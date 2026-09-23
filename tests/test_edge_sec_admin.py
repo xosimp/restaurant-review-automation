@@ -416,13 +416,39 @@ def test_admin_reset_clears_the_forced_reset_flag(app, db_path):
 
 # ── SEC-15: send-referral ───────────────────────────────────────────────────
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
+
 @pytest.fixture
 def captured_mail(monkeypatch):
-    """send_referral calls resend.Emails.send directly; capture instead."""
+    """send_referral used to call resend.Emails.send directly; it goes
+    through emails.deliver now, so both roads are captured."""
     sent = []
     import resend
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda payload: sent.append(payload) or {"id": "x"}),
                         raising=False)
+    _capture_resend_posts(monkeypatch, sent.append)
     return sent
 
 
@@ -436,8 +462,6 @@ def test_a_referral_sends_the_invite_and_notifies_will(app, db_path, captured_ma
     assert len(captured_mail) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-15: send-referral has no rate limit (the '10 per hour' comment "
-                                       "is unimplemented) — an open relay from will@")
 def test_the_eleventh_referral_in_an_hour_from_one_restaurant_is_refused(app, db_path, captured_mail):
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -451,7 +475,6 @@ def test_the_eleventh_referral_in_an_hour_from_one_restaurant_is_refused(app, db
     assert len(captured_mail) == sent_before
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-15: the referral note is interpolated raw into the email HTML")
 def test_the_referral_note_is_html_escaped_in_every_email(app, db_path, captured_mail):
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)

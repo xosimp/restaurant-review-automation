@@ -349,9 +349,7 @@ def _stripe_dispatch(event):
             print(f"ALERT: {subject}\n{body}")
             return
         try:
-            import resend as _resend
-            _resend.api_key = _resend_key()
-            _resend.Emails.send({
+            _emails.deliver_or_raise(email_type="ops_payment_alert", payload={
                 "from": _emails.sender("ops"),
                 "to": [WILL_EMAIL],
                 "subject": subject,
@@ -668,8 +666,6 @@ def _stripe_dispatch(event):
                     # Notify Will when a client converts from trial to paid
                     if first_payment and _resend_key():
                         try:
-                            import resend as _resend
-                            _resend.api_key = _resend_key()
                             # Get restaurant name
                             conn2 = get_conn()
                             rname_row = conn2.execute(
@@ -677,7 +673,9 @@ def _stripe_dispatch(event):
                             ).fetchone()
                             conn2.close()
                             rname = rname_row["name"] if rname_row else email
-                            _resend.Emails.send({
+                            # Through emails.deliver: suppression, retry and
+                            # email_log (MOD-EML-4).
+                            _emails.deliver_or_raise(email_type="Admin Alert", restaurant_id=dict(row)["id"], payload={
                                 "from": _emails.sender("ops"),
                                 "to": [WILL_EMAIL],
                                 "subject": f"💳 New paying client — {rname}",
@@ -697,13 +695,12 @@ def _stripe_dispatch(event):
                                     </p>
                                 </div>"""),
                             })
-                            log_email(dict(row)["id"], "Admin Alert", WILL_EMAIL, f"New paying client — {rname}")
 
                             # Send branded receipt to the client
                             try:
                                 from datetime import datetime as _dt
                                 receipt_date = _dt.now().strftime("%B %d, %Y")
-                                _resend.Emails.send({
+                                _emails.deliver_or_raise(email_type="Payment Receipt", restaurant_id=dict(row)["id"], payload={
                                     "from": _emails.sender("client"),
                                     "to": [email],
                                     "subject": f"Payment confirmed — Cavnar AI",
@@ -731,7 +728,6 @@ def _stripe_dispatch(event):
                                     </div>
                                     </div>"""),
                                 })
-                                log_email(dict(row)["id"], "Payment Receipt", email, f"Payment confirmed — ${amount:.2f}")
                             except Exception as re_err:
                                 print(f"Receipt email failed: {re_err}")
                         except Exception as ne:
@@ -990,7 +986,20 @@ def twilio_inbound_sms():
 # which degrade the sending reputation of the domain that also carries 2FA
 # and password-reset mail.
 
-RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET", "")
+# An override for tests only. The live secret is read from the environment
+# when each request arrives: it was frozen at import, so setting or rotating
+# it on Railway did nothing until the next restart (MOD-EML-9) — the pattern
+# already fixed for RESEND_API_KEY.
+RESEND_WEBHOOK_SECRET = ""
+
+# How far a Svix timestamp may be from now. Nothing checked it, so a
+# captured signed event (a complaint that suppresses an address) could be
+# replayed forever (MOD-EML-9). Five minutes is Svix's own tolerance.
+SVIX_TOLERANCE_SECONDS = 300
+
+
+def _webhook_secret() -> str:
+    return RESEND_WEBHOOK_SECRET or os.getenv("RESEND_WEBHOOK_SECRET", "")
 
 # Statuses worth suppressing on. A soft bounce (full mailbox, temporary
 # defer) is deliberately not here — that address may well work tomorrow.
@@ -1004,12 +1013,17 @@ def _verify_svix(payload_body: bytes, headers) -> bool:
     """Svix signature: HMAC-SHA256 over "{id}.{timestamp}.{body}", keyed by
     the base64 secret after the 'whsec_' prefix. Multiple space-separated
     signatures may be present; any valid one passes."""
-    import base64, hashlib, hmac as _hmac
-    secret = RESEND_WEBHOOK_SECRET
+    import base64, hashlib, hmac as _hmac, time as _time
+    secret = _webhook_secret()
     svix_id = headers.get("svix-id", "")
     svix_ts = headers.get("svix-timestamp", "")
     svix_sig = headers.get("svix-signature", "")
     if not (secret and svix_id and svix_ts and svix_sig):
+        return False
+    try:
+        if abs(_time.time() - int(svix_ts)) > SVIX_TOLERANCE_SECONDS:
+            return False
+    except (TypeError, ValueError):
         return False
     try:
         key = base64.b64decode(secret.split("_", 1)[1] if secret.startswith("whsec_") else secret)
@@ -1022,6 +1036,44 @@ def _verify_svix(payload_body: bytes, headers) -> bool:
         if _hmac.compare_digest(candidate, expected):
             return True
     return False
+
+
+def _guest_email_types():
+    from models import GUEST_EMAIL_TYPES
+    return GUEST_EMAIL_TYPES
+
+
+def _logged_send(message_id):
+    """The email_log row a Resend event is about, or None."""
+    if not message_id:
+        return None
+    try:
+        from models import get_conn as _gc
+        conn = _gc()
+        try:
+            row = conn.execute("SELECT email_type, restaurant_id FROM email_log WHERE message_id=? "
+                               "ORDER BY id DESC LIMIT 1", (message_id,)).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _unsubscribe_guest_email(address, restaurant_id):
+    if not (address and restaurant_id):
+        return
+    try:
+        from models import get_conn as _gc
+        conn = _gc()
+        try:
+            conn.execute("UPDATE guest_contacts SET email_unsubscribed=1 "
+                         "WHERE restaurant_id=? AND LOWER(email)=LOWER(?)", (restaurant_id, address))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[resend-webhook] guest unsubscribe failed: {e}")
 
 
 @webhook_bp.route("/webhooks/resend", methods=["POST"])
@@ -1060,8 +1112,19 @@ def resend_webhook():
         mark_email_engagement(message_id, engagement)
 
     if etype in _SUPPRESS_EVENTS:
+        # A complaint about a restaurant's GUEST mail (a newsletter, a
+        # review request) is about that list: it stops guest mail to the
+        # address and unsubscribes them from that restaurant, and leaves the
+        # same person's staff schedules and account mail alone (MOD-EML-7).
+        # A bounce is about the mailbox itself, so it stops everything.
+        sent = _logged_send(message_id)
+        guest_mail = bool(sent and sent.get("email_type") in _guest_email_types())
         for addr in recipients:
-            suppress_email(addr, _SUPPRESS_EVENTS[etype], detail)
+            if etype == "email.complained" and guest_mail:
+                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail, scope="guest")
+                _unsubscribe_guest_email(addr, sent.get("restaurant_id"))
+            else:
+                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail)
 
     # Always 200 on a verified event — a non-2xx makes Resend retry, and
     # nothing here is worth replaying.

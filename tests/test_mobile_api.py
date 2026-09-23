@@ -2311,19 +2311,24 @@ def test_login_history_route_returns_history(client, db_path):
 
 # ── /mobile/api/account/export-data ─────────────────────────────────────────
 
+def _capture_email(monkeypatch, sent):
+    """The export and the preview digest go through emails.deliver now
+    (MOD-EML-4), not the Resend SDK: record the payload there."""
+    import emails
+
+    def deliver(payload=None, restaurant_id=None, email_type=None, log_send=True):
+        sent.update(payload or {})
+        return emails.SendResult(True, message_id="fake", status_code=200, attempts=1)
+    monkeypatch.setattr(emails, "deliver", deliver)
+
+
 def test_export_data_route_emails_four_column_csv(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     _add_review(db_path, rid)
     sent = {}
 
-    class FakeEmails:
-        @staticmethod
-        def send(payload):
-            sent.update(payload)
-            return {"id": "fake"}
-
-    monkeypatch.setattr("resend.Emails", FakeEmails)
+    _capture_email(monkeypatch, sent)
     resp = client.post("/mobile/api/account/export-data", headers=_auth_headers(token))
     data = resp.get_json()
     assert data["ok"] is True
@@ -2347,13 +2352,7 @@ def test_send_test_digest_scoped_to_own_restaurant(client, db_path, monkeypatch)
     token = _login(client, db_path, rid)
     sent = {}
 
-    class FakeEmails:
-        @staticmethod
-        def send(payload):
-            sent.update(payload)
-            return {"id": "fake"}
-
-    monkeypatch.setattr("resend.Emails", FakeEmails)
+    _capture_email(monkeypatch, sent)
     resp = client.post("/mobile/api/account/send-test-digest", headers=_auth_headers(token))
     data = resp.get_json()
     assert data["ok"] is True
@@ -2758,11 +2757,7 @@ def test_export_scopes(client, db_path, monkeypatch):
     token = _login(client, db_path, rid)
     _add_review(db_path, rid)
     sent = {}
-    class _Emails:
-        @staticmethod
-        def send(payload): sent.update(payload)
-    import resend
-    monkeypatch.setattr(resend, "Emails", _Emails)
+    _capture_email(monkeypatch, sent)
     monkeypatch.setattr(mobile_api, "_resend_key", lambda: "k")
     assert client.post("/mobile/api/account/export-data", headers=_auth_headers(token), json={"scopes": ["bogus"]}).status_code == 400
     resp = client.post("/mobile/api/account/export-data", headers=_auth_headers(token), json={"scopes": ["reviews", "settings", "labor", "food_cost"]})

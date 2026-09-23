@@ -430,9 +430,10 @@ def test_two_concurrent_campaign_sends_text_each_guest_once(db_path, monkeypatch
 
 # ── DATA-14 · guest newsletter ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-14: concurrent newsletters each mint and write their own unsubscribe tokens; the last writer wins and the other batch's links are dead")
 def test_concurrent_newsletters_keep_every_unsubscribe_link_valid(db_path, monkeypatch):
     rid = _restaurant(db_path)
+    # A newsletter needs a mailing address now (CAN-SPAM, MOD-EML-6).
+    models.update_restaurant(rid, {"mailing_address": "1 Test St, Chicago, IL 60601"}, db_path=db_path)
     for i, addr in enumerate(("ann@guest.test", "ben@guest.test")):
         cid = guest_marketing.add_guest_contact_public_optin(rid, f"+1555000200{i}", db_path=db_path)
         guest_email.set_guest_email(cid, rid, addr, consent=True, db_path=db_path)

@@ -102,13 +102,15 @@ def forgot_password():
     if email:
         try:
             from models import create_reset_token
-            import resend as _resend
+            import emails as _emails_fp
             token = create_reset_token(email)
             if token:
                 reset_url = f"https://dashboard.cavnar.ai/reset-password/{token}"
-                _resend.api_key = os.getenv("RESEND_API_KEY", "")
-                _resend.Emails.send({
-                    "from": __import__("emails").sender("client"),
+                # Through emails.deliver — the flood guard and email_log a
+                # direct SDK send skipped (MOD-EML-4). Password reset is
+                # exempt from suppression there, as it should be.
+                _emails_fp.deliver_or_raise(email_type="send_password_reset_email", payload={
+                    "from": _emails_fp.sender("client"),
                     "to": [email],
                     "subject": "Reset your Cavnar AI password",
                     "html": _html_doc(f"""
@@ -573,7 +575,7 @@ def change_password(current_user):
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
     except Exception:
         pass  # the password change itself already succeeded
     return jsonify(ok=True)
@@ -623,7 +625,7 @@ def update_email_route(current_user):
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None)
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
     return jsonify(ok=True)

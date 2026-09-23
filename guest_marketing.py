@@ -67,6 +67,32 @@ CREATE TABLE IF NOT EXISTS guest_sms_optouts (
     UNIQUE(restaurant_id, phone)
 );
 CREATE INDEX IF NOT EXISTS idx_guest_sms_optouts_phone ON guest_sms_optouts(phone);
+-- A newsletter and who it went to (guest_email.send_newsletter). There was
+-- no record, so a second press — or a retry after a send that died halfway —
+-- mailed everyone again (MOD-EML-3). One row per recipient is the claim.
+CREATE TABLE IF NOT EXISTS guest_newsletters (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL,
+    subject        TEXT    NOT NULL,
+    body           TEXT    NOT NULL,
+    content_hash   TEXT    NOT NULL,
+    total          INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    completed_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_guest_newsletters_open ON guest_newsletters(completed_at, restaurant_id);
+CREATE TABLE IF NOT EXISTS guest_newsletter_recipients (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    newsletter_id  INTEGER NOT NULL,
+    contact_id     INTEGER NOT NULL,
+    email          TEXT    NOT NULL,
+    status         TEXT    NOT NULL DEFAULT 'pending',
+    claimed_at     TEXT,
+    sent_at        TEXT,
+    error          TEXT,
+    UNIQUE(newsletter_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gnr_status ON guest_newsletter_recipients(newsletter_id, status);
 """
 
 

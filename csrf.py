@@ -83,6 +83,15 @@ def csrf_required(fn):
     return wrapper
 
 
+def csrf_exempt(fn):
+    """Mark one view on a protected blueprint as exempt. Only for routes
+    whose URL token IS the credential (the email unsubscribe links): a
+    cross-site request cannot forge what it does not know, and a mail
+    client's RFC 8058 one-click POST carries no cookie to double-submit."""
+    fn._csrf_exempt = True
+    return fn
+
+
 def csrf_protect(blueprint):
     """Attach enforcement to a blueprint. State-changing requests must echo
     the csrf_js cookie back in the X-CSRF header (or csrf_token field)."""
@@ -91,6 +100,13 @@ def csrf_protect(blueprint):
     def _check_csrf():
         if request.method in _SAFE_METHODS:
             return None
+        try:
+            from flask import current_app
+            view = current_app.view_functions.get(request.endpoint)
+            if getattr(view, "_csrf_exempt", False):
+                return None
+        except Exception:
+            pass
         cookie_tok = request.cookies.get(CSRF_COOKIE, "")
         sent_tok = _token_from_request()
         if cookie_tok and sent_tok and hmac.compare_digest(cookie_tok, sent_tok):

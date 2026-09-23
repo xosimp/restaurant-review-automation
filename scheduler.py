@@ -39,9 +39,6 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
         log.warning(f"Cannot send urgent alert for {restaurant_name} — no key/email")
         return
     try:
-        import resend as _resend
-        _resend.api_key = _resend_key()
-
         # Look up draft responses for these reviews
         try:
             from models import get_conn as _gc
@@ -84,7 +81,20 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
   {draft_html}
 </div>"""
 
-        _resend.Emails.send({
+        # Through emails.deliver, like every other owner email: this was a
+        # direct SDK send, so a bounced or complained address kept getting it
+        # and nothing reached email_log (MOD-EML-4).
+        _alert_rid = next((r.get("restaurant_id") for r in urgent_reviews if r.get("restaurant_id")), None)
+        if _alert_rid is None:
+            try:
+                from models import get_conn as _gc0
+                _c0 = _gc0()
+                _row0 = _c0.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
+                _c0.close()
+                _alert_rid = _row0[0] if _row0 else None
+            except Exception:
+                _alert_rid = None
+        _emails.deliver_or_raise(email_type="urgent", restaurant_id=_alert_rid, payload={
             "from": _emails.sender("client"),
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
@@ -98,7 +108,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     </p>
   </div>
   <p style="font-size:15px;line-height:1.6;margin-bottom:6px">
-    <strong>{restaurant_name}</strong> received
+    <strong>{_html.escape(restaurant_name or "")}</strong> received
     {"a review" if len(urgent_reviews)==1 else f"{len(urgent_reviews)} reviews"}
     that {"needs" if len(urgent_reviews)==1 else "need"} immediate attention.
   </p>
@@ -123,14 +133,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 </div>
 </div>"""),
         })
-        log.info(f"Urgent alert sent to {owner_email} for {restaurant_name}")
-        try:
-            from models import log_email as _le, get_conn as _gc
-            _c = _gc()
-            _row = _c.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
-            _c.close()
-            if _row: _le(_row[0], "urgent", owner_email, f"Urgent review alert — {restaurant_name}")
-        except Exception: pass
+        log.info(f"Urgent alert handled for {owner_email} ({restaurant_name})")
     except Exception as e:
         log.error(f"Urgent alert failed for {restaurant_name}: {e}")
 
@@ -812,9 +815,16 @@ def run_weekly_digests():
                 log.error(f"Digest build failed for {restaurant.name}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
 
+        from time_utils import restaurant_now as _rnow
         for key, bucket in by_email.items():
             items = bucket["items"]
             first_rest, first_rep = items[0]
+            # Once per address per day, recorded only when it was actually
+            # delivered — so a pass retried after a failure (below) never
+            # mails an address that already got it.
+            sent_period = _rnow(first_rest, naive=True).date().isoformat()
+            if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
+                continue
             try:
                 owner_name = _emails.greeting_name(first_rest)
                 if len(items) == 1:
@@ -835,11 +845,24 @@ def run_weekly_digests():
                     "html": _html_doc(html),
                 })
                 if getattr(result, "ok", False):
+                    _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
                     log.error(f"Digest send to {bucket['to']} failed: {result.error}")
                     _ops.capture(RuntimeError(result.error or "digest send failed"),
                                  job="weekly_digest", context=f"restaurant_id={first_rest.id}")
+                    # The day was claimed before sending (local_due), so a
+                    # transient Resend failure lost the week's digest
+                    # (MOD-EML-8). Give the claims back so the next hourly
+                    # tick inside the window tries again; a refusal that will
+                    # not change (suppressed, a 4xx) keeps them.
+                    transient = (not str(result.error or "").startswith("recipient suppressed")
+                                 and (result.status_code is None or result.status_code in _emails._RETRY_STATUS)
+                                 and result.attempts)
+                    if transient:
+                        for rest, _rep in items:
+                            _ops.release_period(f"weekly_digest:{rest.id}",
+                                                _rnow(rest, naive=True).date().isoformat())
                 for rest, _rep in items:
                     try:
                         from webhooks import fire_webhook as _fw_rep
@@ -944,8 +967,7 @@ def check_stale_inventory():
             for name, status in stale
         ])
 
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_stale_inventory", payload={
             "from": _emails.sender("client"),
             "to": [config.will_email()],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
@@ -1440,9 +1462,7 @@ def backup_db():
         enc_name = filename + ".enc"
         size_kb = round(len(payload) / 1024, 1)
 
-        import resend as _resend
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_backup", payload={
             "from": _emails.sender("ops"),
             "to":   [WILL_EMAIL],
             "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
@@ -1758,9 +1778,7 @@ def check_inactive_clients():
     ])
 
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY_LOCAL
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_inactive_clients", payload={
             "from": _emails.sender("ops"),
             "to": [WILL_EMAIL_LOCAL],
             "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
@@ -2820,6 +2838,16 @@ def scheduler_loop():
                     log.info(f"Scheduled posts: {_posts}")
             except Exception as e:
                 log.error(f"Scheduled post run failed: {e}")
+
+            # Every tick: the rest of any newsletter the owner sent, in
+            # bounded batches (guest_email.send_newsletter, MOD-EML-3).
+            try:
+                from guest_email import run_newsletter_sends
+                _nl = run_newsletter_sends()
+                if _nl.get("sent") or _nl.get("failed"):
+                    log.info(f"Newsletter sends: {_nl}")
+            except Exception as e:
+                log.error(f"Newsletter send run failed: {e}")
 
             try:
                 record_scheduler_heartbeat()

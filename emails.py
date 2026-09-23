@@ -174,6 +174,17 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
     except Exception:
         return fallback
 
+def security_stamp(tz: str = None) -> str:
+    """"9/2/26 at 3:04 PM CDT" — when a security event happened, in the
+    owner-facing date format (M/D/YY), on the restaurant's own clock when the
+    caller knows it. These printed "Sep 02, 2026 at 03:04 PM CT", always in
+    Central time (MOD-EML-9)."""
+    from datetime import datetime
+    from time_utils import mdy, restaurant_tz
+    now = datetime.now(restaurant_tz(tz))
+    return f"{mdy(now)} at {now.strftime('%I:%M %p').lstrip('0')} {now.strftime('%Z')}".strip()
+
+
 def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
     """Send 2FA verification code email."""
     if not _resend_key():
@@ -188,7 +199,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
-        <p style="color:#3a3530;font-size:15px;margin:0 0 24px">Your verification code for <strong>{restaurant_name}</strong>:</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 24px">Your verification code for <strong>{esc(restaurant_name)}</strong>:</p>
         <div style="text-align:center;margin:24px 0">
           <span style="font-family:ui-monospace,'SF Mono','Space Mono',Menlo,Consolas,monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#c84b2f;background:#fdf0ef;padding:16px 24px;border-radius:8px;display:inline-block">{code}</span>
         </div>
@@ -208,16 +219,12 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
         return False
 
 def send_login_notification(to_email: str, restaurant_name: str,
-                            ip: str = None, user_agent: str = None, report_url: str = None):
+                            ip: str = None, user_agent: str = None, report_url: str = None,
+                            tz: str = None):
     """Send sign-in notification email."""
     if not _resend_key():
         return False
-    from datetime import datetime
-    try:
-        from zoneinfo import ZoneInfo
-        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
-    except Exception:
-        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    now_str = security_stamp(tz)
     # Parse UA into readable string
     ua = user_agent or ""
     if "iPhone" in ua: device = "iPhone"
@@ -238,11 +245,11 @@ def send_login_notification(to_email: str, restaurant_name: str,
         <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
-        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{restaurant_name}</strong></p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{esc(restaurant_name)}</strong></p>
         <table style="width:100%;font-size:14px;color:#3a3530;border-collapse:collapse">
           <tr><td style="padding:6px 0;color:#7a736a;width:90px">Time</td><td style="padding:6px 0"><strong>{now_str}</strong></td></tr>
           <tr><td style="padding:6px 0;color:#7a736a">Device</td><td style="padding:6px 0"><strong>{device} &mdash; {browser}</strong></td></tr>
-          <tr><td style="padding:6px 0;color:#7a736a">IP address</td><td style="padding:6px 0"><strong>{ip or 'Unknown'}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">IP address</td><td style="padding:6px 0"><strong>{esc(ip or 'Unknown')}</strong></td></tr>
         </table>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed.</p>
         {("<p style=\"margin:16px 0 0\"><a href=\"" + report_url + "\" style=\"display:inline-block;background:#c84b2f;color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px\">This wasn&rsquo;t me</a></p><p style=\"color:#7a736a;font-size:12px;margin:10px 0 0;line-height:1.6\">That link signs out every device, forgets every remembered device, and requires a password reset before anyone can sign in again. It works once, for 7 days.</p>") if report_url else "<p style=\"color:#7a736a;font-size:13px;margin:8px 0 0;line-height:1.6\">If you don&rsquo;t recognize this sign-in, <a href=\"mailto:will@cavnar.ai\" style=\"color:#c84b2f\">contact Will immediately</a> and change your password.</p>"}
@@ -309,6 +316,39 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE = 0.5   # 0.5s, 1s — deliberately short; these run inline in
                       # request handlers and scheduler ticks, not a queue.
 
+# The most one email may hold its caller, counting every connect and read
+# timeout it asks for plus the backoff between attempts. Three attempts at a
+# flat 15s held a request thread ~46s through a Resend brownout — with
+# --threads 4, a quarter of the platform per email (MOD-EML-8). Attempts
+# after the first get what is left of this budget; one that would get less
+# than _MIN_ATTEMPT_SECONDS is not made.
+_SEND_BUDGET_SECONDS = 18.0
+_CONNECT_TIMEOUT = 2.0
+_READ_TIMEOUT = 3.5     # Resend answers in well under a second; a retry after
+                        # a slow success is safe — it carries the same
+                        # Idempotency-Key, so Resend drops the copy.
+_MIN_ATTEMPT_SECONDS = 3.0
+
+
+def display_from(name: str, address: str = None) -> str:
+    """`"Name" <address>` with the name made safe for a From header.
+
+    A restaurant's own name was used raw as the display name, so a comma or
+    a quote ("Mama's, Kitchen") split the header into two mailboxes and
+    angle brackets could smuggle in a different address (MOD-EML-2). The
+    name keeps its letters, accents and emoji; header syntax is dropped."""
+    import re as _re
+    clean = _re.sub(r'[\r\n\t"\\<>]', " ", str(name or ""))
+    clean = " ".join(clean.split())[:78].strip() or "Cavnar AI"
+    return f'"{clean}" <{address or _from_email()}>'
+
+
+def esc(value) -> str:
+    """HTML-escape anything that came from an owner, a guest, a supplier or
+    a model before it goes into an email body (MOD-EML-2)."""
+    import html as _h
+    return _h.escape("" if value is None else str(value), quote=True)
+
 
 def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
     """Send one email through Resend, with retry on transient failures, and
@@ -322,13 +362,16 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     import requests as _requests
 
     key = _resend_key()
+    # A copy: popping `preheader` out of the caller's own dict meant a caller
+    # that retried with the same dict lost it (MOD-EML-9).
+    payload = dict(payload or {})
     # Lifted out before the payload reaches Resend, which has no such field.
-    preheader = payload.pop("preheader", None) if isinstance(payload, dict) else None
+    preheader = payload.pop("preheader", None)
     if preheader:
-        payload = dict(payload)
         payload["html"] = with_preheader(payload.get("html") or "", preheader)
     to = payload.get("to")
-    to_email = (to[0] if isinstance(to, (list, tuple)) and to else to) or ""
+    recipients = [t for t in (list(to) if isinstance(to, (list, tuple)) else [to]) if t]
+    to_email = recipients[0] if recipients else ""
     subject = payload.get("subject", "")
 
     if not key or not to_email:
@@ -358,13 +401,20 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # complained address is dropped no matter which of the 26 senders fires.
     # Security mail is exempt: someone whose marketing bounced must still be
     # able to receive a 2FA code or a password reset.
+    # Every recipient, not just to[0] (MOD-EML-9): a suppressed address in a
+    # multi-recipient send is dropped from it, and a send left with nobody
+    # is not made.
     if email_type not in _SUPPRESSION_EXEMPT:
         try:
             from models import is_email_suppressed
-            if is_email_suppressed(to_email):
+            kept = [r for r in recipients if not is_email_suppressed(r, email_type=email_type)]
+            if not kept:
                 result = SendResult(False, error="recipient suppressed (bounced/complained)", attempts=0)
                 _record(restaurant_id, email_type, to_email, subject, result, log_send)
                 return result
+            if len(kept) != len(recipients):
+                payload["to"] = kept
+                recipients, to_email = kept, kept[0]
         except Exception as e:
             log.warning("suppression check failed for %s: %s", to_email, e)
 
@@ -376,13 +426,19 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     import uuid as _uuid
     idempotency_key = f"{email_type or 'email'}-{_uuid.uuid4().hex}"
     last = None
+    spent = 0.0          # worst case so far: timeouts asked for plus backoff slept
     for attempt in range(1, _MAX_ATTEMPTS + 1):
+        remaining = _SEND_BUDGET_SECONDS - spent
+        if attempt > 1 and remaining < _MIN_ATTEMPT_SECONDS:
+            break
+        read = max(1.0, min(_READ_TIMEOUT, remaining - _CONNECT_TIMEOUT))
+        spent += _CONNECT_TIMEOUT + read
         try:
             resp = _requests.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                          "Idempotency-Key": idempotency_key},
-                json=payload, timeout=15,
+                json=payload, timeout=(_CONNECT_TIMEOUT, read),
             )
             if resp.status_code == 200:
                 mid = None
@@ -402,7 +458,11 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
             last = SendResult(False, error=str(e)[:300], attempts=attempt)
 
         if attempt < _MAX_ATTEMPTS:
-            _time.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)))
+            pause = _BACKOFF_BASE * (2 ** (attempt - 1))
+            if _SEND_BUDGET_SECONDS - spent - pause < _MIN_ATTEMPT_SECONDS:
+                break
+            spent += pause
+            _time.sleep(pause)
 
     # `last or ...` would be wrong here: SendResult.__bool__ reports .ok, so a
     # failed result is falsy and would be silently replaced by the fallback,
@@ -411,6 +471,25 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     log.warning("email %r to %s failed after %s attempt(s): %s",
                 subject, to_email, result.attempts, result.error)
     _record(restaurant_id, email_type, to_email, subject, result, log_send)
+    return result
+
+
+class EmailNotSent(RuntimeError):
+    """A send deliver() attempted and Resend did not accept."""
+
+
+def deliver_or_raise(payload: dict = None, restaurant_id=None, email_type=None,
+                     log_send: bool = True) -> SendResult:
+    """deliver(), raising EmailNotSent when an attempted send failed.
+
+    For the send sites that called the Resend SDK directly and relied on its
+    exception for their error path. Moving them here gives them suppression,
+    email_log, the flood guard and retry (MOD-EML-4). A send that was never
+    attempted (suppressed, flood-guarded, no key) returns its result without
+    raising: that is a decision, not a failure."""
+    result = deliver(payload, restaurant_id=restaurant_id, email_type=email_type, log_send=log_send)
+    if not result.ok and result.attempts:
+        raise EmailNotSent(result.error or "email send failed")
     return result
 
 
@@ -1182,8 +1261,8 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
     <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
     <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
-    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {username}</p>
-    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {password}</p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {esc(username)}</p>
+    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {esc(password)}</p>
   </div>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:12px">
     Once you log in, go to the <strong>Account</strong> tab to set your own password.
@@ -1226,9 +1305,9 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
     if shifts:
         rows = "".join(
             f'''<tr>
-      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap"><strong>{s.get("day") or s.get("date","")}</strong></td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;white-space:nowrap">{_clock(s.get("start") or s.get("shift_start"))} – {_clock(s.get("end") or s.get("shift_end"))}</td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:13px;color:#7a736a">{s.get("role","")}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap"><strong>{esc(s.get("day") or s.get("date",""))}</strong></td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;white-space:nowrap">{esc(_clock(s.get("start") or s.get("shift_start")))} – {esc(_clock(s.get("end") or s.get("shift_end")))}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:13px;color:#7a736a">{esc(s.get("role",""))}</td>
     </tr>'''
             for s in shifts
         )
@@ -1240,13 +1319,13 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
     html = f"""
 <div style="background:#ffffff;width:100%;padding:32px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:520px;margin:0 auto;color:#1a1714">
-  <p style="font-size:15px;line-height:1.6;margin:0 0 4px">Hi {employee_name},</p>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 4px">Hi {esc(employee_name)},</p>
   <p style="font-size:15px;line-height:1.6;margin:0 0 18px">
-    Here's your schedule at <strong>{restaurant_name}</strong> for {week_label}.
+    Here's your schedule at <strong>{esc(restaurant_name)}</strong> for {esc(week_label)}.
   </p>
   {body}
   <p style="margin:0 0 22px">
-    <a href="{link}" style="display:inline-block;background:#c84b2f;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px">View my schedule</a>
+    <a href="{esc(link)}" style="display:inline-block;background:#c84b2f;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px">View my schedule</a>
   </p>
   <p style="font-size:13px;color:#7a736a;line-height:1.6;margin:0">
     That link always shows your current shifts, so check it if anything changes.
@@ -1257,8 +1336,9 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
     _etype = "send_staff_schedule_email"
     params = {
         # The restaurant is the visible sender — staff know the restaurant,
-        # not Cavnar.
-        "from": f"{restaurant_name} <{_from_email()}>",
+        # not Cavnar. Through display_from: a comma or quote in the name
+        # split the header into two mailboxes (MOD-EML-2).
+        "from": display_from(restaurant_name),
         "to": [to_email],
         "subject": f"Your schedule — {week_label}",
         "html": _html_document(html),
@@ -1278,21 +1358,24 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     supplier replies to the restaurant, not to Cavnar."""
     rows = "".join(
         f'''<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714">{i.get("item") or i.get("name") or ""}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;text-align:right;white-space:nowrap"><strong>{i.get("qty",0)}</strong> {i.get("unit","")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714">{esc(i.get("item") or i.get("name") or "")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;text-align:right;white-space:nowrap"><strong>{esc(i.get("qty",0))}</strong> {esc(i.get("unit",""))}</td>
     </tr>'''
         for i in (items or [])
     )
-    greeting = f"Hi {supplier_name}," if supplier_name else "Hi,"
+    # Every name here was typed by an owner or imported from a POS, and this
+    # mail goes to a third party under Cavnar's domain: escaped, so a name
+    # carrying an anchor arrives as text, not a link Cavnar signed (MOD-EML-2).
+    greeting = f"Hi {esc(supplier_name)}," if supplier_name else "Hi,"
     html = f"""
 <div style="background:#ffffff;width:100%;padding:32px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <p style="font-size:15px;line-height:1.6;margin:0 0 4px">{greeting}</p>
   <p style="font-size:15px;line-height:1.6;margin:0 0 20px">
-    Please supply the following for <strong>{restaurant_name}</strong>.
+    Please supply the following for <strong>{esc(restaurant_name)}</strong>.
   </p>
   <p style="font-size:13px;color:#7a736a;margin:0 0 10px;letter-spacing:1px;text-transform:uppercase;font-weight:600">
-    Order {po_number}
+    Order {esc(po_number)}
   </p>
   <table style="width:100%;border-collapse:collapse;margin-bottom:18px">
     <thead>
@@ -1308,7 +1391,7 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Sent by {restaurant_name} via Cavnar AI. Reference {po_number} on the invoice.
+    Sent by {esc(restaurant_name)} via Cavnar AI. Reference {esc(po_number)} on the invoice.
   </p>
 </div></div>
 """
@@ -1316,8 +1399,8 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     params = {
         # The supplier knows the restaurant, not Cavnar — so the restaurant
         # is the visible sender, on the same verified _from_email() domain
-        # every other send in this file uses.
-        "from": f"{restaurant_name} <{_from_email()}>",
+        # every other send in this file uses (display_from: MOD-EML-2).
+        "from": display_from(restaurant_name),
         "to": [to_email],
         "subject": f"Order {po_number} — {restaurant_name}",
         "html": _html_document(html),
@@ -1332,7 +1415,7 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
     same credentials-in-an-email shape (matches the risk profile already
     accepted for every restaurant's primary login), reworded for "added
     to an existing dashboard" instead of "your dashboard is live"."""
-    added_by = f" by {inviter_name}" if inviter_name else ""
+    added_by = f" by {esc(inviter_name)}" if inviter_name else ""
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1343,13 +1426,13 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
     </p>
   </div>
   <p style="font-size:15px;line-height:1.6;margin-bottom:16px">
-    You've been added{added_by} to the Cavnar AI dashboard for <strong>{restaurant_name}</strong>.
+    You've been added{added_by} to the Cavnar AI dashboard for <strong>{esc(restaurant_name)}</strong>.
   </p>
   <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
     <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
     <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
-    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {username}</p>
-    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {password}</p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {esc(username)}</p>
+    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {esc(password)}</p>
   </div>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
     Once you log in, go to the <strong>Account</strong> tab to set your own password.
@@ -2328,19 +2411,15 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
 # confirmation at all — a genuine security gap, since someone changing
 # either from inside an already-compromised account would do so silently.
 
-def send_password_changed_email(to_email: str, restaurant_name: str, owner_name: str = None):
+def send_password_changed_email(to_email: str, restaurant_name: str, owner_name: str = None,
+                                tz: str = None):
     """Confirms a password change back to the account — same security-
     notification family as send_login_notification, deliberately (this is
     exactly as sensitive an event)."""
     if not _resend_key():
         log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
-    from datetime import datetime
-    try:
-        from zoneinfo import ZoneInfo
-        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
-    except Exception:
-        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    now_str = security_stamp(tz)
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
@@ -2348,7 +2427,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
         <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
-        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">Your password for <strong>{restaurant_name}</strong> was changed on {now_str}.</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">Your password for <strong>{esc(restaurant_name)}</strong> was changed on {now_str}.</p>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you didn't make this change, someone else may have access to your account — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
@@ -2365,7 +2444,8 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
         return False
 
 
-def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str, owner_name: str = None):
+def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str, owner_name: str = None,
+                             tz: str = None):
     """Sent to the OLD address when the account email changes — the
     security-critical direction (the new address already knows, since they
     just typed it in; the old address is where an actual account takeover
@@ -2373,12 +2453,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     if not _resend_key():
         log.warning("send_email_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
-    from datetime import datetime
-    try:
-        from zoneinfo import ZoneInfo
-        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
-    except Exception:
-        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    now_str = security_stamp(tz)
     masked_new = new_email[:2] + "***@" + new_email.split("@")[-1]
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -2387,7 +2462,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
         <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
-        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">The sign-in email for <strong>{restaurant_name}</strong> was changed on {now_str}, from this address to <strong>{masked_new}</strong>.</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">The sign-in email for <strong>{esc(restaurant_name)}</strong> was changed on {now_str}, from this address to <strong>{masked_new}</strong>.</p>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed — this is the last email you'll receive at this address. If you didn't make this change, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>, since someone else may now control sign-in to this account.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>

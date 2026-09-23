@@ -772,8 +772,7 @@ def send_failure_digest():
         return False
     try:
         import html as _html
-        import resend as _resend
-        _resend.api_key = resend_key
+        import emails as _emails_ops
         will = config.will_email()
         total = sum(f["cnt"] for f in failures)
         sec_html = ""
@@ -809,8 +808,8 @@ def send_failure_digest():
             </tr>"""
             for f in failures
         )
-        _resend.Emails.send({
-            "from": __import__("emails").sender("ops"),
+        _emails_ops.deliver_or_raise(email_type="ops_failure_digest", payload={
+            "from": _emails_ops.sender("ops"),
             "to": [will],
             "subject": (f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h"
                         + (f" · {len(stuck)} stuck" if stuck else "")) if failures

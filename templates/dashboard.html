@@ -15209,22 +15209,35 @@ function loadGuestNewsletter(){
     if(el) el.textContent = d.subscribers + ' subscribed';
   }).catch(function(){});
 }
-function sendGuestNewsletter(){
+function sendGuestNewsletter(mailingAddress){
   var body = document.getElementById('guest-newsletter-body').value.trim();
   var status = document.getElementById('guest-newsletter-status');
   if(!body){ status.textContent = 'Paste in the newsletter text first.'; status.style.color='var(--red)'; status.style.display='inline'; return; }
-  if(!confirm('Email this to every subscriber? This can\'t be undone.')) return;
+  if(!mailingAddress && !confirm('Email this to every subscriber? This can\'t be undone.')) return;
   var btn = document.getElementById('guest-newsletter-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
+  var payload = {body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()};
+  if(mailingAddress){ payload.mailing_address = mailingAddress; }
   fetch('/api/guest-newsletter', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()})})
+    body: JSON.stringify(payload)})
     .then(function(r){ return r.json(); }).then(function(d){
       btn.disabled = false; btn.textContent = 'Send to subscribers';
       status.style.display = 'inline';
       if(d.ok){
-        status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + '.';
-        status.style.color = '#2d6a4f';
+        // The first batch goes out now and the rest over the next few
+        // minutes (MOD-EML-3); pressing Send again resumes, never repeats.
+        status.textContent = d.queued
+          ? 'Sending to ' + d.total + ' — ' + d.sent + ' out so far, the rest over the next few minutes.'
+          : 'Sent to ' + d.sent + ' of ' + d.total + '.';
+        status.style.color = 'var(--green)';
         document.getElementById('guest-newsletter-body').value = '';
+      } else if(d.needs_mailing_address){
+        // CAN-SPAM: a newsletter carries the restaurant's postal address
+        // (MOD-EML-6). Asked once; kept on the restaurant after that.
+        var addr = window.prompt((d.error || 'Add your mailing address.') + '\n\nStreet, city, state and ZIP:', '');
+        if(addr && addr.replace(/\s/g, '').length >= 8){ sendGuestNewsletter(addr); return; }
+        status.textContent = d.error;
+        status.style.color = 'var(--red)';
       } else {
         status.textContent = d.error || 'Could not send.';
         status.style.color = 'var(--red)';

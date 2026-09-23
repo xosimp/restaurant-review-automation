@@ -852,7 +852,11 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
     controls — callers check that (and owner_email) before calling this,
     same as they always have for the email alone."""
     from emails import send_login_notification
-    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url)
+    try:
+        _tz = getattr(models.get_restaurant(restaurant_id), "timezone", None)
+    except Exception:
+        _tz = None
+    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz)
     try:
         from push import fire_push
         fire_push(

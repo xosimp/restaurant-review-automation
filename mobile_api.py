@@ -414,7 +414,7 @@ def mobile_reset_password():
         restaurant = get_restaurant(get_user_by_email_rid(email))
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
     except Exception:
         pass
     return jsonify(ok=True)
@@ -3209,7 +3209,8 @@ def mobile_guest_newsletter(current_user):
     if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
         return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
     data = request.get_json() or {}
-    result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"))
+    result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"),
+                                 mailing_address=data.get("mailing_address"))
     return jsonify(**result), (200 if result.get("ok") else 400)
 
 
@@ -4239,7 +4240,7 @@ def mobile_change_password(current_user):
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
     except Exception:
         pass  # the password change itself already succeeded — a failed confirmation email isn't worth failing the request over
     return jsonify(ok=True)
@@ -4292,7 +4293,7 @@ def mobile_update_email(current_user):
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None)
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
     return jsonify(ok=True)
@@ -5093,24 +5094,36 @@ def mobile_send_test_digest(current_user):
         return jsonify(ok=False, error="No email on file for your account."), 400
     try:
         from reporter import build_report_from_db, render_html
-        import resend as _resend
+        import emails as _emails_dg
         report = build_report_from_db(rid, restaurant.name, days=7)
         from permissions import has_permission as _hp_dg, LOSS_VIEW as _lv_dg
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid,
                            owner_view=_hp_dg(current_user, _lv_dg))
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        # Through emails.deliver: suppression, the digest_preview flood
+        # limit and email_log, all of which a direct SDK send skipped
+        # (MOD-EML-4).
+        result = _emails_dg.deliver(email_type="digest_preview", restaurant_id=rid, payload={
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
             "subject": f"[Preview] Your weekly review digest — {restaurant.name}",
             "html": _html_doc(html),
         })
-        try:
-            log_email(rid, "digest", to_email, f"[Preview] Weekly digest — {restaurant.name}")
-        except Exception: pass
+        if not result.ok:
+            return jsonify(ok=False, error=_email_refusal(result)), 502
         return jsonify(ok=True, email=to_email)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+def _email_refusal(result) -> str:
+    """What to tell the owner when emails.deliver did not send."""
+    err = str(getattr(result, "error", "") or "")
+    if err.startswith("recipient suppressed"):
+        return ("Email to your address bounced or was marked as spam before, so it's paused. "
+                "Update your email under Account, or ask Cavnar AI to re-enable it.")
+    if err.startswith("flood guard"):
+        return "That was sent a few times already this hour — check your inbox, or try again later."
+    return "The email didn't go out. Try again in a minute."
 
 
 @mobile_bp.route("/account/send-test-push", methods=["POST"])
@@ -5194,18 +5207,16 @@ def mobile_export_data(current_user):
             attachments.append({"filename": f"{safe_name}_{fname}",
                                 "content": _b64.b64encode(body.encode("utf-8")).decode("ascii")})
             labels.append(label)
-        import resend as _resend
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        import emails as _emails_ex
+        result = _emails_ex.deliver(email_type="data_export", restaurant_id=rid, payload={
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
             "subject": f"Your Cavnar AI data export — {restaurant.name}",
             "html": _html_doc("<p>Attached: " + ", ".join(labels) + ".</p>"),
             "attachments": attachments,
         })
-        try:
-            log_email(rid, "data_export", to_email, f"Data export — {restaurant.name}")
-        except Exception: pass
+        if not result.ok:
+            return jsonify(ok=False, error=_email_refusal(result)), 502
         _log_account_event(rid, "data_exported", current_user, detail=", ".join(scopes))
         return jsonify(ok=True, email=to_email, scopes=scopes)
     except Exception as e:

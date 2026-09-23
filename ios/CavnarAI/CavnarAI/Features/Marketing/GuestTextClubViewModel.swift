@@ -154,6 +154,9 @@ final class GuestTextClubViewModel {
         let ok: Bool
         let sent: Int?
         let total: Int?
+        /// Still to go out: the server sends the first batch now and the
+        /// rest from its scheduler over the next few minutes.
+        let queued: Int?
         let subject: String?
         let error: String?
     }
@@ -170,7 +173,11 @@ final class GuestTextClubViewModel {
                                      subject: newsletterSubject.isEmpty ? nil : newsletterSubject))
             if response.ok {
                 Haptic.success()
-                newsletterResult = "Sent to \(response.sent ?? 0) of \(response.total ?? 0)"
+                if let queued = response.queued, queued > 0 {
+                    newsletterResult = "Sending to \(response.total ?? 0) — \(response.sent ?? 0) out so far, the rest over the next few minutes"
+                } else {
+                    newsletterResult = "Sent to \(response.sent ?? 0) of \(response.total ?? 0)"
+                }
                 newsletterBody = ""
             } else {
                 newsletterError = response.error ?? "Couldn't send that newsletter."
