@@ -4530,6 +4530,33 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
+def rename_capability_holder(restaurant_id: int, old_name: str, new_name: str, db_path: str = DB_PATH):
+    """Move every capability row (ratings, closer flag) from one name to
+    another. Returns rows moved, or None when the new name already holds a
+    row for an attribute being moved — never silently overwrites a rating."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        attrs = [r["attribute"] for r in conn.execute(
+            "SELECT attribute FROM staff_capabilities WHERE restaurant_id=? AND employee_name=?",
+            (restaurant_id, old_name)).fetchall()]
+        if not attrs:
+            conn.rollback()
+            return 0
+        clash = conn.execute(
+            "SELECT 1 FROM staff_capabilities WHERE restaurant_id=? AND employee_name=? AND attribute IN (%s)"
+            % ",".join("?" * len(attrs)), (restaurant_id, new_name, *attrs)).fetchone()
+        if clash:
+            conn.rollback()
+            return None
+        cur = conn.execute("UPDATE staff_capabilities SET employee_name=?, updated_at=datetime('now') "
+                           "WHERE restaurant_id=? AND employee_name=?", (new_name, restaurant_id, old_name))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{employee_name: 1-5} for everyone who has been rated. Absent means
     NOT RATED, which is deliberately different from a low rating."""

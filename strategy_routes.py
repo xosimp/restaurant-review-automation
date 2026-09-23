@@ -899,11 +899,12 @@ def _do_staff_settings_set(u):
                          daypart_availability=b.get("daypart_availability"), is_minor=b.get("is_minor"),
                          time_windows=b.get("time_windows"), certifications=b.get("certifications"),
                          preferred_dayparts=b.get("preferred_dayparts"), desired_hours=b.get("desired_hours"),
-                         updated_by=_who(u))
+                         experienced=b.get("experienced"), updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
     changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",
-                           "time_windows", "certifications", "preferred_dayparts", "desired_hours") if k in b]
+                           "time_windows", "certifications", "preferred_dayparts", "desired_hours",
+                           "experienced") if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
                       detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
     return {"ok": True, "settings": row}, 200
@@ -1266,6 +1267,103 @@ def _do_recommendation_event(u):
     return {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}, 200
 
 
+# When the drafts have been going out nearly untouched, auto-publish is
+# worth offering (the owner still has the undo window). Three published
+# weeks in a row, each with at most this many edits and at least this share
+# of rows untouched, and the latest draft at or above the quality bar.
+AUTO_PUBLISH_WEEKS = 3
+AUTO_PUBLISH_MAX_CHANGES = 3
+AUTO_PUBLISH_MIN_UNCHANGED = 0.95
+AUTO_PUBLISH_MIN_SCORE = 85
+
+
+def _auto_publish_offer(rid) -> dict:
+    import json as _json
+    import schedule_versions as _sv
+    from models import get_restaurant, get_conn
+    r = get_restaurant(rid)
+    if r is not None and int(getattr(r, "auto_publish_schedule", 0) or 0):
+        return {"eligible": False, "reason": "Auto-publish is already on."}
+    acc = _sv.acceptance(rid, weeks=AUTO_PUBLISH_WEEKS)
+    weeks = acc.get("weeks") or []
+    if len(weeks) < AUTO_PUBLISH_WEEKS:
+        return {"eligible": False, "reason": f"Needs {AUTO_PUBLISH_WEEKS} published weeks of drafts to judge."}
+    clean = [w for w in weeks if w["changes"] <= AUTO_PUBLISH_MAX_CHANGES
+             and (w.get("unchanged_share") or 0) >= AUTO_PUBLISH_MIN_UNCHANGED]
+    conn = get_conn()
+    try:
+        latest = conn.execute("SELECT quality_json FROM schedule_history WHERE restaurant_id=? AND quality_json IS NOT NULL "
+                              "ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+    finally:
+        conn.close()
+    try:
+        score = (_json.loads(latest["quality_json"]) or {}).get("score") if latest else None
+    except Exception:
+        score = None
+    if len(clean) < AUTO_PUBLISH_WEEKS:
+        return {"eligible": False, "reason": "Recent drafts still needed edits before they went out."}
+    if score is None or score < AUTO_PUBLISH_MIN_SCORE:
+        return {"eligible": False, "reason": f"The latest draft scored {score}, under {AUTO_PUBLISH_MIN_SCORE}."}
+    return {"eligible": True, "score": score,
+            "reason": (f"Your last {AUTO_PUBLISH_WEEKS} drafts went out with {max(w['changes'] for w in weeks)} "
+                       f"or fewer changes each, and the latest scored {score}. Auto-publish can send next week's "
+                       "on Friday, with time to undo.")}
+
+
+def _do_ratings_unmatched(u):
+    """Operational Scores stored under a name that is not on the roster
+    judge nobody: a rating for "Kim Tran" and a roster "Kim T." never meet
+    (Gia Mia: 17 ratings, none matched). Each is listed with the roster name
+    it most likely means."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import staff_settings as _ss
+    from models import get_operational_scores
+    roster = [e["name"] for e in _ss.roster(_rid(u))]
+    return {"ok": True, "unmatched": rating_name_suggestions(get_operational_scores(_rid(u)), roster)}, 200
+
+
+def rating_name_suggestions(scores: dict, roster: list) -> list:
+    """[{rated, score, suggestion, candidates}] for every rated name not on
+    the roster. A suggestion is offered only when one roster name clearly
+    fits: same first name and matching last initial, or a close spelling."""
+    import difflib
+    on = {n.strip().lower() for n in roster}
+    out = []
+    for rated, sc in sorted((scores or {}).items()):
+        if rated.strip().lower() in on:
+            continue
+        parts = rated.strip().split()
+        first = parts[0].lower() if parts else ""
+        last_initial = parts[-1][0].lower() if len(parts) > 1 and parts[-1] else ""
+        by_initial = [n for n in roster if n.strip().split() and n.strip().split()[0].lower() == first
+                      and (not last_initial or (len(n.strip().split()) > 1 and n.strip().split()[-1][:1].lower() == last_initial))]
+        close = difflib.get_close_matches(rated, roster, n=3, cutoff=0.75)
+        candidates = list(dict.fromkeys(by_initial + close))
+        suggestion = candidates[0] if len(by_initial) == 1 or (not by_initial and len(close) == 1) else None
+        out.append({"rated": rated, "score": sc, "suggestion": suggestion, "candidates": candidates[:4]})
+    return out
+
+
+def _do_ratings_match(u):
+    """Move every rating stored under one name onto a roster name."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change ratings.")
+    import staff_settings as _ss
+    from models import rename_capability_holder
+    from client_api import log_account_event
+    b = _body()
+    rated, target = (b.get("rated") or "").strip(), (b.get("roster_name") or "").strip()
+    roster = {e["name"] for e in _ss.roster(_rid(u))}
+    if not rated or target not in roster:
+        return {"ok": False, "error": "Pick a name from the roster."}, 400
+    moved = rename_capability_holder(_rid(u), rated, target)
+    if moved is None:
+        return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
+    log_account_event(_rid(u), "rating_matched", current_user=u, detail=f"{rated} → {target}")
+    return {"ok": True, "moved": moved}, 200
+
+
 def _do_schedule_intel(u):
     """The record behind the draft: outcomes by daypart, the rotation
     ledger, what staff keep dropping and claiming, who could hold a
@@ -1298,6 +1396,7 @@ def _do_schedule_intel(u):
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
             "weight_calibration": _safe(lambda: _sl.calibrate_weights(rid), {"ready": False}),
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
+            "auto_publish_offer": _safe(lambda: _auto_publish_offer(rid), {"eligible": False}),
             "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
 
 
@@ -1895,6 +1994,8 @@ _ROUTES = [
     ("/labor/schedule/violations", ["POST"], _do_schedule_violations, "schedule_violations"),
     ("/labor/schedule/apply-fixes", ["POST"], _do_schedule_apply_fixes, "schedule_apply_fixes"),
     ("/labor/schedule/optimize", ["POST"], _do_schedule_optimize, "schedule_optimize"),
+    ("/labor/ratings/unmatched", ["GET"], _do_ratings_unmatched, "ratings_unmatched"),
+    ("/labor/ratings/match", ["POST"], _do_ratings_match, "ratings_match"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
