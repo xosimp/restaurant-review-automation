@@ -1274,6 +1274,8 @@ def _do_schedule_intel(u):
         return _forbidden("Only someone who can see labor can see this.")
     import schedule_intel as _si
     import schedule_economics as _econ
+    import schedule_learning as _sl
+    import schedule_versions as _sv
     rid = _rid(u)
     def _safe(fn, default):
         try:
@@ -1289,6 +1291,13 @@ def _do_schedule_intel(u):
             "suggested_pairs": _safe(lambda: _si.chemistry_suggestions(rid), []),
             "splh": _safe(lambda: _econ.splh_by_daypart(rid), {}),
             "revenue": _safe(lambda: _econ.projected_weekly_revenue(rid), {}),
+            # What the engine is learning: how much of each draft survives to
+            # the published week, how the quality dimensions tracked real
+            # outcomes (suggested weights, never applied), and no-show rates
+            # by weekday.
+            "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
+            "weight_calibration": _safe(lambda: _sl.calibrate_weights(rid), {"ready": False}),
+            "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
             "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
 
 

@@ -12,9 +12,13 @@ back into the next draft.
 import csv
 import io
 import json
+import logging
+import sqlite3
 from datetime import datetime
 
 from models import get_conn, DB_PATH
+
+log = logging.getLogger(__name__)
 
 COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
@@ -75,11 +79,32 @@ def diff(before_rows: list, after_rows: list) -> dict:
                 # "from"/"to" here are a shift's old and new times, not an
                 # email header (tests/test_email_audit_fixes scans for those).
                 retimed.append({"date": r["date"], "day": r.get("day"), "employee": r.get("employee"),
-                                "from": was, "to": now, "hours_delta": round(_hours(a) - _hours(r), 1)})
+                                "from": was, "to": now, "hours_delta": round(_hours(a) - _hours(r), 1),
+                                "role": a.get("role") or r.get("role"),
+                                "old_start": r["shift_start"], "new_start": a["shift_start"],
+                                "old_end": r.get("shift_end", ""), "new_end": a.get("shift_end", "")})
                 used_added.add(j)
                 removed.remove(r)
                 break
     added = [a for j, a in enumerate(added) if j not in used_added]
+
+    # Same person, date and start on both sides: a changed end is a retime
+    # (it used to be no change at all, so the person was never told), and a
+    # changed role is its own kind — the key cannot see either.
+    role_changed = []
+    for k in sorted(before.keys() & after.keys()):
+        b, a = before[k], after[k]
+        if (b.get("shift_end") or "") != (a.get("shift_end") or ""):
+            was, now = f"{b['shift_start']}–{b.get('shift_end', '')}", f"{a['shift_start']}–{a.get('shift_end', '')}"
+            retimed.append({"date": a["date"], "day": a.get("day"), "employee": a.get("employee"),
+                            "from": was, "to": now,
+                            "hours_delta": round(_hours(a) - _hours(b), 1), "role": a.get("role") or b.get("role"),
+                            "old_start": b["shift_start"], "new_start": a["shift_start"],
+                            "old_end": b.get("shift_end", ""), "new_end": a.get("shift_end", "")})
+        if (b.get("role") or "").strip().lower() != (a.get("role") or "").strip().lower():
+            role_changed.append({"date": a["date"], "day": a.get("day"), "employee": a.get("employee"),
+                                 "shift_start": a["shift_start"], "old_role": b.get("role") or "",
+                                 "new_role": a.get("role") or ""})
 
     def _by(rows, field):
         out = {}
@@ -91,12 +116,12 @@ def diff(before_rows: list, after_rows: list) -> dict:
     hb, ha = _by(before_rows, "day"), _by(after_rows, "day")
     rb, ra = _by(before_rows, "role"), _by(after_rows, "role")
     return {
-        "added": added, "removed": removed, "moved": moved, "retimed": retimed,
+        "added": added, "removed": removed, "moved": moved, "retimed": retimed, "role_changed": role_changed,
         "hours_before": round(sum(_hours(r) for r in before_rows), 1),
         "hours_after": round(sum(_hours(r) for r in after_rows), 1),
         "hours_by_day": {d: [hb.get(d, 0.0), ha.get(d, 0.0)] for d in sorted(set(hb) | set(ha))},
         "hours_by_role": {r: [rb.get(r, 0.0), ra.get(r, 0.0)] for r in sorted(set(rb) | set(ra))},
-        "changes": len(added) + len(removed) + len(moved) + len(retimed),
+        "changes": len(added) + len(removed) + len(moved) + len(retimed) + len(role_changed),
     }
 
 
@@ -119,6 +144,11 @@ def diff_lines(d: dict, limit=6, unchanged="Unchanged from the last published we
         lines.append(f"{r}: {b:g}h → {a:g}h.")
     for m in d["moved"][:2]:
         lines.append(f"{m.get('day') or m['date']} {m.get('role') or ''} {m['shift_start']}: {m['from']} → {m['to']}.")
+    for rc in (d.get("role_changed") or [])[:2]:
+        lines.append(f"{rc.get('day') or rc['date']} {rc['employee']}: {rc['old_role'] or 'no role'} → {rc['new_role'] or 'no role'}.")
+    if d.get("retimed") and not by_day:
+        n = len(d["retimed"])
+        lines.append(f"{n} shift{'s' if n != 1 else ''} retimed.")
     if d["added"] and not by_day:
         lines.append(f"{len(d['added'])} shift{'s' if len(d['added']) != 1 else ''} added.")
     if d["removed"] and not by_day:
@@ -139,14 +169,71 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
     last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
                         "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
     version = (last["version"] + 1) if last else 1
-    d = diff(rows_from_csv(last["schedule_csv"]), rows_from_csv(schedule_csv)) if last else None
+    before_rows = rows_from_csv(last["schedule_csv"]) if last else []
+    after_rows = rows_from_csv(schedule_csv)
+    d = diff(before_rows, after_rows) if last else None
+    # The advice the week carried before this save — read before the new
+    # version (whose own quality is judged on the edited rows) lands.
+    open_recs = _open_recommendations(conn, history_id) if (last and reason == "edited") else []
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
         "diff_json, saved_by) VALUES (?,?,?,?,?,?,?,?)",
         (restaurant_id, history_id, version, reason, schedule_csv,
          json.dumps(quality) if quality else None, json.dumps(d) if d else None,
          (saved_by or "").strip()[:120] or None))
-    return cur.lastrowid, version
+    row_id = cur.lastrowid
+    if open_recs and d and d.get("changes"):
+        _record_implied_acceptance(conn, restaurant_id, open_recs, before_rows, after_rows, saved_by)
+    return row_id, version
+
+
+def _open_recommendations(conn, history_id) -> list:
+    """The recommendations on the newest version of this week that stored a
+    quality verdict (the generated draft, or a manager save that rescored)."""
+    row = conn.execute("SELECT quality_json FROM schedule_versions WHERE history_id=? AND quality_json IS NOT NULL "
+                       "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    if not row:
+        return []
+    try:
+        q = json.loads(row["quality_json"] or "null") or {}
+    except (TypeError, ValueError):
+        return []
+    return [str(r) for r in (q.get("recommendations") or []) if r]
+
+
+def _record_implied_acceptance(conn, restaurant_id, recs, before_rows, after_rows, saved_by) -> list:
+    """An edit that carries out a recommendation accepted it, button or no
+    button. Written on the caller's connection inside its transaction (a
+    SAVEPOINT, so a failure here unwinds only these rows and never the
+    version the save is for); one 'accepted' per recommendation per day,
+    under the same kind and key the 'shown' event used."""
+    try:
+        from schedule_learning import addressed_recommendations
+        from shift_quality import recommendation_kind
+        hits = addressed_recommendations(recs, before_rows, after_rows)
+    except Exception as e:          # a read-only match; the save must not fail on it
+        log.warning("implied acceptance match failed for restaurant %s: %s", restaurant_id, e)
+        return []
+    if not hits:
+        return []
+    written = []
+    conn.execute("SAVEPOINT implied_accept")
+    try:
+        for rec in hits:
+            kind, key = recommendation_kind(rec)[:60], rec[:200]
+            if conn.execute("SELECT 1 FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND key=? "
+                            "AND action='accepted' AND created_at >= date('now')", (restaurant_id, kind, key)).fetchone():
+                continue
+            conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) "
+                         "VALUES (?,?,?,'accepted',?)", (restaurant_id, kind, key, (saved_by or "").strip()[:120] or None))
+            written.append(rec)
+        conn.execute("RELEASE SAVEPOINT implied_accept")
+    except sqlite3.Error as e:
+        conn.execute("ROLLBACK TO SAVEPOINT implied_accept")
+        conn.execute("RELEASE SAVEPOINT implied_accept")
+        log.warning("implied acceptance not recorded for restaurant %s: %s", restaurant_id, e)
+        return []
+    return written
 
 
 def append(restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None, db_path=DB_PATH) -> int:
@@ -246,13 +333,96 @@ def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
     return {"available": True, **d, "lines": diff_lines(d, unchanged="No edits since the draft.")}
 
 
+def _same_rows(a_rows: list, b_rows: list) -> int:
+    """Rows of a_rows that survive untouched in b_rows: same date, person,
+    start, end and role."""
+    def k(r):
+        return (r.get("date", ""), (r.get("employee") or "").strip().lower(), r.get("shift_start", ""),
+                r.get("shift_end", ""), (r.get("role") or "").strip().lower())
+    pool = {}
+    for r in b_rows:
+        pool[k(r)] = pool.get(k(r), 0) + 1
+    same = 0
+    for r in a_rows:
+        if pool.get(k(r)):
+            pool[k(r)] -= 1
+            same += 1
+    return same
+
+
+def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:
+    """How much of each generated draft survived to the week that was sent.
+
+    Per published week (newest first, the latest publish of each calendar
+    week): the changes between the generated version and the published one,
+    and the share of generated rows that went out untouched. The trend
+    compares the older half of the weeks with the newer half — a rising
+    share is a draft that needs less fixing. A week with no generated
+    version (an uploaded schedule) has no draft to judge and is skipped.
+    Pure read."""
+    conn = get_conn(db_path)
+    try:
+        hist = conn.execute(
+            "SELECT id, week_start, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+            "ORDER BY week_start DESC, id DESC LIMIT ?", (restaurant_id, int(weeks) * 3)).fetchall()
+        picked, seen = [], set()
+        for h in hist:
+            wk = h["week_start"] or f"#{h['id']}"
+            if wk in seen:
+                continue
+            seen.add(wk)
+            picked.append(h)
+            if len(picked) >= int(weeks):
+                break
+        versions = {}
+        if picked:
+            marks = ",".join("?" for _ in picked)
+            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
+                                  f"AND history_id IN ({marks}) ORDER BY version", (restaurant_id, *[h["id"] for h in picked])).fetchall():
+                versions.setdefault(v["history_id"], []).append(v)
+    finally:
+        conn.close()
+    out = []
+    for h in picked:
+        vs = versions.get(h["id"]) or []
+        gen = next((v for v in vs if v["reason"] == "generated"), None)
+        if gen is None:
+            continue
+        pub = next((v for v in reversed(vs) if v["reason"] == "published"), None)
+        g_rows = rows_from_csv(gen["schedule_csv"])
+        p_rows = rows_from_csv(pub["schedule_csv"] if pub else h["schedule_csv"])
+        d = diff(g_rows, p_rows)
+        same = _same_rows(g_rows, p_rows)
+        out.append({"history_id": h["id"], "week_start": h["week_start"], "changes": d["changes"],
+                    "rows_generated": len(g_rows), "rows_published": len(p_rows), "unchanged_rows": same,
+                    "unchanged_share": round(same / len(g_rows), 3) if g_rows else None,
+                    "added": len(d["added"]), "removed": len(d["removed"]), "moved": len(d["moved"]),
+                    "retimed": len(d["retimed"]), "role_changed": len(d["role_changed"]),
+                    "hours_generated": d["hours_before"], "hours_published": d["hours_after"]})
+    shares = [w["unchanged_share"] for w in reversed(out) if w["unchanged_share"] is not None]   # oldest first
+    trend = None
+    if len(shares) >= 3:
+        half = len(shares) // 2
+        older = sum(shares[:half]) / half
+        newer = sum(shares[-half:]) / half
+        delta = round(newer - older, 3)
+        trend = {"direction": "rising" if delta >= 0.05 else "falling" if delta <= -0.05 else "steady",
+                 "older": round(older, 3), "newer": round(newer, 3), "delta": delta}
+    return {"available": bool(out), "weeks": out, "trend": trend,
+            "mean_unchanged_share": round(sum(shares) / len(shares), 3) if shares else None,
+            "mean_changes": round(sum(w["changes"] for w in out) / len(out), 1) if out else None}
+
+
 # ── what the manager keeps changing ────────────────────────────────────────
 
 def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> list:
     """Edits that recur across recent weeks: the same person moved off the
-    same weekday and daypart at least `min_repeats` times. Returned as
-    facts, and rendered into the prompt so the next draft starts where the
-    manager keeps ending up."""
+    same weekday and daypart at least `min_repeats` times (moved_off /
+    moved_on, up to 12), then the kinds schedule_learning.edit_patterns
+    reads from each week's draft-to-final change (retime_start /
+    retime_end, headcount_add / headcount_cut, role_change, leader_swap,
+    up to 8). Returned as facts, and rendered into the prompt so the next
+    draft starts where the manager keeps ending up."""
     from shift_quality import daypart_of
     conn = get_conn(db_path)
     try:
@@ -296,7 +466,17 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
         else:
             out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n,
                         "text": f"The manager has put {name} on {day} {pretty} {n} times recently — a good default for them."})
-    return out[:12]
+    out = out[:12]
+    # What else the manager keeps settling on — retimes, headcount per role,
+    # role changes, a leader swapped onto a busy night — from the net change
+    # between each week's draft and its final version. Same shape, so the
+    # prompt block, the dismissal key and the Roster screen read them as is.
+    try:
+        import schedule_learning as _sl
+        out += _sl.edit_patterns(restaurant_id, weeks=weeks, min_repeats=min_repeats, db_path=db_path)
+    except Exception as e:          # a read; the draft still gets the patterns above
+        log.warning("edit patterns unavailable for restaurant %s: %s", restaurant_id, e)
+    return out
 
 
 def prompt_block(patterns: list) -> str:

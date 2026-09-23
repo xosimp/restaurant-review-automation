@@ -475,7 +475,16 @@ def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
 # ── learned-pattern dismissals ────────────────────────────────────────────
 
 def pattern_key(p: dict) -> str:
-    return f"{p.get('kind')}|{(p.get('employee') or '').lower()}|{p.get('day')}|{p.get('daypart')}"
+    """kind|employee|day|daypart — and, for the kinds that are about a role
+    rather than a person (retimes, headcount, role changes, leader swaps),
+    the role, the role it was changed from and the time, so two roles on one
+    night are dismissed separately. The original moved_off / moved_on keys
+    carry none of those and read exactly as they always have."""
+    key = f"{p.get('kind')}|{(p.get('employee') or '').lower()}|{p.get('day')}|{p.get('daypart')}"
+    extra = [str(p.get(f) or "").strip().lower() for f in ("role", "was_role", "time")]
+    if any(extra):
+        key += "|" + "|".join(extra)
+    return key
 
 
 def dismissed_patterns(restaurant_id, db_path=DB_PATH) -> set:
