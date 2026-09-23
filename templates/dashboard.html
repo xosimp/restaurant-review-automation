@@ -3772,6 +3772,57 @@ svg:hover .hb-xh{opacity:1}
 .sq-rec.done .tx{color:var(--ink3);text-decoration:line-through}
 .sq-rec .st{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);flex:none;margin-top:3px}
 .sq-hidden{font-size:12.5px;color:var(--ink3);margin-top:8px}
+/* The score's movement after an edit, and how far the number can be trusted */
+.sq-delta{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;border-radius:999px;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;vertical-align:middle;background:var(--sf-recess);color:var(--ink2)}
+.sq-delta.up{background:var(--green-bg);color:var(--hb-good)}
+.sq-delta.down{background:var(--red-bg);color:var(--hb-bad)}
+.sq-prov{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:var(--amber-bg);color:var(--hb-warn);vertical-align:middle}
+.sq-prov-why{font-size:13px;color:var(--hb-warn);line-height:1.5;margin-top:6px}
+/* What Cavnar changed in the draft, and what is still the owner's */
+.sq-opt{margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
+.sq-opt .hd{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.5}
+.sq-opt .hd .hb-num{font-weight:700}
+.sq-opt .st{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember)}
+.sq-opt details{margin-top:6px}
+.sq-opt summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink2);list-style:none;display:flex;align-items:center;gap:8px}
+.sq-opt summary::-webkit-details-marker{display:none}
+.sq-opt summary:before{content:'';width:0;height:0;border-left:5px solid var(--ember);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .2s}
+.sq-opt details[open] summary:before{transform:rotate(90deg)}
+.sq-opt .sr-line{font-size:13.5px}
+.sq-opt .gain{margin-left:auto;flex:none;font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--hb-good)}
+.sq-opt .sr-grp .sr-k{color:var(--hb-bad)}
+.sq-gate{font-size:13px;color:var(--ink3);margin-top:8px;line-height:1.5}
+/* Rate the people carrying the week, in place */
+.sq-rate{margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--sf-recess)}
+.sq-rate .hd{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:8px;line-height:1.5}
+.sq-rate .r{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--hb-line2)}
+.sq-rate .r:first-of-type{border-top:none}
+.sq-rate .r .nm{flex:1;min-width:120px;font-size:14px;color:var(--ink)}
+.sq-rate .r .nm small{margin-left:6px;font-size:12.5px;color:var(--ink3)}
+.sq-rate .r.done .nm{color:var(--ink3)}
+/* "What if <person> works this shift?" inside an expanded shift */
+.sq-wi{margin-top:10px;padding-top:10px;border-top:1px solid var(--hb-line2);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--ink2)}
+.sq-wi .ac-select{width:auto;padding:5px 8px;font-size:13.5px}
+.sq-wi .res{flex-basis:100%;font-size:13.5px;color:var(--ink2);line-height:1.5}
+.sq-wi .res .hb-num{font-weight:700}
+.sq-cap{font-size:13px;font-weight:600;color:var(--hb-warn);margin-bottom:5px}
+/* Ratings stored under a name nobody on the roster has */
+.rt-unm{margin-bottom:12px;padding:12px 14px;border-radius:10px;background:var(--amber-bg)}
+.rt-unm .hd{font-size:14px;font-weight:600;color:var(--hb-warn);margin-bottom:6px}
+.rt-unm .r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--hb-line2)}
+.rt-unm .r:first-of-type{border-top:none}
+.rt-unm .r .nm{flex:1;min-width:130px;font-size:14px;color:var(--ink)}
+.rt-unm .r .nm small{margin-left:6px;font-size:12.5px;color:var(--ink3)}
+.rt-unm .ac-select{width:auto;padding:5px 8px;font-size:13.5px}
+/* What the draft learns: kept share per week, weight calibration, the auto-publish offer */
+.int-cal{font-size:13.5px;color:var(--ink2);line-height:1.55}
+.int-cal .w{display:flex;gap:10px;padding:4px 0;border-top:1px solid var(--hb-line2)}
+.int-cal .w:first-child{border-top:none}
+.int-cal .w b{flex:0 0 150px;font-weight:600;color:var(--ink)}
+.int-cal .w .rd{color:var(--ink3)}
+.int-offer{margin-top:14px;padding:14px 16px;border-radius:12px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
+.int-offer .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
+.int-offer .tx{font-size:14px;color:var(--ink2);line-height:1.55;margin-bottom:10px}
 /* Chip toggles (rules: certifications per role, FOH and patio roles;
    roster: certifications) */
 .chip-tog{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
@@ -4155,12 +4206,17 @@ svg:hover .hb-xh{opacity:1}
           <div id="sq-dial"></div>
           <div style="flex:1;min-width:220px">
             <div style="font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Shift Quality</div>
-            <div id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;color:rgba(255,255,255,.92);margin:3px 0 8px"></div>
+            <div style="margin:3px 0 8px"><span id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;color:rgba(255,255,255,.92)"></span><span id="sq-prov"></span><span id="sq-delta"></span></div>
             <div id="sq-confidence"></div>
           </div>
           <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
         </div>
         <div id="sq-save-state" style="margin-top:10px;font-size:13.5px;min-height:18px"></div>
+        <!-- What Cavnar changed to raise the score (schedule_optimizer), and
+             what no legal change could fix — the owner's to decide. -->
+        <div id="sq-optimizer"></div>
+        <!-- Most of the week unrated: rate the people carrying it, here. -->
+        <div id="sq-rate"></div>
         <div id="sq-warnings" style="margin-top:10px"></div>
         <div id="sq-shifts" style="margin-top:16px"></div>
         <div style="margin-top:12px">
@@ -4272,6 +4328,9 @@ svg:hover .hb-xh{opacity:1}
     <div id="team-panel" style="display:none">
       <div class="lb2-avail">
         <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Rate each person 1 to 5 — 1 very weak, 3 average, 5 excellent. The scheduler uses this to balance who works together, never to bench anybody. Nothing changes in your schedules until somebody is rated.</div>
+        <!-- Ratings stored under a name nobody on the roster has judge
+             nobody: each with the roster name it most likely means. -->
+        <div id="team-unmatched"></div>
         <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
           <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading your team…</div>
         </div>
@@ -10229,6 +10288,12 @@ function _schedHandleResult(data) {
   // what the forecast could and could not see. All from the payload.
   _schedRenderEconomics(data);
 
+  // What Cavnar changed before the owner saw the draft, and the gate's
+  // line when the weakest days were regenerated.
+  _sqOptimizerProposed = false;
+  _sqOptimizer = data.optimizer || (data.quality && data.quality.optimizer) || null;
+  _sqGate = data.gate || null;
+  _sqWhatIfResult = {}; _sqWhatIfStage = null; _sqRated = {};
   renderShiftQuality(data.quality, data.what_if);
   loadTeamForSwap();
   // The rules check, what the engine fixed on its own, what still needs a
@@ -10563,23 +10628,163 @@ function _qTitle(shift) {
   return shift.day ? (shift.day + ' ' + part) : shift.date;
 }
 
-function renderShiftQuality(quality, whatIf) {
+// prevScore: the number on screen before this render, when an edit, a fix
+// pass, Cavnar's improvement or a re-score produced this one. The change
+// is shown in points beside the band ("+3" / "−2") so a manager sees what
+// their edit bought without remembering the old figure.
+var _sqOptimizer = null;     // optimizer summary: from generation, the stored quality, or Improve with Cavnar
+var _sqOptimizerProposed = false;  // true while Cavnar's changes are on screen and unsaved
+var _sqGate = null;          // the quality gate's one line, when it ran
+function renderShiftQuality(quality, whatIf, prevScore) {
   var panel = document.getElementById('sched-quality');
   if (!panel) return;
   _quality = quality;
   _whatIf = whatIf || null;
   if (!quality || !quality.checked) { panel.style.display = 'none'; return; }
+  if (quality.optimizer && quality.optimizer.ran && !_sqOptimizerProposed) _sqOptimizer = quality.optimizer;
 
   var score = quality.score || 0, tone = _qTone(score);
   document.getElementById('sq-dial').innerHTML = _qualityDial(score, tone);
   var band = (quality.band || '').charAt(0).toUpperCase() + (quality.band || '').slice(1);
   document.getElementById('sq-band').textContent = band;
+  _renderQualityDelta(prevScore, score);
   renderQualityConfidence(quality.confidence);
   renderQualityDimensions(quality.dimensions || []);
   renderQualityWarnings(quality);
+  renderQualityOptimizer();
+  renderQualityRatePrompt();
   renderQualityShifts(quality.shifts || []);
   renderQualityReasoning();
   panel.style.display = 'block';
+}
+
+// A number for markup: never undefined, never a bare null.
+function _sqN(n) { return (n === null || n === undefined || n === '') ? '—' : _escHtml(String(n)); }
+function _renderQualityDelta(prevScore, score) {
+  var el = document.getElementById('sq-delta');
+  if (!el) return;
+  if (prevScore === null || prevScore === undefined || prevScore === '' || isNaN(+prevScore)) { el.innerHTML = ''; return; }
+  var d = score - (+prevScore);
+  el.innerHTML = '<span class="sq-delta' + (d > 0 ? ' up' : (d < 0 ? ' down' : '')) + '" title="Change from '
+    + (+prevScore) + ' before this edit">' + (d > 0 ? '+' + d : (d < 0 ? '−' + (-d) : '±0')) + '</span>';
+}
+
+// "Cavnar improved this draft from 71 to 84 — 5 changes", each change's
+// reason behind a disclosure, then what no legal change could fix. The
+// gate's one line sits under it when the weak days were regenerated.
+function renderQualityOptimizer() {
+  var el = document.getElementById('sq-optimizer');
+  if (!el) return;
+  var o = _sqOptimizer, h = '', i;
+  if (o && o.ran) {
+    var ch = o.changes || [], un = o.unresolved || [];
+    if (ch.length || un.length) {
+      h += '<div class="sq-opt">';
+      if (ch.length && o.before_score !== null && o.before_score !== undefined) {
+        h += '<div class="hd">Cavnar improved this draft from <span class="hb-num">' + _sqN(o.before_score) + '</span> to <span class="hb-num">'
+           + _sqN(o.after_score) + '</span> — <span class="hb-num">' + ch.length + '</span> change' + (ch.length === 1 ? '' : 's')
+           + (_sqOptimizerProposed ? '<span class="st">not saved yet</span>' : '') + '</div>';
+        h += '<details><summary>What changed and why</summary><div>';
+        for (i = 0; i < ch.length; i++) {
+          var c = ch[i] || {};
+          h += '<div class="sr-line fix"><span class="d"></span><span>' + num(c.reason || c.kind || '') + '</span>'
+             + (c.gain ? '<span class="gain">+' + _sqN(Math.round(+c.gain)) + '</span>' : '') + '</div>';
+        }
+        h += '</div></details>';
+      } else if (o.verdict) {
+        h += '<div class="hd">' + num(o.verdict) + '</div>';
+      }
+      if (un.length) {
+        h += '<div class="sr-grp"><div class="sr-k">Still needs you</div>';
+        for (i = 0; i < un.length; i++) h += '<div class="sr-line bad"><span class="d"></span><span>' + num((un[i] || {}).text || '') + '</span></div>';
+        h += '</div>';
+      }
+      h += '</div>';
+    }
+  }
+  var g = _sqGate;
+  if (g && g.ran && g.reason) h += '<div class="sq-gate">' + num(g.reason) + '</div>';
+  el.innerHTML = h;
+}
+
+// When most of the week's people have no Operational Score the number is
+// provisional, and the quickest fix is to rate the people carrying the
+// most hours — here, without leaving the schedule. Same endpoint as the
+// Operational Score list.
+var _sqRated = {};
+function _sqUnrated() {
+  var conf = (_quality && _quality.confidence) || null, reasons = (conf && conf.reasons) || [], i, hit = false;
+  for (i = 0; i < reasons.length; i++) if (String(reasons[i]).indexOf('have no Operational Score') !== -1) hit = true;
+  if (!hit || !_teamForSwap.length) return [];
+  var score = {}, hours = {}, order = [];
+  for (i = 0; i < _teamForSwap.length; i++) score[String(_teamForSwap[i].name || '').toLowerCase()] = _teamForSwap[i].score;
+  for (i = 0; i < _schedRows.length; i++) {
+    var n = String(_schedRows[i].employee || '').trim();
+    if (!n) continue;
+    if (hours[n] === undefined) { hours[n] = 0; order.push(n); }
+    hours[n] += parseFloat(_schedRows[i].scheduled_hours) || 0;
+  }
+  var out = [];
+  for (i = 0; i < order.length; i++) {
+    if (score[order[i].toLowerCase()] && !_sqRated[order[i]]) continue;
+    out.push({name: order[i], hours: Math.round(hours[order[i]] * 10) / 10});
+  }
+  out.sort(function (a, b) { return b.hours - a.hours; });
+  return out.slice(0, 10);
+}
+function renderQualityRatePrompt() {
+  var el = document.getElementById('sq-rate');
+  if (!el) return;
+  var people = _sqUnrated(), i, v, h = '';
+  if (!people.length) { el.innerHTML = ''; return; }
+  h += '<div class="sq-rate"><div class="hd">Most of this week has no Operational Score, so the number above is provisional. Rate the people carrying the most hours, 1 to 5:</div>';
+  for (i = 0; i < people.length; i++) {
+    var p = people[i], got = _sqRated[p.name];
+    h += '<div class="r' + (got ? ' done' : '') + '"><span class="nm">' + _escHtml(p.name) + '<small><span class="hb-num">' + p.hours + 'h</span> this week</small></span><span class="chip-tog">';
+    for (v = 1; v <= 5; v++) {
+      h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (got === v ? ' on' : '') + '" aria-pressed="' + (got === v ? 'true' : 'false')
+         + '" data-sq-rate="' + _escAttr(p.name) + '" data-sq-score="' + v + '">' + v + '</button>';
+    }
+    h += '</span></div>';
+  }
+  var any = false, k;
+  for (k in _sqRated) if (_sqRated.hasOwnProperty(k) && _sqRated[k]) any = true;
+  if (any) h += '<div class="sr-actions"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="rescoreQualityLive(this)">Re-score with these ratings</button><span class="sr-note">Nothing is saved to the week.</span></div>';
+  el.innerHTML = h + '</div>';
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  while (t && t !== document.body && !(t.getAttribute && t.getAttribute('data-sq-rate') !== null)) t = t.parentNode;
+  if (!t || !t.getAttribute) return;
+  var name = t.getAttribute('data-sq-rate'), score = parseInt(t.getAttribute('data-sq-score'), 10);
+  if (!name || !score) return;
+  var prev = _sqRated[name];
+  _sqRated[name] = score;
+  renderQualityRatePrompt();
+  fetch('/api/labor/team/rating', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({employee_name: name, score: score})})
+    .then(apiJson).then(function (d) {
+      if (!d || !d.ok) { _sqRated[name] = prev; renderQualityRatePrompt(); toast((d && d.error) || 'Could not save that rating', 'error'); return; }
+      var i; for (i = 0; i < _teamForSwap.length; i++) if (_teamForSwap[i].name === name) _teamForSwap[i].score = score;
+    }).catch(function () { _sqRated[name] = prev; renderQualityRatePrompt(); toast('Could not save that rating', 'error'); });
+});
+
+// Score the rows without storing anything — the what-if, and the
+// re-score after rating somebody. The same endpoint Save uses, save:false.
+function _sqLiveScore(rows, done) {
+  fetch('/api/labor/schedule/score', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rows: rows, daily_target_hours: _schedTargets, save: false})})
+    .then(apiJson).then(function (d) { done(d && d.ok ? d : null, d); })
+    .catch(function () { done(null, null); });
+}
+function rescoreQualityLive(btn) {
+  var restore = btn ? cbtnBusy(btn, 'Scoring…') : function () {};
+  var before = _quality ? _quality.score : null;
+  _sqLiveScore(_schedRows, function (d, raw) {
+    restore();
+    if (!d) { toast((raw && raw.error) || 'Could not re-score the week', 'error'); return; }
+    renderShiftQuality(d.quality, d.what_if, before);
+  });
 }
 
 // The score as an arc that fills to it. A three-quarter-full green ring
@@ -10603,15 +10808,21 @@ function _qualityDial(score, tone) {
 // number for both would be the most misleading thing this panel could do.
 function renderQualityConfidence(confidence) {
   var el = document.getElementById('sq-confidence');
+  var prov = document.getElementById('sq-prov');
+  if (prov) prov.innerHTML = '';
   if (!el) return;
   if (!confidence) { el.innerHTML = ''; return; }
+  // Low confidence makes the number provisional, and says why first.
+  var low = confidence.level === 'low', top = (confidence.reasons || [])[0];
+  if (prov && low) prov.innerHTML = '<span class="sq-prov" title="' + _escAttr(confidence.summary || '') + '">provisional</span>';
   var tone = confidence.level === 'high' ? '#6fcf97'
            : (confidence.level === 'moderate' ? '#f2994a' : '#eb5757');
   var label = confidence.level.charAt(0).toUpperCase() + confidence.level.slice(1);
   el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
     + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:13.5px;font-weight:600;color:rgba(255,255,255,.75)">'
     + '<span style="width:6px;height:6px;border-radius:50%;background:' + tone + '"></span>'
-    + _escHtml(label) + ' confidence</span>';
+    + _escHtml(label) + ' confidence</span>'
+    + (low && top ? '<div class="sq-prov-why">' + num(top) + '</div>' : '');
 }
 
 function renderQualityDimensions(dimensions) {
@@ -10778,8 +10989,22 @@ function _qualityShiftDetail(shift, tone) {
           + _escHtml(shift.profile.label || 'a standard shift')
           + (shift.profile.min_quality ? ', which wants ' + shift.profile.min_quality + '+' : '') + '.</div>';
   }
+  // The dimension that caps the shift is what decides its number, so its
+  // weakness leads, under a line that says so; the rest follow.
+  var capLines = [], rest = shift.weaknesses || [], k2;
+  if (shift.capped_by) {
+    var dims = shift.dimensions || [];
+    for (k2 = 0; k2 < dims.length; k2++) if (dims[k2].key === shift.capped_by) capLines = dims[k2].weaknesses || [];
+    if (capLines.length) {
+      rest = [];
+      for (k2 = 0; k2 < (shift.weaknesses || []).length; k2++) if (capLines.indexOf(shift.weaknesses[k2]) === -1) rest.push(shift.weaknesses[k2]);
+      html += '<div style="margin-bottom:9px"><div class="sq-cap">This is what’s holding the shift at <span class="hb-num">' + _sqN(shift.score) + '</span></div>'
+            + _qualityLines(capLines, '#f2994a', '&#8226;', 2) + '</div>';
+    }
+  }
   html += _qualityGroup('Working well', shift.strengths, '#6fcf97', 3);
-  html += _qualityGroup('Holding it back', shift.weaknesses, '#f2994a', 4);
+  html += capLines.length ? _qualityGroup('Also holding it back', rest, '#f2994a', 4)
+                          : _qualityGroup('Holding it back', rest, '#f2994a', 4);
   html += _qualityGroup('Not known', shift.blind_spots, 'var(--ink3)', 2);
   if (shift.failed && shift.failed.length) {
     var names = [], k;
@@ -10801,8 +11026,103 @@ function _qualityShiftDetail(shift, tone) {
           + _escHtml(String(shift.capped_by).replace(/_/g, ' '))
           + ' — a shift is never better than its weakest critical part.</div>';
   }
+  html += _sqWhatIfHtml(shift);
   return html + '</div>';
 }
+
+// "What if <person> works this shift?" — the rows on screen with that one
+// change, scored by the same endpoint as Save but with save:false. Nothing
+// is stored; "Put them on" stages the edit like any other.
+var _sqWhatIfResult = {};
+var _sqWhatIfPick = {};      // the last who / in-place-of per shift, kept across re-renders
+function _sqShiftRowIdx(shift) {
+  var out = [], i;
+  for (i = 0; i < _schedRows.length; i++) {
+    if (_schedRows[i].date === shift.date && _schedDaypart(_schedRows[i].shift_start) === shift.daypart) out.push(i);
+  }
+  return out;
+}
+function _sqWhatIfHtml(shift) {
+  var idx = _sqShiftRowIdx(shift), on = {}, i, names = [], seen = {};
+  if (!idx.length) return '';
+  for (i = 0; i < idx.length; i++) on[String(_schedRows[idx[i]].employee || '').toLowerCase()] = 1;
+  var pool = (_schedRosterNames || []).slice();
+  for (i = 0; i < _teamForSwap.length; i++) pool.push(_teamForSwap[i].name);
+  for (i = 0; i < pool.length; i++) {
+    var n = String(pool[i] || '').trim(), lo = n.toLowerCase();
+    if (!n || on[lo] || seen[lo]) continue;
+    seen[lo] = 1; names.push(n);
+  }
+  if (!names.length) return '';
+  names.sort();
+  var id = shift.date + '-' + shift.daypart, pick = _sqWhatIfPick[id] || {}, opts = '', rep = '<option value="">added to the shift</option>';
+  for (i = 0; i < names.length; i++) opts += '<option value="' + _escAttr(names[i]) + '"' + (pick.who === names[i] ? ' selected' : '') + '>' + _escHtml(names[i]) + '</option>';
+  for (i = 0; i < idx.length; i++) {
+    var r = _schedRows[idx[i]];
+    rep += '<option value="' + idx[i] + '"' + (pick.forIdx === String(idx[i]) ? ' selected' : '') + '>instead of ' + _escHtml(r.employee || '') + (r.role ? ' (' + _escHtml(r.role) + ')' : '') + '</option>';
+  }
+  var res = _sqWhatIfResult[id];
+  return '<div class="sq-wi" data-sq-wi="' + _escAttr(id) + '"><span>What if</span>'
+    + '<select class="ac-select" data-sq-wi-who aria-label="Who">' + opts + '</select>'
+    + '<span>works this shift,</span><select class="ac-select" data-sq-wi-for aria-label="In place of">' + rep + '</select>'
+    + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sq-wi-try="' + _escAttr(id) + '">Try it</button>'
+    + (res ? '<div class="res">' + res + '</div>' : '') + '</div>';
+}
+function _sqWhatIfRows(shift, who, forIdx) {
+  var rows = JSON.parse(JSON.stringify(_schedRows)), idx = _sqShiftRowIdx(shift);
+  if (forIdx !== '' && forIdx !== null && !isNaN(+forIdx) && rows[+forIdx]) {
+    rows[+forIdx].employee = who;
+  } else {
+    var base = rows[idx[0]], role = '', i;
+    for (i = 0; i < _teamForSwap.length; i++) if (_teamForSwap[i].name === who) role = _teamForSwap[i].role || '';
+    rows.push({date: base.date, day: base.day, employee: who, role: role || base.role || '', shift_start: base.shift_start,
+               shift_end: base.shift_end, scheduled_hours: base.scheduled_hours, notes: ''});
+  }
+  return rows;
+}
+var _sqWhatIfStage = null;
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute) return;
+  var id = t.getAttribute('data-sq-wi-try'), stage = t.getAttribute('data-sq-wi-stage');
+  if (stage !== null && _sqWhatIfStage) {
+    _schedRows = _sqWhatIfStage.rows;
+    var j; for (j = 0; j < _schedRows.length; j++) if (_schedRows[j].employee === _sqWhatIfStage.who && _schedRows[j].date === _sqWhatIfStage.date) _schedOverrides[j] = true;
+    _sqWhatIfStage = null; _sqWhatIfResult = {};
+    _schedSortRows();
+    schedAfterEdit();
+    return;
+  }
+  if (!id) return;
+  var box = t.parentNode, shift = null, i, list = (_quality && _quality.shifts) || [];
+  for (i = 0; i < list.length; i++) if (list[i].date + '-' + list[i].daypart === id) shift = list[i];
+  if (!shift || !box) return;
+  var who = box.querySelector('[data-sq-wi-who]').value, forIdx = box.querySelector('[data-sq-wi-for]').value;
+  if (!who) return;
+  _sqWhatIfPick[id] = {who: who, forIdx: forIdx};
+  var rows = _sqWhatIfRows(shift, who, forIdx), restore = cbtnBusy(t, 'Scoring…');
+  _sqLiveScore(rows, function (d, raw) {
+    restore();
+    if (!d || !d.quality) { toast((raw && raw.error) || 'Could not score that', 'error'); return; }
+    var wk = d.quality.score, now = _quality ? _quality.score : null, after = null, k;
+    for (k = 0; k < (d.quality.shifts || []).length; k++) {
+      var s2 = d.quality.shifts[k];
+      if (s2.date === shift.date && s2.daypart === shift.daypart) after = s2.score;
+    }
+    function sgn(n) { return n > 0 ? '+' + n : (n < 0 ? '−' + (-n) : '±0'); }
+    var txt = _escHtml(who) + (forIdx !== '' ? ' in place of ' + _escHtml(_schedRows[+forIdx].employee || '') : ' added') + ': this shift '
+      + '<span class="hb-num">' + _sqN(shift.score) + '</span> → <span class="hb-num">' + _sqN(after) + '</span>'
+      + (after !== null ? ' (<span class="hb-num">' + sgn(after - shift.score) + '</span>)' : '')
+      + ', the week <span class="hb-num">' + _sqN(now) + '</span> → <span class="hb-num">' + _sqN(wk) + '</span>'
+      + (now !== null ? ' (<span class="hb-num">' + sgn(wk - now) + '</span>)' : '') + '. Nothing saved.';
+    var hard = d.review ? (+d.review.hard || 0) : 0;
+    if (hard) txt += ' <span style="color:var(--hb-bad)">It breaks <span class="hb-num">' + hard + '</span> hard rule' + (hard === 1 ? '' : 's') + '.</span>';
+    txt += ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sq-wi-stage="1">Put them on</button>';
+    _sqWhatIfStage = {rows: rows, who: who, date: shift.date};
+    _sqWhatIfResult = {}; _sqWhatIfResult[id] = txt;
+    renderQualityShifts((_quality && _quality.shifts) || []);
+  });
+});
 
 function _qualityGroup(label, lines, colour, limit) {
   if (!lines || !lines.length) return '';
@@ -10834,7 +11154,7 @@ var _teamForSwap = [];
 function loadTeamForSwap() {
   if (_teamForSwap.length) return;
   fetch('/api/labor/team').then(apiJson).then(function (d) {
-    if (d && d.ok && d.team) _teamForSwap = d.team;
+    if (d && d.ok && d.team) { _teamForSwap = d.team; renderQualityRatePrompt(); }
   }).catch(function () { });
 }
 
@@ -10895,6 +11215,7 @@ function applyShiftSwap(index, name) {
 // generation time — so staff received the week the manager had just fixed,
 // unfixed, with nothing on screen to say so.
 function rescoreSchedule(btn) {
+  var prevScore = _quality ? _quality.score : null;
   _setQualityState('saving');
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
   var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
@@ -10911,7 +11232,8 @@ function rescoreSchedule(btn) {
   }).then(function (r) { status = r.status; return r.json(); }).then(function (d) {
     done();
     if (d && d.ok) {
-      renderShiftQuality(d.quality, d.what_if);
+      if (d.saved) _sqOptimizerProposed = false;
+      renderShiftQuality(d.quality, d.what_if, prevScore);
       _schedCsvCache = '';
       if (d.history_id) _schedHistoryId = d.history_id;
       _setQualityState(d.saved ? 'saved' : 'unsaved');
@@ -10964,6 +11286,9 @@ function _setQualityState(state, message) {
   } else if (state === 'edited') {
     note.style.color = 'var(--hb-warn)';
     note.textContent = 'Edited \u2014 the score above is from before your change. Save to re-score the week.';
+  } else if (state === 'proposed') {
+    note.style.color = 'var(--hb-warn)';
+    note.textContent = 'Cavnar\u2019s changes are on screen and scored above \u2014 Save to keep them, Discard to go back.';
   } else if (state === '') {
     note.textContent = '';
   } else {
@@ -11473,6 +11798,9 @@ function reloadScheduleFromHistory(btn) {
     _setQualityState('');
     _schedHideConflict();
     _schedLoadVersion();
+    _sqOptimizerProposed = false;
+    _sqOptimizer = (d.quality && d.quality.optimizer) || null;
+    _sqWhatIfResult = {}; _sqWhatIfStage = null;
     if (d.quality) renderShiftQuality(d.quality, d.what_if || null);
     _schedRenderTable();
     _schedRecheck();
@@ -11707,6 +12035,11 @@ function discardScheduleEdits() {
   _schedRenderTable();
   _schedSetDirty(false);
   _setQualityState('');
+  if (_sqOptimizerProposed && window._sqBeforeImprove) {
+    var b = window._sqBeforeImprove;
+    _sqOptimizerProposed = false; _sqOptimizer = b.optimizer; window._sqBeforeImprove = null;
+    renderShiftQuality(b.quality, b.whatIf);
+  }
   _schedRecheck();
 }
 
@@ -11862,6 +12195,7 @@ function loadTeamPanel() {
     renderTeamThresholds();
     renderTeamRules();
     renderTeamCoverage(d.coverage);
+    loadUnmatchedRatings();
     loadShiftProfiles();
     if (typeof renderTaskRoleTabs === 'function') renderTaskRoleTabs();
   }).catch(function(){
@@ -12092,6 +12426,68 @@ function renderTeamList() {
   }
   list.innerHTML = html;
 }
+
+// GET /api/labor/ratings/unmatched → one row per rating whose name is on
+// nobody's roster: a one-tap confirm when one roster name clearly fits,
+// and a picker (the candidates first, then the roster) when it does not.
+// POST /api/labor/ratings/match moves the rating; a 409 means the roster
+// name already has one, which the server's sentence says.
+var _unmatched = [];
+function loadUnmatchedRatings() {
+  fetch('/api/labor/ratings/unmatched').then(apiJson).then(function (d) {
+    _unmatched = (d && d.ok) ? (d.unmatched || []) : [];
+    renderUnmatchedRatings();
+  }).catch(function () { _unmatched = []; renderUnmatchedRatings(); });
+}
+function renderUnmatchedRatings() {
+  var el = document.getElementById('team-unmatched');
+  if (!el) return;
+  if (!_unmatched.length) { el.innerHTML = ''; return; }
+  var n = _unmatched.length, i, j, h = '<div class="rt-unm"><div class="hd"><span class="hb-num">' + n + '</span> rating' + (n === 1 ? ' doesn\u2019t' : 's don\u2019t')
+    + ' match anyone on your roster \u2014 they judge nobody until they do.</div>';
+  var roster = [];
+  for (i = 0; i < _teamRows.length; i++) roster.push(_teamRows[i].name);
+  for (i = 0; i < n; i++) {
+    var u = _unmatched[i], seen = {}, opts = '<option value="">Pick who this is\u2026</option>', list = (u.candidates || []).concat(roster);
+    for (j = 0; j < n; j++) seen[String(_unmatched[j].rated).toLowerCase()] = 1;
+    for (j = 0; j < list.length; j++) {
+      var nm = String(list[j] || ''), lo = nm.toLowerCase();
+      if (!nm || seen[lo]) continue;
+      seen[lo] = 1;
+      opts += '<option value="' + _escAttr(nm) + '">' + _escHtml(nm) + '</option>';
+    }
+    h += '<div class="r"><span class="nm">' + _escHtml(u.rated) + (u.score ? '<small>rated <span class="hb-num">' + _escHtml(String(u.score)) + '</span></small>' : '') + '</span>'
+       + (u.suggestion ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-rt-match="' + _escAttr(u.rated) + '" data-rt-to="' + _escAttr(u.suggestion) + '">It\u2019s ' + _escHtml(u.suggestion) + '</button>' : '')
+       + '<select class="ac-select" data-rt-pick="' + _escAttr(u.rated) + '" aria-label="Roster name for ' + _escAttr(u.rated) + '">' + opts + '</select></div>';
+  }
+  el.innerHTML = h + '</div>';
+}
+function matchRating(rated, target, ctl) {
+  var restore = (ctl && ctl.tagName === 'BUTTON') ? cbtnBusy(ctl, 'Matching\u2026') : function () {};
+  if (ctl && ctl.tagName === 'SELECT') ctl.disabled = true;
+  fetch('/api/labor/ratings/match', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rated: rated, roster_name: target})})
+    .then(apiJson).then(function (d) {
+      restore();
+      if (ctl && ctl.tagName === 'SELECT') ctl.disabled = false;
+      if (!d || !d.ok) { toast((d && d.error) || 'Could not match that rating', 'error'); return; }
+      toast(rated + '\u2019s rating now belongs to ' + target, 'success');
+      loadTeamPanel();
+      _teamForSwap = [];
+      loadTeamForSwap();
+    }).catch(function () { restore(); if (ctl && ctl.tagName === 'SELECT') ctl.disabled = false; toast('Could not match that rating', 'error'); });
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  while (t && t !== document.body && !(t.getAttribute && t.getAttribute('data-rt-match') !== null)) t = t.parentNode;
+  if (!t || !t.getAttribute) return;
+  matchRating(t.getAttribute('data-rt-match'), t.getAttribute('data-rt-to'), t);
+});
+document.addEventListener('change', function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute || t.getAttribute('data-rt-pick') === null || !t.value) return;
+  matchRating(t.getAttribute('data-rt-pick'), t.value, t);
+});
 
 // Weak reads warm, strong reads green — the same direction every other
 // number on this dashboard uses, so a 2 never looks like good news.
@@ -16835,7 +17231,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
     var band=r.quality_band;
     var qtone=(band==='excellent'||band==='good')?'good':(band==='fair'?'fair':(band?'warn':''));
-    var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'</span>':'';
+    var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+(r.confidence==='low'?' · provisional':'')+'</span>':'';
     var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'';
     // A draft replaced by a newer draft of the same week reads quieter;
     // a published week updated after it went out says so.
@@ -17023,15 +17419,19 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(i=0;i<pendNames.length;i++){var ds=pend[pendNames[i]]||[],dd=[],j;for(j=0;j<ds.length;j++)dd.push(mdy(ds[j]));parts.push(esc(pendNames[i])+' ('+dd.join(', ')+')');}
       h+='<div class="sr-soft"><b>Time off still waiting for an answer</b> &mdash; the draft may use these days: '+parts.join('; ')+'. Answer it in Time off above and regenerate.</div>';
     }
-    if(hard&&(window._schedRows||[]).length){
-      h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button><span class="sr-note">Puts somebody legal on every row that breaks a hard rule. You still choose to save.</span></div>';
+    // Apply fixes clears hard rules; Improve with Cavnar runs the Shift
+    // Quality repair loop over the rows on screen. Both only propose.
+    if((window._schedRows||[]).length){
+      h+='<div class="sr-actions">'+(hard?'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button>':'')
+        +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar</button>'
+        +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
     }
     box.innerHTML=h;box.style.display='block';
     if(typeof _schedRenderTable==='function')_schedRenderTable();
   };
   window.applyScheduleFixes=function(btn){
     var rows=window._schedRows||[];if(!rows.length)return;
-    var done=busy(btn,'Fixing…');
+    var done=busy(btn,'Fixing…'),prevScore=window._quality?window._quality.score:null;
     jsend('/api/labor/schedule/apply-fixes',{rows:rows},function(d){
       done();
       if(!d.ok){toast(d.error||'Could not apply the fixes','error');return;}
@@ -17039,11 +17439,40 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var i,ov=window._schedOverrides||{};
       for(i=0;i<(d.fixes||[]).length;i++)ov[d.fixes[i].index]=true;
       window._schedOverrides=ov;
-      if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if);
+      if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if,prevScore);
       renderScheduleReview({review:d.review,violations:d.violations,fixes:d.fixes||[],unfixed:d.unfixed||[]});
       if(typeof _schedSetDirty==='function'){_schedSetDirty(true);_setQualityState('edited');}
       var n=(d.fixes||[]).length;
       toast(n?(n+' shift'+(n===1?'':'s')+' fixed — save to keep it'):'Nothing could be fixed automatically',n?'success':'error');
+    });
+  };
+
+  // POST /api/labor/schedule/optimize: the Shift Quality repair loop over
+  // the week on screen. Nothing is saved — the improved rows are staged
+  // like any edit, the changes are listed with why, and Save or Discard is
+  // the owner's. Rows Cavnar touched carry a note starting "Cavnar:".
+  window.improveScheduleWithCavnar=function(btn){
+    var rows=window._schedRows||[];if(!rows.length)return;
+    var done=busy(btn,'Improving…'),prevScore=window._quality?window._quality.score:null;
+    jsend('/api/labor/schedule/optimize',{rows:rows,daily_target_hours:window._schedTargets||{}},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not improve the draft','error');return;}
+      var o=d.optimizer||{},n=(o.changes||[]).length;
+      if(!n){
+        window._sqOptimizer=o;window._sqOptimizerProposed=false;
+        if(typeof renderQualityOptimizer==='function')renderQualityOptimizer();
+        toast(o.verdict||'No legal change improved the draft','success');return;
+      }
+      window._sqBeforeImprove={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
+      window._schedRows=d.rows||rows;
+      var i,ov={};
+      for(i=0;i<window._schedRows.length;i++)if(String(window._schedRows[i].notes||'').indexOf('Cavnar:')===0)ov[i]=true;
+      window._schedOverrides=ov;
+      window._sqOptimizer=o;window._sqOptimizerProposed=true;
+      if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if,prevScore);
+      if(typeof _schedSetDirty==='function'){_schedSetDirty(true);_setQualityState('proposed');}
+      if(typeof _schedRecheck==='function')_schedRecheck();
+      toast(n+' change'+(n===1?'':'s')+' from Cavnar — save to keep them','success');
     });
   };
 
@@ -17194,6 +17623,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         for(j=0;j<days.length;j++){var w=tw[days[j]]||{};h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="earliest" value="'+esc(w.earliest||'')+'" placeholder="from" aria-label="'+esc(days[j])+' earliest start" maxlength="8"'+(ro?' disabled':'')+'><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="latest" value="'+esc(w.latest||'')+'" placeholder="until" aria-label="'+esc(days[j])+' latest finish" maxlength="8"'+(ro?' disabled':'')+'></div>';}
         h+='</div><div class="rst-cap">Earliest start and latest finish, like 10:00am and 9:00pm. Blank means any time.</div>';
         h+='<div class="rst-more">';
+        // Experienced: the owner's word for it, counted by Experience
+        // balance without waiting for twenty shifts of history on file.
+        h+='<div><div class="k">Experience</div><div class="rul-sw" style="border-top:none;padding-top:2px">'+_lbSw('experienced',!!st.experienced,ro)+'<span class="t">Experienced — knows the job<small>Counts as an experienced hand without waiting for 20 shifts on file.</small></span></div></div>';
         h+='<div><div class="k">Certifications</div><div class="chip-tog" data-rst-certs="'+nm+'">'+_chipTog(ch.certifications||[],certs,'data-rst-cert',ro)+'</div></div>';
         var said=[];if((st.preferred_dayparts||[]).length)said.push('prefers '+st.preferred_dayparts.map(function(p){return p==='morning'?'days':(p==='night'?'nights':p);}).join(' and '));if(st.desired_hours!=null&&st.desired_hours!=='')said.push('wants <span class="hb-num">'+esc(st.desired_hours)+'h</span> a week');
         h+='<div><div class="k">What they said</div><div class="said">'+(said.length?said.join(' · '):'Nothing stated yet')+'<small>From the staff portal. A wish the draft honours where coverage allows; it is theirs to change.</small></div></div>';
@@ -17223,7 +17655,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(!tr)return;
     var name=tr.getAttribute('data-rst');if(!name)return;
     var f=t.getAttribute('data-rst-f'),day=t.getAttribute('data-rst-day'),patch={};
-    if(f==='active'||f==='is_minor')patch[f]=!!t.checked;
+    if(f==='active'||f==='is_minor'||f==='experienced')patch[f]=!!t.checked;
     else if(f==='min_hours'||f==='max_hours')patch[f]=t.value===''?null:+t.value;
     else if(f==='employment_type')patch[f]=t.value;
     else if(day){
@@ -17617,6 +18049,55 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     });
   };
   function _intMoney(n){return '$'+Math.round(+n||0).toLocaleString();}
+  // What the engine is learning, read from the same payload: the offer to
+  // auto-publish when the drafts have been going out untouched, how much
+  // of each draft survives to the published week, and whether the quality
+  // weights track this restaurant's outcomes yet — suggestions only, never
+  // applied on their own.
+  function _intLearnHtml(d){
+    var h='',i,off=d.auto_publish_offer||{},acc=d.draft_acceptance||{},cal=d.weight_calibration||{};
+    if(off.eligible){
+      h+='<div class="int-offer"><div class="k">Auto-publish</div><div class="tx">'+num(off.reason||'')+'</div>'
+        +'<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="acceptAutoPublishOffer(this)">Turn on auto-publish</button></div>';
+    }
+    h+='<div class="lb2-sub" style="margin-top:14px">How much of the draft you keep<small>rows that went out exactly as Cavnar wrote them</small></div>';
+    var wk=(acc.weeks||[]).slice().reverse(),bars='';
+    for(i=0;i<wk.length;i++){var w=wk[i];if(w.unchanged_share===null||w.unchanged_share===undefined)continue;
+      var pct=Math.round(+w.unchanged_share*100);
+      bars+='<div class="int-bar" title="'+esc(w.changes)+' change'+(+w.changes===1?'':'s')+' before it went out"><span class="l">'+(w.week_start?'Wk of '+esc(mdy(w.week_start)):'A week')+'</span><span class="tr"><i style="width:'+Math.max(3,pct)+'%;animation-delay:'+(i*60)+'ms"></i></span><span class="v">'+pct+'%</span></div>';}
+    if(!acc.available||!bars)h+='<div class="hb-empty">Appears after the first published week — how much of the draft went out untouched, week by week.</div>';
+    else{
+      h+='<div class="int-bars">'+bars+'</div>';
+      var tr=acc.trend,line='';
+      if(tr&&tr.direction==='rising')line='You are keeping more of each draft: '+Math.round(tr.older*100)+'% then, '+Math.round(tr.newer*100)+'% lately.';
+      else if(tr&&tr.direction==='falling')line='You are changing more of each draft lately: '+Math.round(tr.older*100)+'% kept then, '+Math.round(tr.newer*100)+'% now.';
+      else if(tr)line='About the same from week to week.';
+      if(acc.mean_unchanged_share!==null&&acc.mean_unchanged_share!==undefined)line+=(line?' ':'')+'On average '+Math.round(acc.mean_unchanged_share*100)+'% kept'+(acc.mean_changes!==null&&acc.mean_changes!==undefined?', '+acc.mean_changes+' changes a week':'')+'.';
+      if(line)h+='<div class="ac-note" style="margin-top:8px">'+num(line)+'</div>';
+    }
+    h+='<div class="lb2-sub">Quality weights<small>checked against what the published weeks actually did</small></div>';
+    if(!cal.ready)h+='<div class="int-cal">'+num(cal.reason||'Not enough published weeks with a stored score to check the weights yet.')+'</div>';
+    else{
+      var dims=cal.dimensions||{},k,rows='';
+      for(k in dims)if(dims.hasOwnProperty(k)){var dm=dims[k];
+        rows+='<div class="w"><b>'+esc(k.replace(/_/g,' '))+'</b><span><span class="hb-num">'+esc(dm.default)+'</span> → <span class="hb-num">'+esc(dm.suggested)+'</span>'+(dm.nudge_pct?' (<span class="hb-num">'+(dm.nudge_pct>0?'+':'')+esc(dm.nudge_pct)+'%</span>)':'')+' <span class="rd">· '+esc(dm.reading||'')+'</span></span></div>';}
+      h+='<div class="int-cal">'+rows+'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div></div>';
+    }
+    return h;
+  }
+  // The offer's button turns on the same setting Account → Automation
+  // does (POST /api/labor/auto-publish). The undo window still applies.
+  window.acceptAutoPublishOffer=function(btn){
+    var done=busy(btn,'Turning on…');
+    jsend('/api/labor/auto-publish',{enabled:true},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not turn on auto-publish','error');return;}
+      if(window._laborIntel)window._laborIntel.auto_publish_offer={eligible:false,reason:'Auto-publish is already on.'};
+      renderIntel();
+      if(typeof loadAutoPublish==='function')loadAutoPublish();
+      toast('Auto-publish is on — next week goes out on Friday, with time to undo','success');
+    });
+  };
   window.renderIntel=function(){
     var el=document.getElementById('intel-body'),d=window._laborIntel;if(!el||!d)return;
     if(d.ok===false){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not read the record.')+'</div>';return;}
@@ -17625,6 +18106,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var nOut=0;for(k in outs)if(outs.hasOwnProperty(k))nOut++;
     var chip=document.getElementById('intel-chip');if(chip)chip.textContent=nOut?nOut+' weekdays on record':'';
     // Revenue projection: the figure and where it came from, or why not.
+    h+=_intLearnHtml(d);
     h+='<div class="int-rev">'+(rev.value?'<span class="hb-num">'+_intMoney(rev.value)+'</span><span>projected weekly revenue</span>':'<span>No weekly revenue projection yet</span>')+'<span class="src">'+esc(rev.source||'')+(rev.weeks?' · '+rev.weeks+' week'+(rev.weeks===1?'':'s'):'')+'</span></div>';
     // Outcomes by weekday × daypart.
     h+='<div class="lb2-sub" style="margin-top:14px">What published weeks did<small>by weekday and daypart · a troubled daypart is flagged</small></div>';

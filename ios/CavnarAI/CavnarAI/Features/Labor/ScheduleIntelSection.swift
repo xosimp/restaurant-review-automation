@@ -29,6 +29,12 @@ struct ScheduleIntelSection: View {
                 } else if let error = viewModel.intelError, viewModel.intel == nil {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                 } else if let intel = viewModel.intel, !intel.isEmpty {
+                    // What the engine is learning: the auto-publish offer,
+                    // how much of each draft survives, and whether the
+                    // quality weights track this restaurant's outcomes.
+                    if let offer = intel.autoPublishOffer, offer.eligible { autoPublishOfferCard(offer) }
+                    acceptanceBlock(intel.draftAcceptance)
+                    if let calibration = intel.weightCalibration { calibrationBlock(calibration) }
                     if let revenue = intel.revenue, let value = revenue.value { revenueLine(revenue, value: value) }
                     if let outcomes = intel.outcomes, !outcomes.isEmpty { outcomesBlock(outcomes) }
                     if let splh = intel.splh, !splh.isEmpty { splhBlock(splh) }
@@ -64,6 +70,138 @@ struct ScheduleIntelSection: View {
             .font(.cavnarBody(11.5, weight: 700))
             .tracking(1.1)
             .foregroundStyle(tone)
+    }
+
+    // MARK: What the draft learns
+
+    /// Offered only when the last drafts went out nearly untouched and the
+    /// latest scored well. The button turns on the same setting Account →
+    /// Automation does; the undo window still applies.
+    private func autoPublishOfferCard(_ offer: AutoPublishOffer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            kicker("Auto-publish", tone: .cavnarEmber)
+            if let reason = offer.reason {
+                HomeMixedText.make(reason, size: 14, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button {
+                Haptic.medium()
+                Task { await viewModel.acceptAutoPublishOffer() }
+            } label: {
+                Group {
+                    if viewModel.isAcceptingAutoPublish {
+                        CavnarShimmerText(text: "Turning on…")
+                    } else {
+                        Text("Turn on auto-publish")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isAcceptingAutoPublish))
+            .disabled(viewModel.isAcceptingAutoPublish)
+            if let error = viewModel.autoPublishError {
+                Text(error)
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.ai)
+    }
+
+    /// Unchanged share per published week, oldest first — one glowing bar
+    /// each, the same shape as sales per labor hour.
+    private func acceptanceBlock(_ acceptance: DraftAcceptance?) -> some View {
+        let weeks = acceptance?.chartWeeks ?? []
+        return VStack(alignment: .leading, spacing: 8) {
+            kicker("How much of the draft you keep")
+            if acceptance?.available != true || weeks.isEmpty {
+                Text("Appears after the first published week — how much of the draft went out untouched, week by week.")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(weeks) { week in
+                        keptBar(week)
+                    }
+                }
+                let summary = [acceptance?.trendLine,
+                               acceptance?.meanUnchangedShare.map { "On average \(Int(($0 * 100).rounded()))% kept"
+                                   + (acceptance?.meanChanges.map { ", \(CavnarQualityFormat.hours($0)) changes a week." } ?? ".") }]
+                    .compactMap { $0 }.joined(separator: " ")
+                if !summary.isEmpty {
+                    HomeMixedText.make(summary, size: 13, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func keptBar(_ week: AcceptanceWeek) -> some View {
+        let share = week.unchangedShare ?? 0
+        return HStack(spacing: 8) {
+            HomeMixedText.make(week.weekStart.map { "Wk of \(CavnarDate.mdy($0))" } ?? "A week", size: 12.5, weight: 600, color: .cavnarInk2)
+                .frame(width: 96, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.cavnarPaper3.opacity(0.6))
+                    Capsule()
+                        .fill(LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: Swift.max(6, geo.size.width * CGFloat(share)))
+                        .shadow(color: Color.cavnarEmber.opacity(0.45), radius: 5)
+                }
+            }
+            .frame(height: 10)
+            Text("\(Int((share * 100).rounded()))%")
+                .font(.cavnarNumber(13, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .frame(width: 44, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(Int((share * 100).rounded())) percent kept, \(week.changes ?? 0) changes")
+    }
+
+    /// The reason when calibration is not ready; the suggested weights when
+    /// it is — never applied on their own.
+    private func calibrationBlock(_ c: WeightCalibration) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            kicker("Quality weights")
+            if c.ready != true {
+                HomeMixedText.make(c.reason ?? "Not enough published weeks with a stored score to check the weights yet.",
+                                   size: 13.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach((c.dimensions ?? [:]).keys.sorted(), id: \.self) { key in
+                    if let d = c.dimensions?[key] {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(key.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    .font(.cavnarBody(14, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk)
+                                Spacer(minLength: 4)
+                                HomeMixedText.make(
+                                    "\(CavnarQualityFormat.hours(d.default ?? 0)) → \(CavnarQualityFormat.hours(d.suggested ?? 0))"
+                                    + ((d.nudgePct ?? 0) != 0 ? " (\((d.nudgePct ?? 0) > 0 ? "+" : "")\(d.nudgePct ?? 0)%)" : ""),
+                                    size: 13.5, weight: 600, color: .cavnarInk2)
+                            }
+                            if let reading = d.reading {
+                                Text(reading)
+                                    .font(.cavnarBody(12.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                Text(c.note ?? "Suggestions only — the engine keeps its current weights until someone changes them.")
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: Revenue

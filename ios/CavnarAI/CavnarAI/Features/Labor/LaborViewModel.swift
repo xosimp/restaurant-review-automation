@@ -500,14 +500,26 @@ struct ScheduleQuality: Codable, Equatable {
     // Recommendation kinds the engine left out because the owner never
     // acts on them. Absent on older payloads.
     let suppressedRecommendationKinds: [String]?
+    // What the optimizer changed before the draft was shown, stored with
+    // the week's quality. Absent on older payloads.
+    let optimizer: ScheduleOptimizer?
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {
         (dimensions ?? []).filter { $0.isCustomerFacing }
     }
 
+    /// Low confidence makes the number provisional.
+    var isProvisional: Bool { confidence?.level == "low" }
+
+    /// True when the confidence reasons say most of the scheduled staff
+    /// have no Operational Score — the prompt to rate them in place.
+    var needsRatings: Bool {
+        (confidence?.reasons ?? []).contains { $0.contains("have no Operational Score") }
+    }
+
     enum CodingKeys: String, CodingKey {
-        case checked, score, band, shifts, dimensions, strengths, weaknesses
+        case checked, score, band, shifts, dimensions, strengths, weaknesses, optimizer
         case recommendations, confidence, best, worst, reason
         case belowProfile = "below_profile"
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
@@ -525,6 +537,75 @@ struct ScheduleQuality: Codable, Equatable {
         if t.hasPrefix("Rate the") { return "ratings" }
         return "other"
     }
+}
+
+/// One change the Shift Quality optimizer made to the draft, with why.
+struct OptimizerChange: Codable, Identifiable, Equatable {
+    let kind: String
+    let reason: String
+    let gain: Double?
+    var id: String { "\(kind)-\(reason)" }
+}
+
+/// Something still wrong after the search, and why no legal change fixed
+/// it — the owner's to decide.
+struct OptimizerUnresolved: Codable, Identifiable, Equatable {
+    let date: String?
+    let day: String?
+    let daypart: String?
+    let dimension: String?
+    let text: String
+    var id: String { "\(date ?? "")-\(daypart ?? "")-\(dimension ?? "")-\(text)" }
+}
+
+/// The optimizer's summary: before and after, every change with why, and
+/// what is left. From generation (`optimizer`), the stored quality
+/// (`quality.optimizer`), or POST labor/schedule/optimize.
+struct ScheduleOptimizer: Codable, Equatable {
+    let ran: Bool
+    let applied: Bool?
+    let beforeScore: Int?
+    let afterScore: Int?
+    let improvement: Int?
+    let changes: [OptimizerChange]?
+    let unresolved: [OptimizerUnresolved]?
+    let verdict: String?
+    let stopped: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ran, applied, improvement, changes, unresolved, verdict, stopped
+        case beforeScore = "before_score"
+        case afterScore = "after_score"
+    }
+
+    /// "Cavnar improved this draft from 71 to 84 — 5 changes", or nil when
+    /// nothing changed.
+    var headline: String? {
+        let n = (changes ?? []).count
+        guard n > 0, let before = beforeScore, let after = afterScore else { return nil }
+        return "Cavnar improved this draft from \(before) to \(after) — \(n) \(n == 1 ? "change" : "changes")"
+    }
+
+    /// Worth a block at all: something changed, or something is left.
+    var hasContent: Bool { ran && (!(changes ?? []).isEmpty || !(unresolved ?? []).isEmpty) }
+}
+
+/// The quality gate: when the draft was weak, the weakest days were
+/// regenerated with what was wrong with them, and the better one kept.
+struct ScheduleGate: Codable, Equatable {
+    let ran: Bool
+    let kept: String?
+    let reason: String?
+}
+
+/// A rating stored under a name nobody on the roster has, with the
+/// roster name it most likely means. GET labor/ratings/unmatched.
+struct UnmatchedRating: Codable, Identifiable, Equatable {
+    let rated: String
+    let score: Double?
+    let suggestion: String?
+    let candidates: [String]?
+    var id: String { rated }
 }
 
 /// A shift the generator removed to fit the budget, and why that one.
@@ -930,10 +1011,15 @@ struct GeneratedSchedule: Codable {
     let departments: [String]?
     // Set when only some days were regenerated; the rest were kept.
     let regeneratedDates: [String]?
+    // What the optimizer changed before the draft was shown, and the
+    // quality gate's verdict when it regenerated the weakest days. `var`
+    // because Improve with Cavnar replaces the optimizer on screen.
+    var optimizer: ScheduleOptimizer?
+    let gate: ScheduleGate?
 
     enum CodingKeys: String, CodingKey {
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
-        case trimmed, staggered, departments
+        case trimmed, staggered, departments, optimizer, gate
         case whatIf = "what_if"
         case weekDates = "week_dates"
         case weekDays = "week_days"
@@ -973,6 +1059,10 @@ struct GeneratedSchedule: Codable {
               let data = text.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ScheduleWhatIf.self, from: data)
     }
+
+    /// The optimizer summary to show: the live one, or the one stored
+    /// with the week's quality.
+    var optimizerSummary: ScheduleOptimizer? { optimizer ?? quality?.optimizer }
 
     /// The trim list from wherever it landed — the top level or the review.
     var trimmedShifts: [TrimmedShift] { trimmed ?? review?.trimmed ?? [] }
@@ -1462,6 +1552,8 @@ final class LaborViewModel {
             editCost = nil
             overriddenRows = []
             hasUnsavedFixes = false
+            scoreDelta = nil
+            optimizerUnsaved = false
             overrideState = .idle
             saveConflict = nil
             cacheSchedule(fresh)
@@ -1619,7 +1711,10 @@ final class LaborViewModel {
                 }
                 result.previewRows = fixed
             }
-            if let quality = response.quality { result.quality = quality }
+            if let quality = response.quality {
+                scoreDelta = Self.delta(from: result.quality?.score, to: quality.score)
+                result.quality = quality
+            }
             if let review = response.review {
                 result.review = review
             } else if var review = result.review {
@@ -1641,6 +1736,279 @@ final class LaborViewModel {
             applyFixesError = "Couldn't apply those fixes."
         }
     }
+
+    // MARK: - Improve with Cavnar, the live score, what-if
+
+    /// Points the score moved on the last edit, fix pass, improvement or
+    /// re-score — "+3" / "−2" beside the number. Nil before any.
+    var scoreDelta: Int?
+    var isOptimizing = false
+    var optimizeError: String?
+    /// True while Cavnar's changes are on screen and not yet saved.
+    var optimizerUnsaved = false
+
+    nonisolated static func delta(from before: Int?, to after: Int?) -> Int? {
+        guard let before, let after else { return nil }
+        return after - before
+    }
+
+    private struct OptimizeBody: Encodable { let rows: [ScheduleRow] }
+
+    private struct OptimizeResponse: Decodable {
+        let ok: Bool
+        let rows: [ScheduleRow]?
+        let optimizer: ScheduleOptimizer?
+        let quality: ScheduleQuality?
+        let whatIf: ScheduleWhatIf?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, rows, optimizer, quality, error
+            case whatIf = "what_if"
+        }
+    }
+
+    /// POST labor/schedule/optimize: the Shift Quality repair loop over the
+    /// week on screen. Nothing is stored — the improved rows are shown with
+    /// every change and why, and Save (the same one Apply fixes uses) is
+    /// what keeps them. Rows Cavnar touched carry a note starting "Cavnar:".
+    func optimize() async {
+        guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        isOptimizing = true
+        optimizeError = nil
+        defer { isOptimizing = false }
+        do {
+            let response: OptimizeResponse = try await client.send(
+                "/mobile/api/labor/schedule/optimize", method: .post,
+                body: OptimizeBody(rows: rows), hapticOnError: false, timeout: 45, retryTransient: false)
+            guard response.ok else {
+                optimizeError = response.error ?? "Couldn't improve the draft."
+                return
+            }
+            let changes = response.optimizer?.changes ?? []
+            result.optimizer = response.optimizer
+            if !changes.isEmpty, let improved = response.rows {
+                for row in improved where (row.notes ?? "").hasPrefix("Cavnar:") { overriddenRows.insert(row.id) }
+                result.previewRows = improved
+                if let quality = response.quality {
+                    scoreDelta = Self.delta(from: result.quality?.score, to: quality.score)
+                    result.quality = quality
+                }
+                result.whatIf = response.whatIf ?? result.whatIf
+                hasUnsavedFixes = true
+                optimizerUnsaved = true
+                overrideState = .idle
+            }
+            scheduleResult = result
+            Haptic.success()
+            if !changes.isEmpty { await refreshEditCost() }
+        } catch let error as APIClient.APIError {
+            optimizeError = error.message
+        } catch {
+            optimizeError = "Couldn't improve the draft."
+        }
+    }
+
+    /// What scoring a set of rows says, without storing anything.
+    struct LiveScore {
+        let quality: ScheduleQuality
+        let hardRules: Int
+    }
+
+    /// Score rows with save:false — the what-if and the re-score after a
+    /// rating. The same endpoint Save uses; nothing is written.
+    func liveScore(rows: [ScheduleRow]) async -> LiveScore? {
+        do {
+            let response: ScoreResponse = try await client.send(
+                "/mobile/api/labor/schedule/score", method: .post,
+                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: false, historyId: nil, version: nil),
+                hapticOnError: false, retryTransient: true)
+            guard response.ok, let quality = response.quality else { return nil }
+            return LiveScore(quality: quality, hardRules: response.review?.hardCount ?? 0)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Re-score the rows on screen without saving — after rating somebody
+    /// from the quality panel, so the number moves with the ratings.
+    func rescoreLive() async {
+        guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        isRescoringQuality = true
+        defer { isRescoringQuality = false }
+        guard let live = await liveScore(rows: rows) else {
+            overrideState = .failed("Couldn't re-score the week.")
+            return
+        }
+        scoreDelta = Self.delta(from: result.quality?.score, to: live.quality.score)
+        result.quality = live.quality
+        scheduleResult = result
+    }
+
+    /// The rows one shift is made of: same date, same daypart.
+    func rows(for shift: QualityShift) -> [ScheduleRow] {
+        (scheduleResult?.previewRows ?? []).filter {
+            $0.date == shift.date && GeneratedSchedule.daypart(of: $0.shiftStart) == shift.daypart
+        }
+    }
+
+    /// Everybody who could be tried on a shift: the roster the engine drew
+    /// from and the rated team, minus whoever is already on it.
+    func whatIfCandidates(for shift: QualityShift) -> [String] {
+        let on = Set(rows(for: shift).compactMap { $0.employee?.lowercased() })
+        var seen = Set<String>(), out: [String] = []
+        for name in (scheduleResult?.roster ?? []) + team.map(\.name) {
+            let n = name.trimmingCharacters(in: .whitespaces)
+            guard !n.isEmpty, !on.contains(n.lowercased()), seen.insert(n.lowercased()).inserted else { continue }
+            out.append(n)
+        }
+        return out.sorted()
+    }
+
+    /// The week's rows with `who` on this shift — in place of the row
+    /// `replacing` when given, otherwise added alongside the first row.
+    func whatIfRows(shift: QualityShift, who: String, replacing rowId: String?) -> [ScheduleRow]? {
+        guard var rows = scheduleResult?.previewRows else { return nil }
+        if let rowId, let i = rows.firstIndex(where: { $0.id == rowId }) {
+            rows[i].employee = who
+            return rows
+        }
+        guard let base = self.rows(for: shift).first else { return nil }
+        let role = team.first { $0.name == who }?.role ?? base.role
+        rows.append(ScheduleRow(date: base.date, day: base.day, employee: who, role: role,
+                                shiftStart: base.shiftStart, shiftEnd: base.shiftEnd,
+                                scheduledHours: base.scheduledHours, notes: nil))
+        return rows
+    }
+
+    /// Put a what-if on the week: the rows replace the draft and are saved
+    /// exactly like any other override.
+    func applyWhatIf(_ rows: [ScheduleRow], who: String, date: String) async {
+        guard var result = scheduleResult else { return }
+        result.previewRows = rows
+        scheduleResult = result
+        for row in rows where row.employee == who && row.date == date { overriddenRows.insert(row.id) }
+        Haptic.light()
+        await rescoreQuality()
+        await refreshEditCost()
+    }
+
+    // MARK: - Rating in place
+
+    /// Ratings given from the quality panel this session, so a row stays
+    /// on screen with its answer rather than vanishing under the thumb.
+    var ratedInPrompt: [String: Int] = [:]
+
+    /// The people carrying the most hours this week who have no
+    /// Operational Score — only when the confidence says most of the week
+    /// is unrated. At most ten.
+    struct UnratedPerson: Identifiable, Equatable {
+        let name: String
+        let hours: Double
+        var id: String { name }
+    }
+
+    var unratedByHours: [UnratedPerson] {
+        guard let q = scheduleResult?.quality, q.needsRatings, !team.isEmpty,
+              let rows = scheduleResult?.previewRows else { return [] }
+        let scored = Set(team.filter { $0.score != nil }.map { $0.name.lowercased() })
+        var hours: [String: Double] = [:]
+        var order: [String] = []
+        for row in rows {
+            let name = (row.employee ?? "").trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { continue }
+            if hours[name] == nil { order.append(name) }
+            hours[name, default: 0] += Double(row.scheduledHours ?? "") ?? 0
+        }
+        let people = order
+            .filter { !scored.contains($0.lowercased()) || ratedInPrompt[$0] != nil }
+            .map { UnratedPerson(name: $0, hours: hours[$0] ?? 0) }
+            .sorted { $0.hours > $1.hours }
+        return Array(people.prefix(10))
+    }
+
+    /// Rate somebody from the quality panel — the same endpoint the
+    /// Operational Score list uses. Works for a name the team list does
+    /// not carry yet.
+    func rateFromPrompt(_ name: String, score: Int) async {
+        let previous = ratedInPrompt[name]
+        ratedInPrompt[name] = score
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/labor/team/rating", method: .post,
+                body: RatingBody(employeeName: name, score: score, notes: nil), hapticOnError: false)
+            if response.ok {
+                if let i = team.firstIndex(where: { $0.name == name }) {
+                    team[i].score = score
+                    team[i].scoreLabel = Self.scoreLabels[score]
+                    recountCoverage()
+                }
+                Haptic.light()
+            } else {
+                ratedInPrompt[name] = previous
+                teamError = response.error ?? "Couldn't save that rating."
+            }
+        } catch let error as APIClient.APIError {
+            ratedInPrompt[name] = previous
+            teamError = error.message
+        } catch {
+            ratedInPrompt[name] = previous
+            teamError = "Couldn't save that rating."
+        }
+    }
+
+    // MARK: - Ratings that match nobody
+
+    var unmatchedRatings: [UnmatchedRating] = []
+    var matchingRating: String?
+    var matchError: String?
+
+    private struct UnmatchedResponse: Decodable {
+        let ok: Bool
+        let unmatched: [UnmatchedRating]?
+    }
+
+    private struct MatchBody: Encodable {
+        let rated: String
+        let rosterName: String
+        enum CodingKeys: String, CodingKey {
+            case rated
+            case rosterName = "roster_name"
+        }
+    }
+
+    /// GET labor/ratings/unmatched. Silent on failure: the list is a
+    /// courtesy on top of the ratings, never a blocker.
+    func loadUnmatchedRatings() async {
+        do {
+            let r: UnmatchedResponse = try await client.send("/mobile/api/labor/ratings/unmatched", hapticOnError: false)
+            unmatchedRatings = r.ok ? (r.unmatched ?? []) : []
+        } catch {
+            // Keep whatever was known.
+        }
+    }
+
+    /// Move a rating onto a roster name. A 409 (the roster name already
+    /// has one) comes back as the server's own sentence.
+    func matchRating(_ rated: String, to rosterName: String) async {
+        matchingRating = rated
+        matchError = nil
+        defer { matchingRating = nil }
+        do {
+            let r: OkResponse = try await client.send(
+                "/mobile/api/labor/ratings/match", method: .post,
+                body: MatchBody(rated: rated, rosterName: rosterName), hapticOnError: false, retryTransient: false)
+            guard r.ok else { matchError = r.error ?? "Couldn't match that rating."; return }
+            unmatchedRatings.removeAll { $0.rated == rated }
+            Haptic.success()
+            await loadTeam()
+            await loadUnmatchedRatings()
+        } catch let error as APIClient.APIError {
+            matchError = error.message
+        } catch {
+            matchError = "Couldn't match that rating."
+        }
+    }
+
 
     /// What happened to the manager's last edit. A failed save used to be
     /// silent, which left the old score on screen beside a CHANGED badge
@@ -1745,6 +2113,7 @@ final class LaborViewModel {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
                 return
             }
+            scoreDelta = Self.delta(from: result.quality?.score, to: quality.score)
             result.quality = quality
             result.whatIf = response.whatIf
             // The compliance read moves with every edit. Only replaced when
@@ -1755,7 +2124,7 @@ final class LaborViewModel {
             if let pending = response.pendingTimeOff { result.pendingTimeOff = pending }
             scheduleResult = result
             cacheSchedule(result)
-            if save { hasUnsavedFixes = false }
+            if save { hasUnsavedFixes = false; optimizerUnsaved = false }
             overrideState = .idle
             if response.saved ?? false {
                 // The version just written is now the latest; the next
@@ -2153,6 +2522,9 @@ final class LaborViewModel {
                     baselineRows = result.previewRows
                     editCost = nil
                     latestVersion = nil
+                    scoreDelta = nil
+                    optimizerUnsaved = false
+                    ratedInPrompt = [:]
                     suppressedRecommendationKinds = result.quality?.suppressedRecommendationKinds ?? []
                     await loadLatestVersion()
                 }

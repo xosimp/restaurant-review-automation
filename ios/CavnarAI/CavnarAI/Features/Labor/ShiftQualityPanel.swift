@@ -29,9 +29,31 @@ struct ShiftQualityPanel: View {
     var recommendationDecisions: [String: String] = [:]
     var onRecommendation: ((String, Bool) -> Void)? = nil
     var suppressedKinds: [String] = []
+    /// The generation loop's view model, when the panel sits on the live
+    /// draft: the score's movement, what Cavnar changed, rating in place
+    /// and the per-shift what-if all read from it. Nil renders the verdict
+    /// alone.
+    var viewModel: LaborViewModel? = nil
 
     @State private var expandedShift: String?
     @State private var showingReasoning = false
+    @State private var showingChanges = false
+    // Per-shift what-if: who, in place of which row (nil = added), and the
+    // answer the score endpoint gave, by shift id.
+    @State private var whatIfWho: [String: String] = [:]
+    @State private var whatIfFor: [String: String] = [:]
+    @State private var whatIfAnswer: [String: WhatIfAnswer] = [:]
+    @State private var whatIfBusy: String?
+
+    /// What one what-if came back with. `rows` is kept so "Put them on"
+    /// applies exactly what was scored.
+    struct WhatIfAnswer: Equatable {
+        let text: String
+        let rows: [ScheduleRow]
+        let who: String
+        let date: String
+        static func == (a: WhatIfAnswer, b: WhatIfAnswer) -> Bool { a.text == b.text }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -45,6 +67,16 @@ struct ShiftQualityPanel: View {
                     try? await Task.sleep(for: .seconds(4))
                     showingSaved = false
                 }
+            if let optimizer = viewModel?.scheduleResult?.optimizerSummary, optimizer.hasContent {
+                optimizerBlock(optimizer)
+            }
+            if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
+                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let viewModel, !viewModel.unratedByHours.isEmpty {
+                ratePrompt(viewModel)
+            }
             if let dimensions = customerDimensions, !dimensions.isEmpty {
                 dimensionGrid(dimensions)
             }
@@ -65,6 +97,11 @@ struct ShiftQualityPanel: View {
         )
         .animation(.easeOut(duration: 0.22), value: expandedShift)
         .animation(.easeOut(duration: 0.22), value: showingReasoning)
+        .animation(.easeOut(duration: 0.22), value: showingChanges)
+        .task(id: quality.needsRatings) {
+            // The rating prompt needs to know who is rated already.
+            if quality.needsRatings, let viewModel, viewModel.team.isEmpty { await viewModel.loadTeam() }
+        }
     }
 
     // MARK: The number
@@ -77,11 +114,30 @@ struct ShiftQualityPanel: View {
                     .font(.cavnarBody(12.5, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarInk3)
-                Text(bandLabel)
-                    .font(.cavnarHeadline(23))
-                    .foregroundStyle(Color.cavnarInk)
+                HStack(spacing: 8) {
+                    Text(bandLabel)
+                        .font(.cavnarHeadline(23))
+                        .foregroundStyle(Color.cavnarInk)
+                    if quality.isProvisional {
+                        Text("PROVISIONAL")
+                            .font(.cavnarBody(12, weight: 700))
+                            .tracking(0.8)
+                            .foregroundStyle(Color.cavnarAmber)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.cavnarAmber.opacity(0.14)))
+                    }
+                    if let delta = viewModel?.scoreDelta {
+                        ScoreDeltaChip(delta: delta)
+                    }
+                }
                 if let confidence = quality.confidence {
                     confidencePill(confidence)
+                    // Low confidence says why first — the top reason.
+                    if quality.isProvisional, let top = confidence.reasons.first {
+                        HomeMixedText.make(top, size: 13, color: .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -148,6 +204,144 @@ struct ShiftQualityPanel: View {
                 }
             }
         }
+    }
+
+    // MARK: What Cavnar changed
+
+    /// "Cavnar improved this draft from 71 to 84 — 5 changes", the reason
+    /// for each change behind a disclosure, and what no legal change could
+    /// fix — the owner's to decide.
+    private func optimizerBlock(_ o: ScheduleOptimizer) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let headline = o.headline {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HomeMixedText.make(headline, size: 14.5, weight: 600, color: .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if viewModel?.optimizerUnsaved == true {
+                        Text("NOT SAVED")
+                            .font(.cavnarBody(12, weight: 700))
+                            .tracking(0.8)
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                }
+                Button {
+                    Haptic.selection()
+                    showingChanges.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(showingChanges ? "Hide the changes" : "What changed and why")
+                            .font(.cavnarBody(14, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .rotationEffect(.degrees(showingChanges ? 180 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if showingChanges {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(o.changes ?? []) { change in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.cavnarGreen)
+                                    .frame(width: 13)
+                                    .padding(.top, 4)
+                                HomeMixedText.make(change.reason, size: 14, color: .cavnarInk2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 4)
+                                if let gain = change.gain, gain > 0 {
+                                    Text("+\(Int(gain.rounded()))")
+                                        .font(.cavnarNumber(13, weight: 700))
+                                        .foregroundStyle(Color.cavnarGreen)
+                                }
+                            }
+                        }
+                    }
+                    .transition(.opacity)
+                }
+            } else if let verdict = o.verdict {
+                HomeMixedText.make(verdict, size: 14, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let unresolved = o.unresolved, !unresolved.isEmpty {
+                Text("STILL NEEDS YOU")
+                    .font(.cavnarBody(12, weight: 700))
+                    .tracking(1.1)
+                    .foregroundStyle(Color.cavnarRed)
+                    .padding(.top, 2)
+                ForEach(unresolved) { item in
+                    detailLine(item.text, symbol: "circle.fill", color: .cavnarRed)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.ai)
+    }
+
+    // MARK: Rating in place
+
+    /// Most of the week unrated: the people carrying the most hours, each
+    /// with the same five-number control the Operational Score list uses.
+    private func ratePrompt(_ viewModel: LaborViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Most of this week has no Operational Score, so the number is provisional. Rate the people carrying the most hours:")
+                .font(.cavnarBody(14, weight: 600))
+                .foregroundStyle(Color.cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(viewModel.unratedByHours) { person in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text(person.name)
+                            .font(.cavnarBody(14.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                        HomeMixedText.make("\(CavnarQualityFormat.hours(person.hours))h this week", size: 13, color: .cavnarInk3)
+                    }
+                    HStack(spacing: 6) {
+                        ForEach(1...5, id: \.self) { value in
+                            let on = viewModel.ratedInPrompt[person.name] == value
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.rateFromPrompt(person.name, score: value) }
+                            } label: {
+                                Text("\(value)")
+                                    .font(.cavnarNumber(14, weight: 700))
+                                    .frame(maxWidth: .infinity, minHeight: 30)
+                                    .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
+                                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(on ? Color.cavnarEmber : Color.cavnarPaper2))
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Color.cavnarPaper3, lineWidth: on ? 0 : 1))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Rate \(person.name) \(value)")
+                        }
+                    }
+                }
+            }
+            if !viewModel.ratedInPrompt.isEmpty {
+                Button {
+                    Haptic.medium()
+                    Task { await viewModel.rescoreLive() }
+                } label: {
+                    Group {
+                        if viewModel.isRescoringQuality {
+                            CavnarShimmerText(text: "Scoring…")
+                        } else {
+                            Text("Re-score with these ratings")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isRescoringQuality)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarPaper3.opacity(0.35)))
     }
 
     // MARK: Warnings
@@ -361,8 +555,26 @@ struct ShiftQualityPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
             // Grouped under quiet labels rather than eight identically
             // marked lines — the same list read as a wall of text.
+            // The dimension that caps the shift decides its number, so its
+            // weakness leads, under a line that says so.
+            let capLines = cappingLines(shift)
+            if !capLines.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    HomeMixedText.make("This is what's holding the shift at \(shift.score ?? 0)",
+                                       size: 13.5, weight: 700, color: .cavnarAmber)
+                    ForEach(capLines.prefix(2), id: \.self) { line in
+                        detailLine(line, symbol: "circle.fill", color: .cavnarAmber)
+                    }
+                }
+                .padding(.top, 2)
+            }
             group("Working well", shift.strengths, limit: 3, color: .cavnarGreen)
-            group("Holding it back", shift.weaknesses, limit: 4, color: .cavnarAmber)
+            if capLines.isEmpty {
+                group("Holding it back", shift.weaknesses, limit: 4, color: .cavnarAmber)
+            } else {
+                group("Also holding it back", (shift.weaknesses ?? []).filter { !capLines.contains($0) },
+                      limit: 4, color: .cavnarAmber)
+            }
             group("Not known", shift.blindSpots, limit: 2, color: .cavnarInk3)
             if let failures = shift.failed, !failures.isEmpty {
                 group("Could not be worked out",
@@ -404,7 +616,117 @@ struct ShiftQualityPanel: View {
                 }
                 .padding(.top, 2)
             }
+            if let viewModel, !viewModel.whatIfCandidates(for: shift).isEmpty {
+                whatIfRow(shift, viewModel: viewModel)
+            }
         }
+    }
+
+    /// The capping dimension's own weaknesses, from the shift's dimensions.
+    private func cappingLines(_ shift: QualityShift) -> [String] {
+        guard let key = shift.cappedBy,
+              let dim = shift.dimensions?.first(where: { $0.key == key }) else { return [] }
+        return dim.weaknesses ?? []
+    }
+
+    // MARK: What if
+
+    /// "What if <person> works this shift?" — the week with that one change,
+    /// scored by the same endpoint Save uses, with save off. Nothing is
+    /// stored until "Put them on".
+    private func whatIfRow(_ shift: QualityShift, viewModel: LaborViewModel) -> some View {
+        let candidates = viewModel.whatIfCandidates(for: shift)
+        let onShift = viewModel.rows(for: shift)
+        let who = whatIfWho[shift.id] ?? candidates.first ?? ""
+        let forRow = whatIfFor[shift.id]
+        let forName = onShift.first { $0.id == forRow }?.employee
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT IF")
+                .font(.cavnarBody(12, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarEmber2)
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(candidates, id: \.self) { name in
+                        Button(name) { whatIfWho[shift.id] = name; whatIfAnswer[shift.id] = nil }
+                    }
+                } label: { whatIfMenuLabel(who.isEmpty ? "Pick somebody" : who) }
+                Menu {
+                    Button("Added to the shift") { whatIfFor[shift.id] = nil; whatIfAnswer[shift.id] = nil }
+                    ForEach(onShift) { row in
+                        Button("Instead of \(row.employee ?? "")\(row.role.map { " (\($0))" } ?? "")") {
+                            whatIfFor[shift.id] = row.id; whatIfAnswer[shift.id] = nil
+                        }
+                    }
+                } label: { whatIfMenuLabel(forName.map { "instead of \($0)" } ?? "added") }
+            }
+            Button {
+                Haptic.light()
+                Task { await runWhatIf(shift, who: who, replacing: forRow, viewModel: viewModel) }
+            } label: {
+                Group {
+                    if whatIfBusy == shift.id {
+                        CavnarShimmerText(text: "Scoring…")
+                    } else {
+                        Text("What if \(who.isEmpty ? "they" : who) works this shift?")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(who.isEmpty || whatIfBusy != nil)
+            if let answer = whatIfAnswer[shift.id] {
+                HomeMixedText.make(answer.text, size: 14, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Haptic.medium()
+                    let a = answer
+                    whatIfAnswer[shift.id] = nil
+                    Task { await viewModel.applyWhatIf(a.rows, who: a.who, date: a.date) }
+                } label: {
+                    Text("Put \(answer.who) on")
+                        .font(.cavnarBody(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func whatIfMenuLabel(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(text)
+                .font(.cavnarBody(13.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.cavnarInk3)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+            .fill(Color.cavnarPaper3.opacity(0.5)))
+    }
+
+    private func runWhatIf(_ shift: QualityShift, who: String, replacing: String?, viewModel: LaborViewModel) async {
+        guard !who.isEmpty, let rows = viewModel.whatIfRows(shift: shift, who: who, replacing: replacing) else { return }
+        whatIfBusy = shift.id
+        defer { whatIfBusy = nil }
+        guard let live = await viewModel.liveScore(rows: rows) else {
+            whatIfAnswer[shift.id] = WhatIfAnswer(text: "Couldn't score that just now.", rows: [], who: who, date: shift.date)
+            return
+        }
+        let after = live.quality.shifts?.first { $0.date == shift.date && $0.daypart == shift.daypart }?.score
+        var text = "This shift \(shift.score ?? 0) → \(after.map(String.init) ?? "—")"
+        if let after { text += " (\(ScoreDeltaChip.signed(after - (shift.score ?? 0))))" }
+        if let week = live.quality.score, let now = quality.score {
+            text += ", the week \(now) → \(week) (\(ScoreDeltaChip.signed(week - now)))"
+        }
+        text += ". Nothing saved."
+        if live.hardRules > 0 { text += " It breaks \(live.hardRules) hard \(live.hardRules == 1 ? "rule" : "rules")." }
+        whatIfAnswer[shift.id] = WhatIfAnswer(text: text, rows: rows, who: who, date: shift.date)
     }
 
     @ViewBuilder
@@ -584,5 +906,30 @@ private struct QualityBar: View {
         }
         .frame(height: height)
         .animation(.easeOut(duration: 0.4), value: score)
+    }
+}
+
+/// The points the score moved on the last edit — "+3" green, "−2" red.
+struct ScoreDeltaChip: View {
+    let delta: Int
+
+    static func signed(_ n: Int) -> String { n > 0 ? "+\(n)" : (n < 0 ? "−\(-n)" : "±0") }
+
+    var body: some View {
+        let tone: Color = delta > 0 ? .cavnarGreen : (delta < 0 ? .cavnarRed : .cavnarInk3)
+        Text(Self.signed(delta))
+            .font(.cavnarNumber(13.5, weight: 700))
+            .foregroundStyle(tone)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tone.opacity(0.14)))
+            .accessibilityLabel(delta >= 0 ? "Up \(delta) points" : "Down \(-delta) points")
+    }
+}
+
+enum CavnarQualityFormat {
+    /// "38" or "37.5" — hours as a manager says them.
+    static func hours(_ h: Double) -> String {
+        h == h.rounded() ? String(Int(h)) : String(format: "%.1f", h)
     }
 }

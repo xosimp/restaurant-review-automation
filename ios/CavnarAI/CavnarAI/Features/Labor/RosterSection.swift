@@ -382,6 +382,7 @@ private struct RosterDetailSheet: View {
 
     @State private var active = true
     @State private var isMinor = false
+    @State private var experienced = false
     @State private var employmentType = "full"
     @State private var minHours = ""
     @State private var maxHours = ""
@@ -641,6 +642,15 @@ private struct RosterDetailSheet: View {
                                 Task { await viewModel.updateSettings(.init(employeeName: name, isMinor: newValue)) }
                              }),
                              busy: busy, disabled: !editable, showsDivider: true)
+            // The owner's word for it: counted by Experience balance
+            // without waiting for twenty shifts of history on file.
+            AccountSwitchRow(label: "Experienced — knows the job",
+                             detail: "Counts as an experienced hand without waiting for 20 shifts on file.",
+                             isOn: Binding(get: { experienced }, set: { newValue in
+                                experienced = newValue
+                                Task { await viewModel.updateSettings(.init(employeeName: name, experienced: newValue)) }
+                             }),
+                             busy: busy, disabled: !editable, showsDivider: true)
             AccountKVRow(label: "Employment", showsDivider: false) {
                 HStack(spacing: 6) {
                     ForEach(viewModel.employmentTypes, id: \.self) { type in
@@ -724,6 +734,7 @@ private struct RosterDetailSheet: View {
         let s = member.settings
         active = member.isActive
         isMinor = s?.isMinor ?? false
+        experienced = s?.experienced ?? false
         employmentType = s?.employmentType ?? "full"
         minHours = s?.minHours.map(Self.hours) ?? ""
         maxHours = s?.maxHours.map(Self.hours) ?? ""

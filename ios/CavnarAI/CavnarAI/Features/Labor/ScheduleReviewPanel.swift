@@ -297,7 +297,7 @@ struct ScheduleReviewPanel: View {
                             if viewModel.isRescoringQuality {
                                 CavnarShimmerText(text: "Saving…")
                             } else {
-                                Text("Save fixes")
+                                Text(viewModel.optimizerUnsaved ? "Save Cavnar's changes" : "Save fixes")
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -306,6 +306,39 @@ struct ScheduleReviewPanel: View {
                     .disabled(viewModel.isRescoringQuality)
                 }
             }
+        }
+        // The Shift Quality repair loop over the week on screen: legal
+        // changes that raise the score, each listed with why in the quality
+        // panel. Proposed only — Save fixes is what keeps them.
+        if !(result.previewRows ?? []).isEmpty && !viewModel.hasUnsavedFixes {
+            Button {
+                Haptic.medium()
+                Task { await viewModel.optimize() }
+            } label: {
+                Group {
+                    if viewModel.isOptimizing {
+                        CavnarShimmerText(text: "Improving…")
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles").font(.system(size: 12, weight: .semibold))
+                            Text("Improve with Cavnar")
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(viewModel.isOptimizing || viewModel.isApplyingFixes || viewModel.isRescoringQuality)
+            Text("Makes legal changes that raise the score and lists each one. Nothing is saved until you save.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let error = viewModel.optimizeError {
+            Text(error)
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarRed)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if let error = viewModel.applyFixesError {
             Text(error)
