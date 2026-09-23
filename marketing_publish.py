@@ -399,6 +399,10 @@ def _alert_failed_post(row, error, db_path: str = DB_PATH):
         log.warning("scheduled post failure alert failed for %s: %s", row["restaurant_id"], e)
 
 
+# Due posts one pass takes; the rest are still due, and taken, next tick.
+DUE_POSTS_PER_TICK = 200
+
+
 def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH) -> dict:
     """Publish everything whose slot has arrived. Called from scheduler.py.
 
@@ -413,15 +417,32 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
     except Exception as e:
         log.warning("reap_stuck_publishes failed: %s", e)
 
+    # Due-ness is asked per restaurant, against ITS local now, in the query.
+    # One global "200 earliest by scheduled_for" compared local-time strings
+    # across time zones, so a post already due in New York sat behind 200
+    # Los Angeles posts that were not due yet, and was missed (DATA-31).
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
-            "LEFT JOIN marketing_media m ON m.id = s.media_id AND m.restaurant_id = s.restaurant_id "
-            "WHERE s.status='scheduled' ORDER BY s.scheduled_for ASC LIMIT 200"
-        ).fetchall()
+        waiting = conn.execute(
+            "SELECT restaurant_id, COUNT(*) FROM marketing_scheduled_posts WHERE status='scheduled' "
+            "GROUP BY restaurant_id").fetchall()
+        rows = []
+        for rid, _n in waiting:
+            if len(rows) >= DUE_POSTS_PER_TICK:
+                break
+            local_now = _local_now(rid).strftime("%Y-%m-%dT%H:%M:%S")
+            rows.extend(conn.execute(
+                "SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
+                "LEFT JOIN marketing_media m ON m.id = s.media_id AND m.restaurant_id = s.restaurant_id "
+                "WHERE s.status='scheduled' AND s.restaurant_id=? "
+                # Stored as local ISO text; an unreadable one is picked too, to be failed below.
+                "AND (REPLACE(s.scheduled_for, ' ', 'T') <= ? "
+                "     OR s.scheduled_for NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*') "
+                "ORDER BY s.scheduled_for ASC LIMIT ?", (rid, local_now, DUE_POSTS_PER_TICK - len(rows))).fetchall())
     finally:
         conn.close()
+    # Not due yet, or past this tick's batch: still waiting.
+    not_taken = sum(n for _rid, n in waiting) - len(rows)
 
     published = failed = skipped = 0
     for row in rows:
@@ -486,10 +507,10 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             import ops
             ops.capture(RuntimeError(f"{failed} scheduled post(s) failed to publish"),
                         job="scheduled_posts",
-                        context=f"published={published} failed={failed} pending={skipped}")
+                        context=f"published={published} failed={failed} pending={skipped + not_taken}")
         except Exception:
             pass
-    return {"published": published, "failed": failed, "pending": skipped}
+    return {"published": published, "failed": failed, "pending": skipped + not_taken}
 
 
 def _claim_for_publish(row_id, db_path: str = DB_PATH) -> bool:

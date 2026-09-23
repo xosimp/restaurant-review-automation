@@ -347,7 +347,6 @@ def _due_followups(db_path, rid, n):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-10: the review-request job holds the SQLite write lock across every Twilio call")
 def test_other_writers_are_not_locked_out_while_review_requests_go_out(db_path, monkeypatch):
     """A6 Jobs #9 / MOD-MKT-10 — a settings save during the job must not
     fail with 'database is locked'."""
@@ -371,7 +370,6 @@ def test_other_writers_are_not_locked_out_while_review_requests_go_out(db_path, 
     assert outcomes and all(o == "ok" for o in outcomes), outcomes
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-10: a review-request run interrupted mid-loop commits nothing, so the next run re-texts everyone")
 def test_an_interrupted_review_request_run_does_not_re_text_guests(db_path, monkeypatch):
     """A6 Jobs #10 / MOD-MKT-10."""
     rid = _rid(db_path, google_place_id="ChIJreview")

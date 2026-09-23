@@ -301,8 +301,6 @@ def test_a_cancelled_restaurant_s_guests_are_not_texted(db_path, monkeypatch):
 
 # ── the follow-up job's transaction (DATA-52) ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: run_review_request_followups holds one write transaction across "
-                                       "its whole Twilio loop, so every request's session write waits behind it")
 def test_followups_commit_each_claim_before_sending(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=3)
@@ -327,8 +325,6 @@ class _Killed(BaseException):
     """A deploy's SIGTERM: not an Exception, so nothing in the loop catches it."""
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: a crash mid-loop rolls back every stamp after the texts went out, "
-                                       "so the next hourly run texts the same guests again")
 def test_a_follow_up_run_killed_mid_loop_does_not_re_text_guests_already_reached(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=2)
@@ -375,8 +371,6 @@ def test_fetch_coverage_age_is_reported_per_restaurant(db_path):
 
 # ── scheduled posts across time zones (DATA-31) ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-31: run_due_posts takes the 200 earliest rows by local-time string, so "
-                                       "a due Eastern post sits behind 200 not-yet-due Pacific posts")
 def test_a_due_post_is_picked_even_behind_200_undue_ones(db_path, monkeypatch):
     import marketing_publish
     pacific = _rid(db_path, name="Pacific", timezone="America/Los_Angeles")
