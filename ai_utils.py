@@ -489,6 +489,7 @@ MODELS = {
     "email_personalise":   ("CLAUDE_MODEL",           HAIKU),
     "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET),
     "ask_cavnar":          ("ASK_CAVNAR_MODEL",       SONNET),
+    "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET),
 }
 
 

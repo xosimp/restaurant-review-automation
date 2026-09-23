@@ -38,9 +38,19 @@ def _humanize(key):
     return f"{head}: {tail}" if tail else head
 
 
-def history(restaurant_id, limit=40, db_path=DB_PATH):
+def _is_loss(r):
+    key = str(r.get("key") or "")
+    return r.get("kind") == "loss" or key == "loss" or key.startswith("loss:")
+
+
+def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
     """Decision records, newest first. Each: {key, title, kind, asked_on,
-    answer, reason, times_hidden, outcome, issue}."""
+    answer, reason, times_hidden, outcome, issue}.
+
+    `sees_loss=False` leaves out loss signals and loss issues (they name
+    the approving manager), as issues.list_issues does — for anything a
+    manager may read, including a narrative that renders into the manager's
+    view of the daily report."""
     conn = get_conn(db_path)
     recs = {}
 
@@ -182,6 +192,8 @@ def history(restaurant_id, limit=40, db_path=DB_PATH):
     finally:
         conn.close()
     out = sorted(recs.values(), key=lambda r: (r.get("answered_on") or r.get("asked_on") or ""), reverse=True)
+    if not sees_loss:
+        out = [r for r in out if not _is_loss(r)]
     return out[:limit]
 
 
@@ -196,9 +208,10 @@ def _fmt_outcome(o):
     return f" — measured: {v}{money}"
 
 
-def context(restaurant_id, db_path=DB_PATH):
-    """The prompt section: short, dated, and only what was actually decided."""
-    rows = history(restaurant_id, limit=MAX_CONTEXT_LINES, db_path=db_path)
+def context(restaurant_id, db_path=DB_PATH, sees_loss=True):
+    """The prompt section: short, dated, and only what was actually decided.
+    `sees_loss` as history()."""
+    rows = history(restaurant_id, limit=MAX_CONTEXT_LINES, db_path=db_path, sees_loss=sees_loss)
     if not rows:
         return ""
     lines = ["WHAT THIS RESTAURANT HAS DECIDED BEFORE",

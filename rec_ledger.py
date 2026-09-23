@@ -37,7 +37,21 @@ TERMINAL = {"accepted": "accepted", "completed": "completed", "dismissed": "dism
 MODULES = ("reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops", "home", "ask")
 SURFACES = ("home", "brief_email", "brief_push", "weekly_email", "alert_sms", "alert_email", "alert_push",
             "queue", "ask", "schedule_review", "labor", "reviews", "food", "marketing", "intel", "issue_sms",
-            "digest", "monthly_email", "ios", "web", "auto", "unknown")
+            "digest", "monthly_email", "ios", "web", "auto", "unknown", "dsr")
+# What each surface is called where a person reads it (the admin console's
+# "by surface" breakdown). Every surface has one; a test holds them in step.
+SURFACE_LABELS = {
+    "home": "home", "brief_email": "brief email", "brief_push": "brief push", "weekly_email": "weekly email",
+    "alert_sms": "alert text", "alert_email": "alert email", "alert_push": "alert push", "queue": "queue",
+    "ask": "ask", "schedule_review": "schedule review", "labor": "labor", "reviews": "reviews", "food": "food",
+    "marketing": "marketing", "intel": "intel", "issue_sms": "issue text", "digest": "digest",
+    "monthly_email": "monthly email", "ios": "ios", "web": "web", "auto": "automatic", "unknown": "unknown",
+    "dsr": "daily report",
+}
+
+
+def surface_label(surface) -> str:
+    return SURFACE_LABELS.get(surface, str(surface or "unknown"))
 
 # How long each answer silences the same key everywhere.
 SILENCE_DAYS = {"hide": 14, "not_for_us": 3650, "done": 3650}

@@ -51,12 +51,35 @@ _PHONE_RE = re.compile(r"(?:\+?\d[\d\-().\s]{8,}\d)")
 # Substrings that must never appear in a reply published on the restaurant's
 # behalf. Deliberately narrow and concrete — a broad list would reject honest
 # apologies, which is most of what a good reply to a complaint is.
+# The last six are the residue of a model that followed an instruction it
+# read inside fenced text; injection_residue checks only those.
+_INJECTION_TELLS = (
+    "ignore previous", "ignore prior",
+    "as an ai", "as a language model", "system prompt", "my instructions",
+)
 _FORBIDDEN_PHRASES = (
     "health department", "health inspector", "food poisoning", "shut down",
     "under investigation", "lawsuit", "we are closing", "we're closing",
-    "closed permanently", "do not eat", "ignore previous", "ignore prior",
-    "as an ai", "as a language model", "system prompt", "my instructions",
-)
+    "closed permanently", "do not eat",
+) + _INJECTION_TELLS
+
+
+def injection_residue(text: str) -> str | None:
+    """Why this model-written text looks like it obeyed fenced text, or None:
+    a link, an email address, or an injection tell ("ignore previous",
+    "system prompt"). For text an owner reads, not text published — it does
+    not carry check_public_reply's claims list, because an owner's own report
+    may legitimately say "health inspector" (the manager wrote it)."""
+    body = text or ""
+    if _URL_RE.search(body):
+        return "it contains a link"
+    if _EMAIL_RE.search(body):
+        return "it contains an email address"
+    low = body.lower()
+    for phrase in _INJECTION_TELLS:
+        if phrase in low:
+            return f"it contains {phrase!r}"
+    return None
 
 MAX_REPLY_CHARS = 1200
 MAX_MARKETING_CHARS = 2200
@@ -324,6 +347,68 @@ def _numbers(text: str) -> set:
     """Every figure in `text`, of any kind (kept for the star-rating check)."""
     f = _figures(text)
     return f["money"] | f["pct"] | f["bare"]
+
+
+def figure_claims(text: str) -> list:
+    """Every figure a passage STATES, with how precisely it states it.
+
+    unsupported_figures answers "is this figure somewhere in the prompt?";
+    a caller that checks claims against structured facts instead (the DSR
+    narrative, dsr/narrative.py) needs each claim on its own: its kind, its
+    value with any k/m suffix applied, how many decimals it was written to
+    (so "$4,200" can be read as a rounding and "$4,212.40" cannot), and
+    where it sits (so the words around it can say up or down).
+
+    Same regexes and the same kind separation as _figures: a money or
+    percentage span is not also read as a bare numeral, and a star rating
+    in range is its own kind. Returns [{"kind": money|pct|star|bare,
+    "value", "decimals", "mult", "raw", "start", "end", "year"}] in text
+    order; `year` marks a bare calendar year, which the caller decides
+    about. Numbers inside UNTRUSTED fences are not claims and are skipped;
+    the fence is blanked, not removed, so every span indexes `text` itself.
+    """
+    text = re.sub(re.escape(UNTRUSTED_OPEN) + r".*?" + re.escape(UNTRUSTED_CLOSE),
+                  lambda m: " " * len(m.group(0)), text or "", flags=re.S)
+    out, spans = [], []
+
+    def taken(a, b):
+        return any(a < y and x < b for x, y in spans)
+
+    def add(kind, m, raw, mult=1.0):
+        a, b = m.span()
+        if taken(a, b):
+            return
+        try:
+            value = float(raw.replace(",", ""))
+        except ValueError:
+            return
+        decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
+        spans.append((a, b))
+        out.append({"kind": kind, "value": round(value * mult, 4), "decimals": decimals, "mult": mult,
+                    "raw": m.group(0).strip(), "start": a, "end": b, "year": False})
+
+    for pat in (_MONEY_RE, _DOLLARS_RE):
+        for m in pat.finditer(text):
+            add("money", m, m.group(1), _SUFFIX_MULT.get((m.group(2) or "").lower(), 1.0))
+    for m in _PCT_RE.finditer(text):
+        add("pct", m, m.group(1))
+    for m in _STAR_RE.finditer(text):
+        raw = m.group(1) or m.group(2)
+        try:
+            if 1.0 <= float(raw) <= 5.0:
+                add("star", m, raw)
+        except (TypeError, ValueError):
+            continue
+    chars = list(text)
+    for a, b in spans:
+        for i in range(a, b):
+            chars[i] = " "
+    for m in _BARE_RE.finditer("".join(chars)):
+        raw = m.group(1)
+        add("bare", m, raw)
+        if out and out[-1]["start"] == m.start() and _is_calendar_year(raw):
+            out[-1]["year"] = True
+    return sorted(out, key=lambda c: c["start"])
 
 
 def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -> list:

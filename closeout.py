@@ -15,8 +15,11 @@ Four questions, none of them typing-heavy, all optional:
 
 It is a HANDOFF, not a report: it is written by whoever closed and read by
 whoever opens, and it appears in the next morning's brief. Nothing here is
-scored, ranked or fed to a model — an owner reading their GM's own sentence
-is the point.
+scored or ranked, and nothing rewrites it — an owner reading their GM's own
+sentence is the point. The one model that reads it is the Daily Sales
+Report narrative (dsr/narrative.py), and only as fenced, untrusted data: it
+may inform the night's read, never be quoted as a figure or be the basis of
+an action.
 """
 from datetime import date, timedelta
 
