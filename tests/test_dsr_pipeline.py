@@ -223,44 +223,112 @@ def test_awaiting_blocks_are_retried_on_backoff_and_only_they_are_recollected(db
     assert world["narratives"] == []                   # no summary until the facts are in
 
 
-def test_the_deadline_sends_it_out_provisional_with_the_reasons(db, world):
+FOOD_WAITING = "Item sales sync at 5am — food cost follows"
+
+
+def test_sales_in_and_food_awaiting_at_the_deadline_is_final_with_foods_reason(db, world):
+    """Food's item sales land at 5am Central, after most deadlines: that is a
+    FINAL night that says so, not a provisional one every night."""
     r = _restaurant(db)
-    out = _run(r, U(9, 5), db)                         # 4:05am CDT
-    assert out["action"] == "provisional" and out["awaiting"] == ["labor"]
+    _labor_in(db, r.id)
+    world["hook_food"] = lambda ctx: dsr.block(dsr.AWAITING, reason=FOOD_WAITING, block_name="food")
+    out = _run(r, U(4, 10), db)
+    assert (out["action"], out["awaiting"]) == ("retry", ["food"])     # still worth waiting for before 4am
+    out = _run(r, U(9, 5), db)                                       # 4:05am CDT
+    assert out["action"] == "final" and out["awaiting"] == ["food"] and out["required_missing"] == []
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert rep["status"] == "final" and rep["provisional"] is False
+    assert rep["facts"]["blocks"]["food"]["status"] == dsr.AWAITING
+    assert rep["facts"]["missing"] == [FOOD_WAITING]
+    assert rep["next_attempt_at"] is None
+    # The summary is written over what there is, and is told what is missing.
+    assert world["narratives"][-1]["missing"] == [FOOD_WAITING]
+    # Food catching up later never makes a new version on its own.
+    world["hook_food"] = None
+    assert _run(r, U(11, 0), db)["action"] == "none"
+    pipeline.run_sweep(now_utc=U(11, 0), db_path=db)
+    assert [v["version"] for v in store.versions(r.id, DAY, db_path=db)] == [1]
+
+
+def test_labor_still_awaiting_at_the_deadline_goes_out_final_and_labelled(db, world):
+    r = _restaurant(db)                                   # the labor sync never came
+    out = _run(r, U(9, 5), db)
+    assert out["action"] == "final"
+    assert store.get_report(r.id, DAY, db_path=db)["facts"]["missing"] == [block_labor.REASON_SYNC_PENDING]
+
+
+def test_a_night_whose_sales_are_missing_at_the_deadline_is_provisional(db, world):
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["closed"] = False                               # the POS never closed the day
+    out = _run(r, U(9, 5), db)
+    assert out["action"] == "provisional" and out["required_missing"] == ["sales"]
     rep = store.get_report(r.id, DAY, db_path=db)
     assert rep["status"] == "provisional" and rep["provisional"] is True
-    assert rep["facts"]["missing"] == [block_labor.REASON_SYNC_PENDING]
-    # The summary is written over what there is, and is told what is missing.
-    assert world["narratives"][0]["missing"] == [block_labor.REASON_SYNC_PENDING]
+    assert rep["stages"]["closed_by"] == "deadline"
+    assert rep["facts"]["missing"] == ["Awaiting the POS close for 9/22/26"]
+    assert rep["narrative"] is None and world["narratives"] == [] and world["sales_calls"] == 0
+    assert rep["stages"]["narrative"] == {"status": "skipped", "reason": pipeline.NO_SUMMARY_SALES_PENDING}
     assert rep["next_attempt_at"] == "2026-09-23 10:05:00"
 
 
-def test_late_data_makes_a_new_version_and_the_old_one_is_never_edited(db, world):
+def test_late_sales_make_a_new_version_and_the_old_one_is_never_edited(db, world):
     r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["closed"] = False
     _run(r, U(9, 5), db)
     v1 = store.get_report(r.id, DAY, db_path=db)
     assert _run(r, U(10, 5), db)["action"] == "still_awaiting"
     assert store.get_report(r.id, DAY, db_path=db)["version"] == 1
-    _labor_in(db, r.id)                               # the 3am sync landed
+    world["closed"] = True                                # the POS closed the day at last
     out = _run(r, U(11, 5), db)
     assert out["action"] == "final" and out["version"] == 2
     old, new = store.get_report(r.id, DAY, version=1, db_path=db), store.get_report(r.id, DAY, db_path=db)
     assert old["status"] == "provisional" and old["facts"] == v1["facts"] and old["next_attempt_at"] is None
     assert new["trigger"] == pipeline.TRIGGER_LATE and new["stages"]["supersedes"] == 1
-    assert new["facts"]["blocks"]["labor"]["status"] == dsr.READY and new["facts"]["missing"] == []
-    # Sales was carried over with the time it was really collected.
-    assert new["stages"]["blocks"]["sales"] == v1["stages"]["blocks"]["sales"]
-    assert world["sales_calls"] == 1
-    assert store.metric_series(r.id, "labor.cost", DAY, DAY, db_path=db) == [(DAY.isoformat(), 440.0)]
+    assert new["facts"]["blocks"]["sales"]["status"] == dsr.READY and new["facts"]["missing"] == []
+    # Labor was carried over with the time it was really collected.
+    assert new["stages"]["blocks"]["labor"] == v1["stages"]["blocks"]["labor"]
+    assert world["sales_calls"] == 1 and len(world["narratives"]) == 1
+    assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 2000.0)]
     assert [v["version"] for v in store.versions(r.id, DAY, db_path=db)] == [1, 2]
 
 
 def test_a_provisional_night_stops_being_checked_after_the_late_window(db, world):
     r = _restaurant(db)
+    world["closed"] = False
     _run(r, U(9, 5), db)
     out = _run(r, U(10, 0, day=25) + timedelta(hours=1), db)     # past deadline + 48h
     assert out["action"] == "expired"
     assert store.get_report(r.id, DAY, db_path=db)["next_attempt_at"] is None
+
+
+# ── the manager's closeout never holds a night ──────────────────────────────
+
+def test_no_closeout_never_holds_the_night_open(db, world):
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["hook_closeout"] = lambda ctx: dsr.block(dsr.UNAVAILABLE, block_name="closeout")
+    assert _run(r, U(4, 10), db)["action"] == "final"             # right away, not at 4am
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert rep["facts"]["missing"] == ["No manager closeout filed"]
+
+
+def test_even_an_awaiting_closeout_never_holds_or_makes_it_provisional(db, world):
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["hook_closeout"] = lambda ctx: dsr.block(dsr.AWAITING, block_name="closeout")
+    assert _run(r, U(4, 10), db)["action"] == "final"
+
+
+def test_a_closeout_filed_while_the_night_is_open_makes_the_report(db, world):
+    r = _restaurant(db)                                   # labor still syncing: the night stays open
+    world["hook_closeout"] = lambda ctx: dsr.block(dsr.UNAVAILABLE, block_name="closeout")
+    assert _run(r, U(4, 10), db)["action"] == "retry"
+    world["hook_closeout"] = lambda ctx: dsr.block(dsr.READY, source="cavnar", metrics={"notes": 3})
+    _labor_in(db, r.id)
+    assert _run(r, U(4, 20), db)["action"] == "final"
+    assert store.get_report(r.id, DAY, db_path=db)["facts"]["blocks"]["closeout"]["status"] == dsr.READY
 
 
 # ── never twice ─────────────────────────────────────────────────────────────
@@ -362,6 +430,16 @@ def test_the_narrative_is_skipped_not_invented_when_sales_are_not_in(db, world, 
     assert world["narratives"] == []
 
 
+def test_a_narrative_that_would_refuse_never_shows_writing(db, world):
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    sys.modules["dsr.narrative"].can_write = lambda facts: (False, "Not enough data tonight for a summary")
+    assert _run(r, U(4, 10), db)["action"] == "final"
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert "writing" not in rep["stages"] and world["narratives"] == []
+    assert rep["stages"]["narrative"] == {"status": "skipped", "reason": "Not enough data tonight for a summary"}
+
+
 def test_a_block_not_built_yet_is_not_available_yet(db, world, monkeypatch):
     r = _restaurant(db)
     _labor_in(db, r.id)
@@ -412,9 +490,10 @@ def test_the_sweep_runs_each_restaurant_past_its_own_close(db, world):
     assert store.get_report(chicago.id, DAY, db_path=db)["status"] == "final"
     # 9:10pm in LA: Tuesday hasn't closed there. The night that most
     # recently closed is Monday's, which had no report — so it is caught up
-    # (past its deadline, labor for it not on file: provisional, labelled).
+    # (past its deadline, sales in, labor for it not on file: final, labelled).
     assert store.get_report(la.id, DAY, db_path=db) is None
-    assert store.get_report(la.id, DAY - timedelta(days=1), db_path=db)["status"] == "provisional"
+    monday = store.get_report(la.id, DAY - timedelta(days=1), db_path=db)
+    assert monday["status"] == "final" and monday["facts"]["missing"] == [block_labor.REASON_SYNC_PENDING]
     for r in (off, nopos):
         assert store.list_reports(r.id, db_path=db) == [], r.name
     pipeline.run_sweep(now_utc=U(6, 10), db_path=db)
@@ -423,9 +502,11 @@ def test_the_sweep_runs_each_restaurant_past_its_own_close(db, world):
 
 def test_the_sweep_picks_up_retries_and_late_data_when_they_come_due(db, world):
     r = _restaurant(db)
-    pipeline.run_sweep(now_utc=U(9, 5), db_path=db)           # deadline: provisional
-    assert store.get_report(r.id, DAY, db_path=db)["status"] == "provisional"
     _labor_in(db, r.id)
+    world["closed"] = False
+    pipeline.run_sweep(now_utc=U(9, 5), db_path=db)           # deadline, no POS close: provisional
+    assert store.get_report(r.id, DAY, db_path=db)["status"] == "provisional"
+    world["closed"] = True
     assert pipeline.run_sweep(now_utc=U(9, 30), db_path=db)["restaurants"] == 0   # not due yet
     pipeline.run_sweep(now_utc=U(10, 5), db_path=db)
     assert store.get_report(r.id, DAY, db_path=db)["version"] == 2

@@ -26,11 +26,17 @@ THE RULES, each one pinned by tests/test_dsr_pipeline.py:
   taken as closed CLOSE_GRACE_MINUTES after the close time.
 * A block still AWAITING is collected again with backoff (BACKOFF_MINUTES,
   the last step repeating) until the restaurant's deadline
-  (restaurants.dsr_deadline_hour, local, default 4am). At the deadline the
-  night goes out PROVISIONAL with the missing blocks named.
+  (restaurants.dsr_deadline_hour, local, default 4am) — so the 3am labor
+  sync usually makes the report. The closeout never holds a night open
+  (NEVER_HOLDS) but is re-read on every pass while it is.
+* At the deadline only SALES decides (REQUIRED_BLOCKS): still awaiting →
+  PROVISIONAL; in → FINAL, with every other block still awaiting labelled by
+  its reason in facts.missing (Food's item sales land at 5am Central, after
+  most deadlines — that is a final night saying so, not a provisional one).
 * A provisional night is re-checked every LATE_DATA_MINUTES for
-  LATE_DATA_HOURS. When an awaiting block has become ready the night gets a
-  new VERSION — the old one is never edited.
+  LATE_DATA_HOURS. When sales has arrived the night gets a new VERSION — the
+  old one is never edited. Nothing else makes a version on its own; the
+  owner can re-run a night (Close day with rerun, or `force`).
 * Failures are bounded. A collector that raises is captured (ops.capture,
   so it reaches the admin console) and its block retried as awaiting; after
   MAX_FAILURES it is marked unavailable rather than holding the night. The
@@ -76,6 +82,19 @@ SWEEP_LOOKBACK_DAYS = 4            # nights the sweep still finishes or re-check
 
 NOT_AVAILABLE_YET = "Not available yet"
 CLAIM_JOB = "dsr"
+
+# The blocks a night cannot go out FINAL without. Only sales: Food's item
+# sales sync at 5am Central, after a 4am local deadline, so a Food block
+# still awaiting then would make every recipe restaurant's night provisional.
+# A night is provisional only while one of these is awaiting at the
+# deadline, and only these arriving late make a new version — Food catching
+# up the next morning never does.
+REQUIRED_BLOCKS = ("sales",)
+
+# Blocks that never hold a night open (their absence is "unavailable", not
+# "coming") but are read again on every pass while the night is still open,
+# so a closeout filed at 11:45 still makes the report.
+NEVER_HOLDS = ("closeout",)
 
 # Owner-facing words for the narrative's outcome.
 NO_SUMMARY_SALES_PENDING = "Not enough data tonight for a summary — sales are still syncing"
@@ -430,7 +449,8 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     if status != "collecting":
         store.set_stage(report_id, "collecting", db_path=db)
     blocks = dict((facts.get("blocks") or {}))
-    todo = [n for n in dsr.BLOCKS if n not in blocks or blocks[n].get("status") == dsr.AWAITING]
+    todo = [n for n in dsr.BLOCKS if n not in blocks or blocks[n].get("status") == dsr.AWAITING
+            or (n in NEVER_HOLDS and blocks[n].get("status") != dsr.READY)]
     if ctx.day_closed is None and "sales" in todo and not (probed and "sales" in probed) \
             and not (carried and "sales" in carried):
         # A resumed night: re-read the close only when sales still needs it.
@@ -459,20 +479,28 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     if crashed_any:
         store.note(report_id, "crashes", crashes, db_path=db)
 
+    # Until the deadline, anything still coming is worth waiting for (the
+    # 3am labor sync usually makes it); a block that never holds is not.
     awaiting = [n for n in dsr.BLOCKS if (ctx.blocks.get(n) or {}).get("status") == dsr.AWAITING]
-    if awaiting and not past_deadline:
+    holding = [n for n in awaiting if n not in NEVER_HOLDS]
+    if holding and not past_deadline:
         attempts = int(report.get("attempts") or 0)
         wait = BACKOFF_MINUTES[min(attempts, len(BACKOFF_MINUTES) - 1)]
         nxt = now_utc + timedelta(minutes=wait)
         store.schedule_retry(report_id, nxt, db_path=db, count=True)
-        return _result("retry", store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
+        return _result("retry", store.get_report_by_id(report_id, db_path=db), awaiting=holding,
                        next_attempt_at=_stamp(nxt))
 
     # writing: one narrative, only over a night whose sales are in.
     sales_status = (ctx.blocks.get("sales") or {}).get("status")
     if sales_status == dsr.READY:
-        store.set_stage(report_id, "writing", db_path=db)
-        written = _write(ctx, store.get_report_by_id(report_id, db_path=db)["facts"])
+        facts_now = store.get_report_by_id(report_id, db_path=db)["facts"]
+        able, why = _can_write(facts_now)
+        if able:
+            store.set_stage(report_id, "writing", db_path=db)
+            written = _write(ctx, facts_now)
+        else:
+            written = {"ok": False, "narrative": None, "reason": why}
         store.save_narrative(report_id, written["narrative"], db_path=db)
         store.note(report_id, "narrative", {"status": "written" if written["ok"] else "skipped",
                                             "reason": written["reason"]}, db_path=db)
@@ -481,26 +509,51 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
         store.note(report_id, "narrative", {"status": "skipped", "reason": NO_SUMMARY_SALES_PENDING
                                             if sales_status == dsr.AWAITING else NO_SUMMARY_NO_SALES}, db_path=db)
 
-    terminal = "provisional" if awaiting else "final"
+    # Provisional only when a REQUIRED block is still missing; every other
+    # block still awaiting goes out labelled with its reason (facts.missing).
+    required_missing = [n for n in REQUIRED_BLOCKS if n in awaiting]
+    terminal = "provisional" if required_missing else "final"
     store.set_stage(report_id, terminal, db_path=db)
-    nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if awaiting else None
+    nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if required_missing else None
     store.schedule_retry(report_id, nxt, db_path=db, count=False)
-    return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting)
+    return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
+                   required_missing=required_missing)
+
+
+def _can_write(facts):
+    """(able, reason) from narrative.can_write when it has one — so a night
+    the narrative would refuse never shows "Writing the summary"."""
+    import ops
+    try:
+        mod = _import("dsr.narrative")
+        if mod is None:
+            return False, NOT_AVAILABLE_YET
+        check = getattr(mod, "can_write", None)
+        if check is None:
+            return True, None
+        able, reason = check(facts)
+        return bool(able), (None if able else str(reason or NO_SUMMARY_FAILED)[:300])
+    except Exception as e:
+        ops.capture(e, job="dsr_narrative", context="can_write")
+        return True, None            # write() itself decides, and never raises
 
 
 def _upgrade(restaurant, previous, trigger, now_utc, db):
-    """A provisional night's late-data check: collect only the blocks it was
-    missing. Nothing new → look again later. Something landed → a new
-    version: the blocks that were already there carried over with their
-    original collection times, the late ones as they are now, the summary
-    rewritten over the complete facts."""
+    """A provisional night's late-data check. A night is provisional only
+    because a REQUIRED block (sales) was missing at the deadline, so only
+    that block arriving makes a new version: the blocks that were missing
+    are collected (and the closeout re-read); when sales is still not in,
+    look again later. When it is, a new version: the blocks that were
+    already there carried over with their original collection times, the
+    late ones as they are now, the summary written over the complete facts."""
     day = _as_date(previous["business_date"])
     if local_time(restaurant, now_utc) > deadline_at(restaurant, day) + timedelta(hours=LATE_DATA_HOURS):
         store.schedule_retry(previous["id"], None, db_path=db, count=False)
         return _result("expired", previous)
     blocks = (previous.get("facts") or {}).get("blocks") or {}
     awaiting = [n for n in dsr.BLOCKS if (blocks.get(n) or {}).get("status") == dsr.AWAITING]
-    if not awaiting:
+    required = [n for n in REQUIRED_BLOCKS if n in awaiting]
+    if not required:
         store.schedule_retry(previous["id"], None, db_path=db, count=False)
         return _result("none", previous)
     ctx = dsr.Context(restaurant, day, db_path=db, now_utc=now_utc, trigger=TRIGGER_LATE)
@@ -509,11 +562,14 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
     if "sales" in awaiting:
         closed_by = day_closed(restaurant, day, now_utc, trigger)
         ctx.day_closed = closed_by or False
+    recheck = awaiting + [n for n in NEVER_HOLDS if n not in awaiting
+                          and (blocks.get(n) or {}).get("status") != dsr.READY]
     probed = {}
-    for name in awaiting:
-        probed[name], _crashed = _collect(name, ctx)
-        ctx.blocks[name] = probed[name]
-    if not any(b["status"] == dsr.READY for b in probed.values()):
+    for name in dsr.BLOCKS:
+        if name in recheck:
+            probed[name], _crashed = _collect(name, ctx)
+            ctx.blocks[name] = probed[name]
+    if not all(probed[n]["status"] == dsr.READY for n in required):
         nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES)
         store.schedule_retry(previous["id"], nxt, db_path=db, count=False)
         return _result("still_awaiting", previous, next_attempt_at=_stamp(nxt))
@@ -541,19 +597,22 @@ def _spawn(fn):
     threading.Thread(target=fn, name="dsr-close-day", daemon=True).start()
 
 
-def start_manual(restaurant, business_date, db_path=None):
-    """Close day, now. Returns {"started": bool, ...} at once; the night runs
-    on a background thread and the app follows it on /dsr/<date>/status."""
+def start_manual(restaurant, business_date, db_path=None, rerun=False):
+    """Close day, now — or, with `rerun`, the owner re-running a finished
+    night as a new version. Returns {"started": bool, ...} at once; the night
+    runs on a background thread and the app follows it on
+    /dsr/<date>/status."""
     import ops
     db = _db(db_path)
     day = _as_date(business_date)
     latest = store.get_report(restaurant.id, day, db_path=db)
-    if latest and latest["status"] == "final":
+    if latest and latest["status"] == "final" and not rerun:
         return {"started": False, "status": "final", "version": latest["version"]}
 
     def go():
         try:
-            run_night(restaurant, day, TRIGGER_MANUAL, db_path=db_path)
+            run_night(restaurant, day, TRIGGER_MANUAL, db_path=db_path,
+                      force=bool(rerun and latest and latest["status"] in dsr.TERMINAL_STAGES))
         except Exception as e:
             ops.capture(e, job="dsr_manual", context=f"restaurant_id={restaurant.id} business_date={day}")
     _spawn(go)

@@ -234,6 +234,21 @@ def test_close_day_starts_tonight_now(client, db, monkeypatch, fake_night):
     assert rep["facts"]["blocks"]["sales"]["metrics"]["net"] == 950.0
 
 
+def test_only_the_owner_can_rerun_a_finished_night(client, db, monkeypatch, fake_night):
+    import closeout
+    rid = _rid(db)
+    today = closeout.business_date_for(get_restaurant(rid, db_path=db))
+    _report(db, rid, day=today)
+    _as(monkeypatch, rid, "manager")
+    assert client.post("/api/dsr/close", json={"rerun": True}).status_code == 403
+    already = client.post("/api/dsr/close", json={})
+    assert already.status_code == 200 and already.get_json()["started"] is False
+    _as(monkeypatch, rid, "client")
+    assert client.post("/api/dsr/close", json={"rerun": True}).status_code == 202
+    assert [v["version"] for v in store.versions(rid, today, db_path=db)] == [1, 2]
+    assert store.get_report(rid, today, db_path=db)["trigger"] == "manual"
+
+
 def test_close_day_only_for_tonight_or_the_night_before(client, db, monkeypatch, fake_night):
     import closeout
     rid = _rid(db)

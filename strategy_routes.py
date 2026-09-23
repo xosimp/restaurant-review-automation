@@ -2439,7 +2439,8 @@ def _do_dsr_status(u, day):
 def _do_dsr_close(u):
     """Close day, now: the night runs on a background thread and the app
     follows /dsr/<date>/status. Tonight's business date, or the one before
-    (a close pressed after the late-close window rolled over)."""
+    (a close pressed after the late-close window rolled over). `rerun`
+    re-runs a finished night as a new version — the owner's call only."""
     from datetime import timedelta
     from dsr import pipeline
     from models import get_restaurant
@@ -2450,14 +2451,19 @@ def _do_dsr_close(u):
     if not r or not getattr(r, "dsr_enabled", 1):
         return {"ok": False, "error": "The daily report is switched off for this location."}, 409
     import closeout
+    from dsr import access
     today = closeout.business_date_for(r)
-    raw = _body().get("date")
+    body = _body()
+    raw = body.get("date")
     d = _dsr_day(raw) if raw else today
     if d is None or d not in (today, today - timedelta(days=1)):
         return {"ok": False, "error": f"Only tonight ({mdy(today)}) or the night before can be closed here."}, 400
+    rerun = bool(body.get("rerun"))
+    if rerun and _dsr_view(u) != access.OWNER:
+        return {"ok": False, "error": "Only the owner can re-run a finished night."}, 403
     if _limited(u, "dsr_close", 6, 600):
         return _SLOW_DOWN
-    out = pipeline.start_manual(r, d)
+    out = pipeline.start_manual(r, d, rerun=rerun)
     return {"ok": True, "business_date": d.isoformat(), "label": mdy(d), **out}, (202 if out.get("started") else 200)
 
 

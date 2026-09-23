@@ -1069,7 +1069,7 @@ RUNNABLE_JOBS = {
     "restore_drill":           {"cadence": "2nd of Jan / Apr / Jul / Oct, after the 2am backup", "what": "Restore the newest snapshot to scratch and prove it opens, migrates and kept its tokens", "target": ("scheduler", "run_restore_drill")},
     # Safe to run on demand: every night claims (restaurant, date, version)
     # and a finished version is never re-run, so a second pass does nothing.
-    "dsr_sweep":               {"cadence": "every 10 minutes", "what": "Nightly DSR: past each close, poll the POS close, collect, write, finalise (provisional at the deadline, v2 when late data lands)", "target": ("dsr.pipeline", "run_sweep")},
+    "dsr_sweep":               {"cadence": "every 10 minutes", "what": "Nightly DSR: past each close, poll the POS close, collect, write, finalise (provisional only when sales are missing at the deadline; v2 when they land)", "target": ("dsr.pipeline", "run_sweep")},
 }
 
 
