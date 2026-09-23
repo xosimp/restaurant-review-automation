@@ -89,9 +89,7 @@ def _tell_owners_what_worked(results, db_path):
         try:
             import outcomes as _outcomes
             dollars = abs(float(row["dollars_monthly"]))
-            body = (f"{row.get('title') or 'The change you made'}: "
-                    f"{row.get('metric_label') or row.get('metric')} improved over the "
-                    f"window you set. {_outcomes.CAUSATION_CAVEAT}")
+            body = _outcomes.win_message(row)
             if _reach(rid, "outcome_achieved",
                       f"That one worked — about ${dollars:,.0f}/month", body,
                       {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},

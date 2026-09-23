@@ -311,10 +311,15 @@ def test_home_recommendations_carry_confidence_without_changing_their_shape(db_p
     seen = {}
     monkeypatch.setattr(intelligence, "confidence_for", lambda r, kind, metric=None, restaurant=None, db_path=None:
                         seen.setdefault(kind, {"score": 0.3, "band": "low", "caution": "Low confidence — test.", "factors": []}))
-    c = home_brief._confidence_for(rid, "trim_day:Monday", "labor_pct", models.get_restaurant(rid, db_path=db_path))
-    assert c == {"score": 0.3, "band": "low", "caution": "Low confidence — test."} and "trim_day" in seen
+    # One confidence per card, from its own evidence: the kind's score is
+    # read (so it can adjust the card) but never replaces the card's band.
+    c = home_brief._card_confidence(rid, "trim_day:Monday", "labor_pct", models.get_restaurant(rid, db_path=db_path),
+                                    "medium", "four weeks of shifts")
+    assert "trim_day" in seen
+    assert c["band"] == "medium" and c["reason"] == "four weeks of shifts" and c["adjusted"] is None
     monkeypatch.setattr(intelligence, "confidence_for", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    assert home_brief._confidence_for(rid, "x:y", None, None) is None            # never fails the brief
+    c = home_brief._card_confidence(rid, "x:y", None, None, "high", "measured")
+    assert c["band"] == "high"                                                   # never fails the brief
 
 
 # ── jobs: bounded, resumable, and the learning pass end to end ───────────────
