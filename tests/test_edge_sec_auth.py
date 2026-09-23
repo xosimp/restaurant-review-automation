@@ -144,29 +144,29 @@ def _must_reset(db_path, uid):
 
 # ── 2FA pending token: the user id inside it ─────────────────────────────────
 
-def test_the_unedited_pending_token_signs_the_manager_in_as_the_manager(client, db_path):
+def test_the_unedited_pending_token_signs_the_manager_in_as_the_manager(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"}).get_json()
-    code = get_restaurant(rid, db_path=db_path).two_fa_code
+    code = sent["2fa"][-1][1]
     v = client.post("/mobile/api/verify-2fa", json={"pending_token": r["pending_token"], "code": code}).get_json()
     assert v["ok"] is True
     assert get_session_user(v["token"], db_path=db_path)["id"] == mgr
 
 
-def test_a_mobile_pending_token_edited_to_name_the_owner_is_refused(client, db_path):
+def test_a_mobile_pending_token_edited_to_name_the_owner_is_refused(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"}).get_json()
-    code = get_restaurant(rid, db_path=db_path).two_fa_code
+    code = sent["2fa"][-1][1]
     v = client.post("/mobile/api/verify-2fa",
                     json={"pending_token": _swap_uid(r["pending_token"], owner), "code": code})
     assert v.status_code == 401
     assert not (v.get_json() or {}).get("token")
 
 
-def test_a_web_pending_token_edited_to_name_the_owner_is_refused(client, db_path):
+def test_a_web_pending_token_edited_to_name_the_owner_is_refused(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     pending = _pending_from_html(_login_form(client, "mgr", "mgrpass12"))
-    code = get_restaurant(rid, db_path=db_path).two_fa_code
+    code = sent["2fa"][-1][1]
     csrf = client.get_cookie("csrf_token").value
     resp = client.post("/verify-2fa", data={"pending_token": _swap_uid(pending, owner), "code": code,
                                             "next_url": "/", "csrf_token": csrf})
@@ -174,12 +174,12 @@ def test_a_web_pending_token_edited_to_name_the_owner_is_refused(client, db_path
     assert tok is None or get_session_user(tok.value, db_path=db_path)["id"] != owner
 
 
-def test_a_swapped_pending_token_cannot_reach_a_login_locked_by_this_wasnt_me(client, db_path):
+def test_a_swapped_pending_token_cannot_reach_a_login_locked_by_this_wasnt_me(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     report = auth.create_login_report(owner, None, db_path=db_path)
     auth.consume_login_report(report, db_path=db_path)          # owner's password is now burned
     r = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"}).get_json()
-    code = get_restaurant(rid, db_path=db_path).two_fa_code
+    code = sent["2fa"][-1][1]
     v = client.post("/mobile/api/verify-2fa",
                     json={"pending_token": _swap_uid(r["pending_token"], owner), "code": code}).get_json()
     assert not v.get("ok")
@@ -417,7 +417,6 @@ def test_a_relative_next_is_honoured_after_login(client, db_path):
     assert r.status_code == 302 and r.headers["Location"].endswith("/reviews")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-22: an absolute ?next= after login is an open redirect")
 def test_an_absolute_next_is_ignored_after_login(client, db_path):
     _setup(db_path)
     r = _login_form(client, "owner", "ownerpass1", next_url="https://evil.example/phish")
@@ -425,7 +424,6 @@ def test_an_absolute_next_is_ignored_after_login(client, db_path):
     assert "evil.example" not in r.headers["Location"]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-22: a protocol-relative ?next= after login is an open redirect")
 def test_a_protocol_relative_next_is_ignored_after_login(client, db_path):
     _setup(db_path)
     r = _login_form(client, "owner", "ownerpass1", next_url="//evil.example/phish")
@@ -433,12 +431,11 @@ def test_a_protocol_relative_next_is_ignored_after_login(client, db_path):
     assert "evil.example" not in r.headers["Location"]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-22: an absolute next_url after 2FA is an open redirect")
-def test_an_absolute_next_url_is_ignored_after_2fa(client, db_path):
+def test_an_absolute_next_url_is_ignored_after_2fa(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     pending = _pending_from_html(_login_form(client, "owner", "ownerpass1"))
     csrf = client.get_cookie("csrf_token").value
-    r = client.post("/verify-2fa", data={"pending_token": pending, "code": get_restaurant(rid, db_path=db_path).two_fa_code,
+    r = client.post("/verify-2fa", data={"pending_token": pending, "code": sent["2fa"][-1][1],
                                          "next_url": "https://evil.example/phish", "csrf_token": csrf})
     assert r.status_code == 302
     assert client.get_cookie("session_token") is not None      # the sign-in itself worked
@@ -447,7 +444,6 @@ def test_an_absolute_next_url_is_ignored_after_2fa(client, db_path):
 
 # ── one 2FA slot per restaurant ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-20: 2FA is one slot per restaurant; a second login's challenge clobbers the first")
 def test_two_logins_at_one_restaurant_can_complete_2fa_concurrently(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     first = client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"}).get_json()
@@ -457,7 +453,6 @@ def test_two_logins_at_one_restaurant_can_complete_2fa_concurrently(client, db_p
     assert v.status_code == 200 and v.get_json()["ok"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-20: pressing Send test code overwrites a sign-in's pending 2FA code")
 def test_sending_a_2fa_test_code_does_not_break_a_sign_in_in_progress(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     first = client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"}).get_json()
@@ -469,12 +464,26 @@ def test_sending_a_2fa_test_code_does_not_break_a_sign_in_in_progress(client, db
     assert v.status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-20/SEC-39: the emailed 2FA code is stored in plaintext on the restaurants row")
 def test_the_2fa_code_is_not_stored_verbatim(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"})
     code = sent["2fa"][-1][1]
     assert get_restaurant(rid, db_path=db_path).two_fa_code != code
+
+
+def test_no_2fa_challenge_row_holds_the_code_or_the_pending_secret(client, db_path, sent):
+    """Where the challenge now lives (two_fa_challenges): neither the code the
+    owner was sent nor the secret inside the pending token is in any column."""
+    rid, owner, mgr = _setup(db_path, two_fa=True)
+    r = client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"}).get_json()
+    code = sent["2fa"][-1][1]
+    secret = auth.read_pending_token(r["pending_token"])[2]
+    conn = models.get_conn(db_path)
+    rows = [dict(x) for x in conn.execute("SELECT * FROM two_fa_challenges").fetchall()]
+    conn.close()
+    assert len(rows) == 1
+    stored = " ".join(str(v) for v in rows[0].values())
+    assert code not in stored and secret not in stored
 
 
 # ── an owner session switched into a location ────────────────────────────────
@@ -534,7 +543,6 @@ def test_the_google_callback_never_reflects_the_error_parameter_unescaped(client
 
 # ── malformed JSON on the unauthenticated mobile endpoints ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-32: /mobile/api/login 500s on a JSON body that is a string or an array")
 @pytest.mark.parametrize("body", ['"x"', "[1]"])
 def test_the_mobile_login_answers_400_to_a_json_body_that_is_not_an_object(client, db_path, body):
     _setup(db_path)
@@ -542,7 +550,6 @@ def test_the_mobile_login_answers_400_to_a_json_body_that_is_not_an_object(clien
     assert r.status_code == 400
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-32: /mobile/api/verify-2fa 500s on a JSON body that is a string or an array")
 @pytest.mark.parametrize("body", ['"x"', "[1]"])
 def test_the_mobile_2fa_verify_answers_400_to_a_json_body_that_is_not_an_object(client, db_path, body):
     _setup(db_path)
@@ -552,7 +559,6 @@ def test_the_mobile_2fa_verify_answers_400_to_a_json_body_that_is_not_an_object(
 
 # ── side-effecting GETs, timing, stored tokens ───────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-34: GET /logout deletes the session, so any page can log a user out")
 def test_a_plain_get_to_logout_does_not_end_the_session(client, db_path):
     rid, owner, mgr = _setup(db_path)
     tok = create_session(owner, db_path=db_path)
@@ -561,7 +567,6 @@ def test_a_plain_get_to_logout_does_not_end_the_session(client, db_path):
     assert get_session_user(tok, db_path=db_path) is not None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-35: verify_password returns before hashing for an unknown username (timing enumeration)")
 def test_verify_password_pays_for_a_hash_even_for_an_unknown_username(db_path, monkeypatch):
     _setup(db_path)
     calls = []
@@ -624,7 +629,6 @@ def test_google_sso_with_a_verified_email_signs_the_owner_in(client, db_path, mo
     assert client.get_cookie("session_token") is not None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-38: Google SSO links and signs in on an email match without reading verified_email")
 def test_google_sso_refuses_an_unverified_provider_email(client, db_path, monkeypatch):
     rid, owner, mgr = _setup(db_path)
     r = _google_sso(client, monkeypatch, verified=False)
@@ -635,7 +639,6 @@ def test_google_sso_refuses_an_unverified_provider_email(client, db_path, monkey
     assert not linked
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-38: Sign in with Apple links on an email match without reading email_verified")
 def test_apple_signin_refuses_an_unverified_provider_email(client, db_path, monkeypatch):
     rid, owner, mgr = _setup(db_path)
     monkeypatch.setattr(mobile_api, "_verify_apple_identity_token",

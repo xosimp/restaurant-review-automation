@@ -72,6 +72,27 @@ def _clear_attempts(ip, username=None, clear_key=False):
 # this confirms the submitted value actually matches the cookie set for this
 # browser, instead of just checking that *a* token was generated somewhere.
 
+def safe_next_url(value, default="/"):
+    """Where to send a browser after sign-in: a path on this site, or the
+    default. ?next= and the 2FA form's next_url are attacker-writable, and an
+    absolute (https://evil.example) or protocol-relative (//evil.example)
+    value turned the real login page into a redirect to a look-alike
+    (SEC-22). Backslashes count as slashes because browsers treat /\\host
+    as //host."""
+    v = (value or "").strip()
+    if not v or not v.startswith("/"):
+        return default
+    if v.startswith("//") or v.startswith("/\\") or "\\" in v[:3]:
+        return default
+    if any(ord(c) < 32 or ord(c) == 127 for c in v):
+        return default
+    from urllib.parse import urlsplit
+    parts = urlsplit(v.replace("\\", "/"))
+    if parts.scheme or parts.netloc:
+        return default
+    return v
+
+
 def _csrf_ok():
     import hmac as _hmac_csrf
     cookie_val = request.cookies.get("csrf_token", "")
@@ -203,7 +224,7 @@ def login():
         if user.get("must_reset_password"):
             return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
                 error="This account needs a password reset before signing in — use Forgot password below.")
-        next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
+        next_url = safe_next_url(request.args.get("next"), "/admin" if user["is_admin"] else "/")
 
         # Check if 2FA is enabled and device not remembered
         try:
@@ -220,16 +241,14 @@ def login():
 
         if _2fa_on and not _device_ok:
             # Generate and send 2FA code
-            import random, datetime as _dt2
             from models import update_restaurant, get_restaurant
-            code = str(__import__("secrets").randbelow(900000) + 100000)
-            expires = (_dt2.datetime.now() + _dt2.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-            # pending is a per-login-attempt secret bound into the token AND stored
-            # server-side, so verify-2fa can confirm the submitted token was actually
-            # issued by this login — not just that it decodes to a valid restaurant_id.
-            import secrets as _sec3
-            pending = _sec3.token_hex(24)
-            update_restaurant(_rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
+            # pending is a per-login-attempt secret bound into the token AND
+            # stored (hashed) server-side with this attempt's own code, so
+            # verify-2fa can confirm the submitted token was actually issued by
+            # this login, and a second sign-in at the same restaurant gets its
+            # own challenge instead of overwriting this one (SEC-20).
+            from auth import issue_two_fa_challenge as _itfc
+            pending, code = _itfc(_rid, user["id"], "login")
             # Send code via the restaurant's chosen 2FA method
             try:
                 rest2 = get_restaurant(_rid)
@@ -297,14 +316,13 @@ def login():
 @auth_bp.route("/verify-2fa", methods=["GET","POST"])
 def verify_2fa():
     import flask as _fl3
-    import datetime as _dt3
     import hmac as _hmac_2fa
     from models import get_restaurant, update_restaurant
     if request.method == "POST":
         ip = _get_client_ip()
         pending_token = request.form.get("pending_token","")
         code_entered  = request.form.get("code","").strip()
-        next_url      = request.form.get("next_url", "/")
+        next_url      = safe_next_url(request.form.get("next_url"), "/")
         remember      = request.form.get("remember_device","")
         # Rate-limit code-guessing attempts the same way /login is throttled —
         # this is the actual brute-force defense, since a 6-digit code only has
@@ -331,17 +349,12 @@ def verify_2fa():
         if not rest:
             return redirect("/login")
         # Confirm this token was actually issued by OUR login flow for this
-        # restaurant — not just a base64 blob with a guessed restaurant_id.
-        stored_pending = getattr(rest, "two_fa_pending", "") or ""
-        if not stored_pending or not _hmac_2fa.compare_digest(stored_pending, pending_secret):
+        # login at this restaurant — not just a base64 blob with a guessed
+        # restaurant_id — and has not been used yet.
+        from auth import two_fa_challenge_exists as _tfce, check_two_fa_code as _ctfc
+        if not _tfce(uid, pending_user_id, pending_secret):
             _record_failed_attempt("2fa:" + ip)
             return redirect("/login")
-        # Check code
-        now = _dt3.datetime.now()
-        try:
-            expires = _dt3.datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            expires = now
         import secrets as _sec5
         csrf4 = _sec5.token_hex(16)
         try:
@@ -351,8 +364,8 @@ def verify_2fa():
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
-        _otp_matches = rest.two_fa_code and _hmac_2fa.compare_digest(rest.two_fa_code, code_entered)
-        if not _otp_matches:
+        _otp_result = _ctfc(uid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+        if _otp_result == "wrong":
             from models import verify_and_consume_backup_code as _vcbc
             if not _vcbc(uid, code_entered):
                 _record_failed_attempt("2fa:" + ip)
@@ -361,7 +374,7 @@ def verify_2fa():
                     pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
                 resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
                 return resp_err
-        elif now > expires:
+        elif _otp_result != "ok":
             resp_exp = make_response(render_template('two_fa.html',
                 masked_email=masked, error="Code expired. Request a new one.",
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
@@ -369,7 +382,9 @@ def verify_2fa():
             return resp_exp
         # Code correct — clear it (and the pending secret, single-use) and create session
         _clear_attempts("2fa:" + ip, clear_key=True)
-        update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
+        # Single use: this sign-in's challenge ends here (and only this one).
+        from auth import end_two_fa_challenge as _etfc
+        _etfc(uid, pending_user_id, pending_secret)
         _fl3.session.pop("pending_uid", None)
         _fl3.session.pop("pending_token", None)
         _ip_2fa = _get_client_ip()
@@ -411,7 +426,6 @@ def verify_2fa():
 
 @auth_bp.route("/resend-2fa", methods=["POST"])
 def resend_2fa():
-    import random, datetime as _dt4, hmac as _hmac_r2fa
     from models import get_restaurant, update_restaurant
     ip = _get_client_ip()
     if _is_rate_limited("2fa-resend:" + ip):
@@ -433,13 +447,12 @@ def resend_2fa():
     if not rest:
         return jsonify(ok=False)
     # Only the holder of a token actually issued by login() can trigger a resend —
-    # otherwise this endpoint let anyone refresh any restaurant's 2FA code on demand.
-    stored_pending_r = getattr(rest, "two_fa_pending", "") or ""
-    if not stored_pending_r or not _hmac_r2fa.compare_digest(stored_pending_r, pending_secret_r):
+    # otherwise this endpoint let anyone refresh any restaurant's 2FA code on
+    # demand. The new code replaces this sign-in's code and nobody else's.
+    from auth import reissue_two_fa_code as _rtfc
+    code = _rtfc(uid, _pending_uid_r, pending_secret_r)
+    if not code:
         return jsonify(ok=False, error="Session expired — please log in again")
-    code = str(__import__("secrets").randbelow(900000) + 100000)
-    expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-    update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
     try:
         if rest.two_fa_method == "sms" and rest.owner_phone:
             from notify import send_2fa_sms
@@ -453,8 +466,19 @@ def resend_2fa():
         pass
     return jsonify(ok=True)
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["GET", "POST"])
 def logout():
+    """Sign out. A GET only asks: it used to delete the session, so any page
+    anywhere could sign a user out with an <img src=/logout> (SEC-34). The
+    session cookie is SameSite=Lax, so the POST below is only ever
+    authenticated when it comes from this site's own form."""
+    if request.method != "POST":
+        if not request.cookies.get("session_token"):
+            return redirect("/login")
+        return _SIMPLE_PAGE % ("<h1>Sign out?</h1><p>You'll need your username and password (and your "
+                               "two-factor code, if it's on) to sign back in.</p><form method='post' "
+                               "action='/logout'><button type='submit' class='cbtn cbtn-primary'>Sign out"
+                               "</button></form><p style='margin-top:16px'><a href='/'>Back to the dashboard</a></p>")
     token = request.cookies.get("session_token")
     if token:
         delete_session(token)
@@ -467,7 +491,6 @@ def logout():
 @login_required
 def send_2fa_test(current_user):
     """Send a test 2FA code to verify email or phone before enabling."""
-    import random, datetime as _dt5
     from models import get_restaurant, update_restaurant
     rest = get_restaurant(current_user["restaurant_id"])
     if not rest:
@@ -481,9 +504,10 @@ def send_2fa_test(current_user):
         email = rest.owner_email or ""
         if not email or "@" not in email:
             return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
-    code = str(__import__("secrets").randbelow(900000) + 100000)
-    expires = (_dt5.datetime.now() + _dt5.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-    update_restaurant(current_user["restaurant_id"], {"two_fa_code": code, "two_fa_expires": expires})
+    # This login's own setup challenge: it never touches a sign-in someone
+    # else has in progress at this restaurant (SEC-20).
+    from auth import issue_two_fa_challenge as _itfc_t
+    _pending_t, code = _itfc_t(current_user["restaurant_id"], current_user["id"], "setup")
     if method == "sms":
         try:
             from notify import send_2fa_sms
@@ -505,33 +529,20 @@ def send_2fa_test(current_user):
 @login_required
 def verify_2fa_setup(current_user):
     """Verify the test code and enable 2FA."""
-    import datetime as _dt6
     from models import get_restaurant, update_restaurant
     data = request.get_json() or {}
     code = data.get("code", "").strip()
     rest = get_restaurant(current_user["restaurant_id"])
     if not rest:
         return jsonify(ok=False, error="Not found")
-    if rest.two_fa_code != code:
+    from auth import check_two_fa_code as _ctfc_s
+    result = _ctfc_s(current_user["restaurant_id"], current_user["id"], code, purpose="setup")
+    if result in ("wrong", "missing"):
         return jsonify(ok=False, error="Incorrect code. Try again.")
-    try:
-        exp_str = (rest.two_fa_expires or "").strip()
-        expired = True
-        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]:
-            try:
-                expires = _dt6.datetime.strptime(exp_str, fmt)
-                expired = _dt6.datetime.now() > expires
-                break
-            except Exception:
-                continue
-        if expired:
-            return jsonify(ok=False, error="Code expired. Click resend.")
-    except Exception:
+    if result == "expired":
         return jsonify(ok=False, error="Code expired. Click resend.")
     method = data.get("method") if data.get("method") in ("email", "sms") else "email"
-    update_restaurant(current_user["restaurant_id"], {
-        "two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method
-    })
+    update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 1, "two_fa_method": method})
     return jsonify(ok=True)
 
 @auth_bp.route("/api/toggle-2fa", methods=["POST"])
@@ -1037,19 +1048,26 @@ def google_sso_callback():
     if not email:
         return _finish(error="no_email")
 
-    # Match against users table — try google_id column first, fall back to email only
+    # Match a login already linked to this Google account first. An email
+    # match links the Google account to that login for good, so it only
+    # counts when Google says it verified the address (SEC-38): an unverified
+    # Google account carrying the owner's email used to be linked to, and
+    # signed in as, the owner.
+    email_verified = info.get("verified_email") is True or str(info.get("verified_email", "")).lower() == "true"
     conn = _gc()
-    try:
+    row = None
+    if google_id:
         row = conn.execute(
-            "SELECT * FROM users WHERE (LOWER(email)=? OR google_id=?) AND is_active=1 LIMIT 1",
-            (email, google_id)
+            "SELECT * FROM users WHERE google_id=? AND is_active=1 LIMIT 1", (google_id,)
         ).fetchone()
-    except Exception:
-        # google_id column may not exist yet — fall back to email match only
+    if not row and email_verified:
         row = conn.execute(
             "SELECT * FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1",
             (email,)
         ).fetchone()
+    if not row and not email_verified:
+        conn.close()
+        return _finish(error="email_unverified")
     if row:
         try:
             if not row["google_id"]:
@@ -1129,6 +1147,13 @@ def gmb_disconnect(current_user):
 
 
 
+_SIMPLE_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cavnar AI</title><style>body{margin:0;background:#0c0c0c;color:#f0ebe0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif}
+.card{max-width:460px;margin:12vh auto;padding:32px 28px;background:#121212;border:1px solid #262626;border-radius:16px}
+h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9;margin:0 0 12px}a{color:#e8956a}
+.cbtn{display:inline-block;margin-top:8px;padding:12px 20px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:15px;font-weight:700;cursor:pointer}</style></head><body><div class="card">%s</div></body></html>"""
+
+
 @auth_bp.route("/auth/not-me/<token>", methods=["GET", "POST"])
 def login_not_me(token):
     """The login email's 'This wasn't me' button. Signs the account out
@@ -1140,11 +1165,7 @@ def login_not_me(token):
     moment the login email arrived (SEC-7, SEC-34). The button POSTs."""
     from auth import consume_login_report
     from markupsafe import escape as _esc_nm
-    page = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cavnar AI</title><style>body{margin:0;background:#0c0c0c;color:#f0ebe0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif}
-.card{max-width:460px;margin:12vh auto;padding:32px 28px;background:#121212;border:1px solid #262626;border-radius:16px}
-h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9;margin:0 0 12px}a{color:#e8956a}
-.cbtn{display:inline-block;margin-top:8px;padding:12px 20px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:15px;font-weight:700;cursor:pointer}</style></head><body><div class="card">%s</div></body></html>"""
+    page = _SIMPLE_PAGE
     if request.method != "POST":
         return page % ("<h1>Wasn't you?</h1><p>This signs your account out on every device, forgets every "
                        "remembered device, and emails you a link to set a new password. Nobody can sign in "

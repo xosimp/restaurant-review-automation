@@ -227,11 +227,38 @@ def _start_2fa_login(client, db_path, rid, username="alice", password="correct-h
     return html[start:end]
 
 
+_ISSUED_2FA_CODES = []
+
+
+@pytest.fixture(autouse=True)
+def _capture_issued_2fa_codes(monkeypatch):
+    """The code a 2FA challenge was issued with, as the owner would read it
+    in the email or text. It is only stored as a keyed hash (SEC-20/SEC-39),
+    so the database can no longer hand it back; the routes import these two
+    functions from auth at call time, so wrapping them here sees every code."""
+    _ISSUED_2FA_CODES.clear()
+    real_issue, real_reissue = auth.issue_two_fa_challenge, auth.reissue_two_fa_code
+
+    def issue(restaurant_id, user_id, purpose="login", **kw):
+        pending, code = real_issue(restaurant_id, user_id, purpose, **kw)
+        _ISSUED_2FA_CODES.append((restaurant_id, code))
+        return pending, code
+
+    def reissue(restaurant_id, user_id, pending, **kw):
+        code = real_reissue(restaurant_id, user_id, pending, **kw)
+        if code:
+            _ISSUED_2FA_CODES.append((restaurant_id, code))
+        return code
+    monkeypatch.setattr(auth, "issue_two_fa_challenge", issue)
+    monkeypatch.setattr(auth, "reissue_two_fa_code", reissue)
+    yield
+    _ISSUED_2FA_CODES.clear()
+
+
 def _stored_2fa_code(db_path, rid):
-    conn = get_conn(db_path)
-    row = conn.execute("SELECT two_fa_code FROM restaurants WHERE id=?", (rid,)).fetchone()
-    conn.close()
-    return row["two_fa_code"]
+    """The most recent 2FA code issued for this restaurant."""
+    codes = [code for r, code in _ISSUED_2FA_CODES if r == rid]
+    return codes[-1] if codes else None
 
 
 def test_verify_2fa_with_correct_code_succeeds(client, db_path):
@@ -263,10 +290,9 @@ def test_verify_2fa_with_expired_code_fails(client, db_path):
     rid = _restaurant(db_path)
     pending_token = _start_2fa_login(client, db_path, rid)
     code = _stored_2fa_code(db_path, rid)
-    expired = (datetime.now() - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
-    update_restaurant(rid, {}, db_path=db_path)  # no-op, keeps pattern consistent
+    # The challenge's clock is UTC, in SQL; age this sign-in's code past it.
     conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET two_fa_expires=? WHERE id=?", (expired, rid))
+    conn.execute("UPDATE two_fa_challenges SET expires_at=datetime('now', '-1 minute') WHERE restaurant_id=?", (rid,))
     conn.commit()
     conn.close()
     csrf = client.get_cookie("csrf_token").value
@@ -279,8 +305,9 @@ def test_verify_2fa_with_expired_code_fails(client, db_path):
 
 
 def test_verify_2fa_code_is_single_use(client, db_path):
-    """A correct code can't be replayed a second time — the route clears
-    two_fa_code on success, so re-submitting the same code afterward fails."""
+    """A correct code can't be replayed a second time — the route deletes
+    this sign-in's challenge on success, so re-submitting the same code
+    afterward fails."""
     rid = _restaurant(db_path)
     pending_token = _start_2fa_login(client, db_path, rid)
     code = _stored_2fa_code(db_path, rid)

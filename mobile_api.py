@@ -152,7 +152,11 @@ def mobile_apple_signin():
     row = conn.execute(
         "SELECT * FROM users WHERE apple_user_id=? AND is_active=1 LIMIT 1", (apple_user_id,)
     ).fetchone()
-    if not row and email:
+    # An email match links this Apple ID to an existing login for good, so it
+    # only counts when Apple says it verified that address (SEC-38). Apple
+    # sends email_verified as a bool or as the string "true".
+    email_verified = str(payload.get("email_verified", "")).strip().lower() == "true"
+    if not row and email and email_verified:
         row = conn.execute(
             "SELECT * FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1", (email,)
         ).fetchone()
@@ -241,11 +245,10 @@ def mobile_login():
     device_ok = bool(device_token) and trusted_device_ok(rid, device_token)
 
     if two_fa_on and not device_ok:
-        code = str(__import__("secrets").randbelow(900000) + 100000)
-        expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-        import secrets as _secrets
-        pending = _secrets.token_hex(24)
-        update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
+        # This sign-in's own challenge — a second login at the restaurant no
+        # longer overwrites it (SEC-20). See auth.issue_two_fa_challenge.
+        from auth import issue_two_fa_challenge
+        pending, code = issue_two_fa_challenge(rid, user["id"], "login")
         masked = "your registered email"
         try:
             if rest.two_fa_method == "sms" and rest.owner_phone:
@@ -546,13 +549,13 @@ def mobile_verify_2fa():
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    stored_pending = rest.two_fa_pending or ""
-    if not stored_pending or not hmac.compare_digest(stored_pending, pending_secret):
+    from auth import two_fa_challenge_exists, check_two_fa_code, end_two_fa_challenge
+    if not two_fa_challenge_exists(rid, pending_user_id, pending_secret):
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    otp_matches = rest.two_fa_code and hmac.compare_digest(rest.two_fa_code, code_entered)
-    if not otp_matches:
+    otp_result = check_two_fa_code(rid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+    if otp_result == "wrong":
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
@@ -561,16 +564,11 @@ def mobile_verify_2fa():
         if not verify_and_consume_backup_code(rid, code_entered):
             _record_failed_attempt("2fa:" + ip)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
-    else:
-        try:
-            expires = datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            expires = datetime.now()
-        if datetime.now() > expires:
-            return jsonify(ok=False, error="Code expired. Request a new one."), 401
+    elif otp_result != "ok":
+        return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
-    update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
+    end_two_fa_challenge(rid, pending_user_id, pending_secret)
     # The login that passed the password step, not an arbitrary active user of
     # this restaurant. Re-checked against rid so a tampered token can't name
     # somebody from another restaurant.
@@ -4503,9 +4501,9 @@ def mobile_send_2fa_test(current_user):
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
-    code = str(__import__("secrets").randbelow(900000) + 100000)
-    expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-    update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
+    # This login's own setup challenge, never a sign-in in progress (SEC-20).
+    from auth import issue_two_fa_challenge
+    _pending, code = issue_two_fa_challenge(rid, current_user["id"], "setup")
     if method == "sms":
         phone = restaurant.owner_phone
         try:
@@ -4544,21 +4542,14 @@ def mobile_verify_2fa_setup(current_user):
     restaurant = get_restaurant(rid)
     if not restaurant:
         return jsonify(ok=False, error="Not found"), 404
-    if restaurant.two_fa_code != code:
+    from auth import check_two_fa_code
+    result = check_two_fa_code(rid, current_user["id"], code, purpose="setup")
+    if result in ("wrong", "missing"):
         return jsonify(ok=False, error="Incorrect code. Try again."), 400
-    expired = True
-    exp_str = (restaurant.two_fa_expires or "").strip()
-    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]:
-        try:
-            expires = datetime.strptime(exp_str, fmt)
-            expired = datetime.now() > expires
-            break
-        except Exception:
-            continue
-    if expired:
+    if result == "expired":
         return jsonify(ok=False, error="Code expired. Try again."), 400
     method = data.get("method") if data.get("method") in ("email", "sms") else "email"
-    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method})
+    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_method": method})
     from models import generate_backup_codes
     codes = generate_backup_codes(rid)
     _log_account_event(rid, "two_fa_enabled", current_user, detail=method)

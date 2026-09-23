@@ -226,6 +226,37 @@ CREATE TABLE IF NOT EXISTS login_prefs (
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, restaurant_id)
 );
+
+-- One emailed/texted 2FA code per sign-in attempt (purpose 'login') or per
+-- login setting 2FA up (purpose 'setup'). This used to be one slot of
+-- plaintext columns on the restaurants row (two_fa_code / two_fa_pending),
+-- so a manager signing in, or anyone pressing "Send test code", replaced the
+-- code the owner was typing at that moment (SEC-20), and anyone who could
+-- read the database could read a live code (SEC-39). Neither the pending
+-- secret nor the code is stored: both are keyed hashes.
+CREATE TABLE IF NOT EXISTS two_fa_challenges (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    purpose         TEXT    NOT NULL DEFAULT 'login',
+    pending_hash    TEXT    NOT NULL UNIQUE,
+    code_hash       TEXT    NOT NULL,
+    expires_at      TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_two_fa_challenges_user
+    ON two_fa_challenges(restaurant_id, user_id, purpose);
+
+-- Who opened each admin view-as session, and whether it may write. A view-as
+-- opened by a read-only support login used to be a full client session that
+-- could turn 2FA off or shorten review retention (SEC-12). Keyed by the
+-- session's token hash, as sessions itself is.
+CREATE TABLE IF NOT EXISTS view_as_sessions (
+    token_hash      TEXT    PRIMARY KEY,
+    opened_by       INTEGER,
+    read_only       INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -380,6 +411,19 @@ def init_auth(db_path: str = DB_PATH):
         # silently missing index is exactly the kind of thing that is only
         # discovered under load, so it must be visible at boot.
         print(f"[auth] index creation failed: {exc}")
+
+    # The 2FA code and pending secret used to live in plaintext on the
+    # restaurants row (SEC-20/SEC-39). Nothing reads those columns any more
+    # (two_fa_challenges replaced them); blank any value left from before so
+    # no live code sits in the file or in a backup of it.
+    try:
+        conn_2fa = sqlite3.connect(db_path)
+        conn_2fa.execute("UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
+                         "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
+        conn_2fa.commit()
+        conn_2fa.close()
+    except Exception:
+        pass  # restaurants not created yet (init_db runs first at boot)
 
     backfill_memberships(db_path=db_path)
     prune_login_history(db_path=db_path)
@@ -1141,6 +1185,167 @@ def read_pending_token(token: str):
         return None
 
 
+# ── admin view-as (SEC-12) ────────────────────────────────────────────────────
+
+def record_view_as_session(token: str, opened_by, read_only: bool, db_path: str = DB_PATH) -> None:
+    """Note who opened a view-as session and whether it is read-only (it is
+    when a support login opened it). get_session_user reads it back."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM view_as_sessions WHERE created_at < datetime('now', '-2 days')")
+        conn.execute("INSERT OR REPLACE INTO view_as_sessions (token_hash, opened_by, read_only) VALUES (?,?,?)",
+                     (hash_session_token(token), opened_by, 1 if read_only else 0))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _view_as_read_only(conn, token: str) -> bool:
+    try:
+        row = conn.execute("SELECT read_only FROM view_as_sessions WHERE token_hash=?",
+                           (hash_session_token(token),)).fetchone()
+    except Exception:
+        # No table means no support-opened session can exist in this file.
+        return False
+    return bool(row and row[0])
+
+
+def view_as_write_denied(user) -> bool:
+    """True when this request is a write through a read-only view-as."""
+    return bool(user and user.get("view_as_read_only")) and request.method not in ("GET", "HEAD", "OPTIONS")
+
+
+_VIEW_AS_READ_ONLY_MSG = "This is a read-only support view. Nothing was changed."
+
+
+# ── 2FA challenges (SEC-20) ─────────────────────────────────────────────────
+
+TWO_FA_CODE_MINUTES = 10
+
+
+def _two_fa_hash(kind: str, value: str) -> str:
+    import hmac as _h, hashlib as _hl
+    return _h.new(_pending_key(), f"2fa-{kind}:{value}".encode(), _hl.sha256).hexdigest()
+
+
+def _new_two_fa_code() -> str:
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def issue_two_fa_challenge(restaurant_id: int, user_id: int, purpose: str = "login",
+                           db_path: str = DB_PATH):
+    """Start a 2FA challenge for one login. Returns (pending_secret, code):
+    the code goes to the owner by email or text, the pending secret rides in
+    the signed pending token (make_pending_token). Each sign-in attempt gets
+    its own row, so two people signing in at one restaurant no longer
+    overwrite each other's code. A 'setup' challenge ("Send test code") is one
+    per login: a new one replaces that login's previous one and nobody
+    else's."""
+    pending = secrets.token_hex(24)
+    pending_hash = _two_fa_hash("pending", pending)
+    code = _new_two_fa_code()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM two_fa_challenges WHERE expires_at < datetime('now', '-1 day')")
+        if purpose != "login":
+            conn.execute("DELETE FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose=?",
+                         (restaurant_id, user_id, purpose))
+        conn.execute(
+            "INSERT INTO two_fa_challenges (restaurant_id, user_id, purpose, pending_hash, code_hash, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now', ?))",
+            (restaurant_id, user_id, purpose, pending_hash,
+             _two_fa_hash("code", pending_hash + ":" + code), f"+{TWO_FA_CODE_MINUTES} minutes"))
+        conn.commit()
+    finally:
+        conn.close()
+    return pending, code
+
+
+def _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose):
+    if pending is None:
+        return conn.execute(
+            "SELECT * FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose=? "
+            "ORDER BY id DESC LIMIT 1", (restaurant_id, user_id, purpose)).fetchone()
+    return conn.execute(
+        "SELECT * FROM two_fa_challenges WHERE pending_hash=? AND restaurant_id=? AND user_id=? AND purpose=?",
+        (_two_fa_hash("pending", pending), restaurant_id, user_id, purpose)).fetchone()
+
+
+def two_fa_challenge_exists(restaurant_id: int, user_id: int, pending: str,
+                            purpose: str = "login", db_path: str = DB_PATH) -> bool:
+    """True when this pending secret was issued by a sign-in for exactly this
+    login at this restaurant and has not been used yet."""
+    if not pending:
+        return False
+    conn = get_conn(db_path)
+    try:
+        return _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose) is not None
+    finally:
+        conn.close()
+
+
+def reissue_two_fa_code(restaurant_id: int, user_id: int, pending: str,
+                        db_path: str = DB_PATH):
+    """Resend: a fresh code (and a fresh 10 minutes) for the same sign-in.
+    Returns the new code, or None when the challenge is gone."""
+    if not pending:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = _find_two_fa_challenge(conn, restaurant_id, user_id, pending, "login")
+        if not row:
+            return None
+        code = _new_two_fa_code()
+        conn.execute("UPDATE two_fa_challenges SET code_hash=?, expires_at=datetime('now', ?) WHERE id=?",
+                     (_two_fa_hash("code", row["pending_hash"] + ":" + code), f"+{TWO_FA_CODE_MINUTES} minutes",
+                      row["id"]))
+        conn.commit()
+        return code
+    finally:
+        conn.close()
+
+
+def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str = None,
+                      purpose: str = "login", consume: bool = True, db_path: str = DB_PATH) -> str:
+    """'ok', 'wrong', 'expired' or 'missing' for a code typed against one
+    login's challenge. 'setup' challenges are looked up by login (pending
+    None); 'login' ones by the pending secret. A correct, unexpired code
+    deletes the challenge when consume is set, so it works exactly once."""
+    import hmac as _h
+    conn = get_conn(db_path)
+    try:
+        row = _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose)
+        if not row:
+            return "missing"
+        expected = _two_fa_hash("code", row["pending_hash"] + ":" + (code or "").strip())
+        if not _h.compare_digest(row["code_hash"], expected):
+            return "wrong"
+        expired = conn.execute("SELECT datetime('now') > ?", (row["expires_at"],)).fetchone()[0]
+        if expired:
+            return "expired"
+        if consume:
+            conn.execute("DELETE FROM two_fa_challenges WHERE id=?", (row["id"],))
+            conn.commit()
+        return "ok"
+    finally:
+        conn.close()
+
+
+def end_two_fa_challenge(restaurant_id: int, user_id: int, pending: str,
+                         db_path: str = DB_PATH) -> None:
+    """Delete one sign-in's challenge once it has been passed (single use),
+    whether it was passed with the code or with a backup code."""
+    if not pending:
+        return
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM two_fa_challenges WHERE pending_hash=? AND restaurant_id=? AND user_id=?",
+                     (_two_fa_hash("pending", pending), restaurant_id, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def create_staff_session(user_id: int, restaurant_id: int, ip_address: str = None,
                          user_agent: str = None, device_id: str = None,
                          db_path: str = DB_PATH) -> str:
@@ -1865,10 +2070,27 @@ def get_user_by_id(user_id: int, db_path: str = DB_PATH) -> Optional[dict]:
     conn.close()
     return dict(row) if row else None
 
+_DUMMY_HASH = None
+
+
+def _dummy_password_hash() -> str:
+    """A hash made with the same method and cost as a real one, of a random
+    secret nobody knows — what verify_password checks an unknown username's
+    password against so both branches cost the same."""
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = generate_password_hash(secrets.token_hex(16))
+    return _DUMMY_HASH
+
+
 def verify_password(username: str, password: str,
                     db_path: str = DB_PATH) -> Optional[dict]:
     user = get_user_by_username(username, db_path)
     if not user:
+        # Pay for one hash anyway (SEC-35). Returning here before any hashing
+        # made an unknown username answer in microseconds and a known one in
+        # ~100ms, so the login form enumerated usernames by timing.
+        check_password_hash(_dummy_password_hash(), password or "")
         return None
     if not check_password_hash(user["password_hash"], password):
         return None

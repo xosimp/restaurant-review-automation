@@ -106,6 +106,7 @@ func googleSignInErrorMessage(for code: String) -> String {
     case "state_mismatch": return "Security check failed — please try again."
     case "google_token_failed": return "Could not connect to Google. Try again."
     case "no_email": return "Google did not return an email address."
+    case "email_unverified": return "That Google account has not verified its email address, so it cannot be matched to your login. Sign in with your password instead."
     default: return "Couldn't sign in with Google. Try again."
     }
 }
