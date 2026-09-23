@@ -582,14 +582,23 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
 
 # ── staggered starts along the day's curve ────────────────────────────────
 
-def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3) -> tuple:
+def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, score_fn=None,
+                        score_seconds: float = TRIM_SCORE_SECONDS) -> tuple:
     """When three or more people in the same role start at the same minute
     on a day whose sales curve is still climbing, keep the first and move
     the others later in 30-minute steps (at most 90), ending where they
     did. Only with a measured curve for that weekday, and never past the
-    hour the curve peaks. Returns (rows, changes:[...])."""
+    hour the curve peaks. Returns (rows, changes:[...]).
+
+    score_fn(rows) -> float, when given, chooses each move's size among the
+    legal ones (the planned step, each shorter step, or none): the one that
+    costs the week the least Shift Quality, the planned step on a tie. A
+    stagger that would leave a half hour the sales curve needs short backs
+    off instead of opening the gap."""
     if not hourly_profile:
         return rows, []
+    import time as _time
+    _t0 = _time.monotonic()
     groups = {}
     for i, r in enumerate(rows):
         key = (r.get("date"), (r.get("role") or "").strip().lower(), r.get("shift_start"))
@@ -624,6 +633,24 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3) ->
             e = _minutes(r.get("shift_end", ""))
             if e is None or e <= s + off + 120:
                 continue      # would leave under two hours: not worth it
+            if score_fn is not None and _time.monotonic() - _t0 > score_seconds:
+                score_fn = None
+            if score_fn is not None:
+                best = None
+                for step in range(off, -1, -STAGGER_STEP_MIN):
+                    trial = list(rows)
+                    trial[i] = dict(r, shift_start=_fmt(s + step),
+                                    scheduled_hours=str(round((e - (s + step)) / 60, 1)))
+                    try:
+                        val = score_fn(trial)
+                    except Exception:
+                        continue
+                    if best is None or val > best[0] + 1e-9:
+                        best = (val, step)
+                if best is not None:
+                    off = best[1]
+                if off <= 0:
+                    continue  # every stagger of this row costs the week score
             r["shift_start"] = _fmt(s + off)
             r["scheduled_hours"] = str(round((e - (s + off)) / 60, 1))
             note = (r.get("notes") or "").strip()

@@ -222,6 +222,13 @@ class ShiftContext:
     cross_training_target: float = 0.34
     # What staff said they want (staff_settings.stated_preferences).
     preferences: dict = field(default_factory=dict)
+    # The owner's cross-training target per role ({role lower: share}),
+    # over the defaults in CROSS_TRAINING_DEFAULTS.
+    cross_training_targets: dict = field(default_factory=dict)
+    # The section count and the roles it counts (restaurants.section_count,
+    # foh_roles_json): no requirement asks for more of them at once.
+    section_cap: int = 0
+    cap_roles: set = field(default_factory=set)
     # The multi-week rotation (schedule_intel.rotation_plan): per role, who
     # is due a weekend off, next to close, resting from closing.
     rotation: dict = field(default_factory=dict)
@@ -415,6 +422,14 @@ def shift_role_requirements(typical: dict = None, floors: dict = None, minimums:
     return {display[k]: v for k, v in out.items()}
 
 
+def _capped(ctx: ShiftContext, required: dict) -> tuple:
+    """(required, trimmed) under the section cap (staffing_curve.cap_requirement)."""
+    if not ctx.section_cap:
+        return dict(required), {}
+    from staffing_curve import cap_requirement
+    return cap_requirement(required, ctx.section_cap, ctx.cap_roles)
+
+
 def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     """Is every required position filled?
 
@@ -429,6 +444,10 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     if not reqs:
         return None
     required = {r: n for r, (n, _src) in reqs.items()}
+    # Never more of the section-counted roles than there are sections: the
+    # generator and the backstop hold the draft to the cap, so a requirement
+    # over it marked every such shift short however it was built.
+    required, over_cap = _capped(ctx, required)
     sources = sorted({src for _n, src in reqs.values()})
     source = sources[0] if len(sources) == 1 else ", ".join(sources)
 
@@ -462,6 +481,8 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
         facts={"required": total_required, "filled": filled, "missing": missing,
                "gaps": gaps, "short": short, "requirement_source": source},
     )
+    if over_cap:
+        res.facts["held_to_section_cap"] = {"cap": int(ctx.section_cap), "trimmed": over_cap}
     if missing:
         res.weaknesses.append(
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
@@ -936,25 +957,14 @@ HARD_SHIFT_CEILING = 4
 CONSECUTIVE_DAY_CEILING = 6
 
 
-def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
-    """Are the same people carrying every hard shift?
-
-    This is the dimension that stops the engine degenerating into "put the
-    best people on everything". A rating system can only ever push in that
-    direction; burning out the strong half is the predictable result, and
-    it shows up as turnover months later rather than as a bad schedule
-    anybody could point at.
-    """
-    if not ctx.week_assignments:
-        return None
-    people = ctx.people
-    tracked = [n for n in people if n in ctx.week_assignments]
-    if not tracked:
-        return None
-
+def _fatigue_findings(names, week_assignments: dict, max_shift_hours=None, weekly_ceiling=None,
+                      hours_limits: dict = None) -> tuple:
+    """(overloaded, long_runs, long_shifts, heavy_weeks) for `names`, from
+    their assignments across the whole week (the previous week's tail
+    included, so a run over the boundary is seen)."""
     overloaded, long_runs, long_shifts, heavy_weeks = [], [], [], []
-    for name in tracked:
-        assignments = ctx.week_assignments.get(name) or []
+    for name in names:
+        assignments = week_assignments.get(name) or []
         hard = sum(1 for a in assignments
                    if DEMAND_RANK.get(a.get("demand", "normal"), 1) >= DEMAND_RANK[HARD_DEMAND])
         if hard > HARD_SHIFT_CEILING:
@@ -964,23 +974,27 @@ def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
             long_runs.append((name, run))
         # Hours, not only days: a 13-hour double and a 46-hour week are
         # both fatigue the day count never sees.
-        if ctx.max_shift_hours:
+        if max_shift_hours:
             longest = max((a.get("hours") or 0) for a in assignments) if assignments else 0
-            if longest > float(ctx.max_shift_hours) + 0.01:
+            if longest > float(max_shift_hours) + 0.01:
                 long_shifts.append((name, longest))
         total = sum((a.get("hours") or 0) for a in assignments)
         ceiling = None
-        lim = (ctx.hours_limits or {}).get(name)
+        lim = (hours_limits or {}).get(name)
         if lim and lim[1]:
             ceiling = float(lim[1])
-        elif ctx.weekly_ceiling:
-            ceiling = float(ctx.weekly_ceiling)
+        elif weekly_ceiling:
+            ceiling = float(weekly_ceiling)
         if ceiling and total > ceiling + 0.05:
             heavy_weeks.append((name, round(total, 1), ceiling))
+    return overloaded, long_runs, long_shifts, heavy_weeks
 
-    strained = len({n for n, _ in overloaded} | {n for n, _ in long_runs}
-                   | {n for n, _ in long_shifts} | {n for n, _, _ in heavy_weeks})
-    score = _pct(len(tracked) - strained, len(tracked))
+
+def _fatigue_result(tracked: list, findings: tuple, scope: str = "shift") -> DimensionResult:
+    overloaded, long_runs, long_shifts, heavy_weeks = findings
+    strained = sorted({n for n, _ in overloaded} | {n for n, _ in long_runs}
+                      | {n for n, _ in long_shifts} | {n for n, _, _ in heavy_weeks})
+    score = _pct(len(tracked) - len(strained), len(tracked))
     res = DimensionResult(
         key="fatigue", label="Fatigue", score=score,
         weight=DEFAULT_WEIGHTS["fatigue"],
@@ -988,7 +1002,7 @@ def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
                "long_runs": [{"name": n, "days": d} for n, d in long_runs],
                "long_shifts": [{"name": n, "hours": h} for n, h in long_shifts],
                "heavy_weeks": [{"name": n, "hours": h, "ceiling": c} for n, h, c in heavy_weeks],
-               "tracked": len(tracked)},
+               "tracked": len(tracked), "strained": strained, "scope": scope},
     )
     for name, hard in overloaded[:2]:
         res.weaknesses.append(
@@ -1002,6 +1016,53 @@ def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
     if not res.weaknesses:
         res.strengths.append("Nobody is carrying an unreasonable share of the hard shifts.")
     return res
+
+
+def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
+    """Are the same people carrying every hard shift? — asked of the people
+    on one shift.
+
+    This is the dimension that stops the engine degenerating into "put the
+    best people on everything". A rating system can only ever push in that
+    direction; burning out the strong half is the predictable result, and
+    it shows up as turnover months later rather than as a bad schedule
+    anybody could point at.
+
+    It is a property of the WEEK, so the week score judges it once per
+    person (week_fatigue, WEEK_LEVEL_DIMENSIONS) and evaluate_shift no
+    longer runs it: a tired person used to be marked down on every shift
+    they worked, so the same strain counted five or six times, more on a
+    peak night, and more on a thin shift than a busy one. Kept for callers
+    that ask about one shift's people directly.
+    """
+    if not ctx.week_assignments:
+        return None
+    tracked = [n for n in ctx.people if n in ctx.week_assignments]
+    if not tracked:
+        return None
+    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx.week_assignments, ctx.max_shift_hours,
+                                                      ctx.weekly_ceiling, ctx.hours_limits))
+
+
+def week_fatigue(contexts: list) -> DimensionResult | None:
+    """Fatigue judged once per person per week: of everybody working this
+    week, how many are carrying too many busy shifts, too many days in a
+    row, an over-long shift or an over-ceiling week. None when the week has
+    nobody on it (and so nothing to judge)."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    if not ctx.week_assignments:
+        return None
+    working = set()
+    for c in contexts:
+        working.update(c.people)
+    tracked = sorted(n for n in working
+                     if any(not e.get("prior") for e in (ctx.week_assignments.get(n) or [])))
+    if not tracked:
+        return None
+    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx.week_assignments, ctx.max_shift_hours,
+                                                      ctx.weekly_ceiling, ctx.hours_limits), scope="week")
 
 
 def _longest_run(dates: list) -> int:
@@ -1285,21 +1346,77 @@ def dim_cross_training(ctx: ShiftContext) -> DimensionResult | None:
     if not people:
         return None
     flexible = [n for n in people if len(ctx.cross_trained.get(n) or []) > 1]
-    # A third of the shift able to flex is a healthy floor; past that there
-    # is no extra credit to give.
-    target = float(ctx.cross_training_target or 0.34)
-    score = min(SCORE_MAX, int(round(len(flexible) / float(len(people)) / target * 100)))
+    # Judged role by role against that role's own target (the owner's, else
+    # CROSS_TRAINING_DEFAULTS): a dish crew is not expected to flex the way
+    # a bar is. A role whose target is 0 is not asked. Each role counts by
+    # its headcount on the shift; past its target there is no extra credit.
+    per_role, total_w, total = {}, 0, 0.0
+    for role, names in ctx.by_role.items():
+        target = cross_training_target_for(role, ctx.cross_training_targets, ctx.cross_training_target)
+        if target <= 0 or not names:
+            continue
+        flex = [n for n in names if len(ctx.cross_trained.get(n) or []) > 1]
+        role_score = min(SCORE_MAX, int(round(len(flex) / float(len(names)) / target * 100)))
+        per_role[role] = {"flexible": len(flex), "on_shift": len(names), "target": round(target, 2),
+                          "score": role_score}
+        total += role_score * len(names)
+        total_w += len(names)
+    if not total_w:
+        return None
+    score = int(round(total / total_w))
     res = DimensionResult(
         key="cross_training", label="Cross-training", score=score,
         weight=DEFAULT_WEIGHTS["cross_training"],
-        facts={"flexible": flexible, "on_shift": len(people)},
+        facts={"flexible": flexible, "on_shift": len(people), "by_role": per_role},
     )
     if flexible:
         res.strengths.append(
             f"{_names(flexible[:3])} can cover more than one station.")
-    else:
+    short = sorted((r for r, f in per_role.items() if f["score"] < SCORE_MAX),
+                   key=lambda r: per_role[r]["score"])
+    if not flexible:
         res.weaknesses.append("Nobody on this shift can cover a second station.")
+    elif short:
+        r = short[0]
+        f = per_role[r]
+        res.weaknesses.append(f"{f['flexible']} of {f['on_shift']} {r.lower()} on this shift can cover another "
+                              f"station — the target is {int(round(f['target'] * 100))}%.")
     return res
+
+
+# What share of each role on a shift should be able to cover a second
+# station when the owner has not said. A third is the long-standing default;
+# a bar and a manager are expected to flex more (the bartender who runs food,
+# the manager who jumps on the line), a dish crew and hosts less. Matched on
+# the role's lowercase name, then on a word in it ("Line Cook" → "cook").
+CROSS_TRAINING_DEFAULT = 0.34
+CROSS_TRAINING_DEFAULTS = {
+    "manager": 0.5, "bartender": 0.5, "barback": 0.34, "server": 0.34, "cook": 0.34,
+    "prep": 0.34, "host": 0.25, "busser": 0.25, "runner": 0.25, "dishwasher": 0.2, "dish": 0.2,
+}
+
+
+def cross_training_target_for(role: str, owner: dict = None, fallback: float = None) -> float:
+    """The share of `role` on a shift that should be able to cover another
+    station: the owner's own number for the role (restaurants
+    .role_cross_training_json), else the role's default, else the flat
+    target. An owner's 0 means "not expected" and the role is not judged."""
+    key = (role or "").strip().lower()
+    owned = {str(k).strip().lower(): v for k, v in (owner or {}).items()}
+    if key in owned and owned[key] is not None:
+        try:
+            return max(0.0, min(1.0, float(owned[key])))
+        except (TypeError, ValueError):
+            pass
+    if key in CROSS_TRAINING_DEFAULTS:
+        return CROSS_TRAINING_DEFAULTS[key]
+    for word in key.replace("-", " ").split():
+        if word in CROSS_TRAINING_DEFAULTS:
+            return CROSS_TRAINING_DEFAULTS[word]
+    try:
+        return float(fallback) if fallback else CROSS_TRAINING_DEFAULT
+    except (TypeError, ValueError):
+        return CROSS_TRAINING_DEFAULT
 
 
 # ── Coverage by the half hour ──────────────────────────────────────────────
@@ -1342,8 +1459,8 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         required = {r: int(n) for r, n in ctx.role_minimums.items()
                     if n and (not runs_here or r.strip().lower() in runs_here)}
         source = "your role minimums"
-    peak_need = _peak_requirement(ctx)
-    if not required and not peak_need:
+    has_curve = bool(ctx.demand_curve and ctx.typical_headcount)
+    if not required and not has_curve:
         return None
     rows = ctx.day_rows or ctx.rows
     spans = []
@@ -1381,58 +1498,81 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     total = covered = 0
     gaps = {}
     peak_gaps = []
-    if peak_need:
-        # The daypart's busiest hour by this restaurant's own measured sales
-        # (at least three same-weekday readings): most of the usual crew for
-        # each role should be on for it. A floor held all afternoon can
-        # still leave the rush a person short.
-        hour, needs = peak_need
-        t = hour * 60
-        if lo <= t < hi:
-            for role, need in needs.items():
-                on = sum(1 for rl, s, e in spans if rl == role.strip().lower() and s <= t < e)
-                total += 1
-                if on >= need:
-                    covered += 1
-                else:
-                    peak_gaps.append({"role": role, "need": need, "on": on, "at": _fmt_minutes(t),
-                                      "worst_minute": t})
-    for role, need in required.items():
-        key = role.strip().lower()
-        for t in slots:
+    # Half-hour needs from this restaurant's own measured sales curve (at
+    # least three same-weekday readings), across every half hour of service:
+    # the busiest half hour needs most of the usual crew and each other one
+    # that crew scaled by its share of the sales. Only the peak hour used to
+    # carry a requirement, so the climb into the rush was never judged. The
+    # owner's floors hold under it and the section cap over it. Without a
+    # curve this is the floors alone, exactly as before.
+    curve_needs = _half_hour_requirement(ctx, lo, hi)
+    peak_slot = None
+    if curve_needs:
+        from staffing_curve import half_hour_shares as _hhs
+        _shares = _hhs(ctx.demand_curve or {})
+        peak_slot = max(curve_needs, key=lambda m: (_shares.get(m, 0), -m))
+    for t in slots:
+        here = dict(required)
+        for role, n in (curve_needs.get(t) or {}).items():
+            match = next((r for r in here if r.strip().lower() == role.strip().lower()), role)
+            here[match] = max(int(here.get(match) or 0), int(n))
+        here, _over = _capped(ctx, here)
+        for role, need in here.items():
+            need = int(need or 0)
+            if need <= 0:
+                continue
+            key = role.strip().lower()
             on = sum(1 for rl, s, e in spans if rl == key and s <= t < e)
             total += 1
             if on >= need:
                 covered += 1
-            else:
-                g = gaps.setdefault(role, {"short_slots": 0, "worst": None, "worst_on": None})
-                g["short_slots"] += 1
-                if g["worst"] is None or on < g["worst_on"]:
-                    g["worst"], g["worst_on"] = t, on
+                continue
+            from_curve = need > int(required.get(role) or 0)
+            if t == peak_slot and from_curve:
+                peak_gaps.append({"role": role, "need": need, "on": on, "at": _fmt_minutes(t),
+                                  "worst_minute": t})
+            g = gaps.setdefault(role, {"short_slots": 0, "worst": None, "worst_on": None, "need": need,
+                                       "from_curve": False})
+            g["short_slots"] += 1
+            g["from_curve"] = g["from_curve"] or from_curve
+            if g["worst"] is None or on < g["worst_on"] or (on == g["worst_on"] and need > g["need"]):
+                g["worst"], g["worst_on"], g["need"] = t, on, need
     if not total:
         return None
     score = _pct(covered, total)
-    for g in peak_gaps:
-        gaps.setdefault(g["role"], {"short_slots": 0, "worst": g["worst_minute"], "worst_on": g["on"]})
-        required.setdefault(g["role"], g["need"])
+    for role, g in gaps.items():
+        required.setdefault(role, g["need"])
     res = DimensionResult(
         key="coverage_curve", label="Coverage by the hour", score=score,
         weight=DEFAULT_WEIGHTS["coverage_curve"], floor=60,
         facts={"required": required, "window": [_fmt_minutes(lo), _fmt_minutes(hi)],
                "slots": len(slots), "gaps": {r: {"minutes_short": g["short_slots"] * SLOT_MINUTES,
                                                   "worst_at": _fmt_minutes(g["worst"]), "on_at_worst": g["worst_on"],
-                                                  "worst_minute": g["worst"], "need": required[r]}
+                                                  "worst_minute": g["worst"], "need": g["need"],
+                                                  "from_curve": g["from_curve"]}
                                              for r, g in gaps.items()},
                "requirement_source": source},
     )
     res.facts["peak_gaps"] = peak_gaps
+    if curve_needs:
+        from staffing_curve import ramp_runs as _rr, INTERPOLATED_NOTE as _inote
+        res.facts["half_hour_needs"] = {role: [[_fmt_minutes(m), n] for m, n in pts]
+                                        for role, pts in _rr(curve_needs).items()}
+        res.facts["curve_basis"] = _inote
     for g in peak_gaps[:2]:
         res.weaknesses.append(f"{g['role']} has {g['on']} on at {g['at']}, the busiest hour by your sales — "
                               f"usually {g['need']}+ for the rush.")
+    peak_roles = {g["role"] for g in peak_gaps[:2]}
     for role, g in sorted(gaps.items(), key=lambda kv: -kv[1]["short_slots"])[:3]:
-        if not g["short_slots"]:
+        if not g["short_slots"] or (role in peak_roles and g["short_slots"] == 1):
             continue
-        need = required[role]
+        need = g["need"]
+        if g["from_curve"]:
+            res.weaknesses.append(
+                f"{role} is under what your sales curve needs for {g['short_slots'] * SLOT_MINUTES // 60}h"
+                f"{(g['short_slots'] * SLOT_MINUTES % 60) and ' 30m' or ''} — {g['worst_on']} on at "
+                f"{_fmt_minutes(g['worst'])} against {need} (hourly sales, read to the half hour).")
+            continue
         res.weaknesses.append(
             f"{role} is under {need} for {g['short_slots'] * SLOT_MINUTES // 60}h{(g['short_slots'] * SLOT_MINUTES % 60) and ' 30m' or ''} "
             f"— down to {g['worst_on']} at {_fmt_minutes(g['worst'])}.")
@@ -1456,6 +1596,22 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
 # Share of a role's usual daypart headcount that should overlap the
 # daypart's busiest measured hour.
 PEAK_SHARE = 0.75
+
+
+def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
+    """{minute: {role: people}} for this daypart's half hours of service,
+    from the measured sales curve and the usual crew (staffing_curve
+    .half_hour_needs) — {} without both. The same function the requirements
+    table the model reads is built from."""
+    if not ctx.demand_curve or not ctx.typical_headcount:
+        return {}
+    from staffing_curve import half_hour_needs
+    # Normalised over the daypart's whole half of the day, as the
+    # requirements table is (schedule_requirements._service_window), so the
+    # two agree on every half hour; then only this shift's window is judged.
+    half = (0, DAYPART_CUTOVER) if ctx.daypart == "morning" else (DAYPART_CUTOVER, 48 * 60)
+    needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half)
+    return {m: n for m, n in needs.items() if lo <= m < hi}
 
 
 def _peak_requirement(ctx: ShiftContext):
@@ -1617,6 +1773,14 @@ DIMENSIONS = {
     "cross_training": dim_cross_training,
 }
 
+# Dimensions that are properties of the whole week, judged once per week in
+# evaluate_schedule and weighted once into the week score (week_score_raw),
+# never repeated on every shift. Still in DIMENSIONS so their weight is
+# editable and their key is known everywhere a dimension is listed.
+WEEK_LEVEL_DIMENSIONS = {
+    "fatigue": week_fatigue,
+}
+
 # What a customer sees today. The rest is computed, stored and available to
 # the explanation layer, but not put on screen yet — a manager reading
 # fourteen numbers is reading none of them.
@@ -1658,6 +1822,8 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     ctx.notes = []
     applied, skipped, failed = [], [], []
     for key, fn in DIMENSIONS.items():
+        if key in WEEK_LEVEL_DIMENSIONS:
+            continue            # judged once for the week, in evaluate_schedule
         try:
             result = fn(ctx)
             reason = "no data"
@@ -1908,21 +2074,36 @@ def evaluate_schedule(contexts: list, weights: dict = None,
                 "reason": "No shift had enough configured to judge it.",
                 "confidence": confidence(shifts, signals or {})}
 
-    weighted = sum(s["score"] * DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
-    divisor = sum(DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored) or 1.0
-    overall = int(round(weighted / divisor))
+    week_dims = evaluate_week_dimensions(contexts, weights)
+    raw = week_score_raw(scored, week_dims)
+    overall = int(round(raw))
 
     # Strip what is true of the week out of the individual shifts FIRST, so
     # the week-level lists below are built from what is left. Two overlapping
     # summaries is one too many, and the shift sections are what get read.
     hoisted = _hoist_common_lines(scored)
+    # A week-level measure speaks at week level, once.
+    for d in week_dims:
+        hoisted["weaknesses"] = list(d.weaknesses) + list(hoisted.get("weaknesses") or [])
+    share = _week_share(scored, week_dims)
 
     return {
         "checked": True,
         "score": overall,
+        # Before rounding, for a search that has to see a shift move three
+        # points (schedule_optimizer.objective).
+        "raw_score": round(raw, 4),
         "band": band_for(overall),
         "shifts": shifts,
-        "dimensions": _rollup(scored),
+        "dimensions": _rollup(scored) + [
+            {"key": d.key, "label": d.label, "shifts": 0, "score": d.score, "worst": None,
+             "customer_facing": False, "week_level": True} for d in week_dims],
+        # Measures of the whole week, judged once and weighted once:
+        # `share` is the part of the week score they make up.
+        "week_dimensions": [
+            {"key": d.key, "label": d.label, "score": d.score, "weight": d.weight,
+             "share": round(share, 3), "strengths": d.strengths, "weaknesses": d.weaknesses,
+             "facts": d.facts, "week_level": True} for d in week_dims],
         "below_profile": [
             {"date": s["date"], "day": s["day"], "daypart": s["daypart"],
              "score": s["score"], "min_quality": s["profile"]["min_quality"],
@@ -1933,9 +2114,78 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         "best": max(scored, key=lambda s: s["score"])["headline"] if scored else None,
         "strengths": _week_reasons(hoisted, scored, "strengths"),
         "weaknesses": _week_reasons(hoisted, scored, "weaknesses"),
-        "recommendations": recommendations(scored),
+        "recommendations": recommendations(scored, week_dims),
         "confidence": confidence(shifts, signals or {}),
     }
+
+
+def evaluate_week_dimensions(contexts: list, weights: dict = None) -> list:
+    """The WEEK_LEVEL_DIMENSIONS for one week, each judged once, weighted by
+    the owner's weights over the defaults. A measure with nothing to judge,
+    or weighted to zero, is left out."""
+    merged = dict(DEFAULT_WEIGHTS)
+    merged.update(weights or {})
+    out = []
+    for key, fn in WEEK_LEVEL_DIMENSIONS.items():
+        try:
+            res = fn(contexts)
+        except Exception:
+            res = None
+        if res is None:
+            continue
+        res.weight = float(merged.get(key, res.weight) or 0)
+        if res.weight > 0:
+            out.append(res)
+    return out
+
+
+def _shift_share(shift: dict, week_w: float) -> float:
+    """The part of one shift's number the week-level measures stand in for:
+    their weight against the shift's own dimension weights — exactly the
+    share they had when they sat on the shift at that weight. A shift
+    capped by a critical dimension takes none: it is no better than its
+    worst critical part, and a rested week does not lift it."""
+    if week_w <= 0 or shift.get("capped_by"):
+        return 0.0
+    own = sum(float(d.get("weight") or 0) for d in shift.get("dimensions") or [])
+    return week_w / (week_w + own) if (week_w + own) > 0 else 0.0
+
+
+def _week_share(scored: list, week_dims: list) -> float:
+    """The share of the week score the week-level measures carry, demand
+    weighted over the shifts (capped shifts carry none). Bounded to [0, 1)."""
+    week_w = sum(float(d.weight or 0) for d in week_dims or [])
+    if week_w <= 0 or not scored:
+        return 0.0
+    num = den = 0.0
+    for s in scored:
+        w = DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0)
+        num += _shift_share(s, week_w) * w
+        den += w
+    return num / (den or 1.0)
+
+
+def week_score_raw(scored: list, week_dims: list = None) -> float:
+    """The week's score before rounding.
+
+    The week-level measures (fatigue) are judged ONCE, as one number for the
+    week, and that one number stands in for the part of each shift they
+    always carried (_shift_share) — so with nobody tired the week scores
+    what it did when fatigue sat on every shift, and a tired person costs
+    the week once, for being tired, not once per shift they work. Each
+    shift's blend is convex on 0-100, so the week stays on 0-100; with no
+    week-level measure it is the demand-weighted shift mean exactly."""
+    if not scored:
+        return 0.0
+    week_w = sum(float(d.weight or 0) for d in week_dims or [])
+    week_val = (sum(d.score * float(d.weight or 0) for d in week_dims) / week_w) if week_w > 0 else 0.0
+    num = den = 0.0
+    for s in scored:
+        w = DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0)
+        share = _shift_share(s, week_w)
+        num += (s["score"] * (1 - share) + week_val * share) * w
+        den += w
+    return max(0.0, min(float(SCORE_MAX), num / (den or 1.0)))
 
 
 # A line true of most of the week is a fact about the WEEK, and printing it
@@ -2181,7 +2431,7 @@ def recommendation_kind(text: str) -> str:
     return "other"
 
 
-def recommendations(scored: list) -> list:
+def recommendations(scored: list, week_dims: list = None) -> list:
     """What the manager could actually do about it, most valuable first.
 
     Built from the dimensions' own facts rather than written by a model, so
@@ -2212,6 +2462,10 @@ def recommendations(scored: list) -> list:
         for spot in shift.get("blind_spots") or []:
             if "Operational Score" in spot:
                 unrated.add(spot)
+    for d in week_dims or []:
+        if d.key == "fatigue":
+            overloaded.update(o["name"] for o in d.facts.get("overloaded") or [])
+            long_runs.update((r["name"], r["days"]) for r in d.facts.get("long_runs") or [])
 
     for where, gap in coverage_gaps[:2]:
         out.append(f"Fill the gap on {where}: {gap}.")
@@ -2524,6 +2778,9 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             experienced=set(signals.get("experienced") or ()),
             cross_training_target=float(signals.get("cross_training_target") or 0.34),
             preferences=signals.get("preferences") or {},
+            cross_training_targets=signals.get("cross_training_targets") or {},
+            section_cap=int(signals.get("section_cap") or 0),
+            cap_roles=set(signals.get("cap_roles") or ()),
             rotation=signals.get("rotation") or {},
             splh_target=(splh_targets.get(day) or {}).get(part),
             expected_sales=expected or None,
@@ -2627,6 +2884,104 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
     result = evaluate_schedule(contexts, weights=weights, signals=conf_signals)
     result["people"] = sorted(people)
     return result
+
+
+# ── Scoring a change without re-scoring the week ───────────────────────────
+#
+# The fill-in and trim passes choose between a handful of legal options —
+# which of four people takes a floor shift, which of three rows gives way at
+# the section cap — and each choice should cost the week the least score.
+# Re-scoring the whole week per option is ~0.2s on a 250-row week, which is
+# why only the budget trim used to ask. A move touches one date; every
+# shift-level dimension reads that date's rows (coverage, the half-hour
+# sweep, the day's hours, who closes), so the shifts on every OTHER date
+# score exactly as they did and are reused. The week-level measures
+# (fatigue) are recomputed every time — they are cheap and they are the
+# part a move on one date can change anywhere. The one approximation:
+# fairness on an untouched date can drift slightly because a move changes
+# a role's overall rate; the passes only compare options against each
+# other, and the finished week is always scored in full.
+
+LOCAL_CACHE_LIMIT = 4000
+
+
+class LocalScorer:
+    """score(rows) -> the week score before rounding, re-evaluating only
+    the dates whose rows differ from a date already evaluated.
+
+        scorer = LocalScorer(rows, profiles=..., weights=..., **signals)
+        best = max(options, key=lambda rows_after: scorer.score(rows_after))
+
+    Pure, like the rest of this module. Build one per pass: the signals are
+    taken as they are when it is built."""
+
+    def __init__(self, rows: list, profiles: list = None, weights: dict = None, **signals):
+        unmeetable = _unmeetable_rules(rows, signals)
+        if unmeetable:
+            signals = dict(signals)
+            signals["leader_rules"] = [r for r in (signals.get("leader_rules") or []) if id(r) not in unmeetable]
+        import time as _time
+        self.profiles = profiles
+        self.weights = weights
+        self.signals = signals
+        self._cache = {}
+        self.evaluations = 0
+        self.started = _time.monotonic()      # a pass may stop consulting it past its own time budget
+        self.baseline = self.score(rows)
+
+    @staticmethod
+    def _signature(rows: list) -> tuple:
+        return tuple(sorted(((r.get("employee") or "").strip().lower(), (r.get("role") or "").strip().lower(),
+                             r.get("shift_start") or "", r.get("shift_end") or "",
+                             str(r.get("scheduled_hours") or "")) for r in rows))
+
+    def score(self, rows: list) -> float:
+        contexts = build_contexts(rows, profiles=self.profiles, **self.signals)
+        by_date = {}
+        for c in contexts:
+            by_date.setdefault(c.date, []).append(c)
+        rows_by_date = {}
+        for r in rows or []:
+            if (r.get("employee") or "").strip() and (r.get("date") or "").strip():
+                rows_by_date.setdefault(r["date"].strip(), []).append(r)
+        shifts = []
+        for date, ctxs in by_date.items():
+            key = (date, self._signature(rows_by_date.get(date, [])))
+            hit = self._cache.get(key)
+            if hit is None:
+                hit = [evaluate_shift(c, self.weights) for c in ctxs]
+                self.evaluations += 1
+                if len(self._cache) >= LOCAL_CACHE_LIMIT:
+                    self._cache.clear()
+                self._cache[key] = hit
+            shifts.extend(hit)
+        scored = [x for x in shifts if x.get("scored")]
+        if not scored:
+            return 0.0
+        return week_score_raw(scored, evaluate_week_dimensions(contexts, self.weights))
+
+    def cost(self, rows: list) -> float:
+        """Points the week gives up against the scorer's baseline (negative
+        is a gain)."""
+        return self.baseline - self.score(rows)
+
+    def best(self, options: list, seconds: float = None):
+        """The option whose rows score highest: options are (key, rows).
+        Ties keep the earlier option, so a pass's own order breaks them.
+        Returns (key, score) or (None, None) when nothing could be scored."""
+        import time as _time
+        t0 = _time.monotonic()
+        best = None
+        for key, rows in options:
+            if seconds is not None and best is not None and _time.monotonic() - t0 > seconds:
+                break
+            try:
+                val = self.score(rows)
+            except Exception:
+                continue
+            if best is None or val > best[1] + 1e-9:
+                best = (key, val)
+        return best if best is not None else (None, None)
 
 
 # ── What-if: comparing candidate schedules ─────────────────────────────────
@@ -3051,7 +3406,8 @@ PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_bo
 
 
 def apply_fixes(rows: list, violations: list, profiles: list = None, weights: dict = None,
-                max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None, **signals) -> dict:
+                max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None,
+                only_dates=None, **signals) -> dict:
     """Repair the rows that break a hard rule by putting somebody legal on
     them, choosing the replacement that scores best. Rows nobody legal can
     take are left as they are and named, never dropped: a coverage gap the
@@ -3065,9 +3421,17 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     not a fix. Rows the evaluation budget did not reach are reported as not
     tried, never as impossible.
 
+    A missed day off (schedule_rules "days_off": fewer consecutive days off
+    than the rule) is fixable too, after the hard breaches: one of the
+    person's shifts goes to a legal teammate, the one that costs the week
+    the least score (_fix_days_off). It needs `rule_constraints` to know the
+    rule and to prove no new hard breach; `only_dates` limits which rows
+    may be handed over (a partial redo keeps the owner's days).
+
     Returns {rows, fixes: [{index, from, to, kind, reason}], unfixed: [...]}.
     """
     rows = [dict(r) for r in rows]
+    days_off = [v for v in (violations or []) if v.get("kind") == "days_off"]
     availability = signals.get("availability") or {}
     cons = signals.get("constraints") or {}
     rules = signals.get("rules") or {}
@@ -3177,7 +3541,148 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         else:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"),
                             "reason": f"Nobody on the roster can legally take {cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift."})
+    if days_off:
+        # Its own budget: each option is scored locally (LocalScorer), a
+        # fraction of what a whole-week re-score costs.
+        rows, more, missed, used = _fix_days_off(rows, days_off, profiles, weights, rule_constraints,
+                                                 max(MAX_CANDIDATE_EVALUATIONS, max_evaluations - evaluated),
+                                                 only_dates, signals)
+        fixes.extend(more)
+        unfixed.extend(missed)
+        evaluated += used
     return {"rows": rows, "fixes": fixes, "unfixed": unfixed, "evaluated": evaluated}
+
+
+def _hard_keys(rows: list, rule_constraints) -> set:
+    from schedule_rules import violations as _viol
+    return {(v.get("index"), v.get("kind"), (v.get("employee") or "").strip().lower())
+            for v in _viol(rows, rule_constraints) if v.get("hard")}
+
+
+def _days_off_people(rows: list, rule_constraints) -> set:
+    from schedule_rules import violations as _viol
+    return {(v.get("employee") or "").strip().lower() for v in _viol(rows, rule_constraints)
+            if v.get("kind") == "days_off"}
+
+
+def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constraints,
+                  max_evaluations: int, only_dates, signals: dict) -> tuple:
+    """Give each person the rule's run of days off together by handing the
+    fewest of their shifts to legal teammates.
+
+    For each window of consecutive days as long as the rule, the shifts the
+    person works inside it are what would have to go; the windows needing
+    the fewest are tried, and for each shift the teammate taken is the one
+    that costs the week the least score (LocalScorer). A window is kept only
+    when the rule sweep then shows the person's days off met, NO hard breach
+    that was not there before, and nobody newly short of their own days
+    off; of the windows that pass, the best-scoring one wins.
+
+    Returns (rows, fixes, unfixed, evaluations)."""
+    fixes, unfixed, used = [], [], 0
+    if rule_constraints is None:
+        for v in violations:
+            unfixed.append({"index": v.get("index"), "employee": v.get("employee"), "kind": "days_off",
+                            "reason": f"{v.get('employee')} — {v.get('detail') or v.get('label')}; "
+                                      "the rules were not loaded, so nothing was moved."})
+        return rows, fixes, unfixed, used
+    c = rule_constraints
+    week = list(getattr(c, "week_dates", None) or [])
+    availability = signals.get("availability") or {}
+    cons = signals.get("constraints") or {}
+    rules = signals.get("rules") or {}
+    roster = [n for n in (signals.get("roster") or []) if n]
+    roster_roles = signals.get("roster_roles") or {}
+    cross = signals.get("cross_trained") or {}
+    done = set()
+    for v in violations:
+        name = (v.get("employee") or "").strip()
+        low = name.lower()
+        if not low or low in done:
+            continue
+        done.add(low)
+        if low not in _days_off_people(rows, c):
+            continue                      # an earlier fix already gave them the run
+        part = (getattr(c, "employment", {}) or {}).get(low) == "part"
+        req = c.compliance.get("part_time_days_off") if part else c.compliance.get("min_consecutive_days_off")
+        try:
+            req = int(req or 0)
+        except (TypeError, ValueError):
+            req = 0
+        mine = [i for i, r in enumerate(rows) if (r.get("employee") or "").strip().lower() == low]
+        windows = []
+        for k in range(0, max(0, len(week) - req + 1)):
+            span = week[k:k + req]
+            hand = [i for i in mine if rows[i].get("date") in set(span)]
+            if not hand or (only_dates and any(rows[i].get("date") not in only_dates for i in hand)):
+                continue
+            windows.append((len({rows[i].get("date") for i in hand}), k, hand))
+        if not req or not windows:
+            unfixed.append({"index": v.get("index"), "employee": name, "kind": "days_off",
+                            "reason": f"{name} — {v.get('detail') or v.get('label')}; no shift of theirs "
+                                      "could be handed over here."})
+            continue
+        fewest = min(w[0] for w in windows)
+        before_hard = _hard_keys(rows, c)
+        before_short = _days_off_people(rows, c)
+        scorer = LocalScorer(rows, profiles=profiles, weights=weights, **signals)
+        best = None
+        out_of_budget = False
+        for _n, _k, hand in [w for w in windows if w[0] == fewest]:
+            trial = [dict(r) for r in rows]
+            moved = []
+            ok = True
+            for i in hand:
+                if used >= max_evaluations:
+                    out_of_budget = True
+                    ok = False
+                    break
+                index = _SwapIndex(trial, availability, cons, rules)
+                role = (trial[i].get("role") or "").strip().lower()
+                pool = {(r.get("employee") or "").strip() for r in trial
+                        if (r.get("role") or "").strip().lower() == role}
+                pool |= {n for n in roster if (roster_roles.get(n) or "").strip().lower() == role}
+                pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
+                pool.discard("")
+                cands = [n for n in sorted(pool) if n.lower() != low and index.replacement_legal(i, n)]
+                options = []
+                for n in cands:
+                    t2 = list(trial)
+                    t2[i] = dict(trial[i], employee=n)
+                    options.append((n, t2))
+                used += len(options)
+                pick, _val = scorer.best(options)
+                if pick is None:
+                    ok = False
+                    break
+                trial[i] = dict(trial[i], employee=pick)
+                moved.append((i, pick))
+            if not ok or not moved:
+                continue
+            after_hard = _hard_keys(trial, c)
+            after_short = _days_off_people(trial, c)
+            if after_hard - before_hard or low in after_short or (after_short - before_short):
+                continue
+            val = scorer.score(trial)
+            if best is None or val > best[0] + 1e-9:
+                best = (val, trial, moved)
+        if best is None:
+            unfixed.append({"index": v.get("index"), "employee": name, "kind": "days_off",
+                            "not_tried": out_of_budget or None,
+                            "reason": (f"{name}'s days off weren't fixed — the automatic fix ran out of time. "
+                                       "Apply fixes again to continue.") if out_of_budget else
+                                      (f"{name} — {v.get('detail') or v.get('label')}; nobody could legally "
+                                       "take one of their shifts without breaking another rule.")})
+            continue
+        _val, trial, moved = best
+        for i, pick in moved:
+            note = (trial[i].get("notes") or "").strip()
+            trial[i]["notes"] = (note + f" (was {name} — days off)").strip()
+            fixes.append({"index": i, "from": name, "to": pick, "kind": "days_off",
+                          "reason": f"{name} had no {req} days off together; {pick} takes their "
+                                    f"{trial[i].get('day') or trial[i].get('date')} {trial[i].get('role')} shift."})
+        rows = trial
+    return rows, fixes, unfixed, used
 
 
 def _candidate_verdict(baseline: dict, best: dict, swaps: list,

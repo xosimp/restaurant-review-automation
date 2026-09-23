@@ -1695,7 +1695,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  prior_pattern: dict = None,
                                  leader_flags: dict = None,
                                  focus: list = None,
-                                 borrowed_headcount: dict = None) -> dict:
+                                 borrowed_headcount: dict = None,
+                                 hourly_profile: dict = None,
+                                 section_cap_roles: list = None,
+                                 open_times: dict = None,
+                                 close_times: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -2133,9 +2137,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Section count — caps how many servers can work simultaneously
     _section_block = ""
     if section_count:
+        _cap_who = "servers"
+        _cap_roles = sorted({str(r).strip() for r in (section_cap_roles or ()) if str(r).strip()},
+                            key=str.lower)
+        if _cap_roles and [r.lower() for r in _cap_roles] != ["server"]:
+            _cap_who = "front-of-house staff (" + ", ".join(_cap_roles) + ", counted together)"
         _section_block = (f"\n\nDINING SECTIONS: {section_count} sections/tables. "
-                          f"Maximum {section_count} servers can work simultaneously (one per section). "
-                          f"Never schedule more servers than sections — extra servers have nothing to serve.")
+                          f"Maximum {section_count} {_cap_who} can work simultaneously (one per section). "
+                          f"Never schedule more than that at once — extra people have nothing to serve. "
+                          f"The SHIFT REQUIREMENTS below are already held to this cap.")
 
     # Daypart split — tells AI how to weight lunch vs dinner staffing
     _daypart_block = ""
@@ -2381,6 +2391,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         role_minimums=_role_minimums_dict(role_minimums_json),
         roles=_can_work,
         skip_dates=closed_dates or (),
+        # Half-hour needs across service from the measured sales curve, and
+        # the section cap held over every requirement — the same shapes the
+        # scorer judges the draft against (staffing_curve).
+        demand_curve=hourly_profile or None,
+        open_times=open_times or None,
+        close_times=close_times or None,
+        section_cap=section_count or 0,
+        cap_roles=section_cap_roles or None,
     ))
     _names_here = [n for n, _r in employees if n]
     _experience_block = _req.experience_block(tenure, _names_here, leader_flags, experienced)

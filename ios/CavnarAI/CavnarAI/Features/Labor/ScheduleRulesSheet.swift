@@ -20,6 +20,7 @@ struct ScheduleRulesSheet: View {
     @State private var requirements: [String: [String]] = [:]
     @State private var fohRoles: [String] = []
     @State private var patioRoles: [String] = []
+    @State private var crossTraining: [String: String] = [:]
     @State private var trimToBudget = true
     @State private var reservationProvider: String = ""
     @State private var reservationKey: String = ""
@@ -57,6 +58,7 @@ struct ScheduleRulesSheet: View {
                         managerSection
                         floorsSection
                         arrivalsSection
+                        crossTrainingSection
                         certificationsSection
                         roleListSection("Front of house", detail: "Roles counted against sections and the section cap.",
                                         selection: $fohRoles)
@@ -220,6 +222,68 @@ struct ScheduleRulesSheet: View {
                 }
                 .accountCard()
             }
+        }
+    }
+
+    // MARK: Cross-training per role
+
+    /// How much of each role on a shift should be able to cover a second
+    /// station. Blank uses the default shown as the placeholder; 0 means
+    /// the role is not expected to flex and is not judged on it.
+    private var crossTrainingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKicker(text: "Cross-training")
+            Text("The share of each role on a shift that should be able to cover a second station. Blank uses the default shown; 0 means not expected.")
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            if roles.isEmpty {
+                Text("Roles appear here once there is shift history to read them from.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .italic()
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(roles.enumerated()), id: \.element) { index, role in
+                        HStack(spacing: 10) {
+                            Text(role)
+                                .font(.cavnarBody(15, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                            Spacer(minLength: 6)
+                            percentField(role: role)
+                        }
+                        .padding(.vertical, 9)
+                        if index < roles.count - 1 { AccountRowDivider() }
+                    }
+                }
+                .accountCard()
+            }
+        }
+    }
+
+    private func percentField(role: String) -> some View {
+        let id = "ct|\(role)"
+        let placeholder = String(viewModel.crossTrainingDefaults[role] ?? viewModel.crossTrainingDefault)
+        return HStack(spacing: 4) {
+            TextField(placeholder, text: Binding(
+                get: { crossTraining[role] ?? "" },
+                set: { crossTraining[role] = $0 }))
+                .font(.cavnarNumber(15, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .multilineTextAlignment(.center)
+                .keyboardType(.numberPad)
+                .focused($focused, equals: id)
+                .frame(width: 52, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.cavnarPaper2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(focused == id ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
+                .accessibilityLabel("\(role) cross-training target, percent")
+            Text("%")
+                .font(.cavnarNumber(13, weight: 700))
+                .foregroundStyle(Color.cavnarInk3)
         }
     }
 
@@ -426,6 +490,7 @@ struct ScheduleRulesSheet: View {
         for role in floors.keys where !out.contains(role) { out.append(role) }
         for role in arrivals.keys where !out.contains(role) { out.append(role) }
         for role in requirements.keys where !out.contains(role) { out.append(role) }
+        for role in crossTraining.keys.sorted() where !out.contains(role) { out.append(role) }
         return out
     }
 
@@ -590,6 +655,7 @@ struct ScheduleRulesSheet: View {
         requirements = viewModel.roleRequirements
         fohRoles = viewModel.fohRoles
         patioRoles = viewModel.patioRoles
+        crossTraining = viewModel.roleCrossTraining.mapValues(String.init)
         trimToBudget = viewModel.trimToBudget
         reservationProvider = viewModel.reservationFeed?.provider ?? ""
         reservationKey = ""
@@ -611,6 +677,11 @@ struct ScheduleRulesSheet: View {
         p.roleRequirements = requirements.filter { !$0.value.isEmpty }
         p.fohRoles = fohRoles
         p.patioRoles = patioRoles
+        var crossPercents: [String: Int] = [:]
+        for (role, text) in crossTraining {
+            if let n = Int(text.trimmingCharacters(in: .whitespaces)) { crossPercents[role] = max(0, min(100, n)) }
+        }
+        p.roleCrossTraining = crossPercents
         p.trimToBudget = trimToBudget
         if reservationProvider != (viewModel.reservationFeed?.provider ?? "") || !reservationKey.isEmpty {
             p.reservationProvider = .some(reservationProvider.isEmpty ? nil : reservationProvider)

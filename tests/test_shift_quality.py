@@ -350,8 +350,10 @@ def test_carrying_every_busy_shift_is_scored_against_you():
     busy = [sq.ShiftProfile(key="all_peak", demand="peak", label="Busy night",
                             daypart="night", source="restaurant")]
     out = sq.score_rows(heavy, profiles=busy, scores={"Workhorse": 5, "Spare": 4})
-    fatigue = [d for s in out["shifts"] for d in s["dimensions"] if d["key"] == "fatigue"]
-    assert any(f["score"] < 100 for f in fatigue)
+    # Fatigue is a week-level measure now (#31): judged once, not per shift.
+    fatigue = [d for d in out["week_dimensions"] if d["key"] == "fatigue"]
+    assert fatigue and fatigue[0]["score"] < 100
+    assert not any(d["key"] == "fatigue" for s in out["shifts"] for d in s["dimensions"])
     # Said once, at week level, rather than on every shift he works.
     assert any("Workhorse" in w for w in out["weaknesses"])
 
@@ -362,8 +364,8 @@ def test_a_week_spread_across_the_roster_is_not_penalised():
     busy = [sq.ShiftProfile(key="all_peak", demand="peak", daypart="night",
                             label="Busy night", source="restaurant")]
     out = sq.score_rows(rows, profiles=busy, scores={"A": 4, "B": 4, "C": 4, "D": 4})
-    fatigue = [d for s in out["shifts"] for d in s["dimensions"] if d["key"] == "fatigue"]
-    assert all(f["score"] == 100 for f in fatigue)
+    fatigue = [d for d in out["week_dimensions"] if d["key"] == "fatigue"]
+    assert fatigue and all(f["score"] == 100 for f in fatigue)
 
 
 def test_seven_days_in_a_row_is_flagged_even_at_low_demand():
