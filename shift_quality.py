@@ -222,6 +222,15 @@ class ShiftContext:
     cross_training_target: float = 0.34
     # What staff said they want (staff_settings.stated_preferences).
     preferences: dict = field(default_factory=dict)
+    # The multi-week rotation (schedule_intel.rotation_plan): per role, who
+    # is due a weekend off, next to close, resting from closing.
+    rotation: dict = field(default_factory=dict)
+    # Sales per labor hour (schedule_economics.splh_objective): this
+    # weekday's daypart target, the sales that daypart usually does, and
+    # the hours this draft puts on it (rows counted once, under their start).
+    splh_target: float | None = None
+    expected_sales: float | None = None
+    daypart_hours: float = 0.0
 
     # ── Derived views every dimension wants ────────────────────────────
     @property
@@ -329,6 +338,12 @@ DEFAULT_WEIGHTS = {
     "stability": 2,
     "cross_training": 2,
     "preferences": 3,
+    # Sales per labor hour against the daypart's target (#48). Beside labor
+    # efficiency (10), which asks whether the DAY fits its hours target:
+    # this asks whether the hours sit where the sales are, so moving an
+    # hour from a slow lunch to a busy dinner is seen. Withdraws without
+    # sales.
+    "splh": 5,
 }
 
 
@@ -873,6 +888,45 @@ def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
+# Sales per labor hour within this share under the daypart's target is on
+# target; each point further under costs SPLH_STEP. Over the target is not
+# marked down here — a thin floor is coverage's question, not this one's.
+SPLH_TOLERANCE = 0.05
+SPLH_STEP = 200
+SPLH_THIN = 1.4
+
+
+def dim_splh(ctx: ShiftContext) -> DimensionResult | None:
+    """Sales per labor hour on this shift against the daypart's target.
+
+    The sales are what this weekday's daypart usually does (raised by a
+    lift recorded for the date), the hours what the draft puts on it. No
+    sales record, no target or no hours: the dimension withdraws."""
+    if not ctx.splh_target or ctx.splh_target <= 0 or not ctx.expected_sales or ctx.expected_sales <= 0:
+        return None
+    if ctx.daypart_hours <= 0:
+        return None
+    splh = ctx.expected_sales / ctx.daypart_hours
+    ratio = splh / float(ctx.splh_target)
+    score = SCORE_MAX if ratio >= 1 - SPLH_TOLERANCE else max(0, int(round(SCORE_MAX - (1 - SPLH_TOLERANCE - ratio) * SPLH_STEP)))
+    need_hours = ctx.expected_sales / float(ctx.splh_target)
+    res = DimensionResult(
+        key="splh", label="Sales per labor hour", score=score, weight=DEFAULT_WEIGHTS["splh"],
+        facts={"splh": round(splh, 0), "target": round(float(ctx.splh_target), 0),
+               "expected_sales": round(ctx.expected_sales, 0), "hours": round(ctx.daypart_hours, 1),
+               "hours_at_target": round(need_hours, 1), "ratio": round(ratio, 2)})
+    part = "lunch" if ctx.daypart == "morning" else "dinner"
+    if ratio >= 1 - SPLH_TOLERANCE:
+        res.strengths.append(f"${splh:,.0f} of sales per labor hour against a ${float(ctx.splh_target):,.0f} {part} target.")
+        if ratio >= SPLH_THIN:
+            res.blind_spots.append(f"${splh:,.0f} per labor hour is well past the ${float(ctx.splh_target):,.0f} target — "
+                                   "check the floor can carry the volume.")
+    else:
+        res.weaknesses.append(f"${splh:,.0f} of sales per labor hour against a ${float(ctx.splh_target):,.0f} {part} target — "
+                              f"about {ctx.daypart_hours - need_hours:.0f}h more than the usual sales here carry.")
+    return res
+
+
 # A shift at this demand level or above is a hard one to work, and is what
 # fatigue and fairness both count.
 HARD_DEMAND = "high"
@@ -1066,12 +1120,23 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
             lines.append(f"{top['name']} has {top['have']} of the week's {label} — about "
                          f"{top['share']:g} would be their share among {top['role'] or 'their'} staff.")
         facts[kind] = {"overloaded": overloaded}
-    if not any(k in facts for k, _ in kinds):
+
+    # The multi-week rotation: the week judged against who was due a
+    # weekend off or next to close across the last published weeks, not
+    # only against itself. Replaces the ledger check below when a plan
+    # exists — the plan is built from the same weeks, per role.
+    rot_lines, rot_good, rot_facts = _rotation_findings(ctx, {k for k, _l in kinds})
+    if rot_facts:
+        facts["rotation"] = rot_facts
+    if not any(k in facts for k, _ in kinds) and not rot_facts:
         return None
+    if rot_lines:
+        lines.extend(rot_lines)
+        worst = max(0, worst - ROTATION_PENALTY)
 
     # The rotation ledger: over the last published weeks, somebody on this
     # shift already has far more of this kind than their colleagues.
-    if ctx.ledger:
+    if ctx.ledger and not ctx.rotation:
         present = {k for k, _l in kinds}
         for kind, label in (("weekend", "weekend shifts"), ("closing", "closes")):
             if kind not in present:
@@ -1098,7 +1163,70 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
     if not lines:
         res.strengths.append("Nobody on this shift is carrying more than their share of "
                              + " or ".join(label for _k, label in kinds) + ".")
+    res.strengths.extend(rot_good)
     return res
+
+
+# Points a shift loses when it puts somebody due a weekend off, or resting
+# from closes, on it while the rotation's next person in that role is free.
+ROTATION_PENALTY = 15
+
+
+def _rotation_findings(ctx: ShiftContext, kinds: set):
+    """(weaknesses, strengths, facts) for this shift against the rotation
+    plan. A person due a weekend off who is on a weekend shift counts only
+    when somebody else in their role, not due, works this week with the
+    weekend free — the rotation had somebody to give it to. Likewise a
+    person resting from closes on a close, while the next closer in the
+    role has none this week."""
+    plan = (ctx.rotation or {}).get("roles") or {}
+    if not plan or not kinds & {"weekend", "closing"}:
+        return [], [], {}
+    by_low = {str(r).strip().lower(): v for r, v in plan.items()}
+    this_week = {}
+    for n, entries in (ctx.week_assignments or {}).items():
+        mine = [e for e in entries if e.get("date") and not e.get("prior")]
+        if mine:
+            this_week[n.strip().lower()] = mine
+    weak, good, facts = [], [], {}
+    part = "lunch" if ctx.daypart == "morning" else "dinner"
+    for role, names in ctx.by_role.items():
+        rp = by_low.get(role.strip().lower())
+        if not rp:
+            continue
+        on = {n.strip().lower(): n for n in names}
+        if "weekend" in kinds:
+            due = {n.strip().lower() for n in rp.get("weekend_due") or []}
+            for low, n in on.items():
+                if low not in due:
+                    continue
+                free = [p for p in rp.get("people") or [] if p.strip().lower() not in due
+                        and p.strip().lower() in this_week
+                        and not any(e.get("weekend") for e in this_week[p.strip().lower()])]
+                if free:
+                    streak = (rp.get("weekend_streak") or {}).get(n)
+                    weak.append(f"{n} is due a weekend off" + (f" ({streak} weekends in a row)" if streak else "")
+                                + f" and is on {ctx.day} {part}; {free[0]} has this weekend free.")
+                    facts.setdefault("weekend_due_working", []).append(n)
+            rested = [p for p in rp.get("weekend_due") or [] if p.strip().lower() in this_week
+                      and not any(e.get("weekend") for e in this_week[p.strip().lower()])]
+            if rested:
+                good.append(f"{', '.join(rested)} {'gets' if len(rested) == 1 else 'get'} the weekend off the rotation "
+                            f"said {'was' if len(rested) == 1 else 'were'} due.")
+                facts["weekend_due_off"] = rested
+        if "closing" in kinds and ctx.is_closing:
+            resting = {n.strip().lower() for n in rp.get("rest_from_close") or []}
+            nexts = [p for p in (rp.get("next_close") or [])[:3] if p.strip().lower() in this_week
+                     and not any(e.get("closing") for e in this_week[p.strip().lower()])]
+            for low, n in on.items():
+                if low in resting and nexts:
+                    c = (rp.get("closes") or {}).get(n) or {}
+                    had = (f"has closed {c['closes']} of their last {c['shifts']} shifts" if c.get("shifts")
+                           else "has carried more than their share of closes")
+                    weak.append(f"{n} {had} and closes again here; {nexts[0]} is next to close and has none this week.")
+                    facts.setdefault("resting_closer_closing", []).append(n)
+    return weak, good, facts
+
 
 
 def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
@@ -1477,6 +1605,7 @@ DIMENSIONS = {
     "leadership": dim_leadership,
     "demand_match": dim_demand_match,
     "labor_efficiency": dim_labor_efficiency,
+    "splh": dim_splh,
     "experience_balance": dim_experience_balance,
     "training_balance": dim_training_balance,
     "reliability": dim_reliability,
@@ -1492,13 +1621,13 @@ DIMENSIONS = {
 # the explanation layer, but not put on screen yet — a manager reading
 # fourteen numbers is reading none of them.
 CUSTOMER_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "leadership",
-                       "training_balance", "labor_efficiency", "demand_match", "reliability")
+                       "training_balance", "labor_efficiency", "splh", "demand_match", "reliability")
 
 # At least one of these has to have data before a shift claims a score. The
 # rest are real dimensions and genuinely count, but none of them alone says
 # anything about whether the shift will actually run.
 SUBSTANTIVE_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "leadership",
-                          "demand_match", "labor_efficiency", "experience_balance",
+                          "demand_match", "labor_efficiency", "splh", "experience_balance",
                           "training_balance")
 
 
@@ -2247,7 +2376,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     profiles = profiles if profiles is not None else BUILTIN_PROFILES
     demand_by_day = signals.get("demand_by_day") or {}
     demand_by_date = signals.get("demand_by_date") or {}
-    buckets, primary, day_hours = {}, {}, {}
+    buckets, primary, day_hours, part_hours = {}, {}, {}, {}
     for row in rows or []:
         name = (row.get("employee") or "").strip()
         date = (row.get("date") or "").strip()
@@ -2258,6 +2387,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             buckets.setdefault((date, part), []).append(row)
         primary.setdefault((date, parts[0]), []).append(row)
         day_hours[date] = day_hours.get(date, 0.0) + _row_hours(row)
+        part_hours[(date, parts[0])] = part_hours.get((date, parts[0]), 0.0) + _row_hours(row)
 
     # Which bucket actually closes each date, so a closing requirement binds
     # the shift it means rather than every shift of the day. Judged on each
@@ -2338,10 +2468,21 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     for key in expected:
         buckets[key] = []
 
+    splh_targets = signals.get("splh_targets") or {}
+    daypart_sales = signals.get("daypart_sales") or {}
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
         profile = _profile(date, day, part)
+        # The sales this weekday's daypart usually does, raised by a lift
+        # the owner recorded for the date — what the hours are set against.
+        expected = ((daypart_sales.get(day) or {}).get(part)) if daypart_sales else None
+        if expected:
+            lift = (demand_by_date.get(date) or {}).get("lift_pct")
+            try:
+                expected = float(expected) * (1 + float(lift) / 100.0) if lift else float(expected)
+            except (TypeError, ValueError):
+                expected = float(expected)
         floors_here = {}
         for role, spec in role_floors_all.items():
             dspec = (spec.get("days") or {}).get(day) or {}
@@ -2383,6 +2524,10 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             experienced=set(signals.get("experienced") or ()),
             cross_training_target=float(signals.get("cross_training_target") or 0.34),
             preferences=signals.get("preferences") or {},
+            rotation=signals.get("rotation") or {},
+            splh_target=(splh_targets.get(day) or {}).get(part),
+            expected_sales=expected or None,
+            daypart_hours=part_hours.get((date, part), 0.0),
         ))
     return contexts
 

@@ -1749,6 +1749,19 @@ def _do_ratings_match(u):
     return {"ok": True, "moved": moved}, 200
 
 
+def _roster_roles(rid) -> dict:
+    """{name: role} for the active roster — who a rotation plans for."""
+    import staff_settings as _staff
+    return {e["name"]: e.get("role") or "" for e in _staff.roster(rid) or [] if e.get("name")}
+
+
+def _starting_points(rid) -> dict:
+    """The borrowed starting headcount (intelligence.staffing), shaped for
+    the screens — or why there is none."""
+    from intelligence import staffing as _staffing
+    return _staffing.payload(_staffing.starting_headcount(rid, roster_roles=_roster_roles(rid)))
+
+
 def _do_schedule_intel(u):
     """The record behind the draft: outcomes by daypart, the rotation
     ledger, what staff keep dropping and claiming, who could hold a
@@ -1780,6 +1793,15 @@ def _do_schedule_intel(u):
             # by weekday.
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
             "weight_calibration": _safe(lambda: _sl.calibrate_weights(rid), {"ready": False}),
+            # Schedule learning (#42, #46, #48, #43): how well the edit
+            # predictor would have done on past drafts, the multi-week
+            # rotation, the sales-per-labor-hour targets, and — for a
+            # restaurant with no history — a borrowed starting headcount or
+            # why there is none.
+            "edit_prediction": _safe(lambda: _sl.edit_prediction_summary(rid), {"ready": False}),
+            "rotation": _safe(lambda: _si.rotation_plan(rid, roster_roles=_roster_roles(rid)), {}),
+            "splh_objective": _safe(lambda: _econ.splh_objective(rid), {"available": False}),
+            "starting_points": _safe(lambda: _starting_points(rid), {"available": False}),
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
             "auto_publish_offer": (_safe(lambda: _auto_publish_offer(rid), {"eligible": False}) if _may_publish(u)
                                    else {"eligible": False, "reason": "Only someone who can send the schedule can turn this on."}),

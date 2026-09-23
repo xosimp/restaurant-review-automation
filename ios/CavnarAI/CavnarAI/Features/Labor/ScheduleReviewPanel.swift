@@ -30,6 +30,7 @@ struct ScheduleReviewPanel: View {
             }
             if !viewModel.overtimeMoves.isEmpty { overtimeBlock }
             if !standbyDays.isEmpty { standbyBlock }
+            if !predictedEdits.isEmpty { likelyEditsBlock }
             if !pending.isEmpty { pendingBlock }
             actions
             provenance
@@ -253,6 +254,47 @@ struct ScheduleReviewPanel: View {
                 }
             }
         }
+    }
+
+    /// Rows the manager's own past edits say they will probably change —
+    /// flagged before they see the draft, likeliest first. The matches to
+    /// an edit they keep making are already review lines.
+    private var predictedEdits: [LikelyEdit] { (result.likelyEdits ?? []).filter { $0.kind == "predicted" } }
+
+    private var likelyEditsBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("LIKELY EDITS")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarEmber)
+            Text("From your own past edits — rows you'll probably change. Check these first.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(predictedEdits) { edit in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("\(Int(((edit.likelihood ?? 0) * 100).rounded()))%")
+                        .font(.cavnarNumber(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .frame(width: 42, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HomeMixedText.make(likelyEditTitle(edit), size: 14, weight: 600, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let reason = edit.reason, !reason.isEmpty {
+                            HomeMixedText.make(reason.prefix(1).uppercased() + reason.dropFirst() + ".",
+                                               size: 13, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private func likelyEditTitle(_ e: LikelyEdit) -> String {
+        [e.employee, e.date.map { CavnarDate.mdy($0) }, e.shiftStart, e.role]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func moveLine(_ move: OvertimeMove) -> String {

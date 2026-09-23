@@ -136,6 +136,55 @@ final class ScheduleOptimizerDecodingTests: XCTestCase {
         XCTAssertFalse(intel.isEmpty, "an offer or an acceptance record is something to show")
     }
 
+    /// Schedule learning (#39, #42, #43, #46, #48): the calibration step and
+    /// its explanation, the edit predictor's record, the rotation, the
+    /// sales-per-labor-hour target and a borrowed starting headcount.
+    func testDecodesScheduleLearning() throws {
+        let json = """
+        {"ok": true,
+         "weight_calibration": {"ready": true, "dimensions": {"coverage": {"default": 20, "current": 20, "suggested": 22.0,
+             "nudge_pct": 10, "step_pct": 10, "reading": "tracked better outcomes",
+             "explanation": "Coverage up: shifts where it scored higher had fewer coverage or no-show issues (across 54 shifts)."}}},
+         "edit_prediction": {"ready": true, "weeks": 6, "rows": 204, "edited": 30,
+             "backtest": {"weeks": 6, "flagged": 24, "hits": 20, "hit_rate": 0.833, "recall": 0.667, "base_rate": 0.147}},
+         "rotation": {"weeks": 4, "roles": {"Server": {"weekend_due": ["Ana"]}},
+             "lines": ["Servers — next weekend off: Ana (4 in a row), then Ben; next close: Ben, then Cara, Dan."]},
+         "splh_objective": {"available": true, "targets": {"night": {"target": 66, "history": 60, "source": "your own pace"}},
+             "by_day": {"Saturday": {"night": 66}}, "basis": "Dinner $66 per labor hour across the week"},
+         "starting_points": {"available": true, "borrowed": true, "cohort": "pizza", "cohort_label": "Pizza", "n": 5,
+             "note": "Borrowed: the median of 5+ pizza restaurants' people on the floor per $1k of sales.",
+             "by_slot": [{"day": "Saturday", "daypart": "night", "role": "Server", "people": 4}],
+             "headcount": {"Saturday|night": {"Server": 4}}}}
+        """
+        let intel = try JSONDecoder().decode(ScheduleIntel.self, from: Data(json.utf8))
+        let cov = try XCTUnwrap(intel.weightCalibration?.dimensions?["coverage"])
+        XCTAssertEqual(cov.current, 20)
+        XCTAssertEqual(cov.stepPct, 10)
+        XCTAssertTrue(cov.explanation?.hasPrefix("Coverage up") ?? false)
+        XCTAssertEqual(intel.editPrediction?.line,
+                       "On your last 6 drafts, 83% of the rows it flagged were rows you changed — against 15% of all rows.")
+        XCTAssertEqual(intel.rotation?.lines?.first?.hasPrefix("Servers — next weekend off: Ana"), true)
+        XCTAssertEqual(intel.splhObjective?.targets?["night"]?.target, 66)
+        XCTAssertEqual(intel.startingPoints?.bySlot?.first?.people, 4)
+        XCTAssertEqual(intel.startingPoints?.cohortLabel, "Pizza")
+        XCTAssertFalse(intel.isEmpty, "a rotation or a borrowed start is something to show")
+
+        let notReady = try JSONDecoder().decode(EditPredictionSummary.self, from: Data(
+            #"{"ready": false, "weeks": 1, "reason": "1 draft you've finished with — predicting your edits needs at least 3."}"#.utf8))
+        XCTAssertTrue(notReady.line?.hasPrefix("1 draft") ?? false)
+    }
+
+    func testDecodesLikelyEditsOnTheGeneratedSchedule() throws {
+        let json = #"{"ok": true, "likely_edits": [{"kind": "moved_off", "employee": "Ann", "date": "2026-10-10", "text": "Ann is on Saturday dinner"}, {"kind": "predicted", "index": 3, "employee": "Zed", "date": "2026-10-10", "role": "Server", "shift_start": "4:00pm", "likelihood": 0.82, "reason": "you changed 9 of 10 of Zed's shifts", "features": ["person"], "text": "Zed — 82% likely"}]}"#
+        let result = try JSONDecoder().decode(GeneratedSchedule.self, from: Data(json.utf8))
+        let edits = try XCTUnwrap(result.likelyEdits)
+        XCTAssertEqual(edits.count, 2)
+        XCTAssertEqual(edits[1].kind, "predicted")
+        XCTAssertEqual(edits[1].likelihood, 0.82)
+        XCTAssertEqual(edits[1].shiftStart, "4:00pm")
+        XCTAssertNotEqual(edits[0].id, edits[1].id)
+    }
+
     func testCalibrationNotReadyCarriesItsReason() throws {
         let json = #"{"ok": true, "weight_calibration": {"ready": false, "weeks": 1, "shifts": 4, "reason": "1 published week and 4 shift outcomes with a stored score — calibration needs at least 4 weeks and 40 shifts."}, "auto_publish_offer": {"eligible": false, "reason": "Needs 3 published weeks of drafts to judge."}}"#
         let intel = try JSONDecoder().decode(ScheduleIntel.self, from: Data(json.utf8))

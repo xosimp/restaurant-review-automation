@@ -371,6 +371,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     except Exception as _sfx:
         _soft_fail('ledger', _sfx, restaurant_id)
         ledger = {}
+    # What schedule learning adds on top (schedule_learning_inputs): the
+    # multi-week rotation, the sales-per-labor-hour objective, and for a
+    # restaurant with no history of its own a borrowed starting headcount.
+    learning = schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, target)
     stated_prefs, learned_prefs = {}, {}
     try:
         stated_prefs = _staff.stated_preferences(restaurant_id)
@@ -416,7 +420,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
                     + _intel.ledger_block(ledger)
                     + _intel.preferences_block(learned_prefs, stated_prefs)
                     + _could_hold_block(could_hold)
-                    + _cohort_block(restaurant_id, restaurant))
+                    + _cohort_block(restaurant_id, restaurant)
+                    + _intel.rotation_block(learning["rotation"])
+                    + _econ.splh_objective_block(learning["splh_objective"], next_week_dates, signals_by_date)
+                    + learning["starting_block"])
 
     _gen_kwargs = dict(
         restaurant_name=restaurant.name if restaurant else "Restaurant",
@@ -459,8 +466,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         prior_pattern=_people["prior_pattern"],
         experienced=_people["experienced"],
         focus=list(focus) if focus else None,
+        borrowed_headcount=learning["borrowed_headcount"],
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    result["rotation_plan"] = learning["rotation"]
+    result["splh_objective"] = learning["splh_objective"]
+    result["starting_headcount"] = learning["starting_payload"]
     result["holiday_lift"] = holiday
     result["splh_by_daypart"] = splh
     result["outcomes_by_daypart"] = outcomes
@@ -536,6 +547,37 @@ def _acceptable_missing(missing, trading_dates, roster_pairs, max_days) -> bool:
         if len(rest) <= max(0, len(trading_dates) - capacity):
             return True
     return not rest
+
+
+def schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, labor_target) -> dict:
+    """The learned inputs a draft is generated against, each failing alone:
+    the rotation plan (schedule_intel.rotation_plan), the sales-per-labor-
+    hour objective (schedule_economics.splh_objective), and — only for a
+    restaurant with no history of its own — a starting headcount borrowed
+    from similar restaurants (intelligence.staffing), labelled borrowed."""
+    import schedule_intel as _intel
+    import schedule_economics as _econ
+    roles = {n: r for n, r in (roster_pairs or []) if n}
+    out = {"rotation": {}, "splh_objective": {"available": False}, "borrowed_headcount": None,
+           "starting_payload": {"available": False}, "starting_block": ""}
+    try:
+        out["rotation"] = _intel.rotation_plan(restaurant_id, roster_roles=roles or None) or {}
+    except Exception as _sfx:
+        _soft_fail('rotation_plan', _sfx, restaurant_id)
+    try:
+        out["splh_objective"] = _econ.splh_objective(restaurant_id, splh=splh, labor_target_pct=labor_target)
+    except Exception as _sfx:
+        _soft_fail('splh_objective', _sfx, restaurant_id)
+    try:
+        from intelligence import staffing as _staffing
+        start = _staffing.starting_headcount(restaurant_id, restaurant=restaurant, roster_roles=roles, shifts=shifts)
+        out["starting_payload"] = _staffing.payload(start)
+        if start.get("available"):
+            out["borrowed_headcount"] = start["headcount"]
+            out["starting_block"] = _staffing.prompt_block(start)
+    except Exception as _sfx:
+        _soft_fail('starting_headcount', _sfx, restaurant_id)
+    return out
 
 
 def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
@@ -2059,6 +2101,10 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["demand_curve"] = _hourly_profile(restaurant_id)
     except Exception:
         signals["demand_curve"] = {}
+    # The rotation the week is judged against, and the sales-per-labor-hour
+    # objective — the generation's own when it carries them, so a live
+    # re-score judges an edit by what the draft was written against.
+    signals.update(_learning_signals(restaurant_id, result))
     # A rule nobody on the roster could satisfy is not the draft's fault,
     # and confidence should say so rather than the score silently failing.
     try:
@@ -2131,6 +2177,34 @@ def _quality_signals(restaurant_id, result, **extra):
             signals["constraints"] = {}
     signals.update(extra)
     return signals, weights
+
+
+def _learning_signals(restaurant_id, result) -> dict:
+    """{rotation, splh_targets, daypart_sales} for the scorer. Either one
+    failing costs only its own dimension's part (each withdraws on {})."""
+    out = {"rotation": {}, "splh_targets": {}, "daypart_sales": {}}
+    try:
+        rot = result.get("rotation_plan")
+        if rot is None:
+            import schedule_intel as _si
+            rot = _si.rotation_plan(restaurant_id, roster_roles=result.get("roster_roles") or None)
+        out["rotation"] = rot or {}
+    except Exception as _sfx:
+        _soft_fail('rotation_plan', _sfx, restaurant_id)
+    try:
+        obj = result.get("splh_objective")
+        if obj is None:
+            import schedule_economics as _econ
+            obj = _econ.splh_objective(restaurant_id)
+        if obj and obj.get("available"):
+            import schedule_economics as _econ_t
+            out["splh_targets"] = {wd: {p: _econ_t.splh_target_for(obj, wd, p) for p in ("morning", "night")
+                                        if _econ_t.splh_target_for(obj, wd, p)}
+                                   for wd in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")}
+            out["daypart_sales"] = obj.get("daypart_sales") or {}
+    except Exception as _sfx:
+        _soft_fail('splh_objective', _sfx, restaurant_id)
+    return out
 
 
 def _reconcile_to_roster(signals: dict) -> None:
@@ -2231,10 +2305,33 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
 
 
-def likely_edits(restaurant_id, rows: list, patterns: list = None) -> list:
-    """Draft rows that match an edit the manager keeps making: a person on a
+def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool = True) -> list:
+    """Draft rows the manager is likely to change, before they see it.
+
+    First, rows matching an edit the manager keeps making: a person on a
     weekday and daypart they have been taken off repeatedly, or a role's
-    start the manager keeps moving. [{kind, employee?, date, text}]."""
+    start the manager keeps moving. Then every other row the predictor
+    (schedule_learning.predict_row_edits — smoothed edit rates from this
+    restaurant's own finished drafts) puts at or above its threshold, with
+    the likelihood and the rates behind it. [{kind, employee?, date, text,
+    likelihood?, reason?, index?}]."""
+    out = _pattern_likely_edits(restaurant_id, rows, patterns)
+    if not predict:
+        return out
+    try:
+        import schedule_learning as _sl
+        flagged = {(o.get("employee") or "").strip().lower() + "|" + (o.get("date") or "") for o in out if o.get("employee")}
+        for p in _sl.predict_row_edits(restaurant_id, rows):
+            if f"{(p.get('employee') or '').strip().lower()}|{p.get('date') or ''}" in flagged:
+                continue
+            out.append(p)
+    except Exception as _px:
+        print(f"[schedule] edit prediction unavailable for {restaurant_id}: {_px}")
+    return out
+
+
+def _pattern_likely_edits(restaurant_id, rows: list, patterns: list = None) -> list:
+    """The repeated-edit matches likely_edits starts from."""
     import shift_quality as _sq
     if patterns is None:
         patterns = _versions.learned_patterns(restaurant_id)
@@ -2805,12 +2902,33 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 print(f"[schedule] overtime/standby read failed: {_slx}")
             # Rows the manager has repeatedly edited away and the draft put
             # back anyway: said before they have to do it again.
+            # Then every other row the manager's own edit history says they
+            # are likely to change (schedule_learning.predict_row_edits),
+            # with the likelihood and why — listed in the review's Likely
+            # edits block rather than as lines.
             try:
                 result["likely_edits"] = likely_edits(restaurant_id, preview_rows)
-                for _le in result["likely_edits"][:3]:
+                for _le in [x for x in result["likely_edits"] if x.get("kind") != "predicted"][:3]:
                     result["review"]["lines"].append(_le["text"])
             except Exception as _lex:
                 print(f"[schedule] likely-edit read failed: {_lex}")
+            # Sales per labor hour against the objective the draft was
+            # written to, and the borrowed starting headcount, said.
+            try:
+                import schedule_economics as _econ_r
+                _sr = _econ_r.splh_report(result.get("splh_objective") or {}, preview_rows,
+                                          result.get("demand_by_date") or {})
+                result["splh_report"] = _sr
+                if _sr.get("line"):
+                    result["review"]["lines"].append(_sr["line"])
+            except Exception as _srx:
+                print(f"[schedule] splh report failed: {_srx}")
+            _start = result.get("starting_headcount") or {}
+            if _start.get("available"):
+                result["review"]["lines"].append(
+                    f"Staffing numbers marked borrowed come from {_start.get('n')}+ similar "
+                    f"{(_start.get('cohort_label') or 'restaurants').lower()} restaurants (people on the floor per $1k of "
+                    f"sales, scaled to {_start.get('basis')}) — this restaurant has no schedule history of its own yet.")
             _pc = result.get("projected_cost") or {}
             if _pc.get("overtime_hours"):
                 result["review"]["lines"].append(
@@ -3078,6 +3196,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             overtime_forecast=result.get("overtime_forecast") or [],
             standby_days=result.get("standby_days") or [],
             likely_edits=result.get("likely_edits") or [],
+            # What schedule learning set the draft against: the rotation
+            # plan, the sales-per-labor-hour objective and how the draft
+            # landed on it, and a borrowed starting headcount (new accounts).
+            rotation_plan=result.get("rotation_plan") or {},
+            splh_objective=result.get("splh_objective") or {"available": False},
+            splh_report=result.get("splh_report") or {},
+            starting_headcount=result.get("starting_headcount") or {"available": False},
             gate=result.get("gate") or {"ran": False},
         )
         _q_now = (result.get("quality") or {}).get("score")

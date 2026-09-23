@@ -721,6 +721,26 @@ struct HolidayLift: Codable, Equatable {
 
 /// What an edit moves in hours and overtime-priced dollars, against the
 /// rows the manager started from.
+/// A draft row the manager is likely to change: matched to an edit they
+/// keep making, or ("predicted") flagged by the rates of their own past
+/// edits, with the likelihood and why.
+struct LikelyEdit: Codable, Identifiable, Equatable {
+    let kind: String?
+    let employee: String?
+    let date: String?
+    let role: String?
+    let shiftStart: String?
+    let likelihood: Double?
+    let reason: String?
+    let text: String?
+    let index: Int?
+    var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")-\(date ?? "")" }
+    enum CodingKeys: String, CodingKey {
+        case kind, employee, date, role, likelihood, reason, text, index
+        case shiftStart = "shift_start"
+    }
+}
+
 /// A day likely to lose somebody to a no-show, and who could be on call.
 struct StandbyDay: Codable, Identifiable, Equatable {
     struct Person: Codable, Equatable {
@@ -1128,9 +1148,13 @@ struct GeneratedSchedule: Codable {
     // The days most likely to lose somebody to a no-show, each naming who
     // is off and could be on call.
     let standbyDays: [StandbyDay]?
+    // Rows the manager is likely to change before they see the draft.
+    // Absent on an older server.
+    var likelyEdits: [LikelyEdit]? = nil
 
     enum CodingKeys: String, CodingKey {
         case standbyDays = "standby_days"
+        case likelyEdits = "likely_edits"
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
         case trimmed, staggered, departments, optimizer, gate
         case whatIf = "what_if"
