@@ -120,7 +120,6 @@ def _insert_restaurants(db_path, n):
     c.commit(); c.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-2: _restaurant_from_row calls row.keys() ~190 times per restaurant")
 def test_hydrating_every_restaurant_calls_row_keys_a_bounded_number_of_times_per_row(monkeypatch, db_path):
     _insert_restaurants(db_path, 200)
     counter = {"n": 0}
@@ -217,7 +216,6 @@ def test_run_due_executes_due_actions_oldest_first_and_only_once(monkeypatch, re
 
 # ── MOD-PERF-5: a malformed row must not vanish silently ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-5: get_all_restaurants swallows a hydration error with a bare pass")
 def test_a_restaurant_with_a_malformed_numeric_column_is_kept_or_reported(monkeypatch, redirect):
     good = models.create_restaurant(models.Restaurant(name="Good", owner_email="g@x.com"), db_path=redirect)
     bad = models.create_restaurant(models.Restaurant(name="Bad", owner_email="b@x.com"), db_path=redirect)

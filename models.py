@@ -2519,6 +2519,26 @@ def restaurant_version(restaurant_id: int, db_path: str = DB_PATH) -> int:
         conn.close()
 
 
+# Columns _restaurant_from_row converts with int()/float(). A value that
+# does not convert makes the row fail to hydrate, and get_all_restaurants
+# then skips it — the restaurant leaves every scheduled job (DATA-43). So a
+# write that would store one is refused here instead.
+_NUMERIC_RESTAURANT_FIELDS = {"week_start_day": int, "monthly_revenue_target": float}
+
+
+def _check_numeric_fields(updates):
+    for k, cast in _NUMERIC_RESTAURANT_FIELDS.items():
+        v = updates.get(k)
+        if k not in updates or v is None or isinstance(v, (int, float)):
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        try:
+            cast(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{k} must be a number, not {v!r}") from None
+
+
 def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                       expected_version: int = None):
     """Update any restaurant fields by dict.
@@ -2578,6 +2598,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
     import credentials as _cred
@@ -2739,6 +2760,11 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
 def _restaurant_from_row(row) -> Restaurant:
     """Row -> Restaurant. Split out so callers that already hold the row can
     hydrate from it instead of re-querying by id (see get_all_restaurants)."""
+    # One keys() call per row, not one per optional column: sqlite3.Row
+    # builds a fresh list on every keys(), ~190 of them per restaurant,
+    # for every restaurant every scheduled job hydrates (MOD-PERF-2).
+    if not isinstance(row, dict):
+        row = dict(zip(row.keys(), row))
     return Restaurant(
         id=row["id"], name=row["name"], owner_email=row["owner_email"],
         google_place_id=row["google_place_id"], yelp_business_id=row["yelp_business_id"],
@@ -5816,12 +5842,42 @@ def get_all_restaurants(db_path: str = DB_PATH) -> list:
     result = []
     for row in rows:
         # Per-row guard kept: one malformed row must not cost the caller the
-        # whole list, which is what the old per-row try/except bought.
+        # whole list. But a row that fails is reported, not dropped in
+        # silence: it leaves every scheduled job with it, and nothing else
+        # would ever say so (DATA-43 / MOD-PERF-5).
         try:
             result.append(_restaurant_from_row(row))
-        except Exception:
-            pass
+        except Exception as e:
+            _report_unhydratable(row, e, db_path)
     return result
+
+
+# (db_path, restaurant_id) -> monotonic time last reported. A row that cannot
+# hydrate fails on every call; the failure digest needs it once an hour,
+# not once per job and page view.
+_hydration_reported = {}
+
+
+def _report_unhydratable(row, exc, db_path):
+    import time as _time
+    try:
+        rid = row["id"]
+    except Exception:
+        rid = None
+    key = (str(db_path), rid)
+    now = _time.monotonic()
+    last = _hydration_reported.get(key)
+    if last is not None and now - last < 3600:
+        return
+    _hydration_reported[key] = now
+    print(f"[models] restaurant {rid} could not be loaded and is skipped: {exc}")
+    try:
+        import ops
+        ops.capture(exc, job="restaurant_hydration",
+                    context=f"restaurant_id={rid} — skipped by get_all_restaurants, so every scheduled job skips it",
+                    db_path=db_path if db_path != DB_PATH else None)
+    except Exception:
+        pass
 
 def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
     """Get all restaurants scheduled for digest on a given day of week."""

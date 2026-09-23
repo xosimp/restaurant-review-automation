@@ -398,8 +398,6 @@ def test_one_malformed_row_does_not_cost_the_rest_of_the_list(db_path):
     assert good in [r.id for r in models.get_all_restaurants(db_path=db_path)]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-43: get_all_restaurants drops a row that fails to hydrate with a bare "
-                                       "except/pass, so one client silently leaves every scheduled job")
 def test_a_skipped_row_is_reported_to_ops(db_path, monkeypatch):
     bad = _rid(db_path, name="Bad")
     conn = models.get_conn(db_path)
@@ -412,8 +410,6 @@ def test_a_skipped_row_is_reported_to_ops(db_path, monkeypatch):
     assert any(str(bad) in (ctx or "") for _job, ctx in captured), captured
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-43: update_restaurant does not type-check, so one non-numeric write "
-                                       "makes the restaurant vanish from get_all_restaurants")
 def test_a_bad_settings_value_cannot_make_a_restaurant_vanish_from_every_job(db_path):
     rid = _rid(db_path)
     try:
