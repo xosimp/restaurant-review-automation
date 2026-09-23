@@ -133,8 +133,13 @@ def _no_shift_data_message(restaurant_id, restaurant=None):
             "this restaurant has its own shifts on file.")
 
 
-def _build_schedule_result(restaurant_id, week_start=None):
-    """Shared logic for both schedule endpoints."""
+def _build_schedule_result(restaurant_id, week_start=None, focus=None):
+    """Shared logic for both schedule endpoints.
+
+    focus — named weaknesses of the previous draft (a list of strings), for
+    a regeneration of chosen dates; rendered into the prompt as "THE
+    PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON" (schedule_requirements
+    .focus_block). None for an ordinary generation."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
                        generate_optimized_schedule, get_hourly_rate,
                        build_demand_forecast)
@@ -368,6 +373,22 @@ def _build_schedule_result(restaurant_id, week_start=None):
         revenue = _econ.projected_weekly_revenue(restaurant_id)
     except Exception:
         pass
+    # Who is experienced, who can run a shift and who usually works when —
+    # the same reads the quality pass makes (_quality_signals), handed to
+    # the prompt so the model is told the facts it is scored on. Any one of
+    # them failing costs only its own block.
+    from models import get_employee_tenure, get_leader_flags, get_prior_shift_pattern
+    _people = {}
+    for _key, _fn in (("tenure", get_employee_tenure), ("leader_flags", get_leader_flags),
+                      ("prior_pattern", get_prior_shift_pattern)):
+        try:
+            _people[_key] = _fn(restaurant_id) or {}
+        except Exception:
+            _people[_key] = {}
+    try:
+        _people["experienced"] = sorted(_staff.experienced_names(restaurant_id))
+    except Exception:
+        _people["experienced"] = []
     extra_blocks = (_rules.prompt_block(constraints)
                     + _signals.prompt_block(signals_by_date, next_week_dates)
                     + _pairs_block(pairs, roster_pairs)
@@ -411,6 +432,16 @@ def _build_schedule_result(restaurant_id, week_start=None):
         week_start=monday.strftime("%Y-%m-%d"),
         closed_dates=sorted(constraints.closed_dates),
         max_consecutive_days=constraints.compliance.get("max_consecutive_days"),
+        # The SHIFT REQUIREMENTS table and the people blocks: the same
+        # floors, demand, tenure and patterns the quality pass scores with.
+        role_floors=constraints.role_floors or {},
+        demand_by_date=signals_by_date,
+        demand_by_day=_demand_by_day,
+        tenure=_people["tenure"],
+        leader_flags=_people["leader_flags"],
+        prior_pattern=_people["prior_pattern"],
+        experienced=_people["experienced"],
+        focus=list(focus) if focus else None,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["holiday_lift"] = holiday
@@ -505,6 +536,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     kwargs = dict(kwargs)
     closed = set(kwargs.pop("closed_dates", None) or [])
     max_days = kwargs.pop("max_consecutive_days", None) or 6
+    # The prompt leaves closed dates out of its SHIFT REQUIREMENTS table.
+    kwargs["closed_dates"] = sorted(closed)
     parts = 1
     expected = _expected_rows(shifts, roster_pairs)
     if expected > CHUNK_ROWS_PER_CALL:
