@@ -429,6 +429,63 @@ def could_hold(mentored: dict) -> dict:
             if any(c >= MENTOR_SHIFTS_TO_HOLD for c in roles.values())}
 
 
+# ── was anyone watching? ──────────────────────────────────────────────────
+#
+# "Clean" here means no coverage or no-show issue was opened. That is only
+# evidence when something could have opened one. Nothing creates "no_show"
+# issues at all, and a "coverage" issue is opened only by
+# strategy_jobs.run_coverage_check, which runs only when ALL of these hold:
+#
+#   1. the Labor module is on;
+#   2. issue routing names a manager (issues.get_routing has "manager");
+#   3. the connected POS has a live clock-in feed (its provider module
+#      exposes fetch_clock_ins_today — Toast does; RPOWER, month-at-a-time,
+#      does not);
+#   4. the restaurant was open and the POS was read during service THAT DAY.
+#
+# 1-3 are read from the current configuration. 4 is per date: a pos_intraday
+# reading exists for it (run_intraday_capture takes one each open hour from
+# the same live POS, on the same open-hours rule as the coverage check).
+# Without all four, "8 of 8 shared dayparts ran without an issue", an
+# accepted recommendation "improved", and auto-publish's "ran clean" weeks
+# were all true of every restaurant by default (re-audit A-19) — so those
+# reads are withheld for any date nobody was watching.
+
+def coverage_check_possible(restaurant_id, db_path=DB_PATH) -> bool:
+    """Conditions 1-3 above: whether run_coverage_check can open a coverage
+    issue for this restaurant at all."""
+    try:
+        from models import get_restaurant
+        import issues, pos
+        r = get_restaurant(restaurant_id, db_path)
+        if not r or not getattr(r, "module_labor", 0):
+            return False
+        if "manager" not in issues.get_routing(restaurant_id, db_path):
+            return False
+        _name, mod = pos.connected_provider(restaurant_id)
+        return bool(mod) and getattr(mod, "fetch_clock_ins_today", None) is not None
+    except Exception as e:
+        print(f"[schedule_intel] coverage_check_possible failed for {restaurant_id}: {e}")
+        return False
+
+
+def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
+    """ISO dates in [start, end] on which a clean night means something:
+    coverage_check_possible, and a live POS reading taken that day (4)."""
+    if not coverage_check_possible(restaurant_id, db_path):
+        return set()
+    conn = get_conn(db_path)
+    try:
+        return {r["business_date"] for r in conn.execute(
+            "SELECT DISTINCT business_date FROM pos_intraday WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
+            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
+    except Exception as e:
+        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {e}")
+        return set()
+    finally:
+        conn.close()
+
+
 # ── chemistry suggestions ─────────────────────────────────────────────────
 
 def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
@@ -447,6 +504,13 @@ def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
         return []
     finally:
         conn.close()
+    if not outs:
+        return []
+    # Only nights somebody was watching can count as "ran without an issue"
+    # (watched_dates, A-19). None watched, no suggestion.
+    dates = sorted(str(o["date"]) for o in outs if o["date"])
+    seen = watched_dates(restaurant_id, dates[0], dates[-1], db_path) if dates else set()
+    outs = [o for o in outs if str(o["date"]) in seen]
     if not outs:
         return []
     people_by_slot = {}
@@ -554,6 +618,10 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
         if not match:
             continue
         o = sorted(match, key=lambda x: x["date"])[0]
+        # An issue on the night is evidence either way; a night with none is
+        # "improved" only if the coverage check was watching it (A-19).
+        if not (o["issues"] or 0) and o["date"] not in watched_dates(restaurant_id, o["date"], o["date"], db_path):
+            continue
         verdict = "improved" if not (o["issues"] or 0) else "worsened"
         if _rl.record(restaurant_id, schedule_rec_key(a["kind"], a["key"]), "outcome",
                       meta={"verdict": verdict, "date": o["date"], "issues": o["issues"] or 0},

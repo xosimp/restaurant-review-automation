@@ -88,8 +88,11 @@ _SLOW_DOWN = ({"ok": False, "error": "That's a lot in a short time — wait a fe
 def _do_issues_list(u):
     import issues
     status = request.args.get("status") or "unresolved"
-    return {"ok": True, "issues": issues.list_issues(_rid(u), status=status),
-            "summary": issues.summary(_rid(u))}, 200
+    # A loss issue names the manager who approved the comps; only a login
+    # with LOSS_VIEW reads it (re-audit A-8). Web and mobile share this body.
+    loss = issues.viewer_sees_loss(u)
+    return {"ok": True, "issues": issues.list_issues(_rid(u), status=status, sees_loss=loss),
+            "summary": issues.summary(_rid(u), sees_loss=loss)}, 200
 
 
 def _do_issue_create(u):
@@ -853,8 +856,10 @@ def _do_time_off_decide(u, request_id):
     row = time_off.decide(_rid(u), request_id, decision == "approve", decided_by=u.get("id"), note=b.get("note"))
     if not row:
         return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    from time_utils import mdy_range
+    # The account log is owner-facing: M/D/YY, not the stored ISO (A-25).
     log_account_event(_rid(u), "time_off_decided", current_user=u,
-                      detail=f"{row['employee_name']} {row['start_date']}–{row['end_date']}: {row['status']}")
+                      detail=f"{row['employee_name']} {mdy_range(row['start_date'], row['end_date'])}: {row['status']}")
     out = {"ok": True, "request": row}
     if row["status"] == "approved":
         # A week staff already have may put them on those days: name each

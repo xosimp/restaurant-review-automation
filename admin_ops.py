@@ -1043,7 +1043,7 @@ def billing():
 # console can show the same rows the scheduler writes and run one on demand.
 RUNNABLE_JOBS = {
     "review_fetch":            {"cadence": "8am / 12pm / 4pm / 8pm CT", "what": "Fetch new reviews and draft replies", "target": ("scheduler", "run_daily_fetch")},
-    "quality_calibration":     {"cadence": "Sunday 5am CT", "what": "Nudge Shift Quality weights from each restaurant's clean vs troubled weeks", "target": ("strategy_jobs", "run_quality_calibration")},
+    "quality_calibration":     {"cadence": "Sunday 5am CT", "what": "Suggest Shift Quality weights (calibrate_weights, what Apply writes)", "target": ("strategy_jobs", "run_quality_calibration")},
     "schedule_outcomes":       {"cadence": "Monday 4am CT", "what": "Record what each published week actually did, by daypart", "target": ("strategy_jobs", "run_schedule_outcomes")},
     "reservation_sync":        {"cadence": "Wednesday 5am CT", "what": "Reservation feeds into events & reservations (no provider live yet)", "target": ("reservation_feeds", "run_reservation_sync")},
     "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
@@ -1059,7 +1059,7 @@ RUNNABLE_JOBS = {
     # Safe to run on demand despite "sends": every milestone fires at most
     # once ever (UNIQUE on restaurant_id + key), so a second run notifies
     # nobody.
-    "milestones":              {"cadence": "7am daily", "what": "Fire savings / anniversary / goal milestones", "target": ("strategy_jobs", "run_milestones"), "sends": True},
+    "milestones":              {"cadence": "9am local", "what": "Fire savings / anniversary / goal milestones", "target": ("strategy_jobs", "run_milestones"), "sends": True},
     "ops_failure_digest":      {"cadence": "8am daily", "what": "Email Will the failure digest", "target": ("ops", "send_failure_digest"), "sends": True},
     "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
     "weekly_plan":             {"cadence": "Mon 7am local", "what": "The agent files the week's three actions as issues", "target": ("strategy_jobs", "run_weekly_plan")},

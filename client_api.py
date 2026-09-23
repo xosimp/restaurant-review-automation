@@ -3516,7 +3516,10 @@ def client_upload_data(current_user):
             # Persist per-day breakdown for YoY schedule generation
             try:
                 import models as _models_dh
-                _models_dh.save_labor_daily_history(restaurant_id, _shift_analysis.get("by_day", {}))
+                # The whole upload for the per-day archive, not only the
+                # current window the analysis above reads (re-audit A-12).
+                from labor import full_history_by_day
+                _models_dh.save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
             except Exception as _dh_e:
                 import ops as _ops_dh
                 _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")
@@ -5645,7 +5648,17 @@ _NOTIFICATION_LABELS = {
     "monthly_review":   "Your month",
     "schedule_drafted": "Next week's schedule drafted",
     "order_send_pending": "Supplier order going out",
+    "order_send_held":  "Supplier order held",
     "order_send_voided": "Supplier order not sent",
+    # Their own types now (re-audit A-6, A-18): each used to borrow a label
+    # that described something else, or none at all.
+    "shift_request":    "A staff request needs you",
+    "labor_reminder":   "Waiting on you in Labor",
+    "schedule_publish_pending": "Next week's schedule going out",
+    "schedule_publish_held": "Next week's schedule was held",
+    "milestone":        "A milestone",
+    "while_away":       "While you were away",
+    "connection_lost":  "A connection stopped working",
 }
 
 # Which module a notification's "view" action should open. The keys are the
@@ -5655,27 +5668,10 @@ _NOTIFICATION_LABELS = {
 # .get(type, "reviews") sent a food-cost alert to Reviews while .get(type,
 # type) printed the raw column value — an owner's notification list read
 # "ai_visibility_drop" and "critical_low".
-_NOTIFICATION_MODULE = {
-    "1star": "reviews", "2star": "reviews", "3star": "reviews", "5star": "reviews",
-    "any_review": "reviews", "health": "reviews", "edit_downgrade": "reviews",
-    "resp_approved": "reviews", "neg_spike": "reviews", "no_response": "reviews",
-    "unresponded": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
-    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
-    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
-    "order_send_pending": "inventory", "order_send_voided": "inventory",
-    "ai_visibility_drop": "competitor", "competitor_move": "competitor",
-    "review_request_nudge": "reviews",
-    "demand_opportunity": "marketing",
-    # Cross-module reads that arrive with their own question, so they open
-    # the assistant rather than guessing a module (iOS does the same).
-    "morning_brief": "ask", "daily_briefing": "ask", "intraday_pulse": "ask",
-    "closing_summary": "ask", "weekly_review": "ask", "monthly_review": "ask",
-    "outcome_achieved": "ask",
-    "issue": "account", "issue_escalated": "account",
-    # Not a product module — the web dashboard's bell reads this field
-    # directly; iOS's DeepLinkRouter has its own "login" special-case.
-    "login": "account", "staff_signin": "account",
-}
+#
+# The map itself lives in push.NOTIFICATION_MODULE, so every push payload
+# carries the same module the bell shows (re-audit A-7).
+from push import NOTIFICATION_MODULE as _NOTIFICATION_MODULE  # noqa: E402
 
 # Which module permission a row needs before it is shown. A teammate whose
 # role cannot open Labor or Food Cost was still shown "Labor % over target"

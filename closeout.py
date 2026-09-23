@@ -30,9 +30,9 @@ def business_date_for(restaurant, now_local=None):
     """The service a close-out belongs to. A close-out filed at 1am is about
     yesterday's service — restaurants close after midnight, and filing it
     under the new date would put it in the wrong morning's brief."""
-    from time_utils import restaurant_now
+    from time_utils import restaurant_now, business_date
     local = now_local or restaurant_now(restaurant, naive=True)
-    return (local.date() - timedelta(days=1)) if local.hour < 5 else local.date()
+    return business_date(restaurant, local)
 
 
 def save(restaurant_id, fields, user_id=None, submitted_by=None, business_date=None,

@@ -427,7 +427,7 @@ def _intel_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
-def _alerts_context(restaurant_id):
+def _alerts_context(restaurant_id, viewer=None):
     """What has actually fired for this owner in the last week.
 
     The one thing an owner most wants explained was the one thing the
@@ -435,9 +435,16 @@ def _alerts_context(restaurant_id):
     no alerts tool. Unresolved first, because a one-star review that has
     already been answered is history and one that has not is today's
     problem.
+
+    Only notifications that ask for something count as "needing action"
+    (push.ACTIONABLE_TYPES) — briefs, sign-ins and wins are news — only the
+    modules this viewer may see are listed, and dates are M/D/YY in the
+    restaurant's own day (re-audit A-21).
     """
     from models import get_conn
     from client_api import _NOTIFICATION_LABELS
+    import ask_cavnar_tools as _tools
+    from push import ACTIONABLE_TYPES
     try:
         conn = get_conn()
         rows = conn.execute(
@@ -454,15 +461,20 @@ def _alerts_context(restaurant_id):
     open_items, handled = [], 0
     seen = set()
     for r in rows:
+        if not _tools.alert_visible(viewer, r["alert_type"]):
+            continue
+        if r["alert_type"] not in ACTIONABLE_TYPES:
+            continue
         label = _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"])
         if r["response_status"] in ("posted", "approved", "skipped"):
             handled += 1
             continue
-        key = (r["alert_type"], (r["fired_at"] or "")[:10])
+        day = _tools.local_mdy(restaurant_id, r["fired_at"])
+        key = (r["alert_type"], day)
         if key in seen:
             continue
         seen.add(key)
-        open_items.append(f"{label} ({(r['fired_at'] or '')[:10]})")
+        open_items.append(f"{label} ({day})")
 
     lines = ["ALERTS (last 7 days)"]
     if open_items:
@@ -713,7 +725,9 @@ def build_context(restaurant):
     # put in front of them.
     for always in (_memory_context, _decisions_context, _intelligence_context, _alerts_context, _commitments_context):
         try:
-            section = always(restaurant.id)
+            # The alerts section is filtered to what this viewer may see.
+            section = always(restaurant.id, viewer=restaurant) if always is _alerts_context \
+                else always(restaurant.id)
             if section:
                 parts.append(section)
         except Exception:

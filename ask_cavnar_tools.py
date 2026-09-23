@@ -260,10 +260,35 @@ def _days(value, default=7, ceiling=90):
         return default
 
 
-def _read_alerts(restaurant_id, days=7):
-    """What has fired for this owner, and what is still outstanding."""
+def alert_visible(viewer, alert_type) -> bool:
+    """Whether a viewer_restaurant may see a notification of this type: the
+    bell's rule (client_api._sees) against Ask's denied modules. None, or a
+    plain restaurant, is an unrestricted caller."""
+    from client_api import _NOTIFICATION_MODULE, _NOTIFICATION_MODULE_KEY
+    module = _NOTIFICATION_MODULE_KEY.get(_NOTIFICATION_MODULE.get(alert_type, "reviews"))
+    return module is None or module not in _denied(viewer)
+
+
+def local_mdy(restaurant_id, fired_at) -> str:
+    """alert_log.fired_at (naive UTC) as M/D/YY on the restaurant's own day."""
+    from datetime import datetime as _dt, timezone as _tz
+    from time_utils import mdy, restaurant_now_by_id
+    try:
+        at = _dt.fromisoformat(str(fired_at).replace(" ", "T")[:19]).replace(tzinfo=_tz.utc)
+        zone = restaurant_now_by_id(restaurant_id).tzinfo
+        return mdy(at.astimezone(zone) if zone else at)
+    except (TypeError, ValueError):
+        return mdy(fired_at)
+
+
+def _read_alerts(restaurant_id, days=7, _viewer=None):
+    """What has fired for this owner, and what is still outstanding —
+    "outstanding" meaning a notification that asks for something
+    (push.ACTIONABLE_TYPES) and has not been handled; only the modules this
+    viewer may see; dates M/D/YY (re-audit A-21)."""
     from models import get_conn
     from client_api import _NOTIFICATION_LABELS, _NOTIFICATION_MODULE
+    from push import ACTIONABLE_TYPES
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -277,17 +302,21 @@ def _read_alerts(restaurant_id, days=7):
         conn.close()
     out = []
     for r in rows:
+        if not alert_visible(_viewer, r["alert_type"]):
+            continue
+        actionable = r["alert_type"] in ACTIONABLE_TYPES
         out.append({
             "type": r["alert_type"],
             "label": _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"]),
             "module": _NOTIFICATION_MODULE.get(r["alert_type"], "reviews"),
-            "fired_at": r["fired_at"],
+            "fired_on": local_mdy(restaurant_id, r["fired_at"]),
             "review_id": r["review_id"],
             "review_rating": r["rating"],
             "review_author": r["author"],
+            "needs_action": actionable,
             "handled": r["response_status"] in ("posted", "approved", "skipped"),
         })
-    return {"alerts": out, "outstanding": sum(1 for a in out if not a["handled"])}
+    return {"alerts": out, "outstanding": sum(1 for a in out if a["needs_action"] and not a["handled"])}
 
 
 def _remember(restaurant_id, fact, kind="context"):
@@ -1048,10 +1077,14 @@ def _read_demand(restaurant_id, day=None):
             "prep": demand.prep_list(restaurant_id, when)}
 
 
-def _read_open_issues(restaurant_id):
+def _read_open_issues(restaurant_id, _viewer=None):
     import issues
-    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20)
-    return {"summary": issues.summary(restaurant_id),
+    # Loss issues name the manager who approved the comps: only for a login
+    # with LOSS_VIEW (viewer_restaurant stamps it), never the routed manager
+    # who may be their subject (re-audit A-8).
+    loss = getattr(_viewer, "_ask_sees_loss", True) if _viewer is not None else True
+    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20, sees_loss=loss)
+    return {"summary": issues.summary(restaurant_id, sees_loss=loss),
             "issues": [{k: r.get(k) for k in ("id", "title", "severity", "status", "assignee_name",
                                               "created_at", "acknowledged_at", "escalated_at")}
                        for r in rows],
@@ -1229,6 +1262,7 @@ TOOLS = [
     {
         "kind": "read",
         "fn": _read_alerts,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "read_alerts",
@@ -1591,6 +1625,7 @@ TOOLS = [
     {
         "kind": "read",
         "fn": _read_open_issues,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "read_open_issues",
@@ -1955,7 +1990,11 @@ TOOLS = [
     {
         "kind": "write",
         "confirm": True,
-        "route": {"web": "/api/refresh-competitor-intel", "mobile": "/mobile/api/intel/refresh-competitors", "method": "POST"},
+        # `status`: where the job the route starts is polled to its end. The
+        # route answers with a job id at once; "Done" means the job, not the
+        # start (re-audit A-24 — web took the id as done, iOS polled).
+        "route": {"web": "/api/refresh-competitor-intel", "mobile": "/mobile/api/intel/refresh-competitors", "method": "POST",
+                  "status": {"web": "/api/competitor-intel-status/", "mobile": "/mobile/api/intel/refresh-status/"}},
         "summary": "Refresh competitor data",
         "spec": {
             "name": "refresh_competitors",
@@ -1974,7 +2013,8 @@ TOOLS = [
         # other didn't. It now takes POST as well, so both confirm the
         # same way — and POST is the honest verb for something that
         # replaces the current draft.
-        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "POST"},
+        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "POST",
+                  "status": {"web": "/api/schedule-status/", "mobile": "/mobile/api/labor/schedule-status/"}},
         "summary": "Generate next week's schedule",
         "module": "module_labor",
         "spec": {
@@ -2019,6 +2059,10 @@ def viewer_restaurant(restaurant, user):
             denied = set(_MODULE_FLAGS) | {"intel"}
     view = dataclasses.replace(restaurant, **{_MODULE_FLAGS[k]: 0 for k in denied if k in _MODULE_FLAGS})
     view._ask_denied = frozenset(denied)
+    # Comps & voids (loss issues name the approving manager) — LOSS_VIEW,
+    # not a module flag (re-audit A-8).
+    import issues as _issues
+    view._ask_sees_loss = _issues.viewer_sees_loss(user)
     return view
 
 

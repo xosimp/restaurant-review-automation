@@ -17,9 +17,39 @@ final class DeepLinkRouter {
     /// whose lines each carry the question an owner would ask about them.
     /// Prefilled, never auto-sent: the owner decides whether to ask it.
     var pendingAskPrompt: String?
+    /// Bumped each time a tap switched the active location, so Home reloads
+    /// for the location it now shows.
+    var locationSwitches = 0
+    /// Switches the session to another location of the group; set by
+    /// RootView (it owns the SessionStore). Returns true on success.
+    var switchLocation: ((Int) async -> Bool)?
+    /// The location the session is on now; set by RootView.
+    var activeRestaurantId: () -> Int = { SessionScope.restaurantId }
 
+    /// `module` is the server's own routing (push.NOTIFICATION_MODULE, sent
+    /// in every payload and every history row); `restaurantId` is the
+    /// location the notification is about. A group owner's phone hears
+    /// every location's alerts, so a tap on location A's alert while the
+    /// app is on B switches to A first — otherwise A's review is "not
+    /// found" inside B and the open is recorded against B (re-audit A-14).
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil,
-                               alertId: Int? = nil, recKey: String? = nil) {
+                               alertId: Int? = nil, recKey: String? = nil,
+                               module: String? = nil, restaurantId: Int? = nil) {
+        let current = activeRestaurantId()
+        if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
+            Task {
+                if await switchLocation(target) { locationSwitches += 1 }
+                route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
+                      alertId: alertId, recKey: recKey, module: module)
+            }
+            return
+        }
+        route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
+              alertId: alertId, recKey: recKey, module: module)
+    }
+
+    private func route(alertType: String, reviewId: Int?, askPrompt: String?,
+                       alertId: Int?, recKey: String?, module: String?) {
         // What the product knew was how many notifications it SENT. Whether
         // any of them were worth sending had no answer anywhere — not for
         // the owner, not for Will. Best effort: a failure here must never
@@ -51,11 +81,27 @@ final class DeepLinkRouter {
             pendingReviewID = nil
             return
         }
+        let webModule = (module?.isEmpty == false ? module : nil) ?? Self.webModule(for: alertType)
+        switch webModule {
+        case "ask":
+            pendingTab = .ask
+            pendingModuleKey = nil
+            pendingReviewID = nil
+            return
+        case "account":
+            // The web lists issues under Account; the app lists them on Home.
+            pendingTab = (alertType == "issue" || alertType == "issue_escalated") ? .home : .account
+            pendingModuleKey = nil
+            pendingReviewID = nil
+            return
+        default:
+            break
+        }
         // Reviews now lives inside the Modules tab (no per-module tabs
         // anymore), so switch there and let ModulesGridView push into the
         // right module screen itself once pendingModuleKey is set.
         pendingTab = .modules
-        pendingModuleKey = Self.moduleKey(for: alertType)
+        pendingModuleKey = Self.appModuleKey(forWebModule: webModule)
         pendingReviewID = reviewId
     }
 
@@ -84,13 +130,38 @@ final class DeepLinkRouter {
         return pendingModuleKey
     }
 
-    // Mirrors client_api.py's _NOTIFICATION_MODULE — every alert type is
-    // review/rating-driven except the labor ones: labor_over, and
-    // schedule_drafted (strategy_jobs' Thursday auto-draft), whose draft is
-    // waiting in Labor's schedule history.
-    private static func moduleKey(for alertType: String) -> String {
+    /// The fallback when a payload or row carries no `module` (an older
+    /// server). Mirrors push.NOTIFICATION_MODULE — it used to know two
+    /// labor types and send every food-cost, intel, coverage, issue and
+    /// order notification to Reviews (re-audit A-7).
+    static func webModule(for alertType: String) -> String {
         switch alertType {
-        case "labor_over", "schedule_drafted": return "labor"
+        case "labor_over", "schedule_drafted", "coverage", "schedule_publish_pending",
+             "schedule_publish_held", "shift_request", "labor_reminder":
+            return "labor"
+        case "food_waste", "critical_low", "price_spike", "order_send_pending",
+             "order_send_held", "order_send_voided":
+            return "inventory"
+        case "ai_visibility_drop", "competitor_move":
+            return "competitor"
+        case "demand_opportunity":
+            return "marketing"
+        case "morning_brief", "daily_briefing", "intraday_pulse", "closing_summary",
+             "weekly_review", "monthly_review", "outcome_achieved", "milestone":
+            return "ask"
+        case "issue", "issue_escalated", "login", "staff_signin", "connection_lost":
+            return "account"
+        default:
+            return "reviews"
+        }
+    }
+
+    /// The web's module ids are the tab ids; the app's module screens
+    /// (ModuleDestinationView) call Intel "intel".
+    static func appModuleKey(forWebModule module: String) -> String {
+        switch module {
+        case "competitor": return "intel"
+        case "labor", "inventory", "marketing", "reviews", "intel": return module
         default: return "reviews"
         }
     }

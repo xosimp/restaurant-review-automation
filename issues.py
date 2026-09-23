@@ -409,11 +409,29 @@ def reassign(restaurant_id, issue_id, contact_id, db_path=DB_PATH):
     return get_issue(restaurant_id, issue_id, db_path)
 
 
-def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH):
+def viewer_sees_loss(user) -> bool:
+    """Whether this login may read loss issues (comp/void concentration).
+    They name the approving manager, and are meant for the owner — never for
+    the routed manager who may be their subject. None is an internal caller
+    (the scheduler, reports to the owner). Fails closed."""
+    if user is None or (isinstance(user, dict) and user.get("is_admin")):
+        return True
+    try:
+        from permissions import has_permission, LOSS_VIEW
+        return bool(has_permission(user, LOSS_VIEW))
+    except Exception:
+        return False
+
+
+def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH, sees_loss=True):
+    """`sees_loss=False` leaves out kind='loss' — every listing a manager can
+    read passes viewer_sees_loss(viewer) (re-audit A-8)."""
     conn = get_conn(db_path)
     try:
         sql = "SELECT * FROM ops_issues WHERE restaurant_id=?"
         args = [restaurant_id]
+        if not sees_loss:
+            sql += " AND kind!='loss'"
         if status == "unresolved":
             sql += " AND status!='resolved'"
         elif status:
@@ -426,16 +444,17 @@ def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH):
         conn.close()
 
 
-def summary(restaurant_id, db_path=DB_PATH):
+def summary(restaurant_id, db_path=DB_PATH, sees_loss=True):
     """Counts and the oldest unacknowledged issue — what the brief and the
-    portfolio view show."""
+    portfolio view show. `sees_loss` as list_issues."""
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT SUM(status='open') AS open_n, SUM(status='acknowledged') AS ack_n, "
             "MIN(CASE WHEN status='open' THEN created_at END) AS oldest_open, "
             "SUM(status='resolved' AND resolved_at >= datetime('now','-7 days')) AS resolved_7d "
-            "FROM ops_issues WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            "FROM ops_issues WHERE restaurant_id=?" + ("" if sees_loss else " AND kind!='loss'"),
+            (restaurant_id,)).fetchone()
     finally:
         conn.close()
     oldest_h = None
@@ -490,33 +509,75 @@ def open_from_reviews(restaurant_id, db_path=DB_PATH):
     return opened
 
 
+def _coverage_shift_over(issue, db_path=DB_PATH, now_local=None) -> bool:
+    """A coverage issue ("coverage:<date>:<who>") whose day is behind the
+    restaurant's current business date: the shift it was about is over."""
+    if (issue["kind"] if "kind" in issue.keys() else None) != "coverage":
+        return False
+    parts = str(issue["source_key"] or "").split(":", 2)
+    if len(parts) < 2:
+        return False
+    try:
+        from models import get_restaurant
+        from time_utils import business_date, restaurant_now
+        r = get_restaurant(issue["restaurant_id"], db_path)
+        today = business_date(r, now_local or restaurant_now(r, naive=True))
+        return parts[1] < today.isoformat()
+    except Exception as e:
+        print(f"[issues] coverage date check failed for issue {issue['id']}: {e}")
+        return False
+
+
+def _suppress_notify(issue_id, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE ops_issues SET notify_suppressed=1 WHERE id=?", (issue_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def tick(db_path=DB_PATH, now=None):
     """Every scheduler tick: send notifications held by quiet hours, and
     escalate issues nobody acknowledged in time. Each escalates at most once."""
     now = now or datetime.utcnow()
     from models import is_in_quiet_hours
     from notify import send_sms
+    from models import in_service_sql
     conn = get_conn(db_path)
     try:
         # Never an issue filed with notify=False: "not notified yet" and
         # "deliberately not texted" look identical in notified_at alone.
-        held = conn.execute("SELECT id, restaurant_id FROM ops_issues WHERE status='open' "
-                            "AND notified_at IS NULL AND assignee_contact_id IS NOT NULL "
-                            "AND COALESCE(notify_suppressed, 0)=0").fetchall()
+        # Only restaurants still in service: a churned or paused account's
+        # managers were still texted held issues and escalations (A-27).
+        held = conn.execute("SELECT i.id, i.restaurant_id, i.kind, i.source_key FROM ops_issues i "
+                            "JOIN restaurants rs ON rs.id=i.restaurant_id "
+                            "WHERE i.status='open' "
+                            "AND i.notified_at IS NULL AND i.assignee_contact_id IS NOT NULL "
+                            "AND COALESCE(i.notify_suppressed, 0)=0 AND " + in_service_sql("rs.billing_status")
+                            ).fetchall()
         stale = conn.execute(
             "SELECT i.*, r.escalate_after_minutes, r.contact_id AS esc_contact_id, "
             "c.phone AS esc_phone, c.name AS esc_name "
             "FROM ops_issues i JOIN issue_routing r ON r.restaurant_id=i.restaurant_id AND r.role='escalation' "
             "JOIN alert_contacts c ON c.id=r.contact_id AND c.restaurant_id=i.restaurant_id "
             "AND COALESCE(c.sms_consent,0)=1 "
+            "JOIN restaurants rs ON rs.id=i.restaurant_id "
             "WHERE i.status='open' AND i.notified_at IS NOT NULL AND i.escalated_at IS NULL "
             # Escalating to the person who already has it texts them twice.
-            "AND r.contact_id != COALESCE(i.assignee_contact_id, -1)").fetchall()
+            "AND r.contact_id != COALESCE(i.assignee_contact_id, -1) AND "
+            + in_service_sql("rs.billing_status")).fetchall()
     finally:
         conn.close()
 
     sent_held = 0
     for h in held:
+        # "Bob hasn't clocked in", held by quiet hours, used to go out the
+        # next morning about a shift that was over (A-28). Past its date it
+        # is not sent at all — marked suppressed, so it is not retried.
+        if _coverage_shift_over(h, db_path):
+            _suppress_notify(h["id"], db_path)
+            continue
         # Checked BEFORE minting. A held issue's link was never sent and its
         # token is unrecoverable (only the hash is stored), so it needs a
         # fresh one — but only when a text can actually go out. Minting first
@@ -539,6 +600,8 @@ def tick(db_path=DB_PATH, now=None):
             continue
         if is_in_quiet_hours(s["restaurant_id"], db_path=db_path):
             continue
+        if _coverage_shift_over(s, db_path):
+            continue                    # nobody to cover any more (A-28)
         # The escalation contact gets their OWN link. The assignee's stays
         # valid — bringing in the regional manager must not lock the local
         # one out of the issue they were given.

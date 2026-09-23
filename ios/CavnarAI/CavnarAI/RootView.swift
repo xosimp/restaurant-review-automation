@@ -231,6 +231,15 @@ struct RootView: View {
             }
         }
         .onAppear {
+            // A tap on another location's alert switches there first, the
+            // same way the location switcher does (re-audit A-14).
+            let session = sessionStore
+            deepLinkRouter.activeRestaurantId = { session.currentUser?.restaurantId ?? SessionScope.restaurantId }
+            deepLinkRouter.switchLocation = { target in
+                let switcher = LocationSwitcherViewModel()
+                switcher.session = session
+                return await switcher.switchTo(LocationOption(id: target, name: "", active: false))
+            }
             PushManager.shared.router = deepLinkRouter
         }
         .onChange(of: sessionStore.isLocked) { _, locked in

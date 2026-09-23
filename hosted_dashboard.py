@@ -648,6 +648,7 @@ def index(current_user):
             pass
 
     import time_utils as _tu
+    from notify import labor_target_for as _labor_target_for
     _today_mdy = _tu.mdy(_tu.restaurant_now(restaurant))
     return render_template('dashboard.html',
         show_welcome=show_welcome,
@@ -678,7 +679,7 @@ def index(current_user):
         now=_today_mdy,
         now_mdy=_today_mdy,
         viewing_as=current_user.get("is_admin", 0),
-        labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
+        labor_target=_labor_target_for(restaurant),
         labor_overtime_cost=labor_overtime_cost,
         mkt_stats=mkt_stats,
         savings_breakdown=savings_breakdown,

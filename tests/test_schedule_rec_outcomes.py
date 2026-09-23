@@ -32,8 +32,11 @@ def _events(db, rid):
     return [r["event"] for r in rows], rows
 
 
-def test_a_friday_after_acceptance_with_no_issues_is_improved_once(db):
+def test_a_friday_after_acceptance_with_no_issues_is_improved_once(db, monkeypatch):
     import datetime as dt
+    # "No issue" is evidence only on a night the coverage check watched
+    # (re-audit A-19); this restaurant's check was running.
+    monkeypatch.setattr(si, "watched_dates", lambda rid_, start, end, db_path=None: {str(start)[:10]})
     rid = create_restaurant(Restaurant(name="Gap Co", owner_email="g@x.com"), db_path=db)
     text = "Fill the gap on Friday night: nobody on Bartender."
     si.record_recommendation(rid, "coverage", text, "accepted")

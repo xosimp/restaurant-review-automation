@@ -743,8 +743,11 @@ def sync_to_db(restaurant_id: int) -> dict:
         try:
             from labor import analyse_shifts_for_restaurant
             from models import save_labor_daily_history, save_labor_snapshot
+            # Whole file for the per-day archive; the current window for
+            # the period snapshot the labor alert reads (re-audit A-12).
+            from labor import full_history_by_day
+            save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
             analysis = analyse_shifts_for_restaurant(restaurant_id)
-            save_labor_daily_history(restaurant_id, analysis.get("by_day", {}))
             # Same as the Toast sync: keep menu_items current so the dish a
             # post names, the count sheet and recipe drafts have RPOWER's
             # items to match against — not only when Food Cost is open.

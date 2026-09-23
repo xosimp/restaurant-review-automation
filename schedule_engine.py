@@ -172,7 +172,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
-    target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    from notify import labor_target_for as _labor_target_for
+    target   = _labor_target_for(restaurant)
     owner    = restaurant.owner_name if restaurant else None
     staff_notes = get_staff_notes(restaurant_id) or None
 
@@ -2185,7 +2186,12 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         for rec in quality.get("recommendations") or []:
             kind = _sq.recommendation_kind(rec)
             key = schedule_rec_key(kind, rec)
-            if kind in hidden or key in silenced:
+            # The key is the sentence, with no week in it, so a "Not for us"
+            # (silenced for years) or a "Did it" (two weeks) on "Fill the
+            # gap on Friday night" hid the identical gap in every later
+            # week. Coverage, leadership and fatigue say whether a shift is
+            # safe to run: never hidden, by kind OR by key (re-audit A-9).
+            if kind in hidden or (key in silenced and kind not in _sq.PROTECTED_REC_KINDS):
                 continue
             kept.append(rec)
             # The kind travels with the text, so web and iOS never classify

@@ -688,7 +688,8 @@ def _build(current_user):
             labor_live = bool(labor.get("is_live"))
         except Exception:
             labor = None
-    labor_target = float(r.get("labor_target_pct") or 30.0)
+    from notify import labor_target_for as _labor_target_for
+    labor_target = _labor_target_for(r)
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
     client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
     last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
@@ -1066,7 +1067,7 @@ def _build(current_user):
                               "note": ("Toast synced" if r.get("toast_restaurant_guid") and not r.get("toast_sync_error") else f"{days}-day shift export")})
             if r.get("toast_restaurant_guid") and r.get("toast_sync_error"):
                 add_attn("toast_sync", "critical", "Toast sync is failing", f"Last error: {str(r['toast_sync_error'])[:120]}. Labor and depletion numbers stop updating until it's fixed.", "account", "Fix connection")
-            if over > LABOR_OVER_TARGET_PTS:
+            if over >= LABOR_OVER_TARGET_PTS:
                 add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
                          f"Across the last {days} days of shifts" + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
                          since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales",
@@ -1126,8 +1127,8 @@ def _build(current_user):
                              "interpretation": (f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip(),
                              "state": "bad" if over > 6 else ("warn" if over > 0 else "good"),
                              "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": over > LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False, "last_data": client_data.get("updated_at")})
-            brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over > LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
+                             "attention": over >= LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False, "last_data": client_data.get("updated_at")})
+            brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})
@@ -1726,7 +1727,8 @@ def _location_record(conn, r, now):
             from labor import analyse_shifts_for_restaurant
             la = analyse_shifts_for_restaurant(rid)
             if la.get("is_live"):
-                target = float(r.get("labor_target_pct") or 30.0)
+                from notify import labor_target_for as _labor_target_for
+                target = _labor_target_for(r)
                 # People over 40h THIS payroll week, not every overtime week
                 # in the upload (the same read as the location's own Home).
                 try:
@@ -1752,7 +1754,7 @@ def _location_record(conn, r, now):
     if sig["top_issue"]:
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
     from thresholds import LABOR_OVER_TARGET_PTS
-    if labor and labor["over"] > LABOR_OVER_TARGET_PTS:
+    if labor and labor["over"] >= LABOR_OVER_TARGET_PTS:
         issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor"})
     if labor and labor["overtime"]:
         issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor"})

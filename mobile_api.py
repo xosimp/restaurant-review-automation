@@ -713,7 +713,8 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     if key == "inventory" and not inv_live:
         return {"value": "—", "label": "add your inventory", "tone": None}
     if key == "labor":
-        target = float(restaurant.labor_target_pct or 30.0)
+        from notify import labor_target_for as _labor_target_for
+        target = _labor_target_for(restaurant)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
         on_track = pct <= target
         return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
@@ -914,7 +915,8 @@ def _do_mobile_home(current_user):
                 "sublabel": f"{rstats.get('response_rate', 0)}% response rate",
             }
         elif key == "labor":
-            labor_target = float(restaurant.labor_target_pct or 30.0)
+            from notify import labor_target_for as _labor_target_for
+            labor_target = _labor_target_for(restaurant)
             if not (labor or {}).get("is_live"):
                 # No shifts on file: the analysis ran on the labelled sample
                 # week, which is not this restaurant's labor %.
@@ -2318,7 +2320,8 @@ def _do_mobile_labor(restaurant_id):
     from labor import analyse_shifts_for_restaurant
 
     restaurant = get_restaurant(restaurant_id)
-    target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    from notify import labor_target_for as _labor_target_for
+    target = _labor_target_for(restaurant)
     hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
     analysis_failed = False
     try:

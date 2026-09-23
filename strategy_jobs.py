@@ -47,17 +47,77 @@ OUTCOME_WORTH_TELLING = 100.0   # dollars a month
 
 
 def run_outcome_evaluations(db_path=DB_PATH):
+    """6am operator time: close the trackers whose window ended. The owner
+    is told about a win at their own WIN_HOUR (run_outcome_wins) — telling
+    them from here pushed a Pacific owner at 4am and Hawaii at 1am (A-10)."""
     import outcomes, goals, ops
     results = outcomes.evaluate_due(db_path=db_path) or []
     closed = len(results) if isinstance(results, (list, tuple)) else int(results or 0)
-    told = _tell_owners_what_worked(results if isinstance(results, list) else [], db_path)
     achieved = 0
     for r in _restaurants(db_path):
         try:
             achieved += len(goals.mark_achieved(r.id, db_path=db_path) or [])
         except Exception as e:
             ops.capture(e, job="goals_mark_achieved", context=f"restaurant_id={r.id}")
-    return {"outcomes_closed": closed, "goals_achieved": achieved, "wins_told": told}
+    return {"outcomes_closed": closed, "goals_achieved": achieved}
+
+
+# Owner-facing results and milestones go out at this hour in the
+# restaurant's own timezone, with the catch-up window closing at
+# RESULTS_UNTIL_HOUR so an outage never delivers one late at night.
+WIN_HOUR = 9
+RESULTS_UNTIL_HOUR = 20
+# A tracker closed this recently is still news.
+WIN_NEWS_DAYS = 7
+
+
+def run_outcome_wins(db_path=DB_PATH):
+    """Hourly: at each restaurant's own WIN_HOUR, tell the owner about the
+    biggest result closed since they were last told. Each result is claimed
+    once (ops.claim_period), so none is told twice and a day missed to an
+    outage is told the next day."""
+    import ops, scheduler as _sched
+    from datetime import date as _date, timedelta as _td
+    told = {"n": 0}
+
+    def _one(r):
+        if not _sched.local_due(r, WIN_HOUR, until=RESULTS_UNTIL_HOUR, claim_key="outcome_wins"):
+            return
+        import outcomes as _outcomes
+        since = (_date.today() - _td(days=WIN_NEWS_DAYS)).isoformat()
+        fresh = []
+        for row in _outcomes.list_outcomes(r.id, status="evaluated", limit=20, db_path=db_path):
+            if row.get("verdict") != "improved" or str(row.get("evaluate_on") or "") < since:
+                continue
+            if ops.claim_period(f"outcome_win_told:{r.id}", str(row["id"])):
+                fresh.append(dict(row, restaurant_id=r.id))
+        told["n"] += _tell_owners_what_worked(fresh, db_path)
+
+    _bounded_each("outcome_wins", _one, db_path)
+    return {"wins_told": told["n"]}
+
+
+RESULTS_MAX_SECONDS = 10 * 60
+
+
+def _bounded_each(job, fn, db_path, max_seconds=RESULTS_MAX_SECONDS):
+    """Run `fn(r)` for every live restaurant, bounded by wall clock and
+    resumable from a cursor in job_cursors — CLAUDE.md's rule for work that
+    iterates restaurants (run_labor_reminders is the same shape)."""
+    import ops
+    import scheduler as _sched
+    key = f"{job}_cursor"
+    order = sorted(_restaurants(db_path), key=lambda r: r.id)
+    cursor = _read_cursor(key, db_path)
+    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+
+    def _failed(r, e):
+        ops.capture(e, job=job, context=f"restaurant_id={r.id}")
+
+    done, _ran_out = _sched.bounded_map(order, fn, 1, max_seconds, on_error=_failed)
+    if order:
+        _write_cursor(key, order[min(done, len(order)) - 1].id if done else cursor, db_path)
+    return done
 
 
 def _tell_owners_what_worked(results, db_path):
@@ -93,7 +153,10 @@ def _tell_owners_what_worked(results, db_path):
             if _reach(rid, "outcome_achieved",
                       f"That one worked — about ${dollars:,.0f}/month", body,
                       {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
-                      db_path, subject="A change you made paid off"):
+                      db_path, subject="A change you made paid off",
+                      # A food-cost win is for people who can open Food
+                      # Cost, not every brief recipient (A-15).
+                      permissions=_metric_permissions(row.get("metric"))):
                 told += 1
         except Exception as e:
             ops.capture(e, job="outcome_win_push", context=f"restaurant_id={rid}")
@@ -114,22 +177,27 @@ def run_milestones(db_path=DB_PATH):
     here: good_news already puts one in the morning brief, and a record
     plus a brief line plus a milestone is the same news three times.
     """
-    import milestones, ops
-    fired = pushed = 0
-    for r in _restaurants(db_path):
-        try:
-            for m in (milestones.check_all(r.id, restaurant=r, db_path=db_path) or []):
-                fired += 1
-                if m.get("kind") not in ("savings", "anniversary", "goal"):
-                    continue
-                if _reach(r.id, "milestone", m["title"], m.get("body") or "",
-                          {"ask_prompt": f"Tell me more about this: {m['title']}"},
-                          db_path, subject=m["title"], email_type="milestone"):
-                    milestones.mark_notified(r.id, m["key"], db_path=db_path)
-                    pushed += 1
-        except Exception as e:
-            ops.capture(e, job="milestones", context=f"restaurant_id={r.id}")
-    return {"fired": fired, "notified": pushed}
+    import milestones
+    import scheduler as _sched
+    counts = {"fired": 0, "notified": 0}
+
+    def _one(r):
+        # At the restaurant's own WIN_HOUR, once a local day. This ran for
+        # everyone at 7am Chicago: 5am in Los Angeles, 2am in Honolulu (A-10).
+        if not _sched.local_due(r, WIN_HOUR, until=RESULTS_UNTIL_HOUR, claim_key="milestones"):
+            return
+        for m in (milestones.check_all(r.id, restaurant=r, db_path=db_path) or []):
+            counts["fired"] += 1
+            if m.get("kind") not in ("savings", "anniversary", "goal"):
+                continue
+            if _reach(r.id, "milestone", m["title"], m.get("body") or "",
+                      {"ask_prompt": f"Tell me more about this: {m['title']}"},
+                      db_path, subject=m["title"], email_type="milestone"):
+                milestones.mark_notified(r.id, m["key"], db_path=db_path)
+                counts["notified"] += 1
+
+    _bounded_each("milestones", _one, db_path)
+    return counts
 
 
 def run_loss_sync(db_path=DB_PATH):
@@ -368,91 +436,65 @@ def _recent_schedule(conn, restaurant_id):
         (restaurant_id, f"-{AUTO_DRAFT_RECENT_DAYS} days")).fetchone() is not None
 
 
+# Read by nothing since the weekly job records schedule_learning.
+# calibrate_weights' suggestion (re-audit A-26). Kept, not deleted:
+# candidate for future cleanup after additional verification.
 CALIBRATION_MIN_WEEKS = 8
 CALIBRATION_STEP = 2
 CALIBRATION_MAX_WEIGHT = 30
 
 
 def run_quality_calibration(db_path=DB_PATH):
-    """Weekly: let each restaurant's own record nudge how much a quality
-    dimension counts. For the last published weeks with a stored quality
-    verdict, a week is "clean" when no coverage or no-show issue was opened
-    during it. A dimension whose score sits at least 15 points higher in
-    clean weeks than in troubled ones, over at least CALIBRATION_MIN_WEEKS
-    weeks with both kinds present, gains CALIBRATION_STEP weight (capped);
-    nothing is ever lowered, and nothing moves before the sample exists.
-    The result is recorded as a SUGGESTION (quality_weights_suggested);
-    nothing is written to the weights until the owner applies it."""
+    """Weekly: record the Shift Quality weight suggestion for each Labor
+    restaurant, once per new published week, as a capability change
+    (quality_weights_suggested, shown in the change history) — nothing is
+    written to the weights until the owner applies it.
+
+    ONE algorithm: the suggestion is schedule_learning.calibrate_weights,
+    exactly what "Apply" (strategy_routes._do_calibration_apply) writes.
+    This job used to run its own clean-versus-troubled-weeks rule, so the
+    history said one set of weights was suggested and Apply wrote a
+    different one (re-audit A-26)."""
     import json as _j
-    from models import get_restaurant, update_restaurant, get_quality_weights, record_capability_change
+    import ops as _ops_cal
+    import schedule_learning as _sl
     import shift_quality as _sq
-    changed = 0
-    for r in _restaurants(db_path):
+    from models import get_quality_weights, record_capability_change
+    changed = {"n": 0}
+
+    def _one(r):
         if not getattr(r, "module_labor", 0):
-            continue
-        conn = get_conn(db_path)
-        try:
-            rows = conn.execute(
-                "SELECT week_start, week_end, quality_json FROM schedule_history WHERE restaurant_id=? "
-                "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND quality_json IS NOT NULL ORDER BY id DESC LIMIT 26", (r.id,)).fetchall()
-            weeks = []
-            for row in rows:
-                try:
-                    q = _j.loads(row["quality_json"] or "null") or {}
-                except Exception:
-                    continue
-                if not q.get("checked") or not row["week_start"]:
-                    continue
-                try:
-                    trouble = conn.execute(
-                        "SELECT 1 FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage', 'no_show') "
-                        "AND substr(created_at, 1, 10) BETWEEN ? AND ? LIMIT 1",
-                        (r.id, row["week_start"], row["week_end"] or row["week_start"])).fetchone()
-                except Exception:
-                    trouble = None
-                weeks.append((not trouble, {d["key"]: d["score"] for d in (q.get("dimensions") or [])}))
-        finally:
-            conn.close()
-        if len(weeks) < CALIBRATION_MIN_WEEKS:
-            continue
-        clean = [d for ok, d in weeks if ok]
-        troubled = [d for ok, d in weeks if not ok]
-        if len(clean) < 3 or len(troubled) < 3:
-            continue
+            return
+        cal = _sl.calibrate_weights(r.id, db_path=db_path)
+        if not cal.get("ready") or not cal.get("suggested_weights"):
+            return
         current = get_quality_weights(r.id) or {}
         merged = dict(_sq.DEFAULT_WEIGHTS)
         merged.update(current)
-        bumped = []
-        for key in _sq.DIMENSIONS:
-            c = [d[key] for d in clean if key in d]
-            t = [d[key] for d in troubled if key in d]
-            if len(c) < 3 or len(t) < 3:
-                continue
-            gap = sum(c) / len(c) - sum(t) / len(t)
-            if gap >= 15 and merged.get(key, 0) < CALIBRATION_MAX_WEIGHT:
-                merged[key] = min(CALIBRATION_MAX_WEIGHT, merged.get(key, 0) + CALIBRATION_STEP)
-                bumped.append(f"{key} +{CALIBRATION_STEP} (clean weeks score it {gap:.0f} higher)")
-        if not bumped:
-            continue
-        # Once per new published week. The same evidence read again next
-        # week bumped the same dimensions again (stability 2 -> 4 -> 6 -> 8
-        # on unchanged data), ratcheting toward the cap on nothing new.
-        newest = max((row["week_start"] for row in rows if row["week_start"]), default=None)
-        import ops as _ops_cal
-        if newest and not _ops_cal.claim_period("quality_calibration", f"{r.id}:{newest}"):
-            continue
-        # Suggested, never applied: the owner is told the engine keeps its
-        # weights until someone changes them, and a silent weekly write made
-        # that untrue. The suggestion is recorded for the Labor intel card,
-        # where "Apply" is one tap (strategy_routes calibration apply).
+        after = dict(merged)
+        after.update({k: float(v) for k, v in cal["suggested_weights"].items()})
+        if all(abs(float(after[k]) - float(merged.get(k, 0) or 0)) < 0.05 for k in after):
+            return                                 # nothing to suggest
+        # Once per new published week: the same evidence read again next
+        # week is not a new suggestion.
+        conn = get_conn(db_path)
         try:
-            record_capability_change(r.id, "quality_weights_suggested", subject="weights",
-                                     before=_j.dumps(current), after=_j.dumps(merged),
-                                     changed_by="Cavnar AI (calibration)")
-        except Exception as _cx:
-            print(f"[calibration] could not record the suggestion: {_cx}")
-        changed += 1
-    return {"restaurants_changed": changed}
+            row = conn.execute("SELECT MAX(week_start) AS w FROM schedule_history WHERE restaurant_id=? "
+                               "AND published_at IS NOT NULL", (r.id,)).fetchone()
+        finally:
+            conn.close()
+        newest = row["w"] if row else None
+        if newest and not _ops_cal.claim_period("quality_calibration", f"{r.id}:{newest}"):
+            return
+        # Suggested, never applied: "Apply" is one tap and writes these same
+        # numbers (_do_calibration_apply over calibrate_weights).
+        record_capability_change(r.id, "quality_weights_suggested", subject="weights",
+                                 before=_j.dumps(current), after=_j.dumps(after),
+                                 changed_by="Cavnar AI (calibration)")
+        changed["n"] += 1
+
+    _bounded_each("quality_calibration", _one, db_path)
+    return {"restaurants_changed": changed["n"]}
 
 
 def run_auto_draft_schedules(db_path=DB_PATH):
@@ -607,7 +649,9 @@ def labor_waiting(restaurant_id, db_path=DB_PATH, today=None, draft=True) -> dic
             lines.append(f"{r['employee_name']}'s time off from {mdy(r['start_date'])} — still unanswered.")
         soon = (today + timedelta(days=UNPUBLISHED_REMIND_DAYS)).isoformat()
         draft = draft and conn.execute(
-            "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start > ? "
+            # >= today: a week that STARTS today and still hasn't gone to
+            # staff is the most urgent one to remind about (A-30).
+            "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start >= ? "
             "AND h.week_start <= ? AND h.published_at IS NULL AND h.superseded_by IS NULL "
             "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
             "AND p.week_start=h.week_start AND p.published_at IS NOT NULL) ORDER BY h.id DESC LIMIT 1",
@@ -642,7 +686,7 @@ def run_labor_reminders(db_path=DB_PATH):
         data = {"tab": "labor"}
         if w["history_id"]:
             data["history_id"] = w["history_id"]
-        if _reach(r.id, "coverage", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
+        if _reach(r.id, "labor_reminder", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
             sent["n"] += 1
 
     def _failed(r, e):
@@ -694,18 +738,12 @@ DEFAULT_SERVICE_HOURS = (10, 23)
 
 
 def _open_now(r, local):
-    """True when the restaurant is inside its opening hours, or inside a
-    plain daytime window when it hasn't set any."""
-    from notify import _open_window
-    window = _open_window(r, local.strftime("%A"))
-    if not window:
-        return DEFAULT_SERVICE_HOURS[0] <= local.hour < DEFAULT_SERVICE_HOURS[1]
-    opens, closes = window
-    if opens and local.time() < __import__("datetime").time(*opens):
-        return False
-    if closes and local.time() >= __import__("datetime").time(*closes):
-        return False
-    return True
+    """True when the restaurant is inside its opening hours — including a
+    close at or after midnight, which is last night's service still running
+    (time_utils.is_open_at, A-1) — or inside a plain daytime window when it
+    hasn't set hours for today."""
+    from time_utils import is_open_at
+    return is_open_at(r, local, default_hours=DEFAULT_SERVICE_HOURS)
 
 
 def run_intraday_capture(db_path=DB_PATH):
@@ -947,8 +985,20 @@ def run_coverage_check(db_path=DB_PATH):
     return {"opened": opened}
 
 
+def _metric_permissions(metric):
+    """The permission a login needs to be told about a result on `metric`:
+    a food-cost win is Food Cost's, comps and voids are LOSS_VIEW. None
+    means nothing beyond the brief audience itself (sales)."""
+    import permissions as _p
+    base = str(metric or "").split(":", 1)[0]
+    need = {"labor_pct": _p.LABOR_VIEW, "food_cost_pct": _p.FOOD_COST_VIEW, "weekly_waste": _p.FOOD_COST_VIEW,
+            "avg_rating": _p.REVIEWS_VIEW, "complaints": _p.REVIEWS_VIEW,
+            "comp_rate": _p.LOSS_VIEW, "void_rate": _p.LOSS_VIEW}.get(base)
+    return {need} if need else None
+
+
 def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
-           lines=None, email_type=None, rec=None):
+           lines=None, email_type=None, rec=None, permissions=None):
     """Push to the people who have the app, email the ones who don't.
 
     morning_brief.deliver established this — push OR email, never both,
@@ -970,6 +1020,15 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     if _r and (_r.billing_status or "trial").lower() in ("paused", "churned", "cancelled", "canceled"):
         return 0
     people = morning_brief.recipients(restaurant_id, db_path)
+    # Only the people allowed to read what this is about — the rule
+    # notify.alert_audience applies to alerts. The brief's audience includes
+    # managers who cannot open Food Cost, and they were pushed food-cost
+    # wins and supplier-order notices (re-audit A-15). `permissions` names
+    # it when the type alone doesn't (a win is about its metric).
+    need = permissions if permissions is not None else notify.alert_permissions([alert_type])
+    if need:
+        from permissions import has_permission
+        people = [u for u in people if all(has_permission(u, p) for p in need)]
     if not people:
         return 0
     devices = {}
@@ -982,6 +1041,15 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
         # The history row's id rides the payload so the open can name it
         # (#39); the recommendation key too, when this is one.
         data = dict(data or {}, alert_id=alert_id, **({"rec_key": rec["key"]} if rec else {}))
+        # Inside the owner's quiet hours it still arrives, but silently —
+        # no sound, no banner break (push.py "quiet"). A catch-up pass after
+        # an outage used to fire these with sound late at night (A-10).
+        try:
+            from models import is_in_quiet_hours
+            if is_in_quiet_hours(restaurant_id, db_path=db_path):
+                data["quiet"] = True
+        except Exception as qe:
+            print(f"[strategy_jobs] quiet-hours check failed rid={restaurant_id}: {qe}")
         push.fire_push(restaurant_id, alert_type, title, body, data=data,
                        db_path=db_path, user_ids=pushed)
     reached = len(pushed)
@@ -1025,14 +1093,62 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
 
 def _close_hour(r, local):
     """The hour this restaurant is done for the night, rounded up past any
-    half hour, or 22 when it hasn't set hours."""
-    from notify import _open_window
-    window = _open_window(r, local.strftime("%A"))
-    closes = window[1] if window else None
-    if not closes:
-        return DEFAULT_SERVICE_HOURS[1] - 1
-    hour = closes[0] + (1 if closes[1] else 0)
-    return min(hour, 23)
+    half hour, or 22 when it hasn't set hours — for the business date
+    `local` belongs to. A close past midnight is 24+ (1:00am -> 25): it is
+    the same night's close, not the next calendar day's (A-1 / A-11)."""
+    from datetime import datetime as _dt
+    from time_utils import business_date
+    day = business_date(r, local)
+    since = _closing_send_at(r, day) - _dt.combine(day, _dt.min.time())
+    return int(since.total_seconds() // 3600)
+
+
+def _closing_send_at(r, day):
+    """When the closing summary for the service on business date `day` is
+    due: its close, rounded up to the next hour past any half hour, or
+    22:00 when that weekday has no close set. A close at or after midnight
+    is the next calendar morning — still `day`'s service."""
+    from datetime import datetime as _dt, time as _time, timedelta as _td
+    from time_utils import opening_hours, service_window
+    hours = opening_hours(r, day.strftime("%A"))
+    if not hours or not hours[1]:
+        return _dt.combine(day, _time(DEFAULT_SERVICE_HOURS[1] - 1, 0))
+    closes = service_window(r, day)[1]
+    if closes.minute:
+        closes = closes.replace(minute=0) + _td(hours=1)
+    return closes
+
+
+def _as_of_label(summary, r, day):
+    """"9pm" when the night's last reading was taken before close (a POS
+    that couldn't be read at close), else None — so a partial figure is
+    never presented as the night's total (A-20)."""
+    hour = summary.get("hour")
+    if hour is None:
+        return None
+    from datetime import datetime as _dt, timedelta as _td
+    close_at = _closing_send_at(r, day)
+    taken = _dt.combine(day, _dt.min.time()) + _td(hours=int(hour))
+    return _clock(int(hour) % 24) if taken + _td(hours=1) <= close_at else None
+
+
+# The closing summary goes out in this many hours after close, or not at all
+# (a summary at breakfast is the morning brief's job).
+CLOSING_SUMMARY_WINDOW_HOURS = 2
+
+
+def _closing_due_day(r, local):
+    """The business date whose closing summary is due at `local`, or None.
+    The candidate services are yesterday's (a late close lands after
+    midnight) and today's. Owned by the business date, not the calendar
+    date: a Friday that closes at 1:00am is summarised at 1am Saturday as
+    FRIDAY, and Thursday's 10pm close is not re-sent then (A-11)."""
+    from datetime import timedelta as _td
+    for day in (local.date() - _td(days=1), local.date()):
+        send_at = _closing_send_at(r, day)
+        if send_at <= local < send_at + _td(hours=CLOSING_SUMMARY_WINDOW_HOURS):
+            return day
+    return None
 
 
 def run_closing_summary(db_path=DB_PATH):
@@ -1046,7 +1162,7 @@ def run_closing_summary(db_path=DB_PATH):
 
     P4: passive, no sound, no Focus break. It is a summary, not an alert.
     """
-    import closeout, intraday, ops, push, scheduler
+    import closeout, intraday, ops
     from models import is_in_quiet_hours
     from time_utils import restaurant_now
     sent = 0
@@ -1054,17 +1170,26 @@ def run_closing_summary(db_path=DB_PATH):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
         local = restaurant_now(r, naive=True)
-        hour = _close_hour(r, local)
-        if not scheduler.local_due(r, hour, until=min(hour + 2, 24),
-                                   claim_key="closing_summary", now_local=local):
+        day = _closing_due_day(r, local)
+        if day is None:
+            continue
+        if not ops.claim_period(f"closing_summary:{r.id}", day.isoformat()):
             continue
         # An owner who asked not to be disturbed at night meant this too.
         # It is in tomorrow's brief either way.
         if is_in_quiet_hours(r.id, db_path=db_path):
             continue
         try:
-            day = closeout.business_date_for(r, now_local=local)
+            # The hourly captures stop at close, so the last one was taken
+            # up to an hour before it: one more reading now is the night's
+            # real total (A-20). A POS that can't be read during service
+            # just keeps what it has.
+            try:
+                intraday.capture(r.id, now_local=local, db_path=db_path, restaurant=r, business_day=day)
+            except Exception as ce:
+                ops.capture(ce, job="closing_capture", context=f"restaurant_id={r.id}")
             summary = intraday.closing_summary(r.id, day=day, db_path=db_path, restaurant=r)
+            summary["as_of"] = _as_of_label(summary, r, day)
             note = closeout.get(r.id, day, db_path=db_path)
             title, body = _closing_text(summary, note)
             if not title:
@@ -1086,7 +1211,13 @@ def _closing_text(summary, note):
     anyway is how a summary becomes something people turn off.
     """
     lines = []
-    if summary.get("available"):
+    as_of = summary.get("as_of")
+    if as_of and summary.get("net_sales") is not None:
+        # The last reading predates close: a part of the night, said as
+        # such, and never compared with other nights' full totals (A-20).
+        title = f"${summary['net_sales']:,.0f} by {as_of}"
+        lines.append(f"The POS wasn't read at close, so this is the figure as of {as_of}.")
+    elif summary.get("available"):
         pct = summary.get("pct") or 0
         word = "behind" if summary["direction"] == "behind" else "ahead of"
         if abs(pct) < 5:
@@ -1333,15 +1464,20 @@ def run_trusted_orders(db_path=DB_PATH):
             # did not, so they hear why and what to do.
             if held:
                 names = ", ".join(h.get("supplier_name") or h.get("supplier_email") or "a supplier" for h in held[:3])
-                _reach(r.id, "order_send_pending", "A supplier order was held",
+                # Its own type (re-audit A-22): as "order_send_pending" it
+                # shared the day's collapse id with the queued orders, so the
+                # next banner replaced it on the lock screen, and the bell
+                # called it "Supplier order going out".
+                _reach(r.id, "order_send_held", "A supplier order was held",
                        f"{names}: {held[0].get('reason') or 'the last count is too old'}. "
                        "Count the stock and send it from Food Cost.",
                        {"tab": "food"}, db_path, subject=f"A supplier order didn't go out — {r.name}")
             for row in rows:
+                # One banner per order: keyed on the action, not the day.
                 _reach(r.id, "order_send_pending",
                        "A supplier order goes out in an hour",
                        f"{row.get('label')}. Undo from Home if you'd rather look first.",
-                       {"delayed_action_id": row["id"]}, db_path,
+                       {"delayed_action_id": row["id"], "collapse_key": f"order-{row['id']}"}, db_path,
                        subject=f"Supplier order going out at {_local_clock(r, row['execute_at'])} — {r.name}")
                 queued += 1
         except Exception as e:

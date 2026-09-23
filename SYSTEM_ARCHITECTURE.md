@@ -140,12 +140,13 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations` | 6am | the two root-cause passes, then `run_outcome_evaluations` |
 | `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |
 | `auto_draft_schedule` | Thu 6am | `run_auto_draft_schedules` |
-| `milestones`, `refresh_tokens` | 7am | `run_milestones`, `refresh_expiring_tokens` |
+| `refresh_tokens` | 7am | `refresh_expiring_tokens` |
+| `outcome_wins`, `milestones` | hourly | `run_outcome_wins`, `run_milestones` — each restaurant at its own 9am local (`strategy_jobs.WIN_HOUR`), bounded and resumable; pushes inside quiet hours arrive silently |
 | `weekly_plan` | Mon, hourly → 7am *local* | `run_weekly_plan` |
 | `recipe_drafts` | Tue, hourly → 5am *local* | `run_recipe_drafts` |
 | `trusted_orders` | Mon, hourly → 8am *local* | `run_trusted_orders` |
 | `auto_publish_schedule` | Fri, hourly → 9am *local* | `run_auto_publish_schedules` — held when `client_api.publish_blockers` is non-empty |
-| `quality_calibration` | Sun 5am | `strategy_jobs.run_quality_calibration` — nudges a restaurant's quality weights from its own clean vs troubled published weeks; never lowers, never before 8 weeks |
+| `quality_calibration` | Sun 5am | `strategy_jobs.run_quality_calibration` — records the Shift Quality weight suggestion (`schedule_learning.calibrate_weights`, the same numbers Apply writes) once per new published week; never applies it |
 | `schedule_outcomes` | Mon 4am | `strategy_jobs.run_schedule_outcomes` — what each published week did, by daypart |
 | `reservation_sync` | Wed 5am | `reservation_feeds.run_reservation_sync` — reservation feeds into demand_signals; no provider is live, unconfigured restaurants are counted and skipped |
 | `review_fetch` | 8am, 12pm, 4pm, 8pm (latest missed slot only) | `run_daily_fetch` — bounded pool, cursor in `job_cursors` |
@@ -188,7 +189,7 @@ Every tick: `notify.release_due_alerts()` (alerts held through a rush). Every 20
 - `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended, marks met goals.
 - `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`. Bounded (40 minutes) with a `job_cursors` cursor, so a pass that runs out of time resumes where it stopped.
 - `issue_scan` — hourly: bad reviews → issues where a manager is routed.
-- `closing_summary` — at each restaurant's own close: tonight against a typical same weekday plus the close-out handover, to the brief's audience. Skipped in quiet hours and when there is nothing to say.
+- `closing_summary` — at each restaurant's own close (a close at or after midnight is the same night's, owned by its business date — `time_utils.service_window`), after one last POS reading: tonight against a typical same weekday plus the close-out handover, to the brief's audience. Skipped in quiet hours and when there is nothing to say.
 - `demand_opportunity` — weekly (claimed on the ISO week, not the date): a reliably quiet weekday two days out, Marketing module only.
 - Every tick (and, for the first four, from the pulse during a long job): scheduled posts, `delayed.run_due()`, `issues.tick()` (held notifications, one escalation), `notify.release_due_alerts()`, and — on the loop thread only — `morning_brief.run_due()` (per-restaurant local hour, claimed per restaurant per day). The brief goes to every recipient in `morning_brief.recipients()` — owners and managers by default, per-login opt-out in `login_prefs` — each built from that person's own permissions (built once per distinct view) and pushed to that person's devices only, or emailed.
 
