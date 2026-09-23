@@ -434,6 +434,8 @@ def _do_auto_draft_get(u):
 
 
 def _do_auto_draft_set(u):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
     from models import update_restaurant
     b = _body()
     fields = {}
@@ -456,12 +458,30 @@ def _do_auto_publish_get(u):
             "armed": bool(getattr(r, "auto_publish_schedule", 0)) and trust >= SCHEDULE_PUBLISH_TRUST_MIN}, 200
 
 
+def _may_publish(u):
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    return bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)
+
+
+def _flag(v) -> bool:
+    """A JSON boolean as a boolean: bool("false") is True, so a client that
+    sends strings would have switched things ON by asking for off."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
 def _do_auto_publish_set(u):
+    # Auto-publish emails every employee on Friday. It is publishing, and
+    # takes the publish permission — a teammate login could switch it on.
+    if not _may_publish(u):
+        return _forbidden("Only someone who can send the schedule to staff can turn on auto-publish.")
     from models import update_restaurant
     from client_api import log_account_event
     b = _body()
     if "enabled" not in b:
         return {"ok": False, "error": "Nothing to change."}, 400
+    b["enabled"] = _flag(b["enabled"])
     update_restaurant(_rid(u), {"auto_publish_schedule": 1 if b["enabled"] else 0})
     log_account_event(_rid(u), "auto_publish_changed", current_user=u, detail="on" if b["enabled"] else "off")
     return _do_auto_publish_get(u)
@@ -892,6 +912,13 @@ def _do_staff_settings_set(u):
     import staff_settings as _ss
     from client_api import log_account_event
     b = _body()
+    if b.get("experienced") is not None:
+        # "Experienced" changes how every shift is scored; a name nobody is
+        # scheduled under would change it for no one real.
+        _nm = b.get("employee_name") or b.get("name")
+        _roster = {e["name"].strip().lower() for e in _ss.roster(_rid(u), include_inactive=True)}
+        if not isinstance(_nm, str) or _nm.strip().lower() not in _roster:
+            return {"ok": False, "error": "That name isn't on the roster."}, 400
     try:
         row = _ss.upsert(_rid(u), b.get("employee_name") or b.get("name"),
                          active=b.get("active"), employment_type=b.get("employment_type"),
@@ -1084,11 +1111,21 @@ def _do_schedule_versions(u, history_id):
 
 
 def _rows_from_body(b):
+    """The rows in a request, or None when there are none worth reading. A
+    row whose date is not YYYY-MM-DD cannot be judged by any rule and made
+    the rule load fail with a 500; such a body is refused (None) instead."""
+    from datetime import datetime as _dt
     cols = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
     raw = b.get("rows")
     if not isinstance(raw, list) or not raw or len(raw) > 2000:
         return None
-    return [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw if isinstance(r, dict)]
+    rows = [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw if isinstance(r, dict)]
+    for r in rows:
+        try:
+            _dt.strptime(r["date"].strip(), "%Y-%m-%d")
+        except ValueError:
+            return None
+    return rows or None
 
 
 def _do_schedule_violations(u):
@@ -1169,6 +1206,38 @@ def _do_schedule_optimize(u):
     if not rows:
         return {"ok": False, "error": "rows required"}, 400
     targets = body.get("daily_target_hours") if isinstance(body.get("daily_target_hours"), dict) else None
+    try:
+        targets = {str(k): float(v) for k, v in (targets or {}).items()} or None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "daily_target_hours must map dates to hours."}, 400
+    # The week's own hours budget, from the saved draft when the client names
+    # it: without it the search had no ceiling and could add hours past the
+    # labor budget the generation respected.
+    budget = None
+    hid = body.get("history_id")
+    if hid is not None:
+        try:
+            hid = int(hid)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "history_id must be a number."}, 400
+        from models import get_conn as _gc_opt
+        _c = _gc_opt()
+        try:
+            _h = _c.execute("SELECT hours_budget FROM schedule_history WHERE id=? AND restaurant_id=?",
+                            (hid, _rid(u))).fetchone()
+        finally:
+            _c.close()
+        if _h is None:
+            return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
+        budget = float(_h["hours_budget"] or 0) or None
+        if not targets:
+            from schedule_engine import stored_daily_targets
+            targets = stored_daily_targets(_rid(u), hid) or None
+    elif body.get("hours_budget") not in (None, ""):
+        try:
+            budget = float(body.get("hours_budget"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "hours_budget must be a number."}, 400
     inputs = quality_inputs_from_db(_rid(u), daily_target_hours=targets, week_rows=rows)
     c = inputs.get("constraints")
     if c is None:
@@ -1182,7 +1251,7 @@ def _do_schedule_optimize(u):
     res = _opt.optimize(rows, inputs, signals=signals, weights=weights, constraints=c,
                         max_seconds=12.0, max_evaluations=600,
                         max_server_overlap=getattr(_r_opt, "section_count", None),
-                        hours_budget=(body.get("hours_budget") if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
+                        hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
     return {"ok": True, "rows": res["rows"], "optimizer": _opt.summary(res, signals),
             "quality": quality, "what_if": what_if}, 200
@@ -1323,8 +1392,14 @@ def _do_ratings_unmatched(u):
         return _forbidden("Only someone who can see labor can see this.")
     import staff_settings as _ss
     from models import get_operational_scores
-    roster = [e["name"] for e in _ss.roster(_rid(u))]
-    return {"ok": True, "unmatched": rating_name_suggestions(get_operational_scores(_rid(u)), roster)}, 200
+    # Deactivated people are still the people their ratings belong to: left
+    # out, a former employee's rating was offered to whoever shared a first
+    # name and moved onto them.
+    everyone = _ss.roster(_rid(u), include_inactive=True)
+    active = [e["name"] for e in everyone if e.get("active", True)]
+    known = {e["name"].strip().lower() for e in everyone}
+    scores = {n: v for n, v in (get_operational_scores(_rid(u)) or {}).items() if n.strip().lower() not in known}
+    return {"ok": True, "unmatched": rating_name_suggestions(scores, active)}, 200
 
 
 def rating_name_suggestions(scores: dict, roster: list) -> list:
@@ -1357,10 +1432,15 @@ def _do_ratings_match(u):
     from models import rename_capability_holder
     from client_api import log_account_event
     b = _body()
-    rated, target = (b.get("rated") or "").strip(), (b.get("roster_name") or "").strip()
-    roster = {e["name"] for e in _ss.roster(_rid(u))}
+    if not isinstance(b.get("rated"), str) or not isinstance(b.get("roster_name"), str):
+        return {"ok": False, "error": "Pick a name from the roster."}, 400
+    rated, target = b["rated"].strip(), b["roster_name"].strip()
+    everyone = _ss.roster(_rid(u), include_inactive=True)
+    roster = {e["name"] for e in everyone if e.get("active", True)}
     if not rated or target not in roster:
         return {"ok": False, "error": "Pick a name from the roster."}, 400
+    if rated.lower() != target.lower() and rated.lower() in {e["name"].strip().lower() for e in everyone}:
+        return {"ok": False, "error": f"{rated} is on your roster (deactivated) — their rating stays theirs."}, 409
     moved = rename_capability_holder(_rid(u), rated, target)
     if moved is None:
         return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
@@ -1400,7 +1480,8 @@ def _do_schedule_intel(u):
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
             "weight_calibration": _safe(lambda: _sl.calibrate_weights(rid), {"ready": False}),
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
-            "auto_publish_offer": _safe(lambda: _auto_publish_offer(rid), {"eligible": False}),
+            "auto_publish_offer": (_safe(lambda: _auto_publish_offer(rid), {"eligible": False}) if _may_publish(u)
+                                   else {"eligible": False, "reason": "Only someone who can send the schedule can turn this on."}),
             "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
 
 

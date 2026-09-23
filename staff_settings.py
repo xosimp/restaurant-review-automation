@@ -132,12 +132,22 @@ def _clean_windows(raw):
     return out
 
 
+def _flag(v) -> bool:
+    """bool("false") is True; a client sending strings would have switched
+    a flag ON by asking for off."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
            experienced=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed."""
+    if employee_name is not None and not isinstance(employee_name, str):
+        raise StaffSettingsError("an employee name is required")
     name = (employee_name or "").strip()[:120]
     if not name:
         raise StaffSettingsError("an employee name is required")
@@ -196,17 +206,17 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
                                          "desired_hours": None, "experienced": False}
         new = {
-            "active": int(bool(active)) if active is not None else int(current["active"]),
+            "active": int(_flag(active)) if active is not None else int(current["active"]),
             "employment_type": (employment_type or None) if employment_type is not None else current["employment_type"],
             "min_hours": (float(min_hours) if min_hours not in (None, "") else None) if min_hours is not None else current["min_hours"],
             "max_hours": (float(max_hours) if max_hours not in (None, "") else None) if max_hours is not None else current["max_hours"],
             "daypart_availability": daypart_availability if daypart_availability is not None else current["daypart_availability"],
-            "is_minor": int(bool(is_minor)) if is_minor is not None else int(current["is_minor"]),
+            "is_minor": int(_flag(is_minor)) if is_minor is not None else int(current["is_minor"]),
             "time_windows": time_windows if time_windows is not None else current.get("time_windows") or {},
             "certifications": certifications if certifications is not None else current.get("certifications") or [],
             "preferred_dayparts": preferred_dayparts if preferred_dayparts is not None else current.get("preferred_dayparts") or [],
             "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
-            "experienced": int(bool(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
+            "experienced": int(_flag(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -237,7 +247,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
     finally:
         conn.close()
     if active is not None:
-        _sync_portal_access(restaurant_id, name, bool(active), db_path)
+        _sync_portal_access(restaurant_id, name, _flag(active), db_path)
     return _row(row)
 
 

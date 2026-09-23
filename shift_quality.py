@@ -633,6 +633,9 @@ def _rule_applies(rule: dict, ctx: ShiftContext) -> bool:
 # rather than a hire date, because shift data is what this product actually
 # has — a hire date would be a field nobody fills in.
 EXPERIENCE_SHIFTS = 20
+# With too little history for tenure to tell, experience is judged from the
+# owner's marks only once this many people are marked.
+EXPERIENCE_MIN_MARKED = 3
 # Below this, somebody is still learning and should not be the only person
 # holding a station on a busy shift.
 DEVELOPING_SHIFTS = 6
@@ -656,10 +659,16 @@ def dim_experience_balance(ctx: ShiftContext) -> DimensionResult | None:
     flagged = {n.strip().lower() for n in (ctx.experienced or set()) if n}
     if not ctx.tenure and not flagged:
         return None
-    if not flagged and max((int(v or 0) for v in ctx.tenure.values()), default=0) < EXPERIENCE_SHIFTS:
+    # With a short history, being under EXPERIENCE_SHIFTS says nothing about
+    # a person; only the owner's marks do. One mark is not a classification
+    # of the team — it turned everybody unmarked into a known beginner and
+    # dropped the week the moment the first person was marked — so short-
+    # history scoring waits until the owner has marked a few.
+    if max((int(v or 0) for v in ctx.tenure.values()), default=0) < EXPERIENCE_SHIFTS \
+            and len(flagged) < EXPERIENCE_MIN_MARKED:
         ctx.notes.append(
             f"Experience was not judged — the shift history on file is too short for anybody to have "
-            f"{EXPERIENCE_SHIFTS} shifts yet. Mark your experienced staff to turn it on sooner.")
+            f"{EXPERIENCE_SHIFTS} shifts yet. Mark at least {EXPERIENCE_MIN_MARKED} experienced staff to turn it on sooner.")
         return None
     people = ctx.people
     known = [n for n in people if n in ctx.tenure or n.lower() in flagged]
@@ -2229,9 +2238,33 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
         if (row.get("employee") or "").strip() and (row.get("date") or "").strip():
             day_rows_by_date.setdefault(row["date"].strip(), []).append(row)
 
+    # A shift this restaurant runs that the draft left out entirely is still
+    # a shift: scored with nobody on it rather than not scored at all. Only
+    # scoring the buckets that had rows let a week with no Saturday dinner
+    # read "good". Expected means its usual crew or a staffing floor says it
+    # runs, on a date the draft covers (a closed date has no rows at all).
+    typical_all = signals.get("typical_headcount") or {}
+    expected = set()
+    for date in {d for d, _p in buckets}:
+        day = _day_name(date)
+        for part in ("morning", "night"):
+            if (date, part) in buckets:
+                continue
+            runs = any(n for n in (typical_all.get((day, part)) or {}).values())
+            if not runs:
+                for spec in role_floors_all.values():
+                    dspec = (spec.get("days") or {}).get(day) or {}
+                    if (dspec.get(part) if part in dspec else spec.get(part)):
+                        runs = True
+                        break
+            if runs:
+                expected.add((date, part))
+    for key in expected:
+        buckets[key] = []
+
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
-        day = _day_name(date, shift_rows[0].get("day", ""))
+        day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
         profile = _profile(date, day, part)
         floors_here = {}
         for role, spec in role_floors_all.items():

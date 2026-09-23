@@ -19,7 +19,7 @@ import emails as _emails
 import ops as _ops
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
-from time_utils import parse_stored_dt
+from time_utils import parse_stored_dt, mdy
 def _chi_now():
     return datetime.now(_ZI_sch('America/Chicago')).replace(tzinfo=None)
 from dotenv import load_dotenv
@@ -2442,9 +2442,14 @@ def run_auto_publish_schedules():
                                (r.id, local.date().isoformat())).fetchone()
             row = None
             if nxt and nxt["w"]:
+                # The week's CURRENT draft — the newest one no later draft
+                # superseded — and only it. Filtering unedited rows first
+                # meant that once the owner edited the current draft, an
+                # older one they had abandoned was the "newest unedited" and
+                # was queued to staff with "unchanged from the draft".
                 row = conn.execute(
-                    "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
-                    "AND h.edited_at IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
+                    "SELECT h.id, h.week_start, h.edited_at FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
+                    "AND h.superseded_by IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
                     "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
                     "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "
                     "  OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id))) "
@@ -2452,6 +2457,10 @@ def run_auto_publish_schedules():
         finally:
             conn.close()
         if not row:
+            skipped += 1
+            continue
+        if row["edited_at"]:
+            # The owner has taken this week over; it goes out when they send it.
             skipped += 1
             continue
         # Never unread: a week with flagged rows, a hard rule breach, a
@@ -2469,7 +2478,7 @@ def run_auto_publish_schedules():
                 from strategy_jobs import _reach
                 _reach(r.id, "schedule_publish_held",
                        "Next week's schedule needs a look before it goes out",
-                       "The draft for the week of " + str(row["week_start"]) + " was not sent: "
+                       "The draft for the week of " + mdy(row["week_start"]) + " was not sent: "
                        + "; ".join(blockers[:3]) + ". Review it on the Labor tab and send it yourself.",
                        {"schedule_id": row["id"]}, DB_PATH,
                        subject=f"Next week's schedule is waiting on you — {r.name}")
@@ -2478,11 +2487,11 @@ def run_auto_publish_schedules():
             continue
         try:
             action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]}, 120,
-                                      label=f"Publishing the week of {row['week_start']} to staff")
+                                      label=f"Publishing the week of {mdy(row['week_start'])} to staff")
             from strategy_jobs import _reach
             _reach(r.id, "schedule_publish_pending",
                    f"Next week's schedule goes to staff at 11am",
-                   f"The week of {row['week_start']} is unchanged from the draft. Undo from Home before then if you'd rather look first.",
+                   f"The week of {mdy(row['week_start'])} is unchanged from the draft. Undo from Home before then if you'd rather look first.",
                    {"delayed_action_id": action["id"]}, DB_PATH,
                    subject=f"Publishing next week's schedule at 11am — {r.name}")
             queued += 1

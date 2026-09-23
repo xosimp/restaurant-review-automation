@@ -2660,13 +2660,15 @@ def format_demand_block(forecast: dict) -> str:
 
 # ── Publishing a schedule to staff ─────────────────────────────────────────────
 
-_ENGINE_NOTE = re.compile(r"\s*[—\-–]?\s*NEEDS REVIEW:.*$|\s*\(was [^)]*\)|(^|\s*[—\-–;]\s*)(added|trimmed|auto-capped)\b[^;]*", re.I)
+_ENGINE_NOTE = re.compile(r"\s*[—\-–]?\s*NEEDS REVIEW:.*$|\s*[—\-–]?\s*Cavnar:.*$|\s*\(was [^)]*\)|(^|\s*[—\-–;]\s*)(added|trimmed|auto-capped)\b[^;]*", re.I)
 
 
 def staff_facing_note(note) -> str:
     """The notes column carries the engine's own marks for the owner —
-    NEEDS REVIEW, (was Ana — over her hours), added — coverage top-up.
-    None of that belongs on an employee's schedule."""
+    NEEDS REVIEW, (was Ana — over her hours), added — coverage top-up,
+    and the optimizer's "Cavnar: …" reasons (which name colleagues and the
+    owner's strength ratings). None of that belongs on an employee's
+    schedule."""
     n = (note or "").strip()
     if not n:
         return ""

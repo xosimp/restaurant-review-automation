@@ -859,6 +859,38 @@ struct ScheduleRow: Codable, Identifiable {
     }
 }
 
+extension ScheduleRow {
+    /// scheduled_hours arrives as a string from every engine pass, but one
+    /// server path once sent a bare number and the whole schedule failed to
+    /// decode. Either is read as the same text. (An extension, so the
+    /// memberwise initialiser the what-if uses is kept.)
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        day = try c.decodeIfPresent(String.self, forKey: .day)
+        employee = try c.decodeIfPresent(String.self, forKey: .employee)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        shiftStart = try c.decodeIfPresent(String.self, forKey: .shiftStart)
+        shiftEnd = try c.decodeIfPresent(String.self, forKey: .shiftEnd)
+        if let text = try? c.decodeIfPresent(String.self, forKey: .scheduledHours) {
+            scheduledHours = text
+        } else if let number = try? c.decodeIfPresent(Double.self, forKey: .scheduledHours) {
+            scheduledHours = number == number.rounded() ? String(format: "%.1f", number) : String(number)
+        } else {
+            scheduledHours = nil
+        }
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        needsReview = try? c.decodeIfPresent(Bool.self, forKey: .needsReview)
+        reviewReason = try c.decodeIfPresent(String.self, forKey: .reviewReason)
+    }
+
+    /// Everything that makes two rows the same shift, for telling whether
+    /// the week on screen moved while a save was in flight.
+    var signature: String {
+        [date, employee, role, shiftStart, shiftEnd, scheduledHours].map { $0 ?? "" }.joined(separator: "|")
+    }
+}
+
 /// One swap the compliance pass made (or would make) to clear a violation.
 struct ReviewFix: Codable, Identifiable, Equatable {
     let index: Int
@@ -1752,7 +1784,16 @@ final class LaborViewModel {
         return after - before
     }
 
-    private struct OptimizeBody: Encodable { let rows: [ScheduleRow] }
+    /// history_id lets the server hold the search under that week's own
+    /// hours budget; without it "Improve" could add hours past the ceiling.
+    private struct OptimizeBody: Encodable {
+        let rows: [ScheduleRow]
+        let historyId: Int?
+        enum CodingKeys: String, CodingKey {
+            case rows
+            case historyId = "history_id"
+        }
+    }
 
     private struct OptimizeResponse: Decodable {
         let ok: Bool
@@ -1779,7 +1820,7 @@ final class LaborViewModel {
         do {
             let response: OptimizeResponse = try await client.send(
                 "/mobile/api/labor/schedule/optimize", method: .post,
-                body: OptimizeBody(rows: rows), hapticOnError: false, timeout: 45, retryTransient: false)
+                body: OptimizeBody(rows: rows, historyId: result.historyId), hapticOnError: false, timeout: 45, retryTransient: false)
             guard response.ok else {
                 optimizeError = response.error ?? "Couldn't improve the draft."
                 return
@@ -1883,7 +1924,7 @@ final class LaborViewModel {
     /// Put a what-if on the week: the rows replace the draft and are saved
     /// exactly like any other override.
     func applyWhatIf(_ rows: [ScheduleRow], who: String, date: String) async {
-        guard var result = scheduleResult else { return }
+        guard !rows.isEmpty, var result = scheduleResult else { return }
         result.previewRows = rows
         scheduleResult = result
         for row in rows where row.employee == who && row.date == date { overriddenRows.insert(row.id) }
@@ -2113,18 +2154,28 @@ final class LaborViewModel {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
                 return
             }
-            scoreDelta = Self.delta(from: result.quality?.score, to: quality.score)
-            result.quality = quality
-            result.whatIf = response.whatIf
-            // The compliance read moves with every edit. Only replaced when
-            // the server sent one, so an older backend leaves the last
-            // review standing rather than blanking it.
-            if let review = response.review { result.review = review }
-            if let violations = response.violations { result.ruleViolations = violations }
-            if let pending = response.pendingTimeOff { result.pendingTimeOff = pending }
-            scheduleResult = result
-            cacheSchedule(result)
-            if save { hasUnsavedFixes = false; optimizerUnsaved = false }
+            // The week may have moved while this was in flight (a second
+            // quick edit). Writing back the copy taken before the request
+            // overwrote that edit on screen and in the next save. Only the
+            // verdict is merged into the CURRENT week; if its rows are no
+            // longer the ones this response judged, the verdict is stale
+            // and the next rescore (already queued by that edit) owns it.
+            guard var current = scheduleResult else { return }
+            let sameRows = (current.previewRows ?? []).map(\.signature) == rows.map(\.signature)
+            if sameRows {
+                scoreDelta = Self.delta(from: current.quality?.score, to: quality.score)
+                current.quality = quality
+                current.whatIf = response.whatIf
+                // The compliance read moves with every edit. Only replaced
+                // when the server sent one, so an older backend leaves the
+                // last review standing rather than blanking it.
+                if let review = response.review { current.review = review }
+                if let violations = response.violations { current.ruleViolations = violations }
+                if let pending = response.pendingTimeOff { current.pendingTimeOff = pending }
+            }
+            scheduleResult = current
+            cacheSchedule(current)
+            if save && sameRows { hasUnsavedFixes = false; optimizerUnsaved = false }
             overrideState = .idle
             if response.saved ?? false {
                 // The version just written is now the latest; the next

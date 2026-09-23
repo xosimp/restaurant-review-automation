@@ -1771,6 +1771,38 @@ def _daypart_fallback(constraints, day_name: str, part: str) -> tuple:
     return _format_minutes_to_time(start), _format_minutes_to_time(end)
 
 
+def stored_daily_targets(restaurant_id, history_id) -> dict:
+    """{date: hours} the stored week was generated against: kept on its
+    quality, or recovered from its labor-efficiency facts for a week saved
+    before they were kept. {} when neither is on file."""
+    import json as _json
+    from models import get_conn
+    try:
+        hid = int(history_id)
+    except (TypeError, ValueError):
+        return {}
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (hid, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    try:
+        q = _json.loads(row["quality_json"] or "null") or {} if row else {}
+    except Exception:
+        return {}
+    kept = q.get("daily_target_hours")
+    if isinstance(kept, dict) and kept:
+        return {str(k): float(v) for k, v in kept.items() if v}
+    out = {}
+    for s in q.get("shifts") or []:
+        for d in s.get("dimensions") or []:
+            t = (d.get("facts") or {}).get("target_hours") if d.get("key") == "labor_efficiency" else None
+            if t and s.get("date"):
+                out[s["date"]] = float(t)
+    return out
+
+
 def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=None):
     """Rebuild the engine's inputs for a schedule nobody just generated.
 
@@ -2196,6 +2228,46 @@ def _quality_gate(result: dict):
             "reason": f"{len(dates)} busy {'day' if len(dates) == 1 else 'days'} still had a staffing hole after repair"}
 
 
+def _gate_local(quality: dict, dates) -> float:
+    """Demand-weighted mean of the shift scores on `dates`, a daypart the
+    other draft had but this one lacks counting as 0 — so a rewrite cannot
+    "improve" a day by leaving its dinner out."""
+    import shift_quality as _sq
+    dates = set(dates or [])
+    shifts = [s for s in (quality or {}).get("shifts") or [] if s.get("date") in dates]
+    if not shifts:
+        return 0.0
+    num = den = 0.0
+    for s in shifts:
+        w = _sq.DEMAND_WEIGHT.get(((s.get("profile") or {}).get("demand") or "normal"), 1.0)
+        num += (s.get("score") or 0) * w if s.get("scored") else 0.0
+        den += w
+    return num / (den or 1.0)
+
+
+def _restore_draft(restaurant_id, keep_id, drop_id=None):
+    """Make `keep_id` the week's current draft again: saving the rewrite
+    superseded it. The rewrite (and any later unsent draft of the week from
+    this job) is marked superseded by it, so auto-publish and the history
+    read the original as the draft in force."""
+    if not keep_id:
+        return
+    from models import get_conn
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (keep_id, restaurant_id)).fetchone()
+        if not row:
+            return
+        conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? AND id>? "
+                     "AND published_at IS NULL", (keep_id, restaurant_id, row["week_start"], keep_id))
+        conn.execute("UPDATE schedule_history SET superseded_by=NULL WHERE id=? AND restaurant_id=?",
+                     (keep_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def sq_demand_rank(shift: dict) -> int:
     import shift_quality as _sq
     return _sq.DEMAND_RANK.get(((shift.get("profile") or {}).get("demand") or "normal"), 1)
@@ -2206,7 +2278,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
-    automatic regeneration of a draft's weakest days (_quality_gate)."""
+    automatic regeneration of a draft's weakest days (_quality_gate) — never
+    on a redo the owner asked for, which must touch only the days they chose."""
+    if dates and not focus:
+        gate = False
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     try:
         _pinned = []
@@ -2640,6 +2715,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 )
                 if isinstance(_quality, dict):
                     _quality["optimizer"] = result.get("optimizer") or {"ran": False}
+                    # The per-day hour targets belong to this generation and
+                    # cannot be re-derived; kept with the stored verdict so a
+                    # later rescore from a client that never held them (iOS)
+                    # is judged on the same targets (stored_daily_targets).
+                    _quality["daily_target_hours"] = result.get("daily_target_hours") or {}
                 result["quality"] = _quality
                 result["what_if"] = _whatif
                 from models import capability_version as _capver
@@ -2839,28 +2919,40 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             gate=result.get("gate") or {"ran": False},
         )
         _q_now = (result.get("quality") or {}).get("score")
-        if _fallback and _fallback[0] is not None and (_q_now is None or _q_now < _fallback[0]):
-            # The focused regeneration came out worse than the draft it was
-            # meant to improve: the owner gets the better one, and is told.
-            _fb = dict(_fallback[1])
-            _fb["gate"] = {"ran": True, "kept": "original",
-                           "reason": f"Regenerating the weak days scored {_q_now}, below the original {_fallback[0]}, "
-                                     "so the original draft was kept."}
-            _ops.finish_async_job(job_id, "done", _fb)
-            return
+        if _fallback:
+            # Kept only if the days it was asked to fix got better, judged on
+            # those days alone (a shift the rewrite dropped counts as 0), and
+            # the week as a whole is not worse. The whole-week average alone
+            # kept a rewrite with ONE Saturday server over one with five.
+            before_local = _gate_local(_fallback["quality"], _fallback["dates"])
+            after_local = _gate_local(result.get("quality") or {}, _fallback["dates"])
+            better = (after_local is not None and before_local is not None and after_local > before_local
+                      and (_q_now or 0) >= (_fallback["score"] or 0) - 1)
+            if not better:
+                _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
+                _fb = dict(_fallback["payload"])
+                _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
+                               "reason": (f"Cavnar rewrote the weakest days to fix them, but the rewrite was no better "
+                                          f"on those days, so your original draft was kept.")}
+                _ops.finish_async_job(job_id, "done", _fb)
+                return
         _gate = _quality_gate(result) if gate else None
         if _gate and _history_id:
             try:
                 import inspect as _insp
                 if "focus" in _insp.signature(_build_schedule_result).parameters:
                     print(f"[schedule] quality gate: regenerating {_gate['dates']} ({_gate['reason']})")
-                    return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
-                                             base_history_id=_history_id, focus=_gate["focus"], gate=False,
-                                             _fallback=(_q_now, dict(_payload, gate={"ran": True, **_gate})))
+                    return _run_schedule_job(
+                        job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
+                        base_history_id=_history_id, focus=_gate["focus"], gate=False,
+                        _fallback={"score": _q_now, "history_id": _history_id, "dates": _gate["dates"],
+                                   "quality": result.get("quality") or {},
+                                   "payload": dict(_payload, gate={"ran": True, **_gate})})
             except Exception as _gx:
                 print(f"[schedule] quality gate failed: {_gx}")
         if focus:
             _payload["gate"] = {"ran": True, "kept": "regenerated", "focus": list(focus)[:12],
+                                "dates": list(dates or []),
                                 "reason": "The weakest days were regenerated with what was wrong with them."}
         _ops.finish_async_job(job_id, "done", _payload)
     except Exception as e:
@@ -2870,6 +2962,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id}")
         except Exception:
             pass
+        if _fallback:
+            # The rewrite failed, but the draft it was improving is saved and
+            # sound: the owner gets that draft, not a failure it did not have.
+            try:
+                _restore_draft(restaurant_id, _fallback["history_id"], locals().get("_history_id"))
+            except Exception:
+                pass
+            _fb = dict(_fallback["payload"])
+            _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
+                           "reason": "Cavnar tried to rewrite the weakest days but couldn't just now, so your draft is as it was."}
+            _ops.finish_async_job(job_id, "done", _fb)
+            return
         # The owner gets a sentence, never the exception or the traceback.
         msg = str(e) if isinstance(e, ScheduleGenerationError) else \
             "The schedule couldn't be generated just now — please try again in a minute."

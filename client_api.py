@@ -6441,10 +6441,11 @@ def _publish_schedule_request(current_user):
             return jsonify(ok=False, needs_ack=True, blockers=blockers, schedule_id=row["id"],
                            error="This week has things to look at before it goes to staff."), 409
         import delayed
+        from time_utils import mdy as _mdy_pub
         act = delayed.schedule(rid, "schedule_publish",
                                {"schedule_id": row["id"], "acknowledge": bool(data.get("acknowledge"))},
                                delay, actor=current_user,
-                               label=f"Publishing the week of {row['week_start']} to staff")
+                               label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     try:

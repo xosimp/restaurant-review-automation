@@ -5632,8 +5632,21 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     return new_id
 
 
+_HISTORY_COLUMNS_OK = set()
+
+
 def _ensure_history_columns(conn):
-    """Columns added to schedule_history after it first shipped."""
+    """Columns added to schedule_history after it first shipped.
+
+    Boot adds all of them (init_db's column list); this only covers a
+    database created before boot ran, once per database file per process,
+    so no request path reads or changes the schema after the first call."""
+    try:
+        db_file = conn.execute("PRAGMA database_list").fetchone()[2] or ":memory:"
+    except Exception:
+        db_file = None
+    if db_file and db_file != ":memory:" and db_file in _HISTORY_COLUMNS_OK:
+        return
     have = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
     for name, decl in (("quality_json", "TEXT"), ("edited_at", "TEXT"),
                        ("edited_by", "TEXT"), ("published_at", "TEXT"), ("published_by", "TEXT"),
@@ -5648,6 +5661,8 @@ def _ensure_history_columns(conn):
                 # Another connection added it between our read and this write.
                 if "duplicate column" not in str(e).lower():
                     raise
+    if db_file and db_file != ":memory:":
+        _HISTORY_COLUMNS_OK.add(db_file)
 
 
 def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,

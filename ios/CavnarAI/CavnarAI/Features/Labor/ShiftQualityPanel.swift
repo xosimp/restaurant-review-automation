@@ -45,14 +45,16 @@ struct ShiftQualityPanel: View {
     @State private var whatIfAnswer: [String: WhatIfAnswer] = [:]
     @State private var whatIfBusy: String?
 
-    /// What one what-if came back with. `rows` is kept so "Put them on"
-    /// applies exactly what was scored.
+    /// What one what-if came back with. "Put them on" rebuilds the change
+    /// from the week as it is at that moment (`replacing` names the row),
+    /// never from rows captured when it was scored — edits made since would
+    /// be thrown away. A failed what-if is not `applicable`.
     struct WhatIfAnswer: Equatable {
         let text: String
-        let rows: [ScheduleRow]
         let who: String
         let date: String
-        static func == (a: WhatIfAnswer, b: WhatIfAnswer) -> Bool { a.text == b.text }
+        let replacing: String?
+        let applicable: Bool
     }
 
     var body: some View {
@@ -678,17 +680,23 @@ struct ShiftQualityPanel: View {
             if let answer = whatIfAnswer[shift.id] {
                 HomeMixedText.make(answer.text, size: 14, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    Haptic.medium()
-                    let a = answer
-                    whatIfAnswer[shift.id] = nil
-                    Task { await viewModel.applyWhatIf(a.rows, who: a.who, date: a.date) }
-                } label: {
-                    Text("Put \(answer.who) on")
-                        .font(.cavnarBody(14, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
+                if answer.applicable {
+                    Button {
+                        Haptic.medium()
+                        let a = answer
+                        whatIfAnswer[shift.id] = nil
+                        Task {
+                            guard let rows = viewModel.whatIfRows(shift: shift, who: a.who, replacing: a.replacing),
+                                  !rows.isEmpty else { return }
+                            await viewModel.applyWhatIf(rows, who: a.who, date: a.date)
+                        }
+                    } label: {
+                        Text("Put \(answer.who) on")
+                            .font(.cavnarBody(14, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.top, 6)
@@ -715,7 +723,8 @@ struct ShiftQualityPanel: View {
         whatIfBusy = shift.id
         defer { whatIfBusy = nil }
         guard let live = await viewModel.liveScore(rows: rows) else {
-            whatIfAnswer[shift.id] = WhatIfAnswer(text: "Couldn't score that just now.", rows: [], who: who, date: shift.date)
+            whatIfAnswer[shift.id] = WhatIfAnswer(text: "Couldn't score that just now.", who: who, date: shift.date,
+                                                  replacing: replacing, applicable: false)
             return
         }
         let after = live.quality.shifts?.first { $0.date == shift.date && $0.daypart == shift.daypart }?.score
@@ -726,7 +735,8 @@ struct ShiftQualityPanel: View {
         }
         text += ". Nothing saved."
         if live.hardRules > 0 { text += " It breaks \(live.hardRules) hard \(live.hardRules == 1 ? "rule" : "rules")." }
-        whatIfAnswer[shift.id] = WhatIfAnswer(text: text, rows: rows, who: who, date: shift.date)
+        whatIfAnswer[shift.id] = WhatIfAnswer(text: text, who: who, date: shift.date,
+                                              replacing: replacing, applicable: true)
     }
 
     @ViewBuilder

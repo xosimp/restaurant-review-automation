@@ -443,9 +443,19 @@ def test_experience_withdraws_when_the_history_is_too_short_to_tell():
 def test_an_owner_marked_veteran_counts_whatever_the_history_shows():
     rows = saturday({"Bartender": ["A", "B"]})
     out = sq.score_rows(rows, profiles=profiles(), scores={"A": 4, "B": 4},
-                        tenure={"A": 5, "B": 5}, experienced={"A"})
+                        tenure={"A": 5, "B": 5}, experienced={"A", "C", "D"})
     exp = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "experience_balance")
     assert exp["facts"]["veterans"] == ["A"]
+
+
+def test_marking_the_first_veteran_does_not_mark_everybody_else_down():
+    """One mark with a short history is not a classification of the team:
+    it used to make every unmarked person a known beginner and drop the week
+    the moment the first person was marked."""
+    rows = saturday({"Bartender": ["A", "B"]})
+    out = sq.score_rows(rows, profiles=profiles(), scores={"A": 4, "B": 4},
+                        tenure={"A": 5, "B": 5}, experienced={"A"})
+    assert "experience_balance" in out["shifts"][0]["not_applicable"]
 
 
 def test_somebody_with_no_history_is_reported_not_assumed():

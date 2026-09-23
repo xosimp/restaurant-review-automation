@@ -10696,7 +10696,11 @@ function renderQualityOptimizer() {
       }
       if (un.length) {
         h += '<div class="sr-grp"><div class="sr-k">Still needs you</div>';
-        for (i = 0; i < un.length; i++) h += '<div class="sr-line bad"><span class="d"></span><span>' + num((un[i] || {}).text || '') + '</span></div>';
+        for (i = 0; i < un.length; i++) {
+          var u = un[i] || {}, wh = '';
+          if (u.day) wh = u.day + ' ' + (u.daypart === 'morning' ? 'lunch' : u.daypart === 'night' ? 'dinner' : (u.daypart || '')) + ': ';
+          h += '<div class="sr-line bad"><span class="d"></span><span>' + num(wh + (u.text || '')) + '</span></div>';
+        }
         h += '</div>';
       }
       h += '</div>';
@@ -10999,12 +11003,12 @@ function _qualityShiftDetail(shift, tone) {
       rest = [];
       for (k2 = 0; k2 < (shift.weaknesses || []).length; k2++) if (capLines.indexOf(shift.weaknesses[k2]) === -1) rest.push(shift.weaknesses[k2]);
       html += '<div style="margin-bottom:9px"><div class="sq-cap">This is what’s holding the shift at <span class="hb-num">' + _sqN(shift.score) + '</span></div>'
-            + _qualityLines(capLines, '#f2994a', '&#8226;', 2) + '</div>';
+            + _qualityLines(capLines, 'var(--amber)', '&#8226;', 2) + '</div>';
     }
   }
-  html += _qualityGroup('Working well', shift.strengths, '#6fcf97', 3);
-  html += capLines.length ? _qualityGroup('Also holding it back', rest, '#f2994a', 4)
-                          : _qualityGroup('Holding it back', rest, '#f2994a', 4);
+  html += _qualityGroup('Working well', shift.strengths, 'var(--green)', 3);
+  html += capLines.length ? _qualityGroup('Also holding it back', rest, 'var(--amber)', 4)
+                          : _qualityGroup('Holding it back', rest, 'var(--amber)', 4);
   html += _qualityGroup('Not known', shift.blind_spots, 'var(--ink3)', 2);
   if (shift.failed && shift.failed.length) {
     var names = [], k;
@@ -11085,9 +11089,21 @@ document.addEventListener('click', function (ev) {
   var t = ev.target;
   if (!t || !t.getAttribute) return;
   var id = t.getAttribute('data-sq-wi-try'), stage = t.getAttribute('data-sq-wi-stage');
-  if (stage !== null && _sqWhatIfStage) {
-    _schedRows = _sqWhatIfStage.rows;
-    var j; for (j = 0; j < _schedRows.length; j++) if (_schedRows[j].employee === _sqWhatIfStage.who && _schedRows[j].date === _sqWhatIfStage.date) _schedOverrides[j] = true;
+  if (stage !== null) {
+    if (!_sqWhatIfStage) { toast('The week changed since that was scored — try it again', 'error'); return; }
+    /* Rebuilt from the week as it is NOW: the rows captured when this was
+       scored would throw away any edit made since. The row being replaced
+       is found by who/date/start, not by an index edits may have moved. */
+    var st = _sqWhatIfStage, cur = '', k;
+    if (st.forKey) {
+      for (k = 0; k < _schedRows.length; k++) {
+        var rk = _schedRows[k];
+        if (rk.employee + '|' + rk.date + '|' + rk.shift_start === st.forKey) { cur = k; break; }
+      }
+      if (cur === '') { toast('That shift has changed since it was scored — try it again', 'error'); _sqWhatIfStage = null; return; }
+    }
+    _schedRows = _sqWhatIfRows(st.shift, st.who, cur);
+    var j; for (j = 0; j < _schedRows.length; j++) if (_schedRows[j].employee === st.who && _schedRows[j].date === st.date) _schedOverrides[j] = true;
     _sqWhatIfStage = null; _sqWhatIfResult = {};
     _schedSortRows();
     schedAfterEdit();
@@ -11118,7 +11134,9 @@ document.addEventListener('click', function (ev) {
     var hard = d.review ? (+d.review.hard || 0) : 0;
     if (hard) txt += ' <span style="color:var(--hb-bad)">It breaks <span class="hb-num">' + hard + '</span> hard rule' + (hard === 1 ? '' : 's') + '.</span>';
     txt += ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sq-wi-stage="1">Put them on</button>';
-    _sqWhatIfStage = {rows: rows, who: who, date: shift.date};
+    var fr = (forIdx !== '' && _schedRows[+forIdx]) ? _schedRows[+forIdx] : null;
+    _sqWhatIfStage = {shift: shift, who: who, date: shift.date,
+                      forKey: fr ? (fr.employee + '|' + fr.date + '|' + fr.shift_start) : ''};
     _sqWhatIfResult = {}; _sqWhatIfResult[id] = txt;
     renderQualityShifts((_quality && _quality.shifts) || []);
   });
@@ -11383,13 +11401,13 @@ function renderQualityReasoning() {
           + _escHtml(_whatIf.verdict) + '</div>';
     var swaps = _whatIf.swaps || [], i;
     for (i = 0; i < Math.min(swaps.length, 3); i++) {
-      html += _qualityLines([swaps[i].reason], '#56ccf2', '&#8644;', 1);
+      html += _qualityLines([swaps[i].reason], 'var(--blue)', '&#8644;', 1);
     }
   }
   // Same grouped treatment as an expanded shift, so the two never read as
   // two different products stacked on top of each other.
-  html += _qualityGroup('Across the week', _quality.strengths, '#6fcf97', 3);
-  html += _qualityGroup('Worth a look', _quality.weaknesses, '#f2994a', 3);
+  html += _qualityGroup('Across the week', _quality.strengths, 'var(--green)', 3);
+  html += _qualityGroup('Worth a look', _quality.weaknesses, 'var(--amber)', 3);
   var conf = _quality.confidence;
   if (conf && conf.reasons && conf.reasons.length) {
     html += '<div style="font-size:14px;font-weight:600;color:rgba(255,255,255,.78);margin:12px 0 5px">'
@@ -11852,7 +11870,8 @@ function _schedWhy(row) {
   return fallback;
 }
 
-function _schedSnapshot() { try { _schedSaved = JSON.stringify(_schedRows || []); } catch (e) { _schedSaved = '[]'; } }
+function _schedSnapshot() {
+  window._sqBeforeStaged = null;  /* a saved or freshly loaded week has nothing staged to go back to */ try { _schedSaved = JSON.stringify(_schedRows || []); } catch (e) { _schedSaved = '[]'; } }
 
 function _schedSetDirty(on) {
   _schedDirty = !!on;
@@ -12035,9 +12054,11 @@ function discardScheduleEdits() {
   _schedRenderTable();
   _schedSetDirty(false);
   _setQualityState('');
-  if (_sqOptimizerProposed && window._sqBeforeImprove) {
-    var b = window._sqBeforeImprove;
-    _sqOptimizerProposed = false; _sqOptimizer = b.optimizer; window._sqBeforeImprove = null;
+  /* Apply fixes and Improve both stage rows AND a new verdict; Discard
+     puts back the verdict from before either, not only after Improve. */
+  if (window._sqBeforeStaged) {
+    var b = window._sqBeforeStaged;
+    _sqOptimizerProposed = false; _sqOptimizer = b.optimizer; window._sqBeforeStaged = null;
     renderShiftQuality(b.quality, b.whatIf);
   }
   _schedRecheck();
@@ -17435,6 +17456,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/labor/schedule/apply-fixes',{rows:rows},function(d){
       done();
       if(!d.ok){toast(d.error||'Could not apply the fixes','error');return;}
+      if(!window._sqBeforeStaged)window._sqBeforeStaged={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
       window._schedRows=d.rows||rows;
       var i,ov=window._schedOverrides||{};
       for(i=0;i<(d.fixes||[]).length;i++)ov[d.fixes[i].index]=true;
@@ -17454,7 +17476,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.improveScheduleWithCavnar=function(btn){
     var rows=window._schedRows||[];if(!rows.length)return;
     var done=busy(btn,'Improving…'),prevScore=window._quality?window._quality.score:null;
-    jsend('/api/labor/schedule/optimize',{rows:rows,daily_target_hours:window._schedTargets||{}},function(d){
+    var optBody={rows:rows,daily_target_hours:window._schedTargets||{}};
+    if(typeof _schedHistoryId!=='undefined'&&_schedHistoryId)optBody.history_id=_schedHistoryId;
+    jsend('/api/labor/schedule/optimize',optBody,function(d){
       done();
       if(!d.ok){toast(d.error||'Could not improve the draft','error');return;}
       var o=d.optimizer||{},n=(o.changes||[]).length;
@@ -17463,8 +17487,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         if(typeof renderQualityOptimizer==='function')renderQualityOptimizer();
         toast(o.verdict||'No legal change improved the draft','success');return;
       }
-      window._sqBeforeImprove={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
+      if(!window._sqBeforeStaged)window._sqBeforeStaged={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
       window._schedRows=d.rows||rows;
+      /* The chip measures what Cavnar's changes bought, from the score it
+         started at: an unsaved manual edit may already have moved it. */
+      if(o.before_score!==null&&o.before_score!==undefined)prevScore=o.before_score;
       var i,ov={};
       for(i=0;i<window._schedRows.length;i++)if(String(window._schedRows[i].notes||'').indexOf('Cavnar:')===0)ov[i]=true;
       window._schedOverrides=ov;

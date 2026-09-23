@@ -200,8 +200,11 @@ class _State:
 def _new_row(date, name, role, start, end, why):
     s, e = _m(start), _m(end)
     hours = _hours_between(s, e if e > s else e + 24 * 60) if s is not None and e is not None else 0
+    # A string, like every row the engine writes: the iOS ScheduleRow
+    # decodes scheduled_hours as String and a bare number failed the whole
+    # response.
     return {"date": date, "day": _day(date), "employee": name, "role": role,
-            "shift_start": start, "shift_end": end, "scheduled_hours": hours,
+            "shift_start": start, "shift_end": end, "scheduled_hours": str(hours),
             "notes": f"{NOTE_TAG} {why}"}
 
 
@@ -410,7 +413,7 @@ def _retime_move(state, i, new_s, new_e, why):
         out = [dict(r) for r in rows]
         was = f"{out[i].get('shift_start')}–{out[i].get('shift_end')}"
         out[i]["shift_start"], out[i]["shift_end"] = start, end
-        out[i]["scheduled_hours"] = _hours_between(new_s, new_e)
+        out[i]["scheduled_hours"] = str(_hours_between(new_s, new_e))
         _tag(out[i], f"{why} (was {was})")
         return out
     return (("retime", i, start, end),

@@ -826,6 +826,16 @@ struct LaborView: View {
                 // The schedule used to end at a CSV download — the people
                 // who actually work the shifts never saw it. Send is the
                 // main act; the CSV rides along for the office.
+                // Publishing sends the STORED week. With fixes or Cavnar's
+                // changes still unsaved, staff would get the week the
+                // manager has already corrected on screen — so Send waits
+                // for Save, as it does on the web.
+                let unsaved = viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved
+                if unsaved {
+                    Text("Save your changes before sending — staff get the saved week.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
                 HStack(spacing: 10) {
                     Button {
                         Haptic.light()
@@ -837,7 +847,8 @@ struct LaborView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
+                    .disabled(unsaved)
 
                     if let csvURL = Self.csvFile(for: result) {
                         ShareLink(item: csvURL, preview: SharePreview("Schedule CSV", image: Image(systemName: "tablecells"))) {

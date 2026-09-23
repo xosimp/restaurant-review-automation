@@ -5862,8 +5862,14 @@ def mobile_score_schedule(current_user):
 
     try:
         targets = {str(k): float(v) for k, v in (data.get("daily_target_hours") or {}).items()}
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         targets = {}
+    if not targets and data.get("history_id") is not None:
+        # A client that never held the generation's hour targets (iOS)
+        # is scored on the ones stored with the week, so the same week reads
+        # the same on every device.
+        from schedule_engine import stored_daily_targets
+        targets = stored_daily_targets(rid, data.get("history_id"))
 
     # Sample data must never reach a real evaluation. load_shifts_for_restaurant
     # substitutes a bundled fictional week when nothing has been uploaded,
@@ -5964,15 +5970,16 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
-                # A week staff were already sent: the people whose shifts
-                # changed are told, and the week is stamped as changed since
-                # it went out. Nobody else hears about it.
-                try:
-                    changed = _notify_changed_rows(rid, saved, csv_text, current_user)
-                    if changed is not None:
-                        _resp_changed = changed
-                except Exception as _nx:
-                    print(f"[schedule] re-notify failed: {_nx}")
+            # A week staff were already sent: the people whose shifts
+            # changed are told, and the week is stamped as changed since
+            # it went out. Nobody else hears about it. (This sat inside the
+            # except above, so it only ran when logging failed — never.)
+            try:
+                changed = _notify_changed_rows(rid, saved, csv_text, current_user)
+                if changed is not None:
+                    _resp_changed = changed
+            except Exception as _nx:
+                print(f"[schedule] re-notify failed: {_nx}")
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,
