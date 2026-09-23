@@ -182,8 +182,9 @@ def test_home_counts_only_recent_drafts_and_names_the_older_ones(db_path):
     assert "40 older drafts not counted" in a["evidence"]
     # the tap publishes the number on the label, not 25 including history
     assert a["action"]["label"] == "Publish 3 replies" and a["action"]["count"] == 3
-    pub = next(r for r in p["recommendations"] if r["key"] == "publish_drafts")
-    assert pub["title"] == "Publish the 3 drafted replies" and pub["metric"] is None
+    # The "Publish the 3 drafted replies" card is the same news as that item,
+    # so it is not said twice on one screen (reaudit H-14).
+    assert not any(r["key"] == "publish_drafts" for r in p["recommendations"])
 
 
 def test_the_queue_counts_only_recent_reviews(db_path):
@@ -438,7 +439,9 @@ def test_home_keys_are_the_alert_keys():
     assert bi.driver_key({"label": "Salmon waste above tolerance"}) == "food_cost_driver:Salmon waste above tolerance"
     assert home_brief.ledger_key("awaiting_approval") == "no_response"
     src = open("home_brief.py").read()
-    assert 'rec_key=f"stock_low:{crit[0]' in src and 'f"labor_over:{' in src
+    # One key per critically-low item, the alert's own (reaudit H-13).
+    assert home_brief.stock_key("Salmon") == "stock_low:Salmon"
+    assert 'rec_key=stock_key(crit[0]' in src and 'f"labor_over:{' in src
 
 
 def test_decisions_show_the_reason_the_owner_gave_ask(db_path):

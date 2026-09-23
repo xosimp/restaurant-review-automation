@@ -691,11 +691,15 @@ def _intel_home_kpi(restaurant):
 
 
 
-def _home_pulse(key, kpi, rstats, labor, restaurant, inv):
+def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     """One chip for Home's pulse strip per active module: the KPI value, a
     short label, and a semantic tone ("good"/"warn"/None) that colours the
     chip's breathing dot. Computed here, not on the phone, so the same
-    thresholds drive the chip, the Modules tile sublabel and the alerts."""
+    thresholds drive the chip, the Modules tile sublabel and the alerts.
+
+    Labor and inventory read the labelled sample week/items until the
+    restaurant has its own; the chip then says what to add and carries no
+    tone — a sample's 36.8% is not this restaurant "over target"."""
     if not kpi:
         return None
     value = kpi.get("value", "—")
@@ -703,6 +707,10 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv):
         rate = int(rstats.get("response_rate", 0) or 0)
         tone = "good" if rate >= 80 else ("warn" if rstats.get("total", 0) and rate < 50 else None)
         return {"value": value, "label": f"replies · {rate}%", "tone": tone}
+    if key == "labor" and not (labor or {}).get("is_live"):
+        return {"value": "—", "label": "labor · add your shifts", "tone": None}
+    if key == "inventory" and not inv_live:
+        return {"value": "—", "label": "add your inventory", "tone": None}
     if key == "labor":
         target = float(restaurant.labor_target_pct or 30.0)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
@@ -921,10 +929,15 @@ def _do_mobile_home(current_user):
                 inv_live = bool(_live)
             except Exception:
                 inv = {}
-            kpi = {
-                "value": f"${int(inv.get('recoverable_monthly', 0))}",
-                "sublabel": "recoverable / mo",
-            }
+            if not inv_live:
+                # No inventory of its own: the analysis ran on the sample
+                # items, whose recoverable dollars are not this restaurant's.
+                kpi = {"value": "—", "sublabel": "add your inventory"}
+            else:
+                kpi = {
+                    "value": f"${int(inv.get('recoverable_monthly', 0))}",
+                    "sublabel": "recoverable / mo",
+                }
         elif key == "marketing":
             try:
                 from marketing import pieces_this_month
@@ -936,7 +949,7 @@ def _do_mobile_home(current_user):
             kpi = _intel_home_kpi(restaurant)
 
         modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi,
-                            "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv)})
+                            "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=inv_live)})
 
     # "Needs attention" — same three checks and thresholds as the web Home
     # tab's card list (templates/dashboard.html, id="home-attention-list").

@@ -106,9 +106,11 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
     fix_first = brief.get("fix_first")
     _rc.present(restaurant_id, priorities, fix_first, db_path)
 
-    return {"week": f"{last_start.strftime('%b %-d')}–{last_end.strftime('%b %-d')}",
+    # Dates an owner reads are M/D/YY (DESIGN_SYSTEM.md → Dates and times).
+    from time_utils import mdy_range
+    return {"week": mdy_range(last_start, last_end),
             "window": [last_start.isoformat(), last_end.isoformat()],
-            "compared_with": f"{prev_start.strftime('%b %-d')}–{prev_end.strftime('%b %-d')}",
+            "compared_with": mdy_range(prev_start, prev_end),
             "metrics": rows, "results": results, "priorities": priorities,
             "fix_first": fix_first}
 

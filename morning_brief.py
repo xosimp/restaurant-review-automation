@@ -181,6 +181,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         money_bit = (f" — about {_money(f['dollars_monthly'])}/month" if f.get("dollars_monthly") else "")
         lines.append({"key": "fix_first", "tone": "action", "rec": f.get("key"),
                       "critical": f.get("urgency") == "critical",
+                      "same": [f["same_as"]] if f.get("same_as") else [],
                       "text": f"If you only do one thing: {f.get('what')}{money_bit}.",
                       "ask": f"Walk me through this: {f.get('what')}"})
     top = ((eb or {}).get("money") or {}).get("ranked") or []
@@ -268,6 +269,12 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             older_bit = (f" ({older} older one{'' if older == 1 else 's'} not counted)" if older else "")
             lines.append({"key": "reviews", "tone": "bad" if urgent else "action", "rec": "no_response",
                           "critical": bool(urgent),
+                          # With low-star reviews waiting this line covers
+                          # the one thing "Reply to the N reviews at 2 stars
+                          # or worse" (business_intelligence's urgent_reviews)
+                          # and says more — it is the one kept
+                          # (_one_line_per_news).
+                          "same": ["urgent_reviews"] if urgent else [],
                           "text": f"{rs['waiting']} review{'' if rs['waiting'] == 1 else 's'} from the last "
                                   f"30 days waiting on a reply{extra}{older_bit}.",
                           "ask": "Which reviews still need a reply, and what should I say?"})
@@ -276,9 +283,18 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     if getattr(restaurant, "module_inventory", 0) and "inventory" not in denied:
         low = _safe(_critical_low, restaurant_id) or []
         if low:
+            # One recommendation per item — the alert's own key
+            # ("stock_low:Salmon"). An item answered anywhere is left out,
+            # and the line goes only when every item is answered: keyed to
+            # the first item alone, answering the salmon alert hid
+            # "Salmon, Chicken" entirely.
+            import rec_ledger
+            quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path) or set()
+            low = [i for i in low if rec_ledger.rec_key("stock_low", i) not in quiet]
+        if low:
             named = ", ".join(low[:3]) + (f" and {len(low) - 3} more" if len(low) > 3 else "")
-            # The alert's own key for the first item ("stock_low:Salmon").
-            lines.append({"key": "stock", "tone": "bad", "rec": f"stock_low:{low[0]}",
+            keys = [rec_ledger.rec_key("stock_low", i) for i in low[:10]]
+            lines.append({"key": "stock", "tone": "bad", "rec": keys[0], "recs": keys,
                           "text": f"Running low: {named}.",
                           "ask": "What do I need to order today?"})
 
@@ -304,18 +320,22 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
 
     # ── today ──
     fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
+    # `outside` marks a line carrying the weather or the calendar — public
+    # facts, not the restaurant's own data — so the email's footer does not
+    # claim they were measured (_email_html).
     if fc and fc.get("available"):
-        lines.append({"key": "today", "tone": "neutral",
+        context = _day_context(restaurant, today) or ""
+        lines.append({"key": "today", "tone": "neutral", "outside": bool(context),
                       "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
                                f"(range {_money(fc['low'])}-{_money(fc['high'])} over {fc['samples']} weeks)"
-                               + (_day_context(restaurant, today) or "") + "."),
+                               + context + "."),
                       "ask": "What should I focus on before service today?"})
     elif restaurant is not None:
         # No forecast yet, but the weather and the calendar are still worth
         # knowing — and they are the only "today" the first weeks have.
         context = _day_context(restaurant, today)
         if context:
-            lines.append({"key": "today", "tone": "neutral",
+            lines.append({"key": "today", "tone": "neutral", "outside": True,
                           "text": "Today" + context + ".",
                           "ask": "What should I focus on before service today?"})
 
@@ -334,6 +354,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # "not for us", done, snoozed — on Home, in the queue or anywhere else
     # is not said again here (rec_ledger.silenced_keys).
     lines = _drop_answered(restaurant_id, lines, db_path)
+    lines = _one_line_per_news(lines)
 
     # ── what another module would let me say ──
     # Mondays only, and only when something real is off: the brief already
@@ -373,6 +394,32 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
 
 
+def _one_line_per_news(lines):
+    """The same news said once per brief. `same` on a line names the other
+    ledger keys it already covers, and a line whose key another line covers
+    is dropped; of two lines under one key, the first stays. "If you only do
+    one thing: build the schedule to target" and "Biggest dollar
+    opportunity: Scheduling against target" quoted one figure twice, and
+    "Reply to the 2 reviews at 2 stars or worse" sat above "5 reviews
+    waiting on a reply, 2 of them 2 stars or worse" — the fuller line
+    stays."""
+    covered = {}
+    for i, l in enumerate(lines):
+        for k in l.get("same") or ():
+            covered.setdefault(k, i)
+    said, out = set(), []
+    for i, l in enumerate(lines):
+        rec = l.get("rec")
+        if rec and covered.get(rec, i) != i:
+            continue
+        if rec and rec in said:
+            continue
+        if rec:
+            said.add(rec)
+        out.append(l)
+    return out
+
+
 def _drop_answered(restaurant_id, lines, db_path=DB_PATH):
     """Lines whose ledger key an answer is silencing, removed."""
     keyed = [l.get("rec") for l in lines if l.get("rec")]
@@ -407,9 +454,12 @@ def _dedupe(restaurant_id, brief, db_path=DB_PATH):
 def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
     """Every keyed line this brief showed, into rec_ledger (never raises)."""
     import rec_ledger
-    items = [{"key": l["rec"], "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
+    items = [{"key": k, "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
               "position": i}
-             for i, l in enumerate(brief.get("lines") or []) if l.get("rec")]
+             for i, l in enumerate(brief.get("lines") or []) if l.get("rec")
+             # A line that stands for several (running low: one key per item)
+             # shows each of them.
+             for k in ([l["rec"]] + [x for x in (l.get("recs") or []) if x != l["rec"]])]
     if items:
         rec_ledger.present_many(restaurant_id, items, surface, user_id=user_id, db_path=db_path)
 
@@ -564,12 +614,17 @@ def _email_html(brief, restaurant_name):
            if l.get("ask") else "")
         + '</td></tr>'
         for l in brief["lines"])
+    # Honest about provenance: the weather and the holidays are public
+    # facts, not measured from the restaurant's data.
+    source = ("Every figure above is measured from your own data, except the weather and the calendar."
+              if any(l.get("outside") for l in brief["lines"])
+              else "Every figure above is measured from your own data.")
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
             f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}</p>'
             f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'
             f'<table role="presentation" style="width:100%;border-collapse:collapse">{rows}</table>'
-            f'<p style="font-size:13px;color:#7a736a;margin:18px 0 0">Every figure above is measured '
-            f'from your own data. Open Cavnar AI and ask about any line.</p>')
+            f'<p style="font-size:13px;color:#7a736a;margin:18px 0 0">{source} '
+            f'Open Cavnar AI and ask about any line.</p>')
 
 
 def recipients(restaurant_id, db_path=DB_PATH):

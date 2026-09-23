@@ -41,6 +41,28 @@ def _snoozed(restaurant_id, today, db_path):
     return {r["key"] for r in rows}
 
 
+def _local_midnight_utc(restaurant_id, day_iso, db_path=DB_PATH) -> str:
+    """Midnight at the start of `day_iso` in the restaurant's own timezone,
+    as the UTC stamp rec_ledger compares against. The queue's snooze ends at
+    local midnight (action_snoozes.until_date is a local date); sent as
+    "<date> 00:00:00" it was read as UTC and the item came back on Home and
+    in the brief about five hours early for a US restaurant."""
+    from datetime import datetime, time, timezone
+    from time_utils import restaurant_tz
+    name = None
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+            name = row["timezone"] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        name = None
+    local = datetime.combine(date.fromisoformat(day_iso), time.min).replace(tzinfo=restaurant_tz(name))
+    return local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, today=None):
     """Put one item back tomorrow (or up to MAX_SNOOZE_DAYS out).
 
@@ -64,7 +86,8 @@ def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, 
     try:
         import rec_ledger
         rec_ledger.record(restaurant_id, str(key)[:160], "snoozed", surface="queue", user_id=user_id,
-                          meta={"until": until, "days": days}, snooze_until=f"{until} 00:00:00",
+                          meta={"until": until, "days": days},
+                          snooze_until=_local_midnight_utc(restaurant_id, until, db_path),
                           db_path=db_path)
     except Exception as e:
         print(f"[action_queue] snooze not recorded in the ledger: {e}")

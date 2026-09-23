@@ -104,8 +104,15 @@ def _avg_rating(rid, start, end, param, db_path):
     return round(_f(row["r"]), 2), f"{row['n']} reviews"
 
 
+def _category_id(v) -> str:
+    """"Food quality", "food-quality" and "food_quality" are one category:
+    reviews store the underscore id, and a tracker started from a display
+    label read 0% before and after — a false "no clear change"."""
+    return "_".join(str(v or "").strip().lower().replace("-", " ").split())
+
+
 def _complaints(rid, start, end, param, db_path):
-    category = (param or "").strip().lower()
+    category = _category_id(param)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -125,7 +132,7 @@ def _complaints(rid, start, end, param, db_path):
     hits = 0
     for r in rows:
         try:
-            cats = [c.lower() for c in json.loads(r["categories"] or "[]")]
+            cats = [_category_id(c) for c in json.loads(r["categories"] or "[]")]
         except Exception:
             cats = []
         if not category or category in cats:

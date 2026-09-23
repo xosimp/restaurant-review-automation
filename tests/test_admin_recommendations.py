@@ -33,7 +33,8 @@ def test_ignored_counts_in_the_denominator_and_ras_waits_for_twenty(db):
     rec_ledger.record(rid, "k:0", "outcome", meta={"verdict": "improved"})
     rec_ledger.record(rid, "k:1", "dismissed", meta={"kind": "hide"})
     c = models.get_conn(db)
-    c.execute("UPDATE rec_instances SET last_event_at=datetime('now','-20 days') WHERE key='k:3'")
+    # Ignored = created 14+ days ago with no answer (reaudit H-2).
+    c.execute("UPDATE rec_instances SET created_at=datetime('now','-20 days') WHERE key='k:3'")
     c.commit(); c.close()
     d = admin_ops.recommendation_acceptance(days=30)
     t = d["total"]

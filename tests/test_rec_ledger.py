@@ -33,7 +33,8 @@ def test_an_unanswered_recommendation_expires_as_ignored(db_path):
     rid = _rid(db_path)
     rec = rl.present(rid, "post_this_week", "marketing", "home", db_path=db_path)
     c = get_conn(db_path)
-    c.execute("UPDATE rec_instances SET last_event_at=datetime('now','-20 days') WHERE rec_id=?", (rec,))
+    # Expiry runs from when the episode was created (reaudit H-2).
+    c.execute("UPDATE rec_instances SET created_at=datetime('now','-20 days') WHERE rec_id=?", (rec,))
     c.commit(); c.close()
     assert rl.expire_stale(db_path=db_path) == 1
     again = rl.present(rid, "post_this_week", "marketing", "home", db_path=db_path)
