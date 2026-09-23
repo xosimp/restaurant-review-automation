@@ -1530,7 +1530,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  structured: bool = True,
                                  prior_rows: list = None,
                                  projected_revenue_override: float = None,
-                                 week_start: str = None) -> dict:
+                                 week_start: str = None,
+                                 role_floors: dict = None,
+                                 demand_by_date: dict = None,
+                                 demand_by_day: dict = None,
+                                 experienced: list = None,
+                                 closed_dates: list = None,
+                                 tenure: dict = None,
+                                 prior_pattern: dict = None,
+                                 leader_flags: dict = None,
+                                 focus: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -1544,7 +1553,24 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     week_slice    — a subset of the week's dates to write rows for, when the
                     week is generated in parts (a big roster).
     prior_rows    — the rows the earlier parts already wrote, so this part
-                    can keep hours, rest and days off right across the seam.
+                    can keep hours, rest, days off and the share of closes,
+                    weekends and busy shifts right across the seam.
+    role_floors   — schedule_rules.role_floors: the owner's per-role,
+                    per-daypart minimums, folded into SHIFT REQUIREMENTS.
+    demand_by_day — {weekday: % vs an average day} from the restaurant's own
+                    sales; settles a profile's demand per weekday, as the
+                    scorer does (shift_quality.profile_for_shift).
+    experienced   — names the owner marked experienced
+                    (staff_settings.experienced_names).
+    demand_by_date — demand_signals.by_date: a recorded lift raises a
+                    shift's demand level exactly as the scorer raises it.
+    closed_dates  — dates the restaurant is closed; no requirement lines.
+    tenure        — models.get_employee_tenure: {name: shifts worked}.
+    prior_pattern — models.get_prior_shift_pattern: usual days/dayparts.
+    leader_flags  — models.get_leader_flags: who is authorised to close.
+    focus         — named weaknesses of the previous draft of these days,
+                    for a regeneration of chosen dates (schedule_requirements
+                    .focus_block).
     structured    — ask for JSON against SCHEDULE_SCHEMA; falls back to the
                     CSV text contract if the API refuses the format.
     """
@@ -1625,104 +1651,64 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _cross_block = ("\n\nCROSS-TRAINED STAFF — these employees can flex between roles. "
                         "Use this flexibility to fill gaps before adding headcount:\n" + "\n".join(_lines))
 
-    # Compute typical headcount per role per day-of-week, split by daypart,
-    # from actual shift history. This prevents the AI from over/under-
-    # staffing vs what the restaurant actually runs — and critically, from
-    # collapsing a night-specific headcount into a same-day morning+night
-    # split (a real bug: "6 servers Friday" was being read as 6 total for
-    # the day and cut to 3+3, when the real pattern is 6 AT NIGHT with a
-    # separate, smaller morning crew).
+    # Typical headcount per role per weekday and daypart, from the one shared
+    # implementation (historical_patterns) — the figure the scorer judges
+    # coverage against, counted by the same presence rule it uses. This
+    # used to be a second, hand-rolled count here that bucketed by start
+    # time only, so a straight-through lunch server never counted at
+    # dinner in the prompt while the scorer counted them there.
+    #
+    # Morning and night are separate headcounts, never one daily pool to
+    # split (a real bug: "6 servers Friday" was read as 6 for the whole day
+    # and cut to 3+3, when the pattern was 6 AT NIGHT plus a morning crew).
+    # Each date's real headcount is averaged across the dates that weekday
+    # ran, so a stable roster is not divided by its own consistency.
+    import math as _math
     from collections import defaultdict as _dd
     from datetime import datetime as _dt2
-
-    def _daypart(shift_start: str) -> str:
-        """3pm cutoff, matching the mobile app's own morning/night split.
-
-        Parsed 12-hour only ("4:00pm"), which is the format this module's
-        own generated schedules use — but every CSV a client uploads is
-        24-hour ("16:00"), both in the bundled sample and in the paste-box
-        template the product documents. Those all fell through to the
-        except and were classified "night", so the morning crew was
-        invisible to the scheduler for every real restaurant. Both forms
-        parse now, and an unreadable value says so instead of guessing.
-        """
-        raw = (shift_start or "").strip().lower().replace(" ", "")
-        if not raw:
-            return "unknown"
-        for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-            try:
-                return "night" if _dt2.strptime(raw, fmt).hour >= 15 else "morning"
-            except ValueError:
-                continue
-        return "unknown"
-
-    # {dow -> {daypart -> {role -> {date -> set of employees}}}}
-    #
-    # Was {dow -> daypart -> role -> set of employees} accumulated across
-    # every week, then divided by the number of weeks. That set is
-    # deduplicated, so a restaurant running the SAME six servers every
-    # Friday for three weeks held six employees, divided by three, and
-    # reported "Server: 2 night" — a third of the truth. A restaurant with
-    # a rotating roster of eighteen different people got the right answer.
-    # The metric rewarded churn and punished a stable roster, and it is the
-    # scheduler's stated starting point for how many people to schedule.
-    #
-    # Keyed by date now, so each date's real headcount is counted and then
-    # averaged across dates.
-    _dow_daypart_role_staff = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
+    _patterns = historical_patterns(shifts)
+    _typical = _patterns.get("typical_headcount") or {}
+    # A shift whose start time could not be read belongs to neither
+    # daypart. Reported separately rather than folded into one of them, so
+    # the model isn't handed a night figure that quietly includes morning
+    # people. historical_patterns leaves these out, so they are counted here.
+    _unknown = _dd(lambda: _dd(lambda: _dd(set)))
     _dow_date_sets = _dd(set)
     for s in shifts:
-        _date = s.get("date", "")
-        _role = s.get("role", "Unknown")
-        _emp  = s.get("employee", "")
-        _dn   = ""
+        _date = (s.get("date") or "").strip()
+        _dn = ""
         try:
             _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
         except Exception:
-            _dn = s.get("day", "")
-        if _dn and _date:
-            _dow_date_sets[_dn].add(_date)
-        if _dn and _emp and _date:
-            _dow_daypart_role_staff[_dn][_daypart(s.get("shift_start", ""))][_role][_date].add(_emp)
-
-    def _avg_headcount(by_date: dict, dates: set) -> int:
-        """Mean staff on shift across the dates this weekday actually ran.
-
-        Averaged over the dates that had ANY shift for this weekday, so a
-        role that only appears on two of three Fridays averages over three,
-        not two — otherwise an occasional role reads as a permanent one.
-        """
-        if not dates:
-            return 0
-        # Half-up, not Python's bank rounding: 4.5 people on a Friday is
-        # 5, not 4. Understaffing is the direction that hurts service,
-        # and the hours ceiling already stops the schedule overspending.
-        import math
-        return int(math.floor(sum(len(by_date.get(d, ())) for d in dates) / len(dates) + 0.5))
-    # Build headcount block: "Friday: Server 3 morning / 6 night, Cook 2 morning / 3 night"
-    _dow_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    _hc_lines = []
-    for _dn in _dow_order:
-        if _dn not in _dow_daypart_role_staff:
+            _dn = (s.get("day") or "").strip()
+        if not (_dn and _date):
             continue
-        _dates_for_dow = _dow_date_sets[_dn]
-        _roles_seen = sorted({r for _dp in _dow_daypart_role_staff[_dn].values() for r in _dp})
+        _dow_date_sets[_dn].add(_date)
+        _role, _emp = (s.get("role") or "").strip(), (s.get("employee") or "").strip()
+        if _role and _emp and _daypart_of(s.get("shift_start", "")) == "unknown":
+            _unknown[_dn][_role][_date].add(_emp)
+    _hc_lines = []
+    for _dn in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
+        _m = _typical.get((_dn, "morning")) or {}
+        _n = _typical.get((_dn, "night")) or {}
+        _u = {}
+        _dates_for_dow = _dow_date_sets.get(_dn) or set()
+        for _role, _by_date in _unknown.get(_dn, {}).items():
+            # Half-up, averaged over every date this weekday ran — the same
+            # arithmetic historical_patterns applies to the other two.
+            _avg = int(_math.floor(sum(len(_by_date.get(d, ())) for d in _dates_for_dow)
+                                   / max(len(_dates_for_dow), 1) + 0.5))
+            if _avg:
+                _u[_role] = _avg
         _parts = []
-        for _role in _roles_seen:
-            _m_avg = _avg_headcount(_dow_daypart_role_staff[_dn]["morning"].get(_role, {}), _dates_for_dow)
-            _n_avg = _avg_headcount(_dow_daypart_role_staff[_dn]["night"].get(_role, {}), _dates_for_dow)
-            # A shift whose start time could not be read belongs to neither
-            # daypart. Reported separately rather than folded into one of
-            # them, so the model isn't handed a night figure that quietly
-            # includes morning people.
-            _u_avg = _avg_headcount(_dow_daypart_role_staff[_dn]["unknown"].get(_role, {}), _dates_for_dow)
+        for _role in sorted(set(_m) | set(_n) | set(_u)):
             _seg = []
-            if _m_avg:
-                _seg.append(f"{_m_avg} morning")
-            if _n_avg:
-                _seg.append(f"{_n_avg} night")
-            if _u_avg:
-                _seg.append(f"{_u_avg} unspecified start time")
+            if _m.get(_role):
+                _seg.append(f"{_m[_role]} morning")
+            if _n.get(_role):
+                _seg.append(f"{_n[_role]} night")
+            if _u.get(_role):
+                _seg.append(f"{_u[_role]} unspecified start time")
             if _seg:
                 _parts.append(f"{_role}: {' / '.join(_seg)}")
         if _parts:
@@ -1731,9 +1717,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if _hc_lines:
         _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — your starting point for who/how many per role per "
                             "day, split by daypart. IMPORTANT: morning and night are SEPARATE headcounts, not "
-                            "a combined daily total to divide between them — \"6 night\" means 6 people ON AT "
-                            "NIGHT, on top of (not instead of) whatever the morning figure says. Never read a "
-                            "day's total as one pool to split across dayparts.\n"
+                            "a combined daily total to divide between them — \"6 night\" means 6 people on the "
+                            "floor at night. They are counted by who is present (the rule is under SHIFT "
+                            "REQUIREMENTS): somebody whose shift also covers the other daypart's core window "
+                            "counts in both figures. Never read a day's total as one pool to split across "
+                            "dayparts. The SHIFT REQUIREMENTS table turns these and the owner's floors into one "
+                            "number per role per shift.\n"
                             "Use these as the baseline. The only reasons to go over are a flagged event or a "
                             "genuine year-over-year volume spike on that specific day. The PAR HOURS CEILING "
                             "below is NOT a reason to go over — it only ever removes hours, never adds them. "
@@ -1754,9 +1743,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build staff constraints block — placed LAST in prompt so it overrides all rules
     constraints = ""
     if staff_notes:
-        constraints = ("\n\nSTAFF CONSTRAINTS — HIGHEST PRIORITY. These override ALL scheduling rules above, "
-                       "including server stagger, PAR hours target, typical headcount, and shift length guidelines. "
-                       "If a constraint conflicts with any rule, the constraint wins, always:\n")
+        # Priority 1 in the one ranked PRIORITIES list at the top of the
+        # prompt. It used to call itself "HIGHEST PRIORITY" while two other
+        # blocks each claimed the same rank in their own words.
+        constraints = ("\n\nSTAFF CONSTRAINTS — priority 1 (hard constraints). Each one outranks every requirement, "
+                       "target and preference in this prompt, including shift requirements, the hours ceiling, "
+                       "server stagger and shift length guidelines. If a constraint conflicts with any of those, "
+                       "the constraint wins:\n")
         for note in staff_notes:
             constraints += f"- {note['employee_name']}: {note['notes']}\n"
 
@@ -1779,7 +1772,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             else:
                 yoy_lines.append(f"  {dow_name} {nw_date}: no historical data for this day last year")
         if yoy_lines:
-            yoy_block = ("\n\nYear-over-year same-day data (PRIMARY scheduling basis — "
+            yoy_block = ("\n\nYear-over-year same-day data (the primary demand projection — "
                          "prefer this over recent averages; it controls for holidays and seasonality):\n"
                          + "\n".join(yoy_lines))
 
@@ -1897,7 +1890,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build hours/operations block
     hours_block = ""
     if hours_notes:
-        hours_block = f"\n\nRESTAURANT HOURS & SHIFT RULES (follow exactly — these override any patterns in the historical data):\n{hours_notes}"
+        hours_block = f"\n\nRESTAURANT HOURS & SHIFT RULES (priority 1 — these override any patterns in the historical data):\n{hours_notes}"
     else:
         hours_block = ("\n\nShift timing: base start/end times on the patterns visible in the historical shift data. "
                        "Ensure prep staff (cooks) start before open and closers stay until service ends.")
@@ -2048,7 +2041,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _av_lines.extend(_time_off_lines)
         if _av_lines or _note_lines:
             _avail_block = ("\n\nEMPLOYEE AVAILABILITY — do not schedule anyone on days they are unavailable. "
-                            "This is a hard constraint, same priority as STAFF CONSTRAINTS:\n"
+                            "This is a hard constraint (priority 1):\n"
                             + ("\n".join(_av_lines) if _av_lines else "  (no days marked unavailable)"))
         # The free-text note an employee typed is theirs, not the owner's:
         # it used to be appended inside the hard-constraint line above, so
@@ -2109,8 +2102,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 "to leave them off — it is why the owner will be told to rate them.\n"
             )
         if _rule_lines:
-            _strength_block += ("\nSHIFT LEADER REQUIREMENTS — each of these must be "
-                                "satisfied, not merely aimed at:\n" + "\n".join(_rule_lines) + "\n")
+            _strength_block += ("\nSHIFT LEADER REQUIREMENTS — priority 3. Meet each one; only a "
+                                "priority 1 or 2 item may stop you, and then say which in the summary:\n"
+                                + "\n".join(_rule_lines) + "\n")
         _strength_block += _quality_rules_block()
 
     # ── What each shift is actually judged on ─────────────────────────────
@@ -2140,7 +2134,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # gap by adding headcount across every day — so a restaurant running an
     # efficient 24% against a 30% target had staff added until it reached
     # 30%. That raised payroll inside the one module whose headline metric
-    # is savings. Under budget is a good outcome and is now stated as one.
+    # is savings. Under budget is a good outcome once every shift meets its
+    # SHIFT REQUIREMENTS, and is stated as one; a day's target is spent only
+    # as far as its shifts need (the scorer's labor efficiency agrees).
     # The 40h and days-off lines used to be hardcoded here and contradicted the
     # restaurant's own rules block (a 48h ceiling read as 40h). When the engine
     # hands over that block (extra_blocks), it is the only statement of them.
@@ -2149,8 +2145,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                                   "per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.\n\n")
 
     _hours_rule = (
-        f"- Weekly hours must not EXCEED {hours_budget}h. Landing under it is fine and expected — "
-        f"never add people or hours to reach it (see PAR HOURS CEILING above). If you are over it, trim back."
+        f"- Weekly hours must not EXCEED {hours_budget}h (priority 4). Landing under it is fine and expected once "
+        f"every shift meets its SHIFT REQUIREMENTS — never add people or hours beyond those to reach it (see PAR "
+        f"HOURS CEILING above). If you are over it, trim hours no requirement needs."
         if hours_budget else
         "- There is no weekly hours ceiling for this schedule (not enough history to set one honestly). "
         "Staff from TYPICAL HEADCOUNT and the minimum floors; do not invent a total to aim at."
@@ -2170,16 +2167,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         par_block = (f"\n\nPAR HOURS CEILING — schedule is verified against actual column totals:\n"
                      f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
                      f"  Blended rate: ${hourly_rate}/hr → {hours_budget}h is the MAXIMUM for the week\n"
-                     f"  This is a ceiling, not a quota. Coming in under it is a good outcome and needs no "
-                     f"correction, no explanation and no compensating headcount. NEVER add people, extend shifts "
-                     f"or invent coverage in order to reach it. If TYPICAL HEADCOUNT and the per-day targets land "
-                     f"you well under {hours_budget}h, that is the right schedule — write it and move on.\n"
-                     f"  If they would put you OVER {hours_budget}h, that is the case to act on: trim back toward "
-                     f"the ceiling, taking hours from the days furthest above their own per-day target first, and "
-                     f"never below the MINIMUM STAFFING FLOORS above. Say in the summary which days you trimmed.\n"
-                     f"  Staffing is governed by TYPICAL HEADCOUNT, the per-day targets, the minimum floors and the "
-                     f"constraints below — in that order. The hours ceiling only ever removes hours; it never adds "
-                     f"them.{_daily_targets}")
+                     f"  This is a ceiling, not a quota (priority 4). Coming in under it is a good outcome when "
+                     f"every shift meets its SHIFT REQUIREMENTS, and needs no correction, no explanation and no "
+                     f"compensating headcount. NEVER add people, extend shifts or invent coverage beyond what those "
+                     f"requirements need in order to reach it. If meeting them lands you well under "
+                     f"{hours_budget}h, that is the right schedule — write it and move on.\n"
+                     f"  Each per-day target below is that day's share of the budget: use up to it when the day's "
+                     f"shifts need the hours to meet their requirements, and leave it unspent when they do not.\n"
+                     f"  If the schedule would put you OVER {hours_budget}h, trim hours no requirement needs first — "
+                     f"over-long shifts, early starts, late stays past the closing stagger — taking them from the "
+                     f"days furthest above their own per-day target. Never drop a shift below its SHIFT "
+                     f"REQUIREMENTS or the owner's staffing floors to reach the ceiling. Say in the summary which "
+                     f"days you trimmed, or by how much the requirements alone exceed the ceiling.\n"
+                     f"  The hours ceiling only ever removes hours; it never adds them.{_daily_targets}")
 
     # The dates to write rows for. A big roster is generated in parts; the
     # rules that span the whole week (days off, the hours ceiling, rest) are
@@ -2187,31 +2187,68 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # right for its own days.
     _gen_dates = [d for d in week_dates if not week_slice or d in set(week_slice)]
     _gen_days = [n for d, n in zip(week_dates, week_days) if d in set(_gen_dates)]
+
+    # ── What each shift needs, who is experienced, who usually works when ──
+    #
+    # The scorer judges every shift against a number per role, a demand
+    # level, a leader requirement, an experience mix and each person's usual
+    # pattern. The prompt used to carry those as prose and name nobody, so
+    # the model was scored on facts it was never given. schedule_requirements
+    # renders them from the same inputs the scorer reads.
+    import schedule_requirements as _req
+    _can_work = None
+    if employees:
+        _can_work = {(r or "").strip().lower() for _n, r in employees if (r or "").strip()}
+        for _n, _r in employees:
+            _can_work |= {x.strip().lower() for x in _emp_roles.get(_n, ()) if x and x.strip()}
+    _requirements_block = _req.requirements_block(_req.shift_requirements(
+        _gen_dates,
+        typical_headcount=_patterns.get("typical_headcount"),
+        role_floors=role_floors,
+        daily_targets=_daily_target_map,
+        profiles=shift_profiles,
+        demand_by_day=demand_by_day,
+        demand_by_date=demand_by_date,
+        leader_rules=leader_rules,
+        leadership_known=bool(_scores or leader_flags),
+        roles=_can_work,
+        skip_dates=closed_dates or (),
+    ))
+    _names_here = [n for n, _r in employees if n]
+    _experience_block = _req.experience_block(tenure, _names_here, leader_flags, experienced)
+    _pattern_block = _req.usual_pattern_block(prior_pattern, _names_here)
+    _focus_block = _req.focus_block(focus)
+    _presence_rule = _req.presence_rule()
+    _priority_block = (
+        "\n\nPRIORITIES — the one ranked order for every conflict in this prompt. A higher item always wins over "
+        "a lower one; a block below that sounds absolute still sits at its rank here:\n"
+        "  1. Hard constraints — never broken for anything below: employee availability and approved time off, "
+        "STAFF CONSTRAINTS, closed dates, the rules the schedule is checked against with each person's limits and "
+        "windows, and the restaurant's hours and shift rules (open, close and arrival times).\n"
+        "  2. SHIFT REQUIREMENTS — the people each role needs on each shift, with the owner's staffing floors as "
+        "the hard minimum inside them.\n"
+        "  3. Leadership — every shift that needs somebody to run it has one, busiest shifts first, and every "
+        "SHIFT LEADER REQUIREMENT is met.\n"
+        "  4. The weekly hours ceiling — trim toward it only in ways that keep 1-3 intact; it never adds hours.\n"
+        "  5. Quality preferences — operational strength and pairing, experience mix, a fair share of closes, "
+        "weekends and busy shifts, and keeping people on their usual days and dayparts."
+    )
     _dates_block = "Next week dates:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days))
     if week_slice and len(_gen_dates) < len(week_dates):
         _dates_block = ("Next week runs " + week_dates[0] + " to " + week_dates[-1] + ". This request covers ONLY these dates; "
                         "the other days are written separately. Write shifts for these dates only, keeping the same "
                         "people's other days in mind for hours and rest:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days)))
         if prior_rows:
-            _seen = {}
-            for _pr in prior_rows:
-                _nm = (_pr.get("employee") or "").strip()
-                if not _nm:
-                    continue
-                _e = _seen.setdefault(_nm, {"hours": 0.0, "days": set(), "last": ""})
-                try:
-                    _e["hours"] += float(_pr.get("scheduled_hours") or 0)
-                except (TypeError, ValueError):
-                    pass
-                _e["days"].add((_pr.get("day") or _pr.get("date") or "")[:3])
-                _key = (_pr.get("date") or "", _pr.get("shift_end") or "")
-                if _key > (_e.get("_k") or ("", "")):
-                    _e["_k"] = _key
-                    _e["last"] = f"{_pr.get('day') or _pr.get('date')} until {_pr.get('shift_end')}"
-            _prior_lines = [f"  {n}: {e['hours']:g}h so far on {'/'.join(sorted(e['days']))}" + (f", last shift {e['last']}" if e["last"] else "")
-                            for n, e in sorted(_seen.items())]
+            # Closes, weekend shifts (Fri-Sun) and busy shifts ride across
+            # the seam too: fairness is scored over the whole week, and a
+            # slice that could only see hours handed every close to the same
+            # people the earlier slice already had closing.
+            _busy = _req.busy_shifts(week_dates, shift_profiles, demand_by_day, demand_by_date)
+            _prior_lines = _req.seam_lines(prior_rows, busy=_busy)
             _dates_block += ("\n\nALREADY WRITTEN FOR THE OTHER DAYS OF THIS WEEK (count these toward the hours ceiling, "
-                             "rest and days off — the rules are checked across the whole week):\n" + "\n".join(_prior_lines))
+                             "rest and days off — the rules are checked across the whole week — and give closes, "
+                             "weekend shifts and busy shifts to the people with fewer so far, so the week's share "
+                             "stays fair):\n" + "\n".join(_prior_lines))
     if structured:
         _output_spec = ("OUTPUT — JSON only, matching the schema you were given: `shifts` is every shift for the dates above "
                         "(date YYYY-MM-DD, day, employee exactly as listed, role, shift_start and shift_end in 12-hour am/pm "
@@ -2223,7 +2260,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                         "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(continue for every shift)\n---SUMMARY---\n"
                         "- bullet 1\n- bullet 2\n- bullet 3")
 
-    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
+    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}
 
 CONTEXT:
 - Current overall labor: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
@@ -2232,7 +2269,7 @@ CONTEXT:
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
 - Active staff ({len(employees)} people, by role — use these exact names and nobody else):
-{_roster_block}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_avail_block}{_sched_notes_block}{extra_blocks or ""}
+{_roster_block}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_requirements_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_experience_block}{_pattern_block}{_avail_block}{_sched_notes_block}{extra_blocks or ""}{_focus_block}
 
 {_dates_block}
 
@@ -2269,8 +2306,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - If a rule is not specified there, infer reasonable defaults from the historical shift data patterns.{_role_minimums_extra}
 - A day's stated close time is a hard ceiling for every shift_end that day — no exceptions beyond an explicit "stay N after close" rule stated for a specific role. Close time commonly varies by day of week (e.g. an earlier weekday close vs. a later weekend close); always use the close time for the EXACT day you are scheduling, never a different day's. A day being staffed heavier because it's unusually busy (e.g. "treat this day's volume like a busy Friday") is about HEADCOUNT, never about closing time — a busy Monday that closes at 9pm still closes at 9pm, not whatever time a busier weekend day closes. Before finalizing, check every closer's shift_end against that specific day's actual close time.
 
-- Shifts per day: use the TYPICAL HEADCOUNT block as your starting point (scale beyond it only for a high-volume YoY day or a flagged event, never to reach an hours figure). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
-- Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split. This is about shift LENGTH, not headcount — do not use it as a reason to cut the number of people working nights. Each daypart gets its own full headcount per the TYPICAL HEADCOUNT block above (e.g. 6 people at night stays 6 people at night; splitting shift length doesn't mean splitting the 6 into 3 morning + 3 night) — but that total is a headcount of everyone PRESENT during that daypart, not a count of night-only shifts specifically. A straight-through and any shift that extends into the night daypart (e.g. an 11:30am-7pm server) is ALREADY one of the night total's people — it counts toward the 6, it does not add to it. Before finalizing each day, count every person actually on the floor during dinner service (straight-throughs and extended day-into-night shifts included) and confirm that total — not just the count of night-only rows — matches the TYPICAL HEADCOUNT night number.
+- Shifts per day: SHIFT REQUIREMENTS gives the number per role per shift, built from TYPICAL HEADCOUNT and the owner's floors (scale beyond it only for a high-volume YoY day or a flagged event, never to reach an hours figure). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
+- Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split. This is about shift LENGTH, not headcount — do not use it as a reason to cut the number of people working nights. Each daypart gets its own full number per SHIFT REQUIREMENTS (e.g. 6 people at night stays 6 people at night; splitting shift length doesn't mean splitting the 6 into 3 morning + 3 night), and that number counts everyone PRESENT for the daypart, not only the shifts that start in it. {_presence_rule} A shift that counts at dinner this way is ALREADY one of the night total's people — it counts toward the 6, it does not add to it; a shift that falls short of the dinner window does not count toward night at all. Before finalizing each day, count for each daypart every person who counts toward it by that rule and confirm the total — not just the rows that start in that daypart — matches the SHIFT REQUIREMENTS number.
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 
@@ -2417,7 +2454,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         # {(weekday, daypart): {role: typical people}} and who can flex
         # between roles — from the one shared implementation, so the
         # live-rescore path scores against identical numbers.
-        **historical_patterns(shifts),
+        **_patterns,
     }
 
 

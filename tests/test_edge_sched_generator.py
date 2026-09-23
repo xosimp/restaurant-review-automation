@@ -444,7 +444,7 @@ def test_structured_availability_still_reaches_the_prompt_as_a_hard_constraint(d
 
 # ── SCHED-33: New Year's week and the fixed-lift claim ───────────────────
 
-def _build_result_harness(monkeypatch, db, today):
+def _build_result_harness(monkeypatch, db, today, **build_kw):
     import time_utils
     import weather
     rid = _restaurant(db, module_labor=1)
@@ -459,8 +459,36 @@ def _build_result_harness(monkeypatch, db, today):
         captured.update(kwargs)
         return {"schedule_csv": HEADER, "narrative": [], "summary": []}
     monkeypatch.setattr(se, "_generate_in_parts", fake_parts)
-    se._build_schedule_result(rid)
+    se._build_schedule_result(rid, **build_kw)
     return captured
+
+
+def test_a_regeneration_focus_and_the_scorers_inputs_reach_the_generator(db, monkeypatch):
+    """The prompt's SHIFT REQUIREMENTS table and people blocks are built
+    from the same facts the quality pass scores with; a regeneration of
+    chosen dates hands over what the last draft scored weak on."""
+    kw = _build_result_harness(monkeypatch, db, dt.datetime(2026, 10, 1, 9, 0),
+                               focus=["Saturday dinner: no leader on"])
+    assert kw["focus"] == ["Saturday dinner: no leader on"]
+    for key in ("role_floors", "demand_by_date", "demand_by_day", "tenure", "leader_flags",
+                "prior_pattern", "experienced", "closed_dates"):
+        assert key in kw, key
+    assert _build_result_harness(monkeypatch, db, dt.datetime(2026, 10, 1, 9, 0))["focus"] is None
+
+
+def test_every_call_of_a_week_is_told_the_closed_dates_and_the_focus(monkeypatch):
+    _pin_week(monkeypatch)
+    seen = []
+
+    def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
+        seen.append(kwargs)
+        rows = [_line(d, "Ana", "4:00pm", "10:00pm", 6) for d in (week_slice or WEEK) if d != WEEK[0]]
+        return {"schedule_csv": _csv(rows), "narrative": [], "generation_seconds": 1.0,
+                "truncated": False, "stop_reason": "end_turn"}
+    monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
+    se._generate_in_parts({}, _history(4, range(7)), [("Ana", "Server")],
+                          {"tz_name": None, "closed_dates": [WEEK[0]], "focus": ["x"]})
+    assert seen and all(k["closed_dates"] == [WEEK[0]] and k["focus"] == ["x"] for k in seen)
 
 
 def test_a_december_draft_of_new_years_week_carries_new_years_day(db, monkeypatch):
