@@ -534,7 +534,6 @@ def test_an_unreadable_scheduled_time_fails_that_row_and_the_tick_carries_on(db_
     assert _row(db_path, good)["status"] == "posted"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-queue-21: a post failed for an unreadable scheduled time is failed silently — every other terminal failure alerts the owner")
 def test_an_unreadable_scheduled_time_tells_the_owner_the_post_did_not_go_out(db_path, mail):
     """A6 queue #21: the module's own rule is that a scheduled post that
     fails is invisible unless the owner is told; this path skips the alert."""
@@ -551,7 +550,6 @@ def _fail_row(rid, scheduled_for="2026-09-22T11:00:00"):
             "body": "Half price wings tonight", "scheduled_for": scheduled_for}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: the failed-post alert prints the slot as an ISO date ('2026-09-22 11:00')")
 def test_the_failed_post_alert_writes_the_slot_as_m_d_yy(db_path, mail):
     """MOD-MKT-18: CLAUDE.md — an ISO date in owner-facing text is a bug."""
     rid = _restaurant(db_path)
@@ -562,7 +560,6 @@ def test_the_failed_post_alert_writes_the_slot_as_m_d_yy(db_path, mail):
     assert not re.search(r"\d{4}-\d{2}-\d{2}", html)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: the failed-post alert goes only to restaurants.owner_email, never to the other owner logins")
 def test_a_failed_post_reaches_every_owner_login_not_just_owner_email(db_path, mail):
     """A6 queue #22 / MOD-MKT-18: two partners each with an owner login."""
     rid = _restaurant(db_path, owner_email="first@queue.test")
@@ -573,7 +570,6 @@ def test_a_failed_post_reaches_every_owner_login_not_just_owner_email(db_path, m
     assert {"first@queue.test", "partner@queue.test"} <= told
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: a restaurant with a blank owner_email gets no failed-post signal even though an owner login has an email")
 def test_a_restaurant_with_no_owner_email_still_hears_about_a_failed_post(db_path, mail):
     """A6 queue #22 / MOD-MKT-18."""
     rid = _restaurant(db_path, owner_email="")

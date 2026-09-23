@@ -201,7 +201,6 @@ def test_a_restaurant_with_no_sales_data_has_no_daily_sales(db_path):
     ("Cold brew on tap all day", "weather"),
     ("Meet the game-changer: our smash burger", "game_day"),
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: occasion regexes match ordinary menu words ('free' in gluten free, 'cold' in cold brew, 'the game')")
 def test_a_menu_phrase_is_not_mistaken_for_an_occasion(text, not_occasion):
     """A6 Attribution #10 / MOD-MKT-18: these tags drive the by_occasion and
     by_kind lift groups in the attribution summary."""
@@ -248,7 +247,6 @@ def test_the_attribution_summary_looks_at_no_more_than_25_posts(db_path, monkeyp
 
 # ── MOD-MKT-18 engagement rate when nothing was measured ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: performance_window reports engagement_rate 0.0 (not None) when no reach or impressions were measured")
 def test_an_unmeasured_engagement_rate_is_none_not_zero(db_path):
     """MOD-MKT-18: 0.0% reads as "nobody engaged"; the truth is "not
     measured" (CLAUDE.md: value delivered is only what was measured)."""

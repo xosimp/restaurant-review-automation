@@ -625,6 +625,8 @@ _RETENTION_DAYS = {
     # included) and is sent or dropped within a day; notification_opens
     # feeds a 30-day engagement read. Neither was ever pruned (MOD-NOT-14).
     "alert_holds":        int(os.getenv("RETAIN_ALERT_HOLDS_DAYS", "30")),
+    # Tap de-duplication only needs the last half hour (marketing_links).
+    "marketing_link_taps": int(os.getenv("RETAIN_LINK_TAPS_DAYS", "2")),
     "notification_opens": int(os.getenv("RETAIN_NOTIFICATION_OPENS_DAYS", "365")),
 }
 
@@ -636,6 +638,7 @@ _RETENTION_COLUMN = {
     "ai_visibility_query_runs": "created_at", "competitor_snapshots": "captured_at",
     "ai_visibility_runs": "created_at",
     "alert_holds": "created_at", "notification_opens": "opened_at",
+    "marketing_link_taps": "tapped_at",
 }
 
 

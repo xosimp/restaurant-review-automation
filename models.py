@@ -1574,6 +1574,16 @@ def init_db(db_path: str = DB_PATH):
             last_click_at   TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_links_restaurant ON marketing_links(restaurant_id, created_at)",
+        # Recent taps per link, by a one-way visitor key, so a repeat or a
+        # flood from one visitor is counted once (MOD-MKT-18). Pruned after
+        # two days by ops.prune_ledgers.
+        """CREATE TABLE IF NOT EXISTS marketing_link_taps (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            link_id    INTEGER NOT NULL,
+            visitor    TEXT    NOT NULL,
+            tapped_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_link_taps ON marketing_link_taps(link_id, visitor, tapped_at)",
 
         # What a post did to the till. Cached per post because it reads POS
         # sales over a window and is not worth recomputing on every render.

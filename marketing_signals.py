@@ -516,8 +516,10 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
         conn.close()
 
     def rate(row):
+        # None, not 0.0, when nothing was seen: 0% reads as "nobody engaged",
+        # and the truth is "reach was never measured" (MOD-MKT-18).
         seen = row["seen"] or 0
-        return round((row["engaged"] or 0) / seen * 100, 1) if seen else 0.0
+        return round((row["engaged"] or 0) / seen * 100, 1) if seen else None
 
     def change(now_v, then_v):
         if not then_v:

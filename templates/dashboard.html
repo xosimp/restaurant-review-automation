@@ -9395,7 +9395,7 @@ function loadMktWindow(){
     document.getElementById('mkt-window-body').style.display = 'block';
     document.getElementById('mkt-win-reach').textContent = (d.reach||0).toLocaleString();
     document.getElementById('mkt-win-eng').textContent = (d.engagement||0).toLocaleString();
-    document.getElementById('mkt-win-rate').textContent = (d.engagement_rate||0) + '%';
+    document.getElementById('mkt-win-rate').textContent = (d.engagement_rate === null || typeof d.engagement_rate === 'undefined') ? '\u2014' : d.engagement_rate + '%';
     var delta = function(el, v){
       var node = document.getElementById(el);
       if(!node) return;
@@ -9411,7 +9411,7 @@ function loadMktWindow(){
       var p = d.by_platform[i];
       html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
         + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
-        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + p.engagement_rate + '%</span>'
+        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
         + '</div>';
     }
     plats.innerHTML = html;

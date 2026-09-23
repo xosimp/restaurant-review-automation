@@ -4772,9 +4772,14 @@ def marketing_media_file(token):
 
 @client_bp.route("/g/<token>")
 def marketing_link_redirect(token):
-    """Counts the tap, then sends them where they were going."""
-    from marketing_links import resolve
-    target = resolve(token)
+    """Counts the tap, then sends them where they were going. A HEAD, a
+    link-preview fetcher and a repeat from the same visitor within half an
+    hour forward without counting (MOD-MKT-18)."""
+    from marketing_links import resolve, is_preview_agent, visitor_key
+    ua = request.headers.get("User-Agent", "")
+    counts = request.method == "GET" and not is_preview_agent(ua)
+    target = resolve(token, count=counts,
+                     visitor=visitor_key(request.remote_addr, ua) if counts else None)
     if not target:
         return render_template("staff_schedule_invalid.html"), 404
     return redirect(target, code=302)

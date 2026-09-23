@@ -15,7 +15,7 @@ from models import get_conn, DB_PATH
 
 OCCASIONS = {
     "game_day": r"\b(game ?day|kick ?off|bears|packers|cubs|white sox|bulls|blackhawks|nfl|nba|mlb|nhl|playoff|super ?bowl|"
-                r"world series|march madness|tailgate|watch party|big game|the game)\b",
+                r"world series|march madness|tailgate|watch party|big game|the game)\b(?!-)",
     "holiday": r"\b(thanksgiving|christmas|xmas|halloween|valentine|mother'?s day|father'?s day|new year|4th of july|"
                r"fourth of july|labor day|memorial day|st\.? ?patrick|easter|cinco de mayo|hanukkah|juneteenth)\b",
     "event": r"\b(live music|trivia|karaoke|brunch launch|patio (opening|season)|anniversary|grand opening|party|"
@@ -55,8 +55,20 @@ def match_menu_item(text, menu):
     return best
 
 
+# Menu words that contain an occasion word without being one (MOD-MKT-18):
+# "gluten free" is not an offer, "cold brew" is not the weather. Taken out
+# before the occasion patterns run; "game-changer" is handled by the
+# game_day pattern refusing a trailing hyphen.
+_NOT_OCCASIONS = re.compile(
+    r"\b(gluten|dairy|nut|peanut|soy|egg|sugar|fat|lactose|grain|meat|cage|cruelty|caffeine|"
+    r"alcohol|msg|carb|allergen|guilt|hassle|stress|hands|smoke|seed[- ]oil)[- ]free\b"
+    r"|\bice[- ]cold\b"
+    r"|\bcold[- ](brew(ed|s)?|beers?|drinks?|cuts?|press(ed)?|foam|plates?|noodles|sandwich(es)?|"
+    r"smoked|soba|sesame|tea|coffee|pints?|ones?)\b")
+
+
 def occasion_of(text):
-    t = (text or "").lower()
+    t = _NOT_OCCASIONS.sub(" ", (text or "").lower())
     for occ in _OCCASION_ORDER:
         if re.search(OCCASIONS[occ], t):
             return occ

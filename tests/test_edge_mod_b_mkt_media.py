@@ -490,7 +490,6 @@ def test_a_guest_tapping_the_link_is_counted_and_forwarded(app, db_path):
     assert _clicks(db_path, rid) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: every HEAD on /g/<token> increments clicks")
 def test_a_head_request_is_not_counted_as_a_tap(app, db_path):
     """A6 Links #5 / MOD-MKT-18: link checkers and some messaging apps HEAD
     a URL before anyone taps it."""
@@ -507,7 +506,6 @@ def test_a_head_request_is_not_counted_as_a_tap(app, db_path):
     "Twitterbot/1.0",
     "WhatsApp/2.23.20.0",
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: link-preview fetchers are counted as guest taps (no bot/previewer filter)")
 def test_a_link_preview_fetch_is_not_counted_as_a_tap(app, db_path, agent):
     """A6 Links #5 / MOD-MKT-18: taps rank campaigns in
     guest_marketing.diagnose; a preview is not a guest."""
@@ -517,7 +515,6 @@ def test_a_link_preview_fetch_is_not_counted_as_a_tap(app, db_path, agent):
     assert _clicks(db_path, rid) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: /g/<token> has no rate limit or de-duplication, so anyone with the link can inflate a campaign's taps")
 def test_a_flood_of_hits_from_one_address_does_not_inflate_the_tap_count(app, db_path):
     """A6 Links #6 / MOD-MKT-18: 100 hits from one IP in one burst."""
     rid = _restaurant(db_path)
@@ -560,7 +557,6 @@ def test_a_target_with_a_line_break_cannot_inject_a_header(app, db_path):
         assert "\n" not in resp.headers.get("Location", "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-links-7: a target whose host contains a space is accepted and redirected to a broken Location")
 def test_a_target_with_a_space_in_the_host_is_refused(db_path):
     """A6 Links #7: "exa mple.com" is not a web address; a guest tapping the
     text gets a broken page with the restaurant's name on the link."""

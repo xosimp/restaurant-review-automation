@@ -162,8 +162,9 @@ struct MarketingAnalyticsSection: View {
     /// Engagement rate as a ring. Drawn against a 10% full scale — social
     /// rates live between 1% and 6%, and against 100% every ring would be a
     /// sliver that says nothing.
-    private func rateRing(_ rate: Double) -> some View {
-        ZStack {
+    private func rateRing(_ measured: Double?) -> some View {
+        let rate = measured ?? 0
+        return ZStack {
             Circle().stroke(Color.cavnarPaper3, lineWidth: 5)
             Circle()
                 .trim(from: 0, to: min(max(rate / 10, 0), 1))
@@ -171,7 +172,9 @@ struct MarketingAnalyticsSection: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.6), value: rate)
             VStack(spacing: 1) {
-                Text("\(rate, specifier: "%.1f")%")
+                // No reach measured is "—", never a 0.0% that reads as
+                // "nobody engaged".
+                Text(measured.map { String(format: "%.1f%%", $0) } ?? "\u{2014}")
                     .font(.cavnarNumber(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("Rate").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
