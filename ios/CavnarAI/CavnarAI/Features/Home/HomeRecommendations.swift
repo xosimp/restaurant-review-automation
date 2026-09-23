@@ -15,15 +15,30 @@ import SwiftUI
 /// not cannot be measured before and after, and a "Track this" that
 /// silently measures nothing would be worse than no button: it would
 /// produce a tracker that comes back `unknown` forever.
+///
+/// Every card answers five questions (the recommendation-trust audit): what
+/// to do (the title, verb first), why now, the dollars at stake when they
+/// were measured, ONE confidence with what it rests on, and what happens if
+/// it is ignored — plus the timeframe, impact and evidence strength the
+/// payload always carried. Every answer (Done, Not for us, Hide with its
+/// reason, Assign) goes to the server, so it holds on every other surface.
 struct HomeRecommendations: View {
     let recommendations: [HomeRecommendation]
     let viewModel: HomeFollowThroughViewModel
+    var assignees: [HomeAssignee] = []
+    var quieter: [HomeQuietKind] = []
     var onOpenModule: (String) -> Void
+    /// Something changed server-side (an answer, a restore) — reload Home.
+    var onChanged: () -> Void = {}
 
     @State private var toast: String?
     /// Keys answered in this session, so the card drops out without a
     /// reload.
     @State private var answered: Set<String> = []
+    /// The card whose hide is asking why (it was hidden before).
+    @State private var askingWhy: HomeRecommendation?
+    @State private var reason = ""
+    @State private var explaining: HomeRecommendation?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -36,6 +51,9 @@ struct HomeRecommendations: View {
                 }
             }
             .cavnarCard(.ai)
+            if !quieter.isEmpty {
+                quieterLine
+            }
             if let toast {
                 Text(toast)
                     .font(.cavnarBody(12.5, weight: 600))
@@ -43,6 +61,80 @@ struct HomeRecommendations: View {
                     .transition(.opacity)
             }
         }
+        .alert("You\u{2019}ve hidden this before", isPresented: Binding(
+            get: { askingWhy != nil }, set: { if !$0 { askingWhy = nil } })) {
+            TextField("Why doesn\u{2019}t it fit?", text: $reason)
+            Button("Not for us") {
+                if let rec = askingWhy { submit(rec, kind: "not_for_us", reason: reason) }
+            }
+            Button("Just hide it") {
+                if let rec = askingWhy { submit(rec, kind: "recommendation", reason: nil) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tell Cavnar AI why, so it stops suggesting it.")
+        }
+        .alert("What else could explain it", isPresented: Binding(
+            get: { explaining != nil }, set: { if !$0 { explaining = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(explaining?.alternative ?? "")
+        }
+    }
+
+    private func submit(_ rec: HomeRecommendation, kind: String, reason: String?) {
+        let why = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            if let message = await viewModel.answer(rec, kind: kind,
+                                                    reason: (why?.isEmpty == false) ? why : nil) {
+                withAnimation { answered.insert(rec.key); toast = message }
+            }
+        }
+    }
+
+    private var quieterLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Quieter: \(quieter.map(\.label).joined(separator: ", ")) — the last four went by unanswered.")
+                .font(.cavnarBody(12.5, weight: 500))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(quieter) { q in
+                Button {
+                    Haptic.light()
+                    Task {
+                        if await viewModel.restoreKind(q.kind) {
+                            withAnimation { toast = "It will show again" }
+                            onChanged()
+                        }
+                    }
+                } label: {
+                    Text("Show \(q.label.lowercased()) again")
+                        .font(.cavnarBody(12.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func confidenceColor(_ band: String) -> Color {
+        switch band {
+        case "high": return .cavnarGreen
+        case "low": return .cavnarEmber2
+        default: return .cavnarInk2
+        }
+    }
+
+    private static let strengthLabel = ["strong": "strong evidence", "moderate": "some evidence",
+                                        "early": "early signal"]
+
+    private func chips(_ rec: HomeRecommendation) -> [String] {
+        var out: [String] = []
+        if let d = rec.dollarsMonthly, d > 0 { out.append("$\(d.commaFormatted)/mo at stake") }
+        if let t = rec.timeframe { out.append(t) }
+        if let i = rec.impact { out.append(i) }
+        if let s = rec.strength, let l = Self.strengthLabel[s] { out.append(l) }
+        return out
     }
 
     private func row(_ rec: HomeRecommendation, number: Int, showsDivider: Bool) -> some View {
@@ -52,68 +144,45 @@ struct HomeRecommendations: View {
                     .font(.cavnarNumber(17, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .frame(width: 26, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     HomeMixedText.make(rec.title, size: 15, weight: 600, color: .cavnarInk)
-                    if let evidence = rec.evidence ?? rec.why {
-                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                    if let why = rec.why {
+                        HomeMixedText.make(why, size: 13, weight: 500, color: .cavnarInk2)
                     }
-                    // Low confidence is said, not hidden: the engine's own
-                    // caution sentence, in the accent so it reads as a caveat.
-                    if let c = rec.confidence, c.band == "low", let caution = c.caution {
-                        Text(caution)
-                            .font(.cavnarBody(12.5, weight: 500))
-                            .foregroundStyle(Color.cavnarEmber2)
+                    let meta = chips(rec)
+                    if !meta.isEmpty {
+                        Text(meta.joined(separator: " · "))
+                            .font(.cavnarBody(11.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack(spacing: 14) {
-                        if rec.metric != nil {
-                            Button {
-                                Haptic.light()
-                                Task {
-                                    if let message = await viewModel.track(rec) {
-                                        withAnimation { toast = message }
-                                    }
-                                }
-                            } label: {
-                                Text(viewModel.tracked.contains(rec.key) ? "Tracking" : "Track this")
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(viewModel.tracked.contains(rec.key)
-                                                     ? Color.cavnarGreen : Color.cavnarEmber2)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(viewModel.tracked.contains(rec.key))
-                            .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
-                        }
-                        if let module = rec.module {
-                            Button {
-                                Haptic.light()
-                                onOpenModule(module)
-                            } label: {
-                                Text("Open \(module.capitalized)")
-                                    .font(.cavnarBody(13, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk3)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        Spacer(minLength: 0)
-                        // Two answers that are not "hide for a fortnight".
-                        ForEach(["done", "not_for_us"], id: \.self) { kind in
-                            Button {
-                                Haptic.light()
-                                Task {
-                                    if let message = await viewModel.answer(rec, kind: kind) {
-                                        withAnimation { answered.insert(rec.key); toast = message }
-                                    }
-                                }
-                            } label: {
-                                Text(kind == "done" ? "Done" : "Not for us")
-                                    .font(.cavnarBody(12.5, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk3)
-                            }
-                            .buttonStyle(.plain)
+                    if let evidence = rec.evidence {
+                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                    }
+                    // ONE confidence per card, with what it rests on. A
+                    // server that predates the label still sends the low
+                    // band's caution sentence, which is shown as before.
+                    if let c = rec.confidence {
+                        if let label = c.label {
+                            (Text(label).font(.cavnarBody(12.5, weight: 700)).foregroundColor(confidenceColor(c.band))
+                             + Text(c.reason.map { " — \($0)" } ?? "")
+                                .font(.cavnarBody(12.5, weight: 500)).foregroundColor(.cavnarInk3))
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if c.band == "low", let caution = c.caution {
+                            Text(caution)
+                                .font(.cavnarBody(12.5, weight: 500))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .padding(.top, 2)
+                    if let ignored = rec.ifIgnored {
+                        (Text("If ignored: ").font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)
+                         + Text(ignored).font(.cavnarBody(12.5, weight: 500)).foregroundColor(.cavnarInk3))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    actions(rec)
+                        .padding(.top, 2)
+                    answers(rec)
                 }
                 Spacer(minLength: 0)
             }
@@ -121,6 +190,119 @@ struct HomeRecommendations: View {
             if showsDivider {
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func actions(_ rec: HomeRecommendation) -> some View {
+        HStack(spacing: 14) {
+            if let a = rec.action, a.kind == "reprice" {
+                Button {
+                    Haptic.light()
+                    Task {
+                        if let message = await viewModel.reprice(rec) {
+                            withAnimation { answered.insert(rec.key); toast = message }
+                        }
+                    }
+                } label: {
+                    Text(a.label ?? "Reprice")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                }
+                .buttonStyle(.plain)
+            }
+            if rec.metric != nil {
+                Button {
+                    Haptic.light()
+                    Task {
+                        if let message = await viewModel.track(rec) {
+                            withAnimation { toast = message }
+                        }
+                    }
+                } label: {
+                    Text(viewModel.tracked.contains(rec.key) ? "Tracking" : "Track this")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(viewModel.tracked.contains(rec.key)
+                                         ? Color.cavnarGreen : Color.cavnarEmber2)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.tracked.contains(rec.key))
+                .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
+            }
+            if let module = rec.module {
+                Button {
+                    Haptic.light()
+                    onOpenModule(module)
+                } label: {
+                    Text("Open \(module == "inventory" ? "Food Cost" : module.capitalized)")
+                        .font(.cavnarBody(13, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+                .buttonStyle(.plain)
+            }
+            if rec.alternative != nil {
+                Button {
+                    Haptic.light()
+                    explaining = rec
+                } label: {
+                    Text("Could also be…")
+                        .font(.cavnarBody(13, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Assign, and the three answers that are not "Track this": Done, Not
+    /// for us, and Hide — the second hide asks why.
+    private func answers(_ rec: HomeRecommendation) -> some View {
+        HStack(spacing: 14) {
+            if !assignees.isEmpty {
+                Menu {
+                    ForEach(assignees) { person in
+                        Button(person.name) {
+                            Task {
+                                if let message = await viewModel.assign(rec, to: person) {
+                                    withAnimation { answered.insert(rec.key); toast = message }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text("Assign")
+                        .font(.cavnarBody(12.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+            }
+            Spacer(minLength: 0)
+            ForEach(["done", "not_for_us"], id: \.self) { kind in
+                Button {
+                    Haptic.light()
+                    submit(rec, kind: kind, reason: nil)
+                } label: {
+                    Text(kind == "done" ? "Done" : "Not for us")
+                        .font(.cavnarBody(12.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                Haptic.light()
+                if (rec.timesHidden ?? 0) >= 1 {
+                    reason = ""
+                    askingWhy = rec
+                } else {
+                    submit(rec, kind: "recommendation", reason: nil)
+                }
+            } label: {
+                Text("Hide")
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Hides it for two weeks, everywhere Cavnar AI would say it")
         }
     }
 }

@@ -58,3 +58,37 @@ def cost_of_waiting(review) -> str:
     return (f"If {lead['label'].lower()} stays where it is, that is about "
             f"${abs(lead['monthly_dollars']):,.0f} a month — roughly "
             f"${abs(lead['monthly_dollars']) * 12:,.0f} over a year.")
+
+
+# ── the ledger, for both reviews ─────────────────────────────────────────────
+
+def silenced(restaurant_id, db_path=None) -> set:
+    """Keys an answer on any surface is silencing (rec_ledger) — a priority
+    the owner said no to on Home is not a priority in the weekly email."""
+    try:
+        import rec_ledger
+        from models import DB_PATH
+        return rec_ledger.silenced_keys(restaurant_id, db_path=db_path or DB_PATH)
+    except Exception:
+        return set()
+
+
+def present(restaurant_id, priorities, fix_first, db_path=None, surface="weekly_email"):
+    """Record the priorities and the one thing as shown in the periodic
+    email. Only outside a web request: inside one, the review is being
+    VIEWED on Home or previewed, and Home records its own impressions."""
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            return
+        import rec_ledger
+        from models import DB_PATH
+        items = [{"key": p["key"], "module": "home", "title": p.get("label"), "position": i + 1,
+                  "dollar_value": p.get("monthly")} for i, p in enumerate(priorities or []) if p.get("key")]
+        if fix_first and fix_first.get("key"):
+            items.insert(0, {"key": fix_first["key"], "module": "home", "title": fix_first.get("what"),
+                             "position": 0, "dollar_value": fix_first.get("dollars_monthly")})
+        if items:
+            rec_ledger.present_many(restaurant_id, items, surface, db_path=db_path or DB_PATH)
+    except Exception as e:
+        print(f"[review] impressions not recorded: {e}")

@@ -34,8 +34,26 @@ CAUSATION_CAVEAT = ("Measured before and after, not proven cause: other changes 
                     "the same weeks move the same number.")
 
 
+_ISO_DATE = None
+
+
+def owner_title(title) -> str:
+    """A tracker title as an owner reads it: every ISO date in it as M/D/YY.
+    Callers write details like "week of 2026-09-07" (client_api's schedule
+    publish); the owner reads "week of 9/7/26" (CLAUDE.md, dates)."""
+    global _ISO_DATE
+    import re
+    from time_utils import mdy
+    if _ISO_DATE is None:
+        _ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+    return _ISO_DATE.sub(lambda m: mdy(m.group(1)), str(title or ""))
+
+
 def _row(r):
     d = dict(r)
+    if d.get("title"):
+        d["title"] = owner_title(d["title"])
+    d["informational"] = is_informational(d)
     info = metrics.describe(d["metric"]) if metrics.known(d["metric"]) else {}
     d["metric_label"] = info.get("label", d["metric"])
     d["unit"] = info.get("unit")
@@ -68,10 +86,23 @@ ALERT_METRICS = {
 OBSERVED_ACTIONS = {
     "schedule_published": ("labor_pct", "Published a schedule"),
     "supplier_order_sent": ("food_cost_pct", "Sent a supplier order from the draft"),
-    # A post going live is an action; its receipt is sales over the window
-    # (one tracker per month — "the posts you published in September").
-    "post_published": ("sales", "Published a post"),
+    # "post_published" used to be here, measured against SALES. Home says
+    # in as many words that a post has no honest metric (home_brief's
+    # add_rec: pointing "post more" at sales reads every unrelated thing
+    # that moved sales as proof the post worked) — and a tracker observed
+    # on every post published the same claim as delivered value. Removed;
+    # observe() returns None for it, so its callers need no change.
 }
+
+# An alert being OPENED is reading, not acting. Its tracker still records
+# what the metric did next — useful to see — but it is informational and
+# never counts as value delivered (realised() and total_value skip it).
+INFORMATIONAL_PREFIX = "observed:alert_"
+
+
+def is_informational(r) -> bool:
+    """A tracker that measures what followed a READ, not a change."""
+    return str((r or {}).get("source_key") or "").startswith(INFORMATIONAL_PREFIX)
 
 
 def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, today=None):
@@ -79,6 +110,12 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
     or None when nothing was recorded (unknown action, a tracker already in
     flight on that metric, or this month's already observed)."""
     spec = OBSERVED_ACTIONS.get(action)
+    if spec is not None and user_id is None:
+        # "Owner acted" needs an owner. A supplier order the trusted-supplier
+        # automation sent, or a schedule the scheduler auto-published, is
+        # Cavnar acting — crediting it as the owner's change would put the
+        # product's own work in the owner's value ledger.
+        return None
     if spec is None and action.startswith("alert_"):
         spec = ALERT_METRICS.get(action[len("alert_"):])
     if not spec:
@@ -87,9 +124,13 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
     today = today or date.today()
     conn = get_conn(db_path)
     try:
+        # An informational tracker (an alert opened) never counts, so it
+        # must not block a real owner action on the same metric either.
         live = conn.execute(
             "SELECT 1 FROM recommendation_outcomes WHERE restaurant_id=? AND metric=? "
-            "AND status='tracking' LIMIT 1", (restaurant_id, metric)).fetchone()
+            "AND status='tracking' AND (? OR source_key NOT LIKE ?) LIMIT 1",
+            (restaurant_id, metric, 1 if action.startswith("alert_") else 0,
+             INFORMATIONAL_PREFIX + "%")).fetchone()
     finally:
         conn.close()
     if live:
@@ -139,7 +180,7 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
             "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
             "baseline_value, baseline_start, baseline_end, baseline_detail, started_on, evaluate_on, "
             "status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?)",
-            (restaurant_id, source, source_key, title[:200], metric, value,
+            (restaurant_id, source, source_key, owner_title(title)[:200], metric, value,
              base_start.isoformat(), base_end.isoformat(), detail, today.isoformat(),
              evaluate_on.isoformat(), user_id))
         conn.commit()
@@ -304,6 +345,8 @@ def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path):
         if r.get("verdict") != "improved" or not r.get("dollars_monthly"):
             continue
+        if r.get("informational"):
+            continue          # an alert READ is not a change the owner made
         if since and (r.get("evaluate_on") or "") < str(since)[:10]:
             continue
         if denied and module_of(r["metric"]) in denied:
@@ -381,11 +424,14 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None)
 
     # Distinct work only (CLAUDE.md: "counts distinct work, never rows").
     wins = distinct_wins(realised(restaurant_id, db_path=db_path, since=since, denied_modules=denied))
+    # Informational trackers (an alert opened) are neither wins nor misses:
+    # they are left out of the denominator as well as the total.
     evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500,
                                           db_path=db_path)
-                 if (not since or (r.get("evaluate_on") or "") >= str(since)[:10]) and _visible(r)]
+                 if (not since or (r.get("evaluate_on") or "") >= str(since)[:10]) and _visible(r)
+                 and not r.get("informational")]
     tracking = [r for r in list_outcomes(restaurant_id, status="tracking", limit=500,
-                                         db_path=db_path) if _visible(r)]
+                                         db_path=db_path) if _visible(r) and not r.get("informational")]
     by_module = {}
     for r in wins:
         m = module_of(r["metric"])
@@ -417,6 +463,19 @@ def best_ever(restaurant_id, db_path=DB_PATH, denied_modules=None):
     return max(wins, key=lambda r: abs(float(r["dollars_monthly"])))
 
 
+def win_message(r) -> str:
+    """The body of "That one worked" for an improved tracker. It used to say
+    the metric improved "over the window you set" — but most trackers are
+    observed or started with a default window, and no owner set one. This
+    names the actual dates."""
+    from time_utils import mdy
+    label = r.get("metric_label") or r.get("metric") or "the number"
+    start, end = _after_window(r)
+    when = f" between {mdy(start)} and {mdy(end)}" if start and end else ""
+    return (f"{owner_title(r.get('title')) or 'The change you made'}: {label} improved{when}, "
+            f"measured against the same length of time before. {CAUSATION_CAVEAT}")
+
+
 def summarise(r) -> str:
     """One honest sentence for a finished tracker."""
     label = r.get("metric_label") or r["metric"]
@@ -427,6 +486,9 @@ def summarise(r) -> str:
     moved = f"{label} went from {fmt(r['baseline_value'])} to {fmt(r['after_value'])}"
     if r["verdict"] == "no_clear_change":
         return f"{r['title']}: {moved} — within normal week-to-week noise, so no clear change."
+    if is_informational(r):
+        # Reading an alert is not a change: what followed is shown, never priced.
+        return f"{r['title']}: {moved} in the weeks after — for information, not counted as value."
     money = ""
     if r.get("dollars_monthly"):
         money = f", roughly ${abs(r['dollars_monthly']):,.0f}/month"

@@ -17,10 +17,13 @@ struct ActionItem: Decodable, Identifiable {
         /// The same endpoint on each client — the web and mobile APIs have
         /// different prefixes, so the server hands over both.
         struct Route: Decodable { let web: String?; let mobile: String? }
+        /// What the route needs posted — a reprice's dish and price.
+        struct Body: Codable { let dish: String?; let price: Double? }
         let label: String
         let route: Route?
         let method: String?
         let module: String?
+        let body: Body?
     }
     let key: String
     let kind: String
@@ -392,7 +395,7 @@ final class HomeFollowThroughViewModel {
             await Haptic.success()
             await load()
             if let warning = r.warning { return warning }
-            if let on = r.outcome?.evaluateOn { return "Measuring from today — result on \(on)" }
+            if let on = r.outcome?.evaluateOn { return "Measuring from today — result on \(CavnarDate.mdy(on))" }
             return "Measuring from today"
         } catch let error as APIClient.APIError {
             errorMessage = error.message
@@ -408,13 +411,16 @@ final class HomeFollowThroughViewModel {
         let kind: String
         let title: String?
         let metric: String?
+        var reason: String? = nil
     }
 
-    /// "Done" or "Not for us" on a recommendation. Done with a metric
-    /// records an observed outcome — the same thing Track this does — so
-    /// acting on a recommendation without pressing Track no longer leaves
-    /// the value ledger empty. Returns a line for the confirmation.
-    func answer(_ rec: HomeRecommendation, kind: String) async -> String? {
+    /// "Done", "Not for us" or "Hide" (kind "recommendation") on a
+    /// recommendation, with the owner's reason when they gave one. Done with
+    /// a metric records an observed outcome — the same thing Track this does.
+    /// Every answer reaches rec_ledger server-side, so it holds on the
+    /// brief, the emails and the queue too. Returns a line for the
+    /// confirmation.
+    func answer(_ rec: HomeRecommendation, kind: String, reason: String? = nil) async -> String? {
         struct Resp: Decodable {
             struct Outcome: Decodable {
                 let evaluateOn: String?
@@ -426,14 +432,98 @@ final class HomeFollowThroughViewModel {
             let r: Resp = try await client.send(
                 "/mobile/api/home/dismiss", method: .post,
                 body: DismissBody(key: rec.key, kind: kind,
-                                  title: kind == "done" ? rec.title : nil,
-                                  metric: kind == "done" ? rec.metric : nil),
+                                  title: (kind == "done" || reason != nil) ? rec.title : nil,
+                                  metric: kind == "done" ? rec.metric : nil,
+                                  reason: reason),
                 retryTransient: false)
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
             await Haptic.success()
-            if kind == "done", let on = r.outcome?.evaluateOn { return "Marked done — measuring from today, result on \(on)" }
-            return kind == "done" ? "Marked done" : "Noted — it won\u{2019}t come back"
+            if kind == "done", let on = r.outcome?.evaluateOn {
+                return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
+            }
+            switch kind {
+            case "done": return "Marked done"
+            case "recommendation": return "Hidden for two weeks"
+            default: return "Noted — it won\u{2019}t come back"
+            }
         } catch { errorMessage = "Couldn\u{2019}t save that."; return nil }
+    }
+
+    /// Not today (kind "snooze") or hide (kind "recommendation") on a
+    /// Needs-attention item — the same answer, through the same route, as a
+    /// recommendation. Never offered for a critical item.
+    @discardableResult
+    func answerAttention(_ item: NeedsAttentionItem, kind: String, reason: String? = nil) async -> Bool {
+        let r: OKResponse? = try? await client.send(
+            "/mobile/api/home/dismiss", method: .post,
+            body: DismissBody(key: item.recKey ?? item.type, kind: kind,
+                              title: reason != nil ? item.title : nil, metric: nil, reason: reason),
+            retryTransient: false)
+        if r?.ok == true { await Haptic.success() }
+        return r?.ok == true
+    }
+
+    private struct AssignBody: Encodable {
+        let key: String
+        let title: String
+        let detail: String?
+        let contactId: Int
+        enum CodingKeys: String, CodingKey {
+            case key, title, detail
+            case contactId = "contact_id"
+        }
+    }
+
+    /// Hand a card to a person: an issue keyed to the recommendation,
+    /// texted to that routed contact (POST /mobile/api/home/assign).
+    func assign(_ rec: HomeRecommendation, to person: HomeAssignee) async -> String? {
+        struct Resp: Decodable {
+            struct Issue: Decodable {
+                let assigneeName: String?
+                enum CodingKeys: String, CodingKey { case assigneeName = "assignee_name" }
+            }
+            let ok: Bool; let issue: Issue?; let error: String?
+        }
+        do {
+            let r: Resp = try await client.send(
+                "/mobile/api/home/assign", method: .post,
+                body: AssignBody(key: rec.key, title: rec.title, detail: rec.why, contactId: person.id),
+                retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t hand that over."; return nil }
+            await Haptic.success()
+            return "Handed to \(r.issue?.assigneeName ?? person.name) — it\u{2019}s on the issues list"
+        } catch { errorMessage = "Couldn\u{2019}t hand that over."; return nil }
+    }
+
+    private struct RepriceBody: Encodable { let dish: String; let price: Double }
+    private struct RecEventBody: Encodable { let key: String; let event: String; let surface: String }
+
+    /// One-tap reprice at the suggested price (the food-cost reprice route),
+    /// then the recommendation is recorded as completed.
+    func reprice(_ rec: HomeRecommendation) async -> String? {
+        guard let a = rec.action, a.kind == "reprice", let dish = a.dish, let price = a.price else { return nil }
+        let r: OKResponse? = try? await client.send(
+            "/mobile/api/food-cost/reprice/apply", method: .post,
+            body: RepriceBody(dish: dish, price: price), retryTransient: false)
+        guard r?.ok == true else { errorMessage = "Couldn\u{2019}t reprice that."; return nil }
+        _ = try? await client.send("/mobile/api/recs/event", method: .post,
+                                   body: RecEventBody(key: rec.key, event: "completed", surface: "home"),
+                                   hapticOnError: false) as OKResponse
+        await Haptic.success()
+        return "\(dish) repriced"
+    }
+
+    private struct RestoreBody: Encodable {
+        let restoreKind: String
+        enum CodingKeys: String, CodingKey { case restoreKind = "restore_kind" }
+    }
+
+    /// Bring back a kind that went quieter after four unanswered showings.
+    @discardableResult
+    func restoreKind(_ kind: String) async -> Bool {
+        let r: OKResponse? = try? await client.send("/mobile/api/home/dismiss", method: .post,
+                                                    body: RestoreBody(restoreKind: kind), retryTransient: false)
+        return r?.ok == true
     }
 
     private struct SeenBody: Encodable { let key: String }
@@ -457,7 +547,12 @@ final class HomeFollowThroughViewModel {
 
     func run(_ item: ActionItem) async {
         guard let route = item.action?.route?.mobile else { return }
-        let done: OKResponse? = try? await client.send(route, method: .post, retryTransient: false)
+        let done: OKResponse?
+        if let body = item.action?.body {
+            done = try? await client.send(route, method: .post, body: body, retryTransient: false)
+        } else {
+            done = try? await client.send(route, method: .post, retryTransient: false)
+        }
         if done?.ok == true { await Haptic.success() }
         await load()
     }

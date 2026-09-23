@@ -20,7 +20,15 @@ Two rules the whole file follows:
 import json
 from datetime import datetime, timedelta, timezone
 
-from models import get_conn, get_restaurant
+import models as _models_gc
+from models import get_restaurant
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): a
+    bound `from models import get_conn` read a different database from every
+    other module whenever models.get_conn was redirected."""
+    return _models_gc.get_conn() if db_path is None else _models_gc.get_conn(db_path)
 
 _CACHE = {}
 _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
@@ -116,7 +124,11 @@ def _dismissed_keys(conn, rid):
 # still true — the retention audit counted a rejected recommendation
 # resurfacing nine times in six months with no way to say why. "Done" and
 # "not for us" are answers, and an answer should not be asked again.
-_DISMISS_DAYS_BY_KIND = {"recommendation": _DISMISS_DAYS, "done": 3650, "not_for_us": 3650}
+_DISMISS_DAYS_BY_KIND = {"recommendation": _DISMISS_DAYS, "done": 3650, "not_for_us": 3650,
+                         # "Not today" on a Needs-attention item: back tomorrow.
+                         "snooze": 1}
+# The ledger's name for each Home answer (rec_ledger.SILENCE_DAYS keys).
+_LEDGER_KIND = {"recommendation": "hide", "done": "done", "not_for_us": "not_for_us"}
 
 
 def times_hidden(conn, rid):
@@ -129,18 +141,28 @@ def times_hidden(conn, rid):
         return {}
 
 
-def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None):
+def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
+            surface="home", role=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
 
     kind: recommendation (two weeks) | done | not_for_us (effectively for
-    good). Returns the row's expiry so the client can say which."""
+    good) | snooze (back after `days`, default one). Returns the row's
+    expiry so the client can say which.
+
+    Every answer is also written to rec_ledger, which is what makes a "no"
+    on Home a "no" in the brief, the weekly email, the digest and the queue
+    (they all read rec_ledger.silenced_keys)."""
     key = (key or "").strip()[:120]
     if not key:
         return {"ok": False, "error": "Missing key"}
     kind = kind if kind in _DISMISS_DAYS_BY_KIND else "recommendation"
-    days = days or _DISMISS_DAYS_BY_KIND[kind]
+    try:
+        days = int(days) if days else _DISMISS_DAYS_BY_KIND[kind]
+    except (TypeError, ValueError):
+        days = _DISMISS_DAYS_BY_KIND[kind]
+    days = max(1, min(days, 3650))
     conn = get_conn()
     prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
                          (rid, key)).fetchone()
@@ -149,9 +171,24 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
                  "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
     conn.commit(); conn.close()
     invalidate(rid)
+    reason = (reason or "").strip()[:200]
+    try:
+        import rec_ledger
+        from datetime import datetime as _dtl
+        if kind == "snooze":
+            until = (_dtl.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
+                              meta={"until": until, "days": days}, snooze_until=until)
+        else:
+            meta = {"kind": _LEDGER_KIND[kind]}
+            if reason:
+                meta["reason"] = reason
+            rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
+                              user_id=user_id, role=role, meta=meta, silence_days=days)
+    except Exception as e:
+        print(f"[home] dismissal not recorded in the ledger: {e}")
     # The why, remembered: "not doing X: the patio closes in October" is a
     # preference the assistant reads back in every future answer.
-    reason = (reason or "").strip()[:200]
     if reason:
         try:
             from models import remember_ask_fact
@@ -163,9 +200,17 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
 
 
 def undismiss(rid, key):
+    """"Use again": the Home row goes, and so does the ledger's silence, so
+    the key can be said on every surface again."""
     conn = get_conn()
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
+    try:
+        import rec_ledger
+        if rec_ledger.unsilence(rid, (key or "").strip()[:160]):
+            n = n or 1
+    except Exception as e:
+        print(f"[home] ledger unsilence failed: {e}")
     invalidate(rid)
     return {"ok": True, "restored": n}
 
@@ -266,7 +311,7 @@ def _location_signal(conn, r, now):
     if connected and age is not None and age > 3:
         issues.append(("important", f"Reviews not refreshed in {int(age)} days"))
     if (awaiting.get("n") or 0) > 0:
-        issues.append(("watch", f"{_plural(awaiting['n'], 'reply')} waiting for approval"))
+        issues.append(("watch", f"{_plural(awaiting['n'], 'reply', 'replies')} waiting for approval"))
     sev_rank = {"critical": 3, "important": 2, "watch": 1}
     worst = max((sev_rank[s] for s, _ in issues), default=0)
     health = {3: "critical", 2: "important", 1: "watch", 0: "healthy"}[worst]
@@ -325,13 +370,182 @@ def invalidate_user(user_id):
         _CACHE.pop(k, None)
 
 
-def _confidence_for(rid, key, metric, restaurant):
+def _kind_score(rid, key, metric, restaurant):
+    """The intelligence engine's read of this recommendation KIND here — used
+    only to adjust a card's own confidence (intelligence.confidence
+    .card_confidence), never printed beside it."""
     try:
         import intelligence
-        c = intelligence.confidence_for(rid, str(key).split(":", 1)[0], metric=metric, restaurant=restaurant)
-        return {"score": c["score"], "band": c["band"], "caution": c["caution"]}
+        return intelligence.confidence_for(rid, str(key).split(":", 1)[0], metric=metric, restaurant=restaurant)
     except Exception:
         return None
+
+
+def _card_confidence(rid, key, metric, restaurant, band, reason):
+    """ONE confidence per card, from the card's own evidence."""
+    try:
+        from intelligence.confidence import card_confidence
+        return card_confidence(band, reason, _kind_score(rid, key, metric, restaurant))
+    except Exception:
+        return {"band": band, "label": f"{band.capitalize()} confidence", "reason": reason, "adjusted": None,
+                "caution": None, "score": {"low": 0.3, "medium": 0.55, "high": 0.8}.get(band, 0.55)}
+
+
+# ── what a card is worth doing first ────────────────────────────────────────
+#
+# Home listed recommendations in module order — reviews, labor, food,
+# marketing, intel — so a $900/month food line sat under a "draft a post".
+# The order is urgency x dollars x ease, with the card's own confidence as a
+# discount: a thing due today that is worth money and easy to do leads.
+_URGENCY = {"Today": 3.0, "This week": 2.0, "Next schedule": 1.5, "Next order": 1.5}
+_EASE = {"low": 1.0, "medium": 0.8, "high": 0.6}
+_CONF_WEIGHT = {"high": 1.0, "medium": 0.85, "low": 0.6}
+# A card with no dollar figure ranks as if it carried this much: not zero
+# (unmeasured is not worthless), not enough to beat a measured line alone.
+_UNPRICED = 50.0
+
+
+def rank_score(rec) -> float:
+    dollars = rec.get("dollars_monthly")
+    return round(_URGENCY.get(rec.get("timeframe"), 1.0)
+                 * max(float(dollars or 0), _UNPRICED)
+                 * _EASE.get(rec.get("effort"), 0.8)
+                 * _CONF_WEIGHT.get(((rec.get("confidence") or {}).get("band")), 0.85), 2)
+
+
+def order_recommendations(recs, quiet_kinds=()):
+    """Highest rank first; a kind the owner has let expire unanswered four
+    times running (decisions.quiet_kinds) drops below the top three."""
+    for r in recs:
+        r["rank_score"] = rank_score(r)
+    ranked = sorted(recs, key=lambda r: -r["rank_score"])
+    quiet = set(quiet_kinds or ())
+    loud = [r for r in ranked if r["key"].split(":", 1)[0] not in quiet]
+    soft = [r for r in ranked if r["key"].split(":", 1)[0] in quiet]
+    for r in soft:
+        r["quiet"] = True
+    return loud[:3] + soft + loud[3:]
+
+
+def at_stake_monthly(drivers) -> float:
+    """The food drivers' monthly dollars with each ingredient counted ONCE.
+
+    cost_drivers can name one ingredient several times — its waste, its
+    price rise, its usage over recipe — each measured from the same spend.
+    Summing all of them counted salmon three times. Each item keeps its
+    largest driver; drivers with no item stand alone."""
+    best, loose = {}, 0.0
+    for d in drivers or []:
+        dollars = float(d.get("dollars_monthly") or 0)
+        item = str(d.get("item") or "").strip().lower()
+        if not item:
+            loose += dollars
+            continue
+        best[item] = max(best.get(item, 0.0), dollars)
+    return round(sum(best.values()) + loose, 2)
+
+
+def overtime_this_week(labor, today):
+    """The payroll week containing `today`: who is past 40 hours in it and
+    what the overtime premium (the extra half-time) is costing.
+
+    Home used to say "N staff members in overtime this week … Roughly
+    ${N * 38}+" — N counted every overtime week in the whole upload, and $38
+    was a constant. This is the current week only, and the premium is the
+    analysis's own (labor.overtime_premium over its overtime hours) applied
+    to this week's hours past 40. None when nobody is over this week."""
+    if not labor or not labor.get("is_live"):
+        return None
+    try:
+        from labor import _week_key
+        wk = _week_key(today.isoformat(), int(labor.get("week_start_day") or 0))
+    except Exception:
+        return None
+    from labor import OVERTIME_THRESHOLD_HOURS
+    rows = [o for o in (labor.get("overtime_risk") or [])
+            if o.get("status") == "overtime" and o.get("week_start") == wk]
+    if not rows:
+        return None
+    ot_hours = round(sum(max(0.0, float(o.get("hours") or 0) - OVERTIME_THRESHOLD_HOURS) for o in rows), 1)
+    total_hours = float(labor.get("overtime_hours") or 0)
+    premium = None
+    if total_hours > 0 and labor.get("overtime_premium") is not None:
+        premium = round(float(labor["overtime_premium"]) / total_hours * ot_hours, 2)
+    return {"people": len(rows), "hours": ot_hours, "premium": premium, "week_start": wk,
+            "names": [str(o.get("employee") or "")[:18] for o in rows[:3]],
+            "estimated": any(o.get("hours_estimated") for o in rows)}
+
+
+# Home's module keys as rec_ledger's module vocabulary.
+_LEDGER_MODULE = {"reviews": "reviews", "labor": "labor", "inventory": "food", "marketing": "marketing",
+                  "intel": "intel", "account": "home", "alerts": "home"}
+
+
+def _may_assign(user) -> bool:
+    """Whoever may set issue routing may hand a card to someone (the same
+    line strategy_routes._principal draws)."""
+    if user.get("is_admin"):
+        return True
+    try:
+        from permissions import has_permission, TEAM_INVITE
+        return has_permission(user, TEAM_INVITE)
+    except Exception:
+        return False
+
+
+# Home's attention keys, as the rec_ledger key the SAME news carries on the
+# brief, the queue and the ALERT (notify.alert_rec) — "reviews waiting" is one
+# piece of news whichever surface says it, so one answer silences it
+# everywhere. Items whose key carries a subject ("labor_over:<period>",
+# "stock_low:<item>") set it where they are built.
+LEDGER_KEY = {"awaiting_approval": "no_response"}
+
+
+def ledger_key(key):
+    return LEDGER_KEY.get(key, key)
+
+
+def assignees(rid):
+    """This restaurant's consented alert contacts — who a card can be
+    handed to (issues.create_issue refuses anyone else)."""
+    conn = get_conn()
+    try:
+        return [{"id": r["id"], "name": r["name"]} for r in conn.execute(
+            "SELECT id, name FROM alert_contacts WHERE restaurant_id=? AND COALESCE(sms_consent,0)=1 "
+            "ORDER BY name", (rid,)).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def assign(rid, key, title, contact_id, detail=None, user_id=None, role=None, surface="home"):
+    """Hand a Home card to a person: an ops_issues row keyed to the
+    recommendation (source_key = its key, so the issue's resolution closes
+    the recommendation in rec_ledger.sync_existing), texted to the chosen
+    consented contact, and recorded as accepted-and-delegated."""
+    import issues
+    import rec_ledger
+    key = (key or "").strip()[:160]
+    title = (title or "").strip()[:200]
+    if not key or not title:
+        return {"ok": False, "error": "Missing recommendation"}, 400
+    try:
+        contact_id = int(contact_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Pick someone to hand it to."}, 400
+    try:
+        issue, _token = issues.create_issue(rid, "recommendation", title, detail=(detail or None),
+                                            source_key=key, assignee_contact_id=contact_id,
+                                            created_by=user_id)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    rec_ledger.record(rid, key, "accepted", surface=surface, user_id=user_id, role=role,
+                      meta={"delegated": True, "issue_id": issue.get("id"),
+                            "assignee": issue.get("assignee_name")})
+    invalidate(rid)
+    return {"ok": True, "issue": {"id": issue.get("id"), "assignee_name": issue.get("assignee_name"),
+                                  "status": issue.get("status")}}, 200
 
 
 def _build(current_user):
@@ -463,6 +677,20 @@ def _build(current_user):
                                    WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now','-7 days')
                                    ORDER BY a.id DESC LIMIT 12""", (rid,))
     dismissed = _dismissed_keys(conn, rid)
+    # Read while the connection is open. This call used to sit after
+    # conn.close(), so it always returned {} and the "you've hidden this
+    # before — tell us why" prompt could never fire (#7).
+    hidden_counts = times_hidden(conn, rid)
+    # Replies owed: reviews from the last REPLY_OWED_MAX_AGE_DAYS only.
+    # get_review_stats counts every drafted review ever imported, so a
+    # freshly connected Google account read "212 drafted, waiting for you"
+    # about years of history (#6). Older ones are counted, and said, apart.
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
+    owed = _one_dict(conn, "SELECT SUM(recent AND response_status='drafted') AS drafted, "
+                           "SUM(NOT recent AND response_status='drafted') AS drafted_older FROM ("
+                           "SELECT response_status, COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?) AS recent "
+                           "FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted')",
+                     (f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days", rid)) or {}
     conn.close()
 
     # Alerts are scoped to what this login may see, exactly as the
@@ -502,8 +730,9 @@ def _build(current_user):
     upcoming = []
     ask = []
 
-    def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None):
-        attention.append({"key": key, "severity": severity, "title": title, "detail": detail, "module": module,
+    def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None,
+                 rec_key=None):
+        attention.append({"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
                           "action": {"label": action_label, "kind": action, "module": module},
                           "since": since, "evidence": evidence, "location": restaurant.location_name or None})
 
@@ -511,7 +740,8 @@ def _build(current_user):
         wins.append({"key": key, "title": title, "detail": detail, "module": module})
 
     def add_rec(key, title, why, evidence, impact, module, timeframe, strength="moderate",
-                action_label=None, metric=None):
+                action_label=None, metric=None, *, conf=("medium", None), dollars=None, if_ignored=None,
+                effort=None, alternative=None, action=None, evidence_sources=None, model_written=False):
         """`metric` is what would have to move for this recommendation to have
         worked. It is what makes the card trackable: the client posts it to
         /api/outcomes, which takes the baseline now and re-measures when the
@@ -523,16 +753,22 @@ def _build(current_user):
         thing that moved sales as proof the post worked, which is worse than
         not measuring it.
         """
+        # Every card answers five questions (#20): what to do (the title,
+        # verb first), why now (`why`), what is at stake in dollars when it
+        # was measured (`dollars_monthly`, else None — never an invented
+        # figure), how sure (`confidence`: ONE band from the card's own
+        # evidence, which the kind's measured record here may nudge by one
+        # step, #4), and what happens if it is ignored (`if_ignored`).
         recs.append({"key": key, "title": title, "why": why, "evidence": evidence, "impact": impact, "module": module,
                      "timeframe": timeframe, "strength": strength, "metric": metric,
                      "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title()),
-                     # The intelligence engine's confidence in THIS recommendation
-                     # for THIS restaurant (INTELLIGENCE_ENGINE.md): its own
-                     # record with this kind, what held across similar
-                     # restaurants, data completeness, recent changes. Old
-                     # clients ignore the field; low confidence is rendered as
-                     # a caution, never hidden.
-                     "confidence": _confidence_for(rid, key, metric, restaurant)})
+                     "dollars_monthly": round(float(dollars), 2) if dollars else None,
+                     "if_ignored": if_ignored, "effort": effort, "alternative": alternative,
+                     # A one-tap finish when there is one (a reprice at the
+                     # suggested price), else None and the card opens its module.
+                     "action": action,
+                     "evidence_sources": evidence_sources or [module], "model_written": bool(model_written),
+                     "confidence": _card_confidence(rid, key, metric, restaurant, conf[0], conf[1])})
 
     def add_change(text, tone, module, at=None):
         changes.append({"text": text, "tone": tone, "module": module, "at": at})
@@ -541,7 +777,10 @@ def _build(current_user):
     if "reviews" in active_keys:
         total = int(rstats.get("total") or 0)
         urgent = int(rstats.get("urgent") or 0)
-        awaiting = int(rstats.get("awaiting_approval") or 0)
+        # Drafted replies to reviews from the last 30 days; older drafts are
+        # history and are named separately, never counted in (#6).
+        awaiting = int(owed.get("drafted") or 0)
+        awaiting_older = int(owed.get("drafted_older") or 0)
         rate = float(rstats.get("response_rate") or 0)
         avg30 = float(rstats.get("avg_rating_30d") or 0)
         n30 = int(rstats.get("last_30d") or 0)
@@ -569,15 +808,22 @@ def _build(current_user):
                      "Guests read how you respond. A 48-hour reply keeps the thread on your side.", "reviews", "Answer them",
                      since="48h+")
         if awaiting:
-            add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply')} drafted, waiting for you",
-                     "Written in your voice. Approve them in one click and Google-connected replies post right away.", "reviews",
+            add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply', 'replies')} drafted, waiting for you",
+                     "Replies to reviews from the last 30 days, written in your voice. Approve them in one click and "
+                     "Google-connected replies post right away.", "reviews",
                      # Names what the tap publishes, not just a count —
                      # "Publish 1" alone doesn't say what gets published.
                      f"Publish {min(awaiting, 25)} {_plural(min(awaiting, 25), 'reply', 'replies').split(' ', 1)[1]}",
-                     action="publish_replies", evidence=f"{awaiting} drafted")
+                     action="publish_replies",
+                     evidence=f"{awaiting} drafted" + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""))
+            # The tap publishes exactly what the label counts (approve-all
+            # takes a limit, newest first) — not 25 including the history.
+            attention[-1]["action"]["count"] = min(awaiting, 25)
         if total >= 5 and rate < 50:
+            # Only what the data shows: the count. The old line claimed a
+            # guest-count effect of answering reviews that had no source (#46).
             add_attn("low_response_rate", "watch", f"Response rate at {rate:.0f}%",
-                     "Restaurants answering 80%+ of reviews see measurably more new guests.", "reviews", "Answer reviews",
+                     f"{int(rstats.get('responded') or 0)} of {total} reviews have a reply.", "reviews", "Answer reviews",
                      evidence=f"{int(rstats.get('responded') or 0)} of {total} answered")
         if not google_connected and total == 0:
             add_attn("google_not_connected", "important", "Google Business isn't connected",
@@ -608,7 +854,8 @@ def _build(current_user):
         elif rating_delta is not None and rating_delta >= 0.2:
             add_win("rating_up", f"30-day rating up to {avg30:.1f}★", f"From {prev_avg:.1f}★ the previous 30 days.", "reviews")
         if rate >= 80 and total >= 10:
-            add_win("response_rate", f"{rate:.0f}% of reviews answered", "Better than most independents — keep it there.", "reviews")
+            add_win("response_rate", f"{rate:.0f}% of reviews answered",
+                    f"{int(rstats.get('responded') or 0)} of {total} reviews have a reply.", "reviews")
 
         # snapshot card
         interp = None
@@ -635,15 +882,53 @@ def _build(current_user):
 
         # recommendations
         if awaiting >= 3:
-            add_rec("publish_drafts", f"Publish the {awaiting} drafted replies", "Answered reviews rank higher and reassure the next guest reading them.",
-                    f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered", "Reputation · response rate", "reviews", "Today", "strong", "Publish now",
-                    metric="avg_rating")
+            # No metric: publishing replies is not measured against the
+            # rating (it was, and a rating move a fortnight later would have
+            # been credited to the replies, #46). "Rank higher" had no source.
+            add_rec("publish_drafts", f"Publish the {awaiting} drafted replies",
+                    f"{awaiting} guests from the last 30 days have a reply written and not yet posted.",
+                    f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered"
+                    + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
+                    "Reputation · response rate", "reviews", "Today", "strong", "Publish now",
+                    metric=None, conf=("high", f"a count of {awaiting} drafts on file"),
+                    if_ignored="those guests, and everyone who reads their reviews, see no reply",
+                    effort="low", action={"kind": "publish_replies", "count": min(awaiting, 25)})
         if top_issues and total >= 10:
+            cat = top_issues[0].get("category") or top_issues[0]["label"]
             lbl, cnt = top_issues[0]['label'], int(top_issues[0].get('count') or 0)
             if cnt >= 3:
-                add_rec(f"top_issue:{lbl}", f"Look into {lbl.lower()} — it's the most-mentioned complaint", "Repeat themes in negative reviews are the fixable kind.",
-                        f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate", "See the reviews",
-                        metric=f"complaints:{lbl.lower()}")
+                # One complaint, one instruction (#19): the stored diagnosis's
+                # recommended_action when there is one — the Reviews tab has
+                # it — with its alternative explanation (#42). Without one,
+                # the card says what the data supports and nothing more.
+                dg = None
+                try:
+                    import review_intelligence as _ri_hb
+                    dg = next((d for d in _ri_hb.get_diagnoses(rid, include_stale=True)
+                               if d.get("category") == cat and d.get("recommended_action")), None)
+                except Exception:
+                    dg = None
+                ev_band = "high" if cnt >= 8 else ("medium" if cnt >= 5 else "low")
+                if dg:
+                    band = dg.get("confidence") if dg.get("confidence") in ("low", "medium", "high") else ev_band
+                    add_rec(f"top_issue:{cat}", str(dg["recommended_action"]).strip().rstrip("."),
+                            (dg.get("cause") or f"{lbl} is the most-mentioned complaint over 90 days.").strip(),
+                            f"{lbl} raised in {cnt} reviews over 90 days"
+                            + (" · diagnosis older than a week" if dg.get("stale") else ""),
+                            "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate",
+                            "See the reviews", metric=f"complaints:{lbl.lower()}",
+                            conf=(band, f"a diagnosis read from {cnt} reviews"
+                                  + ("; written over a week ago" if dg.get("stale") else "")),
+                            if_ignored=f"{lbl.lower()} stays the most-mentioned complaint",
+                            effort="medium", alternative=dg.get("alternative_cause"), model_written=True)
+                else:
+                    add_rec(f"top_issue:{cat}", f"Read the {cnt} {lbl.lower()} complaints and pick one fix for this week",
+                            f"{lbl} is the most-mentioned complaint in the last 90 days.",
+                            f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week",
+                            "strong" if cnt >= 5 else "moderate", "See the reviews",
+                            metric=f"complaints:{lbl.lower()}",
+                            conf=(ev_band, f"{cnt} reviews in 90 days"),
+                            if_ignored=f"{lbl.lower()} stays the most-mentioned complaint", effort="medium")
         # changes
         if (reviews_since.get("n") or 0) > 0:
             n = reviews_since["n"]
@@ -672,10 +957,12 @@ def _build(current_user):
                              "state": "sample", "spark": [], "spark_label": None, "attention": False, "sample": True, "last_data": None,
                              "setup": {"label": "Add your shifts", "module": "labor"}})
         else:
+            from thresholds import LABOR_OVER_TARGET_PTS
             pct = float(labor.get("overall_labor_pct") or 0)
             over = pct - labor_target
             days = int((labor.get("date_range") or {}).get("days") or 0)
-            ot = [o for o in (labor.get("overtime_risk") or []) if o.get("status") == "overtime"]
+            # This payroll week only, with the analysis's own premium (#2).
+            ot_now = overtime_this_week(labor, local_now.date())
             # Shown as "/week" below — use the per-week figure, not the
             # whole-period gap.
             savings = float(labor.get("potential_savings_weekly") or 0)
@@ -689,26 +976,53 @@ def _build(current_user):
                               "note": ("Toast synced" if r.get("toast_restaurant_guid") and not r.get("toast_sync_error") else f"{days}-day shift export")})
             if r.get("toast_restaurant_guid") and r.get("toast_sync_error"):
                 add_attn("toast_sync", "critical", "Toast sync is failing", f"Last error: {str(r['toast_sync_error'])[:120]}. Labor and depletion numbers stop updating until it's fixed.", "account", "Fix connection")
-            if over > 3:
+            if over > LABOR_OVER_TARGET_PTS:
                 add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
                          f"Across the last {days} days of shifts" + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
-                         since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales")
+                         since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales",
+                         # The labor alert's key: its latest period.
+                         rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
+                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"))
             elif over <= 0:
                 add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under your {labor_target:.0f}% target over {days} days.", "labor")
-            if ot:
-                add_attn("overtime", "important", f"{_plural(len(ot), 'staff member')} in overtime this week",
-                         f"Roughly ${len(ot) * 38:,}+ in overtime premium at current hours.", "labor", "Open schedule",
-                         evidence=", ".join(o.get("employee", o.get("name", ""))[:18] for o in ot[:3]))
+            if ot_now:
+                n_ot = ot_now["people"]
+                prem = ot_now["premium"]
+                add_attn("overtime", "important",
+                         f"{n_ot} {'person' if n_ot == 1 else 'people'} over 40h this week",
+                         (f"About ${prem:,.0f} in overtime premium — the extra half-time on "
+                          f"{ot_now['hours']:g} hours past 40" if prem is not None else
+                          f"{ot_now['hours']:g} hours past 40 so far")
+                         + (" (from scheduled hours — no clock-ins on file)." if ot_now["estimated"] else "."),
+                         "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n))
             # day-of-week recommendation
             if len(dow) >= 4:
                 vals = [v for v in dow.values() if v]
                 mean = sum(vals) / len(vals) if vals else 0
                 worst_day, worst_pct = max(dow.items(), key=lambda kv: kv[1] or 0)
                 if mean and worst_pct - mean >= 4 and worst_pct > labor_target:
-                    add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing", f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
+                    # What that day costs above the owner's own target, from
+                    # the days in the upload — a measured figure, per month.
+                    by_day = labor.get("by_day") or {}
+                    excess, n_days = 0.0, 0
+                    for dstr, dd in by_day.items():
+                        try:
+                            if datetime.strptime(dstr, "%Y-%m-%d").strftime("%A") != worst_day:
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                        n_days += 1
+                        excess += max(0.0, float(dd.get("labor_cost") or 0) - float(dd.get("sales") or 0) * labor_target / 100.0)
+                    trim_monthly = round(excess / n_days * 52.0 / 12.0, 2) if n_days else None
+                    add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing on the next schedule",
+                            f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
                             f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% average · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
                             "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule",
-                            metric="labor_pct")
+                            metric="labor_pct", dollars=trim_monthly,
+                            conf=("high" if n_days >= 4 else ("medium" if n_days >= 2 else "low"),
+                                  f"{_plural(n_days, worst_day)} in your shift data"),
+                            if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over your target",
+                            effort="medium")
             if delta is not None and delta >= 1.5:
                 add_change(f"Labor % rose {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "bad", "labor")
             elif delta is not None and delta <= -1.5:
@@ -719,12 +1033,12 @@ def _build(current_user):
                 add_change(f"New schedule built for {last_schedule.get('week_start') or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
             snapshot.append({"key": "labor", "label": "Labor", "status": "available", "value": f"{pct:.1f}", "unit": "% of sales",
                              "delta": ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0}),
-                             "secondary": [{"label": "Target", "value": f"{labor_target:.0f}%"}, {"label": "Overtime", "value": str(len(ot))}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
+                             "secondary": [{"label": "Target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
                              "interpretation": (f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip(),
                              "state": "bad" if over > 6 else ("warn" if over > 0 else "good"),
                              "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": over > 3 or bool(ot), "sample": False, "last_data": client_data.get("updated_at")})
-            brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over > 3 else ("good" if over <= 0 else "neutral"), "module": "labor"})
+                             "attention": over > LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False, "last_data": client_data.get("updated_at")})
+            brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over > LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})
@@ -753,7 +1067,8 @@ def _build(current_user):
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
-                         evidence=f"{len(reorder)} more to reorder soon")
+                         evidence=f"{len(reorder)} more to reorder soon",
+                         rec_key=f"stock_low:{crit[0].get('item', '?')}")
             # The CFO read. The module's morning headline was
             # "$X recoverable/month" — a waste-recovery estimate, when the
             # question an operator opens with is where their margin is. Food
@@ -761,7 +1076,7 @@ def _build(current_user):
             # neither reached this screen. Best-effort: Home must render even
             # when the ledger cannot answer.
             fc_pct, fc_target, fc_label = None, None, None
-            drivers, cfo_why = [], None
+            drivers, cfo_why, _dg = [], None, None
             try:
                 import food_cost_intelligence as _fci_hb
                 _ev = _fci_hb.build_evidence(rid)
@@ -782,19 +1097,78 @@ def _build(current_user):
             # evidence, its confidence, how hard it is and what happens if it
             # is ignored, none of which the old waste-only line could say.
             if drivers:
+                # The card is the driver's own FIX, verb first ("Cut the
+                # Salmon Fillet order — waste is above tolerance"), not its
+                # finding label (#20). One confidence: the driver's own, from
+                # its own measurement — the evidence line no longer carries
+                # a second one (#4).
+                import business_intelligence as _bi_hb
                 d0 = drivers[0]
-                add_rec(f"food_cost_driver:{d0['label'][:40]}", d0["label"],
-                        d0["if_ignored"].capitalize() + ".",
-                        f"${d0['dollars_monthly']:,.0f}/month · {d0['confidence']} confidence · "
-                        f"{d0['difficulty']} effort · {d0['evidence']}",
+                _conf_why = {"waste": "counted waste against its own tolerance band",
+                             "portion": "physical counts against recipes — portioning, prep loss or a miscount all fit",
+                             "price": "this ingredient's recorded price history",
+                             "sourcing": "two suppliers' prices on file for the same unit",
+                             "menu": "this dish's plate cost against its own sales"}.get(d0.get("kind"), "the ledger")
+                _alt = None
+                if _dg and _dg.get("alternative_cause") and str(d0.get("item") or "").lower() in json.dumps(_dg.get("drivers") or []).lower():
+                    _alt = _dg["alternative_cause"]
+                add_rec(_bi_hb.driver_key(d0), _bi_hb.driver_action(d0),
+                        d0["evidence"][:1].upper() + d0["evidence"][1:] + ".",
+                        f"${d0['dollars_monthly']:,.0f}/month · {d0['difficulty']} effort",
                         "Food cost · margin", "inventory", "This week",
                         "strong" if d0["dollars_monthly"] >= 150 else "moderate", "See the numbers",
-                        metric="food_cost_pct")
+                        # Waste is tracked against waste, not food cost % (#46).
+                        metric="weekly_waste" if d0.get("kind") == "waste" else "food_cost_pct",
+                        dollars=d0["dollars_monthly"],
+                        conf=(d0.get("confidence") or "medium", _conf_why),
+                        if_ignored=d0["if_ignored"][:1].upper() + d0["if_ignored"][1:],
+                        effort=d0.get("difficulty"), alternative=_alt)
             elif top and float(top.get("waste_cost") or 0) >= 40:
-                add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut {top.get('item', 'top-item')} waste", f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
-                        f"${float(top.get('waste_cost') or 0):,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
-                        "strong" if float(top.get("waste_cost") or 0) >= 100 else "moderate", "Adjust the order",
-                        metric="weekly_waste")
+                _wc = float(top.get("waste_cost") or 0)
+                add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut the {top.get('item', 'top-item')} order — it's the biggest waste line",
+                        f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
+                        f"${_wc:,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
+                        "strong" if _wc >= 100 else "moderate", "Adjust the order",
+                        metric="weekly_waste",
+                        dollars=float(top.get("recoverable_cost") or 0) * 52.0 / 12.0 or None,
+                        conf=("medium", "one week of waste counts"),
+                        if_ignored="the same share keeps going in the bin every week", effort="low")
+            elif _dg and _dg.get("recommended_action"):
+                add_rec("food_diagnosis", str(_dg["recommended_action"]).strip().rstrip("."),
+                        (_dg.get("cause") or "").strip() or "From the stored food cost diagnosis.",
+                        _dg.get("headline") or "", "Food cost · margin", "inventory", "This week", "moderate",
+                        "See the numbers", metric="food_cost_pct", dollars=_dg.get("dollars_at_stake"),
+                        conf=(_dg.get("confidence") if _dg.get("confidence") in ("low", "medium", "high") else "medium",
+                              "a diagnosis of this restaurant's own ledger"
+                              + ("; written over a week ago" if _dg.get("stale") else "")),
+                        if_ignored="food cost stays where it is", effort="medium",
+                        alternative=_dg.get("alternative_cause"), model_written=True)
+
+            # One-tap reprice: a dish whose ingredients rose, at the price
+            # that restores its old food cost % (menu_intelligence), applied
+            # by POST /api/food-cost/reprice/apply {dish, price}.
+            try:
+                import menu_intelligence as _mi_hb
+                _sg = [x for x in ((_mi_hb.reprice_suggestions(rid) or {}).get("suggestions") or [])
+                       if (x.get("monthly_margin_lost") or 0) >= 25 and x.get("suggested_price")]
+            except Exception:
+                _sg = []
+            _named = str((drivers[0].get("item") if drivers else "") or "").lower()
+            for x in _sg[:1]:
+                if str(x.get("dish") or "").lower() == _named:
+                    continue
+                _ing = ((x.get("drivers") or [{}])[0] or {}).get("ingredient") or "An ingredient"
+                add_rec(f"reprice:{x['dish']}", f"Reprice {x['dish']} to ${x['suggested_price']:.2f}",
+                        f"{_ing} rose — {x['dish']} now runs at {x.get('food_cost_pct_now')}% food cost, "
+                        f"up from {x.get('food_cost_pct_before')}%.",
+                        f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",
+                        "Food cost · margin", "inventory", "This week", "moderate", "See the price",
+                        metric="food_cost_pct", dollars=x["monthly_margin_lost"],
+                        conf=("high" if x.get("units_sold_30d") else "medium",
+                              f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"),
+                        if_ignored="every plate keeps selling at the thinner margin", effort="low",
+                        action={"kind": "reprice", "dish": x["dish"], "price": x["suggested_price"],
+                                "label": f"Reprice to ${x['suggested_price']:.2f}"})
 
             # The brief line leads with the margin position when it can be
             # measured, and falls back to recoverable waste when it cannot.
@@ -828,8 +1202,10 @@ def _build(current_user):
                           {"label": "Reorder soon", "value": str(len(reorder))},
                           {"label": "Stock value", "value": f"${float(inv.get('total_stock_value') or 0):,.0f}"}]
             if drivers:
+                # Each ingredient counted once (#36): salmon's waste, price
+                # rise and over-recipe usage are three readings of one spend.
                 _secondary.insert(0, {"label": "At stake",
-                                      "value": f"${sum(d['dollars_monthly'] for d in drivers):,.0f}/mo"})
+                                      "value": f"${at_stake_monthly(drivers):,.0f}/mo"})
             snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available",
                              "value": _headline, "unit": _unit,
                              "delta": _delta,
@@ -861,10 +1237,16 @@ def _build(current_user):
         if not mkt.get("ig_connected") and not mkt.get("fb_connected"):
             add_attn("social_not_connected", "watch", "No social account connected", "Posts can be drafted and copied, but one-click publishing and post metrics need Instagram or Facebook connected.", "account", "Connect Instagram")
         if posted_age is not None and posted_age > 10 and (mkt.get("ig_connected") or mkt.get("fb_connected")):
-            add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days; accounts that post weekly hold reach.",
-                    f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "moderate", "Draft a post")
+            # Only what the data shows (#46): "accounts that post weekly hold
+            # reach" had no source here — reach is not measured.
+            add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days.",
+                    f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "moderate", "Draft a post",
+                    conf=("medium", "the posting gap is measured; what a post does for reach is not"),
+                    if_ignored="nothing new goes out to your followers", effort="low")
         elif mkt.get("last_at") is None:
-            add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post")
+            add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post",
+                    conf=("medium", "a setup step — nothing to measure yet"),
+                    if_ignored="the Marketing module has nothing to schedule or measure", effort="low")
         if mkt.get("posted_since"):
             add_change(f"{_plural(mkt['posted_since'], 'scheduled post')} went live", "good", "marketing")
         # What the latest measured post did — sales against the same weekday,
@@ -899,8 +1281,13 @@ def _build(current_user):
                          "interpretation": "Weekly competitor read is ready." if intel["recs"] else "Add competitors on the Intel tab to get a weekly comparison.",
                          "state": "good" if intel["recs"] else "neutral", "spark": [], "spark_label": None, "attention": False, "sample": False, "last_data": intel.get("updated_at")})
         if intel["recs"] and age is not None and age <= 8:
-            add_rec("intel_recs", f"{_plural(intel['recs'], 'competitor move')} worth a look", "The weekly Intel pass found things nearby restaurants are doing that you aren't.",
-                    f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "moderate", "Open Intel")
+            # Say only what the data shows (#46): the read is a model-written
+            # comparison, not a finding that neighbours do things "you aren't".
+            add_rec("intel_recs", f"Read the {_plural(intel['recs'], 'suggestion')} from this week's competitor comparison",
+                    f"The weekly Intel pass compared you with {_plural(intel['competitors'], 'nearby competitor')} {int(age)}d ago.",
+                    f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "moderate", "Open Intel",
+                    conf=("low" if age > 7 else "medium", "a model-written comparison of public listings"),
+                    if_ignored="the suggestions age out at the next weekly pass", effort="medium", model_written=True)
 
     # ── coming-soon modules (compact, never data) ──────────────────────────
     for m in active:
@@ -944,6 +1331,25 @@ def _build(current_user):
             ahead = 7
         upcoming.append({"label": "Weekly digest email", "when": (local_now + timedelta(days=ahead)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat(), "module": "account", "kind": "digest"})
     upcoming.sort(key=lambda u: u.get("when") or "")
+
+    # ── one "no" everywhere ────────────────────────────────────────────────
+    # An answer given on Home, in the brief, the queue or an email silences
+    # the key here too (#17); home_dismissals is still read (silenced_keys
+    # includes it) so answers from before the ledger hold. Needs attention
+    # answers the same way — hide, not today — except a critical item, which
+    # is the product's own health or a guest waiting, and is never hidden.
+    import rec_ledger
+    import decisions
+    try:
+        silenced = rec_ledger.silenced_keys(rid)
+    except Exception:
+        silenced = set()
+    answered = set(dismissed) | silenced
+    for a in attention:
+        a["rec_key"] = a.get("rec_key") or ledger_key(a["key"])
+        a["dismissable"] = a["severity"] != "critical"
+        a["times_hidden"] = hidden_counts.get(a["rec_key"], 0)
+    attention = [a for a in attention if not (a["dismissable"] and (a["rec_key"] in answered))]
 
     # ── order, brief headline, empty states ────────────────────────────────
     sev_rank = {"critical": 0, "important": 1, "watch": 2}
@@ -1007,11 +1413,42 @@ def _build(current_user):
                                 "connected, labor once shifts are in, food cost after a first count."),
                        "first_look": _look_lines}
 
-    _times = times_hidden(conn, rid)
     for _r in recs:
-        _r["times_hidden"] = _times.get(_r["key"], 0)
-    dismissed_recs = [r for r in recs if r["key"] in dismissed]
-    recs = [r for r in recs if r["key"] not in dismissed]
+        _r["times_hidden"] = hidden_counts.get(_r["key"], 0)
+
+    dismissed_recs = [r for r in recs if r["key"] in answered]
+    recs = [r for r in recs if r["key"] not in answered]
+    # Ordered by urgency x dollars x ease (#24), and a kind the owner has let
+    # expire unanswered four times running goes quieter (#45).
+    try:
+        quiet = decisions.quiet_kinds(rid)
+    except Exception:
+        quiet = set()
+    recs = order_recommendations(recs, quiet)
+    quieter = []
+    for _r in recs:
+        _k = _r["key"].split(":", 1)[0]
+        if _r.get("quiet") and _k not in [q["kind"] for q in quieter]:
+            quieter.append({"kind": _k, "label": decisions.kind_label(_k)})
+
+    # Every card and attention item this Home shows is an impression in the
+    # ledger (#37) — one episode per key, one `shown` per surface per day.
+    # A key the ledger says is answered comes back None and is not shown.
+    try:
+        shown = rec_ledger.present_many(rid, [
+            *({"key": a["rec_key"], "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"],
+               "position": i} for i, a in enumerate(attention)),
+            *({"key": r["key"], "module": _LEDGER_MODULE.get(r["module"], "home"), "title": r["title"],
+               "position": 100 + i, "dollar_value": r.get("dollars_monthly"),
+               "confidence_band": (r.get("confidence") or {}).get("band"),
+               "evidence_sources": r.get("evidence_sources"), "model_written": r.get("model_written"),
+               "cavnar_completes": bool(r.get("action")), "expected_metric": r.get("metric")}
+              for i, r in enumerate(recs[:5]))], "home", user_id=current_user.get("id"))
+    except Exception:
+        shown = {}
+    if shown:
+        attention = [a for a in attention if not a["dismissable"] or shown.get(a["rec_key"], True) is not None]
+        recs = [r for r in recs if shown.get(r["key"], True) is not None]
 
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []
@@ -1083,7 +1520,15 @@ def _build(current_user):
         "wins": wins[:4],
         "snapshot": snapshot,
         "recommendations": recs[:5],
-        "dismissed": [{"key": r["key"], "title": r["title"], "until": dismissed[r["key"]]["expires_at"]} for r in dismissed_recs],
+        # Kinds gone quieter because the last four went unanswered, with the
+        # way back (POST /api/home/dismiss {restore_kind}).
+        "quieter": quieter,
+        # Who a card can be handed to — consented alert contacts, and only
+        # for a login that may open issues (#43).
+        "assignees": (assignees(rid) if _may_assign(current_user) else []),
+        "dismissed": [{"key": r["key"], "title": r["title"],
+                       "until": dismissed[r["key"]]["expires_at"] if r["key"] in dismissed else None}
+                      for r in dismissed_recs],
         "ai_insight": ai_insight,
         "changes": {"since": _iso_z(since_dt), "since_label": since_label, "items": changes[:8]},
         "alerts": alert_items[:8],
@@ -1127,9 +1572,16 @@ def _location_record(conn, r, now):
             la = analyse_shifts_for_restaurant(rid)
             if la.get("is_live"):
                 target = float(r.get("labor_target_pct") or 30.0)
+                # People over 40h THIS payroll week, not every overtime week
+                # in the upload (the same read as the location's own Home).
+                try:
+                    from time_utils import restaurant_now as _rn_loc
+                    _ot_loc = overtime_this_week(la, _rn_loc(get_restaurant(rid)).date())
+                except Exception:
+                    _ot_loc = None
                 labor = {"pct": float(la.get("overall_labor_pct") or 0), "target": target,
                          "over": round(float(la.get("overall_labor_pct") or 0) - target, 1),
-                         "overtime": sum(1 for o in (la.get("overtime_risk") or []) if o.get("status") == "overtime")}
+                         "overtime": (_ot_loc or {}).get("people", 0)}
         except Exception:
             labor = None
     inv = None
@@ -1144,10 +1596,11 @@ def _location_record(conn, r, now):
     issues = []
     if sig["top_issue"]:
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
-    if labor and labor["over"] > 3:
+    from thresholds import LABOR_OVER_TARGET_PTS
+    if labor and labor["over"] > LABOR_OVER_TARGET_PTS:
         issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor"})
     if labor and labor["overtime"]:
-        issues.append({"severity": "important", "text": f"{_plural(labor['overtime'], 'staff member')} in overtime", "module": "labor"})
+        issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor"})
     if inv and inv["critical_low"]:
         issues.append({"severity": "important", "text": f"{_plural(inv['critical_low'], 'item')} critically low", "module": "inventory"})
     avg30 = rs.get("avg30"); prev = rs.get("avg_prev")

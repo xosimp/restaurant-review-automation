@@ -67,6 +67,30 @@ struct HomeDayCard: View {
                                     HomeMixedText.make(issue.title, size: 14.5, weight: 600, color: .cavnarInk)
                                     Text((issue.assigneeName ?? "unassigned") + " · " + (issue.status == "acknowledged" ? "on it" : (issue.status ?? "open")))
                                         .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                                    // A coverage issue's suggested covers: one
+                                    // tap asks that person (text or email).
+                                    // The schedule moves only when the manager
+                                    // decides who is on.
+                                    let covers = issue.coversToAsk
+                                    if !covers.isEmpty {
+                                        HStack(spacing: 14) {
+                                            ForEach(covers, id: \.self) { name in
+                                                Button {
+                                                    Haptic.light()
+                                                    Task { await viewModel.askToCover(issue, name: name) }
+                                                } label: {
+                                                    Text("Ask \(name.split(separator: " ").first.map(String.init) ?? name) to cover")
+                                                        .font(.cavnarBody(12.5, weight: 700))
+                                                        .foregroundStyle(Color.cavnarEmber2)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        .padding(.top, 4)
+                                    }
+                                    if let note = viewModel.coverNote[issue.id] {
+                                        Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                                    }
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -102,12 +126,24 @@ final class HomeDayViewModel {
         }
     }
     struct Issue: Decodable, Identifiable {
+        struct Person: Decodable { let name: String? }
+        /// A coverage issue's structured detail: who could cover, and who
+        /// has already been asked (issues._public parses meta_json).
+        struct Meta: Decodable { let covers: [Person]?; let asked: [Person]? }
         let id: Int
         let title: String
         let severity: String?
         let status: String?
         let assigneeName: String?
-        enum CodingKeys: String, CodingKey { case id, title, severity, status; case assigneeName = "assignee_name" }
+        let meta: Meta?
+        enum CodingKeys: String, CodingKey { case id, title, severity, status, meta; case assigneeName = "assignee_name" }
+        /// Up to two suggested covers nobody has asked yet.
+        var coversToAsk: [String] {
+            guard status != "resolved" else { return [] }
+            let asked = Set((meta?.asked ?? []).compactMap { $0.name?.lowercased() })
+            return Array((meta?.covers ?? []).compactMap(\.name)
+                .filter { !$0.isEmpty && !asked.contains($0.lowercased()) }.prefix(2))
+        }
         var tone: Color {
             if status != "open" { return .cavnarInk3 }
             return severity == "high" ? .cavnarRed : .cavnarAmber
@@ -122,6 +158,8 @@ final class HomeDayViewModel {
 
     var lines: [BriefLine] = []
     var issues: [Issue] = []
+    /// "Ana has been asked", per issue, after a cover request.
+    var coverNote: [Int: String] = [:]
     var isLoading = false
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
@@ -137,6 +175,23 @@ final class HomeDayViewModel {
         lines = (brief?.brief?.lines ?? []).filter { $0.key != "fix_first" && $0.key != "money" }
         if lines.count == 1, lines[0].key == "all_clear" { lines = [] }
         issues = iss?.issues ?? []
+    }
+
+    private struct CoverBody: Encodable { let name: String }
+
+    /// POST /mobile/api/issues/<id>/ask-cover — text (or email) the chosen
+    /// cover; the server refuses anyone not suggested or already asked.
+    func askToCover(_ issue: Issue, name: String) async {
+        let r: APIClient.OKResponse? = try? await client.send(
+            "/mobile/api/issues/\(issue.id)/ask-cover", method: .post,
+            body: CoverBody(name: name), retryTransient: false)
+        if r?.ok == true {
+            await Haptic.success()
+            coverNote[issue.id] = "\(name) has been asked"
+            await load()
+        } else {
+            coverNote[issue.id] = r?.error ?? "Couldn\u{2019}t ask \(name)"
+        }
     }
 }
 

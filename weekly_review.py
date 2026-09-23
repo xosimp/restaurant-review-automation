@@ -94,12 +94,17 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
     priorities, fix_first = [], None
     import business_intelligence as bi
     brief = _safe(bi.executive_brief, restaurant_id, restaurant=restaurant, db_path=db_path) or {}
-    for t in ((brief.get("money") or {}).get("ranked") or [])[:2]:
-        priorities.append({"label": t.get("label"), "monthly": t.get("monthly"),
+    # One "no" everywhere: a priority the owner answered on any surface is
+    # not a priority here (fix_first is already filtered by pick_one_thing).
+    import review_common as _rc
+    silenced = _rc.silenced(restaurant_id, db_path)
+    for t in [t for t in ((brief.get("money") or {}).get("ranked") or []) if t.get("key") not in silenced][:2]:
+        priorities.append({"key": t.get("key"), "label": t.get("label"), "monthly": t.get("monthly"),
                            "monthly_low": t.get("monthly_low"),
                            "monthly_high": t.get("monthly_high"),
                            "is_range": t.get("is_range")})
     fix_first = brief.get("fix_first")
+    _rc.present(restaurant_id, priorities, fix_first, db_path)
 
     return {"week": f"{last_start.strftime('%b %-d')}–{last_end.strftime('%b %-d')}",
             "window": [last_start.isoformat(), last_end.isoformat()],

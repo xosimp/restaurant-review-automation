@@ -185,10 +185,13 @@ struct HomeView: View {
                             // that starts measuring it.
                             if let recs = summary.recommendations, !recs.isEmpty {
                                 HomeRecommendations(recommendations: recs,
-                                                    viewModel: followThrough) { module in
+                                                    viewModel: followThrough,
+                                                    assignees: summary.assignees ?? [],
+                                                    quieter: summary.quieter ?? [],
+                                                    onOpenModule: { module in
                                     navigate(to: ModuleRoute(key: module,
                                                              label: moduleLabel(module, in: summary)))
-                                }
+                                }, onChanged: { Task { await viewModel.load() } })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.76)
@@ -508,6 +511,16 @@ struct HomeView: View {
                 onPrimary: { item in primaryAction(item, in: summary) },
                 onSecondary: { item in
                     navigate(to: ModuleRoute(key: item.module, label: moduleLabel(item.module, in: summary)))
+                },
+                // Not today / hide, recorded server-side so the same item is
+                // quiet in the brief and the queue too. Never offered for a
+                // critical item (the server sends dismissable=false).
+                onDismiss: { item, kind in
+                    Task {
+                        if await followThrough.answerAttention(item, kind: kind) {
+                            await viewModel.load()
+                        }
+                    }
                 }
             )
         }
@@ -622,7 +635,7 @@ struct HomeView: View {
         guard pendingPublish != nil else { return }
         // A nil result means the call failed — APIClient has already played
         // the error haptic, and the deck stays exactly as it was.
-        guard let result = await viewModel.publishAllReplies(), result.approved > 0 else {
+        guard let result = await viewModel.publishAllReplies(limit: pendingPublish?.count), result.approved > 0 else {
             pendingPublish = nil
             return
         }
