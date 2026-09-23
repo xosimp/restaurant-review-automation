@@ -63,12 +63,12 @@ def test_snoozing_puts_an_item_back_tomorrow_not_away(db_path):
     _review(db_path, rid)
     today = date(2026, 9, 21)
     assert [i["key"] for i in action_queue.items(rid, db_path=db_path, today=today)["items"]] \
-        == ["reviews:waiting"]
-    action_queue.snooze(rid, "reviews:waiting", db_path=db_path, today=today)
+        == ["reviews_waiting"]
+    action_queue.snooze(rid, "reviews_waiting", db_path=db_path, today=today)
     assert action_queue.items(rid, db_path=db_path, today=today)["items"] == []
     tomorrow = today + timedelta(days=1)
     assert [i["key"] for i in action_queue.items(rid, db_path=db_path, today=tomorrow)["items"]] \
-        == ["reviews:waiting"], "still open tomorrow"
+        == ["reviews_waiting"], "still open tomorrow"
 
 
 def test_a_snooze_is_bounded(db_path):
@@ -85,10 +85,10 @@ def test_a_manager_without_food_cost_gets_no_food_cost_tasks(db_path, monkeypatc
     monkeypatch.setattr(menu_intelligence, "reprice_suggestions", lambda *a, **k: {"suggestions": [
         {"dish": "Parm", "monthly_margin_lost": 140}]})
     owner_keys = [i["key"] for i in action_queue.items(rid, db_path=db_path)["items"]]
-    assert {"invoice:pending", "reprice"} <= set(owner_keys)
+    assert {"invoice:pending", "reprice:Parm"} <= set(owner_keys)
     mgr = {"id": 5, "role": "manager", "is_admin": 0, "grants": frozenset()}
     mgr_keys = [i["key"] for i in action_queue.items(rid, viewer=mgr, db_path=db_path)["items"]]
-    assert not {"invoice:pending", "reprice"} & set(mgr_keys)
+    assert not {"invoice:pending", "reprice:Parm"} & set(mgr_keys)
 
 
 def test_next_weeks_schedule_only_nags_from_thursday(db_path):
@@ -220,7 +220,78 @@ def test_a_proposal_the_owner_already_answered_leaves_the_queue(db_path):
     models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
                           outcome="proposed", db_path=db_path)
     keys = lambda: [i["key"] for i in action_queue.items(rid, db_path=db_path)["items"]]
-    assert "proposal:send_supplier_order" in keys()
+    assert "proposal:send_supplier_order:Order from Fresh Co" in keys()
     models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
                           outcome="confirmed", db_path=db_path)
-    assert "proposal:send_supplier_order" not in keys()
+    assert "proposal:send_supplier_order:Order from Fresh Co" not in keys()
+
+
+# ── recommendation trust audit (#17, #18, #40) ────────────────────────────
+
+def test_a_snooze_is_also_a_ledger_event_with_its_until(db_path):
+    """#40: action_snoozes keeps only the latest snooze; the ledger keeps
+    every one, with when it ends, and the key is quiet everywhere till then."""
+    import action_queue, rec_ledger
+    rid = _rid(db_path, module_reviews=1)
+    _review(db_path, rid)
+    action_queue.items(rid, db_path=db_path)
+    action_queue.snooze(rid, "reviews_waiting", days=3, db_path=db_path, today=date.today())
+    action_queue.snooze(rid, "reviews_waiting", days=5, db_path=db_path, today=date.today())
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT meta FROM rec_events WHERE restaurant_id=? AND key='reviews_waiting' "
+                        "AND event='snoozed' ORDER BY id", (rid,)).fetchall()
+    conn.close()
+    import json
+    assert [json.loads(r["meta"])["days"] for r in rows] == [3, 5]
+    assert rec_ledger.silenced(rid, "reviews_waiting", db_path=db_path)
+
+
+def test_two_proposals_of_one_kind_are_two_items(db_path):
+    """#40: `proposal:{action}` hid every proposal of that kind at once."""
+    import action_queue
+    rid = _rid(db_path)
+    models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
+                          outcome="proposed", db_path=db_path)
+    models.log_ask_action(rid, "send_supplier_order", summary="Order from Sysco",
+                          outcome="proposed", db_path=db_path)
+    action_queue.snooze(rid, "proposal:send_supplier_order:Order from Fresh Co", db_path=db_path)
+    keys = [i["key"] for i in action_queue.items(rid, db_path=db_path)["items"]]
+    assert keys == ["proposal:send_supplier_order:Order from Sysco"]
+
+
+def test_each_dish_to_reprice_is_its_own_item_with_one_tap_apply(db_path, monkeypatch):
+    import action_queue, menu_intelligence
+    rid = _rid(db_path, module_inventory=1)
+    monkeypatch.setattr(menu_intelligence, "reprice_suggestions", lambda *a, **k: {"suggestions": [
+        {"dish": "Parm", "monthly_margin_lost": 140, "suggested_price": 21.5},
+        {"dish": "Carbonara", "monthly_margin_lost": 60, "suggested_price": 18.25}]})
+    items = {i["key"]: i for i in action_queue.items(rid, db_path=db_path)["items"]}
+    assert {"reprice:Parm", "reprice:Carbonara"} <= set(items)
+    act = items["reprice:Parm"]["action"]
+    assert act["route"]["web"] == "/api/food-cost/reprice/apply"
+    assert act["route"]["mobile"] == "/mobile" + act["route"]["web"]
+    assert act["body"] == {"dish": "Parm", "price": 21.5}
+
+
+def test_an_answer_on_home_silences_the_same_key_in_the_queue(db_path):
+    """#17: one "no" everywhere."""
+    import action_queue, rec_ledger
+    rid = _rid(db_path, module_labor=1)
+    thursday = date(2026, 9, 24)
+    assert "schedule:next-week" in [i["key"] for i in action_queue.items(rid, db_path=db_path, today=thursday)["items"]]
+    rec_ledger.record(rid, "schedule:next-week", "dismissed", surface="home", meta={"kind": "hide"}, db_path=db_path)
+    assert "schedule:next-week" not in [i["key"] for i in action_queue.items(rid, db_path=db_path, today=thursday)["items"]]
+
+
+def test_news_home_already_said_today_is_not_repeated_unless_critical(db_path):
+    """#18: the same news once a day across Home, the brief and the queue."""
+    import action_queue, rec_ledger
+    rid = _rid(db_path, module_labor=1, module_reviews=1)
+    thursday = date(2026, 9, 24)
+    _review(db_path, rid, rating=1)
+    rec_ledger.present_many(rid, [{"key": "schedule:next-week", "module": "labor"},
+                                  {"key": "reviews_waiting", "module": "reviews"}], "home", db_path=db_path)
+    out = action_queue.items(rid, db_path=db_path, today=thursday)
+    keys = [i["key"] for i in out["items"]]
+    assert "schedule:next-week" not in keys and out["shown_elsewhere"] == 1
+    assert "reviews_waiting" in keys, "a 1-star guest waiting is critical and is never deduped"

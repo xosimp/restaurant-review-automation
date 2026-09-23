@@ -50,8 +50,28 @@ def test_reviews_waiting_on_a_reply_are_in_the_brief(db_path):
     _review(db_path, rid, 5)
     _review(db_path, rid, 4, status="posted")
     line = _lines(rid, db_path)["reviews"]
-    assert "2 reviews waiting" in line["text"] and "1 of them 2 stars or worse" in line["text"]
-    assert line["ask"]
+    assert "2 reviews from the last 30 days waiting on a reply" in line["text"]
+    assert "1 of them 2 stars or worse" in line["text"]
+    assert line["ask"] and line["rec"] == "reviews_waiting" and line["critical"] is True
+    assert "older" not in line["text"]
+
+
+def test_imported_history_is_not_owed_a_reply(db_path):
+    """#6: connecting Google imports years of reviews. "N waiting on a reply"
+    counts only the last 30 days and names the older ones separately."""
+    rid = _rid(db_path, module_reviews=1)
+    _review(db_path, rid, 5)
+    conn = get_conn(db_path)
+    for i in range(3):
+        conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, "
+                     "review_date, fetched_at, processed, response_status) "
+                     "VALUES (?,'google',?,'A',1,'old',date('now','-200 days'),datetime('now'),1,'pending')",
+                     (rid, f"old{i}"))
+    conn.commit(); conn.close()
+    line = _lines(rid, db_path)["reviews"]
+    assert line["text"].startswith("1 review from the last 30 days waiting on a reply")
+    assert "(3 older ones not counted)" in line["text"]
+    assert "2 stars or worse" not in line["text"] and not line["critical"]
 
 
 def test_what_the_kitchen_is_about_to_run_out_of_is_in_the_brief(db_path, monkeypatch):

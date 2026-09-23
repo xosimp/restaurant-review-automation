@@ -326,11 +326,17 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // field, never executed, but there's no reason to accept an
         // arbitrarily long payload into one.
         let askPrompt = (cavnar["ask_prompt"] as? String).map { String($0.prefix(300)) }
+        // The recommendation the push led with (morning brief): its tap is
+        // an "opened" in rec_ledger, the same as a tap on the brief email.
+        let recKey = (cavnar["rec"] as? String).map { String($0.prefix(160)) }
         // Every action we register is .foreground and lands on the same
         // screen the notification itself does, so the action identifier
         // changes nothing here — it is the tap that matters. Dismissals are
         // ignored rather than routed.
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
+        if let recKey, !recKey.isEmpty {
+            Task { await DeepLinkRouter.recordRecOpened(recKey, surface: alertType == "morning_brief" ? "brief_push" : "alert_push") }
+        }
         await MainActor.run {
             guard let router else {
                 heldTap = (alertType, reviewId, askPrompt)

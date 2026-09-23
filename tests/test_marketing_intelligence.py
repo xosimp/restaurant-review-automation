@@ -97,7 +97,10 @@ def test_logging_a_published_post_tags_it_and_starts_the_months_tracker(db_path,
     # a draft (no post_id) is tagged but starts nothing
     marketing.log_content(rid, "instagram_post", "Margherita draft")
     assert len(observed) == 1
-    assert outcomes.OBSERVED_ACTIONS["post_published"][0] == "sales"
+    # The call stays, but a post is not measured against sales: that would
+    # credit every unrelated sales move to the post (recommendation-trust
+    # audit #10), so observe() records nothing for it.
+    assert "post_published" not in outcomes.OBSERVED_ACTIONS
 
 
 def test_marketing_publish_logs_google_and_scheduled_posts_the_same_way(db_path, monkeypatch):

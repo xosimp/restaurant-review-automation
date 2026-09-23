@@ -143,3 +143,51 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         caution = "Low confidence — too little of this restaurant's record is measured yet to judge it. Treat as a question to check, not a finding."
     return {"score": s, "band": band, "coverage": coverage, "factors": factors, "caution": caution,
             "rec_kind": rec_kind, "cohort": cohort}
+
+
+# ── one confidence per card ─────────────────────────────────────────────────
+#
+# score() rates a recommendation KIND at a restaurant. Home printed it under
+# cards whose own evidence line already carried a confidence — "high
+# confidence" in the evidence, "Low confidence … treat as a question" under
+# it — two opposite verdicts on one card. A card's confidence comes from its
+# OWN evidence (how many reviews, weeks, counts stand behind it); the kind's
+# record here may only move that by one band, and only when this restaurant
+# has actually MEASURED results for the kind, never on platform priors or
+# coverage alone.
+
+BANDS = ("low", "medium", "high")
+_BAND_LABEL = {"low": "Low confidence", "medium": "Medium confidence", "high": "High confidence"}
+# How far this restaurant's own measured record for a kind has to sit from
+# even before it moves a card's band.
+KIND_UP_AT, KIND_DOWN_AT = 0.75, 0.35
+
+
+def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict = None) -> dict:
+    """{band, label, reason, adjusted} for one card.
+
+    `evidence_band`/`evidence_reason` describe the card's own evidence;
+    `kind_score` is score()'s output for its kind (or None). Only the
+    restaurant_history factor adjusts, and only when it rests on measured
+    outcomes — a kind with no measured record here leaves the card's own
+    evidence alone."""
+    band = evidence_band if evidence_band in BANDS else "medium"
+    reason = (evidence_reason or "").strip().rstrip(".")
+    adjusted = None
+    own = next((f for f in (kind_score or {}).get("factors") or []
+                if f.get("name") == "restaurant_history" and "measured" in str(f.get("note") or "")
+                and "none measured" not in str(f.get("note") or "")), None)
+    if own is not None:
+        i = BANDS.index(band)
+        if own["value"] >= KIND_UP_AT and i < 2:
+            band, adjusted = BANDS[i + 1], "up"
+            reason += f"; this kind of change has held here before ({own['note'].split(': ', 1)[-1]})"
+        elif own["value"] <= KIND_DOWN_AT and i > 0:
+            band, adjusted = BANDS[i - 1], "down"
+            reason += f"; this kind of change has not held here before ({own['note'].split(': ', 1)[-1]})"
+    return {"band": band, "label": _BAND_LABEL[band], "reason": reason or None, "adjusted": adjusted,
+            # Kept for older clients, which render `caution` under a low card.
+            "caution": (f"Low confidence — {reason}. Treat it as a question to check."
+                        if band == "low" and reason else None),
+            # Always a number: shipped iOS builds decode `score` as non-optional.
+            "score": {"low": 0.3, "medium": 0.55, "high": 0.8}[band]}

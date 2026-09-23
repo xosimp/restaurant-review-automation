@@ -49,16 +49,25 @@ def _safe(fn, *a, **k):
 
 def _reviews_waiting(restaurant_id, db_path=DB_PATH):
     """Reviews with no reply yet, and how many of those are 2 stars or
-    worse. The same statuses the Reviews inbox counts as outstanding."""
+    worse. The same statuses the Reviews inbox counts as outstanding — but
+    only reviews from the last REPLY_OWED_MAX_AGE_DAYS: connecting Google
+    imports years of history, and "212 reviews waiting on a reply" about
+    reviews from 2023 is a number nobody can act on. Older ones are counted
+    separately so the line can say they exist."""
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS waiting, SUM(rating <= 2) AS urgent FROM reviews "
+            "SELECT SUM(recent) AS waiting, SUM(recent AND rating <= 2) AS urgent, "
+            "SUM(NOT recent) AS older FROM (SELECT rating, "
+            "COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?) AS recent FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL "
-            "AND response_status IN ('pending','drafted')", (restaurant_id,)).fetchone()
+            "AND response_status IN ('pending','drafted'))",
+            (f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days", restaurant_id)).fetchone()
     finally:
         conn.close()
-    return {"waiting": int(row["waiting"] or 0), "urgent": int(row["urgent"] or 0)} if row else {}
+    return ({"waiting": int(row["waiting"] or 0), "urgent": int(row["urgent"] or 0),
+             "older": int(row["older"] or 0)} if row else {})
 
 
 def _critical_low(restaurant_id):
@@ -164,17 +173,22 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # ── the one thing ──
     import business_intelligence as bi
     eb = _safe(bi.executive_brief, restaurant_id, restaurant=restaurant, db_path=db_path)
+    # `rec` is the line's identity in rec_ledger — the same key Home and the
+    # queue use for the same news, so an answer anywhere silences it here and
+    # a showing here counts against saying it again today (_dedupe).
     if eb and eb.get("fix_first"):
         f = eb["fix_first"]
-        lines.append({"key": "fix_first", "tone": "action",
-                      "text": f"If you only do one thing: {f.get('what')}.",
+        money_bit = (f" — about {_money(f['dollars_monthly'])}/month" if f.get("dollars_monthly") else "")
+        lines.append({"key": "fix_first", "tone": "action", "rec": f.get("key"),
+                      "critical": f.get("urgency") == "critical",
+                      "text": f"If you only do one thing: {f.get('what')}{money_bit}.",
                       "ask": f"Walk me through this: {f.get('what')}"})
     top = ((eb or {}).get("money") or {}).get("ranked") or []
     if top:
         t = top[0]
         amount = (f"{_money(t['monthly_low'])}-{_money(t['monthly_high'])}" if t.get("is_range")
                   else _money(t["monthly"]))
-        lines.append({"key": "money", "tone": "neutral",
+        lines.append({"key": "money", "tone": "neutral", "rec": t.get("key"),
                       "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month.",
                       "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
@@ -249,9 +263,13 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         if rs.get("waiting"):
             urgent = rs.get("urgent") or 0
             extra = f", {urgent} of them 2 stars or worse" if urgent else ""
-            lines.append({"key": "reviews", "tone": "bad" if urgent else "action",
-                          "text": f"{rs['waiting']} review{'' if rs['waiting'] == 1 else 's'} "
-                                  f"waiting on a reply{extra}.",
+            older = rs.get("older") or 0
+            # Said separately, never added in: history is not owed a reply.
+            older_bit = (f" ({older} older one{'' if older == 1 else 's'} not counted)" if older else "")
+            lines.append({"key": "reviews", "tone": "bad" if urgent else "action", "rec": "reviews_waiting",
+                          "critical": bool(urgent),
+                          "text": f"{rs['waiting']} review{'' if rs['waiting'] == 1 else 's'} from the last "
+                                  f"30 days waiting on a reply{extra}{older_bit}.",
                           "ask": "Which reviews still need a reply, and what should I say?"})
 
     # ── running low ── (what the kitchen will hit today, not next week)
@@ -259,14 +277,14 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         low = _safe(_critical_low, restaurant_id) or []
         if low:
             named = ", ".join(low[:3]) + (f" and {len(low) - 3} more" if len(low) > 3 else "")
-            lines.append({"key": "stock", "tone": "bad",
+            lines.append({"key": "stock", "tone": "bad", "rec": "running_low",
                           "text": f"Running low: {named}.",
                           "ask": "What do I need to order today?"})
 
     # ── next week's schedule ── (Thursday onward, if nothing is drafted yet)
     if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() >= 3:
         if not _safe(_schedule_drafted_recently, restaurant_id, db_path):
-            lines.append({"key": "schedule", "tone": "action",
+            lines.append({"key": "schedule", "tone": "action", "rec": "schedule:next-week",
                           "text": "Next week's schedule hasn't been built yet.",
                           "ask": "Build next week's schedule."})
 
@@ -279,7 +297,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         slow = (sd.get("slow_days") or [])[:1]
         if slow:
             d = slow[0]
-            lines.append({"key": "slow_day", "tone": "neutral",
+            lines.append({"key": "slow_day", "tone": "neutral", "rec": f"slow_day:{d['day']}",
                           "text": f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day.",
                           "ask": f"How do I fill {d['day']}s?"})
 
@@ -309,6 +327,12 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         extra = _safe(_review_variety, restaurant_id, today, db_path)
         if extra:
             lines.append(extra)
+
+    # ── one "no" everywhere ──
+    # A line whose recommendation the owner already answered — hidden,
+    # "not for us", done, snoozed — on Home, in the queue or anywhere else
+    # is not said again here (rec_ledger.silenced_keys).
+    lines = _drop_answered(restaurant_id, lines, db_path)
 
     # ── what another module would let me say ──
     # Mondays only, and only when something real is off: the brief already
@@ -346,6 +370,51 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                                   + _watching_text(watching) + ".",
                           "ask": "What are you watching for me right now?"})
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+
+
+def _drop_answered(restaurant_id, lines, db_path=DB_PATH):
+    """Lines whose ledger key an answer is silencing, removed."""
+    keyed = [l.get("rec") for l in lines if l.get("rec")]
+    if not keyed:
+        return lines
+    import rec_ledger
+    silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    return [l for l in lines if not (l.get("rec") and l["rec"] in silenced)]
+
+
+# The ledger surfaces this brief is delivered on. A key another surface
+# (Home, the queue) showed today is not repeated here unless it is critical.
+BRIEF_SURFACES = ("brief_email", "brief_push")
+
+
+def _dedupe(restaurant_id, brief, db_path=DB_PATH):
+    """The brief as delivered: the same news is said once a day across Home,
+    the brief and the queue. A line already shown on another surface today
+    is dropped unless it is critical (a guest waiting on a reply to a bad
+    review, a one-thing Home marks critical). Returns a new brief dict."""
+    import decisions
+    keys = [l["rec"] for l in brief.get("lines") or [] if l.get("rec")]
+    if not keys:
+        return brief
+    seen = decisions.shown_elsewhere_today(restaurant_id, keys, BRIEF_SURFACES, db_path=db_path)
+    if not seen:
+        return brief
+    kept = [l for l in brief["lines"] if l.get("critical") or not (l.get("rec") and l["rec"] in seen)]
+    return dict(brief, lines=kept, deduped=sorted(seen))
+
+
+def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
+    """Every keyed line this brief showed, into rec_ledger (never raises)."""
+    import rec_ledger
+    items = [{"key": l["rec"], "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
+              "position": i}
+             for i, l in enumerate(brief.get("lines") or []) if l.get("rec")]
+    if items:
+        rec_ledger.present_many(restaurant_id, items, surface, user_id=user_id, db_path=db_path)
+
+
+_LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "labor",
+                "money": "home", "fix_first": "home"}
 
 
 _UNLOCK = {
@@ -465,16 +534,22 @@ def push_text(brief, restaurant_name):
     return {"title": f"Good morning — {restaurant_name}", "body": body[:230]}
 
 
-def _ask_url(prompt):
+def _ask_url(prompt, rec=None):
     """A link that opens the dashboard and asks that question — the email's
-    version of the push's one-tap into Ask (dashboard.html reads ?ask=)."""
+    version of the push's one-tap into Ask (dashboard.html reads ?ask=).
+    `rec` carries the line's ledger key, so the open is recorded against the
+    recommendation it came from (dashboard.html posts it as "opened")."""
     from urllib.parse import quote
     base = config.base_url()
-    return f"{base}/?ask={quote(prompt or '', safe='')}"
+    url = f"{base}/?ask={quote(prompt or '', safe='')}"
+    if rec:
+        url += f"&rec={quote(str(rec), safe='')}&src=brief_email"
+    return url
 
 
 def _email_html(brief, restaurant_name):
     import html
+    from time_utils import mdy
     dot = {"good": "#2d6a4f", "bad": "#c0392b", "action": "#c84b2f", "neutral": "#7a736a"}
     rows = "".join(
         f'<tr><td style="padding:10px 0;border-top:1px solid #ece7dd;vertical-align:top;width:14px">'
@@ -483,13 +558,13 @@ def _email_html(brief, restaurant_name):
         f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
         # Every line is a question you can ask about it — the email's
         # equivalent of tapping the push, which opens Ask on that line.
-        + (f'<br><a href="{html.escape(_ask_url(l.get("ask")), quote=True)}" '
+        + (f'<br><a href="{html.escape(_ask_url(l.get("ask"), l.get("rec")), quote=True)}" '
            f'style="font-size:13px;color:#c84b2f;text-decoration:none">Ask about this &rarr;</a>'
            if l.get("ask") else "")
         + '</td></tr>'
         for l in brief["lines"])
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
-            f'margin:0 0 6px">{html.escape(restaurant_name)} · {brief["date"]}</p>'
+            f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}</p>'
             f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'
             f'<table role="presentation" style="width:100%;border-collapse:collapse">{rows}</table>'
             f'<p style="font-size:13px;color:#7a736a;margin:18px 0 0">Every figure above is measured '
@@ -588,7 +663,10 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     for u in people:
         key = _view_key(u)
         if key not in built:
-            built[key] = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
+            # Deduped against the other surfaces BEFORE anything here is
+            # presented: the brief's own showings never count against it.
+            full = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
+            built[key] = _safe(_dedupe, restaurant_id, full, db_path) or full
         brief = built[key]
         if not brief["lines"]:
             empty += 1
@@ -614,8 +692,12 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             # badge, counted over alert_log.
             import notify as _notify
             _notify.record_notification(restaurant_id, "morning_brief", db_path=db_path)
+            data = {"ask_prompt": lead["ask"]}
+            if lead.get("rec"):
+                data["rec"] = lead["rec"]          # so the tap is recorded as "opened"
             push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
-                           data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids={u["id"]})
+                           data=data, db_path=db_path, user_ids={u["id"]})
+            _safe(_present, restaurant_id, brief, "brief_push", u["id"], db_path)
             pushed += 1
         elif u.get("email"):
             from emails import deliver as _deliver, _branded_email, sender as _sender
@@ -630,6 +712,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             # Read .ok explicitly rather than leaning on SendResult.__bool__.
             if getattr(result, "ok", False):
                 emailed += 1
+                _safe(_present, restaurant_id, brief, "brief_email", u["id"], db_path)
     return {"sent": pushed + emailed, "push": pushed, "email": emailed, "empty": empty,
             "recipients": len(people)}
 

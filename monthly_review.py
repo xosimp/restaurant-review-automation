@@ -120,10 +120,13 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
     priorities = []
     import business_intelligence as bi
     brief = _safe(bi.executive_brief, restaurant_id, restaurant=restaurant, db_path=db_path) or {}
-    for t in ((brief.get("money") or {}).get("ranked") or [])[:3]:
-        priorities.append({"label": t.get("label"), "monthly": t.get("monthly"),
+    # One "no" everywhere: a priority answered on any surface is not listed.
+    silenced = review_common.silenced(restaurant_id, db_path)
+    for t in [t for t in ((brief.get("money") or {}).get("ranked") or []) if t.get("key") not in silenced][:3]:
+        priorities.append({"key": t.get("key"), "label": t.get("label"), "monthly": t.get("monthly"),
                            "monthly_low": t.get("monthly_low"), "monthly_high": t.get("monthly_high"),
                            "is_range": t.get("is_range"), "basis": t.get("basis")})
+    review_common.present(restaurant_id, priorities, brief.get("fix_first"), db_path)
 
     label = (last_start.strftime("%B %Y") if months == 1
              else f"{last_start.strftime('%B')}–{last_end.strftime('%B %Y')}")

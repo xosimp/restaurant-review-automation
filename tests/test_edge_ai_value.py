@@ -147,7 +147,7 @@ def test_ask_passing_its_own_source_key_does_not_mint_a_second_tracker_on_the_me
 
 def test_ask_does_not_start_a_labor_tracker_beside_one_a_published_schedule_already_started(db_path):
     rid = _rid(db_path)
-    observed = outcomes.observe(rid, "schedule_published", db_path=db_path, today=date.today())
+    observed = outcomes.observe(rid, "schedule_published", user_id=1, db_path=db_path, today=date.today())
     assert observed and observed["metric"] == "labor_pct"
     _ask_track(rid, db_path, title="Publish a leaner schedule", metric="labor_pct")
     assert _in_flight(db_path, rid, "labor_pct") == 1
@@ -174,6 +174,6 @@ def test_ask_can_track_two_different_metrics_at_once(db_path):
 def test_observe_already_refuses_a_second_tracker_on_a_metric_in_flight(db_path):
     """The rule track_outcome should share: observe() has it."""
     rid = _rid(db_path)
-    assert outcomes.observe(rid, "schedule_published", db_path=db_path, today=date(2026, 9, 21))
+    assert outcomes.observe(rid, "schedule_published", user_id=1, db_path=db_path, today=date(2026, 9, 21))
     assert outcomes.observe(rid, "alert_labor_over", db_path=db_path, today=date(2026, 9, 21)) is None
     assert _in_flight(db_path, rid, "labor_pct") == 1

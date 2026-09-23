@@ -42,7 +42,12 @@ def _snoozed(restaurant_id, today, db_path):
 
 
 def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, today=None):
-    """Put one item back tomorrow (or up to MAX_SNOOZE_DAYS out)."""
+    """Put one item back tomorrow (or up to MAX_SNOOZE_DAYS out).
+
+    action_snoozes keeps one row per key — the latest snooze — so the
+    history of how often something was put off lived nowhere. The ledger
+    keeps it: every snooze is also a rec_ledger "snoozed" event with its
+    `until`, and the same key is quiet on every other surface until then."""
     today = today or date.today()
     days = max(1, min(int(days or SNOOZE_DAYS), MAX_SNOOZE_DAYS))
     until = (today + timedelta(days=days)).isoformat()
@@ -56,6 +61,13 @@ def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, 
         conn.commit()
     finally:
         conn.close()
+    try:
+        import rec_ledger
+        rec_ledger.record(restaurant_id, str(key)[:160], "snoozed", surface="queue", user_id=user_id,
+                          meta={"until": until, "days": days}, snooze_until=f"{until} 00:00:00",
+                          db_path=db_path)
+    except Exception as e:
+        print(f"[action_queue] snooze not recorded in the ledger: {e}")
     return {"key": key, "until": until}
 
 
@@ -107,19 +119,25 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         pass
 
     # ── replies the guests are waiting on ──
+    # Only reviews from the last REPLY_OWED_MAX_AGE_DAYS: connecting Google
+    # imports years of history, which is not a reply anyone owes today.
     if getattr(restaurant, "module_reviews", 0) and _sees(viewer, "reviews"):
+        from thresholds import REPLY_OWED_MAX_AGE_DAYS
         conn = get_conn(db_path)
         try:
             row = conn.execute(
                 "SELECT COUNT(*) AS n, SUM(rating <= 2) AS bad FROM reviews WHERE restaurant_id=? "
-                "AND deleted_at IS NULL AND response_status IN ('pending','drafted')",
-                (restaurant_id,)).fetchone()
+                "AND deleted_at IS NULL AND response_status IN ('pending','drafted') "
+                "AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)",
+                (restaurant_id, f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days")).fetchone()
         finally:
             conn.close()
         if row and row["n"]:
-            add("reviews:waiting", "reviews",
-                f"{row['n']} review{'' if row['n'] == 1 else 's'} waiting on a reply",
-                "important" if (row["bad"] or 0) else "watch",
+            add("reviews_waiting", "reviews",
+                f"{row['n']} review{'' if row['n'] == 1 else 's'} from the last 30 days waiting on a reply",
+                # A guest who left 1-2 stars this month is waiting: Home calls
+                # that critical, and so does the queue (it is never deduped).
+                "critical" if (row["bad"] or 0) else "watch",
                 {"label": "Open Reviews", "module": "reviews"},
                 detail=(f"{row['bad']} at 2 stars or worse" if row["bad"] else None),
                 module="reviews", count=int(row["n"]))
@@ -143,7 +161,10 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         finally:
             conn.close()
         for r in rows:
-            add(f"proposal:{r['action']}", "proposal", r["summary"] or r["action"].replace("_", " "),
+            # One key per proposal, not per KIND of proposal: `proposal:{action}`
+            # meant snoozing one "send the order" hid every order proposal.
+            add(f"proposal:{r['action']}:{(r['summary'] or '')[:60]}", "proposal",
+                r["summary"] or r["action"].replace("_", " "),
                 "watch", {"label": "Open Ask", "module": "ask"},
                 detail="Proposed, never confirmed or dismissed", module="ask")
     except Exception:
@@ -167,13 +188,20 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             import menu_intelligence
             sg = [x for x in (menu_intelligence.reprice_suggestions(restaurant_id, db_path=db_path)
                               .get("suggestions") or []) if (x.get("monthly_margin_lost") or 0) >= 25]
-            if sg:
-                worst = sg[0]
-                add("reprice", "reprice",
-                    f"{len(sg)} dish{'' if len(sg) == 1 else 'es'} priced below their new cost",
-                    "watch", {"label": "Open Food Cost", "module": "inventory"},
-                    detail=f"{worst['dish']} alone is about ${worst['monthly_margin_lost']:,.0f}/month",
-                    module="inventory", count=len(sg))
+            # One item per dish, each with its own key: a single "reprice"
+            # key meant snoozing one dish snoozed every dish. The action is
+            # the one-tap apply at the suggested price.
+            for x in sg[:3]:
+                act = ({"label": f"Reprice to ${x['suggested_price']:.2f}", "method": "POST",
+                        "route": {"web": "/api/food-cost/reprice/apply",
+                                  "mobile": "/mobile/api/food-cost/reprice/apply"},
+                        "body": {"dish": x["dish"], "price": x["suggested_price"]}}
+                       if x.get("suggested_price") else {"label": "Open Food Cost", "module": "inventory"})
+                add(f"reprice:{x['dish']}", "reprice",
+                    f"Reprice {x['dish']} — it is priced below its new cost",
+                    "watch", act,
+                    detail=f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",
+                    module="inventory")
         except Exception:
             pass
 
@@ -193,7 +221,39 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     hidden = _snoozed(restaurant_id, today, db_path)
     rank = {"critical": 0, "important": 1, "watch": 2}
     live = [i for i in out if i["key"] not in hidden]
+    # One "no" everywhere: an answer given on Home, in the brief or anywhere
+    # else silences the same key here (rec_ledger.silenced_keys). Issues are
+    # finished at source, so they are never silenced by a recommendation.
+    try:
+        import rec_ledger
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    except Exception:
+        silenced = set()
+    answered = [i for i in live if i["kind"] != "issue" and i["key"] in silenced]
+    live = [i for i in live if i not in answered]
+    # One piece of news once a day: what Home or the brief already said today
+    # drops out of the queue, unless it is critical.
+    try:
+        import decisions
+        seen = decisions.shown_elsewhere_today(
+            restaurant_id, [i["key"] for i in live if i["kind"] != "issue"], "queue", db_path=db_path)
+    except Exception:
+        seen = set()
+    shown = [i for i in live if i["key"] in seen and i["severity"] != "critical"]
+    live = [i for i in live if i not in shown]
     live.sort(key=lambda i: rank.get(i["severity"], 3))
-    return {"items": live, "snoozed": len(out) - len(live),
+    try:
+        import rec_ledger
+        rec_ledger.present_many(restaurant_id, [
+            {"key": i["key"], "module": _LEDGER_MODULE.get(i["module"], "ops"), "title": i["title"],
+             "position": n} for n, i in enumerate(live) if i["kind"] != "issue"],
+            "queue", user_id=(viewer or {}).get("id"), db_path=db_path)
+    except Exception as e:
+        print(f"[action_queue] present failed: {e}")
+    return {"items": live, "snoozed": len(out) - len(live) - len(shown) - len(answered),
+            "shown_elsewhere": len(shown),
             "note": ("Everything still open, across every module. Snoozing puts an item back "
                      "tomorrow — it never goes away on its own.")}
+
+
+_LEDGER_MODULE = {"reviews": "reviews", "inventory": "food", "labor": "labor", "ask": "ask", "issues": "ops"}

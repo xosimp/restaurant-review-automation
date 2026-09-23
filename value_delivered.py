@@ -262,14 +262,15 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
 
 # ── The whole picture ───────────────────────────────────────────────────────
 
-def surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> dict:
+def surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH, denied_modules=None) -> dict:
     """What the alerts raised this month were worth, from the dollars they
     already carried. A fourth figure, and a fourth thing not summed into the
     others: putting a problem in front of someone is not the same as their
-    having fixed it."""
+    having fixed it. Only dollar-valued alert types count, and a module the
+    viewer may not see is dropped before the sum (models.money_surfaced)."""
     try:
         from models import money_surfaced
-        return money_surfaced(restaurant_id, days=days, db_path=db_path)
+        return money_surfaced(restaurant_id, days=days, db_path=db_path, denied_modules=denied_modules)
     except Exception:
         return {"days": days, "items": [], "dollars": 0.0, "alerts": 0}
 
@@ -286,7 +287,7 @@ def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
         "delivered": delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "avoided": avoided(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "opportunity": opportunity(restaurant_id, db_path=db_path, denied_modules=denied_modules),
-        "surfaced": surfaced(restaurant_id, db_path=db_path),
+        "surfaced": surfaced(restaurant_id, db_path=db_path, denied_modules=denied_modules),
     }
 
 

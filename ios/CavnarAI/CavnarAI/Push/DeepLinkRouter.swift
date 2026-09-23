@@ -59,6 +59,15 @@ final class DeepLinkRouter {
     }
 
     private struct OpenedBody: Encodable { let type: String }
+    private struct RecOpenedBody: Encodable { let key: String; let event: String; let surface: String }
+
+    /// A tapped push that carried a recommendation key: recorded as
+    /// "opened" against it (POST /mobile/api/recs/event). Best effort.
+    nonisolated static func recordRecOpened(_ key: String, surface: String) async {
+        let _: APIClient.OKResponse? = try? await APIClient.shared.send(
+            "/mobile/api/recs/event", method: .post,
+            body: RecOpenedBody(key: key, event: "opened", surface: surface), hapticOnError: false)
+    }
 
     private static func recordOpen(_ alertType: String) async {
         let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(

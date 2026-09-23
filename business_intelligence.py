@@ -645,6 +645,8 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
         unavailable.append({"module": "reviews",
                             "reason": money.get("reason") or "no rating movement large enough to price"})
 
+    for l in lines + ([upside] if upside else []):
+        l["key"] = f"money:{l['module']}"      # its identity in rec_ledger
     material = [l for l in lines if l["monthly"] >= MIN_MONTHLY_DOLLARS]
     material.sort(key=lambda l: -l["monthly"])
     return {
@@ -665,6 +667,197 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
     }
 
 
+# ── the one thing to do ────────────────────────────────────────────────────
+#
+# "If you only do one thing: Food cost drivers." was the morning brief's
+# lead line: the top of the money ranking is a MODULE LABEL, and the food
+# brief's own concrete fix ("Salmon Fillet waste above tolerance, $74/mo")
+# was dropped on the way. The one thing is now always an action a person can
+# start today, from the module that measured it — the top driver's own fix,
+# a stored diagnosis's recommended_action, the replies that are owed — and
+# they are ranked against each other by urgency x dollars, so five unanswered
+# one-star reviews that Home already calls critical beat a $124/month food
+# line rather than losing to it for having no dollar figure.
+
+# Urgency weights. Critical is what Home marks critical (a guest waiting on a
+# reply to a 1-2 star review); important is what two modules agree on or a
+# gap against the owner's own target; normal is everything else.
+URGENCY_WEIGHT = {"critical": 10.0, "important": 2.0, "normal": 1.0}
+# An action with no dollar figure is ranked as if it carried this much — not
+# zero (a missing measurement is never $0), and not enough to beat a real
+# line on its own.
+UNPRICED_FLOOR = 50.0
+
+
+def issue_key(category) -> str:
+    """The recommendation key for a review complaint theme, the same on Home,
+    the brief and the ledger."""
+    return f"top_issue:{str(category or '').strip()[:60]}"
+
+
+def driver_key(driver) -> str:
+    label = str((driver or {}).get("label") or (driver or {}).get("what") or "")
+    return f"food_cost_driver:{label[:40]}"
+
+
+def driver_action(driver) -> str:
+    """A food-cost driver as the thing to DO about it, verb first.
+
+    Drivers are labelled as findings ("Salmon Fillet waste above
+    tolerance"); an owner reading a list of findings has to work out the
+    action for each. The kind decides the verb. A driver without its kind
+    (fci.executive_brief's trimmed shape) is read from its label, whose five
+    shapes cost_drivers fixes."""
+    import re
+    d = driver or {}
+    kind, item = d.get("kind"), d.get("item")
+    label = str(d.get("label") or d.get("what") or "").strip()
+    if not kind:
+        for k, pat in (("waste", r"^(.+?) waste above tolerance$"), ("portion", r"^(.+?) usage over recipe$"),
+                       ("price", r"^(.+?) price up (\d+)%$"), ("sourcing", r"^(.+?) cheaper from (.+)$"),
+                       ("menu", r"^(.+?) runs at ([\d.]+)% food cost$")):
+            m = re.match(pat, label)
+            if m:
+                kind, item = k, m.group(1)
+                break
+    if not kind or not item:
+        return label
+    if kind == "waste":
+        return f"Cut the {item} order — waste is above tolerance"
+    if kind == "portion":
+        return f"Check {item} portions against the recipe — usage runs over"
+    if kind == "price":
+        m = re.search(r"up (\d+)%", label)
+        return f"Get a second quote on {item} — the price is up {m.group(1)}%" if m else f"Get a second quote on {item}"
+    if kind == "sourcing":
+        m = re.search(r"cheaper from (.+)$", label)
+        return f"Buy {item} from {m.group(1)} — it's cheaper there" if m else f"Re-source {item}"
+    if kind == "menu":
+        m = re.search(r"runs at ([\d.]+)% food cost", label)
+        return (f"Re-cost or reprice {item} — it runs at {m.group(1)}% food cost" if m
+                else f"Re-cost or reprice {item}")
+    return label
+
+
+def _low_star_waiting(restaurant_id, db_path=DB_PATH) -> int:
+    """1-2 star reviews from the last REPLY_OWED_MAX_AGE_DAYS with no reply —
+    the ones Home marks critical. Imported history is not owed a reply."""
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating <= 2 "
+            "AND response_status IN ('pending','drafted') "
+            "AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)",
+            (restaurant_id, f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days")).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    return int((row[0] if row else 0) or 0)
+
+
+def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> list:
+    """Every concrete action the modules can name, each with its key,
+    urgency, dollars (or None) and evidence, ranked by urgency x dollars."""
+    out = []
+    reviews = data.get("reviews") or {}
+    reviews_brief = reviews.get("brief") or {}
+    food_brief = (data.get("food_cost") or {}).get("brief") or {}
+    labor = data.get("labor") or {}
+
+    def add(key, what, why, modules, urgency="normal", dollars=None, evidence=None, claim_kind="measured",
+            **extra):
+        if not what:
+            return
+        out.append({"key": key, "what": str(what).strip().rstrip("."), "why": why, "modules": modules,
+                    "urgency": urgency, "dollars_monthly": round(float(dollars), 2) if dollars else None,
+                    "evidence": [e for e in (evidence or []) if e], "claim_kind": claim_kind, **extra})
+
+    if data.get("reviews") is not None:
+        n = _low_star_waiting(restaurant_id, db_path=db_path)
+        if n:
+            add("urgent_reviews",
+                f"Reply to the {n} review{'' if n == 1 else 's'} at 2 stars or worse still waiting on an answer",
+                "a guest who complained is waiting, and every later reader sees the silence",
+                ["reviews"], urgency="critical",
+                evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"])
+
+    for top in (links or [])[:1]:
+        add(f"link:{top.get('kind') or 'cross'}", top.get("confirm_by") or top.get("headline"),
+            top.get("headline"), top.get("modules") or [], urgency="important",
+            evidence=top.get("evidence"), claim_kind="inferred",
+            confirm_by=top.get("confirm_by"), link_headline=top.get("headline"))
+
+    fx = food_brief.get("fix_first")
+    if fx and (fx.get("what") or fx.get("label")):
+        add(driver_key(fx), driver_action(fx),
+            ("otherwise " + fx["if_ignored"]) if fx.get("if_ignored") else None, ["food_cost"],
+            dollars=fx.get("dollars_monthly"), evidence=[fx.get("evidence")],
+            claim_kind="computed", confidence=fx.get("confidence"))
+    else:
+        try:
+            import food_cost_intelligence as fci
+            dg = fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) \
+                if data.get("food_cost") is not None else None
+        except Exception:
+            dg = None
+        if dg and dg.get("recommended_action"):
+            add("food_diagnosis", dg["recommended_action"], dg.get("cause"), ["food_cost"],
+                dollars=dg.get("dollars_at_stake"), evidence=[dg.get("headline")], claim_kind="inferred",
+                alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
+
+    rfx = reviews_brief.get("fix_first")
+    if rfx and rfx.get("what"):
+        cat = rfx["what"]
+        dg = next((d for d in (reviews.get("diagnoses") or []) if d.get("category") == cat
+                   and d.get("recommended_action")), None)
+        if dg:
+            add(issue_key(cat), dg["recommended_action"], dg.get("cause"), ["reviews"],
+                evidence=[rfx.get("evidence")], claim_kind="inferred",
+                alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
+        else:
+            add(issue_key(cat), f"Read the {_cat(cat)} complaints and pick one fix for this week",
+                rfx.get("why"), ["reviews"], evidence=[rfx.get("evidence")], claim_kind="computed")
+
+    if labor.get("is_live") and _f(labor.get("potential_savings_monthly")) > 0:
+        dow = {k: v for k, v in (labor.get("dow_summary") or {}).items() if v}
+        if dow:
+            day = max(dow.items(), key=lambda kv: kv[1])[0]
+            target = labor.get("labor_target", 30)
+            add(f"trim_day:{day}", f"Build the next schedule to your {target:g}% target, starting with {day}",
+                f"{day} runs the heaviest labor % of the week", ["labor"], urgency="important",
+                dollars=labor.get("potential_savings_monthly"),
+                evidence=[f"gap above the {target:g}% target over {labor.get('period_days', 0)} days synced"],
+                claim_kind="computed")
+
+    for c in out:
+        c["score"] = URGENCY_WEIGHT.get(c["urgency"], 1.0) * max(c["dollars_monthly"] or 0.0, UNPRICED_FLOOR)
+    out.sort(key=lambda c: -c["score"])
+    return out
+
+
+def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH):
+    """The top candidate the owner has not already answered, and whose kind
+    they have not stopped answering (decisions.quiet_kinds) — a "no" on Home
+    is a no here too, and a kind ignored four times running never leads."""
+    if not candidates:
+        return None
+    try:
+        import rec_ledger
+        import decisions
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+        quiet = decisions.quiet_kinds(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.warning("one thing: ledger unavailable: %s", e)
+        silenced, quiet = set(), set()
+    for c in candidates:
+        if c["key"] in silenced or c["key"].split(":", 1)[0] in quiet:
+            continue
+        return dict(c)
+    return None
+
+
 # ── the one brief ──────────────────────────────────────────────────────────
 
 def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
@@ -681,24 +874,10 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH)
     reviews_brief = (data.get("reviews") or {}).get("brief") or {}
     food_brief = (data.get("food_cost") or {}).get("brief") or {}
 
-    # What to do first, across modules rather than within one. A link beats a
-    # single-module item: two modules agreeing is the strongest evidence this
-    # platform can produce, and it is the thing no tab could ever show.
-    first = None
-    if links:
-        top = links[0]
-        first = {"what": top["headline"], "why": "two modules point at the same thing",
-                 "modules": top["modules"], "evidence": top["evidence"],
-                 "confirm_by": top.get("confirm_by"), "claim_kind": "inferred"}
-    elif money["ranked"]:
-        top = money["ranked"][0]
-        first = {"what": top["label"], "why": f"the largest single monthly figure on the books",
-                 "modules": [top["module"]], "dollars_monthly": top["monthly"],
-                 "evidence": [top["basis"]], "claim_kind": top["claim_kind"]}
-    elif food_brief.get("fix_first"):
-        first = dict(food_brief["fix_first"], modules=["food_cost"])
-    elif reviews_brief.get("fix_first"):
-        first = dict(reviews_brief["fix_first"], modules=["reviews"])
+    # What to do first, across modules rather than within one: a concrete
+    # action, never a module label, ranked by urgency x dollars.
+    candidates = one_thing_candidates(restaurant_id, data, links, db_path=db_path)
+    first = pick_one_thing(restaurant_id, candidates, db_path=db_path)
 
     unanswered = []
     for m in data.get("modules_off", []):

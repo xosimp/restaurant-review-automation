@@ -57,11 +57,16 @@ final class HomeViewModel {
     /// mobile_approve_all_reviews), then reloads so the deck, the pulse
     /// strip and the value figure all catch up together. Returns nil on
     /// failure; APIClient has already played the error haptic by then.
-    func publishAllReplies() async -> BulkPublishResult? {
+    private struct PublishBody: Encodable { let limit: Int }
+
+    /// `limit` is the number on the card's label; nil keeps the server's cap.
+    func publishAllReplies(limit: Int? = nil) async -> BulkPublishResult? {
         isPublishingReplies = true
         defer { isPublishingReplies = false }
         do {
-            let result: BulkPublishResult = try await client.send("/mobile/api/reviews/approve-all", method: .post)
+            let result: BulkPublishResult = try await client.send(
+                "/mobile/api/reviews/approve-all", method: .post,
+                body: limit.map { PublishBody(limit: $0) })
             await load()
             return result
         } catch {

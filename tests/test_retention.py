@@ -324,10 +324,22 @@ def test_observe_records_an_owner_action_once_a_month(db_path):
     import outcomes
     rid = _restaurant(db_path, module_labor=1)
     _days(db_path, rid, date.today() - timedelta(days=40), 40)
-    first = outcomes.observe(rid, "schedule_published", detail="week of 2026-09-21", db_path=db_path)
+    first = outcomes.observe(rid, "schedule_published", detail="week of 2026-09-21", user_id=1, db_path=db_path)
     assert first and first["source"] == "observed" and first["metric"] == "labor_pct"
     assert "Published a schedule" in first["title"]
-    assert outcomes.observe(rid, "schedule_published", db_path=db_path) is None
+    # The owner reads the date as M/D/YY, never ISO (recommendation-trust #10).
+    assert "week of 9/21/26" in first["title"] and "2026-09-21" not in first["title"]
+    assert outcomes.observe(rid, "schedule_published", user_id=1, db_path=db_path) is None
+
+
+def test_an_automatic_action_is_not_the_owner_acting(db_path):
+    """A supplier order the trusted-supplier automation sent (actor id None)
+    or an auto-published schedule is Cavnar's work, not an owner's change,
+    so it starts no "owner acted" tracker."""
+    import outcomes
+    rid = _restaurant(db_path, module_labor=1, module_inventory=1)
+    assert outcomes.observe(rid, "supplier_order_sent", detail="Fresh Co", user_id=None, db_path=db_path) is None
+    assert outcomes.observe(rid, "schedule_published", user_id=None, db_path=db_path) is None
 
 
 def test_observe_never_doubles_a_tracker_already_in_flight(db_path):
@@ -336,7 +348,7 @@ def test_observe_never_doubles_a_tracker_already_in_flight(db_path):
     rid = _restaurant(db_path, module_labor=1)
     _days(db_path, rid, date.today() - timedelta(days=40), 40)
     outcomes.record(rid, "recommendation", "trim_day:Monday", "Trim Monday", "labor_pct", db_path=db_path)
-    assert outcomes.observe(rid, "schedule_published", db_path=db_path) is None
+    assert outcomes.observe(rid, "schedule_published", user_id=1, db_path=db_path) is None
 
 
 def test_observe_ignores_unknown_actions(db_path):

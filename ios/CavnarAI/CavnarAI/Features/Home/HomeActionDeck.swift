@@ -23,6 +23,9 @@ struct HomeActionDeck: View {
     var busy: Bool = false
     let onPrimary: (NeedsAttentionItem) -> Void
     let onSecondary: (NeedsAttentionItem) -> Void
+    /// "snooze" (not today) or "recommendation" (hide two weeks) on an item
+    /// the server marked dismissable.
+    var onDismiss: ((NeedsAttentionItem, String) -> Void)? = nil
 
     @State private var index = 0
     @State private var dragX: CGFloat = 0
@@ -61,7 +64,8 @@ struct HomeActionDeck: View {
                         item: entry.item,
                         busy: busy && entry.depth == 0,
                         onPrimary: { onPrimary(entry.item) },
-                        onSecondary: { onSecondary(entry.item) }
+                        onSecondary: { onSecondary(entry.item) },
+                        onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(entry.item, kind) } }
                     )
                     .scaleEffect(1 - CGFloat(entry.depth) * 0.045, anchor: .bottom)
                     .offset(x: entry.id == draggingID ? dragX : 0,
@@ -188,6 +192,7 @@ private struct ActionDeckCard: View {
     let busy: Bool
     let onPrimary: () -> Void
     let onSecondary: () -> Void
+    var onDismiss: ((String) -> Void)? = nil
 
     private static let obsidian = Color(red: 0.08, green: 0.08, blue: 0.09)
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 22, style: .continuous) }
@@ -201,6 +206,22 @@ private struct ActionDeckCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HomeMixedText.make(item.detail, size: 13, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                // The same answers a recommendation has — never on a
+                // critical item (a guest waiting, a broken sync).
+                if item.dismissable == true, let onDismiss {
+                    Menu {
+                        Button("Not today") { onDismiss("snooze") }
+                        Button("Hide for two weeks") { onDismiss("recommendation") }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Not today, or hide")
                 }
             }
             Spacer(minLength: 8)
