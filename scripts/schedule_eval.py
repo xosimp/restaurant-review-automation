@@ -68,8 +68,20 @@ def evaluate(history_id: int, optimize: bool = False) -> dict:
         except ImportError:
             out["optimized"] = None
         else:
+            from models import get_restaurant
+            r = get_restaurant(row["restaurant_id"])
+            budget = None
+            if r is not None and int(getattr(r, "trim_to_budget", 1) or 0):
+                conn = get_conn()
+                try:
+                    h = conn.execute("SELECT hours_budget FROM schedule_history WHERE id=?", (row["id"],)).fetchone()
+                finally:
+                    conn.close()
+                budget = float(h["hours_budget"] or 0) or None if h else None
+            # The same ceilings the generation job holds the search to.
             res = so.optimize(rows, inputs, signals=signals, weights=weights,
-                              constraints=inputs.get("constraints"))
+                              constraints=inputs.get("constraints"), hours_budget=budget,
+                              max_server_overlap=getattr(r, "section_count", None))
             out["optimized"] = res.get("after_score")
             out["changes"] = [c.get("reason") for c in res.get("changes") or []]
             out["seconds"] = res.get("seconds")

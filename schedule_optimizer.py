@@ -172,7 +172,9 @@ class _State:
             counts = {}
             for i in idxs:
                 r = self.rows[i]
-                if sq.daypart_of(r.get("shift_start", "")) != part:
+                # The row's own daypart by what it covers: a 2pm-close
+                # shift is a dinner shift and never the template for lunch.
+                if sq.present_dayparts(r)[0] != part:
                     continue
                 key = (r.get("shift_start"), r.get("shift_end"))
                 counts[key] = counts.get(key, 0) + 1
@@ -222,14 +224,34 @@ def _moves_for(problem, state: _State) -> list:
     where = f"{day} {'lunch' if part == 'morning' else 'dinner' if part == 'night' else part}"
     moves = []
 
-    def add_person(role, why, prefer=None):
+    def add_person(role, why, prefer=None, cover_minute=None):
         tpl = state.template(date, role, part)
         if not tpl:
             return
         start, end = tpl
+        if cover_minute is not None:
+            # The added shift must actually be on at the thin half hour it is
+            # added for: the template's own times left "thin at 9:00pm" with
+            # a 3-9pm shift and nobody on at nine.
+            ts, te = _m(start), _m(end)
+            if ts is not None and te is not None:
+                if te <= ts:
+                    te += 24 * 60
+                dur = te - ts
+                close = max((e for r in state.rows if r.get("date") == date
+                             for _s, e in [_span(r)] if e is not None), default=te)
+                if cover_minute >= te:
+                    te = min(max(cover_minute + STEP * 2, te), close)
+                    ts = te - dur
+                elif cover_minute < ts:
+                    ts = cover_minute
+                    te = min(ts + dur, close)
+                if not (ts <= cover_minute < te):
+                    return
+                start, end = _fmt(ts), _fmt(te)
         pool = sorted(state.pool.get(role.strip().lower(), ()),
                       key=lambda n: (-(prefer(n) if prefer else 0),
-                                     state.index.total_hours(n.lower())))
+                                     state.index.total_hours(n.lower()), n))
         for name in pool:
             row = _new_row(date, name, role, start, end, why)
             if state.can_add(name, row):
@@ -243,10 +265,16 @@ def _moves_for(problem, state: _State) -> list:
         row = state.rows[idx]
         role = (row.get("role") or "").strip().lower()
         cur = (row.get("employee") or "").strip()
-        for name in sorted(state.pool.get(role, ()), key=lambda n: state.index.total_hours(n.lower())):
+        for name in sorted(state.pool.get(role, ()), key=lambda n: (state.index.total_hours(n.lower()), n)):
             if name == cur or not predicate(name):
                 continue
             if row.get("date") in state.pending.get(name.lower(), ()):
+                continue
+            # Rated for unrated (or the reverse) always "improves" a score
+            # that counts an unrated person as nothing — the same guard the
+            # swap index keeps, so the search never advises benching people
+            # nobody has rated yet.
+            if state.scores and (state.scores.get(cur) is None) != (state.scores.get(name) is None):
                 continue
             if not state.index.replacement_legal(idx, name):
                 continue
@@ -275,10 +303,13 @@ def _moves_for(problem, state: _State) -> list:
                 lo, hi = sq.CORE_WINDOWS.get(part, (None, None))
                 if lo is None:
                     continue
-                new_s, new_e = (min(s, lo), e) if part == "morning" else (s, max(e, lo + sq.PRESENCE_MIN_OVERLAP))
+                # Through the daypart's core service, not just enough of it
+                # to count: an hour into dinner and gone before the rush
+                # "covered" nothing anybody would call dinner.
+                new_s, new_e = (min(s, lo), e) if part == "morning" else (s, max(e, hi))
                 if (new_e - new_s) - (e - s) > MAX_EXTEND_MINUTES:
                     continue
-                moves.append(_retime_move(state, i, new_s, new_e, f"to cover {role} on {where}"))
+                moves.append(_retime_move(state, i, new_s, new_e, f"to cover {role} through {where}"))
 
     elif key == "coverage_curve":
         for role, g in (facts.get("gaps") or {}).items():
@@ -298,7 +329,7 @@ def _moves_for(problem, state: _State) -> list:
             for dist, i, ns, ne in sorted(best)[:2]:
                 if dist <= MAX_EXTEND_MINUTES:
                     moves.append(_retime_move(state, i, ns, ne, f"{role} was thin at {g.get('worst_at')} on {where}"))
-            add_person(role, f"{role} was thin at {g.get('worst_at')} on {where}")
+            add_person(role, f"{role} was thin at {g.get('worst_at')} on {where}", cover_minute=t)
 
     elif key == "leadership":
         for miss in facts.get("misses") or []:
@@ -392,10 +423,11 @@ def _moves_for(problem, state: _State) -> list:
                           key=lambda i: -sq._row_hours(state.rows[i]))
             for i in idxs[:3]:
                 s, e = _span(state.rows[i])
-                if s is not None and e - s > 5 * 60:
+                if s is not None and e - s > 5 * 60 and _can_cut(state, i, 1.0):
                     moves.append(_retime_move(state, i, s, e - 60, f"{day} was over its hour target"))
             for i in idxs[:3]:
-                moves.append(_remove_move(state, i, f"{day} was over its hour target"))
+                if _can_cut(state, i, sq._row_hours(state.rows[i]), removing=True):
+                    moves.append(_remove_move(state, i, f"{day} was over its hour target"))
 
     elif key == "stability":
         for name in facts.get("changed") or []:
@@ -403,6 +435,25 @@ def _moves_for(problem, state: _State) -> list:
                 if (r.get("employee") or "").strip() == name and r.get("date") == date:
                     _swap_moves(state, i, moves, f"{name} is not usually on {where}")
     return moves
+
+
+def _can_cut(state, i, hours, removing=False) -> bool:
+    """A cut the budget trim would also allow: never somebody's only shift
+    of the week, never under the minimum hours they asked for."""
+    name = (state.rows[i].get("employee") or "").strip()
+    low = name.lower()
+    mine = [r for r in state.rows if (r.get("employee") or "").strip().lower() == low]
+    if removing and len(mine) <= 1:
+        return False
+    c = getattr(state, "constraints", None)
+    if c is not None:
+        try:
+            mn = c.min_hours(name)
+        except Exception:
+            mn = None
+        if mn and sum(sq._row_hours(r) for r in mine) - hours < float(mn) - 0.05:
+            return False
+    return True
 
 
 def _retime_move(state, i, new_s, new_e, why):
@@ -441,6 +492,10 @@ def _swap_moves(state, i, moves, why, want=None):
             continue
         if want is not None and not want((state.rows[j].get("employee") or "").strip()):
             continue
+        other_name = (state.rows[j].get("employee") or "").strip().lower()
+        me = (row.get("employee") or "").strip().lower()
+        if row.get("date") in state.pending.get(other_name, ()) or state.rows[j].get("date") in state.pending.get(me, ()):
+            continue
         if not state.index.legal(i, j, state.scores):
             continue
         other = state.rows[j]
@@ -467,7 +522,9 @@ def _hard_count(rows, constraints) -> int:
     try:
         return sum(1 for v in _rules.violations(rows, constraints) if v.get("hard"))
     except Exception:
-        return 0
+        # The sweep could not run: no move can be shown legal, so none is
+        # taken (a very large count refuses every move).
+        return 10 ** 9
 
 
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
@@ -499,6 +556,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         out["stopped"] = "nothing to score"
         return out
     base_hard = _hard_count(current_rows, constraints)
+    if base_hard >= 10 ** 9:
+        out["stopped"] = "the rule check could not run, so nothing was changed"
+        return out
     budget = float(hours_budget if hours_budget is not None else (inputs.get("hours_budget") or 0) or 0)
     ceiling = budget * BUDGET_TOLERANCE if budget > 0 else None
 
@@ -537,6 +597,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
             stopped = "budget spent"
             break
         state = _State(current_rows, signals, inputs)
+        state.constraints = constraints
         candidates, seen = [], set()
         for problem in _problems(current)[:8]:
             for mv in _moves_for(problem, state):
@@ -615,12 +676,20 @@ def unresolved(result: dict, signals: dict = None, limit: int = 4) -> list:
             for miss in (d.get("facts") or {}).get("misses") or []:
                 if miss.get("attribute"):
                     role = (miss.get("role") or "").strip()
-                    able = sorted({(r.get("employee") or "").strip() for r in roster_rows
-                                   if (r.get("role") or "").strip().lower() == role.lower()
-                                   and flags.get((r.get("employee") or "").strip())})
+                    roster_roles = signals.get("roster_roles") or {}
+                    cross = signals.get("cross_trained") or {}
+                    in_role = {n for n, rl in roster_roles.items() if (rl or "").strip().lower() == role.lower()}
+                    in_role |= {n for n, rls in cross.items() if role.lower() in {str(x).strip().lower() for x in rls or []}}
+                    in_role |= {(r.get("employee") or "").strip() for r in roster_rows
+                                if (r.get("role") or "").strip().lower() == role.lower()}
+                    able = sorted(n for n in in_role if flags.get(n))
                     if len(able) <= 1:
+                        # Only what was checked: who in the role is authorised
+                        # (the whole roster, not only this week's rows), and
+                        # that no legal change put them here.
                         text = (f"{where} has no {role.lower()} authorised to close. "
-                                + (f"Only {able[0]} is, and they are already on the other nights they can legally work. "
+                                + (f"Only {able[0]} is, and no legal change could put them on this shift "
+                                   f"(they may be off that day, at their hours limit, or needed on another close). "
                                    if able else "Nobody in that role is. ")
                                 + f"Authorising another {role.lower()} to close fixes this.")
         key = (s["date"], s["daypart"], d["key"])

@@ -28,6 +28,7 @@ from models import get_conn, DB_PATH
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
 TRIM_SCORE_CANDIDATES = 5       # how many equally-discretionary rows the score chooses between
+TRIM_SCORE_SECONDS = 8.0        # past this the score stops choosing; the order alone decides (big rosters)
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
 
@@ -434,7 +435,8 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3) ->
 
 def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constraints=None, floors: dict = None,
                    splh: dict = None, rainy_dates: set = None, patio_roles: set = None,
-                   tolerance: float = TRIM_TOLERANCE, score_fn=None) -> tuple:
+                   tolerance: float = TRIM_TOLERANCE, score_fn=None,
+                   score_seconds: float = TRIM_SCORE_SECONDS) -> tuple:
     """Remove the most discretionary hours until the week is within the
     budget. Order: rows the top-up added, then the later leg of a double,
     then the latest starter of a role on the day furthest over its own
@@ -450,6 +452,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
     Returns (rows, trimmed:[{...}], hours_removed).
     """
+    import time as _time
+    _t0 = _time.monotonic()
     rows = list(rows or [])
     budget = float(hours_budget or 0)
     total = sum(_hours(r) for r in rows)
@@ -555,6 +559,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             return (tier, rain, -over, splh_rank, -start)
         ranked = sorted(cands, key=priority)
         victim = ranked[0]
+        if score_fn is not None and _time.monotonic() - _t0 > score_seconds:
+            score_fn = None
         if score_fn is not None:
             tier = priority(victim)[0]
             pool = [r for r in ranked if priority(r)[0] == tier][:TRIM_SCORE_CANDIDATES]

@@ -1984,6 +1984,9 @@ def _quality_signals(restaurant_id, result, **extra):
         "reliability": result.get("reliability") or {},
         "pairs": result.get("pairs") or {},
         "roster": result.get("roster") or [],
+        # {name: role} — who a fix or a repair may consider for a role,
+        # beyond the people already scheduled in it this week.
+        "roster_roles": result.get("roster_roles") or {},
     }
     c = result.get("constraints")
     if c is not None:
@@ -2017,14 +2020,29 @@ def _quality_signals(restaurant_id, result, **extra):
         scores = signals["scores"]
         unsat = 0
         unmeetable = []
+        roles = result.get("roster_roles") or {}
+        try:
+            from models import get_leader_flags as _glf
+            _flags = _glf(restaurant_id) or {}
+        except Exception:
+            _flags = {}
+        cross = result.get("cross_trained") or {}
         for rule in signals["leader_rules"]:
             ms = rule.get("min_score")
-            if ms is None or rule.get("attribute"):
-                continue
             role = (rule.get("role") or "").strip().lower()
-            roles = result.get("roster_roles") or {}
-            able = [n for n, sc in scores.items() if sc is not None and float(sc) >= float(ms)
-                    and (not roles or (roles.get(n) or "").strip().lower() == role)]
+
+            def _in_role(n):
+                return (not roles or (roles.get(n) or "").strip().lower() == role
+                        or role in {str(x).strip().lower() for x in (cross.get(n) or [])})
+            if rule.get("attribute"):
+                # "Authorised to close" nobody in the role holds is as
+                # unmeetable as a score nobody reaches; checked only for
+                # score rules, it scored every closing shift 0 (SCHED-30).
+                able = [n for n, f in _flags.items() if f and _in_role(n)]
+            elif ms is not None:
+                able = [n for n, sc in scores.items() if sc is not None and float(sc) >= float(ms) and _in_role(n)]
+            else:
+                continue
             if len(able) < int(rule.get("count") or 1):
                 unsat += 1
                 unmeetable.append(rule)
@@ -2543,7 +2561,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _sig, _w = _quality_signals(restaurant_id, result)
                     _profiles_for_fix = result.get("shift_profiles") or None
                     import shift_quality as _sqf
-                    _out = _sqf.apply_fixes(preview_rows, _hard, profiles=_profiles_for_fix, weights=_w, **_sig)
+                    _out = _sqf.apply_fixes(preview_rows, _hard, profiles=_profiles_for_fix, weights=_w,
+                                            rule_constraints=_constraints, **_sig)
                     if _out.get("fixes"):
                         preview_rows = _out["rows"]
                         _fixes = _out["fixes"]
@@ -2552,6 +2571,24 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _unfixed = _out.get("unfixed") or []
                 except Exception as _fx:
                     print(f"[schedule] fix pass failed: {_fx}")
+            # The fix pass staffs rows the budget trim counted as nobody (a
+            # person on time off): a week the trim had brought under budget
+            # can be back over it. Trimmed again, by the same rules.
+            try:
+                _hb2 = float(result.get("hours_budget") or 0)
+                if _fixes and _hb2 > 0 and int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) \
+                        and _safe_hours_sum(preview_rows) > _hb2 * (1 + _econ.TRIM_TOLERANCE):
+                    preview_rows, _t2, _h2 = _econ.trim_to_budget(
+                        preview_rows, _hb2, result.get("daily_target_hours") or {}, constraints=_constraints,
+                        floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
+                        patio_roles=_constraints.patio_roles)
+                    if _t2:
+                        result["trimmed"] = (result.get("trimmed") or []) + _t2
+                        result["hours_trimmed"] = round((result.get("hours_trimmed") or 0) + _h2, 1)
+                        hours_scheduled = _safe_hours_sum(preview_rows)
+                        _viols = _rules.violations(preview_rows, _constraints)
+            except Exception as _t2x:
+                print(f"[schedule] post-fix trim failed: {_t2x}")
             # The score as the objective (schedule_optimizer): legal adds,
             # stretches, replacements, swaps and trims aimed at the weakest
             # dimensions, each re-checked against the rule sweep, applied
@@ -3111,6 +3148,7 @@ def _rules_for_swaps(c) -> dict:
         "certifications": {k: sorted(v) for k, v in (c.certifications or {}).items()},
         "role_requirements": {k: sorted(v) for k, v in (c.role_requirements or {}).items()},
         "time_windows": dict(c.time_windows or {}),
+        "pending_off": {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()},
     }
 
 

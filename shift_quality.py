@@ -226,9 +226,14 @@ class ShiftContext:
     # ── Derived views every dimension wants ────────────────────────────
     @property
     def people(self) -> list:
+        """Everybody really on this shift. A row the rule sweep says will not
+        stand (time off, double-booked) is not somebody on the floor, for
+        leadership, experience, fatigue or anything else."""
         seen, out = set(), []
         for r in self.rows:
             n = (r.get("employee") or "").strip()
+            if self._is_flagged(r):
+                continue
             if n and n.lower() not in seen:
                 seen.add(n.lower())
                 out.append(n)
@@ -454,8 +459,13 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
                 break
         if not people:
             continue  # coverage owns an empty role, not strength
-        strength = sum(ctx.scores.get(n) or 0 for n in people)
         unrated_here.extend(ctx.unrated(people))
+        if not ctx.rated(people):
+            # Nobody in this role on this shift is rated: its strength is
+            # unknown, not zero. Counted as 0 it capped the whole shift at
+            # 0 and sent the optimizer to swap the new hire out.
+            continue
+        strength = sum(ctx.scores.get(n) or 0 for n in people)
         ratios.append(min(1.0, strength / float(target)) if target else 1.0)
         if strength < float(target):
             shorts.append((role, strength, float(target), people))
@@ -1166,7 +1176,11 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         # Whole-day minimums are only an hourly requirement when the hours
         # they apply across are on file; without them the day's own shifts
         # would define the window and a thin day could never be short.
-        required = {r: int(n) for r, n in ctx.role_minimums.items() if n}
+        # A whole-day minimum binds only the dayparts the role works, as in
+        # dim_coverage: a bar that opens at 4pm is not "under 2" all lunch.
+        runs_here = {r.strip().lower() for r in (ctx.typical_headcount or {})}
+        required = {r: int(n) for r, n in ctx.role_minimums.items()
+                    if n and (not runs_here or r.strip().lower() in runs_here)}
         source = "your role minimums"
     peak_need = _peak_requirement(ctx)
     if not required and not peak_need:
@@ -1186,10 +1200,18 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     day_close = ctx.close_minutes if ctx.close_minutes is not None else max(e for _, _, e in spans)
     if day_close <= day_open:
         day_close += 24 * 60
+    # The daypart's window runs from open to the changeover (lunch) or the
+    # changeover to close (dinner) — but the changeover is where the day's
+    # own shifts hand over, not a fixed 3pm: lunch ending at 2:30 and dinner
+    # starting at 4 is a handover, not an hour and a half "short".
+    own = [(s, e) for r in (ctx.rows or []) for s, e in [(_slot_minutes(r.get("shift_start")), _slot_minutes(r.get("shift_end")))]
+           if s is not None and e is not None and not ctx._is_flagged(r)]
     if ctx.daypart == "morning":
-        lo, hi = day_open, min(day_close, DAYPART_CUTOVER)
+        latest = max((e if e > s else e + 1440 for s, e in own), default=DAYPART_CUTOVER)
+        lo, hi = day_open, min(day_close, max(CORE_WINDOWS["morning"][1], min(latest, DAYPART_CUTOVER)))
     elif ctx.daypart == "night":
-        lo, hi = max(day_open, DAYPART_CUTOVER), day_close
+        earliest = min((s for s, _e in own), default=DAYPART_CUTOVER)
+        lo, hi = max(day_open, min(CORE_WINDOWS["night"][0], max(earliest, DAYPART_CUTOVER))), day_close
     else:
         lo, hi = day_open, day_close
     if hi - lo < SLOT_MINUTES:
@@ -1256,10 +1278,11 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
             f"— down to {g['worst_on']} at {_fmt_minutes(g['worst'])}.")
     if not gaps:
         res.strengths.append(f"Every floor is held from {_fmt_minutes(lo)} to {_fmt_minutes(hi)}.")
-    if ctx.demand_curve:
-        # The busiest hour of the day by sales share, and whether it is the
-        # best-staffed. A mismatch is a fact worth stating, not yet a score.
-        peak_hour = max(ctx.demand_curve.items(), key=lambda kv: kv[1])[0]
+    in_window = {h: v for h, v in (ctx.demand_curve or {}).items() if lo <= int(h) * 60 < hi}
+    if in_window:
+        # The busiest hour of THIS daypart by sales share, and whether it is
+        # the best-staffed — lunch was being told about the dinner peak.
+        peak_hour = max(in_window.items(), key=lambda kv: kv[1])[0]
         on_peak = sum(1 for _, s, e in spans if s <= int(peak_hour) * 60 < e)
         on_max = max((sum(1 for _, s, e in spans if s <= t < e) for t in slots), default=0)
         res.facts["peak_hour"] = int(peak_hour)
@@ -2115,21 +2138,39 @@ PRESENCE_MIN_OVERLAP = 60
 
 
 def present_dayparts(row: dict) -> list:
-    """The dayparts a row is on the floor for: its start's daypart always,
-    plus the other one when it covers enough of that one's core window."""
+    """The dayparts a row is on the floor for: each whose core service
+    window it covers for at least PRESENCE_MIN_OVERLAP minutes, the one it
+    covers most first (that is the row's own daypart, where its hours and
+    week assignment count). A shift covering neither core window (an early
+    prep, a 3-5pm changeover) belongs to its start's daypart.
+
+    Judged by what the shift covers, not when it starts: a 2pm-11:30pm cook
+    started "at lunch" by the 3pm cutover and was counted as full lunch
+    coverage for half an hour of it."""
     primary = daypart_of(row.get("shift_start", ""))
-    out = [primary]
     s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
     if s is None or e is None or primary == "unknown":
-        return out
+        return [primary]
     if e <= s:
         e += 24 * 60
+    covered = []
     for part, (lo, hi) in CORE_WINDOWS.items():
-        if part == primary:
-            continue
-        if min(e, hi) - max(s, lo) >= min(PRESENCE_MIN_OVERLAP, hi - lo):
-            out.append(part)
-    return out
+        overlap = min(e, hi) - max(s, lo)
+        if overlap >= min(PRESENCE_MIN_OVERLAP, hi - lo):
+            covered.append((overlap, part == primary, part))
+    if not covered:
+        return [primary]
+    covered.sort(key=lambda t: (-t[0], not t[1]))
+    return [p for _o, _pr, p in covered]
+
+
+def works_daypart_ok(row: dict, choice: str) -> bool:
+    """Whether a row fits somebody's morning-only / night-only availability:
+    every daypart the shift is on the floor for must be the one they chose."""
+    if choice not in ("morning", "night"):
+        return True
+    parts = [p for p in present_dayparts(row) if p != "unknown"]
+    return all(p == choice for p in parts)
 
 
 def profile_for_shift(day: str, part: str, profiles: list = None, demand_by_day: dict = None,
@@ -2394,7 +2435,9 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "has_demand": bool(signals.get("demand_by_day")),
         "has_availability": bool(signals.get("availability")),
         "has_constraints": bool(signals.get("constraints")),
-        "has_profiles": bool(profiles) and profiles is not BUILTIN_PROFILES,
+        "has_profiles": bool(profiles) and profiles is not BUILTIN_PROFILES
+                        and any((getattr(p, "source", "") or "") not in ("default", "your sales history",
+                                                                      "your overall targets") for p in profiles),
         "rows_needing_review": signals.get("rows_needing_review"),
         "dropped_rows": signals.get("dropped_rows"),
         "constrained_people": len(signals.get("availability") or {}),
@@ -2490,6 +2533,9 @@ class _SwapIndex:
         self.certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("certifications") or {}).items()}
         self.role_certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("role_requirements") or {}).items() if v}
         self.windows = {k.lower(): v for k, v in (rules.get("time_windows") or {}).items() if v}
+        # Days somebody has asked off and the owner has not decided yet: a
+        # suggestion must not put them on one.
+        self.pending = {k.lower(): set(v or ()) for k, v in (rules.get("pending_off") or {}).items()}
         self.hours = _weekly_hours(rows)
         self.working = set()
         self.by_role = {}
@@ -2531,9 +2577,10 @@ class _SwapIndex:
             return False
         if date in (self.blocked.get(low) or {}):
             return False
+        if date in self.pending.get(low, ()):
+            return False
         choice = (self.daypart_avail.get(low) or {}).get(day)
-        part = daypart_of(row.get("shift_start", ""))
-        if choice == "off" or (choice in ("morning", "night") and part not in ("unknown", choice)):
+        if choice == "off" or not works_daypart_ok(row, choice):
             return False
         start_m, end_m = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
         if low in self.minors:
@@ -2814,38 +2861,64 @@ def _describe_replacement(row: dict, name: str, before: dict, after: dict, gain:
     }
 
 
+# Breaches another person on the same shift can clear. A shift that is too
+# long, or a shift with no manager on it, is about the SHIFT, not who works
+# it: swapping the person "fixed" nothing and cost them the shift.
+PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
+                            "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere",
+                            "outside_window", "missing_cert", "over_max_hours", "rest_gap",
+                            "minor_late", "minor_hours", "long_run"})
+
+
 def apply_fixes(rows: list, violations: list, profiles: list = None, weights: dict = None,
-                max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, **signals) -> dict:
+                max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None, **signals) -> dict:
     """Repair the rows that break a hard rule by putting somebody legal on
     them, choosing the replacement that scores best. Rows nobody legal can
     take are left as they are and named, never dropped: a coverage gap the
     owner can see beats a silently thinner week.
 
+    Only breaches a different person can clear are attempted (PERSON_FIXABLE).
+    With `rule_constraints` (schedule_rules.Constraints) a replacement is kept
+    only when the full rule sweep shows that row's breach gone and no new
+    hard breach anywhere — the swap index does not know every rule (days in
+    a row, a keyholder), and a fix that trades one breach for another is
+    not a fix. Rows the evaluation budget did not reach are reported as not
+    tried, never as impossible.
+
     Returns {rows, fixes: [{index, from, to, kind, reason}], unfixed: [...]}.
     """
     rows = [dict(r) for r in rows]
     availability = signals.get("availability") or {}
-    constraints = signals.get("constraints") or {}
+    cons = signals.get("constraints") or {}
     rules = signals.get("rules") or {}
     roster = [n for n in (signals.get("roster") or []) if n]
+    roster_roles = signals.get("roster_roles") or {}
     cross = signals.get("cross_trained") or {}
     fixes, unfixed, evaluated = [], [], 0
     hard = [v for v in (violations or []) if v.get("hard")]
+    for v in hard:
+        if v.get("kind") not in PERSON_FIXABLE:
+            unfixed.append({"index": v.get("index"), "employee": v.get("employee"), "kind": v.get("kind"),
+                            "reason": f"{v.get('label') or v.get('kind')} — not something a different person on "
+                                      "the shift would change."})
+    hard = [v for v in hard if v.get("kind") in PERSON_FIXABLE]
     # over_max_hours lands on EVERY row of the person's payroll week. Fixing
     # each one would strip them of the whole week (48h → 0h); only the
-    # excess should move. Keep the latest rows until the week fits, and
-    # drop the rest of that person's over-hours entries from the work list.
+    # excess of THAT payroll week should move. Keep its latest rows until
+    # the week fits, and drop the rest of its entries from the work list.
     over = {}
     for v in hard:
         if v.get("kind") == "over_max_hours":
-            over.setdefault((v.get("employee") or "").strip().lower(), []).append(v)
+            over.setdefault(((v.get("employee") or "").strip().lower(), v.get("bucket")), []).append(v)
     if over:
-        probe = _SwapIndex(rows, availability, constraints, rules)
         keep = set()
-        for low, vs in over.items():
-            cap = probe.cap(low)
-            excess = probe.total_hours(low) - cap
-            vs_sorted = sorted(vs, key=lambda x: (rows[x["index"]].get("date") or "", _slot_minutes(rows[x["index"]].get("shift_start") or "") or 0),
+        for (_low, _b), vs in over.items():
+            excess = float(vs[0].get("over_by") or 0)
+            if excess <= 0:
+                probe = _SwapIndex(rows, availability, cons, rules)
+                excess = probe.total_hours(_low) - probe.cap(_low)
+            vs_sorted = sorted(vs, key=lambda x: (rows[x["index"]].get("date") or "",
+                                                  _slot_minutes(rows[x["index"]].get("shift_start") or "") or 0),
                                reverse=True)
             removed = 0.0
             for v in vs_sorted:
@@ -2854,28 +2927,41 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                 keep.add(id(v))
                 removed += _row_hours(rows[v["index"]])
         hard = [v for v in hard if v.get("kind") != "over_max_hours" or id(v) in keep]
+
+    def _hard_state(rs):
+        if rule_constraints is None:
+            return None
+        from schedule_rules import violations as _viol
+        vs = [x for x in _viol(rs, rule_constraints) if x.get("hard")]
+        return {(x.get("index"), x.get("kind")) for x in vs}, len(vs)
+
     seen_idx = set()
-    # The week's own score, computed once and carried forward: it only
-    # changes when a fix is applied, and then the winning candidate's score
-    # IS the new baseline. It used to be re-scored for every violation
-    # (~0.18s each, 17s for 99 on the web process — SCHED-39).
     baseline = None
+    budget_out = False
     for v in sorted(hard, key=lambda x: (0 if x.get("no_show") else 1, x.get("index", 0))):
         i = v.get("index")
         if i is None or i in seen_idx or i >= len(rows):
             continue
         seen_idx.add(i)
         row = rows[i]
-        index = _SwapIndex(rows, availability, constraints, rules)
-        role = (row.get("role") or "").strip().lower()
         cur = (row.get("employee") or "").strip()
+        if budget_out or evaluated >= max_evaluations:
+            budget_out = True
+            unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
+                            "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
+                                      "tried — the automatic fix ran out of time. Apply fixes again to continue."})
+            continue
+        index = _SwapIndex(rows, availability, cons, rules)
+        role = (row.get("role") or "").strip().lower()
         pool = {(r.get("employee") or "").strip() for r in rows if (r.get("role") or "").strip().lower() == role}
+        pool |= {n for n in roster if (roster_roles.get(n) or "").strip().lower() == role}
         pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
-        pool |= {n for n in roster if not cross.get(n) and not any(r.get("employee") == n for r in rows)} if not pool else set()
+        pool.discard("")
         candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
-        best, best_score, best_result = None, None, None
+        scored = []
         for name in candidates:
             if evaluated >= max_evaluations:
+                budget_out = True
                 break
             if baseline is None:
                 baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
@@ -2884,15 +2970,30 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
             cand = score_rows(trial, profiles=profiles, weights=weights, **signals)
             evaluated += 1
             sc = cand.get("score") if cand.get("checked") else (baseline.get("score") or 0)
-            if best is None or (sc or 0) > (best_score or -1):
-                best, best_score, best_result = name, sc, cand
-        if best:
-            baseline = best_result
-            rows[i]["employee"] = best
+            scored.append((sc or 0, name, cand, trial))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        before = _hard_state(rows)
+        chosen = None
+        for sc, name, cand, trial in scored:
+            if before is not None:
+                after = _hard_state(trial)
+                still = any(ix == i and k == v.get("kind") for ix, k in after[0])
+                if still or after[1] >= before[1]:
+                    continue
+            chosen = (name, cand, trial)
+            break
+        if chosen:
+            name, cand, trial = chosen
+            baseline = cand
+            rows = trial
             note = (rows[i].get("notes") or "").strip()
             rows[i]["notes"] = (note + f" (was {cur} — {v.get('label') or v.get('kind')})").strip()
-            fixes.append({"index": i, "from": cur, "to": best, "kind": v.get("kind"),
-                          "reason": f"{cur} — {v.get('detail') or v.get('label')}; {best} can take it."})
+            fixes.append({"index": i, "from": cur, "to": name, "kind": v.get("kind"),
+                          "reason": f"{cur} — {v.get('detail') or v.get('label')}; {name} can take it."})
+        elif budget_out and not scored:
+            unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
+                            "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
+                                      "tried — the automatic fix ran out of time. Apply fixes again to continue."})
         else:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"),
                             "reason": f"Nobody on the roster can legally take {cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift."})

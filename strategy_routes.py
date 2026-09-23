@@ -1185,6 +1185,7 @@ def _do_schedule_apply_fixes(u):
     viols = _sr.violations(rows, c)
     signals, weights = _quality_signals(_rid(u), inputs)
     out = _sq.apply_fixes(rows, [v for v in viols if v["hard"]], profiles=inputs.get("shift_profiles") or None,
+                          rule_constraints=c,
                           weights=weights, **signals)
     fixed_rows = out["rows"]
     after = _sr.violations(fixed_rows, c)

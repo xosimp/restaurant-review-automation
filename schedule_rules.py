@@ -709,14 +709,20 @@ def violations(rows: list, c: Constraints) -> list:
     out = []
     by_person = {}
     seen_slots = set()
+    from shift_quality import present_dayparts as _present
     for i, r in enumerate(rows or []):
         name = (r.get("employee") or "").strip()
         key = name.lower()
         if not key:
             continue
         by_person.setdefault(key, []).append((i, r))
-        part = daypart_of(r.get("shift_start", ""))
-        ok, why = c.can_work(name, r.get("date", ""), part)
+        # Availability is judged on every daypart the shift covers, not its
+        # start: a "mornings only" person on 2:30-11:30pm was never flagged.
+        ok, why = True, ""
+        for part in _present(r):
+            ok, why = c.can_work(name, r.get("date", ""), part)
+            if not ok:
+                break
         if not ok:
             kind = next((k for k, lab in LABELS.items() if lab == why), None)
             if kind is None:
@@ -845,7 +851,11 @@ def violations(rows: list, c: Constraints) -> list:
             if mx and total > mx + 0.05 and b:
                 for i, r in items:
                     if c.bucket(r.get("date", "")) == b:
-                        out.append(_v("over_max_hours", i, r, f"{total:g}h in the payroll week — over {mx:g}h"))
+                        v = _v("over_max_hours", i, r, f"{total:g}h in the payroll week — over {mx:g}h")
+                        # Which payroll week, and by how much, so a fix moves
+                        # that week's excess and nothing more.
+                        v["bucket"], v["over_by"] = b, round(total - mx, 2)
+                        out.append(v)
         mn = c.min_hours(name)
         if mn:
             this_week = sum(row_hours(r) for _, r in items)
