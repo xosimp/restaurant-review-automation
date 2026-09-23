@@ -15,7 +15,7 @@ at least `privacy.MIN_COHORT` restaurants and never carry a name.
     cohort_for(restaurant)            (category, source) for a restaurant
 """
 from models import DB_PATH
-from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard  # noqa: F401
+from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard, staffing  # noqa: F401
 
 
 def restaurant_memory(restaurant_id, db_path=DB_PATH):

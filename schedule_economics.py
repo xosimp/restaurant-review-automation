@@ -14,6 +14,8 @@ and never used. This module owns:
   projected_weekly_revenue — the restaurant's own weekly pattern, not a
                         twelfth of a month
   splh_by_daypart     — sales per labor hour by weekday and daypart
+  splh_objective      — the SPLH target per weekday and daypart the draft
+                        aims for and the scorer's `splh` dimension judges
   holiday_lift        — what a holiday did to THIS restaurant's sales last time
   stagger_same_starts — spread identical starts along the day's sales curve
   cost_delta          — what an edit moves in hours and dollars
@@ -225,7 +227,11 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
                     wd = datetime.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A")
                 except ValueError:
                     continue
-            part = _daypart(sh)
+            # Filed under the daypart the row is mostly on the floor for
+            # (shift_quality.present_dayparts), as the scorer's `splh`
+            # dimension files a draft's hours — a 2pm-11pm cook is dinner.
+            from shift_quality import present_dayparts
+            part = present_dayparts(sh)[0]
             if part == "unknown":
                 continue
             h = 0.0
@@ -264,7 +270,10 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
             s = e["sales"] / e["n"] * s_share
             h = total_hours / e["n"] * h_share
             if h > 0:
-                day[part] = {"sales": round(s, 0), "hours": round(h, 1), "splh": round(s / h, 0)}
+                day[part] = {"sales": round(s, 0), "hours": round(h, 1), "splh": round(s / h, 0),
+                             # whether the day's sales were split by measured
+                             # intraday readings or the 40/60 default
+                             "sales_split": "measured" if wd in share else "assumed"}
         if day:
             out[wd] = day
     return out
@@ -285,6 +294,199 @@ def splh_block(splh: dict) -> str:
     return ("\n\nSALES PER LABOR HOUR BY DAYPART (this restaurant's own recent record — a daypart well "
             "below the others is where hours are being spent for the least return; add there last and "
             "trim there first):\n" + "\n".join(lines))
+
+
+# ── sales per labor hour as the objective ─────────────────────────────────
+#
+# splh_by_daypart used to steer only which rows the budget trim cut first.
+# The objective states a target for every weekday's lunch and dinner, from
+# the restaurant's own record, raised to meet its labor target when it runs
+# over it; the prompt is told the hours each shift's usual sales carry at
+# that target, the scorer's `splh` dimension judges the draft against it,
+# and the review says how the draft landed. Per weekday, not one figure per
+# daypart: a Monday's minimum crew can never reach a Saturday's sales per
+# hour, and a pooled target marked every quiet shift down for existing. No
+# sales record: no target, and the dimension withdraws.
+
+SPLH_MIN_WEEKDAYS = 3            # weekdays with a measured SPLH before a target is set
+
+
+def _dp_label(part):
+    return "lunch" if part == "morning" else "dinner"
+
+
+def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, weeks: int = 8, db_path=DB_PATH) -> dict:
+    """{available, by_day: {weekday: {daypart: target}}, targets: {daypart:
+    {target, history, source}} (the week's figure per daypart, for display),
+    daypart_sales: {weekday: {daypart: sales}}, labor_target_pct,
+    history_labor_pct, scale, basis, split_assumed} or {available: False,
+    reason}.
+
+    Each weekday's daypart target is its own recent sales per labor hour.
+    When the restaurant has been running over its labor % target, every
+    target is raised by the same factor — history labor % ÷ target labor % —
+    which is exactly the productivity the target needs at the wages it
+    actually paid (labor % = wage × hours ÷ sales). Under target, history
+    stands: the objective never asks for more hours than the record ran."""
+    splh = splh_by_daypart(restaurant_id, weeks=weeks, db_path=db_path) if splh is None else splh
+    if not splh:
+        return {"available": False, "reason": "No daily sales and hours on file yet, so there is no sales-per-labor-hour target."}
+    tot = {"morning": [0.0, 0.0, 0], "night": [0.0, 0.0, 0]}
+    daypart_sales, hist_by_day = {}, {}
+    for wd, parts in splh.items():
+        for part, v in (parts or {}).items():
+            if part not in tot or not v or not v.get("hours") or not v.get("sales"):
+                continue
+            tot[part][0] += float(v["sales"])
+            tot[part][1] += float(v["hours"])
+            tot[part][2] += 1
+            daypart_sales.setdefault(wd, {})[part] = float(v["sales"])
+            hist_by_day.setdefault(wd, {})[part] = float(v["sales"]) / float(v["hours"])
+    have = {p: t for p, t in tot.items() if t[2] >= SPLH_MIN_WEEKDAYS and t[1] > 0}
+    if not have:
+        return {"available": False,
+                "reason": f"Sales per labor hour needs at least {SPLH_MIN_WEEKDAYS} weekdays of sales and hours per daypart."}
+    hist_pct = None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT SUM(labor_pct * sales) AS w, SUM(sales) AS s FROM labor_daily_history WHERE restaurant_id=? "
+                           "AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?)",
+                           (restaurant_id, f"-{int(weeks) * 7} days")).fetchone()
+        if row and row["s"]:
+            hist_pct = float(row["w"]) / float(row["s"])
+    except Exception as e:
+        print(f"[splh] labor % history unavailable for {restaurant_id}: {e}")
+    finally:
+        conn.close()
+    if labor_target_pct is None:
+        try:
+            from models import get_restaurant
+            from notify import labor_target_for
+            labor_target_pct = labor_target_for(get_restaurant(restaurant_id))
+        except Exception:
+            labor_target_pct = None
+    scale = 1.0
+    if hist_pct and labor_target_pct and float(labor_target_pct) > 0 and hist_pct > float(labor_target_pct):
+        scale = hist_pct / float(labor_target_pct)
+    by_day = {wd: {p: round(v * scale, 0) for p, v in parts.items() if p in have} for wd, parts in hist_by_day.items()}
+    by_day = {wd: parts for wd, parts in by_day.items() if parts}
+    targets = {}
+    for part, (s, h, _n) in have.items():
+        hist = s / h
+        if scale > 1:
+            src = (f"your own recent pace on each day's {_dp_label(part)}, raised {int(round((scale - 1) * 100))}% to meet "
+                   f"your {float(labor_target_pct):g}% labor target (you have run {hist_pct:.1f}%)")
+        elif hist_pct and labor_target_pct:
+            src = (f"your own recent pace on each day's {_dp_label(part)} — already inside your "
+                   f"{float(labor_target_pct):g}% labor target")
+        else:
+            src = f"your own recent pace on each day's {_dp_label(part)} over the last {weeks} weeks"
+        targets[part] = {"target": round(hist * scale, 0), "history": round(hist, 0), "source": src}
+    basis = "; ".join(f"{_dp_label(p).capitalize()} ${v['target']:,.0f} per labor hour across the week — {v['source']}"
+                      for p, v in sorted(targets.items()))
+    assumed = sorted({wd for wd, parts in splh.items() for v in (parts or {}).values()
+                      if (v or {}).get("sales_split") == "assumed"})
+    if assumed:
+        basis += (f". Lunch and dinner sales are split 40/60 on {len(assumed)} weekday{'s' if len(assumed) != 1 else ''} "
+                  "with no intraday sales readings yet")
+    return {"available": True, "by_day": by_day, "targets": targets, "daypart_sales": daypart_sales,
+            "labor_target_pct": float(labor_target_pct) if labor_target_pct else None,
+            "history_labor_pct": round(hist_pct, 1) if hist_pct else None, "scale": round(scale, 3),
+            "basis": basis, "split_assumed": bool(assumed)}
+
+
+def splh_target_for(objective: dict, weekday: str, part: str):
+    """The target for one weekday's daypart: its own, else the week's."""
+    t = ((objective.get("by_day") or {}).get(weekday) or {}).get(part)
+    return t or ((objective.get("targets") or {}).get(part) or {}).get("target")
+
+
+def _shift_sales(objective, weekday, part, date, demand_by_date):
+    s = ((objective.get("daypart_sales") or {}).get(weekday) or {}).get(part)
+    if not s:
+        return None
+    lift = ((demand_by_date or {}).get(date) or {}).get("lift_pct")
+    try:
+        return float(s) * (1 + float(lift) / 100.0) if lift else float(s)
+    except (TypeError, ValueError):
+        return float(s)
+
+
+def splh_objective_block(objective: dict, dates: list, demand_by_date: dict = None) -> str:
+    """The prompt's objective: for each shift of the week, the sales per
+    labor hour it aims for and the labor hours its usual sales carry there."""
+    if not objective or not objective.get("available"):
+        return ""
+    from time_utils import mdy
+    lines = []
+    for d in dates or []:
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        bits = []
+        for part in ("morning", "night"):
+            t = splh_target_for(objective, wd, part)
+            s = _shift_sales(objective, wd, part, d, demand_by_date)
+            if not t or not s:
+                continue
+            bits.append(f"{_dp_label(part)} ${t:,.0f}/labor-hour ≈ {s / float(t):.0f}h")
+        if bits:
+            lines.append(f"  {wd[:3]} {mdy(d)}: " + ", ".join(bits))
+    if not lines:
+        return ""
+    return ("\n\nSALES PER LABOR HOUR — the productivity objective, ranked below the shift requirements ("
+            + objective.get("basis", "") + "). Each shift's target, and the labor hours its usual sales carry at that "
+            "target (hours counted under the daypart each shift is mostly on the floor for). Staff to the requirements "
+            "table first; past it, add hours where they carry the most sales and hold the rest near these figures:\n"
+            + "\n".join(lines))
+
+
+def splh_report(objective: dict, rows: list, demand_by_date: dict = None) -> dict:
+    """How a draft lands against the objective, per shift and per daypart
+    for the week — what the review panel reports. {} without a target."""
+    if not objective or not objective.get("available") or not rows:
+        return {}
+    from shift_quality import present_dayparts
+    from time_utils import mdy
+    hours = {}
+    for r in rows:
+        d = (r.get("date") or "").strip()
+        if not d or not (r.get("employee") or "").strip():
+            continue
+        part = present_dayparts(r)[0]
+        hours[(d, part)] = hours.get((d, part), 0.0) + _hours(r)
+    shifts, week = [], {}
+    for (d, part), h in sorted(hours.items()):
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        t = splh_target_for(objective, wd, part)
+        s = _shift_sales(objective, wd, part, d, demand_by_date)
+        if not t or not s or h <= 0:
+            continue
+        v = s / h
+        shifts.append({"date": d, "day": wd, "daypart": part, "hours": round(h, 1), "expected_sales": round(s, 0),
+                       "splh": round(v, 0), "target": t, "hours_at_target": round(s / t, 1),
+                       "under": v < t * 0.95})
+        w = week.setdefault(part, [0.0, 0.0, 0.0])
+        w[0] += s
+        w[1] += h
+        w[2] += s / t
+    if not shifts:
+        return {}
+    by_part = {p: {"splh": round(s / h, 0), "target": round(s / at, 0), "hours": round(h, 1), "hours_at_target": round(at, 1)}
+               for p, (s, h, at) in week.items() if h > 0 and at > 0}
+    worst = min(shifts, key=lambda x: x["splh"] / float(x["target"]))
+    parts = [f"{_dp_label(p)} ${v['splh']:,.0f} against ${v['target']:,.0f}" for p, v in sorted(by_part.items())]
+    line = "Sales per labor hour across the week: " + ", ".join(parts) + "."
+    if worst["under"]:
+        line += (f" Furthest under: {worst['day'][:3]} {mdy(worst['date'])} {_dp_label(worst['daypart'])} at "
+                 f"${worst['splh']:,.0f} against ${worst['target']:,.0f}, about "
+                 f"{worst['hours'] - worst['hours_at_target']:.0f}h more than its usual sales carry.")
+    return {"by_daypart": by_part, "shifts": shifts, "under": [x for x in shifts if x["under"]],
+            "line": line, "basis": objective.get("basis")}
 
 
 # ── holidays: what they did here last time ────────────────────────────────

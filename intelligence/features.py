@@ -231,6 +231,15 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             f["outcomes_improved_rate_90d"] = round(sum(1 for r in ev if r["verdict"] == "improved") / len(ev), 3)
     finally:
         conn.close()
+    # People on the floor per role family and daypart, per $1k of sales
+    # (staffing.compute_ratios) — the ratio a new restaurant's starting
+    # headcount is borrowed from. Not in FEATURE_KEYS: a family this
+    # restaurant does not run is absent, and completeness does not count it.
+    try:
+        from .staffing import compute_ratios
+        f.update(compute_ratios(restaurant_id, today=today, db_path=db_path))
+    except Exception as e:
+        print(f"[intelligence] staffing ratios unavailable for {restaurant_id}: {e}")
     return f
 
 

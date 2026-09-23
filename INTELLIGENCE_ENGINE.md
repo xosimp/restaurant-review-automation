@@ -78,6 +78,7 @@ may record events directly through `feedback.record`.
 | `trends.py` | 2/3 | weekly medians per cohort × metric, slope, `emerging()` |
 | `confidence.py` | all | `score(rid, rec_kind, metric)` → `{score, band, factors[], caution}` |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
+| `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); cohort bands come from `benchmarks.compute`; `starting_headcount` lends a restaurant with no history of its own the cohort median scaled by ITS OWN sales, only over `MIN_COHORT`, through `assert_anonymous`, labelled borrowed |
 | `jobs.py` | — | `run_features()` (bounded, cursor-resumable), `run_learning()` |
 
 ## Background jobs

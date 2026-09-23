@@ -9,6 +9,8 @@ a model; nothing crosses a tenant.
                         daypart: hours, sales, labor %, issues, review rating
   outcome_block         "last time this pattern ran" for the prompt
   fairness_ledger       weekends, closes and holidays per person over 8 weeks
+  rotation_plan         who is next for a weekend off, a close and a holiday,
+                        per role, planned across those weeks
   behaviour_preferences what people keep dropping and claiming
   mentoring             shifts worked beside a closer in a role that is not
                         their own — who could hold a station
@@ -296,6 +298,221 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
     for e in ledger.values():
         e["weeks"] = len(rows)
     return ledger
+
+
+# ── the rotation plan ──────────────────────────────────────────────────────
+#
+# The ledger says who has carried the weekends and closes; nothing said who
+# should get the NEXT one. The plan reads the same published weeks week by
+# week and orders each role: who has worked the most weekends in a row (so
+# is due one off), who has closed least for their shifts (so is next to
+# close) and who is closing far past their share (so should rest from it),
+# and who has worked the fewest holidays (so works the next one). The
+# generator is handed it as a soft preference and the fairness score judges
+# a week against it — over weeks, not inside one.
+
+ROTATION_MIN_SHIFTS = 3          # shifts in the window before somebody is in the rotation
+ROTATION_MIN_GROUP = 3           # people in a role before a rotation is planned for it
+ROTATION_WEEKEND_DUE = 3         # weekends in a row before a weekend off is due
+ROTATION_CLOSE_REST = 1.5        # closing at this multiple of the role's rate, and...
+ROTATION_CLOSE_EXCESS = 2        # ...this many closes past their share: rest from closing
+ROTATION_HOLIDAY_HORIZON = 42    # days ahead a holiday is planned for
+ROTATION_SHOW = 3                # names per queue shown and prompted
+
+
+def _published_weeks(conn, restaurant_id, weeks, today):
+    return conn.execute(
+        "SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+        "AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id "
+        "AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+        "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
+        (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
+
+
+def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None, roster_roles: dict = None) -> dict:
+    """{weeks, roles: {role: {...queues}}, holiday, lines} — who is next for
+    a weekend off, a close and a holiday, per role, from the last `weeks`
+    published weeks. roster_roles ({name: role}) limits the plan to people
+    still on the roster and files them under their roster role; without it
+    each person's most-worked role is used. Empty when fewer than two
+    published weeks exist: a rotation needs a history to rotate from."""
+    from schedule_versions import rows_from_csv
+    from schedule_economics import _holiday_dates
+    from schedule_rules import parse_minutes
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        published = _published_weeks(conn, restaurant_id, weeks, today)
+        close_times = {}
+        try:
+            from models import get_close_times
+            close_times = get_close_times(restaurant_id, db_path) or {}
+        except Exception:
+            close_times = {}
+    finally:
+        conn.close()
+    if len(published) < 2:
+        return {}
+    years = set()
+    for w in published:
+        for k in ("week_start", "week_end"):
+            try:
+                years.add(int((w[k] or "")[:4]))
+            except (TypeError, ValueError):
+                pass
+    years |= {today.year, today.year + 1}
+    holidays = {}
+    for y in years:
+        holidays.update(_holiday_dates(y))
+    roster = {str(n).strip().lower(): (n, (r or "").strip()) for n, r in (roster_roles or {}).items() if n}
+    people = {}       # lower name -> {display, roles{}, shifts, closes, nights, holidays, by_week{ws: weekend?}}
+    week_keys = []
+    for w in published:
+        ws = w["week_start"] or ""
+        week_keys.append(ws)
+        for r in rows_from_csv(w["schedule_csv"]):
+            low = r["employee"].strip().lower()
+            if roster and low not in roster:
+                continue
+            p = people.setdefault(low, {"name": r["employee"].strip(), "roles": {}, "shifts": 0, "closes": 0,
+                                        "nights": 0, "holidays": 0, "weeks": {}})
+            p["shifts"] += 1
+            role = (r.get("role") or "").strip()
+            if role:
+                p["roles"][role] = p["roles"].get(role, 0) + 1
+            try:
+                d = datetime.strptime(r["date"], "%Y-%m-%d")
+            except ValueError:
+                continue
+            p["weeks"][ws] = p["weeks"].get(ws, False) or d.weekday() >= 4
+            if r["date"] in holidays:
+                p["holidays"] += 1
+            if _daypart(r) == "night":
+                p["nights"] += 1
+            close = parse_minutes(close_times.get(d.strftime("%A"), ""))
+            end = parse_minutes(r.get("shift_end", ""))
+            if (close is not None and end is not None and end >= close - 30) or \
+               (close is None and end is not None and end >= 22 * 60):
+                p["closes"] += 1
+    by_role = {}
+    for low, p in people.items():
+        if p["shifts"] < ROTATION_MIN_SHIFTS:
+            continue
+        role = (roster.get(low) or (None, ""))[1] or (max(p["roles"].items(), key=lambda kv: (kv[1], kv[0]))[0] if p["roles"] else "")
+        if role:
+            by_role.setdefault(role, []).append(p)
+    roles_out, lines = {}, []
+    for role, members in sorted(by_role.items(), key=lambda kv: kv[0].lower()):
+        if len(members) < ROTATION_MIN_GROUP:
+            continue
+        streak = {}
+        for p in members:
+            s = 0
+            for ws in week_keys:                        # newest first
+                if p["weeks"].get(ws):
+                    s += 1
+                else:
+                    break                               # off that weekend, or off the whole week
+            streak[p["name"]] = s
+        weekend_q = sorted((p for p in members if streak[p["name"]] >= 2),
+                           key=lambda p: (-streak[p["name"]], -sum(1 for v in p["weeks"].values() if v), p["name"]))
+        cap = max(1, (len(members) + 3) // 4)
+        due = [p["name"] for p in weekend_q if streak[p["name"]] >= ROTATION_WEEKEND_DUE][:cap]
+        closers = [p for p in members if p["nights"] or p["closes"]]
+        total_s = sum(p["shifts"] for p in closers)
+        rate = (sum(p["closes"] for p in closers) / float(total_s)) if total_s else 0.0
+        next_close = [p["name"] for p in sorted(closers, key=lambda p: (p["closes"] / float(p["shifts"]), p["closes"], p["name"]))] if rate else []
+        rest = []
+        if rate:
+            for p in closers:
+                share = p["shifts"] * rate
+                if p["closes"] >= ROTATION_CLOSE_REST * share and p["closes"] - share >= ROTATION_CLOSE_EXCESS:
+                    rest.append((p["closes"] - share, p["name"]))
+        rest_names = [n for _x, n in sorted(rest, key=lambda t: (-t[0], t[1]))]
+        next_close = [n for n in next_close if n not in rest_names]
+        holiday_work = [p["name"] for p in sorted(members, key=lambda p: (p["holidays"], p["name"]))]
+        holiday_off = [p["name"] for p in sorted(members, key=lambda p: (-p["holidays"], p["name"])) if p["holidays"]]
+        roles_out[role] = {
+            "members": len(members),
+            "people": sorted(p["name"] for p in members),
+            "weekend_off": [p["name"] for p in weekend_q][:ROTATION_SHOW * 2],
+            "weekend_due": due,
+            "weekend_streak": {p["name"]: streak[p["name"]] for p in weekend_q},
+            "next_close": next_close[:ROTATION_SHOW * 2],
+            "rest_from_close": rest_names,
+            "closes": {p["name"]: {"closes": p["closes"], "shifts": p["shifts"]} for p in closers},
+            "holiday_work_first": holiday_work[:ROTATION_SHOW * 2],
+            "holiday_off_first": holiday_off[:ROTATION_SHOW * 2],
+        }
+        bits = []
+        if weekend_q:
+            q = weekend_q[:ROTATION_SHOW]
+            bits.append("next weekend off: " + _then([f"{p['name']} ({streak[p['name']]} in a row)" if i == 0 else p["name"]
+                                                        for i, p in enumerate(q)]))
+        if next_close:
+            bits.append("next close: " + _then(next_close[:ROTATION_SHOW]))
+        if rest_names:
+            bits.append("rest from closing: " + ", ".join(rest_names[:ROTATION_SHOW]))
+        if bits:
+            lines.append(f"{_plural_role(role)} — " + "; ".join(bits) + ".")
+    holiday = None
+    upcoming = sorted((d, n) for d, n in holidays.items()
+                      if today.isoformat() < d <= (today + timedelta(days=ROTATION_HOLIDAY_HORIZON)).isoformat())
+    if upcoming and roles_out:
+        d, n = upcoming[0]
+        holiday = {"date": d, "name": n,
+                   "work_first": {role: v["holiday_work_first"][:ROTATION_SHOW] for role, v in roles_out.items()},
+                   "off_first": {role: v["holiday_off_first"][:ROTATION_SHOW] for role, v in roles_out.items() if v["holiday_off_first"]}}
+        from time_utils import mdy
+        for role, v in roles_out.items():
+            if v["holiday_off_first"]:
+                lines.append(f"{n} {mdy(d)}, {_plural_role(role)} — first off: {_then(v['holiday_off_first'][:ROTATION_SHOW])} "
+                             f"(worked the most holidays); first to work it: {_then(v['holiday_work_first'][:ROTATION_SHOW])}.")
+    if not roles_out:
+        return {}
+    return {"weeks": len(published), "roles": roles_out, "holiday": holiday, "lines": lines}
+
+
+def _then(names: list) -> str:
+    """'Ana', 'Ana, then Ben', 'Ana, then Ben, Cara' — the head of a queue first."""
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    return names[0] if len(names) == 1 else names[0] + ", then " + ", ".join(names[1:])
+
+
+def _plural_role(role: str) -> str:
+    role = (role or "").strip()
+    return role if role.lower().endswith("s") else role + "s"
+
+
+def rotation_block(plan: dict) -> str:
+    """The plan for the prompt — a soft preference under the hard rules and
+    the shift requirements, never a reason to break either."""
+    if not plan or not plan.get("roles"):
+        return ""
+    lines = []
+    for role, v in plan["roles"].items():
+        bits = []
+        if v.get("weekend_due"):
+            bits.append("give these people this weekend off where the rules allow — "
+                        + ", ".join(f"{n} ({v['weekend_streak'].get(n)} weekends in a row)" for n in v["weekend_due"]))
+        if v.get("next_close"):
+            bits.append("hand the week's closes first to " + ", ".join(v["next_close"][:ROTATION_SHOW]))
+        if v.get("rest_from_close"):
+            bits.append("close " + ", ".join(v["rest_from_close"][:ROTATION_SHOW]) + " less than usual")
+        if bits:
+            lines.append(f"  {role}: " + "; ".join(bits) + ".")
+    h = plan.get("holiday")
+    if h and h.get("off_first"):
+        from time_utils import mdy
+        for role, names in h["off_first"].items():
+            lines.append(f"  {h['name']} ({mdy(h['date'])}), {role}: first off {', '.join(names)}; first to work it "
+                         f"{', '.join((h.get('work_first') or {}).get(role) or [])}.")
+    if not lines:
+        return ""
+    return ("\n\nROTATION PLAN (over the last " + str(plan.get("weeks")) + " published weeks — a preference ranked below the "
+            "hard rules and the shift requirements; the fairness score checks the week against it):\n" + "\n".join(lines))
 
 
 def ledger_block(ledger: dict) -> str:

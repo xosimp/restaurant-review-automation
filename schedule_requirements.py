@@ -106,7 +106,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_by_day: dict = None, demand_by_date: dict = None,
                        leader_rules: list = None,
                        leadership_known: bool = False, roles: set = None,
-                       skip_dates=(), role_minimums: dict = None,
+                       skip_dates=(), role_minimums: dict = None, borrowed: dict = None,
                        demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
                        section_cap: int = 0, cap_roles=None) -> list:
     """One entry per date × daypart that needs anybody.
@@ -122,6 +122,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     leadership_known — whether anybody is rated or authorised to close. A
                 profile's "needs a leader" cannot be judged without one of
                 those, so it is not asked of the model either.
+    borrowed  — {(weekday, daypart): {lower role}}: typical figures lent by
+                similar restaurants (intelligence.staffing) to a restaurant
+                with no history of its own; the row says so.
     demand_curve — {weekday: {hour: share}} measured sales by the hour; with
                 it each shift also carries its half-hour needs across service
                 (staffing_curve.half_hour_needs, interpolated from the hourly
@@ -129,7 +132,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 judges. Without it nothing changes.
     section_cap / cap_roles — the section count and the roles it counts: no
                 requirement, whole-shift or half-hour, asks for more of them
-                than the cap (staffing_curve.cap_requirement).
+                than the cap (staffing_curve.cap_requirement). A borrowed
+                figure held down by the cap is no longer the lent figure,
+                so it is not marked borrowed.
     """
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
@@ -205,8 +210,12 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if profile.requires_leader and leadership_known and not leader:
                 leader.append(f"somebody scoring {profile.leader_min_score:g}+ or authorised to close")
             roles_out = []
+            lent = (borrowed or {}).get((day, part)) or set()
             for _k, (name, required, floor, typical) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
-                roles_out.append({"role": name, "required": required, "floor": floor, "typical": typical})
+                entry = {"role": name, "required": required, "floor": floor, "typical": typical}
+                if _k in lent and typical and required == typical and typical > floor:
+                    entry["borrowed"] = True
+                roles_out.append(entry)
             row = {"date": d, "day": day, "daypart": part, "roles": roles_out,
                    "target_hours": (daily_targets or {}).get(d), "demand": demand,
                    "leader": leader}
@@ -239,6 +248,7 @@ def requirements_block(rows: list) -> str:
     lines = []
     for r in rows:
         people = ", ".join(f"{x['role']} {x['required']}" + (f" (floor {x['floor']})" if x["floor"] else "")
+                           + (" (borrowed)" if x.get("borrowed") else "")
                            for x in r["roles"])
         bits = [f"  {r['day'][:3]} {r['date']} {_PART_LABEL[r['daypart']]} | {people}"]
         if r.get("target_hours"):

@@ -1695,6 +1695,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  prior_pattern: dict = None,
                                  leader_flags: dict = None,
                                  focus: list = None,
+                                 borrowed_headcount: dict = None,
                                  hourly_profile: dict = None,
                                  section_cap_roles: list = None,
                                  open_times: dict = None,
@@ -2368,9 +2369,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _can_work = {(r or "").strip().lower() for _n, r in employees if (r or "").strip()}
         for _n, _r in employees:
             _can_work |= {x.strip().lower() for x in _emp_roles.get(_n, ()) if x and x.strip()}
+    # A restaurant with no history of its own starts from a headcount
+    # borrowed from similar restaurants (intelligence.staffing), only where
+    # its own typical has nothing, and marked borrowed in the table. The
+    # scorer's typical headcount (_patterns, returned below) stays its own.
+    _req_typical, _borrowed_marks = _patterns.get("typical_headcount"), {}
+    if borrowed_headcount:
+        from intelligence.staffing import merge_into_typical
+        _req_typical, _borrowed_marks = merge_into_typical(_patterns.get("typical_headcount") or {}, borrowed_headcount)
     _requirements_block = _req.requirements_block(_req.shift_requirements(
         _gen_dates,
-        typical_headcount=_patterns.get("typical_headcount"),
+        typical_headcount=_req_typical,
+        borrowed=_borrowed_marks or None,
         role_floors=role_floors,
         daily_targets=_daily_target_map,
         profiles=shift_profiles,

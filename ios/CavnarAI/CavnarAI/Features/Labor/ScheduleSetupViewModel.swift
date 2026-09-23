@@ -375,16 +375,104 @@ struct DraftAcceptance: Codable, Equatable {
     }
 }
 
-/// One quality dimension checked against real outcomes.
+/// One quality dimension checked against real outcomes: where it is now,
+/// the bounded next step, and which outcome drove it.
 struct CalibrationDimension: Codable, Equatable {
     let `default`: Double?
     let suggested: Double?
     let nudgePct: Int?
     let reading: String?
+    // Absent on an older server.
+    var current: Double? = nil
+    var stepPct: Int? = nil
+    var explanation: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case `default`, suggested, reading
+        case `default`, suggested, reading, current, explanation
         case nudgePct = "nudge_pct"
+        case stepPct = "step_pct"
+    }
+}
+
+/// How the edit predictor would have done on this restaurant's own past
+/// drafts, each held out in turn — or why it cannot predict yet.
+struct EditPredictionSummary: Codable, Equatable {
+    struct Backtest: Codable, Equatable {
+        let weeks: Int?
+        let flagged: Int?
+        let hits: Int?
+        let hitRate: Double?
+        let recall: Double?
+        let baseRate: Double?
+        enum CodingKeys: String, CodingKey {
+            case weeks, flagged, hits, recall
+            case hitRate = "hit_rate"
+            case baseRate = "base_rate"
+        }
+    }
+    let ready: Bool?
+    let weeks: Int?
+    let reason: String?
+    let backtest: Backtest?
+
+    /// "On your last 6 drafts, 71% of the rows it flagged were rows you
+    /// changed — against 18% of all rows."
+    var line: String? {
+        guard ready == true else { return reason }
+        guard let b = backtest, let hit = b.hitRate, let base = b.baseRate, (b.flagged ?? 0) > 0 else {
+            return "Ready — it flags rows from your own edit history."
+        }
+        return "On your last \(b.weeks ?? weeks ?? 0) drafts, \(Int((hit * 100).rounded()))% of the rows it flagged were rows "
+            + "you changed — against \(Int((base * 100).rounded()))% of all rows."
+    }
+}
+
+/// Who is next for a weekend off, a close and a holiday, per role — the
+/// multi-week rotation the draft is written and scored against.
+struct RotationPlan: Codable, Equatable {
+    let weeks: Int?
+    let lines: [String]?
+}
+
+/// A sales-per-labor-hour target for one daypart across the week.
+struct SplhTarget: Codable, Equatable {
+    let target: Double?
+    let history: Double?
+    let source: String?
+}
+
+/// The sales-per-labor-hour objective the draft aims for.
+struct SplhObjective: Codable, Equatable {
+    let available: Bool?
+    let reason: String?
+    let targets: [String: SplhTarget]?
+    let basis: String?
+}
+
+/// One borrowed starting figure: people in a role on a weekday's daypart.
+struct BorrowedSlot: Codable, Identifiable, Equatable {
+    let day: String
+    let daypart: String
+    let role: String
+    let people: Int
+    var id: String { "\(day)|\(daypart)|\(role)" }
+}
+
+/// A starting headcount borrowed from similar restaurants for a restaurant
+/// with no history of its own — or why there is none.
+struct StartingPoints: Codable, Equatable {
+    let available: Bool?
+    let ownHistory: Bool?
+    let reason: String?
+    let note: String?
+    let cohortLabel: String?
+    let n: Int?
+    let bySlot: [BorrowedSlot]?
+    enum CodingKeys: String, CodingKey {
+        case available, reason, note, n
+        case ownHistory = "own_history"
+        case cohortLabel = "cohort_label"
+        case bySlot = "by_slot"
     }
 }
 
@@ -426,9 +514,17 @@ struct ScheduleIntel: Codable, Equatable {
     let draftAcceptance: DraftAcceptance?
     let weightCalibration: WeightCalibration?
     var autoPublishOffer: AutoPublishOffer?
+    // Schedule learning. Absent on an older server.
+    var editPrediction: EditPredictionSummary? = nil
+    var rotation: RotationPlan? = nil
+    var splhObjective: SplhObjective? = nil
+    var startingPoints: StartingPoints? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, outcomes, ledger, behaviour, mentored, splh, revenue
+        case ok, error, outcomes, ledger, behaviour, mentored, splh, revenue, rotation
+        case editPrediction = "edit_prediction"
+        case splhObjective = "splh_objective"
+        case startingPoints = "starting_points"
         case draftAcceptance = "draft_acceptance"
         case weightCalibration = "weight_calibration"
         case autoPublishOffer = "auto_publish_offer"
@@ -441,6 +537,7 @@ struct ScheduleIntel: Codable, Equatable {
         (outcomes ?? [:]).isEmpty && (ledger ?? [:]).isEmpty && (behaviour ?? [:]).isEmpty
             && (couldHold ?? [:]).isEmpty && (suggestedPairs ?? []).isEmpty && (splh ?? [:]).isEmpty
             && draftAcceptance?.available != true && autoPublishOffer?.eligible != true
+            && (rotation?.lines ?? []).isEmpty && startingPoints?.available != true
     }
 }
 

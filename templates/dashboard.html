@@ -10739,6 +10739,7 @@ function _schedHandleResult(data) {
     for (oi = 0; oi < otf.length; oi++) if (otf[oi] && otf[oi].candidate) otMoves.push(otf[oi]);
     renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations,
                           overtime_moves: otMoves, standby_days: data.standby_days || [],
+                          likely_edits: data.likely_edits || [],
                           fixes: rv ? (rv.fixes || []) : [], unfixed: rv ? (rv.unfixed || []) : [],
                           generation_seconds: data.generation_seconds, chunked: data.chunked, initial: true});
   }
@@ -17962,7 +17963,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // generator: roster & settings, scheduling rules, events & reservations,
   // shift requests. Every figure here is the server's; nothing is invented
   // on the client. ES5 only.
-  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],gen:null,chunked:false};
+  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],likely:[],gen:null,chunked:false};
   var _RV_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   function _rvRow(i){return (window._schedRows||[])[i]||{};}
   function _rvWhen(r){var d=r.day||(r.date?mdy(r.date):'');return d+(r.shift_start?' '+r.shift_start:'');}
@@ -17974,6 +17975,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(d.unfixed!==undefined)_rv.unfixed=d.unfixed||[];
     if(d.overtime_moves!==undefined)_rv.moves=d.overtime_moves||[];
     if(d.standby_days!==undefined)_rv.standby=d.standby_days||[];
+    if(d.likely_edits!==undefined)_rv.likely=d.likely_edits||[];
     if(d.generation_seconds!==undefined)_rv.gen=d.generation_seconds;
     if(d.chunked!==undefined)_rv.chunked=!!d.chunked;
   }
@@ -18036,6 +18038,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(i=0;i<sbAsk.length;i++){var sd=_rv.standby[sbAsk[i]],sp=sd.standby;
         h+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedAskStandby('+sbAsk[i]+',this)">Ask '+esc(sp.employee)+'</button></div>';}
+      h+='</div>';
+    }
+    /* Rows the manager's own past edits say they will probably change
+       (schedule_learning.predict_row_edits), likeliest first. Matches to an
+       edit they keep making are already lines above. */
+    var lk=[];for(i=0;i<_rv.likely.length;i++)if(_rv.likely[i]&&_rv.likely[i].kind==='predicted')lk.push(_rv.likely[i]);
+    if(lk.length){
+      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.</div>';
+      for(i=0;i<lk.length;i++){var le=lk[i],rs=String(le.reason||'');
+        h+='<div class="sr-line"><span class="d"></span><span><span class="hb-num">'+Math.round((+le.likelihood||0)*100)+'%</span> <b>'+esc(le.employee)+'</b>, '+esc(mdy(le.date))+' '+esc(le.shift_start||'')+' '+esc(le.role||'')
+          +(rs?' &mdash; '+esc(rs.charAt(0).toUpperCase()+rs.slice(1))+'.':'')+'</span></div>';}
       h+='</div>';
     }
     if(_rv.unfixed.length){
@@ -18757,12 +18770,32 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(acc.mean_unchanged_share!==null&&acc.mean_unchanged_share!==undefined)line+=(line?' ':'')+'On average '+Math.round(acc.mean_unchanged_share*100)+'% kept'+(acc.mean_changes!==null&&acc.mean_changes!==undefined?', '+acc.mean_changes+' changes a week':'')+'.';
       if(line)h+='<div class="ac-note" style="margin-top:8px">'+num(line)+'</div>';
     }
+    /* The edit predictor: ready or why not, and how it did on past drafts. */
+    var ep=d.edit_prediction||{};
+    h+='<div class="lb2-sub">Predicting your edits<small>from the drafts you have already finished</small></div>';
+    if(ep.ready&&ep.backtest&&ep.backtest.flagged&&ep.backtest.hit_rate!==null&&ep.backtest.hit_rate!==undefined)
+      h+='<div class="int-cal">'+num('On your last '+(ep.backtest.weeks||ep.weeks)+' drafts, '+Math.round(ep.backtest.hit_rate*100)+'% of the rows it flagged were rows you changed — against '+Math.round((ep.backtest.base_rate||0)*100)+'% of all rows.')+'</div>';
+    else if(ep.ready)h+='<div class="int-cal">Ready — it flags rows from your own edit history.</div>';
+    else h+='<div class="int-cal">'+num(ep.reason||'Needs a few finished drafts before it can predict your edits.')+'</div>';
+    /* A borrowed starting headcount, only for a restaurant with no history. */
+    var sp=d.starting_points||{};
+    if(sp.available){
+      var sl=sp.by_slot||[],byK={},order=[],q;
+      for(q=0;q<sl.length;q++){var kk=sl[q].day+'|'+sl[q].daypart;if(!byK[kk]){byK[kk]=[];order.push(kk);}byK[kk].push(esc(sl[q].role)+' <span class="hb-num">'+esc(sl[q].people)+'</span>');}
+      var srows='';for(q=0;q<order.length;q++){var pr=order[q].split('|');srows+='<div class="int-say"><b>'+esc(pr[0].slice(0,3))+' '+esc(_DP_NAMES[pr[1]]||pr[1])+'</b> '+byK[order[q]].join(' · ')+'</div>';}
+      h+='<div class="lb2-sub">Borrowed starting headcount<small>until your own weeks replace it</small></div><div class="int-cal">'+num(sp.note||'')+'</div>'+srows;
+    }else if(sp.reason&&!sp.own_history){
+      h+='<div class="lb2-sub">Borrowed starting headcount<small>for a restaurant with no history of its own</small></div><div class="int-cal">'+num(sp.reason)+'</div>';
+    }
     h+='<div class="lb2-sub">Quality weights<small>checked against what the published weeks actually did</small></div>';
     if(!cal.ready)h+='<div class="int-cal">'+num(cal.reason||'Not enough published weeks with a stored score to check the weights yet.')+'</div>';
     else{
       var dims=cal.dimensions||{},k,rows='';
-      for(k in dims)if(dims.hasOwnProperty(k)){var dm=dims[k];
-        rows+='<div class="w"><b>'+esc(k.replace(/_/g,' '))+'</b><span><span class="hb-num">'+esc(dm.default)+'</span> → <span class="hb-num">'+esc(dm.suggested)+'</span>'+(dm.nudge_pct?' (<span class="hb-num">'+(dm.nudge_pct>0?'+':'')+esc(dm.nudge_pct)+'%</span>)':'')+' <span class="rd">· '+esc(dm.reading||'')+'</span></span></div>';}
+      /* Where each weight is now, its bounded next step, and which outcome
+         drove it (calibrate_weights' explanation). */
+      for(k in dims)if(dims.hasOwnProperty(k)){var dm=dims[k],cur=(dm.current!==undefined&&dm.current!==null)?dm.current:dm.default;
+        rows+='<div class="w"><b>'+esc(k.replace(/_/g,' '))+'</b><span><span class="hb-num">'+esc(cur)+'</span> → <span class="hb-num">'+esc(dm.suggested)+'</span>'+(dm.nudge_pct?' (<span class="hb-num">'+(dm.nudge_pct>0?'+':'')+esc(dm.nudge_pct)+'%</span> vs default)':'')+'</span></div>'
+          +'<div class="ac-note" style="margin:-2px 0 6px">'+num(dm.explanation||dm.reading||'')+'</div>';}
       h+='<div class="int-cal">'+rows+'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div>'
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" onclick="applySuggestedWeights(this)">Apply suggested weights</button></div>';
     }
@@ -18812,6 +18845,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var bars=[],mx=0;
     for(i=0;i<_RV_DAYS.length;i++){wd=_RV_DAYS[i];if(!splh[wd])continue;for(part in splh[wd])if(splh[wd].hasOwnProperty(part)&&splh[wd][part]&&splh[wd][part].splh){bars.push({l:wd.slice(0,3)+' '+(_DP_NAMES[part]||part),v:+splh[wd][part].splh,h:splh[wd][part].hours,s:splh[wd][part].sales});if(+splh[wd][part].splh>mx)mx=+splh[wd][part].splh;}}
     h+='<div class="lb2-sub">Sales per labor hour<small>by daypart · the last 8 weeks</small></div>';
+    /* The target the draft aims for and Shift Quality scores against. */
+    var so=d.splh_objective||{};
+    if(so.available&&so.targets){
+      var tg=[];if(so.targets.morning)tg.push('lunch <span class="hb-num">'+_intMoney(so.targets.morning.target)+'</span>');if(so.targets.night)tg.push('dinner <span class="hb-num">'+_intMoney(so.targets.night.target)+'</span>');
+      h+='<div class="int-cal"><b>Target</b> '+tg.join(', ')+' per labor hour.<div class="ac-note" style="margin-top:4px">'+num((so.basis||'')+'.')+'</div></div>';
+    }
     if(!bars.length)h+='<div class="hb-empty">Needs daily sales and hours on file — upload shifts and connect the POS, and the bars draw themselves.</div>';
     else{
       h+='<div class="int-bars">';
@@ -18831,6 +18870,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+=ledgerLine(wk,'weekend','weekend shifts')+'<div style="height:8px"></div>'+ledgerLine(cl,'closing','closes');
       var hol=names.filter(function(n){return ledger[n].holiday;});if(hol.length){var hh=[];for(i=0;i<Math.min(hol.length,4);i++)hh.push('<b>'+esc(hol[i])+'</b> <span class="hb-num">'+ledger[hol[i]].holiday+'</span>');h+='<div class="int-ledger" style="margin-top:8px"><span class="most">Holidays:</span> '+hh.join(', ')+'</div>';}
       h+='<div class="ac-note" style="margin-top:8px">Over the last '+weeks+' published week'+(weeks===1?'':'s')+'. The draft spreads the next ones.</div>';
+    }
+    /* Who is next: the multi-week rotation plan (schedule_intel.rotation_plan). */
+    var rot=d.rotation||{},rl=rot.lines||[];
+    if(rl.length){
+      h+='<div class="int-ledger" style="margin-top:10px"><span class="most">Up next:</span></div>';
+      for(i=0;i<rl.length;i++)h+='<div class="int-say">'+num(rl[i])+'</div>';
+      h+='<div class="ac-note" style="margin-top:4px">The draft follows this where the rules allow, and fairness is scored against it.</div>';
     }
     h+='</div>';
     // What staff keep dropping and claiming.
