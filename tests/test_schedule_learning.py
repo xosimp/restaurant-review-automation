@@ -365,16 +365,21 @@ def test_calibration_refuses_on_too_little_record(db_path, rid):
     assert "at least 8 weeks and 40 shifts" in out["reason"]
 
 
-def test_calibration_suggests_bounded_nudges_and_applies_nothing(db_path, rid):
+def test_calibration_suggests_bounded_nudges_and_applies_nothing(db_path, rid, monkeypatch):
+    """Updated for #39: issues count only on watched nights (every night is
+    watched here), and one suggestion moves a weight at most 10% of its
+    default toward the fitted 30% — it used to jump the whole 30% at once."""
     import shift_quality
     before = dict(shift_quality.DEFAULT_WEIGHTS)
+    monkeypatch.setattr(intel, "watched_dates", lambda rid, a, b, db_path=None: {d for w in range(9) for d in _week(w)})
     _calibration_world(db_path, rid, weeks=9)
-    out = sl.calibrate_weights(rid, db_path=db_path)
+    out = sl.calibrate_weights(rid, db_path=db_path, current_weights={})
     assert out["ready"] is True and out["applied"] is False and out["weeks"] == 9 and out["shifts"] == 54
     cov = out["dimensions"]["coverage"]
     assert cov["correlation"]["issues"] < -0.5 and cov["correlation"]["review_rating"] > 0.5
     assert cov["correlation"]["labor_vs_target"] < -0.5
-    assert cov["nudge_pct"] == 30 and cov["suggested"] == round(before["coverage"] * 1.3, 1)
+    assert cov["target"] == round(before["coverage"] * 1.3, 1)
+    assert cov["nudge_pct"] == 10 and cov["suggested"] == round(before["coverage"] * 1.1, 1)
     # a dimension that never varied says nothing, and one with no data is left alone
     assert out["dimensions"]["stability"]["nudge_pct"] == 0 and out["dimensions"]["stability"]["evidence"] is None
     assert out["dimensions"]["leadership"]["suggested"] == before["leadership"]

@@ -14,9 +14,15 @@ deterministic, and never calls a model.
   learned_headcount_adjustments  {(weekday, daypart): {role: delta}}
   addressed_recommendations    which stored recommendations an edit carried
                                out (the implicit 'accepted')
-  calibrate_weights            how each Shift Quality dimension's score
-                               tracked real outcomes; suggested weights only,
-                               never applied
+  predict_row_edits            which rows of a draft the manager is likely
+                               to change, from smoothed edit rates over their
+                               own finished drafts (edit_prediction_backtest
+                               measures it on held-out weeks)
+  calibrate_weights            the Shift Quality weights fitted to what
+                               published shifts did (a joint ridge fit per
+                               outcome, watched nights only for issues,
+                               bounded steps, the outcome that drove each
+                               change named); suggested only, the owner applies
   attendance_by_weekday        no-show rate per person per weekday
   standby_days                 the dates in a week most likely to lose a
                                scheduled person
@@ -44,8 +50,10 @@ _PRETTY = {"morning": "lunch/day", "night": "dinner/night"}
 CALIBRATION_MIN_WEEKS = 8
 CALIBRATION_MIN_SHIFTS = 40
 CALIBRATION_MIN_PAIRS = 20        # per dimension per outcome, before a correlation is reported
-CALIBRATION_MIN_EVIDENCE = 0.1    # |mean correlation| below this suggests no change
-CALIBRATION_MAX_NUDGE = 0.30      # a suggestion never moves a weight more than 30% of its default
+CALIBRATION_MIN_EVIDENCE = 0.1    # |mean fitted effect| below this suggests no change
+CALIBRATION_MAX_NUDGE = 0.30      # the fitted weight never strays more than 30% from its default
+CALIBRATION_MAX_STEP = 0.10       # one Apply moves a weight at most 10% of its default
+CALIBRATION_RIDGE = 0.1           # ridge penalty, as a share of the shifts fitted (standardized)
 
 ATTENDANCE_MIN_WEEKDAY_SHIFTS = 4
 ATTENDANCE_MIN_OVERALL_SHIFTS = 6     # staff_settings.reliability's floor
@@ -458,6 +466,303 @@ def addressed_recommendations(recommendations: list, before_rows: list, after_ro
     return out
 
 
+# ── predicting which draft rows the manager will change ───────────────────
+#
+# likely_edits used to flag only a row that matched an edit made repeatedly
+# (the same person taken off the same Saturday twice). This predicts edits
+# in general, from every row of every draft that reached a manager's final
+# word: was that row removed, given to somebody else, retimed or re-roled?
+# A smoothed edit rate per feature value (the person, the role, the weekday
+# and daypart, the shift's length, how deep into the person's week it
+# falls, and whether the model or a fill-in pass wrote it) combined in
+# naive-Bayes log-odds (the strongest in full, the rest at half). Per restaurant, deterministic, no model call, no
+# library — and every flagged row names the rates that flagged it.
+
+PREDICT_WEEKS = 16               # drafts looked back over
+PREDICT_MIN_WEEKS = 3            # drafts with a manager's final word before anything is predicted
+PREDICT_MIN_ROWS = 60
+PREDICT_MIN_EDITED = 8
+PREDICT_SMOOTHING = 3.0          # pseudo-rows pulling each feature's rate toward the overall rate
+PREDICT_SUPPORT = 0.5            # features overlap (a person and their usual slot): the strongest piece of
+                                 # evidence counts in full, each further one at this share, so one fact
+                                 # seen through two features is not counted twice
+PREDICT_THRESHOLD = 0.5          # flag a row at this likelihood or above...
+PREDICT_MIN_LIFT = 0.2           # ...and at least this far above the restaurant's overall edit rate
+PREDICT_MAX_FLAGS = 12
+
+_FEATURES = ("person", "role", "slot", "weekday", "daypart", "length", "week_position", "origin")
+
+
+def _origin(notes: str) -> str:
+    """Who wrote the row, from the note the engine's own passes leave."""
+    n = (notes or "").strip().lower()
+    if not n:
+        return "model"
+    if n.startswith("cavnar:") or " cavnar:" in n:
+        return "optimizer"
+    if n.startswith("added") or "top-up" in n or " floor" in n:
+        return "fill"
+    if any(w in n for w in ("auto-capped", "staggered", "trimmed", "extended", "arrival", "(was ")):
+        return "adjusted"
+    return "model"
+
+
+def _length(r) -> str:
+    h = _hours(r)
+    if h <= 0:
+        return ""
+    return "short" if h < 5 else "long" if h > 8 else "standard"
+
+
+def row_features(rows: list) -> list:
+    """[{feature: value}] per row, in row order. week_position is where the
+    shift falls in that person's own week (their 1st-3rd, 4th-5th, 6th+)."""
+    from schedule_rules import parse_minutes
+    order = {}
+    for i, r in enumerate(rows or []):
+        n = (r.get("employee") or "").strip().lower()
+        order.setdefault(n, []).append((r.get("date") or "", parse_minutes(r.get("shift_start") or "") or 0, i))
+    nth = {}
+    for n, items in order.items():
+        for k, (_d, _s, i) in enumerate(sorted(items)):
+            nth[i] = k + 1
+    out = []
+    for i, r in enumerate(rows or []):
+        day = _weekday(r.get("date"), r.get("day"))
+        part = _part(r.get("shift_start"))
+        k = nth.get(i, 1)
+        out.append({
+            "person": (r.get("employee") or "").strip().lower(),
+            "role": (r.get("role") or "").strip().lower(),
+            "slot": f"{day}|{part}" if day and part in ("morning", "night") else "",
+            "weekday": day,
+            "daypart": part if part in ("morning", "night") else "",
+            "length": _length(r),
+            "week_position": "1-3" if k <= 3 else "4-5" if k <= 5 else "6+",
+            "origin": _origin(r.get("notes")),
+        })
+    return out
+
+
+def _edited_keys(d: dict) -> set:
+    """(date, lower name, start) of every draft row the net diff changed."""
+    keys = set()
+    for r in d.get("removed") or []:
+        keys.add((r.get("date") or "", (r.get("employee") or "").strip().lower(), r.get("shift_start") or ""))
+    for m in d.get("moved") or []:
+        keys.add((m.get("date") or "", (m.get("from") or "").strip().lower(), m.get("shift_start") or ""))
+    for rt in d.get("retimed") or []:
+        keys.add((rt.get("date") or "", (rt.get("employee") or "").strip().lower(), rt.get("old_start") or ""))
+    for rc in d.get("role_changed") or []:
+        keys.add((rc.get("date") or "", (rc.get("employee") or "").strip().lower(), rc.get("shift_start") or ""))
+    return keys
+
+
+def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> list:
+    """One entry per calendar week whose draft reached the manager's final
+    word — edited, or published as it stood (a week sent out untouched is
+    evidence too: every row in it was kept). [{history_id, week_start,
+    rows, edited: [bool per row]}], oldest first. Staff swaps after the
+    manager's last save are not the manager's edits (edited_weeks' rule)."""
+    from schedule_versions import diff, rows_from_csv
+    conn = get_conn(db_path)
+    try:
+        hist = conn.execute(
+            "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
+            "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason IN ('edited','published') "
+            "AND v.created_at >= datetime('now', ?) ORDER BY v.history_id DESC LIMIT 80",
+            (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        newest = {}
+        for h in hist:
+            wk = h["week_start"] or f"#{h['history_id']}"
+            if wk not in newest:
+                newest[wk] = (h["history_id"], wk)
+        ids = sorted(v[0] for v in newest.values())
+        if not ids:
+            return []
+        week_of = {v[0]: v[1] for v in newest.values()}
+        marks = ",".join("?" for _ in ids)
+        versions = conn.execute(
+            f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
+            f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
+    finally:
+        conn.close()
+    by = {}
+    for v in versions:
+        by.setdefault(v["history_id"], []).append(v)
+    out = []
+    for hid in ids:
+        vs = by.get(hid) or []
+        base = next((v for v in vs if v["reason"] == "generated"), None)
+        if base is None:
+            continue
+        mgr = [v for v in vs if v["reason"] in ("edited", "published") and v["version"] > base["version"]]
+        if not mgr:
+            continue
+        b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(mgr[-1]["schedule_csv"])
+        if not b:
+            continue
+        keys = _edited_keys(diff(b, f))
+        out.append({"history_id": hid, "week_start": week_of.get(hid),
+                    "rows": b, "edited": [(r.get("date") or "", (r.get("employee") or "").strip().lower(),
+                                           r.get("shift_start") or "") in keys for r in b]})
+    out.sort(key=lambda w: (w["week_start"] or "", w["history_id"]))
+    return out
+
+
+def fit_edit_model(weeks: list) -> dict:
+    """Counts behind the predictor: overall and per feature value. Not
+    ready (with the reason) under the minimum history."""
+    n = sum(len(w["rows"]) for w in weeks)
+    e = sum(sum(1 for x in w["edited"] if x) for w in weeks)
+    need = (f"{PREDICT_MIN_WEEKS} drafts you've finished with, {PREDICT_MIN_ROWS} rows and "
+            f"{PREDICT_MIN_EDITED} changed rows")
+    if len(weeks) < PREDICT_MIN_WEEKS or n < PREDICT_MIN_ROWS or e < PREDICT_MIN_EDITED:
+        return {"ready": False, "weeks": len(weeks), "rows": n, "edited": e,
+                "reason": (f"{len(weeks)} draft{'s' if len(weeks) != 1 else ''} you've finished with, {n} row"
+                           f"{'s' if n != 1 else ''}, {e} changed — predicting your edits needs at least {need}.")}
+    tables = {f: {} for f in _FEATURES}
+    for w in weeks:
+        for feats, hit in zip(row_features(w["rows"]), w["edited"]):
+            for f in _FEATURES:
+                v = feats.get(f)
+                if not v:
+                    continue
+                c = tables[f].setdefault(v, [0, 0])
+                c[0] += 1 if hit else 0
+                c[1] += 1
+    return {"ready": True, "weeks": len(weeks), "rows": n, "edited": e,
+            "base_rate": (e + 1.0) / (n + 2.0), "tables": tables}
+
+
+def _logit(p):
+    p = min(1 - 1e-6, max(1e-6, p))
+    return math.log(p / (1 - p))
+
+
+def _feature_phrase(feature, value, edits, seen, row) -> str:
+    part = {"morning": "lunch", "night": "dinner"}
+    if feature == "person":
+        who = (row.get("employee") or value).strip()
+        return f"you changed {edits} of {seen} of {who}'s shifts"
+    if feature == "role":
+        return f"{edits} of {seen} {(row.get('role') or value).strip()} shifts"
+    if feature == "slot":
+        day, p = value.split("|", 1)
+        return f"{edits} of {seen} {day} {part.get(p, p)} shifts"
+    if feature == "weekday":
+        return f"{edits} of {seen} {value} shifts"
+    if feature == "daypart":
+        return f"{edits} of {seen} {part.get(value, value)} shifts"
+    if feature == "length":
+        return f"{edits} of {seen} {'shifts over 8 hours' if value == 'long' else 'shifts under 5 hours' if value == 'short' else '5-8 hour shifts'}"
+    if feature == "week_position":
+        label = {"6+": "a person's 6th shift or later that week", "4-5": "a person's 4th or 5th shift that week",
+                 "1-3": "among a person's first three shifts that week"}[value]
+        return f"{edits} of {seen} shifts {label}" if value == "1-3" else f"{edits} of {seen} shifts that were {label}"
+    if feature == "origin":
+        label = {"fill": "rows a fill-in pass added", "optimizer": "rows Cavnar's repair loop wrote",
+                 "adjusted": "rows an automatic pass retimed or trimmed", "model": "rows the draft wrote"}[value]
+        return f"{edits} of {seen} {label}"
+    return f"{edits} of {seen}"
+
+
+def predict_edits(model: dict, rows: list, threshold=PREDICT_THRESHOLD, limit=PREDICT_MAX_FLAGS) -> list:
+    """[{index, employee, date, role, shift_start, likelihood, reason, text}]
+    for draft rows at or above the threshold (and clearly above the
+    restaurant's overall edit rate), likeliest first, at most `limit`."""
+    if not model or not model.get("ready") or not rows:
+        return []
+    base = model["base_rate"]
+    lb = _logit(base)
+    out = []
+    for i, (r, feats) in enumerate(zip(rows, row_features(rows))):
+        contrib = []
+        for f in _FEATURES:
+            v = feats.get(f)
+            c = (model["tables"].get(f) or {}).get(v) if v else None
+            if not c:
+                continue
+            e, n = c
+            rate = (e + PREDICT_SMOOTHING * base) / (n + PREDICT_SMOOTHING)
+            contrib.append((_logit(rate) - lb, f, v, e, n))
+        ranked = sorted(contrib, key=lambda c: (-abs(c[0]), c[1]))
+        z = lb + sum(c[0] * (1.0 if k == 0 else PREDICT_SUPPORT) for k, c in enumerate(ranked))
+        p = 1 / (1 + math.exp(-z))
+        if p < threshold or p < base + PREDICT_MIN_LIFT:
+            continue
+        top = [c for c in sorted(contrib, key=lambda c: (-c[0], c[1])) if c[0] > 0][:2]
+        reason = "; ".join(_feature_phrase(f, v, e, n, r) for _c, f, v, e, n in top)
+        day = _weekday(r.get("date"), r.get("day"))
+        part = {"morning": "lunch", "night": "dinner"}.get(_part(r.get("shift_start")), "")
+        who = (r.get("employee") or "").strip()
+        from time_utils import mdy
+        pct = int(round(p * 100))
+        out.append({"index": i, "kind": "predicted", "employee": who, "date": r.get("date"),
+                    "role": r.get("role"), "shift_start": r.get("shift_start"),
+                    "likelihood": round(p, 2), "reason": reason, "features": [c[1] for c in top],
+                    "text": (f"{who}, {day[:3]} {mdy(r.get('date'))} {part} {(r.get('role') or '').strip()}".replace("  ", " ").strip()
+                             + f" — {pct}% likely you'll change it: {reason}.")})
+    out.sort(key=lambda x: (-x["likelihood"], x["index"]))
+    return out[:limit]
+
+
+def edit_predictor(restaurant_id, db_path=DB_PATH, weeks=None) -> dict:
+    """The fitted model for this restaurant, or {ready: False, reason}."""
+    weeks = prediction_weeks(restaurant_id, db_path=db_path) if weeks is None else weeks
+    return fit_edit_model(weeks)
+
+
+def predict_row_edits(restaurant_id, rows: list, db_path=DB_PATH, model=None) -> list:
+    """predict_edits over a draft for this restaurant's own history."""
+    model = edit_predictor(restaurant_id, db_path=db_path) if model is None else model
+    return predict_edits(model, rows)
+
+
+def edit_prediction_summary(restaurant_id, db_path=DB_PATH) -> dict:
+    """What the record panel says about the predictor: ready or why not,
+    and how it would have done on your own past drafts (held out one at a
+    time)."""
+    weeks = prediction_weeks(restaurant_id, db_path=db_path)
+    model = fit_edit_model(weeks)
+    out = {k: model.get(k) for k in ("ready", "weeks", "rows", "edited", "reason")}
+    if model.get("ready"):
+        bt = edit_prediction_backtest(weeks)
+        out["backtest"] = {k: bt[k] for k in ("weeks", "flagged", "hits", "hit_rate", "recall", "base_rate")}
+    return out
+
+
+def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
+    """Leave one week out: fit on every other week, predict the held-out
+    draft, and count. hit_rate is the share of flagged rows the manager did
+    change; recall the share of changed rows that were flagged; base_rate
+    what flagging at random would hit. Weeks whose training set is under
+    the minimum are skipped, and said."""
+    flagged = hits = edited = rows = skipped = 0
+    per_week = []
+    for i, w in enumerate(weeks):
+        model = fit_edit_model(weeks[:i] + weeks[i + 1:])
+        if not model.get("ready"):
+            skipped += 1
+            continue
+        preds = predict_edits(model, w["rows"], threshold=threshold, limit=len(w["rows"]))
+        idx = {p["index"] for p in preds}
+        h = sum(1 for j in idx if w["edited"][j])
+        e = sum(1 for x in w["edited"] if x)
+        flagged += len(idx)
+        hits += h
+        edited += e
+        rows += len(w["rows"])
+        per_week.append({"week_start": w.get("week_start"), "flagged": len(idx), "hits": h, "edited": e,
+                         "rows": len(w["rows"])})
+    return {"weeks": len(per_week), "skipped": skipped, "rows": rows, "edited": edited,
+            "flagged": flagged, "hits": hits,
+            "hit_rate": round(hits / flagged, 3) if flagged else None,
+            "recall": round(hits / edited, 3) if edited else None,
+            "base_rate": round(edited / rows, 3) if rows else None,
+            "per_week": per_week}
+
+
 # ── outcome calibration ───────────────────────────────────────────────────
 
 def _pearson(pairs):
@@ -474,18 +779,86 @@ def _pearson(pairs):
     return sxy / math.sqrt(sxx * syy)
 
 
-def calibrate_weights(restaurant_id, db_path=DB_PATH) -> dict:
-    """How each Shift Quality dimension's score lined up with what the shift
-    actually did, over the published weeks schedule_intel.record_outcomes
-    has recorded — and a suggested weight for each, at most 30% either side
-    of the default. Nothing is applied: the owner (or an engineer) decides.
+def _solve(a, b):
+    """Gaussian elimination with partial pivoting: x in a·x = b. None when
+    the system is singular (it cannot be, with a ridge penalty, but a
+    degenerate column is refused rather than divided by)."""
+    n = len(b)
+    m = [list(a[i]) + [b[i]] for i in range(n)]
+    for col in range(n):
+        piv = max(range(col, n), key=lambda r: abs(m[r][col]))
+        if abs(m[piv][col]) < 1e-12:
+            return None
+        m[col], m[piv] = m[piv], m[col]
+        for r in range(col + 1, n):
+            f = m[r][col] / m[col][col]
+            if f:
+                for c in range(col, n + 1):
+                    m[r][c] -= f * m[col][c]
+    x = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        x[r] = (m[r][n] - sum(m[r][c] * x[c] for c in range(r + 1, n))) / m[r][r]
+    return x
 
-    Outcomes per shift: coverage/no-show issues (fewer is better), the
-    day's review rating (higher is better), labor % against the week's
-    target (lower is better). A dimension whose higher scores went with
-    better outcomes is suggested up; one whose scores told nothing, or
-    pointed the wrong way, is suggested down. Deterministic."""
-    from shift_quality import DEFAULT_WEIGHTS
+
+def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
+    """One outcome regressed on every dimension at once, standardized, with
+    a ridge penalty: {key: coefficient}, {key: shifts that dimension was
+    scored on}, and the shifts used. A dimension scored on fewer than
+    `min_pairs` of those shifts, or that never varied, is left out of the
+    fit. A dimension a shift did not score is held at its mean there, so it
+    neither helps nor hurts that shift. Joint rather than one correlation
+    per dimension: coverage and the half-hour sweep move together, and
+    fitted one at a time each took the credit for the other."""
+    rows = [(dims, oc[outcome]) for dims, oc, _h in samples if oc.get(outcome) is not None]
+    if len(rows) < min_pairs:
+        return {}, {}, len(rows)
+    ys = [y for _d, y in rows]
+    my = sum(ys) / len(ys)
+    sy = math.sqrt(sum((y - my) ** 2 for y in ys) / len(ys))
+    if sy <= 1e-9:
+        return {}, {}, len(rows)
+    stats, seen = {}, {}
+    for k in keys:
+        vals = [d[k] for d, _y in rows if k in d]
+        seen[k] = len(vals)
+        if len(vals) < min_pairs:
+            continue
+        mu = sum(vals) / len(vals)
+        sd = math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals))
+        if sd > 1e-9:
+            stats[k] = (mu, sd)
+    used = sorted(stats)
+    if not used:
+        return {}, seen, len(rows)
+    xs = [[((d[k] - stats[k][0]) / stats[k][1]) if k in d else 0.0 for k in used] for d, _y in rows]
+    yz = [(y - my) / sy for y in ys]
+    n, p = len(xs), len(used)
+    xtx = [[sum(xs[r][i] * xs[r][j] for r in range(n)) for j in range(p)] for i in range(p)]
+    for i in range(p):
+        xtx[i][i] += CALIBRATION_RIDGE * n
+    xty = [sum(xs[r][i] * yz[r] for r in range(n)) for i in range(p)]
+    beta = _solve(xtx, xty)
+    if beta is None:
+        return {}, seen, len(rows)
+    # Scaled so a lone dimension's coefficient is its correlation, which is
+    # what CALIBRATION_MIN_EVIDENCE was written against.
+    return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows)
+
+
+# The outcomes a shift is judged by afterwards: +1 = a higher value is
+# better, −1 = a lower one is. Each carries the words its explanation uses.
+CALIBRATION_OUTCOMES = {
+    "issues": (-1, "coverage and no-show issues", "fewer coverage or no-show issues", "more coverage or no-show issues"),
+    "review_rating": (1, "the day's review rating", "better reviews that day", "worse reviews that day"),
+    "labor_vs_target": (-1, "labor % against target", "labor % nearer or under target", "labor % further over target"),
+}
+
+
+def _calibration_samples(restaurant_id, db_path):
+    """[(dims, outcomes, history_id)] — one per recorded shift outcome that
+    has a stored score, plus the dates Cavnar was watching (None when the
+    restaurant cannot be watched at all)."""
     conn = get_conn(db_path)
     try:
         outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating, labor_pct FROM schedule_outcomes "
@@ -511,6 +884,19 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH) -> dict:
                 continue
             dims_by[(hid, s.get("date"), s.get("daypart"))] = {
                 d["key"]: float(d["score"]) for d in s.get("dimensions") or [] if d.get("key") and d.get("score") is not None}
+    # A coverage or no-show issue can only have been opened on a night the
+    # coverage check was watching (schedule_intel.watched_dates). A quiet
+    # night nobody watched is not a clean one, so the issues outcome counts
+    # only watched dates; reviews and labor % are measured either way.
+    dates = sorted(o["date"] for o in outs if o["date"])
+    watched = set()
+    if dates:
+        try:
+            from schedule_intel import watched_dates
+            watched = watched_dates(restaurant_id, dates[0], dates[-1], db_path=db_path)
+        except Exception as e:
+            log.warning("[calibration] watched dates unavailable for %s: %s", restaurant_id, e)
+            watched = set()
     samples = []
     for o in outs:
         dims = dims_by.get((o["history_id"], o["date"], o["daypart"]))
@@ -520,44 +906,131 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH) -> dict:
         labor = None
         if o["labor_pct"] is not None and target:
             labor = float(o["labor_pct"]) - float(target)
-        samples.append((dims, {"issues": float(o["issues"] or 0),
+        samples.append((dims, {"issues": float(o["issues"] or 0) if o["date"] in watched else None,
                                "review_rating": float(o["review_rating"]) if o["review_rating"] is not None else None,
                                "labor_vs_target": labor}, o["history_id"]))
+    return samples, watched
+
+
+def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> dict:
+    """Fit the Shift Quality weights to what published shifts actually did,
+    and suggest the next step toward that fit. Nothing is applied: "Apply"
+    (strategy_routes._do_calibration_apply) is the owner's decision.
+
+    Outcomes per shift (schedule_intel.record_outcomes): coverage and
+    no-show issues — only on nights Cavnar was watching — the day's review
+    rating, and labor % against the week's target. Each outcome is fitted
+    on every dimension at once (a standardized ridge regression); a
+    dimension whose higher scores went with better outcomes, holding the
+    others steady, is moved up, one whose scores went with worse outcomes
+    is moved down, and one the record cannot read is left alone.
+
+    Guardrails:
+      * a minimum record: CALIBRATION_MIN_WEEKS published weeks and
+        CALIBRATION_MIN_SHIFTS shift outcomes, and CALIBRATION_MIN_PAIRS
+        shifts per dimension per outcome before that pair says anything;
+      * an evidence floor (CALIBRATION_MIN_EVIDENCE) under which nothing
+        moves;
+      * the fitted weight stays within CALIBRATION_MAX_NUDGE of the default;
+      * one Apply moves a weight at most CALIBRATION_MAX_STEP of its default
+        from where it is now, so a week of odd outcomes cannot swing the
+        score — the next suggestion takes the next step if the record
+        still says so;
+      * every dimension says which outcome drove its change, and how many
+        shifts that rests on. Deterministic."""
+    from shift_quality import DEFAULT_WEIGHTS
+    samples, watched = _calibration_samples(restaurant_id, db_path)
     n_weeks = len({s[2] for s in samples})
-    base = {"weeks": n_weeks, "shifts": len(samples),
+    base = {"weeks": n_weeks, "shifts": len(samples), "watched_shifts": sum(1 for s in samples if s[1]["issues"] is not None),
             "needs": {"weeks": CALIBRATION_MIN_WEEKS, "shifts": CALIBRATION_MIN_SHIFTS}}
     if n_weeks < CALIBRATION_MIN_WEEKS or len(samples) < CALIBRATION_MIN_SHIFTS:
         return {"ready": False, **base,
                 "reason": (f"{n_weeks} published week{'s' if n_weeks != 1 else ''} and {len(samples)} shift outcome"
                            f"{'s' if len(samples) != 1 else ''} with a stored score — calibration needs at least "
                            f"{CALIBRATION_MIN_WEEKS} weeks and {CALIBRATION_MIN_SHIFTS} shifts.")}
-    # +1 = a higher score should mean a higher outcome value is GOOD; −1 = lower is good.
-    direction = {"issues": -1, "review_rating": 1, "labor_vs_target": -1}
+    if current_weights is None:
+        try:
+            current_weights = _models_mod.get_quality_weights(restaurant_id) or {}
+        except Exception as e:
+            log.warning("[calibration] current weights unavailable for %s: %s", restaurant_id, e)
+            current_weights = {}
+    current = dict(DEFAULT_WEIGHTS)
+    current.update({k: float(v) for k, v in (current_weights or {}).items() if k in DEFAULT_WEIGHTS})
+    keys = list(DEFAULT_WEIGHTS)
+    fits = {}
+    for outcome in CALIBRATION_OUTCOMES:
+        coef, seen, used = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
+        fits[outcome] = {"coef": coef, "seen": seen, "shifts": used}
     report, suggested = {}, {}
     for key, default in DEFAULT_WEIGHTS.items():
-        corr, pairs_n, evidence = {}, {}, []
-        for outcome, sign in direction.items():
+        corr, pairs_n, coefs, contrib = {}, {}, {}, {}
+        for outcome, (sign, _label, _good, _bad) in CALIBRATION_OUTCOMES.items():
             pairs = [(dims[key], oc[outcome]) for dims, oc, _h in samples if key in dims and oc[outcome] is not None]
             pairs_n[outcome] = len(pairs)
             r = _pearson(pairs) if len(pairs) >= CALIBRATION_MIN_PAIRS else None
             corr[outcome] = round(r, 3) if r is not None else None
-            if r is not None:
-                evidence.append(sign * r)
-        ev = sum(evidence) / len(evidence) if evidence else None
-        nudge = 0.0
+            b = fits[outcome]["coef"].get(key)
+            coefs[outcome] = round(b, 3) if b is not None else None
+            if b is not None:
+                contrib[outcome] = sign * b
+        ev = sum(contrib.values()) / len(contrib) if contrib else None
+        target_nudge = 0.0
         if ev is not None and abs(ev) >= CALIBRATION_MIN_EVIDENCE:
-            nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev))
-        weight = round(default * (1 + nudge), 1)
+            target_nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev))
+        target = default * (1 + target_nudge)
+        now = float(current.get(key, default))
+        step = CALIBRATION_MAX_STEP * default
+        weight = round(now + max(-step, min(step, target - now)), 1)
         suggested[key] = weight
-        report[key] = {"default": default, "suggested": weight, "nudge_pct": int(round(nudge * 100)),
+        driver = None
+        if contrib and target_nudge:
+            same_way = {o: c for o, c in contrib.items() if (c > 0) == (target_nudge > 0)}
+            if same_way:
+                o = max(same_way, key=lambda k: (abs(same_way[k]), k))
+                driver = {"outcome": o, "label": CALIBRATION_OUTCOMES[o][1], "effect": round(same_way[o], 3),
+                          "shifts": pairs_n[o]}
+        explanation = _calibration_explanation(key, now, weight, target_nudge, ev, driver, contrib, pairs_n)
+        report[key] = {"default": default, "current": round(now, 1), "suggested": weight,
+                       "nudge_pct": int(round((weight / default - 1) * 100)) if default else 0,
+                       "step_pct": int(round((weight - now) / default * 100)) if default else 0,
+                       "target": round(target, 1),
                        "evidence": round(ev, 3) if ev is not None else None,
-                       "correlation": corr, "pairs": pairs_n,
-                       "reading": ("tracked better outcomes" if nudge > 0 else
-                                   "did not track outcomes here" if nudge < 0 else
+                       "correlation": corr, "coefficient": coefs, "pairs": pairs_n,
+                       "driver": driver, "explanation": explanation,
+                       "reading": ("tracked better outcomes" if target_nudge > 0 else
+                                   "did not track outcomes here" if target_nudge < 0 else
                                    "no clear signal yet")}
+    moving = sorted((k for k, d in report.items() if abs(d["suggested"] - d["current"]) >= 0.05),
+                    key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
+    watch_note = ("" if base["watched_shifts"] else
+                  " Coverage and no-show issues are not counted: none of these shifts fell on a night Cavnar was watching.")
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
-            "note": "Suggestions only — the engine keeps its current weights until someone changes them."}
+            "moving": moving,
+            "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"])} for o, f in fits.items()},
+            "limits": {"max_step_pct": int(CALIBRATION_MAX_STEP * 100), "max_total_pct": int(CALIBRATION_MAX_NUDGE * 100),
+                       "min_pairs": CALIBRATION_MIN_PAIRS, "min_evidence": CALIBRATION_MIN_EVIDENCE},
+            "note": ("Suggestions only — the engine keeps its current weights until someone applies them. One apply moves "
+                     f"a weight at most {int(CALIBRATION_MAX_STEP * 100)}% of its default." + watch_note)}
 
+
+def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs_n) -> str:
+    """One sentence per dimension: which outcome moved it, and on how many
+    shifts — or why it did not move."""
+    label = key.replace("_", " ").capitalize()
+    if not contrib:
+        few = max(pairs_n.values()) if pairs_n else 0
+        return (f"{label} has not been scored on enough shifts with a recorded outcome to read "
+                f"({few} of the {CALIBRATION_MIN_PAIRS} needed).")
+    if not nudge:
+        return f"{label} did not line up clearly with any outcome (evidence {ev:+.2f}); left where it is."
+    head = (f"{label} up" if weight > now else f"{label} down" if weight < now
+            else f"{label} stays at {weight:g}, already where the record points")
+    if driver:
+        _sign, _l, good, bad = CALIBRATION_OUTCOMES[driver["outcome"]]
+        went = good if nudge > 0 else bad
+        return (f"{head}: shifts where it scored higher had {went} "
+                f"(across {driver['shifts']} shift{'s' if driver['shifts'] != 1 else ''}), holding the other dimensions steady.")
+    return f"{head}: the outcomes pulled in different directions, and on balance {'for' if nudge > 0 else 'against'} it."
 
 # ── attendance by weekday ─────────────────────────────────────────────────
 

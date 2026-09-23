@@ -44,10 +44,13 @@ struct ScheduleIntelSection: View {
                         }
                     }
                     acceptanceBlock(intel.draftAcceptance)
+                    if let prediction = intel.editPrediction { editPredictionBlock(prediction) }
                     if let calibration = intel.weightCalibration { calibrationBlock(calibration) }
+                    if let start = intel.startingPoints, start.ownHistory != true { startingPointsBlock(start) }
                     if let revenue = intel.revenue, let value = revenue.value { revenueLine(revenue, value: value) }
                     if let outcomes = intel.outcomes, !outcomes.isEmpty { outcomesBlock(outcomes) }
-                    if let splh = intel.splh, !splh.isEmpty { splhBlock(splh) }
+                    if let splh = intel.splh, !splh.isEmpty { splhBlock(splh, objective: intel.splhObjective) }
+                    if let lines = intel.rotation?.lines, !lines.isEmpty { rotationPlanBlock(lines, weeks: intel.rotation?.weeks) }
                     if let ledger = intel.ledger, !ledger.isEmpty { ledgerBlock(ledger) }
                     if let behaviour = intel.behaviour, !behaviour.isEmpty { behaviourBlock(behaviour) }
                     if let could = intel.couldHold, !could.isEmpty { trainedUpBlock(could) }
@@ -192,15 +195,16 @@ struct ScheduleIntelSection: View {
                                     .font(.cavnarBody(14, weight: 600))
                                     .foregroundStyle(Color.cavnarInk)
                                 Spacer(minLength: 4)
+                                // Where the weight is now → the bounded next step.
                                 HomeMixedText.make(
-                                    "\(CavnarQualityFormat.hours(d.default ?? 0)) → \(CavnarQualityFormat.hours(d.suggested ?? 0))"
-                                    + ((d.nudgePct ?? 0) != 0 ? " (\((d.nudgePct ?? 0) > 0 ? "+" : "")\(d.nudgePct ?? 0)%)" : ""),
+                                    "\(CavnarQualityFormat.hours(d.current ?? d.default ?? 0)) → \(CavnarQualityFormat.hours(d.suggested ?? 0))"
+                                    + ((d.nudgePct ?? 0) != 0 ? " (\((d.nudgePct ?? 0) > 0 ? "+" : "")\(d.nudgePct ?? 0)% vs default)" : ""),
                                     size: 13.5, weight: 600, color: .cavnarInk2)
                             }
-                            if let reading = d.reading {
-                                Text(reading)
-                                    .font(.cavnarBody(12.5))
-                                    .foregroundStyle(Color.cavnarInk3)
+                            // Which outcome moved it, on how many shifts — or why not.
+                            if let why = d.explanation ?? d.reading {
+                                HomeMixedText.make(why, size: 12.5, color: .cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         .padding(.vertical, 3)
@@ -221,6 +225,74 @@ struct ScheduleIntelSection: View {
                     Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                 }
             }
+        }
+    }
+
+    /// Whether the edit predictor is ready, and how it did on past drafts.
+    private func editPredictionBlock(_ p: EditPredictionSummary) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            kicker("Predicting your edits")
+            if let line = p.line {
+                HomeMixedText.make(line, size: 13.5, color: p.ready == true ? .cavnarInk2 : .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The headcount borrowed from similar restaurants for a restaurant
+    /// with no history of its own — or why none was.
+    private func startingPointsBlock(_ start: StartingPoints) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            kicker("Borrowed starting headcount")
+            if start.available == true {
+                if let note = start.note {
+                    HomeMixedText.make(note, size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                let slots = start.bySlot ?? []
+                ForEach(orderedDays(Set(slots.map(\.day))), id: \.self) { day in
+                    ForEach(Self.dayparts, id: \.self) { part in
+                        let here = slots.filter { $0.day == day && $0.daypart == part }
+                        if !here.isEmpty {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("\(String(day.prefix(3))) \(part == "morning" ? "day" : "night")")
+                                    .font(.cavnarBody(13, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .frame(width: 72, alignment: .leading)
+                                HomeMixedText.make(here.map { "\($0.role) \($0.people)" }.joined(separator: " · "),
+                                                   size: 13, color: .cavnarInk3)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+            } else if let reason = start.reason {
+                HomeMixedText.make(reason, size: 13.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Who is next for a weekend off, a close and a holiday, per role.
+    private func rotationPlanBlock(_ lines: [String], weeks: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            kicker("Up next in the rotation")
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .frame(width: 13)
+                        .padding(.top, 3)
+                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text(weeks.map { "Planned from the last \($0) published weeks. The draft follows it where the rules allow, and fairness is scored against it." }
+                 ?? "The draft follows it where the rules allow, and fairness is scored against it.")
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -323,13 +395,25 @@ struct ScheduleIntelSection: View {
 
     // MARK: Sales per labor hour
 
-    private func splhBlock(_ splh: [String: [String: IntelSplh]]) -> some View {
+    private func splhBlock(_ splh: [String: [String: IntelSplh]], objective: SplhObjective? = nil) -> some View {
         let entries: [(String, String, IntelSplh)] = orderedDays(splh.keys).flatMap { day in
             Self.dayparts.compactMap { part in (splh[day]?[part]).map { (day, part, $0) } }
         }
         let maxValue = entries.compactMap { $0.2.splh }.max() ?? 0
         return VStack(alignment: .leading, spacing: 8) {
             kicker("Sales per labor hour")
+            // The target the draft aims for and Shift Quality scores against.
+            if let obj = objective, obj.available == true, let targets = obj.targets, !targets.isEmpty {
+                HomeMixedText.make(
+                    "Target " + Self.dayparts.compactMap { p in
+                        targets[p]?.target.map { "\(p == "morning" ? "lunch" : "dinner") $\($0.commaFormatted)" }
+                    }.joined(separator: ", ") + " per labor hour.",
+                    size: 13.5, weight: 600, color: .cavnarInk2)
+                if let basis = obj.basis {
+                    HomeMixedText.make(basis + ".", size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if maxValue > 0 {
                 VStack(spacing: 6) {
                     ForEach(Array(entries.enumerated()), id: \.offset) { _, e in

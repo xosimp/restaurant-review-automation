@@ -413,6 +413,16 @@ def _moves_for(problem, state: _State) -> list:
                             and part in sq.present_dayparts(r):
                         replace_in(i, lambda n: True, f"{o['name']} had more than their share of {kind} shifts")
                         _swap_moves(state, i, moves, f"{o['name']} had more than their share of {kind} shifts")
+        # The multi-week rotation (schedule_intel.rotation_plan): somebody
+        # due a weekend off, or resting from closes, who is on this shift.
+        rot = facts.get("rotation") or {}
+        for name, why in ([(n, f"{n} was due a weekend off") for n in rot.get("weekend_due_working") or []]
+                          + [(n, f"{n} is resting from closes") for n in rot.get("resting_closer_closing") or []]):
+            for i, r in enumerate(state.rows):
+                if (r.get("employee") or "").strip() == name and r.get("date") == date \
+                        and part in sq.present_dayparts(r):
+                    replace_in(i, lambda n: True, why)
+                    _swap_moves(state, i, moves, why)
 
     elif key == "labor_efficiency":
         ratio = facts.get("ratio") or 1
@@ -428,6 +438,23 @@ def _moves_for(problem, state: _State) -> list:
             for i in idxs[:3]:
                 if _can_cut(state, i, sq._row_hours(state.rows[i]), removing=True):
                     moves.append(_remove_move(state, i, f"{day} was over its hour target"))
+
+    elif key == "splh":
+        # More hours on this daypart than its usual sales carry at the
+        # target: an hour off its longest shifts, or its longest shift off,
+        # each only where a floor and the coverage still allow the cut.
+        if (facts.get("ratio") or 1) < 1 - sq.SPLH_TOLERANCE:
+            idxs = sorted([i for i, r in enumerate(state.rows) if r.get("date") == date
+                           and sq.present_dayparts(r)[0] == part],
+                          key=lambda i: -sq._row_hours(state.rows[i]))
+            why = f"{where} carried more hours than its usual sales at the ${facts.get('target', 0):,.0f} target"
+            for i in idxs[:3]:
+                s, e = _span(state.rows[i])
+                if s is not None and e - s > 5 * 60 and _can_cut(state, i, 1.0):
+                    moves.append(_retime_move(state, i, s, e - 60, why))
+            for i in idxs[:3]:
+                if _can_cut(state, i, sq._row_hours(state.rows[i]), removing=True):
+                    moves.append(_remove_move(state, i, why))
 
     elif key == "stability":
         for name in facts.get("changed") or []:

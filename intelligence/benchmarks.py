@@ -43,7 +43,10 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None) -> dict:
         for cohort, rows in groups.items():
             if not privacy.cohort_ok(len(rows)):
                 continue
-            for metric in _features.BENCHMARK_KEYS:
+            # Plus the staffing ratios (staffing.compute_ratios), whose keys
+            # depend on which role families the cohort runs.
+            staffing = sorted({k for _, r in rows for k in (r["features"] or {}) if k.startswith("staff_per_1k.")})
+            for metric in tuple(_features.BENCHMARK_KEYS) + tuple(staffing):
                 vals = [r["features"].get(metric) for _, r in rows if r["features"].get(metric) is not None]
                 if not privacy.cohort_ok(len(vals)):
                     continue
