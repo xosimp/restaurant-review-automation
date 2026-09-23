@@ -88,8 +88,6 @@ def test_a_good_snapshot_is_written_under_today_s_name(tmp_path, monkeypatch):
     assert snap.exists() and _count(str(snap), "SELECT COUNT(*) FROM restaurants") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-34: a snapshot that fails integrity_check is left on disk under "
-                                       "today's name, so 'the newest snapshot' is the corrupt one")
 def test_a_failed_snapshot_leaves_no_file_behind(tmp_path, monkeypatch):
     _live_db(str(tmp_path / "live.db"), monkeypatch)
     bdir = tmp_path / "backups"
@@ -115,8 +113,6 @@ def test_a_failed_snapshot_leaves_no_file_behind(tmp_path, monkeypatch):
 
 # ── the off-site copy (DATA-18) ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-18: the emailed copy is built with f.read() of the whole database, "
-                                       "then encrypted and base64'd in the web process (3-4x the DB in RAM)")
 def test_the_offsite_copy_is_streamed_not_read_whole(tmp_path, monkeypatch):
     import resend
     from cryptography.fernet import Fernet

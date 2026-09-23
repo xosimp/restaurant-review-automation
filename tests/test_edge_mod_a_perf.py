@@ -255,7 +255,6 @@ def test_a_per_restaurant_hot_query_does_not_scan_the_whole_table(db_path, table
 
 # ── MOD-PERF-7: the emailed backup has a size ceiling ───────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-7: backup_db reads/encrypts/base64s the whole DB into one email with no size check")
 def test_the_emailed_backup_is_skipped_and_recorded_above_a_configured_size(monkeypatch, redirect, tmp_path):
     import scheduler
     import resend

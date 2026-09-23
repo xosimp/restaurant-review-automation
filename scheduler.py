@@ -1283,6 +1283,43 @@ _BACKUP_SCRUB_COLUMNS = [
 ]
 
 
+# The emailed copy is skipped, and the skip reported, above this many bytes
+# of encrypted file (MOD-PERF-7). Resend caps a message at 40 MB and the
+# attachment travels base64'd, so ~25 MB is the most that reliably arrives;
+# past it the only off-volume copy has to live somewhere other than email.
+BACKUP_EMAIL_MAX_BYTES = int(os.getenv("BACKUP_EMAIL_MAX_BYTES", str(25 * 1024 * 1024)))
+_BACKUP_CHUNK = 3 * 1024 * 1024           # a multiple of 3, so base64 chunks join cleanly
+
+
+def _encrypt_file_chunked(src_path, dest_path, key):
+    """Encrypt src to dest one chunk at a time: one Fernet token per line.
+
+    The old copy was Fernet(key).encrypt(f.read()) — the whole database
+    read, then encrypted, then base64'd, three to four times its size in
+    the web process's memory every night (DATA-18). A file of one token
+    (the old format) decrypts with the same loop (docs/ops/RECOVERY.md)."""
+    from cryptography.fernet import Fernet
+    fernet = Fernet(key.encode())
+    with open(src_path, "rb") as src, open(dest_path, "wb") as dst:
+        while True:
+            chunk = src.read(_BACKUP_CHUNK)
+            if not chunk:
+                break
+            dst.write(fernet.encrypt(chunk) + b"\n")
+
+
+def _base64_file(path):
+    import base64
+    parts = []
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(_BACKUP_CHUNK)
+            if not chunk:
+                break
+            parts.append(base64.b64encode(chunk).decode())
+    return "".join(parts)
+
+
 def _write_consistent_snapshot(dest_path):
     """Consistent copy of a LIVE WAL database.
 
@@ -1296,20 +1333,33 @@ def _write_consistent_snapshot(dest_path):
     """
     import sqlite3
     from models import DB_PATH
-    src = sqlite3.connect(DB_PATH, timeout=30)
+    # Written under a temporary name and renamed into place only once it
+    # passes its integrity check. A snapshot that failed the check used to
+    # stay on disk under today's name, so "the newest snapshot" — what a
+    # restore and the restore drill pick — was the corrupt one (DATA-34).
+    partial = dest_path + ".partial"
     try:
-        dst = sqlite3.connect(dest_path)
+        src = sqlite3.connect(DB_PATH, timeout=30)
         try:
-            src.backup(dst)
-            # Integrity-check the artifact itself, so a corrupt backup is
-            # caught here rather than during an emergency restore.
-            result = dst.execute("PRAGMA integrity_check").fetchone()
-            if not result or result[0] != "ok":
-                raise RuntimeError(f"backup integrity_check failed: {result}")
+            dst = sqlite3.connect(partial)
+            try:
+                src.backup(dst)
+                # Integrity-check the artifact itself, so a corrupt backup is
+                # caught here rather than during an emergency restore.
+                result = dst.execute("PRAGMA integrity_check").fetchone()
+                if not result or result[0] != "ok":
+                    raise RuntimeError(f"backup integrity_check failed: {result}")
+            finally:
+                dst.close()
         finally:
-            dst.close()
+            src.close()
+        os.replace(partial, dest_path)
     finally:
-        src.close()
+        for leftover in (partial, partial + "-journal", partial + "-wal", partial + "-shm"):
+            try:
+                os.unlink(leftover)
+            except FileNotFoundError:
+                pass
 
 
 def _redact_snapshot(path):
@@ -1365,7 +1415,6 @@ def backup_db():
     BACKUP_ENCRYPTION_KEY to be set — without it the local backup still runs
     and the email is skipped rather than sent in the clear.
     """
-    import base64
     from models import DB_PATH
 
     WILL_EMAIL = config.will_email()
@@ -1416,17 +1465,23 @@ def backup_db():
         return
 
     redacted_path = local_path + ".redacted"
+    enc_path = local_path + ".enc"
     try:
-        from cryptography.fernet import Fernet
         import shutil as _shutil
         # Redact a COPY. The email is the artifact that leaves the server;
         # the local snapshot stays whole so a restore is a restore.
         _shutil.copy2(local_path, redacted_path)
         _redact_snapshot(redacted_path)
-        with open(redacted_path, "rb") as f:
-            payload = Fernet(key.encode()).encrypt(f.read())
+        _encrypt_file_chunked(redacted_path, enc_path, key)
         enc_name = filename + ".enc"
-        size_kb = round(len(payload) / 1024, 1)
+        enc_bytes = os.path.getsize(enc_path)
+        size_kb = round(enc_bytes / 1024, 1)
+        if enc_bytes > BACKUP_EMAIL_MAX_BYTES:
+            # Too big to arrive as an attachment, and building it means
+            # holding it in memory. Said out loud rather than attempted: the
+            # local snapshot is intact, but there is no off-volume copy.
+            raise RuntimeError(f"encrypted backup is {size_kb} KB, over BACKUP_EMAIL_MAX_BYTES "
+                               f"({BACKUP_EMAIL_MAX_BYTES} bytes) — email copy skipped, no off-volume copy tonight")
 
         import resend as _resend
         _resend.api_key = _resend_key()
@@ -1449,7 +1504,7 @@ def backup_db():
 </div>"""),
             "attachments": [{
                 "filename": enc_name,
-                "content":  base64.b64encode(payload).decode(),
+                "content":  _base64_file(enc_path),
             }],
         })
         log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB) to {WILL_EMAIL}")
@@ -1463,11 +1518,12 @@ def backup_db():
         # The redacted copy exists only to be encrypted and attached. Leaving
         # it on the volume would double the backup directory's size and put a
         # second, restore-useless file next to every real snapshot.
-        try:
-            if os.path.exists(redacted_path):
-                os.unlink(redacted_path)
-        except OSError as e:
-            log.warning(f"backup_db: could not remove {redacted_path}: {e}")
+        for _tmp in (redacted_path, enc_path):
+            try:
+                if os.path.exists(_tmp):
+                    os.unlink(_tmp)
+            except OSError as e:
+                log.warning(f"backup_db: could not remove {_tmp}: {e}")
 
 
 # An owner who has signed in this many times has found their way around.

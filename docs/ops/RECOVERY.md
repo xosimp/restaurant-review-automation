@@ -89,13 +89,23 @@ If the volume itself is gone, use the encrypted email copy instead:
 ```bash
 python3 -c "
 from cryptography.fernet import Fernet
-key = open('key.txt').read().strip()
-open('reviews.db','wb').write(Fernet(key.encode()).decrypt(open('cavnar_ai_backup_YYYY-MM-DD.db.enc','rb').read()))
+f = Fernet(open('key.txt').read().strip().encode())
+with open('cavnar_ai_backup_YYYY-MM-DD.db.enc','rb') as enc, open('reviews.db','wb') as out:
+    for line in enc:
+        if line.strip():
+            out.write(f.decrypt(line.strip()))
 "
 ```
 
+The file is one Fernet token per 3 MB chunk, one per line (DATA-18: it is
+encrypted as a stream, not read whole into memory); a copy from before that
+change is a single token and decrypts with the same loop.
+
 `BACKUP_ENCRYPTION_KEY` is in Railway's variables. **That copy is redacted** —
-expect to redo every integration.
+expect to redo every integration. Above `BACKUP_EMAIL_MAX_BYTES` (25 MB of
+encrypted file by default) the email copy is skipped and the skip lands in
+the failure digest as `backup_db` — from then on there is no off-volume copy
+until one is set up somewhere other than email.
 
 ### 3. Verify the snapshot before trusting it
 
