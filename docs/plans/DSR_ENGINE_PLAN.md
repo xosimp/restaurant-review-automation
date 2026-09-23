@@ -9,7 +9,7 @@ His DSR is an Excel workbook ("Simple EJ's DSR"), one sheet per week:
 
 - **Calendar:** "PERIOD 9 · WEEK 1", weeks run **Wednesday → Tuesday**
   (Wed 8/26/26 – Tue 9/1/26). Period 9 week 1 starting Wed 8/26 fits a
-  13-period × 4-week year starting Wed 1/7/26 — **to confirm with Erik.**
+  13-period × 4-week year starting Wed 1/14/26 (32 weeks earlier) — **to confirm with Erik.**
 - **Per day:** Weather ("Rain Muggy"), Event or Sport ("NOTHING"),
   Influence/Result (his own read of why the day went how it did).
 - **Weekly Sales Breakdown**, a column per day plus Total, three blocks:
@@ -205,7 +205,7 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
 ## 11. Questions for Erik (block the parts that must match his sheet)
 
 1. Calendar: 13 periods × 4 weeks, weeks Wed–Tue, period 1 starting Wed
-   1/7/26? (inferred from Period 9 Week 1 = Wed 8/26/26)
+   1/14/26? (inferred from Period 9 Week 1 = Wed 8/26/26; or a 4-4-5 year)
 2. Gross vs net: what comes off gross — comps, discounts, voids, tax?
 3. The six categories: how do his RPower departments map (draft beer under
    Beer? "Retail/Rental" = merch + room rental?).

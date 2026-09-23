@@ -466,6 +466,12 @@ class Restaurant:
     alert_food_waste: int            = 0     # daily: waste flagged on several items / a real dollar amount
     alert_ai_visibility_drop: int    = 0     # daily: AI visibility score fell vs. the previous run
     alert_competitor_move: int       = 1     # weekly: a tracked competitor's rating moved / a new one appeared
+    # The nightly DSR (dsr/): the restaurant's own fiscal calendar and switches.
+    fiscal_week_start_dow: Optional[int] = None   # 0=Mon..6=Sun; Erik's week starts Wednesday (2)
+    fiscal_year_start: Optional[str] = None       # ISO date of Period 1, Week 1
+    fiscal_period_scheme: Optional[str] = None    # "4x13" | "445"
+    dsr_enabled: int                 = 1
+    dsr_deadline_hour: int           = 4          # local hour a still-incomplete night goes out provisional
     alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
     push_sound: int                  = 1     # 0 = silent pushes
     auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
@@ -962,6 +968,12 @@ def ensure_columns(db_path: str = DB_PATH):
         ("ask_cavnar_actions", "reason", "TEXT"),
         # Weekly competitor-movement alert, on by default (#48).
         ("restaurants", "alert_competitor_move", "INTEGER DEFAULT 1"),
+        # The nightly DSR: fiscal calendar and switches (dsr/).
+        ("restaurants", "fiscal_week_start_dow", "INTEGER"),
+        ("restaurants", "fiscal_year_start", "TEXT"),
+        ("restaurants", "fiscal_period_scheme", "TEXT"),
+        ("restaurants", "dsr_enabled", "INTEGER DEFAULT 1"),
+        ("restaurants", "dsr_deadline_hour", "INTEGER DEFAULT 4"),
     ]
     try:
         for table, col, col_type in columns_to_add:
@@ -2601,6 +2613,10 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The nightly Daily Sales Report: reports, searchable metrics, budgets,
+    # the POS-department → DSR-category map (dsr/).
+    from dsr import init_dsr
+    init_dsr(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -2804,6 +2820,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
+        "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","dsr_enabled","dsr_deadline_hour",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
@@ -3155,6 +3172,11 @@ def _restaurant_from_row(row) -> Restaurant:
         alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
         alert_ai_visibility_drop=row["alert_ai_visibility_drop"] if "alert_ai_visibility_drop" in row.keys() else 0,
         alert_competitor_move=row["alert_competitor_move"] if "alert_competitor_move" in row.keys() and row["alert_competitor_move"] is not None else 1,
+        fiscal_week_start_dow=row["fiscal_week_start_dow"] if "fiscal_week_start_dow" in row.keys() else None,
+        fiscal_year_start=row["fiscal_year_start"] if "fiscal_year_start" in row.keys() else None,
+        fiscal_period_scheme=row["fiscal_period_scheme"] if "fiscal_period_scheme" in row.keys() else None,
+        dsr_enabled=row["dsr_enabled"] if "dsr_enabled" in row.keys() and row["dsr_enabled"] is not None else 1,
+        dsr_deadline_hour=row["dsr_deadline_hour"] if "dsr_deadline_hour" in row.keys() and row["dsr_deadline_hour"] is not None else 4,
         alert_extra_emails=row["alert_extra_emails"] if "alert_extra_emails" in row.keys() else None,
         push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
         auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,

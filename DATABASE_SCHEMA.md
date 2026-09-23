@@ -193,6 +193,14 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 `insight_cache` (`insight_store.py`): one stored model read per `(restaurant_id, kind)` — reviews, food, marketing — with the `fingerprint` of the prompt it was written from. A read is reused while the fingerprint matches (and for at most a week), so web and iOS show the same words and a new read is written only when the data changes.
 
+## Daily Sales Report (dsr/)
+
+- `dsr_reports` — one row per (restaurant, business date, **version**); `status` is the stage (scheduled → awaiting_close → collecting → writing → final | provisional | failed); `stages_json` holds when each stage was reached (the report's provenance); `facts_json` the snapshot every view renders from; `narrative_json` the AI read; `attempts` / `next_attempt_at` drive retries. A night completed after a provisional finish is a new version, never an edit.
+- `dsr_metrics` — PK (restaurant_id, business_date, metric); `metric` is `<block>.<key>`; only measured values are stored (NULL = not measured, never 0). The searchable history.
+- `dsr_budgets` — PK (restaurant_id, business_date); gross / net budget per night.
+- `dsr_category_map` — PK (restaurant_id, pos_name) → category; an unmapped POS department is shown as Unmapped, never guessed.
+- `restaurants`: `fiscal_week_start_dow`, `fiscal_year_start`, `fiscal_period_scheme` (4x13 | 445), `dsr_enabled`, `dsr_deadline_hour`.
+
 ## Conventions that apply across this schema
 
 - **Additive-only migrations.** A new column is added via a guarded `ALTER TABLE` in `init_db()`'s list or `ensure_columns()`'s (both run at boot; 57 columns live only in the latter), never a destructive rewrite, so old rows keep working and a rollback of the code doesn't orphan data.
