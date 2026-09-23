@@ -72,7 +72,7 @@ Modules sit in one of five layers. **At module scope, a module may import only i
 
 | Layer | What lives there | May import at module scope |
 |---|---|---|
-| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `ai_guard`, `competitor_intel_format`, `review_common`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories` | stdlib, third-party, L0 |
+| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories` | stdlib, third-party, L0 |
 | **L1 data** | `models`, `auth`, `ops`, `ai_utils`, `security`, `guest_links` | L0, L1 |
 | **L2 domain** | every module that computes something for one restaurant (the services in §2), the `intelligence/` package, `emails`, `notify`, `push`, `webhooks`, `admin_ops`, `admin_events`, `status_manager`, `sales_audit_engine/cheatsheet/notes_ai`, `sales_audits` | L0, L1, L2 |
 | **L3 HTTP** | `client_api`, `mobile_api`, `strategy_routes`, every `*_routes.py` | L0–L3 |
@@ -207,6 +207,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `security_headers` | 0 | response headers |
 | `shift_quality` | 0 | the pure schedule scorer — no I/O |
 | `schedule_requirements` | 0 | what the generation prompt is told from the scorer's own inputs: the SHIFT REQUIREMENTS table, experienced staff, usual patterns, the chunk-seam fairness summary, a regeneration's focus — pure, no I/O |
+| `thresholds` | 0 | the numbers that decide when something is a problem, one definition read by every surface (labor over target, a strong day, the age of a reply owed) |
 | `social_routes` | 3 | Instagram/Facebook OAuth and publish routes |
 | `square` / `square_routes` | 2 / 3 | Square provider / routes |
 | `staff_roster` | 2 | names and job roles |
