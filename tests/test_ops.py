@@ -58,16 +58,13 @@ def test_digest_sends_when_failures_exist(monkeypatch, db_path):
 
     sent = {}
 
-    class FakeEmails:
-        @staticmethod
-        def send(payload):
-            sent.update(payload)
-            return {"id": "fake"}
+    # The digest goes through emails.deliver (MOD-EML-4), not the SDK.
+    import emails
 
-    fake = types.ModuleType("resend")
-    fake.Emails = FakeEmails
-    fake.api_key = None
-    monkeypatch.setitem(sys.modules, "resend", fake)
+    def deliver(payload=None, restaurant_id=None, email_type=None, log_send=True):
+        sent.update(payload or {})
+        return emails.SendResult(True, message_id="fake", status_code=200, attempts=1)
+    monkeypatch.setattr(emails, "deliver", deliver)
     monkeypatch.setenv("RESEND_API_KEY", "fake")
 
     assert ops.send_failure_digest() is True

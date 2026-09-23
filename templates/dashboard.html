@@ -5452,7 +5452,7 @@ svg:hover .hb-xh{opacity:1}
          which is not something an owner has for a picture on their phone. -->
     <div id="mkt-photo-row" style="display:none;align-items:center;gap:10px;flex:1;min-width:240px">
       <img id="mkt-photo-thumb" alt="" style="display:none;width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--paper3)">
-      <input type="file" id="mkt-photo-input" accept="image/*" style="display:none" onchange="uploadMktPhoto(this)">
+      <input type="file" id="mkt-photo-input" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="uploadMktPhoto(this)">
       <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('mkt-photo-input').click()" id="mkt-photo-btn">Add a photo</button>
       <button class="cbtn cbtn-secondary cbtn-sm" style="display:none" onclick="clearMktPhoto()" id="mkt-photo-clear">Remove</button>
       <span id="mkt-photo-status" style="font-size:11px;color:var(--ink3)"></span>
@@ -9287,13 +9287,40 @@ function postToFacebook(){
 // phone or their desktop.
 window._mktPhotoId = null;
 window._mktPhotoUrl = '';
+// Downscaled in the browser first (2048px long edge, JPEG): a camera photo is
+// often bigger than the 5 MB request cap, and the server keeps 1440px anyway
+// (MOD-MKT-14). Anything the browser can't draw goes up as it is.
+function _mktShrinkPhoto(file, done){
+  var canvas = document.createElement('canvas');
+  if(!window.FileReader || !canvas.toBlob){ done(file); return; }
+  var reader = new FileReader();
+  reader.onload = function(){
+    var img = new Image();
+    img.onload = function(){
+      var max = 2048, w = img.naturalWidth, h = img.naturalHeight;
+      if(w <= max && h <= max && file.size <= 3000000){ done(file); return; }
+      var scale = Math.min(1, max / Math.max(w, h));
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function(blob){ done(blob || file); }, 'image/jpeg', 0.86);
+    };
+    img.onerror = function(){ done(file); };
+    img.src = reader.result;
+  };
+  reader.onerror = function(){ done(file); };
+  reader.readAsDataURL(file);
+}
 function uploadMktPhoto(input){
   var file = input.files && input.files[0];
   if(!file) return;
   var status = document.getElementById('mkt-photo-status');
   if(status) status.textContent = 'Uploading…';
+  _mktShrinkPhoto(file, function(ready){ _mktSendPhoto(input, ready, status); });
+}
+function _mktSendPhoto(input, file, status){
   var form = new FormData();
-  form.append('file', file);
+  form.append('file', file, (file && file.name) || 'photo.jpg');
   fetch('/api/marketing/media', {method:'POST', body: form})
     .then(apiJson)
     .then(function(d){
@@ -9521,7 +9548,7 @@ function loadMktWindow(){
     document.getElementById('mkt-window-body').style.display = 'block';
     document.getElementById('mkt-win-reach').textContent = (d.reach||0).toLocaleString();
     document.getElementById('mkt-win-eng').textContent = (d.engagement||0).toLocaleString();
-    document.getElementById('mkt-win-rate').textContent = (d.engagement_rate||0) + '%';
+    document.getElementById('mkt-win-rate').textContent = (d.engagement_rate === null || typeof d.engagement_rate === 'undefined') ? '\u2014' : d.engagement_rate + '%';
     var delta = function(el, v){
       var node = document.getElementById(el);
       if(!node) return;
@@ -9537,7 +9564,7 @@ function loadMktWindow(){
       var p = d.by_platform[i];
       html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
         + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
-        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + p.engagement_rate + '%</span>'
+        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
         + '</div>';
     }
     plats.innerHTML = html;
@@ -15339,22 +15366,35 @@ function loadGuestNewsletter(){
     if(el) el.textContent = d.subscribers + ' subscribed';
   }).catch(function(){});
 }
-function sendGuestNewsletter(){
+function sendGuestNewsletter(mailingAddress){
   var body = document.getElementById('guest-newsletter-body').value.trim();
   var status = document.getElementById('guest-newsletter-status');
   if(!body){ status.textContent = 'Paste in the newsletter text first.'; status.style.color='var(--red)'; status.style.display='inline'; return; }
-  if(!confirm('Email this to every subscriber? This can\'t be undone.')) return;
+  if(!mailingAddress && !confirm('Email this to every subscriber? This can\'t be undone.')) return;
   var btn = document.getElementById('guest-newsletter-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
+  var payload = {body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()};
+  if(mailingAddress){ payload.mailing_address = mailingAddress; }
   fetch('/api/guest-newsletter', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()})})
+    body: JSON.stringify(payload)})
     .then(apiJson).then(function(d){
       btn.disabled = false; btn.textContent = 'Send to subscribers';
       status.style.display = 'inline';
       if(d.ok){
-        status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + '.';
-        status.style.color = '#2d6a4f';
+        // The first batch goes out now and the rest over the next few
+        // minutes (MOD-EML-3); pressing Send again resumes, never repeats.
+        status.textContent = d.queued
+          ? 'Sending to ' + d.total + ' — ' + d.sent + ' out so far, the rest over the next few minutes.'
+          : 'Sent to ' + d.sent + ' of ' + d.total + '.';
+        status.style.color = 'var(--green)';
         document.getElementById('guest-newsletter-body').value = '';
+      } else if(d.needs_mailing_address){
+        // CAN-SPAM: a newsletter carries the restaurant's postal address
+        // (MOD-EML-6). Asked once; kept on the restaurant after that.
+        var addr = window.prompt((d.error || 'Add your mailing address.') + '\n\nStreet, city, state and ZIP:', '');
+        if(addr && addr.replace(/\s/g, '').length >= 8){ sendGuestNewsletter(addr); return; }
+        status.textContent = d.error;
+        status.style.color = 'var(--red)';
       } else {
         status.textContent = d.error || 'Could not send.';
         status.style.color = 'var(--red)';

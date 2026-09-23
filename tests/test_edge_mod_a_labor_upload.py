@@ -68,6 +68,29 @@ class _InertThread:
         return None
 
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
 @pytest.fixture
 def sent(monkeypatch):
     """Every Resend SDK send and every fired webhook, captured."""
@@ -76,6 +99,7 @@ def sent(monkeypatch):
     out = {"email": [], "webhook": []}
     monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda p: out["email"].append(p)), raising=False)
+    _capture_resend_posts(monkeypatch, out["email"].append)    # the overtime alert uses emails.deliver now
     monkeypatch.setattr(webhooks, "fire_webhook",
                         lambda rid, event, payload=None, *a, **k: out["webhook"].append((event, payload)))
     monkeypatch.setattr(threading, "Thread", _InertThread)

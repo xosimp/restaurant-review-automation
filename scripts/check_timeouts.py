@@ -53,6 +53,19 @@ SDK_CLIENTS = {"Anthropic", "AsyncAnthropic"}
 _SESSION_FACTORIES = set()
 
 
+def _import_aliases(tree, modules):
+    """Every name `import requests as X` binds, at any scope. The lint only
+    knew the literal spellings, so twelve Graph calls made through
+    `import requests as _req` passed it with no timeout (MOD-MKT-2)."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in modules:
+                    names.add(alias.asname or alias.name)
+    return names
+
+
 def offenders():
     out = []
     for root, dirs, files in os.walk(ROOT):
@@ -65,15 +78,8 @@ def offenders():
                 tree = ast.parse(open(path, encoding="utf-8").read())
             except (SyntaxError, UnicodeDecodeError):
                 continue
-            # Whatever name the module was imported as. A fixed list missed
-            # every call through `import requests as _req` — twelve of them,
-            # one in the scheduler thread (DATA-16).
-            http_names = set(HTTP_MODULES)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.split(".")[0] in _HTTP_PACKAGES:
-                            http_names.add(alias.asname or alias.name.split(".")[0])
+            http_names = HTTP_MODULES | _import_aliases(tree, {"requests", "httpx"})
+            sdk_names = SDK_MODULES | _import_aliases(tree, {"anthropic"})
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -82,7 +88,7 @@ def offenders():
                 # default read timeout is 600 s with 2 hidden retries, which
                 # is four request threads held for ten minutes (AI-1).
                 if (isinstance(fn, ast.Attribute) and fn.attr in SDK_CLIENTS
-                        and isinstance(fn.value, ast.Name) and fn.value.id in SDK_MODULES):
+                        and isinstance(fn.value, ast.Name) and fn.value.id in sdk_names):
                     kws = {k.arg for k in node.keywords if k.arg}
                     if "timeout" not in kws or "max_retries" not in kws:
                         rel = os.path.relpath(path, ROOT)

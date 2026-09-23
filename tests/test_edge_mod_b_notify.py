@@ -178,7 +178,6 @@ def _owner_token(rid, username="owner"):
     return uid, auth.create_session(uid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: quiet hours of '9pm' are stored and silently disable quiet hours")
 @pytest.mark.parametrize("surface", ["web", "mobile"])
 def test_a_quiet_hours_value_that_is_not_hh_mm_is_refused_not_stored(db_path, app, surface):
     """A8 #21 / MOD-NOT-5 — refused (or normalised to 21:00); never stored as
@@ -197,7 +196,6 @@ def test_a_quiet_hours_value_that_is_not_hh_mm_is_refused_not_stored(db_path, ap
     assert resp.status_code == 400 or stored == "21:00", (resp.status_code, stored)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: a non-numeric daily cap 500s the whole alert-settings save")
 def test_a_non_numeric_daily_cap_is_a_field_error_not_a_server_error(db_path, app):
     """A8 #21 / MOD-NOT-5."""
     rid = _rid(db_path)
@@ -208,7 +206,6 @@ def test_a_non_numeric_daily_cap_is_a_field_error_not_a_server_error(db_path, ap
     assert resp.status_code == 400
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: digest_day is stored unvalidated by the alert-settings save")
 def test_an_unknown_digest_day_is_refused_by_the_alert_settings_save(db_path, app):
     """A8 #21 / MOD-NOT-5 — an invalid day means the digest never matches
     and silently stops."""
@@ -289,7 +286,6 @@ def test_a_single_labor_alert_is_delivered_with_the_unresponded_toggles_off(db_p
     assert (rid, "labor_over") in sent["push"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-8: owners with SMS and email both off never receive labor/trend/threshold pushes")
 def test_a_push_only_owner_still_gets_the_labor_alert(db_path, sent, monkeypatch):
     """A8 #27 / MOD-NOT-8."""
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
@@ -371,7 +367,6 @@ class _CountingConn:
         return getattr(self._c, name)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-11: the hourly daily-alert pass does per-restaurant work for every restaurant, even those outside their 10am window")
 def test_restaurants_outside_their_10am_window_cost_nothing_on_the_hourly_pass(db_path, sent, monkeypatch):
     """A8 #33 / MOD-NOT-11 — 200 restaurants, all at 3am local: the pass
     must not issue a query per restaurant (it runs every hour, forever)."""
@@ -394,7 +389,6 @@ def test_restaurants_outside_their_10am_window_cost_nothing_on_the_hourly_pass(d
     assert n[0] < 200, f"{n[0]} queries for 200 restaurants none of which were due"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-16: a restart between collecting and flushing the 10am batch loses that day's alerts")
 def test_a_restart_mid_batch_does_not_lose_the_days_alerts(db_path, sent, monkeypatch):
     """A8 #34 / MOD-NOT-16 — the process dies after the checks collected a
     labor alert but before flush; the next hourly pass must re-collect it."""
@@ -454,7 +448,6 @@ def test_a_multi_location_owner_hears_about_every_location(db_path, delivered):
     assert delivered == ["tok-own", "tok-own"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-12: a full push queue drops the remaining devices instead of retrying them")
 def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     """A8 #41 / MOD-NOT-12 — with room for 2 in flight and 5 devices, every
     device is delivered to once the pool drains."""
@@ -479,7 +472,6 @@ def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     assert sorted(got) == [f"tok-{i}" for i in range(5)]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-13: push_deliveries and device_tokens have no index for their per-alert lookups")
 def test_the_per_alert_push_lookups_use_an_index(db_path):
     """MOD-NOT-13 — brief_pushed_today and get_device_tokens run on every
     alert; neither may be a full-table scan."""
@@ -516,7 +508,6 @@ def _bearer(app, username, password):
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-10: the unread count includes notifications this login's role may not see")
 def test_the_badge_counts_only_what_the_list_shows_this_login(db_path, app):
     """A8 #43 / MOD-NOT-10 — a manager cannot see food cost; a food_waste row
     must not badge them."""
@@ -533,7 +524,6 @@ def test_the_badge_counts_only_what_the_list_shows_this_login(db_path, app):
     assert count == len(visible) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-10: a new login's badge is the restaurant's entire notification history")
 def test_a_new_login_is_not_badged_with_the_restaurants_whole_history(db_path, app):
     """A8 #43 / MOD-NOT-10 — a co-owner invited today has read nothing, but
     nothing from before they existed is news to them either."""
@@ -548,7 +538,6 @@ def test_a_new_login_is_not_badged_with_the_restaurants_whole_history(db_path, a
 
 # ── Retention ───────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-14: alert_holds (full HTML bodies) and notification_opens are never pruned")
 def test_old_sent_holds_and_notification_opens_are_pruned(db_path):
     """A8 'also noted' / MOD-NOT-14 — the retention registry covers both."""
     rid = _rid(db_path)

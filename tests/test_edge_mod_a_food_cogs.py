@@ -423,6 +423,29 @@ def test_one_restaurant_failing_its_snapshot_does_not_stop_the_rest(db_path, mon
     assert done == rids[1:] and out["failed"] == 1
 
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
 def test_one_malformed_timestamp_does_not_hide_the_other_stale_restaurants(db_path, monkeypatch):
     import resend
     bad, stale = _rid(db_path, name="Bad Stamp"), _rid(db_path, name="Really Stale")
@@ -436,6 +459,7 @@ def test_one_malformed_timestamp_does_not_hide_the_other_stale_restaurants(db_pa
     monkeypatch.setattr(pos, "connected_provider", lambda rid: (None, None))
     sent = []
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda p: sent.append(p)), raising=False)
+    _capture_resend_posts(monkeypatch, sent.append)
     scheduler.check_stale_inventory()
     assert sent and "Really Stale" in sent[0]["html"]
 
@@ -451,5 +475,6 @@ def test_the_stale_inventory_check_reports_a_stale_ledger(db_path, monkeypatch):
     monkeypatch.setattr(pos, "connected_provider", lambda rid: (None, None))
     sent = []
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda p: sent.append(p)), raising=False)
+    _capture_resend_posts(monkeypatch, sent.append)
     scheduler.check_stale_inventory()
     assert sent and "Really Stale" in sent[0]["html"]

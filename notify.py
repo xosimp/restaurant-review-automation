@@ -4,6 +4,7 @@ Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
 import os
+import re
 import config
 import html as _html
 import requests
@@ -41,6 +42,15 @@ TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 # Optional; falls back to TWILIO_MESSAGING_SERVICE_SID (and from there to
 # TWILIO_FROM) when unset, so nothing breaks before this is provisioned.
 TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID", "")
+# Guest-facing texts (campaigns, opt-in invites, review requests) are a third
+# use case: marketing to diners, not alerts to owners. Riding the owner-alert
+# campaign mixed the two, so a carrier filtering the promos would also filter
+# owners' health alerts (MOD-MKT-11). Provisioning this service is what moves
+# them; until it is set, guest texts keep the alert service they have always
+# used (a plain From on the same number is the same campaign, only less
+# reliably routed), and the mismatch is logged once per process.
+TWILIO_GUEST_MESSAGING_SERVICE_SID = os.getenv("TWILIO_GUEST_MESSAGING_SERVICE_SID", "")
+_guest_service_warned = False
 from emails import _resend_key
 
 def emails_sender(kind="client"):
@@ -59,7 +69,14 @@ HEALTH_KEYWORDS = [
 ]
 
 
+_PHONE_EXTENSION = re.compile(r"\s*(?:x|ext\.?|extension|#)\s*\d+\s*$", re.IGNORECASE)
+
+
 def _normalize_phone(phone: str) -> str:
+    # A text cannot reach an extension, and its digits appended to the number
+    # made "(630) 555-0123 x45" into +630555012345, someone else's number
+    # abroad (MOD-A6-optin-17).
+    phone = _PHONE_EXTENSION.sub("", phone or "")
     digits = "".join(c for c in phone if c.isdigit() or c == "+")
     if digits.startswith("+"):
         return digits
@@ -106,7 +123,9 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     one Campaign: "alert" (default) is the owner review/health/labor alert
     campaign on TWILIO_MESSAGING_SERVICE_SID; "otp" is the staff-signup
     verification-code campaign on TWILIO_OTP_MESSAGING_SERVICE_SID, a
-    genuinely separate number and service. Sending OTP traffic through the
+    genuinely separate number and service; "guest" is guest marketing
+    (campaigns, opt-in invites, review requests) on
+    TWILIO_GUEST_MESSAGING_SERVICE_SID. Sending OTP traffic through the
     alert service (or vice versa) is exactly the "mixed use case on one
     campaign" pattern carriers filter hardest.
     """
@@ -120,8 +139,18 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     # is worse than the plain-From send this falls back to instead (the
     # behavior every send already had before TWILIO_MESSAGING_SERVICE_SID
     # existed).
-    service_sid = (TWILIO_OTP_MESSAGING_SERVICE_SID if use_case == "otp"
-                   else TWILIO_MESSAGING_SERVICE_SID)
+    if use_case == "otp":
+        service_sid = TWILIO_OTP_MESSAGING_SERVICE_SID
+    elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
+        service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
+    else:
+        if use_case == "guest":
+            global _guest_service_warned
+            if not _guest_service_warned:
+                _guest_service_warned = True
+                print("[notify] TWILIO_GUEST_MESSAGING_SERVICE_SID unset: guest texts are "
+                      "going out on the owner-alert messaging service (MOD-MKT-11)")
+        service_sid = TWILIO_MESSAGING_SERVICE_SID
     if service_sid:
         data["MessagingServiceSid"] = service_sid
     else:
@@ -896,7 +925,11 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
     controls — callers check that (and owner_email) before calling this,
     same as they always have for the email alone."""
     from emails import send_login_notification
-    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url)
+    try:
+        _tz = getattr(models.get_restaurant(restaurant_id), "timezone", None)
+    except Exception:
+        _tz = None
+    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz)
     try:
         from push import fire_push
         fire_push(
@@ -1368,18 +1401,27 @@ class _Pending:
         self.subject, self.lines, self.value = subject, lines or [], value
 
 
+# The once-a-day claims a batched pass has EARNED, written only when the batch
+# is flushed. _gated_out used to claim each restaurant's day as it collected,
+# so a deploy between collecting and flushing lost that day's alerts with the
+# claims already spent (MOD-NOT-16); now the next hourly pass re-collects.
+_batch_claims = []
+
+
 def begin_daily_batch():
     """Start collecting. Idempotent, and safe to call when one is already
     open (the scheduler runs one pass at a time behind the lease)."""
-    global _batch
+    global _batch, _batch_claims
     _batch = {}
+    _batch_claims = []
 
 
 def flush_daily_batch(db_path: str = DB_PATH):
     """Send what was collected: one notification per restaurant when more
     than one thing fired, otherwise exactly what would have gone before."""
-    global _batch
+    global _batch, _batch_claims
     pending, _batch = (_batch or {}), None
+    claims, _batch_claims = _batch_claims, []
     out = {"restaurants": 0, "combined": 0, "single": 0}
     for rid, items in pending.items():
         if not items:
@@ -1399,6 +1441,10 @@ def flush_daily_batch(db_path: str = DB_PATH):
                 ops.capture(e, job="daily_batch", context=f"restaurant_id={rid}", db_path=db_path)
             except Exception:
                 pass
+    if claims:
+        import ops
+        for job, period in claims:
+            ops.claim_period(job, period)
     return out
 
 
@@ -1894,10 +1940,56 @@ def _gated_out(restaurant_id, local_hour, claim_key, db_path: str = DB_PATH, unt
         local = restaurant_now_by_id(restaurant_id, naive=True)
         if not (local_hour <= local.hour < until):
             return True
-        return not ops.claim_period(f"{claim_key}:{restaurant_id}", local.date().isoformat())
+        job, period = f"{claim_key}:{restaurant_id}", local.date().isoformat()
+        if _batch is not None:
+            # Inside the morning batch the day is claimed at flush, once the
+            # alerts collected here have actually gone out (MOD-NOT-16).
+            if ops.period_claimed(job, period):
+                return True
+            _batch_claims.append((job, period))
+            return False
+        return not ops.claim_period(job, period)
     except Exception:
         # Fail open: alert rather than silently skip a day.
         return False
+
+
+# One hourly pass stops taking on restaurants after this long. With the
+# morning batch a restaurant's day is claimed only once it was checked and
+# flushed, so whoever this pass did not reach is picked up by the next hourly
+# pass inside the 10am-2pm window — the claims are the cursor (MOD-NOT-11).
+DAILY_ALERT_PASS_SECONDS = int(os.getenv("DAILY_ALERT_PASS_SECONDS", "600"))
+
+
+def _pass_deadline(local_hour):
+    import time as _time
+    return None if local_hour is None else _time.monotonic() + DAILY_ALERT_PASS_SECONDS
+
+
+def _past(deadline):
+    import time as _time
+    return deadline is not None and _time.monotonic() > deadline
+
+
+def _in_window_only(rows, id_key, local_hour, until=14):
+    """The rows whose restaurant is inside its local window this hour, read
+    from the timezone each row already carries. The scheduler runs these
+    checks every hour; asking every restaurant "is it 10am there?" cost a
+    query each, forever, to skip nearly all of them (MOD-NOT-11)."""
+    if local_hour is None:
+        return list(rows)
+    from time_utils import known_timezones, restaurant_now_by_id
+    keep = []
+    with known_timezones({r[id_key]: r["timezone"] for r in rows}):
+        for r in rows:
+            try:
+                hour = restaurant_now_by_id(r[id_key], naive=True).hour
+            except Exception:
+                keep.append(r)          # fail open, as _gated_out does
+                continue
+            if local_hour <= hour < until:
+                keep.append(r)
+    return keep
 
 
 def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
@@ -1906,8 +1998,13 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
     reviews unresponded for 48+ hours. Fires both email and SMS per restaurant flags.
     """
     conn = models.get_conn(db_path)
+    # 'drafted' as well as 'pending': auto-drafting makes a draft waiting on
+    # the owner the normal state of an unanswered review, so counting only
+    # 'pending' meant this nudge almost never fired. A soft-deleted
+    # (retention-purged) review is not actionable and never counts
+    # (MOD-NOT-9).
     rows = conn.execute("""
-        SELECT r.restaurant_id, rest.name, rest.owner_email,
+        SELECT r.restaurant_id, rest.name, rest.owner_email, rest.timezone,
                rest.urgent_via_sms, rest.urgent_via_email,
                rest.al_unres_sms, rest.al_unres_email, rest.al_unres_push,
                COUNT(*) as overdue_count
@@ -1926,7 +2023,10 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """).fetchall()
     conn.close()
 
-    for row in rows:
+    deadline = _pass_deadline(local_hour)
+    for row in _in_window_only(rows, "restaurant_id", local_hour):
+        if _past(deadline):
+            break
         rid         = row["restaurant_id"]
         if _gated_out(rid, local_hour, "no_response_alerts", db_path):
             continue
@@ -1985,19 +2085,27 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     Called once per day by the scheduler alongside check_no_response_alerts.
     """
     conn = models.get_conn(db_path)
+    # Selected on the alert switches, not the SMS/email switches: push has
+    # no global switch (deliver_alert gates it per type), so an owner with
+    # SMS and email both off and push on was dropped here and never heard
+    # about labor, a declining trend or the rating floor (MOD-NOT-8).
     restaurants = conn.execute("""
-        SELECT id, name, owner_email,
+        SELECT id, name, owner_email, timezone,
                urgent_via_sms, urgent_via_email,
                alert_negative_trend,
                alert_rating_threshold, alert_rating_floor, gbp_rating,
                alert_labor_over, labor_target_pct
         FROM restaurants
-        WHERE (urgent_via_sms = 1 OR urgent_via_email = 1)
+        WHERE (COALESCE(alert_negative_trend,0) = 1 OR COALESCE(alert_rating_threshold,0) = 1
+               OR COALESCE(alert_labor_over,0) = 1)
           AND """ + models.in_service_sql() + """
     """).fetchall()
     conn.close()
 
-    for r in restaurants:
+    deadline = _pass_deadline(local_hour)
+    for r in _in_window_only(restaurants, "id", local_hour):
+        if _past(deadline):
+            break
         rid         = r["id"]
         # 10am where the restaurant is (the scheduler attempts this hourly).
         if _gated_out(rid, local_hour, "daily_alerts", db_path):
@@ -2206,7 +2314,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     recipients, SMS to consented contacts, push)."""
     conn = models.get_conn(db_path)
     restaurants = conn.execute("""
-        SELECT id, name, owner_email, urgent_via_sms, urgent_via_email,
+        SELECT id, name, owner_email, timezone, urgent_via_sms, urgent_via_email,
                alert_food_waste, alert_ai_visibility_drop
         FROM restaurants
         WHERE (COALESCE(alert_food_waste,0)=1 OR COALESCE(alert_ai_visibility_drop,0)=1)
@@ -2214,7 +2322,10 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """).fetchall()
     conn.close()
 
-    for r in restaurants:
+    deadline = _pass_deadline(local_hour)
+    for r in _in_window_only(restaurants, "id", local_hour):
+        if _past(deadline):
+            break
         rid, name = r["id"], r["name"]
         if _gated_out(rid, local_hour, "extra_alerts", db_path):
             continue

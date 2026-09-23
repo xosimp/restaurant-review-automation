@@ -877,9 +877,7 @@ def reset_password(user_id, current_user):
             ).fetchone()
             conn.close()
             if row:
-                import resend as _resend
-                _resend.api_key = _resend_key()
-                _resend.Emails.send({
+                _emails.deliver_or_raise(email_type="admin_password_reset", payload={
                     "from": _emails.sender("client"),
                     "to": [row["email"]],
                     "subject": "Your Cavnar AI password has been reset",
@@ -890,7 +888,7 @@ def reset_password(user_id, current_user):
                         <p>Hi — your Cavnar AI dashboard password has been reset.</p>
                         <div style="background:#f7f4ef;padding:14px;border-radius:8px;margin:16px 0">
                             <p><strong>URL:</strong> <a href="https://dashboard.cavnar.ai">dashboard.cavnar.ai</a></p>
-                            <p><strong>New password:</strong> {new_pw}</p>
+                            <p><strong>New password:</strong> {_emails.esc(new_pw)}</p>
                         </div>
                         <p>Log in and update your password in the Account tab.</p>
                         <p style="color:#7a736a;font-size:12px">— Will Cavnar · will@cavnar.ai</p>
@@ -1823,21 +1821,16 @@ def test_digest(restaurant_id, current_user):
         return jsonify(ok=False, error="Restaurant not found")
     try:
         from reporter import build_report_from_db, render_html
-        import resend as _resend
         owner_email = restaurant.owner_email
         report = build_report_from_db(restaurant_id, restaurant.name, days=7)
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=restaurant_id,
                            owner_view=True)
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="digest_preview", restaurant_id=restaurant_id, payload={
             "from": _emails.sender("client"),
             "to": [owner_email],
             "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
             "html": _html_doc(html),
         })
-        try:
-            log_email(restaurant_id, "digest", owner_email, f"[TEST] Weekly digest — {restaurant.name}")
-        except Exception: pass
         return jsonify(ok=True, email=owner_email)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e))
@@ -1990,94 +1983,88 @@ def competitor_intel_status(current_user, job_id):
     result["status"] = job["status"]
     return jsonify(result)
 
+# Referrals one restaurant may send per rolling hour. Counted from email_log,
+# so it holds across restarts and workers. The "10 per hour" limit here was
+# only ever a comment (MOD-EML-1).
 REFERRALS_PER_HOUR = 10
 
 
-def _referrals_sent_last_hour(restaurant_id) -> int:
-    """Referrals this restaurant sent in the last hour, from email_log — the
-    database, so the limit survives a deploy and holds across processes.
-    log_email stamps sent_at in Chicago local time, so the cutoff is too."""
-    from datetime import datetime, timezone, timedelta
+def _referrals_last_hour(restaurant_id) -> int:
     try:
-        import zoneinfo
-        now_local = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo("America/Chicago"))
-    except Exception:
-        now_local = datetime.now(timezone.utc) - timedelta(hours=5)
-    cutoff = (now_local - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-    try:
+        from datetime import datetime as _dt, timedelta as _td
+        from zoneinfo import ZoneInfo as _ZI
+        # email_log.sent_at is America/Chicago local (models.log_email).
+        since = (_dt.now(_ZI("America/Chicago")).replace(tzinfo=None) - _td(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         try:
             return conn.execute("SELECT COUNT(*) FROM email_log WHERE restaurant_id=? AND email_type='referral' "
-                                "AND sent_at >= ?", (restaurant_id, cutoff)).fetchone()[0]
+                                "AND sent_at >= ?", (restaurant_id, since)).fetchone()[0]
         finally:
             conn.close()
     except Exception:
-        return 0
+        return REFERRALS_PER_HOUR          # fail closed: this mails strangers as Will
 
 
 @admin_bp.route("/api/send-referral", methods=["POST"])
 @login_required
 def send_referral(current_user):
-    """Email a restaurant owner's referral from will@. Mail from Cavnar's own
-    domain carries the 2FA codes too, so this is held to: at most
-    REFERRALS_PER_HOUR per restaurant (the comment promising 10 an hour was
-    never implemented — any login could send unlimited mail as Will), every
-    caller-written field HTML-escaped (the note was pasted in raw, so a
-    "referral" could carry a phishing link in Cavnar's name), and nothing to
-    an address on the suppression list (SEC-15)."""
-    import resend as _resend
-    from markupsafe import escape as _esc
+    """An owner introduces Cavnar AI to someone they know, from will@.
+
+    It was an open relay: any login could mail any address, unlimited, as
+    Will, with the note injected as raw HTML, through a direct SDK send that
+    skipped the suppression list (MOD-EML-1). Now: account holders only, a
+    real address, REFERRALS_PER_HOUR per restaurant, every field escaped,
+    and through emails.deliver."""
+    from permissions import is_principal
+    from guest_email import valid_email
+    esc = _emails.esc
+    if not is_principal(current_user):
+        return jsonify(ok=False, error="Only the account owner can send referrals."), 403
     data = request.get_json(silent=True) or {}
-    ref_name  = (data.get("name") or "").strip()
-    ref_email = (data.get("email") or "").strip()
-    note      = (data.get("note") or "").strip()
+    ref_name  = (data.get("name") or "").strip()[:80]
+    ref_email = valid_email(data.get("email"))
+    note      = (data.get("note") or "").strip()[:500]
     if not ref_name or not ref_email:
-        return jsonify(ok=False, error="Name and email required")
+        return jsonify(ok=False, error="Name and a valid email address are required")
     rid = current_user["restaurant_id"]
-    if _referrals_sent_last_hour(rid) >= REFERRALS_PER_HOUR:
-        return jsonify(ok=False, error="That's the most referrals we can send in an hour — try again later."), 429
-    try:
-        from models import is_email_suppressed
-        if is_email_suppressed(ref_email):
-            return jsonify(ok=False, error="That address has bounced or opted out of our email, so we can't send to it."), 400
-    except Exception:
-        pass
+    if _referrals_last_hour(rid) >= REFERRALS_PER_HOUR:
+        return jsonify(ok=False, error="That's a lot of referrals in an hour — thank you! Try again later."), 429
     try:
         restaurant = get_restaurant(rid)
         referrer   = restaurant.name if restaurant else "A Cavnar AI client"
         owner_name = (restaurant.owner_name if restaurant else None) or "Your colleague"
         subject_owner = owner_name
-        referrer, owner_name = _esc(referrer), _esc(owner_name)
-        note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{_esc(note)}\"</p>" if note else ""
+        note_block = (f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{esc(note)}\"</p>"
+                      if note else "")
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
   <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin-bottom:6px">
   <div style="font-size:10px;color:#7a736a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px">Restaurant Intelligence</div>
-  <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {owner_name} from {referrer} thought you might find this useful.</p>
+  <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {esc(owner_name)} from {esc(referrer)} thought you might find this useful.</p>
   {note_block}
   <p style="margin:0 0 16px 0;font-size:14px;color:#3a3530;line-height:1.7">Cavnar AI is a fully managed dashboard that handles the operational side of running a restaurant — review responses, labor cost analysis, inventory tracking, and marketing content. It runs quietly in the background and takes about 30 minutes a week of your time.</p>
   <p style="margin:0 0 24px 0;font-size:14px;color:#3a3530;line-height:1.7">If you want to see what it looks like for your restaurant, book a free 30-minute call below.</p>
   <a href="https://calendly.com/will-cavnar/30min" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600">Book a free call</a>
   <p style="margin:24px 0 0 0;font-size:12px;color:#7a736a">Will Cavnar · Cavnar AI · <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a></p>
 </div>"""
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        result = _emails.deliver(email_type="referral", restaurant_id=rid, payload={
             "from": _emails.sender("will"),
             "to": [ref_email],
             "subject": f"{subject_owner} thinks you should check out Cavnar AI",
             "html": _html_doc(html),
         })
-        # Notify Will
-        _resend.Emails.send({
+        if not result.ok:
+            if str(result.error or "").startswith("recipient suppressed"):
+                return jsonify(ok=False, error="That address has asked not to get email from us."), 409
+            return jsonify(ok=False, error="The referral didn't go out. Try again in a minute."), 502
+        # Tell Will.
+        _emails.deliver(email_type="referral_notice", restaurant_id=rid, payload={
             "from": _emails.sender("client"),
             "to": [_from_email()],
-            "subject": f"New referral from {restaurant.name if restaurant else 'a client'} — {ref_name}",
-            "html": _html_doc(f"<p>{referrer} referred {_esc(ref_name)} ({_esc(ref_email)}).</p>"
-                              f"<p>Note: {_esc(note) if note else 'none'}</p>"),
+            "subject": f"New referral from {referrer} — {ref_name}",
+            "html": _html_doc(f"<p>{esc(referrer)} referred {esc(ref_name)} ({esc(ref_email)}).</p>"
+                              f"<p>Note: {esc(note) or 'none'}</p>"),
         })
-        try:
-            log_email(rid, "referral", ref_email, f"Referral to {ref_name}")
-        except Exception: pass
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e))

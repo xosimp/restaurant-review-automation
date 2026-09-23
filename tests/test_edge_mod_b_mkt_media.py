@@ -163,7 +163,6 @@ class _DecodedTheBomb(BaseException):
     test pass on the wrong path."""
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-13: store_image decodes the full canvas (exif_transpose/convert) before any pixel-count check")
 def test_a_tiny_file_with_a_huge_canvas_is_refused_before_it_is_decoded(db_path, monkeypatch, bomb_png):
     """A6 Media #5 / MOD-MKT-13: the check has to be on the image size read
     from the header, not on the compressed byte count. The guard stops the
@@ -279,7 +278,6 @@ def _source_max_content_length():
     raise AssertionError("MAX_CONTENT_LENGTH assignment not found in hosted_dashboard.py")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: MAX_UPLOAD_BYTES (12 MB, and its 'pick one under 12MB' message) is above the app's 5 MB body cap, so it can never fire")
 def test_the_per_photo_limit_the_owner_is_told_is_one_the_app_can_actually_receive(real_app_uploads):
     """A6 Media #6 / MOD-MKT-14. The mobile path base64-encodes (+33%), so
     the stated limit has to fit under the cap after encoding."""
@@ -290,7 +288,6 @@ def test_the_per_photo_limit_the_owner_is_told_is_one_the_app_can_actually_recei
 
 # ── Media #7 HEIC (MOD-MKT-14) ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: image/heic and image/heif pass ALLOWED_MIME but no HEIF decoder is registered with Pillow (pillow-heif is not installed)")
 def test_every_format_the_upload_gate_accepts_is_one_the_server_can_decode():
     """A6 Media #7 / MOD-MKT-14: a HEIC from a desktop file picker passes the
     MIME gate and then fails "That file didn't open as a photo"."""
@@ -343,7 +340,6 @@ def _referenced_photo(db_path, rid):
 
 
 @pytest.mark.parametrize("path", ["/api/marketing/media/{id}", "/mobile/api/marketing/media/{id}"])
-@pytest.mark.xfail(strict=True, reason="MOD-A6-media-9: the media_id foreign key blocks the delete, but delete_media lets the IntegrityError escape and the route 500s with no reason")
 def test_deleting_a_photo_a_scheduled_post_needs_is_refused_with_a_reason(app, db_path, path):
     """A6 Media #9 (MOD-MKT-18 said the delete was allowed; on a database
     built by init_db the FK refuses it — the defect is the 500)."""
@@ -367,7 +363,6 @@ def test_a_photo_a_scheduled_post_needs_is_still_there_after_a_delete_attempt(ap
 
 
 @pytest.mark.parametrize("path", ["/api/marketing/media/{id}", "/mobile/api/marketing/media/{id}"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: DELETE on a photo id that is not yours (or does not exist) returns ok=True")
 def test_deleting_someone_elses_photo_does_not_report_success(app, db_path, path):
     """MOD-MKT-18: the delete is correctly scoped, but says it worked."""
     mine = _restaurant(db_path, name="Mine Co")
@@ -451,7 +446,6 @@ def test_a_draft_is_kept_up_to_the_limit_and_refused_one_character_past_it(app, 
 
 # ── Drafts #7 approval is not enforced at publish (MOD-MKT-17) ────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: approval is advisory — a teammate refused at /approve can still schedule the same copy")
 def test_a_teammate_cannot_route_around_approval_by_scheduling_the_draft(app, db_path):
     """A6 Drafts #7 / MOD-MKT-17: write → refused approval → schedule it
     anyway. The last step must be refused too."""
@@ -492,7 +486,6 @@ def test_a_guest_tapping_the_link_is_counted_and_forwarded(app, db_path):
     assert _clicks(db_path, rid) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: every HEAD on /g/<token> increments clicks")
 def test_a_head_request_is_not_counted_as_a_tap(app, db_path):
     """A6 Links #5 / MOD-MKT-18: link checkers and some messaging apps HEAD
     a URL before anyone taps it."""
@@ -509,7 +502,6 @@ def test_a_head_request_is_not_counted_as_a_tap(app, db_path):
     "Twitterbot/1.0",
     "WhatsApp/2.23.20.0",
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: link-preview fetchers are counted as guest taps (no bot/previewer filter)")
 def test_a_link_preview_fetch_is_not_counted_as_a_tap(app, db_path, agent):
     """A6 Links #5 / MOD-MKT-18: taps rank campaigns in
     guest_marketing.diagnose; a preview is not a guest."""
@@ -519,7 +511,6 @@ def test_a_link_preview_fetch_is_not_counted_as_a_tap(app, db_path, agent):
     assert _clicks(db_path, rid) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: /g/<token> has no rate limit or de-duplication, so anyone with the link can inflate a campaign's taps")
 def test_a_flood_of_hits_from_one_address_does_not_inflate_the_tap_count(app, db_path):
     """A6 Links #6 / MOD-MKT-18: 100 hits from one IP in one burst."""
     rid = _restaurant(db_path)
@@ -562,7 +553,6 @@ def test_a_target_with_a_line_break_cannot_inject_a_header(app, db_path):
         assert "\n" not in resp.headers.get("Location", "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-links-7: a target whose host contains a space is accepted and redirected to a broken Location")
 def test_a_target_with_a_space_in_the_host_is_refused(db_path):
     """A6 Links #7: "exa mple.com" is not a web address; a guest tapping the
     text gets a broken page with the restaurant's name on the link."""

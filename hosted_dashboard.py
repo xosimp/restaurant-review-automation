@@ -748,6 +748,20 @@ def forbidden(e):
 </html>"""
     return Response(html, status=403, mimetype="text/html")
 
+@app.errorhandler(413)
+def request_too_large(e):
+    """A body over MAX_CONTENT_LENGTH. Flask's default is an HTML page, which
+    the web's r.json() and the iOS decoder both dead-end on as "Upload
+    failed" with no reason (MOD-MKT-14). JSON for the APIs, like 403/404."""
+    from flask import Response
+    limit_mb = (app.config.get("MAX_CONTENT_LENGTH") or 0) / (1024 * 1024)
+    msg = (f"That upload is too large. Keep it under {limit_mb:g} MB — "
+           "for a photo, pick a smaller one or take a screenshot of it.")
+    if request.path.startswith(("/api/", "/mobile/api/")):
+        return jsonify(ok=False, error=msg), 413
+    return Response(msg, status=413, mimetype="text/plain")
+
+
 @app.errorhandler(404)
 def page_not_found(e):
     from flask import Response

@@ -57,6 +57,10 @@ def _valid_target(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return ""
+    # "exa mple.com" is not a host; forwarding a guest there is a broken
+    # page with the restaurant's name on the link (MOD-A6-links-7).
+    if any(ch.isspace() for ch in parsed.netloc):
+        return ""
     # Reject a netloc that is really a scheme in disguise.
     if ":" in parsed.netloc and not parsed.netloc.rsplit(":", 1)[-1].isdigit():
         return ""
@@ -94,8 +98,46 @@ def create_link(restaurant_id, target_url, *, source="sms", campaign="", label="
     return {"ok": True, "token": token, "target_url": tagged}
 
 
-def resolve(token: str, db_path: str = DB_PATH):
-    """Record the click and return where to send them, or None."""
+# A second tap from the same visitor on the same link inside this window is
+# the same guest (a double tap, a back-and-forward, a refresh), not another
+# one. Also what stops anyone with the link inflating a campaign by reloading
+# it (MOD-MKT-18).
+TAP_DEDUPE_MINUTES = 30
+
+# Link-preview fetchers, crawlers and scripted clients. A preview is the
+# messaging app or social network reading the link, not a guest tapping it,
+# and taps rank campaigns in guest_marketing.diagnose (MOD-MKT-18).
+_NOT_A_GUEST = ("facebookexternalhit", "facebot", "slackbot", "twitterbot", "whatsapp",
+                "telegrambot", "discordbot", "linkedinbot", "skypeuripreview", "pinterest",
+                "redditbot", "embedly", "applebot", "googlebot", "bingbot", "yandex",
+                "duckduckbot", "baiduspider", "bot/", "bot ", "crawler", "spider",
+                "preview", "curl/", "wget/", "python-requests", "httpx", "go-http-client",
+                "headlesschrome", "okhttp")
+
+
+def is_preview_agent(user_agent: str) -> bool:
+    ua = (user_agent or "").strip().lower()
+    if not ua:
+        return True             # nobody's phone sends no User-Agent
+    return ua.endswith("bot") or any(marker in ua for marker in _NOT_A_GUEST)
+
+
+def visitor_key(remote_addr: str, user_agent: str) -> str:
+    """A one-way key for de-duplicating taps. Not a person: a hash of the
+    address and browser, kept two days (ops retention) and never shown."""
+    import hashlib
+    import os
+    salt = os.getenv("SECRET_KEY") or "cavnar-taps"
+    raw = f"{salt}|{remote_addr or ''}|{(user_agent or '')[:200]}"
+    return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:32]
+
+
+def resolve(token: str, db_path: str = DB_PATH, count: bool = True, visitor: str = None):
+    """Return where to send them, or None, and record the tap when `count`.
+
+    The /g/ route passes count=False for a HEAD or a link-preview fetcher,
+    and a `visitor` key so the same visitor tapping again within
+    TAP_DEDUPE_MINUTES is not counted twice."""
     conn = get_conn(db_path)
     try:
         row = conn.execute(
@@ -103,10 +145,21 @@ def resolve(token: str, db_path: str = DB_PATH):
         ).fetchone()
         if not row:
             return None
-        conn.execute(
-            "UPDATE marketing_links SET clicks=clicks+1, last_click_at=datetime('now') WHERE id=?",
-            (row["id"],),
-        )
+        if count and visitor:
+            seen = conn.execute(
+                "SELECT 1 FROM marketing_link_taps WHERE link_id=? AND visitor=? "
+                "AND tapped_at >= datetime('now', ?) LIMIT 1",
+                (row["id"], visitor, f"-{TAP_DEDUPE_MINUTES} minutes")).fetchone()
+            if seen:
+                count = False
+            else:
+                conn.execute("INSERT INTO marketing_link_taps (link_id, visitor) VALUES (?,?)",
+                             (row["id"], visitor))
+        if count:
+            conn.execute(
+                "UPDATE marketing_links SET clicks=clicks+1, last_click_at=datetime('now') WHERE id=?",
+                (row["id"],),
+            )
         conn.commit()
         return row["target_url"]
     except Exception as e:

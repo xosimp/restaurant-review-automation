@@ -409,8 +409,10 @@ def send_email(to_email, restaurant, pdf_buf):
             "content_type": "application/pdf",
         }],
     }
-    response = resend.Emails.send(params)
-    return response.get("id")
+    # Through emails.deliver (suppression, retry, email_log — MOD-EML-4).
+    from emails import deliver
+    result = deliver(params, email_type="sales_audit")
+    return result.message_id if result.ok else None
 
 # ── Web UI ────────────────────────────────────────────────────────────────────
 TEMPLATE = """<!DOCTYPE html>

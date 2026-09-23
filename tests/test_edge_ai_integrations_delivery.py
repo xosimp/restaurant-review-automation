@@ -246,6 +246,10 @@ def _fire_with_a_full_queue(monkeypatch, rid, db_path):
     monkeypatch.setattr(push, "_executor", None)
     monkeypatch.setattr(push, "_deliver", lambda *a, **k: delivered.append(a))
     monkeypatch.setattr(push, "_MAX_PUSH_QUEUED", 0)
+    # MOD-NOT-12: past the pool ceiling a delivery now waits for a slot; a
+    # push is dropped only once the waiting line is full too, so that is
+    # the ceiling this exercises.
+    monkeypatch.setattr(push, "_MAX_PUSH_OVERFLOW", 0)
     push.fire_push(rid, "1star", "1-star review", "Cold soup.", db_path=db_path)
     push._push_executor().shutdown(wait=True)
     push._executor = None

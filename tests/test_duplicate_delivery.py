@@ -132,14 +132,13 @@ def test_the_digest_sends_for_stuck_jobs_even_with_zero_failures(db_path, monkey
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     sent = {}
 
-    class _Emails:
-        @staticmethod
-        def send(payload):
-            sent.update(payload)
-            return {"id": "e1"}
+    # The digest goes through emails.deliver (MOD-EML-4), not the SDK.
+    import emails
 
-    import sys, types
-    monkeypatch.setitem(sys.modules, "resend", types.SimpleNamespace(api_key=None, Emails=_Emails))
+    def deliver(payload=None, restaurant_id=None, email_type=None, log_send=True):
+        sent.update(payload or {})
+        return emails.SendResult(True, message_id="e1", status_code=200, attempts=1)
+    monkeypatch.setattr(emails, "deliver", deliver)
 
     assert ops.send_failure_digest() is True
     assert "monthly_summary" in sent["html"]

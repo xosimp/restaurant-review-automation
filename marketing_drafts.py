@@ -87,6 +87,20 @@ def list_drafts(restaurant_id, limit=40, db_path: str = DB_PATH) -> list:
 
 
 
+CANNOT_PUBLISH = "Ask the main account to approve this before it goes out."
+
+
+def may_publish(user) -> bool:
+    """Whether this login may put copy on a public feed — now or scheduled.
+
+    Approval was advisory: approve_draft refused a teammate, and every
+    publish and schedule route then let the same teammate post the same
+    copy directly (MOD-MKT-17). The routes ask this, with the same
+    permission approve_draft checks, so there is one rule."""
+    from permissions import MARKETING_APPROVE, has_permission
+    return has_permission(user, MARKETING_APPROVE)
+
+
 def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
                   db_path: str = DB_PATH) -> dict:
     """Release a draft. Invited teammates can write but not publish.

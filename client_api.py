@@ -29,6 +29,7 @@ _json_object_guard(client_bp)
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.
 from ai_guard import safe_error as _safe_err
+from csrf import csrf_exempt  # the email unsubscribe links: their token is the credential
 
 # Simple in-memory insight cache: {cache_key: (timestamp, value)}
 _insight_cache = {}
@@ -2026,9 +2027,11 @@ No preamble on them, no closing encouragement, no sign-off.{forecast_instruction
 
 Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
 brand voice. No corporate language. The whole brief must be under 60 words."""
-        import anthropic as _anth
-        from ai_utils import create_with_retry, extract_text, model_for
-        _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
+        # The shared, bounded client (timeout, no hidden SDK retries): an
+        # unbounded one here was invisible to the timeout lint behind its
+        # `import anthropic as _anth` alias (MOD-MKT-2).
+        from ai_utils import create_with_retry, extract_text, model_for, get_client
+        _client = get_client()
         msg = create_with_retry(
             _client,
             model=model_for("marketing_insight"),
@@ -2240,9 +2243,8 @@ def marketing_media_api(current_user):
 @client_bp.route("/api/marketing/media/<int:media_id>", methods=["DELETE"])
 @login_required
 def marketing_media_delete(media_id, current_user):
-    from marketing_media import delete_media
-    delete_media(media_id, current_user["restaurant_id"])
-    return jsonify(ok=True)
+    """Web twin — the one body is mobile_api.mobile_delete_media."""
+    return _m("mobile_delete_media")(media_id, current_user)
 
 
 @client_bp.route("/api/marketing/schedule", methods=["GET", "POST"])
@@ -2349,6 +2351,9 @@ def post_to_google(current_user):
     put a Google post on Google. Mobile got this route first
     (mobile_api.mobile_create_google_post); this is the web half."""
     import gmb as _gmb
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     if not _gmb.is_connected(rid):
@@ -2759,6 +2764,59 @@ def _normalize_phone_lenient(raw):
     return None
 
 
+_DIGEST_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _quiet_hour(raw):
+    """A quiet-hours bound as "HH:MM" (24h), None for blank, or raises
+    ValueError. is_in_quiet_hours reads only HH:MM and treats anything else
+    as "no quiet hours", so a stored "9pm" silently turned them off
+    (MOD-NOT-5). "9pm", "9:30 pm", "21" and "21:00" all normalise."""
+    s = str(raw or "").strip().lower().replace(".", "")
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?", s)
+    if not m:
+        raise ValueError(raw)
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if ap:
+        if not 1 <= h <= 12:
+            raise ValueError(raw)
+        h = (h % 12) + (12 if ap.startswith("p") else 0)
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        raise ValueError(raw)
+    return f"{h:02d}:{mi:02d}"
+
+
+def _validated_alert_fields(data):
+    """The alert-settings fields that are not simple switches, checked the
+    same way for the web save and its mobile twin. Returns (fields, error):
+    a field the owner typed that cannot be read is a 400 naming it, never a
+    500 for the whole save and never a value stored that quietly disables
+    the setting (MOD-NOT-5)."""
+    out = {}
+    try:
+        out["alert_quiet_start"] = _quiet_hour(data.get("alert_quiet_start"))
+        out["alert_quiet_end"] = _quiet_hour(data.get("alert_quiet_end"))
+    except ValueError:
+        return None, "Quiet hours need a time like 21:00 or 9pm."
+    if "alert_max_per_day" in data:
+        raw = data.get("alert_max_per_day")
+        try:
+            cap = int(raw or 0)
+        except (TypeError, ValueError):
+            return None, "The daily alert limit has to be a whole number."
+        if cap < 0:
+            return None, "The daily alert limit can't be negative."
+        out["alert_max_per_day"] = cap
+    if "digest_day" in data:
+        day = str(data.get("digest_day") or "monday").strip().lower()
+        if day not in _DIGEST_DAYS:
+            return None, "Pick a day of the week for the weekly digest."
+        out["digest_day"] = day
+    return out, None
+
+
 # The per-alert-type push switches, in the order the settings screens list
 # them. deliver_alert reads these columns; both clients now write them.
 _PUSH_COLUMNS = ("al_1star_push", "al_2star_push", "al_5star_push",
@@ -2817,6 +2875,10 @@ def save_alert_settings(current_user):
         e = StaleWrite(restaurant_version(rid))
         return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
 
+    checked, bad = _validated_alert_fields(data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+
     # Sync contacts — max 2. A real error instead of silently dropping the
     # extras — the client already hides its own "+ Add" past 2, but a
     # direct API call or a stale build should hear why it failed.
@@ -2861,10 +2923,7 @@ def save_alert_settings(current_user):
         "alert_any_review":      int(bool(data.get("alert_any_review"))),
         "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
         "digest_enabled":        int(bool(data.get("digest_enabled"))),
-        "digest_day":            data.get("digest_day", "monday"),
-        "alert_quiet_start":     data.get("alert_quiet_start") or None,
-        "alert_quiet_end":       data.get("alert_quiet_end") or None,
-        "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
+        **checked,
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
     }
@@ -3180,21 +3239,19 @@ def client_upload_data(current_user):
                 _ot_flags.append(_f)
     if _ot_flags:
         try:
-            import os as _os_ot, resend as _resend_ot
-            from html import escape as _html_escape_ot   # names come from the CSV
+            import html as _h_ot
             from models import get_restaurant as _gr_ot
             _r_ot = _gr_ot(restaurant_id)
-            _key_ot = _os_ot.getenv("RESEND_API_KEY", "")
-            _from_ot = config.from_email()
-            if _key_ot and _r_ot and _r_ot.owner_email:
-                _resend_ot.api_key = _key_ot
+            if _emails_mod()._resend_key() and _r_ot and _r_ot.owner_email:
+                # Names come from the uploaded CSV: escaped (MOD-LAB-17).
                 _ot_rows = "".join(
                     "<tr><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'><strong>" +
-                    _html_escape_ot(f["employee"]) + "</strong></td><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'>" +
-                    str(f["hours"]) + "h — week of " + _html_escape_ot(f["week"]) + "</td></tr>"
+                    _h_ot.escape(str(f["employee"])) + "</strong></td><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'>" +
+                    _h_ot.escape(str(f["hours"])) + "h — week of " + _h_ot.escape(str(f["week"])) + "</td></tr>"
                     for f in _ot_flags
                 )
-                _resend_ot.Emails.send({
+                # Through emails.deliver, not the SDK (MOD-EML-4).
+                _emails_mod().deliver(email_type="overtime_alert", restaurant_id=restaurant_id, payload={
                     "from": _emails_mod().sender("ops"),
                     "to": [_r_ot.owner_email],
                     "subject": "⚠ Overtime detected — " + _r_ot.name,
@@ -3244,14 +3301,10 @@ def client_upload_data(current_user):
 
         log_email(restaurant_id, label, current_user.get("email",""), f"{label} — {r.name if r else ''}")
 
-        import os as _os, resend as _resend
-        _resend_key = _os.getenv("RESEND_API_KEY", "")
         _will_email = config.will_email()
-        _from_email = config.from_email()
-        if _is_first_upload and _resend_key and r:
-            _resend.api_key = _resend_key
+        if _is_first_upload and _emails_mod()._resend_key() and r:
             _module = "shift schedule" if data_type == "shifts" else "inventory"
-            _resend.Emails.send({
+            _emails_mod().deliver(email_type="ops_first_upload", restaurant_id=restaurant_id, payload={
                 "from": _emails_mod().sender("ops"),
                 "to": [_will_email],
                 "subject": f"📂 {r.name} uploaded their first {_module} data",
@@ -3567,13 +3620,26 @@ def _do_send_review_request(rid, data):
                 return {"ok": False,
                         "error": "Confirm the guest agreed to be texted before sending a "
                                  "review request by SMS."}, 400
+            # The same two rules every other guest text obeys: a number that
+            # texted STOP to the shared line is not texted again, and nothing
+            # goes out outside 8am-9pm in the restaurant's time (MOD-MKT-11).
+            import guest_marketing as _gm
+            if _gm.phone_opted_out(customer_phone):
+                return {"ok": False,
+                        "error": "This guest replied STOP to our texts, so they can't be sent "
+                                 "a text. Send the review link by email instead."}, 409
+            if not _gm.guest_sms_allowed_now(rid):
+                return {"ok": False,
+                        "error": "Guest texts can only go out between "
+                                 + _gm.guest_sms_window_label()
+                                 + " your time. Try again then, or send it by email."}, 409
             from notify import send_sms as _send_sms
             sms_text = (
                 f"Hi {first_name}, thanks for dining at {rest_name}! "
                 + (f"{guest_note} " if guest_note else "")
                 + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
-            sent_sms = _send_sms(customer_phone, sms_text)
+            sent_sms = _send_sms(customer_phone, sms_text, use_case="guest")
             if not sent_sms and not customer_email:
                 return {"ok": False, "error": "SMS delivery failed — check Twilio config"}, 500
 
@@ -3590,12 +3656,21 @@ def _do_send_review_request(rid, data):
             conn.close()
             return {"ok": True}, 200
 
-        import resend as _resend
-        _resend.api_key = os.getenv("RESEND_API_KEY", "")
-        if not _resend.api_key:
+        _em = _emails_mod()
+        if not _em._resend_key():
             return {"ok": False, "error": "Email not configured"}, 500
 
         import html as _html_escape
+        # Everything the owner typed or the restaurant is called goes in
+        # escaped: an anchor in the restaurant's name rendered as a live link
+        # Cavnar signed (MOD-EML-2).
+        rest_name_h = _html_escape.escape(rest_name)
+        first_name_h = _html_escape.escape(first_name)
+        # A guest who never joined any list still gets a working way out
+        # (MOD-EML-6): a signed opt-out for this address, shown in the footer
+        # and as the one-click List-Unsubscribe header.
+        from models import guest_optout_token
+        optout_url = f"{config.base_url()}/ue/{guest_optout_token(customer_email)}"
         note_block = (
             f'<p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 24px;'
             f'padding:14px 16px;background:#f7f4ef;border-left:3px solid #c84b2f;border-radius:4px">'
@@ -3608,13 +3683,13 @@ def _do_send_review_request(rid, data):
           <div style="background:white;border-radius:12px;padding:32px;border:1px solid #e0dbd0">
             <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:4px">
             <div style="font-size:11px;color:#7a736a;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #e0dbd0">
-              On behalf of {rest_name}
+              On behalf of {rest_name_h}
             </div>
             <p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 16px">
-              Hi {first_name},
+              Hi {first_name_h},
             </p>
             <p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 24px">
-              Thank you for dining with us at <strong>{rest_name}</strong>. We hope you had a great experience — we'd love to hear your thoughts.
+              Thank you for dining with us at <strong>{rest_name_h}</strong>. We hope you had a great experience — we'd love to hear your thoughts.
             </p>
             {note_block}
             <a href="{review_url}" style="display:inline-block;background:#c84b2f;color:white;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:.3px">
@@ -3626,16 +3701,27 @@ def _do_send_review_request(rid, data):
           </div>
           <p style="font-size:10px;color:#a09080;text-align:center;margin-top:16px">
             Sent via Cavnar AI · <a href="https://dashboard.cavnar.ai" style="color:#a09080">cavnar.ai</a>
+            · <a href="{optout_url}" style="color:#a09080">Unsubscribe</a> from restaurant emails
           </p>
         </div>
         </div>"""
 
-        _resend.Emails.send({
-            "from":    "reviews@cavnar.ai",
+        # Through emails.deliver: this was a direct SDK send, so a bounced,
+        # complained or opted-out address was mailed anyway and nothing
+        # reached email_log (MOD-EML-4).
+        result = _em.deliver(email_type="guest_review_request", restaurant_id=rid, payload={
+            "from":    _em.display_from(rest_name, "reviews@cavnar.ai"),
             "to":      [customer_email],
             "subject": f"How was your visit to {rest_name}?",
             "html":    _html_doc(html_body),
+            "headers": {"List-Unsubscribe": f"<{optout_url}>",
+                        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"},
         })
+        if not result.ok:
+            if str(result.error or "").startswith("recipient suppressed"):
+                return {"ok": False, "error": "This guest has asked not to get restaurant emails "
+                                              "through Cavnar AI, so it wasn't sent."}, 409
+            return {"ok": False, "error": "The email didn't go out. Try again in a minute."}, 502
 
         # Log the request
         from models import get_conn as _gc
@@ -4867,23 +4953,57 @@ def marketing_media_file(token):
 
 @client_bp.route("/g/<token>")
 def marketing_link_redirect(token):
-    """Counts the tap, then sends them where they were going."""
-    from marketing_links import resolve
-    target = resolve(token)
+    """Counts the tap, then sends them where they were going. A HEAD, a
+    link-preview fetcher and a repeat from the same visitor within half an
+    hour forward without counting (MOD-MKT-18)."""
+    from marketing_links import resolve, is_preview_agent, visitor_key
+    ua = request.headers.get("User-Agent", "")
+    counts = request.method == "GET" and not is_preview_agent(ua)
+    target = resolve(token, count=counts,
+                     visitor=visitor_key(request.remote_addr, ua) if counts else None)
     if not target:
         return render_template("staff_schedule_invalid.html"), 404
     return redirect(target, code=302)
 
 
 @client_bp.route("/e/<token>", methods=["GET", "POST"])
+@csrf_exempt
 def guest_newsletter_unsubscribe(token):
     """Per-guest, and it works without signing in — CAN-SPAM requires the link
-    to work for someone who has no account here and never will."""
-    from guest_email import unsubscribe
+    to work for someone who has no account here and never will.
+
+    GET only shows the page with a button; the POST (that button, or a mail
+    client's RFC 8058 one-click) unsubscribes. A GET that wrote meant link
+    scanners and prefetchers opted guests out (MOD-EML-5). The token is the
+    credential, so there is nothing for CSRF to protect."""
+    from guest_email import unsubscribe, restaurant_for_token
+    if request.method != "POST":
+        name = restaurant_for_token(token)
+        if not name:
+            return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
+        return render_template("unsubscribed.html", ok=True, confirm=True, audience="guest",
+                               restaurant_name=name)
     name = unsubscribe(token)
     if not name:
         return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
-    return render_template("unsubscribed.html", ok=True, restaurant_name=name)
+    return render_template("unsubscribed.html", ok=True, audience="guest", restaurant_name=name)
+
+
+@client_bp.route("/ue/<token>", methods=["GET", "POST"])
+@csrf_exempt
+def guest_email_optout(token):
+    """Opt out of guest email for an address with no list behind it — the
+    review-request email a restaurant sends one guest (MOD-EML-6). Same
+    GET-confirms / POST-writes shape as /e/."""
+    from models import verify_guest_optout_token, suppress_email
+    email = verify_guest_optout_token(token)
+    if not email:
+        return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
+    if request.method != "POST":
+        return render_template("unsubscribed.html", ok=True, confirm=True, audience="guest_any",
+                               restaurant_name="")
+    suppress_email(email, "unsubscribed", "guest opt-out link", scope="guest")
+    return render_template("unsubscribed.html", ok=True, audience="guest_any", restaurant_name="")
 
 
 # ── Public guest opt-in page — no login, printed on a table tent / QR code ──
@@ -5000,6 +5120,7 @@ def send_test_digest_web(current_user):
 # reach any other setting from this token.
 
 @client_bp.route("/u/<token>", methods=["GET", "POST"])
+@csrf_exempt
 def marketing_unsubscribe(token):
     from models import verify_unsubscribe_token
     rid = verify_unsubscribe_token(token)
@@ -5009,9 +5130,15 @@ def marketing_unsubscribe(token):
     if not restaurant:
         return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
 
-    # RFC 8058 one-click: a POST from the mail client unsubscribes directly.
-    # A GET shows the same confirmation, so a human clicking the link in the
-    # footer gets a page rather than a silent no-op.
+    # RFC 8058 one-click: a POST from the mail client unsubscribes directly,
+    # and so does the button on the page a GET shows. A GET alone never
+    # writes: link scanners and prefetchers fetch every URL in a message,
+    # and they were opting owners out (MOD-EML-5). The signed token is the
+    # credential, so CSRF has nothing to add — and a mail client's one-click
+    # POST carries no cookie, so the blueprint's check refused it.
+    if request.method != "POST":
+        return render_template("unsubscribed.html", ok=True, confirm=True,
+                               restaurant_name=restaurant.name or "")
     update_restaurant(rid, {"marketing_emails_opt_out": 1})
     return render_template("unsubscribed.html", ok=True,
                            restaurant_name=restaurant.name or "")
@@ -5179,6 +5306,12 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
 
 
+def notification_visibility(viewer):
+    """alert_type -> whether this login's notification list shows it; the
+    same rule _do_get_notifications applies, for the unread badge."""
+    return lambda alert_type: _sees(viewer, _NOTIFICATION_MODULE.get(alert_type, "reviews"))
+
+
 def _sees(viewer, module):
     """Whether this login may see a row about `module`. No viewer means an
     internal/admin caller, which sees everything."""
@@ -5258,7 +5391,8 @@ def get_notifications_unread_count(current_user):
     localStorage mark, so the two clients never agreed either."""
     from models import unread_notification_count
     return jsonify(ok=True, count=unread_notification_count(
-        current_user["id"], current_user["restaurant_id"]))
+        current_user["id"], current_user["restaurant_id"],
+        visible=notification_visibility(current_user)))
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

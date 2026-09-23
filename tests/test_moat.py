@@ -399,7 +399,7 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
     conn.execute("UPDATE guest_contacts SET consent=1, consent_at='2026-09-01T10:00:00' WHERE restaurant_id=?", (rid,))
     conn.commit(); conn.close()
     monkeypatch.setattr(gm, "guest_sms_allowed_now", lambda r: True)
-    monkeypatch.setattr(gm, "send_sms", lambda phone, msg: True)
+    monkeypatch.setattr(gm, "send_sms", lambda phone, msg, **kw: True)
     out = gm.send_campaign(rid, "Patio is open", db_path=db_path)
     assert out["ok"] and out["sent"] == 2
     conn = get_conn(db_path)

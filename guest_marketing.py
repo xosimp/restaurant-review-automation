@@ -55,6 +55,44 @@ CREATE TABLE IF NOT EXISTS sms_optin_invites (
     UNIQUE(restaurant_id, external_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_optin_invites_phone ON sms_optin_invites(phone, sent_at);
+-- A STOP that outlives the contact row it was recorded on (CLIENT-34).
+-- Deleting a guest used to hard-delete their STOP with them, so the same
+-- number re-imported from the POS or re-typed by the owner came back
+-- textable. restaurant_id 0 is a STOP to the shared platform number.
+CREATE TABLE IF NOT EXISTS guest_sms_optouts (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL DEFAULT 0,
+    phone          TEXT    NOT NULL,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, phone)
+);
+CREATE INDEX IF NOT EXISTS idx_guest_sms_optouts_phone ON guest_sms_optouts(phone);
+-- A newsletter and who it went to (guest_email.send_newsletter). There was
+-- no record, so a second press — or a retry after a send that died halfway —
+-- mailed everyone again (MOD-EML-3). One row per recipient is the claim.
+CREATE TABLE IF NOT EXISTS guest_newsletters (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL,
+    subject        TEXT    NOT NULL,
+    body           TEXT    NOT NULL,
+    content_hash   TEXT    NOT NULL,
+    total          INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    completed_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_guest_newsletters_open ON guest_newsletters(completed_at, restaurant_id);
+CREATE TABLE IF NOT EXISTS guest_newsletter_recipients (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    newsletter_id  INTEGER NOT NULL,
+    contact_id     INTEGER NOT NULL,
+    email          TEXT    NOT NULL,
+    status         TEXT    NOT NULL DEFAULT 'pending',
+    claimed_at     TEXT,
+    sent_at        TEXT,
+    error          TEXT,
+    UNIQUE(newsletter_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_gnr_status ON guest_newsletter_recipients(newsletter_id, status);
 """
 
 
@@ -99,6 +137,17 @@ def init_guest_marketing(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_gcr_campaign ON guest_campaign_recipients(campaign_id)",
         "ALTER TABLE guest_campaigns ADD COLUMN visits_matched INTEGER",
         "ALTER TABLE guest_campaigns ADD COLUMN attribution_through TEXT",
+        # Which restaurants the daily opt-in invite pass has finished for a
+        # business date. The job re-runs hourly through the afternoon so a
+        # restaurant held back by its own 8am-9pm window is reached later
+        # the same day; this keeps the others from being re-fetched from
+        # the POS every hour (MOD-MKT-12).
+        """CREATE TABLE IF NOT EXISTS optin_invite_runs (
+            restaurant_id INTEGER NOT NULL,
+            business_date TEXT NOT NULL,
+            done_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, business_date)
+        )""",
     ):
         try:
             conn.execute(col_sql)
@@ -202,6 +251,22 @@ def add_guest_contact_sms_optin(restaurant_id, phone, name=None, db_path=DB_PATH
     return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
 
 
+def _record_optout(phone, restaurant_id=0, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (?,?)",
+                     (int(restaurant_id or 0), _normalize_phone(phone)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _opted_out_here(conn, restaurant_id, phone) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM guest_sms_optouts WHERE phone=? AND restaurant_id IN (0, ?) LIMIT 1",
+        (phone, int(restaurant_id or 0))).fetchone() is not None
+
+
 def _upsert_contact(restaurant_id, phone, name, consent, db_path):
     phone = _normalize_phone(phone)
     conn = get_conn(db_path)
@@ -239,11 +304,15 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
         conn.commit()
         contact_id = existing["id"]
     else:
+        # A number that texted STOP (here, or to the shared number) comes
+        # back unsubscribed, however it comes back: a POS import, an owner
+        # re-typing it, the public form. Only their own START undoes it.
+        stopped = _opted_out_here(conn, restaurant_id, phone)
         cur = conn.execute(
             "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, "
-            "last_visit, visit_count) VALUES (?,?,?,?,?,?,?)",
+            "last_visit, visit_count, unsubscribed) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, (name or "").strip() or None, phone, int(consent), now_iso,
-             now_iso, 1 if consent else 0)
+             now_iso, 1 if consent else 0, 1 if stopped else 0)
         )
         conn.commit()
         contact_id = cur.lastrowid
@@ -253,11 +322,22 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
 
 def delete_guest_contact(contact_id, restaurant_id, db_path=DB_PATH):
     """Scoped to restaurant_id — a client must never be able to delete
-    another restaurant's contact by guessing an id."""
+    another restaurant's contact by guessing an id.
+
+    The row goes (the owner's list no longer shows them), but a STOP it
+    carried is kept in guest_sms_optouts first, so the same number added
+    again later is added unsubscribed (CLIENT-34)."""
     conn = get_conn(db_path)
-    conn.execute("DELETE FROM guest_contacts WHERE id=? AND restaurant_id=?", (contact_id, restaurant_id))
-    conn.commit()
-    conn.close()
+    try:
+        row = conn.execute("SELECT phone, unsubscribed FROM guest_contacts WHERE id=? AND restaurant_id=?",
+                           (contact_id, restaurant_id)).fetchone()
+        if row and row["unsubscribed"]:
+            conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (?,?)",
+                         (int(restaurant_id), row["phone"]))
+        conn.execute("DELETE FROM guest_contacts WHERE id=? AND restaurant_id=?", (contact_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_guest_visit(contact_id, restaurant_id, db_path=DB_PATH):
@@ -290,6 +370,26 @@ def unsubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
     conn.close()
 
 
+def phone_opted_out(phone, db_path=DB_PATH) -> bool:
+    """True when this number has texted STOP to ANY restaurant here.
+
+    Every restaurant shares one platform number, and the STOP reply promises
+    "no more texts from us" — "us" being that number. So anything that texts
+    a guest who has not consented to THIS restaurant (an opt-in invite, a
+    review request an owner typed in) honours a STOP sent to any of them
+    (MOD-MKT-11, MOD-MKT-12)."""
+    phone = _normalize_phone(phone)
+    conn = get_conn(db_path)
+    try:
+        return (conn.execute(
+            "SELECT 1 FROM guest_contacts WHERE phone=? AND unsubscribed=1 LIMIT 1", (phone,)
+        ).fetchone() is not None or conn.execute(
+            "SELECT 1 FROM guest_sms_optouts WHERE phone=? LIMIT 1", (phone,)
+        ).fetchone() is not None)
+    finally:
+        conn.close()
+
+
 # ── Inbound SMS ─────────────────────────────────────────────────────────────
 # Every outbound message this system sends promises "Reply STOP to
 # unsubscribe". Until these handlers existed that promise was not actually
@@ -301,11 +401,16 @@ HELP_KEYWORDS  = {"help", "info"}
 
 
 def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
+    """The guest's own START (handle_inbound_sms) — the one thing that undoes
+    a STOP, including one kept after their contact row was deleted."""
+    phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     conn.execute(
         "UPDATE guest_contacts SET unsubscribed=0 WHERE restaurant_id=? AND phone=?",
-        (restaurant_id, _normalize_phone(phone))
+        (restaurant_id, phone)
     )
+    conn.execute("DELETE FROM guest_sms_optouts WHERE phone=? AND restaurant_id IN (0, ?)",
+                 (phone, int(restaurant_id or 0)))
     conn.commit()
     conn.close()
 
@@ -457,6 +562,9 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
     if _is_stop(body):
         conn = get_conn(db_path)
         conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
+        # Kept apart from the contact rows, which an owner can delete.
+        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)",
+                     (phone,))
         conn.commit()
         conn.close()
         _mark_invite_response(phone, "stop", db_path=db_path)
@@ -839,7 +947,7 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
             raced += 1          # another send in flight already has this guest
             continue
         try:
-            ok = bool(send_sms(c["phone"], full_message))
+            ok = bool(send_sms(c["phone"], full_message, use_case="guest"))
         except Exception:
             ok = False
         except BaseException:
@@ -1077,17 +1185,31 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
     handle_inbound_sms — ever sets consent. That keeps the one rule this
     module is built around intact: consent comes from the guest.
 
-    A guest already consented, already unsubscribed, or already invited for
-    this order is skipped, so re-running is safe.
+    A guest already consented, already unsubscribed, already invited for
+    this order, or who has texted STOP to any restaurant on the shared
+    number is skipped, so re-running is safe. The scheduler runs this hourly
+    through the afternoon: a restaurant outside its own 8am-9pm window is
+    deferred and picked up by a later pass, and one already finished for
+    `business_date` (optin_invite_runs) is not fetched again (MOD-MKT-12).
+    A cancelled restaurant sends nothing.
     """
     from datetime import date as _date
+    from models import in_service_sql
 
     if business_date is None:
         business_date = _date.today()
+    bdate = str(business_date)
 
     conn = get_conn(db_path)
-    restaurants = conn.execute("SELECT id, name FROM restaurants WHERE module_marketing=1").fetchall()
-    conn.close()
+    try:
+        restaurants = conn.execute(
+            "SELECT id, name FROM restaurants WHERE module_marketing=1 AND "
+            + in_service_sql("billing_status") +
+            " AND id NOT IN (SELECT restaurant_id FROM optin_invite_runs WHERE business_date=?)",
+            (bdate,)
+        ).fetchall()
+    finally:
+        conn.close()
     # Whichever POS shares guest records (pos.supports), not a Toast column.
     import pos as _pos
     restaurants = [r for r in restaurants if _pos.supports(r["id"], "fetch_order_customers")]
@@ -1095,10 +1217,11 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
     invited, skipped, failed, deferred = 0, 0, 0, 0
     for r in restaurants:
         rid = r["id"]
-        # This job is pinned to 11am on the SERVER's clock while restaurants
+        # This job is scheduled on the SERVER's clock while restaurants
         # keep their own timezones, so "11am" is not 11am everywhere. An
         # opt-in invite is asking for marketing consent, which makes it a
-        # marketing text — same window as everything else here.
+        # marketing text — same window as everything else here. A deferred
+        # restaurant is not marked done, so the next hourly pass retries it.
         if not guest_sms_allowed_now(rid):
             deferred += 1
             continue
@@ -1106,24 +1229,26 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
             customers, _prov = _pos.fetch_order_customers(rid, business_date)
         except Exception:
             failed += 1
-            continue
+            continue       # not marked done: the next pass fetches again
 
         for cust in customers:
             phone = _normalize_phone(cust["phone"])
             conn = get_conn(db_path)
-            existing = conn.execute(
-                "SELECT consent, unsubscribed FROM guest_contacts WHERE restaurant_id=? AND phone=?",
-                (rid, phone)
-            ).fetchone()
-            already_invited = conn.execute(
-                "SELECT 1 FROM sms_optin_invites WHERE restaurant_id=? AND phone=?", (rid, phone)
-            ).fetchone()
-            conn.close()
+            try:
+                existing = conn.execute(
+                    "SELECT consent, unsubscribed FROM guest_contacts WHERE restaurant_id=? AND phone=?",
+                    (rid, phone)
+                ).fetchone()
+                already_invited = conn.execute(
+                    "SELECT 1 FROM sms_optin_invites WHERE restaurant_id=? AND phone=?", (rid, phone)
+                ).fetchone()
+            finally:
+                conn.close()
 
             if existing and (existing["consent"] or existing["unsubscribed"]):
                 skipped += 1
                 continue
-            if already_invited:
+            if already_invited or phone_opted_out(phone, db_path=db_path):
                 skipped += 1
                 continue
 
@@ -1143,18 +1268,37 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
                 "Reply STOP to opt out."
             )
             try:
-                if send_sms(phone, message):
+                if send_sms(phone, message, use_case="guest"):
                     invited += 1
                 else:
                     failed += 1
             except Exception:
                 failed += 1
 
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT OR IGNORE INTO optin_invite_runs (restaurant_id, business_date) "
+                         "VALUES (?,?)", (rid, bdate))
+            conn.commit()
+        finally:
+            conn.close()
+
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM optin_invite_runs WHERE done_at < datetime('now','-45 days')")
+        conn.commit()
+    finally:
+        conn.close()
     return {"invited": invited, "skipped": skipped, "failed": failed,
             "deferred_quiet_hours": deferred}
 
 
-def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
+# One pass stops after this long; guests it did not reach stay eligible (the
+# claim below is their only marker), so the next hourly pass continues.
+REVIEW_REQUEST_PASS_SECONDS = 240
+
+
+def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=None):
     """Hourly job (called from scheduler.py) — texts a Google-review link to
     any consented, non-unsubscribed guest whose last visit crossed the delay
     threshold, as long as they haven't already been asked about *this* visit.
@@ -1171,31 +1315,53 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
     so the delay check is done in Python per-restaurant rather than in SQL
     against SQLite's UTC datetime('now'), which would be off by that
     restaurant's UTC offset.
+
+    Each guest is CLAIMED — last_review_requested_at stamped by a
+    conditional UPDATE and committed — before the text goes out, and the
+    review_requests row is committed right after it. This used to hold one
+    write transaction across the whole Twilio loop, so every other writer in
+    the app got "database is locked" on the hour, and a crash rolled back
+    every stamp so the next run texted everyone again (MOD-MKT-10). A send
+    that raises gives its claim back, so that guest is tried again; one
+    Twilio answered with a failure keeps it (a bad number is not re-texted
+    every hour) and is recorded as failed. The pass is bounded by
+    `max_seconds`; the claims are the cursor, so nothing is starved.
     """
+    import time as _time
     from time_utils import restaurant_now_by_id
     # A cancelled restaurant's guests are not texted on its behalf (MOD-REV-2).
     from models import in_service_sql
 
     if delay_hours is None:
         delay_hours = int(os.getenv("REVIEW_REQUEST_DELAY_HOURS", DEFAULT_REVIEW_REQUEST_DELAY_HOURS))
+    if max_seconds is None:
+        max_seconds = REVIEW_REQUEST_PASS_SECONDS
+    started = _time.monotonic()
 
     conn = get_conn(db_path)
-    rows = conn.execute(
-        """
-        SELECT gc.id AS contact_id, gc.restaurant_id, gc.name, gc.phone, gc.last_visit,
-               r.name AS restaurant_name, r.google_place_id
-        FROM guest_contacts gc
-        JOIN restaurants r ON r.id = gc.restaurant_id
-        WHERE gc.consent=1 AND gc.unsubscribed=0
-          AND r.module_marketing=1
-          AND """ + in_service_sql("r.billing_status") + """
-          AND gc.last_visit IS NOT NULL
-          AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
-        """
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            """
+            SELECT gc.id AS contact_id, gc.restaurant_id, gc.name, gc.phone, gc.last_visit,
+                   gc.last_review_requested_at,
+                   r.name AS restaurant_name, r.google_place_id
+            FROM guest_contacts gc
+            JOIN restaurants r ON r.id = gc.restaurant_id
+            WHERE gc.consent=1 AND gc.unsubscribed=0
+              AND r.module_marketing=1
+              AND """ + in_service_sql("r.billing_status") + """
+              AND gc.last_visit IS NOT NULL
+              AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
+            ORDER BY gc.id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
 
     sent, failed, skipped, deferred = 0, 0, 0, 0
     for row in rows:
+        if _time.monotonic() - started > max_seconds:
+            break
         try:
             visited_at = datetime.fromisoformat(row["last_visit"])
         except Exception:
@@ -1217,6 +1383,22 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
             skipped += 1
             continue
 
+        stamp = now_local.isoformat()
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "UPDATE guest_contacts SET last_review_requested_at=? WHERE id=? AND consent=1 "
+                "AND unsubscribed=0 AND (last_review_requested_at IS NULL "
+                "OR last_review_requested_at < last_visit)",
+                (stamp, row["contact_id"])
+            )
+            conn.commit()
+            claimed = cur.rowcount == 1
+        finally:
+            conn.close()
+        if not claimed:
+            continue          # another pass got here first, or they said STOP
+
         first_name = (row["name"] or "").split()[0] if row["name"] else "there"
         message = (
             f"Hi {first_name}, thanks for visiting {row['restaurant_name']}! "
@@ -1224,32 +1406,35 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
             "\n\nReply STOP to unsubscribe."
         )
         try:
-            ok = send_sms(row["phone"], message)
-        except Exception:
-            ok = False
+            ok = bool(send_sms(row["phone"], message, use_case="guest"))
+        except BaseException:
+            # Nothing was confirmed sent: give the claim back so the next
+            # pass tries this guest again, then let the failure go on.
+            conn = get_conn(db_path)
+            try:
+                conn.execute(
+                    "UPDATE guest_contacts SET last_review_requested_at=? "
+                    "WHERE id=? AND last_review_requested_at=?",
+                    (row["last_review_requested_at"], row["contact_id"], stamp)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            raise
         if ok:
             sent += 1
         else:
             failed += 1
 
-        # Stamped and committed per guest, straight after that guest's send
-        # (DATA-52 / MOD-MKT-10). The stamps used to be written inside one
-        # transaction held across the whole Twilio loop: every request's
-        # write waited behind it, and a crash mid-loop rolled back the stamps
-        # of guests already texted, so the next hourly run texted them all
-        # again. Now nothing is held during a send, a guest reached is
-        # recorded before the next one is tried, and a guest the crash
-        # interrupted is simply picked up by the next run.
-        conn.execute(
-            "UPDATE guest_contacts SET last_review_requested_at=? WHERE id=?",
-            (now_local.isoformat(), row["contact_id"])
-        )
-        conn.execute(
-            "INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, method, status) "
-            "VALUES (?,?,?,?,?,?)",
-            (row["restaurant_id"], row["name"] or "", "", row["phone"], "sms_auto", "sent" if ok else "failed")
-        )
-        conn.commit()
-    conn.close()
+        conn = get_conn(db_path)
+        try:
+            conn.execute(
+                "INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, method, status) "
+                "VALUES (?,?,?,?,?,?)",
+                (row["restaurant_id"], row["name"] or "", "", row["phone"], "sms_auto", "sent" if ok else "failed")
+            )
+            conn.commit()
+        finally:
+            conn.close()
     return {"sent": sent, "failed": failed, "skipped_no_place_id": skipped,
             "deferred_quiet_hours": deferred}

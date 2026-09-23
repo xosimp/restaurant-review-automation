@@ -92,6 +92,30 @@ class _Resp:
 
 # ═══ AI-2 · Stripe: claim before handle ═════════════════════════════════════
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
+
 def _stripe_client(monkeypatch, event_holder, alerts=None):
     """The real /stripe-webhook route with the signature check stood in for.
     `event_holder["event"]` is what construct_event returns, so one client can
@@ -107,6 +131,8 @@ def _stripe_client(monkeypatch, event_holder, alerts=None):
     monkeypatch.setattr(resend.Emails, "send",
                         staticmethod(lambda payload: sent.append(payload.get("subject"))),
                         raising=False)
+    # Those alerts go through emails.deliver now (MOD-EML-4).
+    _capture_resend_posts(monkeypatch, lambda payload: sent.append(payload.get("subject")))
     app = Flask(__name__)
     app.register_blueprint(webhook_routes.webhook_bp)
     return app.test_client()

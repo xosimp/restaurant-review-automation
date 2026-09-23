@@ -3055,6 +3055,10 @@ _MODULE_PREFIXES = (
     ("/api/content-calendar",       "marketing"),
     ("/api/recent-topics",          "marketing"),
     ("/api/post-to-google",         "marketing"),
+    # The web publish routes live in social_routes and were missing here, so
+    # a restaurant without Marketing could still post to Meta (MOD-MKT-17).
+    ("/api/post-to-facebook",       "marketing"),
+    ("/api/post-to-instagram",      "marketing"),
     ("/api/gbp-listing",            "marketing"),
     ("/api/guest-",                 "marketing"),
     ("/mobile/api/marketing",       "marketing"),

@@ -121,7 +121,7 @@ def test_every_daily_job_keeps_its_once_per_day_claim():
     claim key is what stops a widened gate re-running it every tick."""
     body = _loop_body()
     for job in ("backup_db", "pos_sync", "inventory_depletion", "food_cost_snapshots",
-                "review_diagnoses", "food_cost_diagnoses", "ops_digest", "optin_invite",
+                "review_diagnoses", "food_cost_diagnoses", "ops_digest",
                 "marketing_metrics_sync"):
         assert re.search(r'claim_period\("%s", str\(today\)\)' % job, body), job
 
@@ -135,6 +135,15 @@ def test_the_token_refresh_is_hourly_with_a_per_restaurant_daily_cap():
     src = inspect.getsource(scheduler.refresh_expiring_tokens)
     assert 'claim_period(f"refresh_tokens_attempt:{r.id}"' in src
     assert "TOKEN_REFRESH_ATTEMPTS_PER_DAY" in src
+
+
+def test_the_opt_in_invite_pass_is_claimed_per_hour():
+    """MOD-MKT-12 — 11am on the server is 6am in Hawaii, so a once-a-day
+    claim deferred western restaurants for good. The invite job runs every
+    hour of its window instead; its own per-restaurant done marker
+    (guest_marketing.optin_invite_runs) is what keeps it once a day."""
+    body = _loop_body()
+    assert re.search(r'claim_period\("optin_invite", f"\{today\}-\{now\.hour\}"\)', body)
 
 
 def test_owner_facing_jobs_are_attempted_hourly_and_claimed_per_restaurant():

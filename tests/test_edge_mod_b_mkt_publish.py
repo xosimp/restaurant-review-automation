@@ -287,7 +287,6 @@ def test_the_timeout_lint_still_catches_the_plain_spelling(tmp_path):
 
 # ── #3 non-JSON error body ────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-3 (MOD-MKT-4): a non-JSON Graph error body makes r.json() raise inside /api/post-to-facebook, which 500s instead of refusing in JSON")
 def test_a_gateway_page_from_facebook_comes_back_as_a_json_refusal(app, db_path, monkeypatch):
     """A6 direct #3: Meta's edge answers an HTML 502 now and then; the
     owner's browser does r.json() on whatever comes back."""
@@ -302,7 +301,6 @@ def test_a_gateway_page_from_facebook_comes_back_as_a_json_refusal(app, db_path,
 
 # ── #4 the Instagram container ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-4: a container whose status_code is ERROR is still sent to media_publish (the poll only breaks on FINISHED)")
 def test_an_instagram_container_that_errors_is_never_sent_to_media_publish(db_path, monkeypatch, sleeps):
     """A6 direct #4: Meta rejected the image (wrong aspect ratio, unreachable
     URL). Publishing it anyway is a guaranteed failure with Meta's wording."""
@@ -364,7 +362,6 @@ def _publish_request(s, path, rid):
 
 
 @pytest.mark.parametrize("path", PUBLISH_PATHS)
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: every publish/schedule route is only login_required; a 'member' who cannot approve can publish directly")
 def test_an_invited_teammate_who_cannot_approve_cannot_publish_either(app, db_path, monkeypatch, sleeps, path):
     """A6 direct #6 / MOD-MKT-17: approve_draft refuses role 'member'; the
     routes that actually put copy on the public feed must refuse it too."""
@@ -391,7 +388,6 @@ def test_the_primary_login_can_still_publish_on_every_route(app, db_path, monkey
 # ── #7 no Marketing module ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("path", ["/api/post-to-facebook", "/api/post-to-instagram"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: /api/post-to-facebook and /api/post-to-instagram are missing from auth._MODULE_PREFIXES, so they skip the Marketing module gate")
 def test_a_restaurant_without_marketing_cannot_publish_through_the_web_post_routes(app, db_path, monkeypatch, sleeps, path):
     """A6 direct #7 / MOD-MKT-17."""
     rid = _restaurant(db_path, module_marketing=0)
@@ -429,7 +425,6 @@ def test_a_restaurant_without_marketing_cannot_post_to_google(app, db_path, monk
 
 # ── #8 empty caption ──────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-8: _do_post_to_facebook sends an empty message to Graph /feed instead of refusing locally")
 def test_an_empty_facebook_post_is_refused_without_calling_graph(db_path, monkeypatch):
     """A6 direct #8: an empty caption is always an owner mistake (a stale
     compose box); it should be refused here, not by Meta."""
@@ -452,7 +447,6 @@ def test_the_shared_publish_path_refuses_an_empty_body_before_any_platform(db_pa
 
 # ── #9 Meta's raw error text (MOD-MKT-18) ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: social_routes returns Meta's raw error.message ('(#200) ...') to the owner verbatim")
 def test_a_meta_permission_error_is_explained_not_echoed(app, db_path, monkeypatch):
     """A6 direct #9 / MOD-MKT-18: "(#200) If posting to a page, requires
     both pages_read_engagement and pages_manage_posts" means nothing to an
@@ -470,7 +464,6 @@ def test_a_meta_permission_error_is_explained_not_echoed(app, db_path, monkeypat
 
 # ── #10 an Instagram post holds its request thread (MOD-MKT-3) ────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-3: _do_post_to_instagram sleeps up to 20s (10 x 2s) inside the calling request/scheduler thread")
 def test_an_instagram_post_does_not_park_the_calling_thread_for_the_whole_container_poll(db_path, monkeypatch, sleeps):
     """A6 direct #10 / MOD-MKT-3: with gunicorn --threads 4, four owners
     posting to Instagram at once take the whole platform for 20s. The
@@ -484,7 +477,6 @@ def test_an_instagram_post_does_not_park_the_calling_thread_for_the_whole_contai
 
 # ── MOD-MKT-18: the two debug routes ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: /api/debug-insights queries a hard-coded post id with fb_page_token=None for a restaurant with no Facebook connection")
 def test_debug_insights_makes_no_graph_call_for_a_restaurant_without_facebook(app, db_path, monkeypatch):
     """MOD-MKT-18: a live authenticated route that reads someone else's
     hard-coded post. (Not a deletion recommendation — see CLAUDE.md.)"""

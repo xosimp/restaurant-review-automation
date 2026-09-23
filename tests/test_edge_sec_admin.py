@@ -395,13 +395,39 @@ def test_admin_reset_clears_the_forced_reset_flag(app, db_path):
 
 # ── SEC-15: send-referral ───────────────────────────────────────────────────
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
+
 @pytest.fixture
 def captured_mail(monkeypatch):
-    """send_referral calls resend.Emails.send directly; capture instead."""
+    """send_referral used to call resend.Emails.send directly; it goes
+    through emails.deliver now, so both roads are captured."""
     sent = []
     import resend
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda payload: sent.append(payload) or {"id": "x"}),
                         raising=False)
+    _capture_resend_posts(monkeypatch, sent.append)
     return sent
 
 

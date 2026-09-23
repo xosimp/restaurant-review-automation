@@ -84,9 +84,10 @@ def test_every_send_site_goes_through_a_guarded_path():
         # It sat outside this allowlist for the life of the alert system,
         # bypassing suppression, retry and email_log, and this test reported
         # green the whole time.
-        if re.search(r"\.Emails\.send\s*\(", src) and path not in (
-                "admin_routes.py", "webhook_routes.py", "audit_app.py", "mobile_api.py",
-                "auth_routes.py", "ops.py", "scheduler.py", "client_api.py"):
+        #
+        # The allowlist that used to sit here (eight modules, ~19 sends) is
+        # gone: every one now goes through emails.deliver (MOD-EML-4).
+        if re.search(r"\.Emails\.send\s*\(", src) and path != "emails.py":
             offenders.append(path + " (raw SDK send)")
     assert offenders == [], offenders
 

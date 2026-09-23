@@ -346,6 +346,26 @@ def claim_cooldown(key: str, minutes: float) -> bool:
         return True
 
 
+def period_claimed(job: str, period: str) -> bool:
+    """Whether `job` already holds `period`, without claiming it. For work
+    that claims only once it has finished (notify's morning batch claims at
+    flush), so a pass can skip what an earlier pass completed. Fails open
+    (False): run again rather than silently skip."""
+    key = f"{job}:{period}"
+    if key in _claim_fallback:
+        return True
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            return conn.execute("SELECT 1 FROM job_period_claims WHERE job_key=?",
+                                (key,)).fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def release_period(job: str, period: str) -> None:
     """Give back a claim_period claim, so the next tick can try the work
     again. For jobs that claim BEFORE working (so two ticks cannot run it at
@@ -764,6 +784,13 @@ _RETENTION_DAYS = {
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     "job_period_claims": int(os.getenv("RETAIN_JOB_CLAIMS_DAYS", "45")),
+    # A held alert keeps its whole email body (guest review excerpts
+    # included) and is sent or dropped within a day; notification_opens
+    # feeds a 30-day engagement read. Neither was ever pruned (MOD-NOT-14).
+    "alert_holds":        int(os.getenv("RETAIN_ALERT_HOLDS_DAYS", "30")),
+    # Tap de-duplication only needs the last half hour (marketing_links).
+    "marketing_link_taps": int(os.getenv("RETAIN_LINK_TAPS_DAYS", "2")),
+    "notification_opens": int(os.getenv("RETAIN_NOTIFICATION_OPENS_DAYS", "365")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -773,6 +800,8 @@ _RETENTION_COLUMN = {
     "alert_log": "fired_at", "email_log": "sent_at",
     "ai_visibility_query_runs": "created_at", "competitor_snapshots": "captured_at",
     "ai_visibility_runs": "created_at", "job_period_claims": "claimed_at",
+    "alert_holds": "created_at", "notification_opens": "opened_at",
+    "marketing_link_taps": "tapped_at",
 }
 # Every table above has an index on its column, created where the table is
 # (DATA-40): these deletes run under the write lock, and a full scan of a
@@ -911,8 +940,7 @@ def send_failure_digest():
         return False
     try:
         import html as _html
-        import resend as _resend
-        _resend.api_key = resend_key
+        import emails as _emails_ops
         will = config.will_email()
         total = sum(f["cnt"] for f in failures)
         sec_html = ""
@@ -948,8 +976,8 @@ def send_failure_digest():
             </tr>"""
             for f in failures
         )
-        _resend.Emails.send({
-            "from": __import__("emails").sender("ops"),
+        _emails_ops.deliver_or_raise(email_type="ops_failure_digest", payload={
+            "from": _emails_ops.sender("ops"),
             "to": [will],
             "subject": (f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h"
                         + (f" · {len(stuck)} stuck" if stuck else "")) if failures

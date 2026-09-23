@@ -121,7 +121,7 @@ struct MarketingWindow: Decodable {
         let posts: Int
         let reach: Int
         let engagement: Int
-        let engagementRate: Double
+        let engagementRate: Double?
 
         enum CodingKeys: String, CodingKey {
             case posts, reach, engagement
@@ -140,7 +140,7 @@ struct MarketingWindow: Decodable {
         let posts: Int
         let reach: Int
         let engagement: Int
-        let engagementRate: Double
+        let engagementRate: Double?
 
         enum CodingKeys: String, CodingKey {
             case platform, posts, reach, engagement
@@ -163,7 +163,9 @@ struct MarketingWindow: Decodable {
     let posts: Int
     let reach: Int
     let engagement: Int
-    let engagementRate: Double
+    /// nil when nothing was seen (no reach or impressions measured) — the
+    /// server no longer reports that as 0% (MOD-MKT-18).
+    let engagementRate: Double?
     let previous: Bucket
     let change: Change
     let byPlatform: [Platform]

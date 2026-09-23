@@ -39,9 +39,6 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
         log.warning(f"Cannot send urgent alert for {restaurant_name} — no key/email")
         return
     try:
-        import resend as _resend
-        _resend.api_key = _resend_key()
-
         # Look up draft responses for these reviews
         try:
             from models import get_conn as _gc
@@ -84,7 +81,20 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
   {draft_html}
 </div>"""
 
-        _resend.Emails.send({
+        # Through emails.deliver, like every other owner email: this was a
+        # direct SDK send, so a bounced or complained address kept getting it
+        # and nothing reached email_log (MOD-EML-4).
+        _alert_rid = next((r.get("restaurant_id") for r in urgent_reviews if r.get("restaurant_id")), None)
+        if _alert_rid is None:
+            try:
+                from models import get_conn as _gc0
+                _c0 = _gc0()
+                _row0 = _c0.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
+                _c0.close()
+                _alert_rid = _row0[0] if _row0 else None
+            except Exception:
+                _alert_rid = None
+        _emails.deliver_or_raise(email_type="urgent", restaurant_id=_alert_rid, payload={
             "from": _emails.sender("client"),
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
@@ -98,7 +108,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     </p>
   </div>
   <p style="font-size:15px;line-height:1.6;margin-bottom:6px">
-    <strong>{restaurant_name}</strong> received
+    <strong>{_html.escape(restaurant_name or "")}</strong> received
     {"a review" if len(urgent_reviews)==1 else f"{len(urgent_reviews)} reviews"}
     that {"needs" if len(urgent_reviews)==1 else "need"} immediate attention.
   </p>
@@ -123,14 +133,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 </div>
 </div>"""),
         })
-        log.info(f"Urgent alert sent to {owner_email} for {restaurant_name}")
-        try:
-            from models import log_email as _le, get_conn as _gc
-            _c = _gc()
-            _row = _c.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
-            _c.close()
-            if _row: _le(_row[0], "urgent", owner_email, f"Urgent review alert — {restaurant_name}")
-        except Exception: pass
+        log.info(f"Urgent alert handled for {owner_email} ({restaurant_name})")
     except Exception as e:
         log.error(f"Urgent alert failed for {restaurant_name}: {e}")
 
@@ -812,9 +815,16 @@ def run_weekly_digests():
                 log.error(f"Digest build failed for {restaurant.name}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
 
+        from time_utils import restaurant_now as _rnow
         for key, bucket in by_email.items():
             items = bucket["items"]
             first_rest, first_rep = items[0]
+            # Once per address per day, recorded only when it was actually
+            # delivered — so a pass retried after a failure (below) never
+            # mails an address that already got it.
+            sent_period = _rnow(first_rest, naive=True).date().isoformat()
+            if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
+                continue
             try:
                 owner_name = _emails.greeting_name(first_rest)
                 if len(items) == 1:
@@ -835,11 +845,24 @@ def run_weekly_digests():
                     "html": _html_doc(html),
                 })
                 if getattr(result, "ok", False):
+                    _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
                     log.error(f"Digest send to {bucket['to']} failed: {result.error}")
                     _ops.capture(RuntimeError(result.error or "digest send failed"),
                                  job="weekly_digest", context=f"restaurant_id={first_rest.id}")
+                    # The day was claimed before sending (local_due), so a
+                    # transient Resend failure lost the week's digest
+                    # (MOD-EML-8). Give the claims back so the next hourly
+                    # tick inside the window tries again; a refusal that will
+                    # not change (suppressed, a 4xx) keeps them.
+                    transient = (not str(result.error or "").startswith("recipient suppressed")
+                                 and (result.status_code is None or result.status_code in _emails._RETRY_STATUS)
+                                 and result.attempts)
+                    if transient:
+                        for rest, _rep in items:
+                            _ops.release_period(f"weekly_digest:{rest.id}",
+                                                _rnow(rest, naive=True).date().isoformat())
                 for rest, _rep in items:
                     try:
                         from webhooks import fire_webhook as _fw_rep
@@ -944,8 +967,7 @@ def check_stale_inventory():
             for name, status in stale
         ])
 
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_stale_inventory", payload={
             "from": _emails.sender("client"),
             "to": [config.will_email()],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
@@ -1129,15 +1151,22 @@ def refresh_expiring_tokens():
                 continue  # tried enough today
 
             try:
-                # A timeout: this runs on the scheduler thread, where one
-                # unanswered connection stopped every job (DATA-16).
+                # Timed (MOD-MKT-2): this runs on the one scheduler thread, and
+                # a black-holed Graph connection stopped every job with it.
                 resp = _req.get(graph_url("oauth/access_token"), params={
                     "grant_type": "fb_exchange_token",
                     "client_id": app_id, "client_secret": app_secret,
                     "fb_exchange_token": r.ig_token,
                 }, timeout=(5, 20))
-                if resp.status_code == 200:
-                    new_token   = resp.json().get("access_token", r.ig_token)
+                try:
+                    new_token = (resp.json() or {}).get("access_token") if resp.status_code == 200 else None
+                except Exception:
+                    new_token = None
+                if new_token:
+                    # Only a token Meta actually handed back moves the expiry.
+                    # A 200 with no access_token used to keep the old token and
+                    # still push its expiry 60 days out, so the job stopped
+                    # trying while the real token died (MOD-A6-oauth-5).
                     new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
                     update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
                     if r.fb_page_token:
@@ -1146,18 +1175,27 @@ def refresh_expiring_tokens():
                             "client_id": app_id, "client_secret": app_secret,
                             "fb_exchange_token": r.fb_page_token,
                         }, timeout=(5, 20))
-                        if resp2.status_code == 200:
-                            update_data["fb_page_token"]    = resp2.json().get("access_token", r.fb_page_token)
+                        try:
+                            fb_token = (resp2.json() or {}).get("access_token") if resp2.status_code == 200 else None
+                        except Exception:
+                            fb_token = None
+                        if fb_token:
+                            update_data["fb_page_token"]    = fb_token
                             update_data["fb_token_expires"] = new_expires
                     update_restaurant(r.id, update_data)
                     log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
                 else:
-                    log.warning(f"Token refresh failed for {r.name}: {resp.text[:100]}")
+                    log.warning(f"Token refresh failed for {r.name}: {resp.status_code} {(resp.text or '')[:100]}")
             except Exception as e:
                 log.error(f"Token refresh error for {r.name}: {e}")
 
     except Exception as e:
         log.error(f"refresh_expiring_tokens error: {e}")
+
+
+# One nightly metrics pass stops taking on restaurants after this long; the
+# job_cursors cursor makes the next night start where it stopped.
+METRICS_SYNC_SECONDS = int(os.getenv("METRICS_SYNC_SECONDS", "1800"))
 
 
 def run_marketing_metrics_sync():
@@ -1166,26 +1204,33 @@ def run_marketing_metrics_sync():
     client-side (a 60s poll while someone had the Marketing tab open), so the
     numbers behind the tab's analytics card were stale the moment nobody was
     looking — an owner who checks once a week saw whatever reach/engagement
-    happened to be cached from their last visit, not real current totals."""
+    happened to be cached from their last visit, not real current totals.
+
+    Bounded and resumable (resumable_sweep): it looped every connected
+    restaurant serially with no wall-clock bound and no cursor (MOD-MKT-15)."""
     try:
         from models import get_all_restaurants, in_service
-        from social_routes import refresh_post_metrics
+        import social_routes
 
-        candidates = [r for r in get_all_restaurants()
-                     if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)]
+        candidates = {r.id: r for r in get_all_restaurants()
+                      if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)}
         if not candidates:
             return
         log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
-        for r in candidates:
-            try:
-                result = refresh_post_metrics(r.id)
-                if result.get("ok"):
-                    log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
-                else:
-                    log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
-            except Exception as e:
-                log.error(f"Metrics sync error for {r.name}: {e}")
-                _ops.capture(e, job="marketing_metrics_sync", context=r.name)
+
+        def _one(rid):
+            r = candidates[rid]
+            result = social_routes.refresh_post_metrics(rid) or {}
+            if result.get("ok"):
+                log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
+            else:
+                log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
+
+        done, hit_bound = resumable_sweep("marketing_metrics_sync", list(candidates), _one,
+                                          METRICS_SYNC_SECONDS, workers=1, job="marketing_metrics_sync")
+        if hit_bound:
+            log.info(f"Marketing metrics sync stopped at its bound after {done}; "
+                     "the next pass resumes from there")
     except Exception as e:
         log.error(f"run_marketing_metrics_sync error: {e}")
 
@@ -1483,9 +1528,7 @@ def backup_db():
             raise RuntimeError(f"encrypted backup is {size_kb} KB, over BACKUP_EMAIL_MAX_BYTES "
                                f"({BACKUP_EMAIL_MAX_BYTES} bytes) — email copy skipped, no off-volume copy tonight")
 
-        import resend as _resend
-        _resend.api_key = _resend_key()
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_backup", payload={
             "from": _emails.sender("ops"),
             "to":   [WILL_EMAIL],
             "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
@@ -1802,9 +1845,7 @@ def check_inactive_clients():
     ])
 
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY_LOCAL
-        _resend.Emails.send({
+        _emails.deliver_or_raise(email_type="ops_inactive_clients", payload={
             "from": _emails.sender("ops"),
             "to": [WILL_EMAIL_LOCAL],
             "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
@@ -2564,6 +2605,15 @@ def _minute_duties():
         _notify_rel.release_due_alerts()
     except Exception as e:
         _ops.capture(e, job="release_held_alerts")
+    try:
+        # The rest of any newsletter the owner sent, in bounded batches
+        # (guest_email.send_newsletter, MOD-EML-3).
+        from guest_email import run_newsletter_sends
+        _nl = run_newsletter_sends()
+        if _nl.get("sent") or _nl.get("failed"):
+            log.info(f"Newsletter sends: {_nl}")
+    except Exception as e:
+        _ops.capture(e, job="newsletter_sends")
 
 
 def _pulse_interval():
@@ -2860,11 +2910,16 @@ def scheduler_loop():
                 _ops.run_job("inactive_clients", check_inactive_clients)
                 _ops.run_job("while_away", send_while_away_nudges)
 
-            if _due(now, 11, until=OPTIN_INVITE_LATEST_HOUR) and _ops.claim_period("optin_invite", str(today)):
-                # 11am daily — invite guests Toast identified yesterday to
-                # opt in for themselves. Yesterday, not today: Toast's
-                # business day doesn't end at midnight, so today's is still
-                # open and would be re-scanned tomorrow anyway.
+            if (_due(now, 11, until=OPTIN_INVITE_LATEST_HOUR)
+                    and _ops.claim_period("optin_invite", f"{today}-{now.hour}")):
+                # From 11am, hourly — invite guests Toast identified
+                # yesterday to opt in for themselves. Yesterday, not today:
+                # Toast's business day doesn't end at midnight, so today's is
+                # still open and would be re-scanned tomorrow anyway. Hourly,
+                # not once: 11am here is 6am in Hawaii, and a restaurant
+                # outside its 8am-9pm window was deferred and never retried
+                # (MOD-MKT-12). The job skips restaurants it already finished
+                # for the date, so the later passes are cheap.
                 log.info("Running Toast opt-in invites...")
                 from guest_marketing import run_toast_optin_invites
                 from datetime import date as _d, timedelta as _td

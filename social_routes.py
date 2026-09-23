@@ -54,7 +54,6 @@ def instagram_connect(current_user):
 @social_bp.route("/instagram/callback")
 def instagram_callback():
     """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
-    import requests as _req
     from models import update_restaurant as _update_r
 
     code         = request.args.get("code")
@@ -71,41 +70,43 @@ def instagram_callback():
             "</script><p>Connection failed.</p></body></html>"
         )
 
-    # Exchange code for short-lived token
-    r = _req.get(graph_url("oauth/access_token"), params={
+    # Exchange code for short-lived token. Every call is timed (MOD-MKT-2)
+    # and read through _GraphAnswer, so an edge proxy's HTML page with a 200
+    # ends in the popup's error rather than a 500 (MOD-A6-oauth-3).
+    r = _graph("get", graph_url("oauth/access_token"), params={
         "client_id": app_id, "client_secret": app_secret,
         "redirect_uri": redirect_uri, "code": code,
-    }, timeout=(5, 20))
-    if r.status_code != 200:
-        print(f"IG token exchange failed: {r.text}")
+    })
+    short_token = (r.body or {}).get("access_token") if r.ok else None
+    if not short_token:
+        print(f"IG token exchange failed: {r.status} {r.text[:300]}")
         return (
             "<html><body><script>"
             "window.opener&&window.opener.postMessage({ig:'error',msg:'token_failed'},'*');"
             "window.close();"
             "</script><p>Token exchange failed.</p></body></html>"
         )
-    short_token = r.json().get("access_token")
 
     # Exchange for long-lived token (60 days)
-    r2 = _req.get(graph_url("oauth/access_token"), params={
+    r2 = _graph("get", graph_url("oauth/access_token"), params={
         "grant_type": "fb_exchange_token", "client_id": app_id,
         "client_secret": app_secret, "fb_exchange_token": short_token,
-    }, timeout=(5, 20))
-    long_token = r2.json().get("access_token", short_token)
+    })
+    long_token = (r2.body or {}).get("access_token") or short_token
 
     # Get Facebook pages
-    r3 = _req.get(graph_url("me/accounts"), params={"access_token": long_token}, timeout=(5, 20))
-    pages = r3.json().get("data", [])
+    r3 = _graph("get", graph_url("me/accounts"), params={"access_token": long_token})
+    pages = (r3.body or {}).get("data") or []
     ig_user_id = None
     page_token = long_token
     matched_page = None
 
     for page in pages:
-        r4 = _req.get(graph_url(page['id']), params={
+        r4 = _graph("get", graph_url(page['id']), params={
             "fields": "instagram_business_account",
             "access_token": page.get("access_token", long_token),
-        }, timeout=(5, 20))
-        ig_data = r4.json().get("instagram_business_account")
+        })
+        ig_data = (r4.body or {}).get("instagram_business_account")
         if ig_data:
             ig_user_id = ig_data.get("id")
             page_token = page.get("access_token", long_token)
@@ -113,7 +114,7 @@ def instagram_callback():
             break
 
     if not ig_user_id:
-        print(f"No IG account found. Pages: {r3.json()}")
+        print(f"No IG account found. Pages: {r3.text[:300]}")
         return (
             "<html><body><script>"
             "window.opener&&window.opener.postMessage({ig:'error',msg:'no_ig_account'},'*');"
@@ -167,6 +168,9 @@ def instagram_callback():
 @login_required
 def post_to_instagram(current_user):
     """Post a caption to Instagram. Client must have connected their account."""
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_instagram(
         current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
@@ -178,9 +182,101 @@ def post_to_instagram(current_user):
 IG_PUBLISH_DEDUP_MINUTES = 10
 
 
-def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
-    """Shared by the web route above and mobile_api.py's own post-to-instagram."""
+# Every Graph call names a timeout (MOD-MKT-2): one black-holed connection
+# used to hang a request thread, or the scheduler thread that publishes the
+# queue and refreshes tokens, for as long as the OS allowed.
+GRAPH_TIMEOUT = (5, 20)
+
+# The Instagram container is polled on the caller's thread, so the wait is
+# short and bounded (MOD-MKT-3): an immediate check, then 1+1+2+2+3 seconds.
+# It used to sleep up to 20s — with --threads 4, four owners posting at once
+# held the whole platform. A container still processing after this is
+# abandoned (nothing was published) and the owner is told to try again.
+_IG_POLL_WAITS = (0, 1, 1, 2, 2, 3)
+
+
+class _GraphAnswer:
+    """One Graph response, read defensively: Meta's edge answers an HTML 502
+    now and then, and r.json() on that raised straight through the route
+    (MOD-MKT-4). `ambiguous` is the question the queue has to ask of a
+    PUBLISH call: did Meta possibly accept it anyway? A 5xx, a 429, an
+    unreadable body or a dropped connection may have; a 4xx with an error
+    is Meta saying no."""
+
+    def __init__(self, resp=None, exc=None):
+        self.exc = exc
+        self.status = getattr(resp, "status_code", 0) if resp is not None else 0
+        self.text = (getattr(resp, "text", "") or "") if resp is not None else str(exc or "")
+        try:
+            self.body = resp.json() if resp is not None else None
+        except Exception:
+            self.body = None
+        if not isinstance(self.body, dict):
+            self.body = None
+
+    @property
+    def ok(self):
+        return self.status == 200 and self.body is not None
+
+    @property
+    def ambiguous(self):
+        return (self.exc is not None or self.status >= 500 or self.status == 429
+                or (self.status == 200 and self.body is None))
+
+    @property
+    def error(self):
+        return (self.body or {}).get("error") or {}
+
+
+def _graph(method, url, **kw):
     import requests as _req
+    kw.setdefault("timeout", GRAPH_TIMEOUT)
+    try:
+        return _GraphAnswer(getattr(_req, method)(url, **kw))
+    except Exception as e:
+        return _GraphAnswer(exc=e)
+
+
+def _owner_error(platform, answer, fallback):
+    """Meta's refusal in words an owner can act on (MOD-MKT-18). The raw
+    "(#200) ... pages_manage_posts ..." goes to the log, never the screen."""
+    err = answer.error
+    code = err.get("code")
+    try:
+        code = int(code) if code is not None else None
+    except (TypeError, ValueError):
+        code = None
+    print(f"[social] {platform} Graph refusal {answer.status}: {answer.text[:300]}")
+    name = platform.title()
+    if code == 190 or err.get("type") == "OAuthException" and code in (None, 102, 463, 467):
+        return (f"{name}'s connection has expired. Reconnect it under Account → "
+                "Connections, then post again.")
+    if code in (10, 200, 294, 299) or (code and 200 <= code < 300):
+        return (f"{name} didn't give Cavnar AI permission to post. Reconnect it under "
+                "Account → Connections and allow posting.")
+    if code in (4, 17, 32, 613):
+        return f"{name} is limiting how often posts can go out. Wait a few minutes and try again."
+    if code == 368:
+        return f"{name} blocked this post. Check your Page for a notice from Meta."
+    if code == 506:
+        return f"{name} says this exact post is already on your Page."
+    if code == 9004 or code == 36003 or "image" in (err.get("message") or "").lower():
+        return "Instagram couldn't use that photo. Try a different photo, or re-add it."
+    return fallback
+
+
+def _maybe_live(platform):
+    return (f"{platform.title()} didn't answer clearly, so this post may already be "
+            "live. Check your Page before posting it again.")
+
+
+def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
+    """Shared by the web route above and mobile_api.py's own post-to-instagram.
+
+    A refusal carries `maybe_live` only when the PUBLISH step itself got an
+    ambiguous answer; a failure creating or processing the container means
+    nothing reached the feed, so the queue may retry it (MOD-MKT-4)."""
+    import time as _time
     caption = (caption or "").strip()
     image_url = (image_url or "").strip()
 
@@ -207,44 +303,50 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
         return {"ok": False, "duplicate": True,
                 "error": "This post is already being published. Check Instagram before posting it again."}, 409
 
-    r1 = _req.post(graph_url(f"{ig_user_id}/media"), data={
+    created = _graph("post", graph_url(f"{ig_user_id}/media"), data={
         "image_url":    image_url,
         "caption":      caption,
         "access_token": token,
-    }, timeout=(5, 30))
-
-    if r1.status_code != 200:
-        err = r1.json().get("error",{}).get("message","Unknown error")
-        print(f"IG media create failed: {r1.text}")
+    })
+    creation_id = (created.body or {}).get("id") if created.ok else None
+    if not creation_id:
+        print(f"IG media create failed: {created.status} {created.text[:300]}")
         _ops_ig.release_period("cooldown", _claim)      # nothing was posted
-        return {"ok": False, "error": err}, 200
+        return {"ok": False, "error": _owner_error(
+            "instagram", created, "Instagram didn't accept the photo just now. Nothing was posted — try again.")}, 200
 
-    creation_id = r1.json().get("id")
-
-    # Poll until Instagram finishes processing the media container (max 20s)
-    import time as _time
-    for _ in range(10):
-        _time.sleep(2)
-        _status = _req.get(
-            graph_url(creation_id),
-            params={"fields": "status_code", "access_token": token},
-            timeout=(5, 10),
-        ).json().get("status_code", "")
-        if _status == "FINISHED":
+    status = ""
+    for wait in _IG_POLL_WAITS:
+        if wait:
+            _time.sleep(wait)
+        polled = _graph("get", graph_url(creation_id),
+                        params={"fields": "status_code", "access_token": token})
+        status = ((polled.body or {}).get("status_code") or "") if polled.ok else ""
+        if status in ("FINISHED", "ERROR", "EXPIRED"):
             break
+    if status in ("ERROR", "EXPIRED"):
+        # Meta rejected the image (aspect ratio, an unreachable URL). Sending
+        # it to media_publish anyway was a guaranteed failure in Meta's words.
+        _ops_ig.release_period("cooldown", _claim)      # nothing was posted
+        return {"ok": False, "error": "Instagram couldn't use that photo (it may be the wrong shape "
+                                      "or size). Nothing was posted — try a different photo."}, 200
+    if status != "FINISHED":
+        _ops_ig.release_period("cooldown", _claim)      # nothing was posted
+        return {"ok": False, "error": "Instagram is still processing the photo. Nothing was posted "
+                                      "yet — try again in a minute."}, 200
 
-    # Publish the media
-    r2 = _req.post(graph_url(f"{ig_user_id}/media_publish"), data={
+    published = _graph("post", graph_url(f"{ig_user_id}/media_publish"), data={
         "creation_id":  creation_id,
         "access_token": token,
-    }, timeout=(5, 30))
-
-    if r2.status_code != 200:
-        err = r2.json().get("error",{}).get("message","Publish failed")
+    })
+    post_id = (published.body or {}).get("id") if published.ok else None
+    if not post_id:
+        if published.ambiguous:
+            return {"ok": False, "maybe_live": True, "error": _maybe_live("instagram")}, 200
         _ops_ig.release_period("cooldown", _claim)      # Meta refused it; nothing is live
-        return {"ok": False, "error": err}, 200
+        return {"ok": False, "error": _owner_error(
+            "instagram", published, "Instagram didn't publish the post. Nothing went out — try again.")}, 200
 
-    post_id = r2.json().get("id")
     # Save post_id for engagement tracking
     try:
         from marketing import log_content as _lc
@@ -274,18 +376,28 @@ def instagram_disconnect(current_user):
 @social_bp.route("/api/debug-insights")
 @login_required
 def debug_insights(current_user):
-    import requests as _req
-    from models import get_restaurant
+    """Raw Graph answer for this restaurant's own latest Facebook post. It
+    read a hard-coded post id (someone else's) with whatever token this
+    restaurant had — None when Facebook was not connected (MOD-MKT-18)."""
+    from flask import jsonify as _jsonify
     restaurant = get_restaurant(current_user["restaurant_id"])
-    post_id = "1206793632506765_122108397639307271"
-    results = {}
-    # Try FB page token
-    r1 = _req.get(graph_url(post_id),
-        params={"fields":"id,message,likes.summary(true),comments.summary(true),shares","access_token": restaurant.fb_page_token}, timeout=5)
-    results["post_with_likes"] = r1.json()
-    results["fb_page_id"] = restaurant.fb_page_id
-    results["fb_token_present"] = bool(restaurant.fb_page_token)
-    return __import__('flask').jsonify(results)
+    if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
+        return _jsonify(ok=False, error="Facebook not connected")
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT post_id FROM marketing_content_log WHERE restaurant_id=? AND post_platform='facebook' "
+            "AND post_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+            (current_user["restaurant_id"],)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return _jsonify(ok=False, error="No Facebook post from Cavnar AI to inspect yet")
+    answer = _graph("get", graph_url(row["post_id"]), params={
+        "fields": "id,message,likes.summary(true),comments.summary(true),shares",
+        "access_token": restaurant.fb_page_token})
+    return _jsonify(ok=answer.ok, post_with_likes=answer.body, fb_page_id=restaurant.fb_page_id,
+                    fb_token_present=True)
 
 def _fb_post_metrics(post_id, token, _req):
     """Facebook Page post engagement + reach/impressions. Reach/impressions is
@@ -346,18 +458,47 @@ def _ig_post_metrics(post_id, token, _req):
     return metrics
 
 
+import threading as _threading
+
+# Inside refresh_post_metrics the failures of one restaurant's pass are
+# collected here and reported ONCE: every failed Graph call used to run
+# ops.capture, so one expired token was ~50 operator-digest entries a
+# night (MOD-MKT-15).
+_insights_pass = _threading.local()
+
+
+def _meta_error_code(resp):
+    try:
+        return int(((resp.json() or {}).get("error") or {}).get("code"))
+    except Exception:
+        return None
+
+
 def _capture_insights_error(what, post_id, resp):
     """Surface a real Meta API failure (bad metric name, expired token,
     revoked permission) instead of letting it disappear into empty metrics
     forever — this is what makes 'analytics are working' verifiable rather
     than assumed."""
-    print(f"[insights] {what} for {post_id} failed: {resp.status_code} {resp.text[:300]}")
+    status = getattr(resp, "status_code", 0)
+    text = (getattr(resp, "text", "") or "")[:300]
+    print(f"[insights] {what} for {post_id} failed: {status} {text}")
+    bucket = getattr(_insights_pass, "errors", None)
+    if bucket is not None:
+        bucket.append({"what": what, "post_id": post_id, "status": status, "text": text,
+                       "code": _meta_error_code(resp)})
+        return
     try:
         import ops
-        ops.capture(Exception(resp.text[:300]), job="post_insights",
-                    context=f"{what} post={post_id} status={resp.status_code}")
+        ops.capture(Exception(text), job="post_insights",
+                    context=f"{what} post={post_id} status={status}")
     except Exception:
         pass
+
+
+# Metrics a sync can measure, and so the only columns it may write. `engaged`
+# is not a Graph field at all; writing metrics.get(k, 0) for every column
+# zeroed whatever a failed or fallback call did not return (MOD-MKT-15).
+_METRIC_COLUMNS = ("reach", "impressions", "engaged", "likes", "comments", "shares")
 
 
 def refresh_post_metrics(restaurant_id, limit=25):
@@ -371,6 +512,8 @@ def refresh_post_metrics(restaurant_id, limit=25):
     if not restaurant or (not restaurant.ig_token and not restaurant.fb_page_token):
         return {"ok": False, "error": "Not connected", "posts": []}
     conn = get_conn()
+    _insights_pass.errors = errors = []
+    token_dead = False
     try:
         rows = conn.execute(
             """SELECT id, topic, post_id, post_platform, created_at,
@@ -384,6 +527,11 @@ def refresh_post_metrics(restaurant_id, limit=25):
         for row in rows:
             if not row["post_id"]:
                 continue
+            if any(e.get("code") in (190, 102) for e in errors):
+                # The token is dead; the other 24 posts would each fail the
+                # same way. Stop and say so once.
+                token_dead = True
+                break
             try:
                 token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
                 if not token:
@@ -394,15 +542,12 @@ def refresh_post_metrics(restaurant_id, limit=25):
                     metrics = _fb_post_metrics(row["post_id"], token, _req)
                 else:
                     metrics = _ig_post_metrics(row["post_id"], token, _req)
-                if metrics:
+                measured = [c for c in _METRIC_COLUMNS if metrics.get(c) is not None]
+                if measured:
                     conn.execute(
-                        """UPDATE marketing_content_log
-                           SET reach=?, impressions=?, engaged=?, likes=?, comments=?, shares=?
-                           WHERE id=?""",
-                        (metrics.get("reach", 0), metrics.get("impressions", 0),
-                         metrics.get("engaged", 0), metrics.get("likes", 0),
-                         metrics.get("comments", 0), metrics.get("shares", 0),
-                         row["id"])
+                        "UPDATE marketing_content_log SET "
+                        + ", ".join(f"{c}=?" for c in measured) + " WHERE id=?",
+                        tuple(metrics[c] for c in measured) + (row["id"],)
                     )
                     conn.commit()
                 results.append({
@@ -415,9 +560,22 @@ def refresh_post_metrics(restaurant_id, limit=25):
                 _capture_insights_error("refresh_post_metrics row", row["post_id"], type("R", (), {"status_code": 0, "text": str(e)})())
                 results.append({"topic": row["topic"], "post_id": row["post_id"],
                                "platform": row["post_platform"], "metrics": {}})
+        if token_dead:
+            return {"ok": False, "posts": results,
+                    "error": "Meta says the connection has expired — reconnect Instagram & Facebook."}
         return {"ok": True, "posts": results}
     finally:
         conn.close()
+        _insights_pass.errors = None
+        if errors:
+            first = errors[0]
+            try:
+                import ops
+                ops.capture(Exception(first["text"]), job="post_insights",
+                            context=f"restaurant_id={restaurant_id} {len(errors)} failed call(s); "
+                                    f"first: {first['what']} post={first['post_id']} status={first['status']}")
+            except Exception:
+                pass
 
 
 @social_bp.route("/api/post-insights")
@@ -434,6 +592,9 @@ def post_insights(current_user):
 @login_required
 def post_to_facebook(current_user):
     """Post to Facebook Page."""
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_facebook(
         current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
@@ -442,21 +603,25 @@ def post_to_facebook(current_user):
 
 
 def _do_post_to_facebook(restaurant_id, caption, topic):
-    """Shared by the web route above and mobile_api.py's own post-to-facebook."""
-    import requests as _req
+    """Shared by the web route above and mobile_api.py's own post-to-facebook.
+    `maybe_live` marks an answer that may hide an accepted post (MOD-MKT-4)."""
     caption = (caption or "").strip()
+    if not caption:
+        return {"ok": False, "error": "There's no post text to publish."}, 200
     restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
         return {"ok": False, "error": "Facebook not connected — click Connect Instagram & Facebook first"}, 200
-    r = _req.post(graph_url(f"{restaurant.fb_page_id}/feed"), data={
+    answer = _graph("post", graph_url(f"{restaurant.fb_page_id}/feed"), data={
         "message":      caption,
         "access_token": restaurant.fb_page_token,
-    }, timeout=(5, 30))
-    if r.status_code != 200:
-        err = r.json().get("error",{}).get("message","Unknown error")
-        print(f"FB post failed: {r.text}")
-        return {"ok": False, "error": err}, 200
-    post_id = r.json().get("id")
+    })
+    post_id = (answer.body or {}).get("id") if answer.ok else None
+    if not post_id:
+        print(f"FB post failed: {answer.status} {answer.text[:300]}")
+        if answer.ambiguous:
+            return {"ok": False, "maybe_live": True, "error": _maybe_live("facebook")}, 200
+        return {"ok": False, "error": _owner_error(
+            "facebook", answer, "Facebook didn't accept the post. Nothing went out — try again.")}, 200
     try:
         from marketing import log_content as _lc_fb
         if topic and post_id:

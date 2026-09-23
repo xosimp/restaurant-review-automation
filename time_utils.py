@@ -7,6 +7,8 @@ Central time signs up. Anything computing time *for a specific restaurant*
 should go through restaurant_now(); the scheduler's global cadence (2am
 backup, 10am job sweep) intentionally stays on operator time.
 """
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -48,8 +50,30 @@ def restaurant_now(restaurant_or_tz=None, naive: bool = False) -> datetime:
     return now.replace(tzinfo=None) if naive else now
 
 
+_tz_hints = threading.local()
+
+
+@contextmanager
+def known_timezones(mapping):
+    """For a sweep that already SELECTed each restaurant's timezone column:
+    inside this block restaurant_now_by_id answers from `mapping`
+    ({restaurant_id: tz name}) instead of loading the restaurant. The hourly
+    alert pass asked "is it 10am there?" of every restaurant with a query
+    each, forever, to skip nearly all of them (MOD-NOT-11). Thread-local, so
+    a request thread never sees a scheduler sweep's hints."""
+    prev = getattr(_tz_hints, "map", None)
+    _tz_hints.map = dict(mapping or {})
+    try:
+        yield
+    finally:
+        _tz_hints.map = prev
+
+
 def restaurant_now_by_id(restaurant_id: int, naive: bool = False) -> datetime:
     """Same, for call sites that only have an id in hand."""
+    hints = getattr(_tz_hints, "map", None)
+    if hints and restaurant_id in hints:
+        return restaurant_now(hints[restaurant_id], naive=naive)
     try:
         from models import get_restaurant
         return restaurant_now(get_restaurant(restaurant_id), naive=naive)

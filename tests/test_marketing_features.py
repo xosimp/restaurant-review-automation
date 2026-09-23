@@ -410,7 +410,7 @@ def test_a_campaign_records_who_it_went_to(rid, db_path, monkeypatch, _inside_ho
 def test_a_campaign_can_carry_a_tracked_link(rid, db_path, monkeypatch, _inside_hours):
     _guest(db_path, rid, "+15550000011", visits=1, days_ago=2)
     bodies = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body: bodies.append(body) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: bodies.append(body) or True)
     made = marketing_links.create_link(rid, "https://example.com/menu", db_path=db_path)
 
     guest_marketing.send_campaign(rid, "Menu is live", link_token=made["token"], db_path=db_path)

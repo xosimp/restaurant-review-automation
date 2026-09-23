@@ -238,7 +238,7 @@ def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):
     add_guest_contact_public_optin(r.id, "555-222-2222", db_path=db_path)
     captured = {}
 
-    def fake_send_sms(phone, message):
+    def fake_send_sms(phone, message, use_case=None):
         captured["message"] = message
         return True
 
@@ -443,7 +443,7 @@ def test_review_request_followup_message_includes_review_link(db_path, monkeypat
     _backdate_visit(db_path, r.id, cid, hours_ago=4)
     captured = {}
 
-    def fake_send_sms(phone, message):
+    def fake_send_sms(phone, message, use_case=None):
         captured["phone"] = phone
         captured["message"] = message
         return True

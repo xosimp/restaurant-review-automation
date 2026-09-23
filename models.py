@@ -452,6 +452,10 @@ class Restaurant:
     # opt-in for owners who want to watch it, not a default alarm.
     staff_signin_notify: int         = 0
     marketing_emails_opt_out: int    = 0
+    # The restaurant's physical mailing address, printed at the foot of every
+    # guest newsletter. CAN-SPAM requires one on commercial email, and the
+    # newsletter carried none (MOD-EML-6).
+    mailing_address: Optional[str]   = None
     # The monthly business review. On by default and deliberately NOT part
     # of marketing_emails_opt_out: it is a service report on a paid account
     # (metrics vs last month, measured results, goals, what to fix next),
@@ -851,6 +855,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # timestamps, never a wrong one.
         ("email_log", "opened_at", "TEXT"),
         ("email_log", "clicked_at", "TEXT"),
+        # NULL = every email; 'guest' = only guest-facing mail (see
+        # suppress_email). A guest's newsletter complaint used to stop the
+        # same person's staff schedules too (MOD-EML-7).
+        ("email_suppressions", "scope", "TEXT"),
         # Alert DND / throttle
         ("restaurants", "alert_quiet_start", "TEXT"),
         ("restaurants", "alert_quiet_end",   "TEXT"),
@@ -1216,6 +1224,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN staff_signin_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN mailing_address TEXT",
         "ALTER TABLE restaurants ADD COLUMN monthly_review_enabled INTEGER DEFAULT 1",
         # Optimistic concurrency. Bumped by every update_restaurant write;
         # only compared against when a caller passes expected_version.
@@ -1700,6 +1709,16 @@ def init_db(db_path: str = DB_PATH):
             last_click_at   TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_links_restaurant ON marketing_links(restaurant_id, created_at)",
+        # Recent taps per link, by a one-way visitor key, so a repeat or a
+        # flood from one visitor is counted once (MOD-MKT-18). Pruned after
+        # two days by ops.prune_ledgers.
+        """CREATE TABLE IF NOT EXISTS marketing_link_taps (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            link_id    INTEGER NOT NULL,
+            visitor    TEXT    NOT NULL,
+            tapped_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_link_taps ON marketing_link_taps(link_id, visitor, tapped_at)",
 
         # What a post did to the till. Cached per post because it reads POS
         # sales over a window and is not worth recomputing on every render.
@@ -1976,6 +1995,14 @@ def init_db(db_path: str = DB_PATH):
         # continuing to mail someone who hit "report spam", is exactly what
         # burns a sending domain — and this domain also carries 2FA and
         # password-reset mail.
+        # Secrets this install mints for itself and keeps, so a link signed
+        # with one survives a SECRET_KEY rotation (MOD-EML-9): unsubscribe
+        # links sit in inboxes for years.
+        """CREATE TABLE IF NOT EXISTS app_secrets (
+            name        TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         """CREATE TABLE IF NOT EXISTS email_suppressions (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             email       TEXT NOT NULL UNIQUE,
@@ -2698,7 +2725,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","monthly_review_enabled","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
@@ -3045,6 +3072,7 @@ def _restaurant_from_row(row) -> Restaurant:
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
         staff_signin_notify=row["staff_signin_notify"] if "staff_signin_notify" in row.keys() else 0,
         marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
+        mailing_address=row["mailing_address"] if "mailing_address" in row.keys() else None,
         monthly_review_enabled=row["monthly_review_enabled"] if "monthly_review_enabled" in row.keys() else 1,
         alert_health_bypass_quiet=row["alert_health_bypass_quiet"] if "alert_health_bypass_quiet" in row.keys() else 0,
         alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
@@ -7155,20 +7183,30 @@ def notifications_seen_at(user_id: int, restaurant_id: int, db_path: str = DB_PA
     return value.replace("T", " ")[:19] if value else None
 
 
-def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> int:
+def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH,
+                              visible=None) -> int:
+    """This login's unread badge.
+
+    Counts only what the list would show this login: `visible(alert_type)`
+    is the caller's role filter (client_api.notification_visibility), and
+    nothing from before the login existed — a co-owner invited today was
+    badged with the restaurant's entire history, and a manager was badged
+    for food-cost rows their list never shows (MOD-NOT-10)."""
     since = notifications_seen_at(user_id, restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
-        if since:
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND fired_at > ?",
-                (restaurant_id, since)).fetchone()
+        born = conn.execute("SELECT created_at FROM users WHERE id=?", (int(user_id or 0),)).fetchone()
+        born = (born["created_at"] or "").replace("T", " ")[:19] if born else ""
+        if since and since >= born:
+            where, arg = "fired_at > ?", since
         else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            where, arg = "fired_at >= ?", born
+        rows = conn.execute(
+            f"SELECT alert_type, COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND {where} "
+            "GROUP BY alert_type", (restaurant_id, arg)).fetchall()
     finally:
         conn.close()
-    return row["c"] if row else 0
+    return sum(r["c"] for r in rows if visible is None or visible(r["alert_type"]))
 
 
 def record_notification_open(restaurant_id: int, alert_type: str, user_id: int = None,
@@ -8558,34 +8596,58 @@ def get_schedule_share_status(restaurant_id: int, schedule_id: int, db_path: str
 
 # ── Email suppression list ──────────────────────────────────────────────────
 
-def suppress_email(email: str, reason: str, detail: str = None, db_path: str = DB_PATH):
+# Mail a restaurant's GUESTS receive. A complaint about one of these is about
+# that guest list, not about the address: the same person can be a guest of
+# one restaurant and on staff at another (MOD-EML-7).
+GUEST_EMAIL_TYPES = frozenset({"guest_newsletter", "guest_review_request"})
+
+
+def suppress_email(email: str, reason: str, detail: str = None, db_path: str = DB_PATH,
+                   scope: str = None):
     """Stop sending to an address. Idempotent; the first reason wins so a
-    later soft signal can't overwrite a hard bounce."""
+    later soft signal can't overwrite a hard bounce.
+
+    `scope` None stops every email (a hard bounce: the mailbox does not
+    work for anyone). 'guest' stops only GUEST_EMAIL_TYPES. A later
+    all-mail suppression widens a guest-only one; never the reverse."""
     email = (email or "").strip().lower()
     if not email:
         return False
+    scope = scope or None
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO email_suppressions (email, reason, detail) VALUES (?,?,?)",
-            (email, reason, (detail or "")[:500])
+            "INSERT OR IGNORE INTO email_suppressions (email, reason, detail, scope) VALUES (?,?,?,?)",
+            (email, reason, (detail or "")[:500], scope)
         )
+        if scope is None:
+            conn.execute(
+                "UPDATE email_suppressions SET scope=NULL, reason=?, detail=? "
+                "WHERE email=? AND scope IS NOT NULL",
+                (reason, (detail or "")[:500], email))
         conn.commit()
     finally:
         conn.close()
     return True
 
 
-def is_email_suppressed(email: str, db_path: str = DB_PATH) -> bool:
+def is_email_suppressed(email: str, db_path: str = DB_PATH, email_type: str = None) -> bool:
+    """Whether a send of `email_type` to this address is suppressed. A
+    guest-scoped row only stops guest-facing mail."""
     email = (email or "").strip().lower()
     if not email:
         return False
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT 1 FROM email_suppressions WHERE email=?", (email,)).fetchone()
+        row = conn.execute("SELECT scope FROM email_suppressions WHERE email=?", (email,)).fetchone()
     finally:
         conn.close()
-    return bool(row)
+    if not row:
+        return False
+    scope = row["scope"] if "scope" in row.keys() else None
+    if not scope:
+        return True
+    return scope == "guest" and email_type in GUEST_EMAIL_TYPES
 
 
 def unsuppress_email(email: str, db_path: str = DB_PATH):
@@ -8683,28 +8745,85 @@ def mark_email_delivery_event(message_id: str, status: str, detail: str = None, 
 
 # ── Marketing unsubscribe tokens ────────────────────────────────────────────
 
+def _link_secret(db_path: str = None) -> bytes:
+    """This install's own signing secret for email links, minted once and
+    kept in app_secrets. Unsubscribe links were signed with SECRET_KEY, so
+    rotating it killed every link already in an inbox (MOD-EML-9)."""
+    import secrets as _secrets
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        row = conn.execute("SELECT value FROM app_secrets WHERE name='email_links'").fetchone()
+        if not row:
+            conn.execute("INSERT OR IGNORE INTO app_secrets (name, value) VALUES ('email_links', ?)",
+                         (_secrets.token_hex(32),))
+            conn.commit()
+            row = conn.execute("SELECT value FROM app_secrets WHERE name='email_links'").fetchone()
+        return row["value"].encode()
+    finally:
+        conn.close()
+
+
+def _legacy_link_secret() -> bytes:
+    import os as _os
+    return (_os.getenv("SECRET_KEY") or _os.getenv("RESEND_API_KEY") or "cavnar-fallback").encode()
+
+
+def _link_sig(secret: bytes, message: str) -> str:
+    import hmac, hashlib, base64
+    sig = hmac.new(secret, message.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig).decode().rstrip("=")[:24]
+
+
 def unsubscribe_token(restaurant_id: int) -> str:
     """Signed, stateless one-click unsubscribe token.
 
     Signed rather than stored so an old link in an old email never stops
     working, and HMAC'd so nobody can unsubscribe a restaurant by walking
-    ids. Scoped to marketing only — it never touches security email.
+    ids. Scoped to marketing only — it never touches security email. Signed
+    with this install's own kept secret, not SECRET_KEY (MOD-EML-9).
     """
-    import hmac, hashlib, base64, os as _os
-    secret = (_os.getenv("SECRET_KEY") or _os.getenv("RESEND_API_KEY") or "cavnar-fallback").encode()
-    sig = hmac.new(secret, f"unsub:{restaurant_id}".encode(), hashlib.sha256).digest()
-    return f"{restaurant_id}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')[:24]}"
+    return f"{restaurant_id}.{_link_sig(_link_secret(), f'unsub:{restaurant_id}')}"
 
 
 def verify_unsubscribe_token(token: str):
-    """Return the restaurant_id a token authorises, or None."""
+    """Return the restaurant_id a token authorises, or None. Links signed
+    with SECRET_KEY before the kept secret existed still verify while that
+    key is unchanged."""
     import hmac as _hmac
     try:
-        rid_str, _ = (token or "").split(".", 1)
+        rid_str, sig = (token or "").split(".", 1)
         rid = int(rid_str)
     except Exception:
         return None
-    return rid if _hmac.compare_digest(unsubscribe_token(rid), token or "") else None
+    message = f"unsub:{rid}"
+    for secret in (_link_secret(), _legacy_link_secret()):
+        if _hmac.compare_digest(_link_sig(secret, message), sig):
+            return rid
+    return None
+
+
+def guest_optout_token(email: str) -> str:
+    """A signed opt-out for one guest address, for guest mail that has no
+    guest_contacts row behind it (the review-request email). The address is
+    in the token, base64'd; the signature is what makes it unforgeable."""
+    import base64
+    email = (email or "").strip().lower()
+    enc = base64.urlsafe_b64encode(email.encode()).decode().rstrip("=")
+    return f"{enc}.{_link_sig(_link_secret(), f'guest-optout:{email}')}"
+
+
+def verify_guest_optout_token(token: str):
+    """The address a guest opt-out token names, or None."""
+    import base64, hmac as _hmac
+    try:
+        enc, sig = (token or "").rsplit(".", 1)
+        email = base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4)).decode()
+    except Exception:
+        return None
+    if "@" not in email:
+        return None
+    ok = _hmac.compare_digest(_link_sig(_link_secret(), f"guest-optout:{email}"), sig)
+    return email if ok else None
 
 
 # Human labels for email_log.email_type. The stored value is the sender

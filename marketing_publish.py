@@ -34,6 +34,13 @@ LATE_TOLERANCE_HOURS = 6
 
 MAX_ATTEMPTS = 3
 
+# One tick stops taking on posts after this long (MOD-MKT-3). An Instagram
+# publish can wait several seconds on its container, and a popular slot
+# across many restaurants used to hold the one scheduler thread for as long
+# as 200 serial publishes took. Unclaimed rows stay 'scheduled' and the next
+# tick (five minutes later) carries on; the status column is the cursor.
+TICK_BUDGET_SECONDS = 600
+
 
 def _local_now(restaurant_id):
     from time_utils import restaurant_now_by_id
@@ -96,9 +103,13 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
                 "reached_platform": True}
 
     if not payload.get("ok"):
-        # The platform answered and said no. Definite, so retrying is safe.
+        # `maybe_live`: the publish call itself got a 5xx, a 429, an
+        # unreadable body or no answer, any of which can hide a post Meta
+        # accepted — never retried (MOD-MKT-4). Anything else is the
+        # platform saying no, or a step before publishing failing; nothing
+        # reached the feed, so retrying is safe.
         return {"ok": False, "error": payload.get("error") or "The post didn't go through.",
-                "reached_platform": False}
+                "reached_platform": bool(payload.get("maybe_live"))}
 
     post_id = payload.get("post_id")
     # Instagram and Facebook log their own content row inside social_routes;
@@ -370,11 +381,15 @@ def _alert_failed_post(row, error, db_path: str = DB_PATH):
         # own module default, so on any database but the process-wide one it
         # emailed whoever happened to hold that id in the wrong file.
         restaurant = get_restaurant(row["restaurant_id"], db_path)
-        if not restaurant or not restaurant.owner_email:
+        if not restaurant:
+            return
+        recipients = _owner_addresses(restaurant, db_path=db_path)
+        if not recipients:
+            log.warning("failed-post alert for %s: no owner address on file", row["restaurant_id"])
             return
         import notify
         platform = (row["platform"] or "").title()
-        when = str(row["scheduled_for"] or "").replace("T", " ")[:16]
+        when = _slot_label(row["scheduled_for"])
         body = (row["body"] or "").strip()
         preview = body[:120] + ("…" if len(body) > 120 else "")
         html = notify._alert_email_html(
@@ -389,18 +404,72 @@ def _alert_failed_post(row, error, db_path: str = DB_PATH):
             cta_label="Open Marketing",
             restaurant_id=row["restaurant_id"],
         )
-        notify._send_alert_email(
-            restaurant.owner_email,
-            f"Post didn't go out — {restaurant.name}",
-            html,
-            restaurant_id=row["restaurant_id"],
-        )
+        subject = f"Post didn't go out — {restaurant.name}"
+        # The first address through the ordinary alert path, which also
+        # copies the restaurant's "also email" list; every other owner login
+        # gets its own send (suppression and the log are per recipient).
+        primary = recipients[0]
+        notify._send_alert_email(primary, subject, html, restaurant_id=row["restaurant_id"])
+        covered = {a.lower() for a in notify.alert_recipients(primary, row["restaurant_id"], db_path=db_path)}
+        from emails import deliver
+        for address in recipients[1:]:
+            if address.lower() in covered:
+                continue
+            deliver(email_type="alert", restaurant_id=row["restaurant_id"], payload={
+                "from": notify.emails_sender("client"),
+                "to": [address],
+                "subject": subject,
+                "html": notify._html_doc(html),
+            })
     except Exception as e:
         log.warning("scheduled post failure alert failed for %s: %s", row["restaurant_id"], e)
 
 
 # Due posts one pass takes; the rest are still due, and taken, next tick.
 DUE_POSTS_PER_TICK = 200
+
+
+def _slot_label(value) -> str:
+    """"9/22/26 at 11:00 AM" — the owner-facing date rule (M/D/YY), not the
+    stored ISO "2026-09-22 11:00" (MOD-MKT-18). An unreadable value is
+    shown as-is rather than hidden."""
+    from time_utils import mdy
+    when = _parse_local(value)
+    if when is None:
+        return str(value or "an unreadable time")
+    return f"{mdy(when)} at {when.strftime('%I:%M %p').lstrip('0')}"
+
+
+def _owner_addresses(restaurant, db_path: str = DB_PATH) -> list:
+    """restaurants.owner_email plus every active owner login's email at this
+    restaurant, de-duplicated. The alert went to owner_email alone, so a
+    partner with their own owner login never heard, and a restaurant whose
+    owner_email was blank heard nothing at all (MOD-MKT-18)."""
+    out = []
+
+    def add(addr):
+        a = (addr or "").strip()
+        if "@" in a and a.lower() not in {x.lower() for x in out}:
+            out.append(a)
+
+    add(getattr(restaurant, "owner_email", ""))
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT u.email FROM users u WHERE u.restaurant_id=? AND COALESCE(u.is_active,1)=1 "
+            "AND LOWER(COALESCE(u.role,'client')) IN ('client','owner') "
+            "UNION SELECT u.email FROM memberships m JOIN users u ON u.id=m.user_id "
+            "WHERE m.restaurant_id=? AND m.is_active=1 AND COALESCE(u.is_active,1)=1 "
+            "AND LOWER(m.role) IN ('client','owner')",
+            (restaurant.id, restaurant.id)).fetchall()
+    except Exception as e:
+        log.warning("owner logins lookup failed for %s: %s", restaurant.id, e)
+        rows = []
+    finally:
+        conn.close()
+    for r in rows:
+        add(r["email"])
+    return out
 
 
 def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH) -> dict:
@@ -444,11 +513,18 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
     # Not due yet, or past this tick's batch: still waiting.
     not_taken = sum(n for _rid, n in waiting) - len(rows)
 
+    import time as _time
+    started = _time.monotonic()
     published = failed = skipped = 0
     for row in rows:
+        if _time.monotonic() - started > TICK_BUDGET_SECONDS:
+            break
         when = _parse_local(row["scheduled_for"])
         if when is None:
             _finish(row["id"], "failed", error="Unreadable scheduled time", db_path=db_path)
+            # Every other terminal failure tells the owner; this one was
+            # silent (MOD-A6-queue-21).
+            _alert_failed_post(row, "Unreadable scheduled time", db_path=db_path)
             failed += 1
             continue
         now = _local_now(row["restaurant_id"])

@@ -117,6 +117,46 @@ def test_a_stop_that_leads_the_message_still_works(db_path, body):
     assert _unsubscribed(db_path, "+15551234567") == [1]
 
 
+@pytest.mark.parametrize("readd", ["manual", "public_optin", "toast_import"])
+def test_a_deleted_guest_who_said_stop_comes_back_unsubscribed(db_path, texts, readd):
+    """CLIENT-34 — deleting a contact used to hard-delete their STOP with
+    them, so the same number re-imported from the POS, re-typed by the
+    owner or re-submitted on the join page was textable again. The owner's
+    list stops showing the deleted guest; only the guest's own START undoes
+    the STOP."""
+    rid = _rid(db_path)
+    cid = gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    gm.handle_inbound_sms("+15551234567", "STOP", db_path=db_path)
+    gm.delete_guest_contact(cid, rid, db_path=db_path)
+    assert gm.get_guest_contacts(rid, db_path=db_path) == []
+
+    if readd == "manual":
+        gm.add_guest_contact_manual(rid, "5551234567", name="Ana", db_path=db_path)
+    elif readd == "public_optin":
+        gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    else:
+        gm.add_guest_contact_manual(rid, "(555) 123-4567", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [1]
+    assert gm.phone_opted_out("+15551234567", db_path=db_path)
+    gm.send_campaign(rid, "Pasta night", db_path=db_path)
+    assert texts == []
+
+    # Their own START is the one way back.
+    gm.handle_inbound_sms("+15551234567", "START", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [0]
+    assert not gm.phone_opted_out("+15551234567", db_path=db_path)
+
+
+def test_deleting_a_guest_who_never_said_stop_leaves_no_opt_out(db_path):
+    """CLIENT-34 control: an ordinary delete does not invent a STOP."""
+    rid = _rid(db_path)
+    cid = gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    gm.delete_guest_contact(cid, rid, db_path=db_path)
+    gm.add_guest_contact_manual(rid, "5551234567", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [0]
+    assert not gm.phone_opted_out("+15551234567", db_path=db_path)
+
+
 def test_the_help_reply_names_the_restaurant_it_is_for(db_path):
     """A6 SMS #18 — a HELP reply has to identify the program (the carrier
     requirement for a HELP response is program name plus how to stop)."""
@@ -188,7 +228,6 @@ def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, 
     assert [c["phone"] for c in gm.get_guest_contacts(rid, db_path=db_path)] == ["+442079460958"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-optin-17: a US number typed with an extension becomes a different (foreign) number")
 def test_a_us_number_with_an_extension_is_stored_as_that_us_number_or_refused(db_path, web):
     """A6 SMS #17 — '(630) 555-0123 x45' must not become +630555012345."""
     rid = _rid(db_path)
@@ -300,7 +339,6 @@ def test_a_campaign_longer_than_an_sms_can_carry_is_refused_before_anyone_is_tex
     assert out["ok"] is False and texts == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: guest marketing texts go out on the owner-alert A2P messaging service")
 def test_a_guest_campaign_does_not_ride_the_owner_alert_messaging_service(db_path, texts):
     """A6 Campaigns #14 / MOD-MKT-11."""
     rid = _rid(db_path)
@@ -309,7 +347,6 @@ def test_a_guest_campaign_does_not_ride_the_owner_alert_messaging_service(db_pat
     assert texts and all(t.get("use_case") not in (None, "alert") for t in texts), texts
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: the manual review-request SMS ignores a guest's STOP")
 def test_a_manual_review_request_is_not_texted_to_a_guest_who_said_stop(db_path, monkeypatch):
     """MOD-MKT-11 — _do_send_review_request texts whatever number is typed."""
     rid = _rid(db_path, google_place_id="ChIJreview")
@@ -322,7 +359,6 @@ def test_a_manual_review_request_is_not_texted_to_a_guest_who_said_stop(db_path,
     assert sent == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: the manual review-request SMS ignores the 8am-9pm guest window")
 def test_a_manual_review_request_is_not_texted_at_midnight(db_path, monkeypatch):
     """MOD-MKT-11."""
     rid = _rid(db_path, google_place_id="ChIJreview")
@@ -402,7 +438,6 @@ def _toast_restaurant(db_path, name, **kw):
     return rid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a STOP sent to one restaurant does not stop another restaurant's opt-in invite")
 def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, texts):
     """A6 Jobs #11 / MOD-MKT-12 — the reply promised 'no more texts from us',
     and 'us' is one shared number."""
@@ -418,7 +453,6 @@ def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, text
     assert victim not in {t["phone"] for t in texts}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a churned restaurant's opt-in invites keep going out")
 def test_a_churned_restaurant_sends_no_opt_in_invites(db_path, texts):
     """A6 Jobs #13 / MOD-MKT-12."""
     rid = _toast_restaurant(db_path, "Gone Co")
@@ -440,7 +474,6 @@ class _StopLoop(BaseException):
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a restaurant deferred by quiet hours at the 11am invite slot is never retried that day")
 def test_a_restaurant_deferred_at_the_invite_slot_is_retried_later_that_day(monkeypatch):
     """A6 Jobs #12 / MOD-MKT-12 — drive two real scheduler ticks (11:05 and
     15:00 server time). The first pass deferred a restaurant (Hawaii is at

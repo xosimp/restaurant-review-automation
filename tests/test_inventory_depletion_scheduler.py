@@ -113,6 +113,30 @@ def test_unmapped_selections_are_logged_not_silently_dropped(db_path, monkeypatc
 
 # ── check_stale_inventory: ledger-aware freshness ────────────────────────
 
+
+class _ResendOK:
+    status_code = 200
+    text = '{"id": "msg_test"}'
+
+    def json(self):
+        return {"id": "msg_test"}
+
+
+def _capture_resend_posts(monkeypatch, record):
+    """What emails.deliver would POST to Resend, recorded instead. The send
+    sites these tests watch moved off the Resend SDK onto emails.deliver
+    (MOD-EML-4), so capturing only resend.Emails.send would see nothing."""
+    import emails
+    import requests
+
+    def post(url, headers=None, json=None, timeout=None, **kw):
+        assert "api.resend.com" in url, url
+        record(dict(json or {}))
+        return _ResendOK()
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_key")
+
+
 def test_stale_check_uses_ledger_freshness_for_migrated_restaurants(db_path, monkeypatch):
     """A migrated restaurant's client_data.updated_at never changes again —
     the check must look at ingredients.updated_at instead, or every
@@ -123,6 +147,7 @@ def test_stale_check_uses_ledger_freshness_for_migrated_restaurants(db_path, mon
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
     sent = {}
     monkeypatch.setattr("resend.Emails.send", lambda payload: sent.update(payload))
+    _capture_resend_posts(monkeypatch, sent.update)
 
     fresh_rid, fresh_iid = _restaurant_with_recipe(db_path, "Fresh Ledger Co", toast_client_id="demo")
     stale_rid, stale_iid = _restaurant_with_recipe(db_path, "Stale Ledger Co", toast_client_id="demo")
@@ -153,6 +178,7 @@ def test_stale_check_flags_a_disconnected_pos_explicitly(db_path, monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
     sent = {}
     monkeypatch.setattr("resend.Emails.send", lambda payload: sent.update(payload))
+    _capture_resend_posts(monkeypatch, sent.update)
 
     rid, iid = _restaurant_with_recipe(db_path, "Unplugged Co", toast_client_id="demo")
     conn = get_conn(db_path)

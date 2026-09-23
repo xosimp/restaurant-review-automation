@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>{% if ok %}Unsubscribed{% else %}Link not valid{% endif %}</title>
+<title>{% if not ok %}Link not valid{% elif confirm %}Unsubscribe{% else %}Unsubscribed{% endif %}</title>
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
   body{margin:0;background:#0c0c0c;color:#f0ebe0;
        font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
@@ -15,17 +16,42 @@
   h1{font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
   p{color:#8f847b;font-size:14.5px;line-height:1.6;margin:0 0 10px}
   a{color:#e8956a}
+  form{margin:18px 0 6px}
 </style>
 </head>
 <body>
 <div class="wrap">
   {% if ok %}
     {% if restaurant_name %}<div class="kicker">{{ restaurant_name }}</div>{% endif %}
-    <h1>You're unsubscribed</h1>
-    <p>You won't get product tips or summary emails from Cavnar AI any more.</p>
-    <p>You'll still receive account and security email — sign-in codes, password
-       changes and billing notices — because those aren't marketing.</p>
-    <p>Changed your mind? Turn it back on under Account → Automation &amp; data.</p>
+    {% if confirm %}
+      {# A GET only asks. Link scanners and mail prefetchers open every URL in
+         a message, and they were unsubscribing people (MOD-EML-5). #}
+      {% if audience == "guest" %}
+        <h1>Stop getting {{ restaurant_name }}'s emails?</h1>
+        <p>You'll be taken off their email list. Texts, if you get them, are separate — reply STOP to any of those.</p>
+      {% elif audience == "guest_any" %}
+        <h1>Stop getting restaurant emails from us?</h1>
+        <p>No more review requests or newsletters sent through Cavnar AI will come to this address.</p>
+      {% else %}
+        <h1>Unsubscribe from product emails?</h1>
+        <p>You'll stop getting product tips and summary emails from Cavnar AI. Account and security email still comes.</p>
+      {% endif %}
+      <form method="post">
+        <button type="submit" class="cbtn cbtn-primary">Unsubscribe</button>
+      </form>
+    {% elif audience == "guest" %}
+      <h1>You're unsubscribed</h1>
+      <p>You won't get {{ restaurant_name }}'s emails any more.</p>
+    {% elif audience == "guest_any" %}
+      <h1>You're unsubscribed</h1>
+      <p>No more restaurant emails sent through Cavnar AI will come to this address.</p>
+    {% else %}
+      <h1>You're unsubscribed</h1>
+      <p>You won't get product tips or summary emails from Cavnar AI any more.</p>
+      <p>You'll still receive account and security email — sign-in codes, password
+         changes and billing notices — because those aren't marketing.</p>
+      <p>Changed your mind? Turn it back on under Account → Automation &amp; data.</p>
+    {% endif %}
   {% else %}
     <h1>This link isn't valid</h1>
     <p>It may have been mistyped. You can change email preferences under

@@ -165,7 +165,9 @@ def test_security_email_still_reaches_a_suppressed_address(db_path, monkeypatch)
 
 
 def _svix_headers(body: bytes, secret="whsec_" + base64.b64encode(b"topsecret").decode()):
-    msg_id, ts = "msg_1", "1700000000"
+    # Signed now: an event more than five minutes old is refused as a
+    # replay (MOD-EML-9). These used to sign with a fixed 2023 timestamp.
+    msg_id, ts = "msg_1", str(int(__import__("time").time()))
     key = base64.b64decode(secret.split("_", 1)[1])
     sig = base64.b64encode(
         hmac.new(key, f"{msg_id}.{ts}.".encode() + body, hashlib.sha256).digest()).decode()
@@ -256,11 +258,18 @@ def test_transactional_email_gets_no_unsubscribe(db_path, monkeypatch):
 
 
 def test_the_unsubscribe_link_actually_opts_the_restaurant_out(client, db_path):
+    """Opening the link shows a page with a button; pressing it (a POST)
+    opts out. This used to write on the GET, which is how link scanners and
+    mail prefetchers unsubscribed owners (MOD-EML-5) — the GET half now
+    pins that nothing changes until the button is pressed."""
     from models import unsubscribe_token, get_restaurant
     rid = _restaurant(db_path)
     assert not get_restaurant(rid, db_path=db_path).marketing_emails_opt_out
     resp = client.get(f"/u/{unsubscribe_token(rid)}")
     assert resp.status_code == 200
+    assert b'method="post"' in resp.data
+    assert not get_restaurant(rid, db_path=db_path).marketing_emails_opt_out
+    assert client.post(f"/u/{unsubscribe_token(rid)}").status_code == 200
     assert get_restaurant(rid, db_path=db_path).marketing_emails_opt_out == 1
 
 
