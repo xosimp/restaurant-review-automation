@@ -226,7 +226,8 @@ def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str =
     return out
 
 
-def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: int = None) -> bool:
+def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: int = None,
+                      skip=None) -> bool:
     """Send an alert email. Returns True when at least one copy went out.
 
     Goes through emails.deliver() — the single choke point — rather than
@@ -246,7 +247,10 @@ def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: 
         return False
     from emails import deliver as _deliver
     sent = 0
+    skip = {str(s).strip().lower() for s in (skip or ())}
     for address in alert_recipients(owner_email, restaurant_id):
+        if str(address).strip().lower() in skip:
+            continue
         result = _deliver(email_type="alert", restaurant_id=restaurant_id, payload={
             "from": emails_sender("client"),
             "to": [address],
@@ -271,6 +275,7 @@ ALERT_TAB = {
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
     "schedule_publish_held": "labor", "shift_request": "labor", "labor_reminder": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
+    "order_send_held": "inventory",
     "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
@@ -290,6 +295,9 @@ BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "
                              # A promised supplier order that did not go out:
                              # a delivery that will not come (MOD-FC-10).
                              "order_send_voided",
+                             # An order the owner expected to go out that the
+                             # trusted-order job held back (A-22).
+                             "order_send_held",
                              # A week that was supposed to go to staff and
                              # did not: the owner must hear it at any level,
                              # having been told when it would go out (A-18).
@@ -1377,8 +1385,35 @@ def _mark_sent(hold_id, db_path: str = DB_PATH):
 # only "unresponded", so the waiting-reviews email was never folded (#6). A
 # combined morning notification ("daily_briefing") is folded when every item
 # in it is one of these (see _email_alert's covered_types).
-BRIEF_COVERED_TYPES = {"labor_over", "food_waste", "negative_trend",
-                       "rating_threshold", "ai_visibility_drop", "unresponded", "no_response"}
+#
+# Only the types the brief ACTUALLY carries a line for (re-audit A-17): its
+# "N reviews waiting on a reply" line and its "Running low" line. Labor over
+# target, waste, the rating floor, the trend and AI visibility have no line
+# in the brief, so folding their email away left them unsaid.
+BRIEF_COVERED_TYPES = {"unresponded", "no_response", "critical_low"}
+
+
+def brief_pushed_emails(restaurant_id, db_path: str = DB_PATH) -> set:
+    """The email addresses (lower-case) of the logins whose OWN phone got
+    today's brief by push. An alert email is folded only for them: a
+    manager's phone getting the brief used to fold the owner's email — and
+    every alert_extra_emails address — away as well (re-audit A-17)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        day = restaurant_now_by_id(restaurant_id, naive=True).date().isoformat()
+        conn = models.get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT LOWER(u.email) AS email FROM push_deliveries p "
+                "JOIN device_tokens d ON d.id = p.device_token_id JOIN users u ON u.id = d.user_id "
+                "WHERE p.restaurant_id=? AND p.alert_type='morning_brief' AND p.ok=1 "
+                "AND date(p.created_at) >= ? AND u.email IS NOT NULL", (restaurant_id, day)).fetchall()
+        finally:
+            conn.close()
+        return {r["email"] for r in rows if r["email"]}
+    except Exception as e:
+        print(f"[notify] brief_pushed_emails failed rid={restaurant_id}: {e}")
+        return set()
 
 
 def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
@@ -1413,10 +1448,16 @@ def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path:
     `covered_types` are the alert types a combined notification carries;
     it is folded only when the brief covers every one of them."""
     types = list(covered_types or [alert_type])
-    if types and all(t in BRIEF_COVERED_TYPES for t in types) and brief_pushed_today(restaurant_id, db_path):
-        print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
-        return False
+    skip = set()
+    if types and all(t in BRIEF_COVERED_TYPES for t in types):
+        # Per recipient: only the people whose own phone got the brief.
+        skip = brief_pushed_emails(restaurant_id, db_path)
+        if skip and all(str(a).strip().lower() in skip for a in alert_recipients(owner_email, restaurant_id)):
+            print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
+            return False
     resolved = _resolve_cta(html, alert_type, review_id)
+    if skip:
+        return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id, skip=skip)
     return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id)
 
 
@@ -1575,10 +1616,20 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)
-        if alert_type == "labor_over":
-            _fw(restaurant_id, "labor.over_target", {"alert_type": alert_type}, db_path)
-    except Exception:
-        pass
+        # The morning batch is one delivery of several alerts. Each keeps its
+        # own events: an integration listening for labor.over_target (or for
+        # alert.fired of one type) never heard it on any morning with two or
+        # more alerts, because only "daily_briefing" fired (re-audit A-16).
+        items = [t for t in (covered_types or []) if t and t != alert_type] \
+            if alert_type == "daily_briefing" else []
+        for t in items:
+            _fw(restaurant_id, "alert.fired", {"alert_type": t, "review_id": None, "batch": "daily_briefing"},
+                db_path)
+        for t in [alert_type] + items:
+            if t == "labor_over":
+                _fw(restaurant_id, "labor.over_target", {"alert_type": t}, db_path)
+    except Exception as e:
+        print(f"[notify] webhook for {alert_type} rid={restaurant_id} failed: {e}")
 
 
 # ── The morning batch ───────────────────────────────────────────────────────

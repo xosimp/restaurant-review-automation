@@ -165,7 +165,11 @@ def _schedule(db_path, rid, week_start, edited=False, shared=True, csv="employee
     return sid
 
 
-def test_publish_trust_counts_consecutive_unedited_publishes(db_path):
+def test_publish_trust_counts_consecutive_unedited_publishes(db_path, monkeypatch):
+    # A week counts only when the coverage check was watching it (re-audit
+    # A-19); this restaurant has the feed and a routed manager.
+    import schedule_intel
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
     rid = _rid(db_path, module_labor=1)
     assert models.schedule_publish_trust(rid, db_path=db_path) == 0
     _schedule(db_path, rid, "2026-08-31", edited=True)
@@ -178,7 +182,9 @@ def test_publish_trust_counts_consecutive_unedited_publishes(db_path):
 
 
 def test_auto_publish_queues_only_with_the_switch_and_the_record(db_path, monkeypatch):
-    import scheduler, delayed, strategy_jobs
+    import scheduler, delayed, strategy_jobs, schedule_intel
+    # The record is weeks the coverage check watched run clean (A-19).
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
     rid = _rid(db_path, module_labor=1)
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         _schedule(db_path, rid, w)

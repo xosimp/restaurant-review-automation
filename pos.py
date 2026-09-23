@@ -150,8 +150,8 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         from models import save_labor_daily_history, save_labor_snapshot
         # The per-day archive takes the whole synced file; the period
         # snapshot (what the labor alert reads) is the current window.
-        save_labor_daily_history(restaurant_id, analyse_shifts_for_restaurant(
-            restaurant_id, window_days=None).get("by_day", {}))
+        from labor import full_history_by_day
+        save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
         analysis = analyse_shifts_for_restaurant(restaurant_id)
         dr = analysis.get("date_range", {})
         if dr.get("start") and dr.get("end"):

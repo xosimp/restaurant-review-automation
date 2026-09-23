@@ -7197,8 +7197,9 @@ NON_ALERT_TYPES = (
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
     # request and what became of it, and the 9am "waiting on you in Labor".
     "shift_request", "labor_reminder",
-    # Auto-publish's held notice and a milestone (re-audit A-18).
-    "schedule_publish_held", "milestone",
+    # Auto-publish's held notice and a milestone (re-audit A-18), and a
+    # supplier order the trusted-order job held back (A-22).
+    "schedule_publish_held", "milestone", "order_send_held",
 )
 
 
@@ -8230,7 +8231,17 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
     Clean used to mean "went out unedited". An unedited week proves the
     owner did not look; a week that ran is the evidence auto-publish needs:
     nobody flagged a coverage gap or a no-show as an issue during it, and
-    the owner did not have to rewrite it after generation."""
+    the owner did not have to rewrite it after generation.
+
+    "Nobody flagged" is only evidence when something could have: a week
+    counts only if the coverage check was watching it
+    (schedule_intel.watched_dates — the live clock-in feed, a routed
+    manager, and a POS reading taken during the week). Otherwise trust
+    reduced to "went out unedited" again (re-audit A-19)."""
+    try:
+        import schedule_intel as _si
+    except Exception:
+        return 0
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -8251,6 +8262,9 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
                     trouble = None
                 if trouble:
                     break
+            if not (r["week_start"] and r["week_end"]
+                    and _si.watched_dates(restaurant_id, r["week_start"], r["week_end"], db_path)):
+                break                      # nobody was watching: not evidence it ran clean
             n += 1
     finally:
         conn.close()

@@ -7622,7 +7622,11 @@ function _runAskCavnarProposal(p, card, btn) {
   // The proposal fires the very same authenticated endpoint the button in
   // the UI uses, so it can never reach anything the user couldn't do.
   fetch(route, opts).then(apiJson).then(function(d) {
-    if (d.ok) {
+    if (d.ok && d.job_id && p.route && p.route.status && p.route.status.web) {
+      /* The route only STARTED a background job (a schedule build, a
+         competitor refresh). Done means the job finished, as on iOS. */
+      _pollAskCavnarJob(p, card, btn, p.route.status.web + encodeURIComponent(d.job_id));
+    } else if (d.ok) {
       _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
     } else {
@@ -7642,6 +7646,42 @@ function _runAskCavnarProposal(p, card, btn) {
     err.textContent = 'Lost the connection before this was confirmed, so it may already have gone through. Check before asking again.';
     card.appendChild(err);
   });
+}
+
+function _pollAskCavnarJob(p, card, btn, statusUrl) {
+  /* Same budget as the app: 40 polls, 1.5s apart. A failed poll is not a
+     failed job; only a finished answer decides it. */
+  var tries = 0;
+  btn.textContent = 'Working…';
+  function fail(msg) {
+    btn.textContent = 'Confirm';
+    btn.disabled = false;
+    var err = document.createElement('div');
+    err.className = 'err';
+    err.textContent = msg;
+    card.appendChild(err);
+  }
+  function poll() {
+    tries++;
+    if (tries > 40) {
+      btn.textContent = 'Still working';
+      var note = document.createElement('div');
+      note.className = 'err';
+      note.textContent = 'This is still running. Check back in a minute before asking again.';
+      card.appendChild(note);
+      return;
+    }
+    fetch(statusUrl).then(apiJson).then(function(s) {
+      if (!s || typeof s.status !== 'string' || s.status === 'pending') { setTimeout(poll, 1500); return; }
+      if (s.ok && s.status !== 'error') {
+        _recordAskCavnarAction(p, 'confirmed');
+        card.innerHTML = '<div class="ok">Done ✓</div>';
+      } else {
+        fail(s.error || "That didn't finish. Open the module to see where it stopped.");
+      }
+    }).catch(function() { setTimeout(poll, 1500); });
+  }
+  setTimeout(poll, 1500);
 }
 
 window.sendAskCavnar = function() {

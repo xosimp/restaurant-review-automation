@@ -462,7 +462,18 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
 
     `window_days` bounds the read to the current period (CURRENT_WINDOW_DAYS,
     see above). Pass None for the whole file — only the per-day history
-    archive wants that."""
+    archive wants that (full_history_by_day)."""
+    return _analyse_for_restaurant(restaurant_id, client_data, window_days)
+
+
+def full_history_by_day(restaurant_id: int) -> dict:
+    """The per-day breakdown of the WHOLE shifts file, for the
+    labor_daily_history archive (YoY and trends) — not the current window
+    every other labor read uses."""
+    return _analyse_for_restaurant(restaurant_id, _UNREAD, None).get("by_day", {}) or {}
+
+
+def _analyse_for_restaurant(restaurant_id, client_data, window_days):
     if client_data is _UNREAD:
         from models import get_client_data
         client_data = get_client_data(restaurant_id)

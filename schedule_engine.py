@@ -2186,7 +2186,12 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         for rec in quality.get("recommendations") or []:
             kind = _sq.recommendation_kind(rec)
             key = schedule_rec_key(kind, rec)
-            if kind in hidden or key in silenced:
+            # The key is the sentence, with no week in it, so a "Not for us"
+            # (silenced for years) or a "Did it" (two weeks) on "Fill the
+            # gap on Friday night" hid the identical gap in every later
+            # week. Coverage, leadership and fatigue say whether a shift is
+            # safe to run: never hidden, by kind OR by key (re-audit A-9).
+            if kind in hidden or (key in silenced and kind not in _sq.PROTECTED_REC_KINDS):
                 continue
             kept.append(rec)
             # The kind travels with the text, so web and iOS never classify

@@ -131,15 +131,17 @@ def test_the_waiting_email_and_an_all_covered_morning_batch_fold_into_the_brief(
     """The alert is raised as "no_response"; the covered set held only
     "unresponded", so it was never folded. A combined batch folds only when
     the brief covers every item in it."""
-    monkeypatch.setattr(notify, "brief_pushed_today", lambda *a, **k: True)
+    # Per recipient since re-audit A-17: the owner's own phone got the brief.
+    monkeypatch.setattr(notify, "brief_pushed_emails", lambda *a, **k: {"o@x.test"})
     mailed = []
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: mailed.append(a[1]) or True)
     rid = _rid(db_path)
     assert notify._email_alert(rid, "o@x.test", "s", "<p>x</p>", "no_response") is False
     assert notify._email_alert(rid, "o@x.test", "s", "<p>x</p>", "daily_briefing",
-                               covered_types=["labor_over", "no_response"]) is False
+                               covered_types=["critical_low", "no_response"]) is False
+    # Labor over target has no line in the brief (A-17): not folded.
     assert notify._email_alert(rid, "o@x.test", "s2", "<p>x</p>", "daily_briefing",
-                               covered_types=["labor_over", "critical_low"]) is True
+                               covered_types=["labor_over", "no_response"]) is True
     assert mailed == ["s2"]
 
 

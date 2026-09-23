@@ -551,6 +551,11 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
                 aps.pop("interruption-level", None)
     except Exception:
         pass
+    if (data or {}).get("quiet"):
+        # Sent inside the owner's quiet hours (strategy_jobs._reach): into
+        # Notification Center with no sound and no Focus break (A-10).
+        aps.pop("sound", None)
+        aps["interruption-level"] = "passive"
     payload = {
         "aps": aps,
         "cavnar": {"alert_type": alert_type, "priority": priority, **(data or {})},

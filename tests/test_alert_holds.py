@@ -122,25 +122,53 @@ def test_no_gate_means_run_for_everyone(db_path):
 
 # ── one morning email, not three (workflow audit #16) ─────────────────────
 
-def _push_delivery(db_path, rid, alert_type="morning_brief", ok=1):
-    """A delivered push, as push.py records one. The device_tokens FK is
-    irrelevant here — brief_pushed_today reads push_deliveries only."""
+def _push_delivery(db_path, rid, alert_type="morning_brief", ok=1, email="o@x.test"):
+    """A delivered push, as push.py records one, to the phone of the login
+    with this email. The fold is per recipient (re-audit A-17): it reads
+    whose device got the brief."""
     import auth, push
     auth.init_auth(db_path=db_path)
     push.init_push(db_path=db_path)
     conn = get_conn(db_path)
+    uid = conn.execute("INSERT INTO users (username, email, password_hash, restaurant_id, role) "
+                       "VALUES (?,?,?,?,'owner')", (email, email, "x", rid)).lastrowid
+    tok = conn.execute("INSERT INTO device_tokens (user_id, restaurant_id, apns_token) VALUES (?,?,?)",
+                       (uid, rid, f"tok-{uid}")).lastrowid
     conn.execute("INSERT INTO push_deliveries (device_token_id, restaurant_id, alert_type, ok, attempts) "
-                 "VALUES (1,?,?,?,1)", (rid, alert_type, ok))
+                 "VALUES (?,?,?,?,1)", (tok, rid, alert_type, ok))
     conn.commit(); conn.close()
 
 
 def test_an_alert_the_brief_already_carried_does_not_email_again(db_path, monkeypatch):
+    """The brief's "N reviews waiting" line carries the waiting-reviews
+    alert. Labor over target has no line in the brief (A-17), so it is not
+    folded — see the test below."""
     rid = _rid(db_path)
     sent = []
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: sent.append(a[1]) or True)
     _push_delivery(db_path, rid)
-    assert notify._email_alert(rid, "o@x.test", "Labor over", "<p>x</p>", "labor_over", db_path) is False
+    assert notify._email_alert(rid, "o@x.test", "Waiting", "<p>x</p>", "no_response", db_path) is False
     assert sent == []
+
+
+def test_an_alert_the_brief_has_no_line_for_still_emails(db_path, monkeypatch):
+    rid = _rid(db_path)
+    sent = []
+    monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: sent.append(a[1]) or True)
+    _push_delivery(db_path, rid)
+    notify._email_alert(rid, "o@x.test", "Labor over", "<p>x</p>", "labor_over", db_path)
+    assert sent == ["Labor over"]
+
+
+def test_a_managers_brief_push_does_not_fold_the_owners_email(db_path, monkeypatch):
+    """A manager's phone got the brief; the owner has no app. The owner's
+    email is still their only channel (re-audit A-17)."""
+    rid = _rid(db_path)
+    sent = []
+    monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: sent.append((a[1], k.get("skip"))) or True)
+    _push_delivery(db_path, rid, email="manager@x.test")
+    assert notify._email_alert(rid, "o@x.test", "Waiting", "<p>x</p>", "no_response", db_path) is True
+    assert sent and sent[0][0] == "Waiting"
 
 
 def test_an_urgent_alert_still_emails_after_the_brief(db_path, monkeypatch):

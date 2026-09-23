@@ -1990,7 +1990,11 @@ TOOLS = [
     {
         "kind": "write",
         "confirm": True,
-        "route": {"web": "/api/refresh-competitor-intel", "mobile": "/mobile/api/intel/refresh-competitors", "method": "POST"},
+        # `status`: where the job the route starts is polled to its end. The
+        # route answers with a job id at once; "Done" means the job, not the
+        # start (re-audit A-24 — web took the id as done, iOS polled).
+        "route": {"web": "/api/refresh-competitor-intel", "mobile": "/mobile/api/intel/refresh-competitors", "method": "POST",
+                  "status": {"web": "/api/competitor-intel-status/", "mobile": "/mobile/api/intel/refresh-status/"}},
         "summary": "Refresh competitor data",
         "spec": {
             "name": "refresh_competitors",
@@ -2009,7 +2013,8 @@ TOOLS = [
         # other didn't. It now takes POST as well, so both confirm the
         # same way — and POST is the honest verb for something that
         # replaces the current draft.
-        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "POST"},
+        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "POST",
+                  "status": {"web": "/api/schedule-status/", "mobile": "/mobile/api/labor/schedule-status/"}},
         "summary": "Generate next week's schedule",
         "module": "module_labor",
         "spec": {

@@ -1908,13 +1908,25 @@ def send_while_away_nudges():
                     return int(conn.execute(sql, a).fetchone()[0] or 0)
                 except Exception:
                     return 0
+            # Counted honestly (re-audit A-23): a review is "new" when it was
+            # WRITTEN since they left, not merely fetched (an import of old
+            # history is not news); "waiting" is the reply-owed window, not
+            # every pending review ever; and "alerts" are the ones that asked
+            # for something, not briefs and sign-ins.
+            from push import ACTIONABLE_TYPES
+            from thresholds import REPLY_OWED_MAX_AGE_DAYS
+            written = "substr(COALESCE(NULLIF(review_date,''), fetched_at), 1, 10)"
             drafted = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                        "AND draft_response IS NOT NULL AND fetched_at>=?", r.id, since)
+                        f"AND draft_response IS NOT NULL AND fetched_at>=? AND {written} >= substr(?, 1, 10)",
+                        r.id, since, since)
             arrived = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                        "AND fetched_at>=?", r.id, since)
+                        f"AND fetched_at>=? AND {written} >= substr(?, 1, 10)", r.id, since, since)
             waiting = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                        "AND response_status IN ('pending','drafted')", r.id)
-            alerts = n("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? AND fired_at>=?", r.id, since)
+                        f"AND response_status IN ('pending','drafted') AND {written} >= date('now', ?)",
+                        r.id, f"-{REPLY_OWED_MAX_AGE_DAYS} days")
+            _types = sorted(ACTIONABLE_TYPES)
+            alerts = n(f"SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? AND fired_at>=? "
+                       f"AND alert_type IN ({','.join('?' * len(_types))})", r.id, since, *_types)
             conn.close()
             if not (drafted or arrived or alerts):
                 continue
@@ -2815,11 +2827,14 @@ def scheduler_loop():
                 from strategy_jobs import run_outcome_evaluations
                 _ops.run_job("outcome_evaluations", run_outcome_evaluations)
 
-            # 7am — after outcome evaluations, which is what moves the
-            # measured-dollars figure the savings tiers read. Running it
-            # first would mean a tier crossed today is not noticed until
-            # tomorrow.
-            if _due(now, 7) and _ops.claim_period("milestones", str(today)):
+            # Hourly: each restaurant is told about a result or a milestone
+            # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
+            # never at a Chicago hour that is 4am in Los Angeles (A-10). The
+            # 6am evaluation above runs first everywhere west of Hawaii's 9am.
+            if _ops.claim_period("outcome_wins", f"{today}-{now.hour}"):
+                from strategy_jobs import run_outcome_wins
+                _ops.run_job("outcome_wins", run_outcome_wins)
+            if _ops.claim_period("milestones", f"{today}-{now.hour}"):
                 from strategy_jobs import run_milestones
                 _ops.run_job("milestones", run_milestones)
 
