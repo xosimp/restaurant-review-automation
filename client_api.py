@@ -141,8 +141,13 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # status) and mobile_api.py's mobile views can call the exact same logic
 # without duplicating it.
 
-def _do_approve(rid, restaurant_id, google=None, auto=None):
+def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
     """Approve (and post) one drafted reply.
+
+    `bulk`: part of a publish-many (approve-all). The claim is held to
+    models.BULK_PUBLISHABLE_SQL, and the row is marked
+    response_action='bulk_approved' — nobody read this draft on its own, so
+    it is not evidence for auto_approve_trust or a style example (M-3).
 
     `auto`: True when no person approved it — the auto-approve rule. Such a
     reply is stored as response_action='auto_approved' and never counts as
@@ -161,7 +166,7 @@ def _do_approve(rid, restaurant_id, google=None, auto=None):
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
     from models import claim_approval
-    if not claim_approval(rid, restaurant_id):
+    if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk)):
         _gc = get_conn()
         _cur = _gc.execute("SELECT response_status, deleted_at FROM reviews WHERE id=? AND restaurant_id=?",
                            (rid, restaurant_id)).fetchone()
@@ -188,6 +193,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None):
                 _action = "regenerated"
             elif (_row["draft_edited"] or 0) == 1:
                 _action = "edited"
+            elif bulk:
+                # Published in a batch, unread and unchanged: not a
+                # person's "yes" to this draft (M-3). An edit or a
+                # regenerate before the batch still is a person's "no",
+                # so those keep their own label above.
+                _action = "bulk_approved"
             else:
                 _action = "approved_as_is"
             _ac2 = get_conn()
@@ -342,21 +353,24 @@ def _do_approve_all(restaurant_id, limit=25):
         limit = max(1, min(int(limit), 25))
     except (TypeError, ValueError):
         limit = 25
+    # Only what a bulk publish may post (models.BULK_PUBLISHABLE_SQL):
+    # recent, not urgent, not flagged — the same set Home counts on its
+    # "Publish N replies" label, newest guest first. It used to order
+    # urgent first with no age bound, so "Publish 1 reply" posted a 90-day-
+    # old safety reply the label had excluded, or a flagged one (M-2).
+    from models import BULK_PUBLISHABLE_SQL, bulk_publish_window, reply_queue_counts
     conn = get_conn()
-    rows = conn.execute("""
-        SELECT id FROM reviews
-        WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
-          AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        ORDER BY (urgency='high') DESC, review_date DESC, id DESC
-        LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
+    rows = conn.execute(
+        f"SELECT id FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
+        "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
+        (restaurant_id, bulk_publish_window(), limit)).fetchall()
     conn.close()
 
     approved = posted = failed = 0
     google = {}
     for row in rows:
         try:
-            payload, status = _do_approve(row["id"], restaurant_id, google)
+            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True)
             if status == 200 and payload.get("ok"):
                 approved += 1
                 if payload.get("auto_posted"):
@@ -366,17 +380,12 @@ def _do_approve_all(restaurant_id, limit=25):
         except Exception:
             failed += 1
 
-    remaining = 0
+    remaining = held = 0
     try:
-        conn = get_conn()
-        remaining = conn.execute("""
-            SELECT COUNT(*) FROM reviews
-            WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
-              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        """, (restaurant_id,)).fetchone()[0] or 0
-        conn.close()
-    except Exception:
-        pass
+        q = reply_queue_counts(restaurant_id)
+        remaining, held = q["publishable"], q["held"]
+    except Exception as e:
+        print(f"[approve-all] could not count what is left for {restaurant_id}: {e}")
 
     if approved:
         try:
@@ -384,8 +393,10 @@ def _do_approve_all(restaurant_id, limit=25):
             log_event(restaurant_id, "reviews_bulk_approved", {"count": approved, "posted": posted})
         except Exception:
             pass
+    # `held`: urgent or flagged drafts a bulk publish never posts — they
+    # wait for someone to read them one at a time.
     return {"ok": True, "approved": approved, "posted": posted,
-            "failed": failed, "remaining": int(remaining)}, 200
+            "failed": failed, "remaining": int(remaining), "held": int(held)}, 200
 
 
 
@@ -722,10 +733,14 @@ def rec_controls_html(key, surface, module):
     k, sf, m = str(_esc_rc(key)), str(_esc_rc(surface)), str(_esc_rc(module))
     b = ('<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="' + k
          + '" data-rec-surface="' + sf + '" data-rec-module="' + m + '" ')
+    # Track only where it starts a real tracker (strategy_routes.
+    # REC_TRACK_METRICS) — the web twin is recControlsHtml (M-8).
+    from strategy_routes import REC_TRACK_METRICS
+    track = (b + 'data-rec-event="accepted">Track</button>') if (module or surface) in REC_TRACK_METRICS else ''
     return ('<span class="rec-ans">'
             + b + 'data-rec-event="completed">Done</button>'
             + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
-            + b + 'data-rec-event="accepted">Track</button>'
+            + track
             + '</span>')
 
 
@@ -1312,9 +1327,11 @@ def _do_review_insight(rid):
                 f"{d['daypart'].replace('_',' ')} {d['negative_pct']}% of {d['total']}"
                 for d in _hot_parts) + ".")
         if _bench.get("available") and _bench.get("gap_vs_median") is not None:
+            # Google rating against their Google ratings — like for like
+            # (M-18). The recent sample is named apart and never compared.
             _ev.append(f"Against the {_bench['competitor_count']} competitors Intel tracks: "
-                       f"you are {_bench['our_rating_90d']}★ over 90 days vs a "
-                       f"{_bench['competitor_median']}★ median "
+                       f"your Google rating is {_bench['our_google_rating']}★ vs a "
+                       f"{_bench['competitor_median']}★ median of theirs "
                        f"({_bench['gap_vs_median']:+.2f}), intel as of {_bench.get('as_of') or 'unknown'}.")
         if _locs.get("available") and _locs.get("outlier_themes"):
             _o = _locs["outlier_themes"][0]
@@ -1322,7 +1339,8 @@ def _do_review_insight(rid):
                        f"{int(_o['our_share']*100)}% of this location's complaints vs "
                        f"{int(_o['peer_share']*100)}% at the others.")
         if _money.get("available"):
-            _ev.append(f"Revenue implication of the {_money['rating_delta']:+.2f}-star 30-day move: "
+            _ev.append(f"Revenue implication of the {_money['rating_delta']:+.2f}-star 30-day move in the "
+                       f"all-time average rating: "
                        f"${abs(_money['monthly_low']):,} to ${abs(_money['monthly_high']):,} a month "
                        f"{'at risk' if _money['direction']=='at_risk' else 'of upside'}, "
                        f"on {_money['sales_source']}. A forecast from a published range, not a measurement.")
@@ -1340,7 +1358,14 @@ def _do_review_insight(rid):
                 f"Recommended: {_d['recommended_action'] or 'none'}\n"
                 f"Confidence: {_d['confidence']} | rests on reviews "
                 + ", ".join("#" + str(i) for i in _d['evidence_review_ids'][:5])
-                + (f" | produced {int(_d['age_hours'])}h ago" if _d.get("age_hours") is not None else ""))
+                # The read's DATE, not its age in hours (M-7). The prompt is
+                # the stored read's fingerprint; "produced 5h ago" changed
+                # it every hour, so the stored read never matched — a new
+                # Sonnet call each hour, and the web and the phone an hour
+                # apart showed different words. The age travels to the UI
+                # as metadata on the diagnosis instead.
+                + (f" | read of {_d['as_of']}" if _d.get("as_of") else "")
+                + (" (older than its refresh window)" if _d.get("stale") else ""))
         else:
             diag_block = ("(No root-cause diagnosis exists yet - either no complaint cluster "
                           "clears the evidence floor, or the diagnosis pass has not run. Do NOT "
@@ -1359,6 +1384,10 @@ def _do_review_insight(rid):
             "apart. Use that diagnosis - do not substitute a different cause.]"
         ) if has_diag else ""
         from ai_guard import UNTRUSTED_NOTE as _UN_RI
+        # What the owner already answered on this module, so a reworded
+        # line cannot bring the same advice back (M-8).
+        import insight_store as _ist_ans
+        _answered_ri = _ist_ans.do_not_repeat_block(rid, ("insight_review", "diag_review"))
         prompt = (
             "You are an experienced restaurant operations consultant writing the daily read on "
             "this restaurant's reviews. You are not a summariser: the owner can already see their "
@@ -1396,7 +1425,8 @@ def _do_review_insight(rid):
             "with the claim it belongs to: if a trend is low confidence, say so rather than "
             "stating it flat.\n"
             "- Prioritise a multi-week pattern over a single-week blip, and a serious complaint "
-            "over a merely frequent one.\n\n"
+            "over a merely frequent one."
+            + _answered_ri + "\n\n"
             "Return EXACTLY these lines, in this order, no markdown, no preamble, no extra lines:\n"
             "\U0001f4ca This week: [1 sentence on the most important MEASURED fact. Max 22 words.]"
             f"{why_line}\n"
@@ -1415,6 +1445,12 @@ def _do_review_insight(rid):
         _fp_ri = _ist_ri.fingerprint(prompt)
         _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri)
         if isinstance(_stored_ri, dict) and _stored_ri.get("insight"):
+            # The diagnoses' age, stale flag and "as of" are the current
+            # ones, not those frozen when the read was stored (M-7): the
+            # same cause, so the same fingerprint, but its age is metadata.
+            _stored_ri = dict(_stored_ri)
+            _stored_ri["diagnoses"] = _diags[:3]
+            _stored_ri["diagnosis"] = _diags[0] if _diags else None
             _cache_set("review-insight:" + str(rid), _stored_ri)
             return _review_insight_recs(rid, dict(_stored_ri)), 200
 
@@ -2133,9 +2169,13 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     logged (audit #21), answered ones left out, and on the web the HTML with
     Done / Not for us / Track on each line. `rec_items` travels to the
     mobile route, which hands it to _insight_json."""
-    recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing",
-                             promote="UNVERIFIED:" not in (text or ""))
-    out = dict(extra or {})
+    # A read whose figures could not all be traced to the data offers no
+    # Done / Track (M-16): the marketing path never wrote an "UNVERIFIED:"
+    # marker, so checking for one promoted every line.
+    extra = dict(extra or {})
+    promote = bool(extra.get("figures_verified", True)) and "UNVERIFIED:" not in (text or "")
+    recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote)
+    out = dict(extra)
     out["insight"] = text if raw else format_insight_html(text, rec_items=recs, surface="marketing",
                                                           module="marketing")
     out["recs"] = [{"key": r["key"], "text": r["text"]} for r in recs if r.get("controls") and not r.get("answered")]
@@ -2163,7 +2203,13 @@ def _do_mkt_insight(rid, raw=False):
     insight_store keyed on the prompt; the web formats it on the way out."""
     cache_key = "mkt-insight:" + str(rid)
     cached = _cache_get(cache_key)
-    if cached:
+    # The whole read is cached — text and its figure check — so a cache hit
+    # keeps the caveat (M-16). An older entry is the bare string.
+    if isinstance(cached, dict) and cached.get("insight"):
+        return _mkt_insight_out(rid, cached["insight"], raw,
+                                {"figures_verified": cached.get("figures_verified", True),
+                                 "unsupported_figures": cached.get("unsupported_figures") or []}), 200
+    if cached and isinstance(cached, str):
         return _mkt_insight_out(rid, cached, raw), 200
     try:
         from marketing import get_profile_for_restaurant, get_recent_content, get_upcoming_holidays, generate_content
@@ -2266,6 +2312,10 @@ def _do_mkt_insight(rid, raw=False):
         # parser has nowhere to put — the whole brief landed in `intro` and
         # rendered as a wall of prose filling the sheet. The point of the
         # consultant is a glance, not a read.
+        # Lines the owner already answered, so a rewording cannot bring
+        # the same advice back (M-8).
+        import insight_store as _ist_ans_m
+        answered_m = _ist_ans_m.do_not_repeat_block(rid, ("insight_marketing",))
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 
 Restaurant: {p["name"]} in {p["neighborhood"]}.
@@ -2289,7 +2339,7 @@ specific angle — reference a real menu item or a named holiday where it fits.
 No preamble on them, no closing encouragement, no sign-off.{forecast_instruction}
 
 Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
-brand voice. No corporate language. The whole brief must be under 60 words."""
+brand voice. No corporate language. The whole brief must be under 60 words.{answered_m}"""
         # The shared, bounded client (timeout, no hidden SDK retries): an
         # unbounded one here was invisible to the timeout lint behind its
         # `import anthropic as _anth` alias (MOD-MKT-2).
@@ -2297,7 +2347,9 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
         _fp_m = _ist_m.fingerprint(prompt)
         _stored_m = _ist_m.get(rid, "marketing", _fp_m)
         if isinstance(_stored_m, dict) and _stored_m.get("insight"):
-            _cache_set(cache_key, _stored_m["insight"])
+            _cache_set(cache_key, {"insight": _stored_m["insight"],
+                                   "figures_verified": _stored_m.get("figures_verified", True),
+                                   "unsupported_figures": _stored_m.get("unsupported_figures") or []})
             return _mkt_insight_out(rid, _stored_m["insight"], raw,
                                     {"figures_verified": _stored_m.get("figures_verified", True),
                                      "unsupported_figures": _stored_m.get("unsupported_figures") or []}), 200
@@ -2314,7 +2366,8 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
         insight = extract_text(msg).strip()
         from ai_guard import verify_figures
         _unsupported = verify_figures(insight, prompt, "marketing_insight", rid)
-        _cache_set(cache_key, insight)
+        _cache_set(cache_key, {"insight": insight, "figures_verified": not _unsupported,
+                               "unsupported_figures": _unsupported})
         _ist_m.put(rid, "marketing", _fp_m, {"insight": insight, "figures_verified": not _unsupported,
                                             "unsupported_figures": _unsupported})
         return _mkt_insight_out(rid, insight, raw, {"figures_verified": not _unsupported,
@@ -2324,7 +2377,12 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
         print(f"[MktInsight] ERROR: {str(e)}")
         stale = _insight_cache.get(cache_key)
         if stale:
-            return _mkt_insight_out(rid, stale[1], raw, {"stale": True}), 200
+            _sv = stale[1]
+            if isinstance(_sv, dict):
+                return _mkt_insight_out(rid, _sv.get("insight") or "", raw,
+                                        {"stale": True, "figures_verified": _sv.get("figures_verified", True),
+                                         "unsupported_figures": _sv.get("unsupported_figures") or []}), 200
+            return _mkt_insight_out(rid, _sv, raw, {"stale": True}), 200
         # A budget stop or outage says so (AI-11); anything else keeps the
         # retry wording.
         from ai_utils import insight_error as _insight_err_mkt
@@ -2688,7 +2746,7 @@ def _do_regenerate_draft(review_id, restaurant_id):
     so a regenerated draft gets the same quality/model/urgency-escalation as
     the original draft (this used to be a separate, drifted reimplementation)."""
     from models import get_conn, get_approved_examples
-    from drafter import draft_response
+    from drafter import draft_response, DraftNotReplaced
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"regen:{restaurant_id}", max_calls=10, window_secs=60):
         return {"ok": False, "error": "Too many regenerations — please wait a moment and try again."}, 200
@@ -2699,6 +2757,14 @@ def _do_regenerate_draft(review_id, restaurant_id):
     if not row:
         return {"ok": False, "error": "Review not found"}, 200
     r = dict(row)
+    # A reply that is approved or live is not a draft to replace. Regenerate
+    # had no guard, so a second tab (or the phone) regenerating a posted
+    # reply flipped a live Google reply back to "drafted" with different
+    # text — the DATA-26 bug _do_save_draft already refuses (M-25).
+    # update_draft holds the same condition for the race in between.
+    if r.get("response_status") in ("posted", "approved"):
+        return {"ok": False, "error": "This reply has already been sent. Retract it before replacing it.",
+                "response_status": r.get("response_status")}, 409
     restaurant = get_restaurant(restaurant_id)
     try:
         examples = get_approved_examples(restaurant_id, limit=4)
@@ -2718,11 +2784,22 @@ def _do_regenerate_draft(review_id, restaurant_id):
             # A fresh model draft: the next edit is compared against THIS
             # text, so the preserved original restarts with it (audit #41).
             "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1, "
-            "original_draft=NULL WHERE id=? AND restaurant_id=?",
+            "original_draft=NULL WHERE id=? AND restaurant_id=? "
+            "AND response_status NOT IN ('posted', 'approved')",
             (review_id, restaurant_id)
         )
-        conn.commit(); conn.close()
-        return {"ok": True, "draft": new_draft}, 200
+        conn.commit()
+        # The guard's verdict on the new text travels with it, so the card
+        # can show the reason before the owner approves (M-1).
+        flag = conn.execute("SELECT draft_needs_review, draft_review_reason FROM reviews "
+                            "WHERE id=? AND restaurant_id=?", (review_id, restaurant_id)).fetchone()
+        conn.close()
+        return {"ok": True, "draft": new_draft,
+                "needs_review": bool(flag and flag["draft_needs_review"]),
+                "review_reason": (flag["draft_review_reason"] if flag and flag["draft_needs_review"] else None)}, 200
+    except DraftNotReplaced:
+        return {"ok": False, "error": "This reply was sent while the new one was being written. "
+                                      "Retract it before replacing it."}, 409
     except Exception as e:
         return {"ok": False, "error": _safe_err(e)}, 200
 
@@ -4651,14 +4728,19 @@ def _do_ai_visibility_inner(rid, force=False):
     # Items 7-10: require GMB OAuth connection
     gbp_data = {}
     gbp_connected = bool(r.gmb_refresh_token and r.gmb_location_id)
+    # Whether the listing itself was read. Description, phone, website and
+    # hours can only be known from it; without it they are unmeasured, not
+    # missing (M-14).
+    gbp_read = False
     if gbp_connected:
         try:
             from gmb import get_gbp_listing
             gbp_result = get_gbp_listing(rid)
             if gbp_result.get("ok"):
                 gbp_data = gbp_result
-        except Exception:
-            pass
+                gbp_read = True
+        except Exception as _ge:
+            print(f"[aivis] GBP listing read failed for rid={rid}: {_ge}")
 
     checklist = []
 
@@ -4699,7 +4781,11 @@ def _do_ai_visibility_inner(rid, force=False):
     # 5. Review volume — AI systems rank by review count; 50+ is the threshold for appearing
     rstats = get_review_stats(rid)
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
-    review_total = rstats.get("total", 0) if rstats else 0
+    # Google's own count of the listing's reviews when Cavnar has it, not the
+    # reviews Cavnar imported: a Places-only account holds as few as five,
+    # and "Build to 50+ Google reviews (5 so far)" was about our copy (M-14).
+    _imported_total = rstats.get("total", 0) if rstats else 0
+    review_total = int(r.gbp_review_count) if getattr(r, "gbp_review_count", None) else _imported_total
     if review_total >= 50:
         checklist.append({"label": "50+ Google reviews", "effort": "months", "why_it_matters": "the slowest signal to build and the hardest to fake", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — 50+ reviews is a strong public signal", "needs_gmb": False})
@@ -4738,7 +4824,7 @@ def _do_ai_visibility_inner(rid, force=False):
     desc = gbp_data.get("description", "")
     if desc and len(desc) >= 150:
         checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "effort": "minutes", "why_it_matters": "the text a reader sees under your name", "done": True, "kind": "presence", "pts": 10,
-                          "action": "Done — your description is published on your listing", "needs_gmb": False})
+                          "action": "Done", "needs_gmb": False})
     elif desc:
         checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "effort": "minutes", "why_it_matters": "a short description leaves out the cuisine and dishes a reader is looking for", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Description: add cuisine type, atmosphere, and signature dishes",
@@ -4765,8 +4851,9 @@ def _do_ai_visibility_inner(rid, force=False):
     # 10. Website linked in GBP — AI tools follow the website link to gather more context
     has_website = bool(gbp_data.get("website"))
     if gbp_connected and has_website:
+        # Plain "Done": how an AI tool uses the link has no source (M-32).
         checklist.append({"label": "Website linked in GBP", "effort": "minutes", "why_it_matters": "the one link you control end to end", "done": True, "kind": "presence", "pts": 10,
-                          "action": "Done — AI tools crawl your website for menu and about content", "needs_gmb": False})
+                          "action": "Done", "needs_gmb": False})
     elif gbp_connected and not has_website:
         checklist.append({"label": "Add website URL to GBP", "effort": "minutes", "why_it_matters": "the one link you control end to end — menu, hours and booking in your own words", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
@@ -4784,7 +4871,7 @@ def _do_ai_visibility_inner(rid, force=False):
     has_hours = bool(gbp_data.get("has_hours"))
     if gbp_connected and has_hours:
         checklist.append({"label": "Hours listed in GBP", "effort": "minutes", "why_it_matters": "the single most-read field on a listing", "done": True, "kind": "presence", "pts": 10,
-                          "action": "Done — AI tools can answer \"is it open now\" directly", "needs_gmb": False})
+                          "action": "Done", "needs_gmb": False})
     elif gbp_connected and not has_hours:
         checklist.append({"label": "Add hours to GBP", "effort": "minutes", "why_it_matters": "the most-read field on a listing — without it nobody can tell whether you're open", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
@@ -4858,11 +4945,26 @@ def _do_ai_visibility_inner(rid, force=False):
                              job="ai_visibility", context=f"restaurant_id={rid}")
         except Exception:
             pass
+    # Listing fields that can only be read from Google's own listing are
+    # unmeasured while it is not connected (or could not be read), and a
+    # missing measurement is never scored as 0 (M-14): with GBP off, four of
+    # seven presence items counted as "not done", so a perfect listing
+    # scored at most 43% under a "measured" label.
+    _listing_labels = ("description", "phone number", "website url", "hours")
+    for _it in checklist:
+        if (_it.get("kind") == "presence" and not gbp_read and not _it.get("done")
+                and any(w in _it["label"].lower() for w in _listing_labels)):
+            _it["measured"] = False
+            _it["unmeasured_reason"] = ("Connect Google Business Profile so Cavnar can read this from your listing"
+                                        if not gbp_connected else
+                                        "Cavnar couldn't read your Google listing just now")
     presence_items = [i for i in checklist if i.get("kind") == "presence"]
     setup_items    = [i for i in checklist if i.get("kind") == "setup"]
-    _presence_done = sum(1 for item in presence_items if item["done"])
+    _presence_measured = [i for i in presence_items if i.get("measured", True)]
+    _presence_done = sum(1 for item in _presence_measured if item["done"])
     _setup_done    = sum(1 for item in setup_items if item["done"])
-    presence_score = round(_presence_done / len(presence_items) * 100) if presence_items else 0
+    presence_score = round(_presence_done / len(_presence_measured) * 100) if _presence_measured else None
+    presence_unmeasured = len(presence_items) - len(_presence_measured)
     setup_done, setup_total = _setup_done, len(setup_items)
     # Kept so an older client still decodes something sane; it is the
     # presence figure now, not the blended one.
@@ -4971,6 +5073,10 @@ def _do_ai_visibility_inner(rid, force=False):
         # computation. presence_score is the only one that describes the
         # restaurant rather than this product's own configuration.
         "presence_score": presence_score,
+        # How many presence items the score is out of, and how many could
+        # not be read (they are left out of it, not counted as 0).
+        "presence_measured": len(_presence_measured),
+        "presence_unmeasured": presence_unmeasured,
         "setup_done": setup_done,
         "setup_total": setup_total,
         # Which kind of claim each number is, so a client can stop rendering
@@ -4980,7 +5086,7 @@ def _do_ai_visibility_inner(rid, force=False):
             "ai_score": "measured" if (answered and len(answered) == len(queries)) else "partial",
             "ai_score_low": "estimate",
             "ai_score_high": "estimate",
-            "presence_score": "measured",
+            "presence_score": "measured" if not presence_unmeasured else "partial",
             "branded_score": "measured",
             "competitor_appearances": "measured",
             "setup_done": "configuration",
@@ -7257,6 +7363,41 @@ def ask_cavnar_opening(current_user):
 @login_required
 def intel_movement(current_user):
     return _m("mobile_intel_movement")(current_user)
+
+
+def intel_open_recs(rid, restaurant=None) -> dict:
+    """The competitor recommendations still open for this restaurant, WITHOUT
+    logging them as shown: {"recs": [text], "competitors", "withheld",
+    "nothing_to_act_on"}. The same parser and keys as intel_recs_payload,
+    minus every line the owner already answered and every line an
+    unverified read withheld.
+
+    Home, the phone's Intel tile and Ask counted extract_recs over the raw
+    text, so after "Not for us" on all three Home still said "Read the 3
+    suggestions" and Ask was still fed them (M-20)."""
+    import json as _json_io
+    import insight_store
+    from competitor_intel_format import parse_competitor_intel
+    r = restaurant if restaurant is not None else get_restaurant(rid)
+    raw = getattr(r, "competitor_intel", None) if r is not None else None
+    if raw is None and isinstance(r, dict):
+        raw = r.get("competitor_intel")
+    try:
+        blob = _json_io.loads(raw or "{}")
+    except (TypeError, ValueError):
+        blob = {"insight": raw} if isinstance(raw, str) else {}
+    if not isinstance(blob, dict):
+        blob = {}
+    insight = blob.get("insight") or ""
+    parsed = parse_competitor_intel(insight) if insight else {
+        "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False}
+    texts = [it["text"] for it in parsed.get("recommendation_items") or []]
+    keys = [insight_store.line_key("insight_intel", t) for t in texts]
+    done = insight_store.answered(rid, keys) if keys else set()
+    return {"recs": [t for t, k in zip(texts, keys) if k not in done],
+            "competitors": len(blob.get("competitors") or []),
+            "withheld": int(parsed.get("withheld_recommendations") or 0),
+            "nothing_to_act_on": bool(parsed.get("nothing_to_act_on"))}
 
 
 def intel_recs_payload(rid, user_id=None, surface="intel"):

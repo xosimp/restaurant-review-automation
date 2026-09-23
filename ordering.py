@@ -35,6 +35,7 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 ORDER_TRUST_MIN = 3          # prior orders to this supplier before one can go on its own
+ORDER_TRUST_EDIT_RATE = 0.20  # ...and at most this share of the owner's orders changed before sending
 ORDER_BAND = (0.65, 1.35)    # draft total must sit inside this multiple of the usual order
 ORDER_MIN_GAP_DAYS = 5       # never a second automatic order inside the usual cadence
 ORDER_UNDO_MINUTES = 60
@@ -45,30 +46,39 @@ COUNT_FRESH_DAYS = 7
 
 
 def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
-    """{orders, median_total, last_sent_at, trusted} for one supplier.
+    """{orders, edited, edit_rate, median_total, last_sent_at, trusted} for
+    one supplier.
 
-    Trust is the OWNER's record (audit): only orders a person sent, exactly
-    as drafted, count. An automatic order counted as history, so the rule
-    that sends orders on its own was earning its own trust; and an order the
-    owner changed before sending is evidence the draft was wrong, not that
-    it can go unread. Rows from before `source` existed count as the owner's.
-    `last_sent_at` still reads every order — the cadence guard is about what
-    the supplier received, whoever sent it."""
+    Trust is the OWNER's record (audit): only orders a person sent count.
+    An automatic order counted as history, so the rule that sends orders on
+    its own was earning its own trust. An order the owner changed before
+    sending is evidence the draft was wrong: it is IN the count and counts
+    against the supplier (M-5). It used to be left out, so 12 owner orders
+    with 9 of them corrected read as "3 orders, trusted" and automatic
+    sends began for a supplier whose drafts the owner fixes 75% of the
+    time. `orders` is every owner-sent order; trusted needs
+    ORDER_TRUST_MIN of them unedited and an edit rate at or under
+    ORDER_TRUST_EDIT_RATE — the shape auto_approve_trust uses for replies.
+    Rows from before `source` existed count as the owner's. `last_sent_at`
+    still reads every order — the cadence guard is about what the supplier
+    received, whoever sent it."""
     email = (supplier_email or "").strip().lower()
     if not email:
-        return {"orders": 0, "median_total": None, "last_sent_at": None, "trusted": False}
+        return {"orders": 0, "edited": 0, "edit_rate": None, "median_total": None,
+                "last_sent_at": None, "trusted": False}
     conn = get_conn(db_path)
     try:
         try:
             rows = conn.execute(
-                "SELECT total_cost, sent_at FROM purchase_orders WHERE restaurant_id=? "
+                "SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
+                "WHERE restaurant_id=? "
                 "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
-                "AND COALESCE(source,'owner')='owner' AND COALESCE(edited,0)=0 "
+                "AND COALESCE(source,'owner')='owner' "
                 "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
         except Exception:
             # A database from before source/edited existed.
             rows = conn.execute(
-                "SELECT total_cost, sent_at FROM purchase_orders WHERE restaurant_id=? "
+                "SELECT total_cost, sent_at, 0 AS edited FROM purchase_orders WHERE restaurant_id=? "
                 "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
                 "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
         last_row = conn.execute(
@@ -77,12 +87,17 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
             (restaurant_id, email)).fetchone()
     finally:
         conn.close()
+    # The usual order size is what the owner actually sends, edits included.
     totals = [float(r["total_cost"]) for r in rows if r["total_cost"] is not None]
     last = last_row["sent_at"] if last_row else None
-    return {"orders": len(rows),
+    n = len(rows)
+    edited = sum(1 for r in rows if int(r["edited"] or 0))
+    rate = (edited / n) if n else None
+    return {"orders": n, "edited": edited, "edit_rate": rate,
             "median_total": (round(statistics.median(totals), 2) if totals else None),
             "last_sent_at": last,
-            "trusted": len(rows) >= ORDER_TRUST_MIN and bool(totals)}
+            "trusted": bool((n - edited) >= ORDER_TRUST_MIN and rate is not None
+                            and rate <= ORDER_TRUST_EDIT_RATE and totals)}
 
 
 def count_freshness(restaurant_id, ingredient_ids=None, db_path=DB_PATH, today=None) -> dict:
@@ -130,7 +145,9 @@ def order_can_go(restaurant_id, group, db_path=DB_PATH):
     guess, and it held with nothing saying why."""
     t = supplier_trust(restaurant_id, group.get("supplier_email"), db_path=db_path)
     if not t["trusted"]:
-        return False, f"only {t['orders']} prior orders"
+        if t.get("edit_rate") is not None and t["edit_rate"] > ORDER_TRUST_EDIT_RATE:
+            return False, f"{t['edited']} of your last {t['orders']} orders were changed before sending"
+        return False, f"only {t['orders'] - t.get('edited', 0)} prior orders sent as drafted"
     ids = [it.get("ingredient_id") for it in (group.get("items") or [])
            if isinstance(it, dict) and it.get("ingredient_id")]
     fresh = count_freshness(restaurant_id, ids or None, db_path=db_path)
@@ -207,7 +224,12 @@ def queue_trusted_orders(restaurant_id, restaurant=None, db_path=DB_PATH, held=N
 
 def invoice_trust(restaurant_id, supplier, db_path=DB_PATH):
     """{applied, full_accepts, trusted}: how many of this supplier's past
-    scans the owner applied accepting every preselected line."""
+    scans the owner applied accepting every preselected line.
+
+    Only the OWNER's applies are evidence (M-4). A scan the rule applied on
+    its own (auto_applied=1) was counted as the owner accepting every line,
+    so after ten auto-applies no human decision was left in the window and
+    the rule kept itself trusted."""
     name = (supplier or "").strip().lower()
     if not name:
         return {"applied": 0, "full_accepts": 0, "trusted": False}
@@ -215,7 +237,8 @@ def invoice_trust(restaurant_id, supplier, db_path=DB_PATH):
     try:
         rows = conn.execute(
             "SELECT lines_json, applied_json FROM invoice_imports WHERE restaurant_id=? "
-            "AND LOWER(COALESCE(supplier,''))=? AND applied_at IS NOT NULL ORDER BY id DESC LIMIT 10",
+            "AND LOWER(COALESCE(supplier,''))=? AND applied_at IS NOT NULL "
+            "AND COALESCE(auto_applied, 0) = 0 ORDER BY id DESC LIMIT 10",
             (restaurant_id, name)).fetchall()
     finally:
         conn.close()
@@ -238,7 +261,8 @@ def invoice_trust(restaurant_id, supplier, db_path=DB_PATH):
 def auto_apply_if_trusted(restaurant_id, proposal, user_id=None, db_path=DB_PATH):
     """After a scan: apply the preselected lines when the supplier has
     earned it. Returns the (possibly updated) proposal with `auto_applied`
-    and `trust` set. Flagged lines are never applied here."""
+    and `trust` set. Flagged lines are never applied here; they stay open
+    for the owner (invoices.apply takes the lines not yet in, M-4)."""
     import invoices
     trust = invoice_trust(restaurant_id, proposal.get("supplier"), db_path=db_path)
     proposal["trust"] = trust
@@ -254,10 +278,13 @@ def auto_apply_if_trusted(restaurant_id, proposal, user_id=None, db_path=DB_PATH
              and ln.get("proposed_cost") and not ln.get("note")]
     if not picks:
         return proposal
-    out = invoices.apply(restaurant_id, proposal["id"], picks, user_id=user_id, db_path=db_path)
+    out = invoices.apply(restaurant_id, proposal["id"], picks, user_id=user_id, db_path=db_path, auto=True)
     if out.get("ok"):
         proposal["auto_applied"] = out.get("updated") or []
         proposal["applied_at"] = "now"
+        # The lines the rule left (flagged, unverified) stay open for the
+        # owner: the card keeps its apply button for them (M-4).
+        invoices.mark_applied(proposal, proposal["auto_applied"], True)
         try:
             from client_api import log_account_event
             log_account_event(restaurant_id, "invoice_auto_applied", {"username": "Cavnar AI"},

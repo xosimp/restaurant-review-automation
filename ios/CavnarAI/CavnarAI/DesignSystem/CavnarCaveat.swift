@@ -79,8 +79,11 @@ struct CavnarCaveat: View {
     static func olderRead(asOf: String?) -> CavnarCaveat {
         CavnarCaveat(
             title: "Older read",
-            detail: asOf.map { "This is the last read Cavnar finished, from \($0). A fresh one is on the way." }
-                ?? "This is the last read Cavnar finished. A fresh one is on the way."
+            // The stale path runs because writing a new read failed and
+            // nothing is queued: promise only the retry that does happen
+            // (M-33). `asOf` arrives M/D/YY from the server (M-26).
+            detail: asOf.map { "This is the last read Cavnar finished, from \($0). A new one couldn\u{2019}t be written just now \u{2014} Cavnar tries again the next time this opens." }
+                ?? "This is the last read Cavnar finished. A new one couldn\u{2019}t be written just now \u{2014} Cavnar tries again the next time this opens."
         )
     }
 }

@@ -53,11 +53,14 @@ def _user(rid, uid=1, role="owner"):
 
 def _review(db_path, rid, rating, status="pending", days_ago=1, urgency="normal", cats=None):
     c = get_conn(db_path)
+    # A drafted review has its draft: Home counts only replies a publish can
+    # actually post (models.reply_queue_counts, re-audit M-2).
     c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, "
-              "fetched_at, sentiment, urgency, response_status, processed, categories) "
-              "VALUES (?, 'google', ?, 'A', ?, 'text', date('now', ?), datetime('now'), ?, ?, ?, 1, ?)",
+              "fetched_at, sentiment, urgency, response_status, processed, categories, draft_response) "
+              "VALUES (?, 'google', ?, 'A', ?, 'text', date('now', ?), datetime('now'), ?, ?, ?, 1, ?, ?)",
               (rid, uuid.uuid4().hex, rating, f"-{days_ago} days", "negative" if rating <= 2 else "positive",
-               urgency, status, json.dumps(cats) if cats else None))
+               urgency, status, json.dumps(cats) if cats else None,
+               "Thank you!" if status == "drafted" else None))
     c.commit(); c.close()
 
 
@@ -312,7 +315,9 @@ def test_top_issue_uses_the_diagnosis_recommended_action_and_alternative(db_path
               "'Add a second server on Friday from 6 to 9.')", (rid,))
     c.commit(); c.close()
     p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
-    rec = next(r for r in p["recommendations"] if r["key"] == "top_issue:service")
+    # The diagnosis's action carries the Reviews card's own key, so one
+    # answer holds on Home and in the module (re-audit M-9).
+    rec = next(r for r in p["recommendations"] if r["key"] == "diag_review:service")
     assert rec["title"] == "Add a second server on Friday from 6 to 9"
     assert rec["alternative"] == "The kitchen is slow on Fridays."
     assert rec["confidence"]["band"] == "medium" and rec["model_written"]

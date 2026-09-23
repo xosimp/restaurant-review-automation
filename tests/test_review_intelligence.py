@@ -576,6 +576,13 @@ def test_the_benchmark_puts_our_rating_beside_the_median(db_path):
     assert out["available"] is True
     assert out["competitor_median"] == 4.4
     assert out["our_rating_90d"] == 4.0
+    # The gap is like for like — our Google rating against theirs — or none
+    # at all (re-audit M-18): the 90-day sample is reported, never compared.
+    assert out["gap_vs_median"] is None
+    c = models.get_conn(db_path)
+    c.execute("UPDATE restaurants SET gbp_rating=4.0 WHERE id=1")
+    c.commit(); c.close()
+    out = ri.competitor_benchmark(1)
     assert out["gap_vs_median"] == pytest.approx(-0.4, abs=0.01)
 
 

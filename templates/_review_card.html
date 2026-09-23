@@ -36,6 +36,14 @@
       <div class="draft-box" id="draft-box-{{ r.id }}">
         <div class="draft-lbl">Cavnar's reply</div>
         <div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.draft_response|e }}</div>
+        {# The reply guard's flag (ai_guard.unsupported_commitments): the
+           draft states an action, a comp or a staff conversation nobody told
+           Cavnar about. iOS showed it; the web card showed a plain Approve,
+           so "a complimentary dinner on us" went to Google unread (M-1).
+           approveR and saveDraft read data-flag-reason and ask first. #}
+        {% if r.draft_needs_review and r.response_status != 'posted' %}
+        <div class="ai-caveat draft-flag" id="draft-flag-{{ r.id }}" data-flag-reason="{{ (r.draft_review_reason or 'states something Cavnar cannot confirm')|e }}" style="margin:8px 0 0"><span aria-hidden="true">⚠</span><span><b>Read this one before you post it.</b> This reply {{ (r.draft_review_reason or 'states something Cavnar cannot confirm')|e }}.</span></div>
+        {% endif %}
         <div class="draft-actions" id="draft-actions-{{ r.id }}">
           {% if r.response_status=='posted' %}
             <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
@@ -63,7 +71,9 @@
               <span class="rv2-status ok">✓ Approved</span>
               <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Will post to Google once connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
             {% endif %}
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Edit</button>
+            {# Undo, not skip (M-29): an approved reply being edited was not
+               turned down, and a skip counted against auto-approve trust. #}
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="editApprovedR({{ r.id }})">Edit</button>
             {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
           {% elif r.response_status=='skipped' %}
             <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>

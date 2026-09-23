@@ -1,14 +1,17 @@
 import SwiftUI
 
-/// "Value delivered since you joined" as a full-bleed band: the count-up
-/// figure on top, this month's gain under it, and the value history drawn
+/// "Measured value, per month" as a full-bleed band: the count-up figure on
+/// top (a monthly run-rate of measured improvements, value_delivered.headline
+/// — never a lifetime total, H-8), this month's gain under it with the
+/// modules it was measured on, and the value history drawn
 /// as the band's own backdrop — a green line that reveals left to right
 /// while the number climbs. The 1M/3M/6M chart moved to a tap-through
 /// (the chevron); Home shouldn't ask you to operate a chart.
 struct HomeValueBand: View {
     let total: Int
     let history: [ValueSnapshot]
-    let activeModuleKeys: [String]
+    /// Where the figure came from — only modules with measured dollars.
+    var measuredOn: [ValueModulePart] = []
     /// True once this band has actually been revealed on screen.
     ///
     /// Both animations in here — the count-up and the sparkline's line
@@ -41,7 +44,7 @@ struct HomeValueBand: View {
                 .opacity(hasRealTrend ? 1 : 0.35)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("VALUE DELIVERED SINCE YOU JOINED")
+                Text("MEASURED VALUE \u{00B7} PER MONTH")
                     .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.6)
                     .foregroundStyle(Color.cavnarEmber2)
@@ -104,26 +107,29 @@ struct HomeValueBand: View {
                 .font(.cavnarNumber(13, weight: 700))
              + Text(Self.digits(delta))
                 .font(.cavnarNumber(13, weight: 700))
-             + Text(" this month")
+             + Text("/mo since the 1st")
                 .font(.cavnarBody(13, weight: 700)))
                 .foregroundStyle(Color.cavnarGreen)
-            + Text(" · " + contributions)
+            + Text(contributions.map { " \u{00B7} " + $0 } ?? "")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
+        } else if let contributions {
+            Text(contributions)
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
         } else {
-            Text("Tracking starts today · grows as Cavnar AI answers, trims, and catches things")
+            Text("Grows as tracked changes are measured before and after")
                 .font(.cavnarBody(13, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
         }
     }
 
-    private var contributions: String {
-        var parts: [String] = []
-        if activeModuleKeys.contains("reviews") { parts.append("reviews answered") }
-        if activeModuleKeys.contains("labor") { parts.append("labor trimmed") }
-        if activeModuleKeys.contains("inventory") { parts.append("waste caught") }
-        if activeModuleKeys.contains("marketing") { parts.append("posts drafted") }
-        return parts.isEmpty ? "everything Cavnar AI runs" : parts.joined(separator: ", ")
+    /// "measured on labor, food cost" — from the modules the dollars were
+    /// actually measured on (H-8). It was built from the modules switched on,
+    /// and credited replies and posts, which produce no measured value.
+    private var contributions: String? {
+        let parts = measuredOn.map(\.label)
+        return parts.isEmpty ? nil : "measured on " + parts.joined(separator: ", ")
     }
 
     /// Gain since the first snapshot of this calendar month, or nil when

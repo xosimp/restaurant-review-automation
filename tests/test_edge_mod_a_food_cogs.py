@@ -328,7 +328,8 @@ def test_reprice_monthly_margin_matches_its_stated_basis(db_path, monkeypatch):
     monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda r: ([{"item": "Beef", "unit_cost": 6.0}], True))
     monkeypatch.setattr(inventory, "compute_item_trends", lambda r, items: {})
     monkeypatch.setattr(inventory, "build_price_watch", lambda t: [
-        {"item": "Beef", "old_price": 5.0, "new_price": 6.0, "change_pct": 20.0}])
+        # A sustained rise: a one-week spike never prices a menu (re-audit M-13).
+        {"item": "Beef", "kind": "trend", "weeks": 3, "old_price": 5.0, "new_price": 6.0, "change_pct": 20.0}])
     monkeypatch.setattr(il, "menu_profitability", lambda r: {"priced": [
         {"id": mid, "name": "Burger", "sell_price": 15.0, "plate_cost": 6.0, "units_sold": 28}]})
     s = menu_intelligence.reprice_suggestions(rid)["suggestions"][0]

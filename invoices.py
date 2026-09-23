@@ -30,7 +30,17 @@ import math
 from ai_utils import model_for
 import re
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): the
+    bound copy kept whatever models.get_conn was when this module was first
+    imported — in a test run, a previous test's database."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 log = logging.getLogger(__name__)
 
@@ -323,6 +333,24 @@ def scan(restaurant_id, data, media_type, user_id=None, db_path=DB_PATH, client=
     return proposal
 
 
+def mark_applied(out, applied, auto_applied):
+    """Tag each line of a proposal with whether it went in, and say whether
+    the import still waits for the owner: the rule applied some lines on
+    its own and no person has acted on the rest yet (M-4). Web and iOS show
+    the remaining lines with an apply button while `awaiting_owner`."""
+    applied = [a for a in (applied or []) if isinstance(a, dict)]
+    done = {a.get("index") for a in applied}
+    for ln in out.get("lines") or []:
+        ln["applied"] = ln.get("index") in done
+        if ln["applied"]:
+            ln["selected"] = False
+    owner_acted = any(a.get("by") == "owner" for a in applied)
+    out["auto_applied_count"] = sum(1 for a in applied if a.get("by") == "rule") if auto_applied else 0
+    out["awaiting_owner"] = bool(auto_applied and not owner_acted
+                                 and any(not ln.get("applied") for ln in (out.get("lines") or [])))
+    return out
+
+
 def get_import(restaurant_id, import_id, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
@@ -336,11 +364,14 @@ def get_import(restaurant_id, import_id, db_path=DB_PATH):
     if not row:
         return None
     body = json.loads(row["lines_json"] or "{}")
-    return {"id": row["id"], "supplier": row["supplier"], "invoice_date": row["invoice_date"],
-            "lines": body.get("lines", []), "total_check": body.get("total_check"),
-            "applied": json.loads(row["applied_json"]) if row["applied_json"] else None,
-            "applied_at": row["applied_at"], "created_at": row["created_at"],
-            "ingredients": ingredients}
+    applied = json.loads(row["applied_json"]) if row["applied_json"] else None
+    out = {"id": row["id"], "supplier": row["supplier"], "invoice_date": row["invoice_date"],
+           "lines": body.get("lines", []), "total_check": body.get("total_check"),
+           "applied": applied,
+           "applied_at": row["applied_at"], "created_at": row["created_at"],
+           "ingredients": ingredients}
+    auto = row["auto_applied"] if "auto_applied" in row.keys() else 0
+    return mark_applied(out, applied, bool(auto))
 
 
 def list_imports(restaurant_id, limit=20, db_path=DB_PATH):
@@ -360,24 +391,39 @@ def list_imports(restaurant_id, limit=20, db_path=DB_PATH):
 
 # ── 3. apply ──────────────────────────────────────────────────────────────────
 
-def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH):
+def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, auto=False):
     """Write the confirmed costs. selections: [{"index", "ingredient_id",
     "unit_cost"}] — the owner's choices, which may differ from the proposal
     (a different ingredient, a corrected cost). Returns {"ok", "updated"}.
 
-    One import applies once: a second tap, or a second device, must not
-    write the same invoice twice on top of a correction made in between.
+    Each LINE applies once: a second tap, or a second device, must not
+    write the same line twice on top of a correction made in between. An
+    import is not closed by its first apply, though. The trusted-supplier
+    rule (ordering.auto_apply_if_trusted, auto=True) applies only the
+    verified lines, and the flagged ones it skipped still wait for a person;
+    they used to answer "already been applied" (409) because the rule had
+    claimed the whole import (M-4). A later apply writes only lines not
+    already in applied_json.
     """
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT applied_at FROM invoice_imports WHERE id=? AND restaurant_id=?",
+        row = conn.execute("SELECT applied_at, applied_json FROM invoice_imports WHERE id=? AND restaurant_id=?",
                            (import_id, restaurant_id)).fetchone()
         if not row:
             return {"ok": False, "error": "Invoice not found."}
+        prior_json = row["applied_json"]
+        prior = []
         if row["applied_at"]:
-            return {"ok": False, "error": "This invoice has already been applied."}
+            try:
+                prior = [p for p in (json.loads(prior_json or "[]") or []) if isinstance(p, dict)]
+            except Exception:
+                prior = []
+        done_idx = {p.get("index") for p in prior}
         applied = []
         for s in selections or []:
+            if row["applied_at"] and s.get("index") in done_idx:
+                continue          # this line already went in
+
             try:
                 ing_id = int(s["ingredient_id"])
                 cost = round(float(s["unit_cost"]), 4)
@@ -394,12 +440,23 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH):
             conn.execute("UPDATE ingredients SET unit_cost=?, updated_at=datetime('now') "
                          "WHERE id=? AND restaurant_id=?", (cost, ing_id, restaurant_id))
             applied.append({"index": s.get("index"), "ingredient_id": ing_id,
-                            "name": ing["name"], "old_cost": ing["unit_cost"], "new_cost": cost})
+                            "name": ing["name"], "old_cost": ing["unit_cost"], "new_cost": cost,
+                            "by": "rule" if auto else "owner"})
+        if row["applied_at"] and not applied:
+            conn.rollback()
+            return {"ok": False, "error": "This invoice has already been applied."}
         # Claim the import in the same transaction as the writes, guarded on
-        # applied_at still being NULL, so two concurrent applies can't both win.
-        cur = conn.execute("UPDATE invoice_imports SET applied_json=?, applied_at=datetime('now') "
-                           "WHERE id=? AND restaurant_id=? AND applied_at IS NULL",
-                           (json.dumps(applied), import_id, restaurant_id))
+        # the state this apply read (applied_at NULL, or the same applied
+        # lines), so two concurrent applies can't both win.
+        if row["applied_at"]:
+            cur = conn.execute("UPDATE invoice_imports SET applied_json=? "
+                               "WHERE id=? AND restaurant_id=? AND applied_at IS NOT NULL "
+                               "AND COALESCE(applied_json,'') = COALESCE(?,'')",
+                               (json.dumps(prior + applied), import_id, restaurant_id, prior_json))
+        else:
+            cur = conn.execute("UPDATE invoice_imports SET applied_json=?, applied_at=datetime('now'), "
+                               "auto_applied=? WHERE id=? AND restaurant_id=? AND applied_at IS NULL",
+                               (json.dumps(applied), 1 if auto else 0, import_id, restaurant_id))
         if cur.rowcount != 1:
             conn.rollback()
             return {"ok": False, "error": "This invoice has already been applied."}

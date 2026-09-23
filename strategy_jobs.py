@@ -1213,7 +1213,7 @@ QUIET_NIGHT_DRAFT_DAYS = 3
 
 def _quiet_night_drafts(conn, restaurant_id):
     return conn.execute(
-        "SELECT id, status, created_at FROM marketing_drafts WHERE restaurant_id=? "
+        "SELECT id, status, created_at, approved_at FROM marketing_drafts WHERE restaurant_id=? "
         "AND (topic LIKE ? OR topic LIKE ?) ORDER BY created_at DESC, id DESC LIMIT 60",
         (restaurant_id, "%" + _QN_POST_SUFFIX, "%" + _QN_SMS_SUFFIX)).fetchall()
 
@@ -1244,7 +1244,9 @@ def quiet_night_ignored_weeks(restaurant_id, db_path=DB_PATH) -> int:
     for d in drafts:
         wk = _wk(d["created_at"])
         if wk:
-            by_week.setdefault(wk, []).append(d["status"])
+            # An approved draft that later expired unsent was still an
+            # approval: expire_quiet_night_drafts retires approved ones too.
+            by_week.setdefault(wk, []).append("approved" if d["approved_at"] else d["status"])
     weeks = [w for w in dict.fromkeys(_wk(p["fired_at"]) for p in pushes) if w]
     ignored = 0
     for wk in weeks:
@@ -1258,14 +1260,19 @@ def quiet_night_ignored_weeks(restaurant_id, db_path=DB_PATH) -> int:
 
 
 def expire_quiet_night_drafts(restaurant_id, db_path=DB_PATH) -> int:
-    """A quiet-night post or guest text still unapproved after its night has
-    passed is retired (status 'expired'), so nobody can approve a "come in
-    Tuesday" on Thursday. approve_draft only approves status='draft'."""
+    """A quiet-night post or guest text not sent by the time its night has
+    passed is retired (status 'expired'), so nobody can approve — or send —
+    a "come in Tuesday" on Thursday. approve_draft only approves
+    status='draft'.
+
+    Approved drafts expire too (M-21): approval is not sending, and an
+    approved but unsent quiet-night post stayed approved and sendable on
+    Thursday and forever after."""
     conn = get_conn(db_path)
     try:
         n = conn.execute(
             "UPDATE marketing_drafts SET status='expired', updated_at=datetime('now') "
-            "WHERE restaurant_id=? AND status='draft' AND (topic LIKE ? OR topic LIKE ?) "
+            "WHERE restaurant_id=? AND status IN ('draft', 'approved') AND (topic LIKE ? OR topic LIKE ?) "
             "AND created_at < datetime('now', ?)",
             (restaurant_id, "%" + _QN_POST_SUFFIX, "%" + _QN_SMS_SUFFIX,
              f"-{QUIET_NIGHT_DRAFT_DAYS} days")).rowcount

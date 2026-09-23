@@ -19,8 +19,14 @@ struct HomeSummary: Codable {
     let reviewsAwaitingApproval: Int
     let modules: [ModuleSummary]
     let needsAttention: [NeedsAttentionItem]
+    /// A MONTHLY run-rate of measured improvements (value_delivered.headline),
+    /// not a lifetime total — H-8.
     let totalValueDelivered: Int
     let valueHistory: [ValueSnapshot]
+    /// "measured, per month", and the modules the figure was measured on,
+    /// largest first. Optional: an older server omits them.
+    let valueLabel: String?
+    let valueByModule: [ValueModulePart]?
     // Computed server-side by the exact same is_in_quiet_hours() check
     // notify.py's own alert dispatch gates on, so the Home badge can never
     // disagree with what's actually being held back right now.
@@ -90,6 +96,8 @@ struct HomeSummary: Codable {
         case modules
         case needsAttention = "needs_attention"
         case totalValueDelivered = "total_value_delivered"
+        case valueLabel = "value_label"
+        case valueByModule = "value_by_module"
         case valueHistory = "value_history"
         case quietHoursActive = "quiet_hours_active"
         case alertQuietEnd = "alert_quiet_end"
@@ -227,6 +235,13 @@ struct HomeWeeklyReceipt: Codable, Identifiable, Hashable {
 struct ValueSnapshot: Codable, Hashable {
     let date: String
     let value: Int
+}
+
+/// One module's share of the measured monthly value (value_delivered.headline).
+struct ValueModulePart: Codable, Hashable {
+    let module: String
+    let label: String
+    let monthly: Double
 }
 
 /// One entry in the active-modules list. `icon` is a small semantic

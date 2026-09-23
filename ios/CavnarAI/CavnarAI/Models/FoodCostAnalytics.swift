@@ -354,11 +354,18 @@ struct FoodCostCFO: Decodable {
         let available: Bool
         let drivers: [Driver]
         let totalMonthly: Double?
+        /// The same dollars with no ingredient counted twice — the figure the
+        /// web card shows. The plain sum counts one ingredient up to four
+        /// times (M-10).
+        let totalMonthlyDeduplicated: Double?
         let reason: String?
         enum CodingKeys: String, CodingKey {
             case available, drivers, reason
             case totalMonthly = "total_monthly"
+            case totalMonthlyDeduplicated = "total_monthly_deduplicated"
         }
+        /// The one "at stake" figure to state.
+        var atStake: Double? { totalMonthlyDeduplicated ?? totalMonthly }
     }
 
     /// One driver of cost movement. Ranked server-side by dollars, then
@@ -399,6 +406,8 @@ struct FoodCostCFO: Decodable {
         let answered: Bool?
         let asOf: String?
         let staleNote: String?
+        /// Figures in the cause the server could not trace to the data (M-17).
+        let unsupportedFigures: [String]?
 
         struct OperationalEvidence: Decodable, Hashable {
             let module: String
@@ -410,6 +419,7 @@ struct FoodCostCFO: Decodable {
             case recKey = "rec_key"
             case asOf = "as_of"
             case staleNote = "stale_note"
+            case unsupportedFigures = "unsupported_figures"
             case alternativeCause = "alternative_cause"
             case whatWouldConfirm = "what_would_confirm"
             case recommendedAction = "recommended_action"

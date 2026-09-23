@@ -44,9 +44,12 @@ def _seed(db_path, name="Corner Bar", **kw):
 
 def _review(c, rid, rating, status="pending", urgency="normal", days_ago=1, text="ok", ext=None):
     import uuid
-    c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, fetched_at, sentiment, urgency, response_status, processed) "
-              "VALUES (?, 'google', ?, 'A', ?, ?, date('now', ?), datetime('now', ?), ?, ?, ?, 1)",
-              (rid, ext or uuid.uuid4().hex, rating, text, f"-{days_ago} days", f"-{days_ago} days", "negative" if rating <= 2 else "positive", urgency, status))
+    # A drafted review has its draft: Home counts only replies a publish can
+    # actually post (models.reply_queue_counts, re-audit M-2).
+    c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, fetched_at, sentiment, urgency, response_status, processed, draft_response) "
+              "VALUES (?, 'google', ?, 'A', ?, ?, date('now', ?), datetime('now', ?), ?, ?, ?, 1, ?)",
+              (rid, ext or uuid.uuid4().hex, rating, text, f"-{days_ago} days", f"-{days_ago} days", "negative" if rating <= 2 else "positive", urgency, status,
+               "Thank you!" if status == "drafted" else None))
 
 
 def test_new_account_gets_welcome_and_checklist_not_fake_numbers(db_path):

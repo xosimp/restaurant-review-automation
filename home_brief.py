@@ -640,7 +640,9 @@ def _build(current_user):
         # or the weekly job's own unseen drafts.
         import marketing as _mkt
         mkt["month"] = _mkt.pieces_this_month(rid)
-        mkt["week"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND julianday(created_at) >= julianday('now','-7 days')", (rid,)) or {}).get("n") or 0
+        # The same real-piece count as "this month" (M-27): all rows here
+        # put "5 this week" under "3 this month".
+        mkt["week"] = _mkt.count_pieces(rid, "-7 days")
         mkt["last_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=?", (rid,)) or {}).get("t")
         mkt["last_posted_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
         mkt["scheduled"] = _rows_dict(conn, "SELECT id, platform, topic, content_type, scheduled_for, status FROM marketing_scheduled_posts WHERE restaurant_id=? AND status IN ('scheduled','pending') AND scheduled_for >= datetime('now') ORDER BY scheduled_for LIMIT 3", (rid,))
@@ -649,7 +651,7 @@ def _build(current_user):
         try:
             mkt["post_result"] = _one_dict(conn,
                 "SELECT c.topic, COALESCE(c.posted_at, c.created_at) AS posted_at, a.lift_pct, a.item_lift_pct, "
-                "       a.reviews_mentioning, m.name AS menu_item_name "
+                "       a.reviews_mentioning, a.verdict, m.name AS menu_item_name "
                 "FROM marketing_attribution a JOIN marketing_content_log c ON c.id = a.content_log_id "
                 "LEFT JOIN menu_items m ON m.id = c.menu_item_id "
                 "WHERE a.restaurant_id=? AND a.lift_pct IS NOT NULL AND julianday(COALESCE(c.posted_at, c.created_at)) >= julianday('now','-10 days') "
@@ -662,15 +664,18 @@ def _build(current_user):
     # ── intel ───────────────────────────────────────────────────────────────
     intel = None
     if "intel" in active_keys:
-        intel = {"updated_at": r.get("competitor_updated_at"), "recs": 0, "competitors": 0}
+        intel = {"updated_at": r.get("competitor_updated_at"), "recs": 0, "competitors": 0, "withheld": 0}
         if r.get("competitor_intel"):
+            # Open recommendations only — not ones the owner answered, not
+            # ones an unverified read withheld (M-20).
             try:
-                from competitor_intel_format import extract_recs
-                blob = json.loads(r["competitor_intel"])
-                intel["recs"] = len(extract_recs(blob.get("insight", "")))
-                intel["competitors"] = len(blob.get("competitors") or [])
-            except Exception:
-                pass
+                from client_api import intel_open_recs
+                _io = intel_open_recs(rid, restaurant=r)
+                intel["recs"] = len(_io["recs"])
+                intel["competitors"] = _io["competitors"]
+                intel["withheld"] = _io["withheld"]
+            except Exception as e:
+                print(f"[home] intel recs failed for {rid}: {e}")
 
     # ── alerts ──────────────────────────────────────────────────────────────
     alerts_7d = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n, MAX(fired_at) AS last_at FROM alert_log WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-7 days') GROUP BY alert_type ORDER BY n DESC", (rid,))
@@ -688,13 +693,17 @@ def _build(current_user):
     # get_review_stats counts every drafted review ever imported, so a
     # freshly connected Google account read "212 drafted, waiting for you"
     # about years of history (#6). Older ones are counted, and said, apart.
-    from thresholds import REPLY_OWED_MAX_AGE_DAYS
-    owed = _one_dict(conn, "SELECT SUM(recent AND response_status='drafted') AS drafted, "
-                           "SUM(NOT recent AND response_status='drafted') AS drafted_older FROM ("
-                           "SELECT response_status, COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?) AS recent "
-                           "FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted')",
-                     (f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days", rid)) or {}
+    # The count is the set a bulk publish may post (models.reply_queue_
+    # counts): urgent and flagged drafts are held for a person and named
+    # apart, so "Publish N" never counts a reply the tap would not — or
+    # must not — post (M-2). iOS Home reads the same function.
     conn.close()
+    try:
+        from models import reply_queue_counts
+        owed = reply_queue_counts(rid)
+    except Exception as e:
+        print(f"[home] reply queue count failed for {rid}: {e}")
+        owed = {}
 
     # Alerts are scoped to what this login may see, exactly as the
     # notification list is (client_api._sees). Home read alert_log with no
@@ -782,8 +791,9 @@ def _build(current_user):
         urgent = int(rstats.get("urgent") or 0)
         # Drafted replies to reviews from the last 30 days; older drafts are
         # history and are named separately, never counted in (#6).
-        awaiting = int(owed.get("drafted") or 0)
-        awaiting_older = int(owed.get("drafted_older") or 0)
+        awaiting = int(owed.get("publishable") or 0)
+        awaiting_older = int(owed.get("older") or 0)
+        awaiting_held = int(owed.get("held") or 0)
         rate = float(rstats.get("response_rate") or 0)
         avg30 = float(rstats.get("avg_rating_30d") or 0)
         n30 = int(rstats.get("last_30d") or 0)
@@ -818,7 +828,9 @@ def _build(current_user):
                      # "Publish 1" alone doesn't say what gets published.
                      f"Publish {min(awaiting, 25)} {_plural(min(awaiting, 25), 'reply', 'replies').split(' ', 1)[1]}",
                      action="publish_replies",
-                     evidence=f"{awaiting} drafted" + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""))
+                     evidence=f"{awaiting} drafted"
+                     + (f" · {awaiting_held} urgent or flagged held for you to read" if awaiting_held else "")
+                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""))
             # The tap publishes exactly what the label counts (approve-all
             # takes a limit, newest first) — not 25 including the history.
             attention[-1]["action"]["count"] = min(awaiting, 25)
@@ -914,7 +926,11 @@ def _build(current_user):
                 ev_band = "high" if cnt >= 8 else ("medium" if cnt >= 5 else "low")
                 if dg:
                     band = dg.get("confidence") if dg.get("confidence") in ("low", "medium", "high") else ev_band
-                    add_rec(f"top_issue:{cat}", str(dg["recommended_action"]).strip().rstrip("."),
+                    # The Reviews diagnosis card's own key ("diag_review:<cat>"),
+                    # so "Not for us" on either one holds on both (M-9).
+                    from client_api import diagnosis_rec_key as _drk_rv
+                    add_rec(_drk_rv("diag_review", dg) or f"top_issue:{cat}",
+                            str(dg["recommended_action"]).strip().rstrip("."),
                             (dg.get("cause") or f"{lbl} is the most-mentioned complaint over 90 days.").strip(),
                             f"{lbl} raised in {cnt} reviews over 90 days"
                             + ((" · " + (dg.get("stale_note") or "diagnosis older than a week").rstrip("."))
@@ -1138,7 +1154,13 @@ def _build(current_user):
                         conf=("medium", "one week of waste counts"),
                         if_ignored="the same share keeps going in the bin every week", effort="low")
             elif _dg and _dg.get("recommended_action"):
-                add_rec("food_diagnosis", str(_dg["recommended_action"]).strip().rstrip("."),
+                # The Food Cost card's key for this diagnosis — its lead
+                # driver — not the static "food_diagnosis", whose one Done
+                # or Not for us hid every future food diagnosis on Home for
+                # ten years, whatever drove it (M-9, H-13).
+                from client_api import diagnosis_rec_key as _drk_fd
+                add_rec(_drk_fd("diag_food", _dg) or "food_diagnosis",
+                        str(_dg["recommended_action"]).strip().rstrip("."),
                         (_dg.get("cause") or "").strip() or "From the stored food cost diagnosis.",
                         _dg.get("headline") or "", "Food cost · margin", "inventory", "This week", "moderate",
                         "See the numbers", metric="food_cost_pct", dollars=_dg.get("dollars_at_stake"),
@@ -1259,19 +1281,25 @@ def _build(current_user):
         # attribution row, so Home stays a read; the sync computes it.
         pr = mkt.get("post_result")
         if pr:
-            bits = [f"{pr['lift_pct']:+.0f}% sales vs the same weekday"]
+            # Coloured and worded from the noise-band verdict, never the
+            # sign (M-23): +1% on a weekday that swings 15% was a green win.
+            _verdict = pr.get("verdict")
+            bits = [f"{pr['lift_pct']:+.0f}% sales vs the same weekday"
+                    + (" — within its normal swing" if _verdict == "no_clear_change" else "")]
             if pr.get("item_lift_pct") is not None and pr.get("menu_item_name"):
                 bits.append(f"{pr['menu_item_name']} {pr['item_lift_pct']:+.0f}%")
             if pr.get("reviews_mentioning"):
                 bits.append(f"{_plural(int(pr['reviews_mentioning']), 'review')} mentioned it")
             add_change(f"Your post on {pr.get('topic') or 'the last post'}: " + " · ".join(bits),
-                       "good" if pr["lift_pct"] >= 0 else "bad", "marketing", at=pr.get("posted_at"))
+                       {"lifted": "good", "dropped": "bad"}.get(_verdict, "neutral"), "marketing",
+                       at=pr.get("posted_at"))
         for p in mkt.get("scheduled") or []:
             upcoming.append({"label": f"{(p.get('platform') or '').title()} post · {p.get('topic') or p.get('content_type') or 'scheduled'}", "when": p.get("scheduled_for"), "module": "marketing", "kind": "post"})
         snapshot.append({"key": "marketing", "label": "Marketing", "status": "available", "value": str(mkt.get("month", 0)), "unit": "pieces this month",
                          "delta": ({"value": f"{mkt.get('week', 0)} this week", "label": "", "good": (mkt.get("week") or 0) > 0}),
                          "secondary": [{"label": "Scheduled", "value": str(len(mkt.get("scheduled") or []))}, {"label": "Last live", "value": (f"{int(posted_age)}d ago" if posted_age is not None else "—")}, {"label": "Channels", "value": ", ".join(x for x, on in (("IG", mkt.get("ig_connected")), ("FB", mkt.get("fb_connected"))) if on) or "none"}],
-                         "interpretation": (f"Next post {mkt['scheduled'][0].get('scheduled_for', '')[:10]} on {(mkt['scheduled'][0].get('platform') or '').title()}." if mkt.get("scheduled") else ("Nothing scheduled — draft something for this week." if mkt.get("ig_connected") or mkt.get("fb_connected") else "Connect Instagram to publish and track posts from here.")),
+                         # M/D/YY, like every owner-facing date (M-26, H-20).
+                         "interpretation": (f"Next post {_mdy(mkt['scheduled'][0].get('scheduled_for', ''))} on {(mkt['scheduled'][0].get('platform') or '').title()}." if mkt.get("scheduled") else ("Nothing scheduled — draft something for this week." if mkt.get("ig_connected") or mkt.get("fb_connected") else "Connect Instagram to publish and track posts from here.")),
                          "state": "bad" if mkt.get("failed") else ("warn" if (posted_age is not None and posted_age > 10) or not (mkt.get("ig_connected") or mkt.get("fb_connected")) else "good"),
                          "spark": [], "spark_label": None, "attention": bool(mkt.get("failed")), "sample": False, "last_data": mkt.get("last_at")})
         ask.append("What should I post about this week?")
@@ -1283,7 +1311,14 @@ def _build(current_user):
                           "note": f"{intel['competitors']} competitors tracked" if intel["competitors"] else "no competitors added"})
         snapshot.append({"key": "intel", "label": "Intel", "status": "available", "value": str(intel["recs"]) if intel["competitors"] else "—", "unit": "recommendations" if intel["competitors"] else "",
                          "delta": None, "secondary": [{"label": "Competitors", "value": str(intel["competitors"])}, {"label": "Updated", "value": (f"{int(age)}d ago" if age is not None else "—")}],
-                         "interpretation": "Weekly competitor read is ready." if intel["recs"] else "Add competitors on the Intel tab to get a weekly comparison.",
+                         # Three different states, said apart (M-20): no
+                         # competitors yet; tracked but nothing open; open.
+                         "interpretation": ("Weekly competitor read is ready." if intel["recs"]
+                                            else ("Add competitors on the Intel tab to get a weekly comparison."
+                                                  if not intel["competitors"]
+                                                  else ("This week's suggestions were held back — their figures couldn't be checked."
+                                                        if intel.get("withheld")
+                                                        else "Nothing open from this week's competitor read."))),
                          "state": "good" if intel["recs"] else "neutral", "spark": [], "spark_label": None, "attention": False, "sample": False, "last_data": intel.get("updated_at")})
         if intel["recs"] and age is not None and age <= 8:
             # Say only what the data shows (#46): the read is a model-written
@@ -1382,13 +1417,25 @@ def _build(current_user):
     overnight = _mob._home_overnight(rid)
     receipts = _mob._home_weekly_receipts(rid, active_keys, inv if inv_live else {})
     checklist = _mob._setup_checklist(restaurant, rstats, labor, active_keys)
-    from value_delivered import compute_total_value_delivered, record_value_snapshot, get_value_history
-    total_value = compute_total_value_delivered(rid)
+    # The headline as THIS viewer may see it, a monthly run-rate of what was
+    # measured, with where it came from (H-8). A filtered figure is not the
+    # restaurant's, so it is neither snapshotted nor drawn against the
+    # restaurant-wide history.
+    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history
     try:
-        record_value_snapshot(rid, total_value)
-    except Exception:
-        pass
-    value_history = get_value_history(rid, days=365)
+        _vh = _value_headline(rid, user=current_user)
+    except Exception as e:
+        print(f"[home] value headline failed for {rid}: {e}")
+        _vh = {"monthly": 0, "by_module": [], "label": "measured, per month", "restaurant_wide": False}
+    total_value = _vh["monthly"]
+    if _vh.get("restaurant_wide"):
+        try:
+            record_value_snapshot(rid, total_value)
+        except Exception as e:
+            print(f"[home] value snapshot failed for {rid}: {e}")
+        value_history = get_value_history(rid, days=365)
+    else:
+        value_history = []
 
     has_any_data = bool(rstats.get("total")) or labor_live or inv_live or bool(mkt.get("last_at") if mkt else False)
     empty_state = None
@@ -1457,8 +1504,12 @@ def _build(current_user):
 
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []
-    if "reviews" in active_keys and int(rstats.get("awaiting_approval") or 0):
-        quick.append({"key": "publish", "label": f"Publish {min(int(rstats['awaiting_approval']), 25)} replies", "kind": "publish_replies", "module": "reviews", "count": int(rstats["awaiting_approval"])})
+    # The same count the attention card and approve-all use (M-2): the tap
+    # publishes min(n, 25) of exactly these, and `count` is what it posts.
+    _pub = int(owed.get("publishable") or 0)
+    if "reviews" in active_keys and _pub:
+        quick.append({"key": "publish", "label": f"Publish {min(_pub, 25)} {'reply' if min(_pub, 25) == 1 else 'replies'}",
+                      "kind": "publish_replies", "module": "reviews", "count": min(_pub, 25)})
     if "reviews" in active_keys and int(rstats.get("urgent") or 0):
         quick.append({"key": "urgent", "label": "Answer urgent reviews", "kind": "open_module", "module": "reviews", "count": int(rstats["urgent"])})
     quick.append({"key": "ask", "label": "Ask Cavnar AI", "kind": "ask", "module": None, "count": None})
@@ -1540,7 +1591,8 @@ def _build(current_user):
         "quick_actions": quick,
         "ask_suggestions": ask,
         "upcoming": upcoming[:5],
-        "value": {"total": total_value, "history": value_history},
+        "value": {"total": total_value, "history": value_history, "per": "month",
+                  "label": _vh.get("label"), "by_module": _vh.get("by_module") or []},
         "receipts": receipts,
         "setup_checklist": checklist,
         "quiet_hours_active": is_in_quiet_hours(rid),

@@ -440,12 +440,15 @@ struct IntelView: View {
     /// poorly" unmistakably negative at a glance, not just on close read.
     private func marketSection(_ section: IntelSection) -> some View {
         let isGood = section.name.localizedCaseInsensitiveContains("well")
-        let tone = isGood ? Color.cavnarGreen : Color.cavnarRed
-        let icon = isGood ? "checkmark" : "xmark"
+        let isBad = section.name.localizedCaseInsensitiveContains("poorly")
+        // Price positioning is a fact about the market, not a verdict: its
+        // own neutral treatment (M-28 — it used to be dropped entirely).
+        let tone = isGood ? Color.cavnarGreen : (isBad ? Color.cavnarRed : Color.cavnarInk3)
+        let icon = isGood ? "checkmark" : (isBad ? "xmark" : "tag")
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
-                Image(systemName: isGood ? "arrow.up.right" : "arrow.down.right")
+                Image(systemName: isGood ? "arrow.up.right" : (isBad ? "arrow.down.right" : "dollarsign"))
                     .font(.system(size: 9, weight: .bold))
                 Text(section.name.uppercased())
                     .font(.cavnarBody(14, weight: 700))

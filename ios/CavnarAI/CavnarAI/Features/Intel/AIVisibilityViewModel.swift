@@ -92,6 +92,10 @@ struct AIVisibilityResult: Decodable {
     // restaurant's actual public listing and review record; setup counts
     // this product's own configuration and is deliberately not scored.
     let presenceScore: Int?
+    /// How many presence items the score is out of, and how many could not
+    /// be read (left out of it, never counted as 0) — M-14.
+    let presenceMeasured: Int?
+    let presenceUnmeasured: Int?
     let setupDone: Int?
     let setupTotal: Int?
     let claimKinds: [String: String]?
@@ -158,6 +162,8 @@ struct AIVisibilityResult: Decodable {
         case citySource = "city_source"
         case gbpScore = "gbp_score"
         case presenceScore = "presence_score"
+        case presenceMeasured = "presence_measured"
+        case presenceUnmeasured = "presence_unmeasured"
         case setupDone = "setup_done"
         case setupTotal = "setup_total"
         case claimKinds = "claim_kinds"

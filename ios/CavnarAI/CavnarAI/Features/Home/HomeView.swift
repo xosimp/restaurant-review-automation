@@ -139,7 +139,7 @@ struct HomeView: View {
                             HomeValueBand(
                                 total: summary.totalValueDelivered,
                                 history: summary.valueHistory,
-                                activeModuleKeys: summary.modules.filter(\.isAvailable).map(\.key),
+                                measuredOn: summary.valueByModule ?? [],
                                 // Its count-up and line reveal wait for this
                                 // rather than for onAppear — see the flag's
                                 // own comment in HomeValueBand.

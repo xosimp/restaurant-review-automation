@@ -17,7 +17,15 @@ parameter after a colon: "weekday_sales:Tuesday", "complaints:service".
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH, REVIEW_TIME_AXIS_BARE
+import models as _models_mod
+from models import DB_PATH, REVIEW_TIME_AXIS_BARE
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 
 def _f(v, default=None):

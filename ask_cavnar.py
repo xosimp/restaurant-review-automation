@@ -405,10 +405,17 @@ def _intel_context(restaurant_id):
         insight = _json.loads(raw).get("insight", "") or ""
     except Exception:
         insight = raw if isinstance(raw, str) else ""
+    # Open recommendations only: a line the owner answered "Not for us" (or
+    # an unverified read withheld) is not handed to the model as current
+    # advice (M-20).
     try:
-        recs = extract_recs(insight)
+        from client_api import intel_open_recs
+        recs = intel_open_recs(restaurant_id, restaurant=restaurant)["recs"]
     except Exception:
-        return "COMPETITOR INTEL\n- No competitor analysis run yet.\n"
+        try:
+            recs = extract_recs(insight)
+        except Exception:
+            return "COMPETITOR INTEL\n- No competitor analysis run yet.\n"
     updated = restaurant.competitor_updated_at or "unknown date"
     lines = [f"COMPETITOR INTEL (last updated {updated})"]
     if recs:

@@ -271,7 +271,11 @@ def test_no_branch_of_the_checklist_asserts_how_third_party_ai_works():
 
 def test_claim_kinds_travel_with_the_numbers(db_path, monkeypatch):
     p = _payload(monkeypatch, db_path, answers=["x"] * 12)
-    assert p["claim_kinds"]["presence_score"] == "measured"
+    # Google isn't connected here, so the listing fields can't be read: they
+    # are left out of the score and the score says it is partial (re-audit
+    # M-14) rather than "measured" with four items counted as not done.
+    assert p["claim_kinds"]["presence_score"] == "partial"
+    assert p["presence_unmeasured"] == 4
     assert p["claim_kinds"]["setup_done"] == "configuration"
 
 

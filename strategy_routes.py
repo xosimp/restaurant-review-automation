@@ -525,7 +525,7 @@ def _do_auto_order_get(u):
             t = ordering.supplier_trust(_rid(u), row["supplier_email"])
             suppliers.append({"name": row["supplier_name"] or row["supplier_email"], "email": row["supplier_email"],
                               "orders": t["orders"], "median_total": t["median_total"], "trusted": t["trusted"],
-                              "needed": max(0, ordering.ORDER_TRUST_MIN - t["orders"])})
+                              "needed": max(0, ordering.ORDER_TRUST_MIN - (t["orders"] - t.get("edited", 0)))})
     except Exception:
         pass
     # An automatic order waits for a count from the last week
@@ -774,7 +774,7 @@ def _do_trust(u):
             for row in rows:
                 t = ordering.supplier_trust(_rid(u), row["supplier_email"])
                 out["suppliers"].append({"name": row["supplier_name"] or row["supplier_email"], **t,
-                                         "needed": max(0, ordering.ORDER_TRUST_MIN - t["orders"])})
+                                         "needed": max(0, ordering.ORDER_TRUST_MIN - (t["orders"] - t.get("edited", 0)))})
             for row in inv:
                 t = ordering.invoice_trust(_rid(u), row["supplier"])
                 out["invoices"].append({"supplier": row["supplier"], **t,
@@ -1336,10 +1336,74 @@ def _do_calibration_apply(u):
     return {"ok": True, "weights": after}, 200
 
 
+# The metric a module's recommendation is measured against when the owner
+# taps Track — the module's natural number, in the order to try. The first
+# one this restaurant can actually measure is used; with none, no tracker
+# starts and the answer says so (M-8). Intel has no metric of its own, so
+# neither client offers Track there.
+REC_TRACK_METRICS = {
+    "reviews": ("avg_rating",),
+    "food": ("food_cost_pct", "weekly_waste"),
+    "marketing": ("sales",),
+    "labor": ("labor_pct",),
+}
+
+
+def _rec_title(rid, key):
+    """The words the recommendation was shown with (rec_instances.title)."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT title FROM rec_instances WHERE restaurant_id=? AND key=? "
+                               "ORDER BY created_at DESC, rowid DESC LIMIT 1", (rid, key)).fetchone()
+        finally:
+            conn.close()
+        return (row["title"] if row and row["title"] else None)
+    except Exception as e:
+        print(f"[recs] title lookup failed for {rid} {key}: {e}")
+        return None
+
+
+def _start_rec_tracker(rid, key, module, user_id):
+    """Track: a real before-and-after tracker (outcomes.record) on the
+    module's natural metric. Returns (outcome row, metric description) or
+    (None, None) when nothing here can be measured for this restaurant."""
+    import metrics
+    import outcomes
+    for metric in REC_TRACK_METRICS.get(module or "", ()):
+        try:
+            from datetime import date as _date, timedelta as _td
+            value = metrics.trailing(rid, metric, end=(_date.today() - _td(days=1)).isoformat())["value"]
+        except Exception as e:
+            print(f"[recs] {metric} not measurable for {rid}: {e}")
+            continue
+        if value is None:
+            continue
+        title = _rec_title(rid, key) or key
+        try:
+            row = outcomes.record(rid, "recommendation", key, title, metric, user_id=user_id)
+        except Exception as e:
+            print(f"[recs] tracker failed for {rid} {key}: {e}")
+            return None, None
+        return row, metrics.describe(metric)
+    return None, None
+
+
 def _do_rec_event(u):
     """An owner's response to any recommendation, from any client: opened,
     evidence viewed, accepted, dismissed (hide / not_for_us / done),
-    snoozed, completed. The one door into rec_ledger for web and iOS."""
+    snoozed, completed. The one door into rec_ledger for web and iOS.
+
+    What each answer does, and the sentence the client shows for it (M-8,
+    H-10) — both clients show `message` rather than their own promise:
+      completed  — "Done": silenced for SILENCE_DAYS["done"] (it said "won't
+                   suggest it again" and came back after 14 days);
+      dismissed  — "Not for us": silenced; the module's insight prompt is
+                   told not to suggest the same thing in other words;
+      accepted   — "Track": a real outcomes tracker on the module's metric
+                   when one can be measured, quiet for its window; otherwise
+                   no tracker, and the message says it is only hidden."""
     import rec_ledger as _rl
     from datetime import datetime as _dt, timedelta as _td
     b = _body()
@@ -1365,9 +1429,36 @@ def _do_rec_event(u):
         until = (_dt.utcnow() + _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(b.get("module"), str):
         meta["module"] = b["module"][:20]
+    module = meta.get("module") or (surface if surface in REC_TRACK_METRICS else None)
+    message = None
+    tracking = None
+    if event == "completed":
+        silence = _rl.SILENCE_DAYS["done"]
+        message = "Done \u2014 Cavnar won\u2019t suggest it again"
+    elif event == "dismissed" and meta.get("kind") == "not_for_us":
+        message = "Noted \u2014 it won\u2019t come back"
+    elif event == "accepted":
+        row, info = _start_rec_tracker(_rid(u), key.strip(), module, u.get("id"))
+        if row:
+            window = int(info["default_window_days"])
+            # Not re-asked while its outcome is being measured.
+            silence = max(_rl.ACCEPTED_QUIET_DAYS, window)
+            meta["tracker_id"] = row.get("id")
+            tracking = {"metric": info["key"], "label": info["label"], "window_days": window,
+                        "evaluate_on": row.get("evaluate_on")}
+            message = (f"Tracking \u2014 Cavnar will compare {info['label'].lower()} over the next "
+                       f"{window} days with the {window} before")
+        else:
+            message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
+                       "here Cavnar can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
                     meta=meta or None, silence_days=silence, snooze_until=until)
-    return {"ok": True, "recorded": ok}, 200
+    out = {"ok": True, "recorded": ok}
+    if message:
+        out["message"] = message
+    if tracking:
+        out["tracking"] = tracking
+    return out, 200
 
 
 def _do_standby_ask(u):

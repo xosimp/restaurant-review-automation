@@ -51,6 +51,13 @@ struct MarketingAnalyticsSection: View {
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
             } else if let insight = viewModel.insight {
+                // A figure the server couldn't trace to the data: said, and
+                // the lines carry no Done / Track (M-16). The phone never
+                // showed it, so an untraced number read as fact.
+                if insight.figuresVerified == false {
+                    CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
+                        .padding(.bottom, 10)
+                }
                 Text(insight.intro)
                     .font(.cavnarHeadline(18))
                     .foregroundStyle(Color.cavnarInk)

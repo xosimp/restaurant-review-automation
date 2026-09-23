@@ -179,6 +179,8 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     let asOf: String?
     /// The server's own sentence for a read that hasn't been refreshed.
     let staleNote: String?
+    /// Figures in the cause the server could not trace to the data (M-17).
+    let unsupportedFigures: [String]?
 
     struct OperationalEvidence: Decodable, Sendable, Equatable {
         let module: String
@@ -191,6 +193,7 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
         case recKey = "rec_key"
         case asOf = "as_of"
         case staleNote = "stale_note"
+        case unsupportedFigures = "unsupported_figures"
         case mentionCount = "mention_count"
         case windowDays = "window_days"
         case alternativeCause = "alternative_cause"

@@ -13,6 +13,11 @@ from ai_utils import (AIRefused, create_with_retry, extract_text, get_client, is
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
+class DraftNotReplaced(Exception):
+    """The review's reply was approved or posted while this draft was being
+    written, so the new text was not stored (M-25)."""
+
+
 
 def get_approved_examples(restaurant_id: int, limit: int = 4) -> str:
     """The style block, built from models.get_approved_examples.
@@ -263,11 +268,15 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     from ai_guard import unsupported_commitments
     claims = unsupported_commitments(draft)
     if claims:
-        update_draft(review_id, draft, needs_review=True,
-                     review_reason="states a specific action the restaurant may not have taken: "
-                                   + ", ".join(claims[:3]))
+        stored = update_draft(review_id, draft, needs_review=True,
+                              review_reason="states a specific action the restaurant may not have taken: "
+                                            + ", ".join(claims[:3]))
     else:
-        update_draft(review_id, draft)
+        stored = update_draft(review_id, draft)
+    if stored is False:
+        # The reply went out (approved or posted) while this one was being
+        # written; the live text stands and this draft is dropped.
+        raise DraftNotReplaced(f"review {review_id} already has an approved or posted reply")
     return draft
 
 
@@ -287,6 +296,9 @@ def draft_pending(restaurant_id: int, limit: int = 50):
                 approved_examples=approved_examples,
                 sign_off=restaurant.sign_off_name or restaurant.name,
                 never_say=restaurant.never_say or "",
+                # The restaurant's reply language, as the scheduler and the
+                # regenerate route pass it; this path ignored it (M-30).
+                language=getattr(restaurant, "response_language", None) or None,
                 urgency=r.urgency,
             )
             print(f"    [{r.id}] drafted ({len(draft)} chars)")

@@ -346,6 +346,10 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             if day in lean:
                 links.append({
                     "kind": "reviews_x_labor",
+                    # What the link is about, for its recommendation key: one
+                    # answer silences THIS pairing, not every cross-module
+                    # link of the kind (H-13).
+                    "subject": _link_subject(c.get("category"), day),
                     "modules": ["reviews", "labor"],
                     "claim_kind": "inferred",
                     # No superlative. _lean_days returns every day past the
@@ -386,6 +390,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
         if waste_day and waste_day in days:
             links.append({
                 "kind": "reviews_x_food_cost",
+                "subject": _link_subject(c.get("category"), waste_day),
                 "modules": ["reviews", "food_cost"],
                 "claim_kind": "inferred",
                 "headline": (f"{waste_day} carries both the {_cat(c['category'])} complaints and "
@@ -418,6 +423,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 if any(_same_thing(dish, h) for h in haystack):
                     links.append({
                         "kind": "reviews_x_menu",
+                        "subject": _link_subject(c.get("category"), dish),
                         "modules": ["reviews", "food_cost"],
                         "claim_kind": "inferred",
                         "headline": (f"Guests name {dish} in {c['mentions']} {_cat(c['category'])} "
@@ -449,6 +455,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             up = vol["pct"] > 0
             links.append({
                 "kind": "marketing_x_reviews",
+                "subject": "reviews_up" if up else "reviews_down",
                 "modules": ["marketing", "reviews"],
                 "claim_kind": "inferred",
                 "headline": (f"{mk['posts_published']} posts went out in the last 30 days and reviews "
@@ -483,6 +490,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             if direction == "down":
                 links.append({
                     "kind": "intel_x_reviews",
+                    "subject": "visibility_down",
                     "modules": ["intel", "reviews"],
                     "claim_kind": "inferred",
                     "headline": (f"Your AI-search visibility fell {drop:.0f} points and your weekly rating "
@@ -689,6 +697,23 @@ URGENCY_WEIGHT = {"critical": 10.0, "important": 2.0, "normal": 1.0}
 UNPRICED_FLOOR = 50.0
 
 
+def _link_subject(*parts) -> str:
+    """What a link is about, as a key fragment ("service:friday")."""
+    return ":".join(str(p or "").strip().lower()[:60] for p in parts)
+
+
+def link_key(link) -> str:
+    """The recommendation key for a cross-module link: its kind AND what it
+    is about ("link:reviews_x_labor:service:Friday")."""
+    link = link or {}
+    kind = link.get("kind") or "cross"
+    subject = str(link.get("subject") or "").strip()[:100]
+    if not subject:
+        import hashlib
+        subject = hashlib.sha1(str(link.get("headline") or "").encode()).hexdigest()[:10]
+    return f"link:{kind}:{subject}"
+
+
 def issue_key(category) -> str:
     """The recommendation key for a review complaint theme, the same on Home,
     the brief and the ledger."""
@@ -801,7 +826,9 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                 evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"])
 
     for top in (links or [])[:1]:
-        add(f"link:{top.get('kind') or 'cross'}", top.get("confirm_by") or top.get("headline"),
+        # "link:<kind>:<subject>" — a bare "link:<kind>" meant one "Not for
+        # us" silenced every future link of that kind for ten years (H-13).
+        add(link_key(top), top.get("confirm_by") or top.get("headline"),
             top.get("headline"), top.get("modules") or [], urgency="important",
             evidence=top.get("evidence"), claim_kind="inferred",
             confirm_by=top.get("confirm_by"), link_headline=top.get("headline"))
@@ -820,7 +847,13 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         except Exception:
             dg = None
         if dg and dg.get("recommended_action"):
-            add("food_diagnosis", dg["recommended_action"], dg.get("cause"), ["food_cost"],
+            # The Food Cost card's own key for this diagnosis (its lead
+            # driver), so one answer holds on the brief, Home and the
+            # module alike; "food_diagnosis" had no subject and one answer
+            # silenced every future diagnosis (M-9, H-13).
+            from client_api import diagnosis_rec_key
+            add(diagnosis_rec_key("diag_food", dg) or "food_diagnosis", dg["recommended_action"],
+                dg.get("cause"), ["food_cost"],
                 dollars=dg.get("dollars_at_stake"), evidence=[dg.get("headline")], claim_kind="inferred",
                 alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
 
@@ -830,7 +863,11 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         dg = next((d for d in (reviews.get("diagnoses") or []) if d.get("category") == cat
                    and d.get("recommended_action")), None)
         if dg:
-            add(issue_key(cat), dg["recommended_action"], dg.get("cause"), ["reviews"],
+            # The diagnosis's action carries the Reviews card's key, so an
+            # answer on either holds on both (M-9).
+            from client_api import diagnosis_rec_key
+            add(diagnosis_rec_key("diag_review", dg) or issue_key(cat), dg["recommended_action"],
+                dg.get("cause"), ["reviews"],
                 evidence=[rfx.get("evidence")], claim_kind="inferred",
                 alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
         else:

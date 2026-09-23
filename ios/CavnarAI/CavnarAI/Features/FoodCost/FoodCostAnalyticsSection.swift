@@ -316,7 +316,7 @@ struct FoodCostAnalyticsSection: View {
                 }
                 .padding(.horizontal, 16).padding(.top, 14)
 
-                if let total = cfo.drivers?.totalMonthly, total > 0 {
+                if let total = cfo.drivers?.atStake, total > 0 {
                     Text("$\(total.commaFormatted)/month across \(viewModel.drivers.count) driver\(viewModel.drivers.count == 1 ? "" : "s")"
                          + (dg?.asOf.map { " · read \($0)" } ?? "")
                          + ((dg?.stale ?? false) && dg?.staleNote == nil ? " · older read" : ""))
@@ -328,6 +328,10 @@ struct FoodCostAnalyticsSection: View {
                 // refreshed — the same caveat the Reviews diagnosis carries.
                 if let note = dg?.staleNote, !note.isEmpty {
                     CavnarCaveat(title: "Older read", detail: note)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                }
+                if let figs = dg?.unsupportedFigures, !figs.isEmpty {
+                    CavnarCaveat.unverifiedFigures(figs)
                         .padding(.horizontal, 16).padding(.top, 10)
                 }
 

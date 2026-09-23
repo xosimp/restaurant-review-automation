@@ -2204,6 +2204,15 @@ svg:hover .hb-xh{opacity:1}
     p.innerHTML=chips;
   }
   // ── hero chart ────────────────────────────────────────────────────────────
+  // The headline is a monthly run-rate of MEASURED improvements (H-8): it
+  // read "since you started", so one $420/month win read as $420 in total.
+  // Where it came from is the modules it was measured on, never the modules
+  // switched on.
+  function _hbValueFrom(v){
+    var bm=(v&&v.by_module)||[];if(!bm.length)return '';
+    var parts=[];for(var i=0;i<bm.length;i++){parts.push(esc(bm[i].label||bm[i].module));}
+    return '<div class="delta"><span>measured on '+parts.join(', ')+'</span></div>';
+  }
   function renderHero(d){
     var el=document.getElementById('hb-hero');if(!el)return;
     var v=d.value||{},hist=v.history||[];
@@ -2213,7 +2222,7 @@ svg:hover .hb-xh{opacity:1}
     var vals=sel.map(function(p){return +p.value||0;});
     var delta=vals.length>1?vals[vals.length-1]-vals[0]:0;
     var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':'year';
-    var h='<div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>since you started</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+' <span>in the last '+rangeLabel+'</span></div>':'')+'</div>';
+    var h='<div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>a month, measured</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
@@ -5993,10 +6002,10 @@ svg:hover .hb-xh{opacity:1}
 .in2-read .sec{margin-top:14px}
 .in2-read .sec:first-child{margin-top:0}
 .in2-read .st{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:9px}
-.in2-read .st.good{color:var(--hb-good)}.in2-read .st.bad{color:var(--hb-bad)}.in2-read .st.ember{color:var(--ember)}
+.in2-read .st.good{color:var(--hb-good)}.in2-read .st.bad{color:var(--hb-bad)}.in2-read .st.ember{color:var(--ember)}.in2-read .st.neutral{color:var(--ink3)}
 .in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:7px;font-size:15px;line-height:1.6;color:var(--ink2)}
 .in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:14px}
-.in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}
+.in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}.in2-read .b i.neutral{color:var(--ink3)}
 .in2-read .rec{display:flex;gap:11px;align-items:flex-start;margin-bottom:9px;font-size:15px;line-height:1.6;color:var(--ink)}
 .in2-read .rec b{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
 .in2-pre{margin-top:34px;padding:22px 24px;border-radius:14px;background:var(--hb-tint);display:flex;gap:26px;align-items:center;flex-wrap:wrap}
@@ -6166,7 +6175,8 @@ svg:hover .hb-xh{opacity:1}
   <div class="lb2-ai"><div class="tag">Cavnar AI's competitive analysis</div>
     <div class="in2-read" id="intel-insight-card">
       {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
-      <div class="sec"><div class="st {{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ '✓' if 'WELL' in name|upper else '✗' }}</i><span>{{ b }}</span></div>{% endfor %}</div>
+      {% set _tone = 'good' if 'WELL' in name|upper else ('bad' if 'POORLY' in name|upper else 'neutral') %}
+      <div class="sec"><div class="st {{ _tone }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ _tone }}">{{ '✓' if _tone == 'good' else ('✗' if _tone == 'bad' else '·') }}</i><span>{{ b }}</span></div>{% endfor %}</div>
       {% endif %}{% endfor %}{% endif %}
       <div id="in2-recs">{% if recs %}<div class="sec"><div class="st ember">How to improve</div>{% for rec in recs %}<div class="rec"><b>{{ loop.index }}</b><span>{{ rec }}</span></div>{% endfor %}</div>{% endif %}</div>
       {% if not _parts or (not _parts.sections and not recs) %}<div style="font-size:13.5px;color:var(--ink2)">{{ _cd.insight }}</div>{% endif %}
@@ -7762,6 +7772,7 @@ function regenDraft(id) {
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
         actionsEl.style.display='flex';
         document.getElementById('editor-'+id).style.display='none';
+        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar cannot confirm') : '');
       } else if (boxEl) {
         boxEl.style.background='';
         boxEl.innerHTML =
@@ -7779,6 +7790,7 @@ function regenDraft(id) {
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
           '</div>';
+        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar cannot confirm') : '');
       }
       toast('New draft generated','success');
     } else {
@@ -7805,6 +7817,14 @@ function saveDraft(id) {
     body:JSON.stringify({draft:draft})
   }).then(apiJson).then(function(sd){
     if (!sd.ok) { settle(); toast(sd.error||'Save failed','error'); return; }
+    // The server re-checks the edited text; a flagged edit is saved as a
+    // draft with its reason shown, and posts only if the owner says so.
+    var _txtSaved = document.getElementById('draft-txt-'+id);
+    if (_txtSaved) _txtSaved.textContent = draft;
+    _revShowFlag(id, sd.needs_review ? (sd.review_reason || 'states something Cavnar cannot confirm') : '');
+    if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar cannot confirm')) {
+      settle(); toast('Saved as a draft — not posted','success'); return;
+    }
     fetch('/approve/'+id, {method:'POST'}).then(apiJson).then(function(ad){
       settle();
       if (ad.ok) {
@@ -8396,15 +8416,23 @@ function loadReviewInsight(){
    server gave the line, so an answer given here holds on every surface —
    the brief, Home and the phone included. */
 function recEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+/* Track starts a before-and-after tracker on the module's own metric
+   (strategy_routes.REC_TRACK_METRICS); a module with no metric (Intel) is
+   not offered Track at all (M-8). */
+var REC_TRACKABLE={reviews:1,food:1,marketing:1,labor:1};
 function recControlsHtml(key,surface,module){
-  var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" ';
+  var m=module||surface;
+  var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'" ';
   return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
     +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
-    +b+'data-rec-event="accepted">Track</button></span>';
+    +(REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
 }
-function _recAnsweredText(ev){
+/* The server says what the answer actually did (a tracker started, or only
+   hidden); these are the fallbacks for an older server. */
+function _recAnsweredText(ev,d){
+  if(d&&d.message)return String(d.message);
   if(ev==='completed')return 'Done \u2014 Cavnar won\u2019t suggest it again';
-  if(ev==='accepted')return 'Tracking \u2014 Cavnar will watch what changes';
+  if(ev==='accepted')return 'Noted \u2014 hidden for 14 days';
   return 'Noted \u2014 it won\u2019t come back';
 }
 function recAnswer(btn){
@@ -8415,7 +8443,7 @@ function recAnswer(btn){
   for(var i=0;i<all.length;i++)all[i].disabled=true;
   fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
     if(!d||!d.ok){for(var j=0;j<all.length;j++)all[j].disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t save that','error');return;}
-    if(box)box.innerHTML='<span class="rec-ans-done">'+_recAnsweredText(ev)+'</span>';
+    if(box)box.innerHTML='<span class="rec-ans-done">'+recEsc(_recAnsweredText(ev,d))+'</span>';
     /* The panels keep a five-minute session copy; an answered line must not
        come back from it. */
     try{sessionStorage.removeItem('review_insight');sessionStorage.removeItem('mkt_brief');}catch(x){}
@@ -8449,9 +8477,12 @@ function applyInsightCaveats(el,d){
       +' to any reviewer in your data. Check the review before acting on this.'),el.firstChild);
   }
   if(d.stale){
+    /* The stale path runs because writing a new read failed; nothing is
+       queued, so it promises only what happens: another try next time
+       (M-33). as_of is M/D/YY from the server (M-26). */
     el.insertBefore(aiCaveat('Older read',
       'This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')
-      +'. A fresh one is on the way.'),el.firstChild);
+      +'. A new one couldn\u2019t be written just now \u2014 Cavnar tries again the next time this opens.'),el.firstChild);
   }
 }
 /* Open complaints by how serious they are, not how many there are. Urgency
@@ -8486,7 +8517,22 @@ function renderReviewDiagnosis(d){
   var box=document.getElementById('review-diagnosis');
   if(!box)return;
   var dg=d&&d.diagnosis;
-  if(!dg||!dg.cause){box.hidden=true;box.innerHTML='';return;}
+  var m=d&&d.revenue_at_risk;
+  /* The revenue range is the whole restaurant's, from the move in its
+     all-time rating — never what one complaint costs. It sat inside the
+     first diagnosis card and read as that cluster's price (M-19). */
+  var money='';
+  if(m&&m.available){
+    money='<div class="rv-money"><span class="n">$'+Math.abs(m.monthly_low).toLocaleString()
+      +'–$'+Math.abs(m.monthly_high).toLocaleString()+'</span>'
+      +'<span class="l">a month '+(m.direction==='at_risk'?'at risk':'of upside')+' across the restaurant, from the '
+      +(m.rating_delta>0?'+':'')+m.rating_delta+'★ move in your all-time rating over 30 days. Forecast, not a measurement — '
+      +_rvEsc(m.assumption)+'</span></div>';
+  }
+  if(!dg||!dg.cause){
+    if(money){box.innerHTML=money;box.hidden=false;}else{box.hidden=true;box.innerHTML='';}
+    return;
+  }
   var conf=(dg.confidence||'low');
   var h=''
     +'<div class="rv-diag">'
@@ -8529,17 +8575,14 @@ function renderReviewDiagnosis(d){
     for(var j=0;j<ids.length;j++){bl+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-review-id="'+ids[j]+'">Review #'+ids[j]+'</button>';}
     h+='<div class="rv-diag-row"><div class="k">Reviews this rests on</div><div class="rv-diag-ev">'+bl+'</div></div>';
   }
-  var m=d.revenue_at_risk;
-  if(m&&m.available){
-    h+='<div class="rv-money"><span class="n">$'+Math.abs(m.monthly_low).toLocaleString()
-      +'–$'+Math.abs(m.monthly_high).toLocaleString()+'</span>'
-      +'<span class="l">a month '+(m.direction==='at_risk'?'at risk':'of upside')+' from the '
-      +(m.rating_delta>0?'+':'')+m.rating_delta+'★ move over 30 days. Forecast, not a measurement — '
-      +_rvEsc(m.assumption)+'</span></div>';
-  }
-  h+='</div></div>';
+  h+='</div></div>'+money;
   box.innerHTML=h;
   box.hidden=false;
+  /* Figures in the cause the verifier could not trace to the data, stored
+     with the read (M-17) so the card says so wherever it is shown. */
+  if((dg.unsupported_figures||[]).length){
+    applyFigureCaveat(box.querySelector('.rv-diag-bd'),{figures_verified:false,unsupported_figures:dg.unsupported_figures});
+  }
   /* Delegated, per this file's ES5-only rule and the no-inline-handler
      convention used everywhere else in the module. */
   var btns=box.querySelectorAll('.rv-diag-ev button');
@@ -9311,8 +9354,38 @@ function _reloadResponsePerfCurrent(){
 // no-op until the first answers.
 var _revInflight = {};
 function _revBtn(fn, id){ return document.querySelector('[onclick="' + fn + '(' + id + ')"]') || document.querySelector('[onclick="' + fn + '(' + id + ',this)"]'); }
+// A flagged draft (the reply guard found an action, a comp or a staff
+// conversation nobody told Cavnar about) is read before it posts: the
+// reason is on the card, and Approve asks once more (M-1).
+function _revFlagOk(id, reason){
+  if(!reason){
+    var f=document.getElementById('draft-flag-'+id);
+    reason=f?f.getAttribute('data-flag-reason'):'';
+  }
+  if(!reason)return true;
+  return window.confirm('This reply '+reason+'. Cavnar can’t confirm that. Post it anyway?');
+}
+function _revShowFlag(id, reason){
+  var old=document.getElementById('draft-flag-'+id);
+  if(old&&old.parentNode)old.parentNode.removeChild(old);
+  if(!reason)return;
+  var txt=document.getElementById('draft-txt-'+id);
+  if(!txt||!txt.parentNode)return;
+  var d=document.createElement('div');
+  d.className='ai-caveat draft-flag';
+  d.id='draft-flag-'+id;
+  d.style.margin='8px 0 0';
+  d.setAttribute('data-flag-reason',reason);
+  var ic=document.createElement('span');ic.setAttribute('aria-hidden','true');ic.textContent='⚠';
+  var body=document.createElement('span');
+  var b=document.createElement('b');b.textContent='Read this one before you post it.';
+  body.appendChild(b);body.appendChild(document.createTextNode(' This reply '+reason+'.'));
+  d.appendChild(ic);d.appendChild(body);
+  txt.parentNode.insertBefore(d,txt.nextSibling);
+}
 function approveR(id){
   if(_revInflight['approve'+id])return;
+  if(!_revFlagOk(id))return;
   _revInflight['approve'+id]=1;
   var _appBtn=_revBtn('approveR',id)||document.querySelector('#rc-'+id+' .cbtn-primary');
   var done=cbtnBusy(_appBtn,'Approving\u2026');
@@ -9461,6 +9534,30 @@ function markPosted(id, btn){
       updateReviewStats();
     } else { toast(d.error||'Could not mark it as posted \u2014 try again','error'); }
   }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
+}
+
+/* "Edit" on an approved reply that has not posted: back to drafted through
+   the undo route, then the editor. It used to call skipR, which recorded a
+   skip — a "no" to the draft in auto-approve trust — for an owner who only
+   wanted to change a word (M-29). */
+function editApprovedR(id){
+  if(_revInflight['undo'+id])return;
+  _revInflight['undo'+id]=1;
+  var done=cbtnBusy(_revBtn('editApprovedR',id),'Opening\u2026');
+  function settle(){delete _revInflight['undo'+id];done();}
+  fetch('/undo/'+id,{method:'POST'}).then(apiJson).then(function(d){
+    settle();
+    if(!d.ok){toast(d.error||'Couldn\u2019t reopen that reply \u2014 try again','error');return;}
+    var card=document.getElementById('rc-'+id);
+    if(card){card.classList.remove('approved','skipped','posted');card.dataset.status='drafted';}
+    var actions=document.getElementById('draft-actions-'+id);
+    if(actions){
+      actions.innerHTML='<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">\u2713 Approve</button>'
+        +'<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
+    }
+    openEditor(id);
+    updateReviewStats();
+  }).catch(function(){settle();toast('Network error \u2014 check your connection','error');});
 }
 
 function skipR(id){
@@ -10194,13 +10291,17 @@ function loadMktInsight(){
       el.classList.remove('insight-loading');
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
       el.innerHTML=cached;
+      /* The figure check travels with the cached copy: a session-cache hit
+         dropped the "unverified numbers" caveat (M-16). */
+      try{applyFigureCaveat(el,JSON.parse(sessionStorage.getItem('mkt_brief_check')||'{}'));}catch(x){}
       mktLoaded=true;
       return;
     }
   }catch(e){}
   fetch('/api/mkt-insight').then(apiJson).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
-    try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));}catch(e){}
+    try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));
+        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[]}));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
     applyFigureCaveat(el,d);
@@ -13268,6 +13369,9 @@ function fc2LoadCfo(){
       if(tl.length){h+='<div class="fc2-row alt"><div class="k">How far to trust this</div><div class="v">'+tl.join(' · ')+'</div></div>';}
       h+='</div></div>';
       host.innerHTML=h;host.hidden=false;
+      if(dg&&(dg.unsupported_figures||[]).length){
+        applyFigureCaveat(host.querySelector('.fc2-cfo-bd'),{figures_verified:false,unsupported_figures:dg.unsupported_figures});
+      }
     }).catch(function(){host.hidden=true;});
 }
 
@@ -15107,7 +15211,13 @@ function renderAIVisibility(d) {
   // presence_score is the restaurant's real public listing and review
   // record. gbp_score used to blend that with whether a Yelp ID had been
   // typed into Cavnar AI, which is this product's own configuration.
-  var gbp = Math.round((d.presence_score !== undefined && d.presence_score !== null) ? d.presence_score : (d.gbp_score||0));
+  // null when none of the listing could be read (Google not connected and
+  // nothing else to score): shown as a dash, never as 0 (M-14). Items that
+  // need the listing are left out of the score while it can't be read.
+  var gbpRaw = (d.presence_score !== undefined) ? d.presence_score : d.gbp_score;
+  var gbpHas = (gbpRaw !== null && gbpRaw !== undefined);
+  var gbp = gbpHas ? Math.round(gbpRaw) : null;
+  var gbpPartial = !!d.presence_unmeasured;
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
   if (scoreEl) {
@@ -15132,7 +15242,7 @@ function renderAIVisibility(d) {
   if(chipAi){chipAi.className='hb-chip '+(measured?tone(ai,67,34):'');}
   if(chipAiN)chipAiN.textContent = hasScore ? (ai+'%') : '—';
   var chipG=document.getElementById('in2-chip-gbp'), chipGN=document.getElementById('in2-chip-gbp-n');
-  if(chipG){chipG.className='hb-chip '+tone(gbp,70,40);}if(chipGN)chipGN.textContent=gbp+'%';
+  if(chipG){chipG.className='hb-chip '+(gbpHas?tone(gbp,70,40):'');}if(chipGN)chipGN.textContent=gbpHas?(gbp+'%'):'\u2014';
   var aivNote = document.getElementById('aiv-disclaimer');
   if (aivNote) {
     var note = '';
@@ -15154,10 +15264,17 @@ function renderAIVisibility(d) {
   }
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');
-  if (gbpEl) { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = gbp >= 70 ? 'var(--hb-good)' : (gbp >= 40 ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
+  if (gbpEl) {
+    if (!gbpHas) { gbpEl.textContent = '\u2014'; gbpEl.style.color = 'var(--ink3)'; }
+    else { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = gbp >= 70 ? 'var(--hb-good)' : (gbp >= 40 ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
+  }
   if (gbpLbl) {
-    gbpLbl.textContent = gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps'));
-    gbpLbl.className = gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad');
+    if (!gbpHas) { gbpLbl.textContent = 'not measured'; gbpLbl.className = ''; }
+    else {
+      gbpLbl.textContent = (gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps')))
+        + (gbpPartial ? ' \u00b7 of ' + (d.presence_measured||0) + ' items read' : '');
+      gbpLbl.className = gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad');
+    }
   }
   try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
 
@@ -15170,6 +15287,8 @@ function renderAIVisibility(d) {
     for (var ci = 0; ci < d.checklist.length; ci++) {
       var item = d.checklist[ci]; if (item.done) doneN++;
       var ic = item.done ? '&#10003;' : (item.needs_gmb ? '&#128274;' : '&#9675;');
+      // Not read, not missing: left out of the score (M-14).
+      if (item.measured === false) { item.action = item.unmeasured_reason || item.action; }
       var hide = ci >= GBP_VISIBLE ? ' in2-extra" style="display:none' : '';
       chtml += '<div class="it' + (item.done ? ' done' : '') + hide + '"><span class="ic">' + ic + '</span><div style="min-width:0"><div class="l" title="' + esc(item.label) + '">' + esc(item.label) + '<small>+' + item.pts + '</small></div>';
       if (!item.done && item.action) {
@@ -15246,7 +15365,7 @@ function renderAIVisibility(d) {
   var footerEl = document.getElementById('aiv-roadmap-footer');
   var ptsEl = document.getElementById('aiv-roadmap-pts');
   if (!roadmapEl) return;
-  var gbpDone = gbp >= 80, reviewsDone = false, responseDone = false, missingGbpCount = 0;
+  var gbpDone = gbpHas && gbp >= 80, reviewsDone = false, responseDone = false, missingGbpCount = 0;
   if (d.checklist) {
     for (var cj = 0; cj < d.checklist.length; cj++) {
       var lbl = (d.checklist[cj].label || '').toLowerCase();
@@ -15998,9 +16117,13 @@ function revokeOtherSessions(btn){
     for(var k=0;k<(v.ingredients||[]).length;k++){var ing=v.ingredients[k];opts+='<option value="'+ing.id+'">'+_fcEsc(ing.name)+(ing.unit?' ('+_fcEsc(ing.unit)+')':'')+'</option>';}
     var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(window.mdy?window.mdy(v.invoice_date):v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
     if(v.total_check&&!v.total_check.plausible)h+='<div class="fc2-inv-note">Lines add up to '+_fcMoney(v.total_check.lines_sum)+' against an invoice total of '+_fcMoney(v.total_check.invoice_total)+' — some lines may be misread. Check them against the paper.</div>';
-    if(v.applied_at){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
+    if(v.applied_at&&!v.awaiting_owner){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
+    // The trusted-supplier rule applied the lines it could check; the rest
+    // still wait for the owner, so the table stays for them (M-4).
+    if(v.awaiting_owner)h+='<div class="fc2-inv-note">Cavnar applied '+(+v.auto_applied_count||0)+' checked line'+((+v.auto_applied_count||0)===1?'':'s')+' from this trusted supplier. The lines below still need you.</div>';
     h+='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th></th><th>Invoice line</th><th>Ingredient</th><th class="r">Now</th><th class="r">New cost</th></tr></thead><tbody>';
     for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
+      if(l.applied){h+='<tr><td><span class="ok">✓</span></td><td><b>'+_fcEsc(l.description)+'</b><div class="why">Applied automatically</div></td><td>'+_fcEsc(l.ingredient_name||'')+'</td><td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td><td class="r hb-num">'+_fcMoney(l.proposed_cost,4)+'</td></tr>';continue;}
       h+='<tr><td><input type="checkbox" data-inv-line="'+i+'"'+(l.selected?' checked':'')+'></td>'
         +'<td><b>'+_fcEsc(l.description)+'</b><div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'+(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
         +'<td><select class="fc2-inv-sel" data-inv-ing="'+i+'">'+opts.replace('value="'+l.ingredient_id+'"','value="'+l.ingredient_id+'" selected')+'</select></td>'
@@ -16020,7 +16143,7 @@ function revokeOtherSessions(btn){
     fetch('/api/food-cost/invoices/'+v.id+'/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:sel})})
       .then(apiJson).then(function(d){
         if(!d||!d.ok){if(msg){msg.style.color='var(--red)';msg.textContent=(d&&d.error)||'Couldn\'t update.';}return;}
-        v.applied_at='just now';renderInvoice();
+        v.applied_at='just now';v.awaiting_owner=false;renderInvoice();
         if(typeof toast==='function')toast(d.updated.length+' ingredient cost'+(d.updated.length===1?'':'s')+' updated','success');
       }).catch(function(){if(msg){msg.style.color='var(--red)';msg.textContent='Couldn\'t reach Cavnar.';}});
   };
@@ -16148,7 +16271,7 @@ function loadGuestHistory(){
         var c = d.campaigns[i];
         html += '<div style="padding:9px 0;border-bottom:1px solid var(--paper3)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px">'
-          + '<span style="font-size:11px;font-weight:600;color:var(--ember)">' + _escHtml((c.created_at||'').slice(0,10)) + '</span>'
+          + '<span style="font-size:11px;font-weight:600;color:var(--ember)">' + _escHtml(mdy(c.created_at||'')) + '</span>'
           + '<span style="font-size:11px;color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + c.sent_count + ' sent'
           + (c.clicks ? ' · ' + c.clicks + ' taps' : '')
           + (c.visits_matched ? ' · ' + c.visits_matched + ' came back' : '') + '</span></div>'

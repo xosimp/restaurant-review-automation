@@ -14,12 +14,20 @@ struct AIInsight: Codable, Equatable {
     /// arrays server-side. Optional so an older server, and Labor's cached
     /// copy written before this existed, still decode.
     var recKeys: [String?]? = nil
+    /// False when a figure in the read could not be traced to the data the
+    /// model was given; the screen then carries CavnarCaveat.unverifiedFigures
+    /// and the server offers no answer controls (M-16). Optional: absent on
+    /// modules that don't send it, and on older cached copies.
+    var figuresVerified: Bool? = nil
+    var unsupportedFigures: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case intro = "insight_intro"
         case recommendations = "insight_recommendations"
         case forecast = "insight_forecast"
         case recKeys = "insight_rec_keys"
+        case figuresVerified = "figures_verified"
+        case unsupportedFigures = "unsupported_figures"
     }
 
     /// The key for the recommendation at `index`, or nil when it has none

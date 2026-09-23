@@ -424,7 +424,9 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
         sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)})
     res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 19))
     assert res == {"campaigns_checked": 1, "visits_matched": 1}
-    assert fetched == ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]
+    # From the day AFTER the send (re-audit M-22): the send day's own orders
+    # are not guests coming back.
+    assert fetched == ["2026-09-16", "2026-09-17", "2026-09-18"]
     hist = gm.campaign_history(rid, db_path=db_path)[0]
     assert hist["visits_matched"] == 1 and hist["attribution_through"] == "2026-09-18"
     # the next day reads only the day not yet read, and Ana is not counted twice
@@ -471,15 +473,18 @@ def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path)
 def test_marketing_diagnosis_compares_only_measured_campaigns(db_path, monkeypatch):
     import guest_marketing as gm
     rows = [
-        {"id": 1, "sent_count": 40, "clicks": 8, "visits_matched": 6, "segment": "regulars", "segment_label": "Regulars", "created_at": "2026-09-01 12:00:00"},
-        {"id": 2, "sent_count": 50, "clicks": 2, "visits_matched": 1, "segment": "lapsed", "segment_label": "Lapsed", "created_at": "2026-09-08 12:00:00"},
+        {"id": 1, "sent_count": 40, "clicks": 8, "visits_matched": 6, "segment": "regulars", "segment_label": "Regulars", "created_at": "2026-09-01 12:00:00", "link_token": "a"},
+        {"id": 2, "sent_count": 50, "clicks": 2, "visits_matched": 1, "segment": "lapsed", "segment_label": "Lapsed", "created_at": "2026-09-08 12:00:00", "link_token": "b"},
         {"id": 3, "sent_count": 5, "clicks": 5, "visits_matched": 5, "segment": "all", "segment_label": "Everyone", "created_at": "2026-09-10 12:00:00"},
     ]
     monkeypatch.setattr(gm, "campaign_history", lambda rid, limit=20, db_path=None: rows)
     d = gm.diagnose(1)
     assert d["available"] and "Regulars segment answered at 15.0 came back per 100 texts" in d["cause"]
     assert "Lapsed" in d["cause"] and d["confidence"] == "low"          # only two measured
-    assert "Send the next campaign to the stronger segment" in d["what_would_confirm"]
+    # No "send to the stronger segment only" without a baseline: regulars
+    # come back anyway (re-audit M-22). Only the test that would tell.
+    assert "stronger segment only" not in d["what_would_confirm"]
+    assert "hold a few guests in each back" in d["what_would_confirm"]
     # taps stand in until attribution has run, and the summary says so
     for r in rows:
         r["visits_matched"] = None

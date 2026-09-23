@@ -908,6 +908,18 @@ def ensure_columns(db_path: str = DB_PATH):
         ("purchase_orders", "source", "TEXT"),
         ("purchase_orders", "draft_items_json", "TEXT"),
         ("purchase_orders", "edited", "INTEGER DEFAULT 0"),
+        # An invoice scan the trusted-supplier rule applied on its own (M-4):
+        # never the owner's evidence in ordering.invoice_trust, or the rule
+        # grades itself.
+        ("invoice_imports", "auto_applied", "INTEGER DEFAULT 0"),
+        # Figures in a stored diagnosis the verifier could not trace to the
+        # data (JSON list), so every surface shows the caveat (M-17).
+        ("review_diagnoses", "unsupported_figures", "TEXT"),
+        # A post's lift verdict against its own noise band (M-23): readers
+        # colour the result from it, never from the sign of lift_pct.
+        ("marketing_attribution", "verdict", "TEXT"),
+        ("marketing_attribution", "noise_band_pct", "REAL"),
+        ("food_cost_diagnoses", "unsupported_figures", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
@@ -3726,16 +3738,21 @@ def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
     the system cannot stand behind — see ai_guard.unsupported_commitments.
     It never blocks the owner from posting; it makes the reason visible
     before they do, and the auto-approve rule refuses to touch it.
+
+    Never overwrites an approved or posted reply: a regenerate racing a
+    publish used to flip a live Google reply back to "drafted" with other
+    text (M-25). Returns True when the draft was stored.
     """
     conn = get_conn(db_path)
-    conn.execute("""
+    cur = conn.execute("""
         UPDATE reviews
            SET draft_response=?, response_status='drafted',
                draft_needs_review=?, draft_review_reason=?
-         WHERE id=?
+         WHERE id=? AND COALESCE(response_status, '') NOT IN ('posted', 'approved')
     """, (draft, 1 if needs_review else 0, review_reason, review_id))
     conn.commit()
     conn.close()
+    return cur.rowcount == 1
 
 
 def approve_response(review_id: int, restaurant_id: int = None, db_path: str = DB_PATH):
@@ -3756,7 +3773,53 @@ def approve_response(review_id: int, restaurant_id: int = None, db_path: str = D
     conn.close()
 
 
-def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+# The drafts a bulk publish (Home's "Publish N replies", approve-all, Ask's
+# approve_all_reviews) may post without anyone reading them one by one:
+# recent, not urgent, and not flagged by the reply guard. It ignored all
+# three, so a "Publish 1 reply" labelled from the last 30 days posted a
+# 90-day-old urgent reply, or a flagged one promising a free dinner (M-2).
+# One definition, read by the publish and by every count that labels it.
+BULK_PUBLISHABLE_SQL = (
+    "response_status='drafted' AND deleted_at IS NULL "
+    "AND draft_response IS NOT NULL AND TRIM(draft_response) != '' "
+    "AND COALESCE(draft_needs_review, 0) = 0 "
+    "AND COALESCE(urgency, 'normal') != 'high' "
+    "AND COALESCE(NULLIF(review_date, ''), fetched_at) >= date('now', ?)")
+
+
+def bulk_publish_window() -> str:
+    """The SQLite date modifier for BULK_PUBLISHABLE_SQL's recency bound."""
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
+    return f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days"
+
+
+def reply_queue_counts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Drafted replies, split the way web and iOS Home both say them:
+    `publishable` — what one bulk publish may post; `held` — recent drafts
+    that are urgent or flagged, which a person reads one at a time; `older`
+    — drafts on reviews past the reply window, history rather than owed."""
+    conn = get_conn(db_path)
+    try:
+        win = bulk_publish_window()
+        row = conn.execute(
+            "SELECT "
+            f" SUM(CASE WHEN {BULK_PUBLISHABLE_SQL} THEN 1 ELSE 0 END) AS publishable, "
+            " SUM(CASE WHEN recent AND (COALESCE(draft_needs_review,0)=1 OR COALESCE(urgency,'normal')='high') "
+            "     THEN 1 ELSE 0 END) AS held, "
+            " SUM(CASE WHEN NOT recent THEN 1 ELSE 0 END) AS older "
+            "FROM (SELECT *, COALESCE(NULLIF(review_date, ''), fetched_at) >= date('now', ?) AS recent "
+            "      FROM reviews WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL "
+            "        AND draft_response IS NOT NULL AND TRIM(draft_response) != '')",
+            (win, win, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    return {"publishable": int((row and row["publishable"]) or 0),
+            "held": int((row and row["held"]) or 0),
+            "older": int((row and row["older"]) or 0)}
+
+
+def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
+                   publishable_only: bool = False) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -3765,9 +3828,20 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH) -
     already-posted, deleted, draftless or other restaurant's review returned
     200 and published or confirmed about nothing (MOD-REV-4), and two
     approves at once both went on to post to Google (MOD-REV-5). The WHERE
-    clause is the lock: SQLite serialises the writes, only one matches."""
+    clause is the lock: SQLite serialises the writes, only one matches.
+
+    `publishable_only`: a bulk publish's claim, held to BULK_PUBLISHABLE_SQL
+    at the moment of the write, so a draft regenerated into a flagged one
+    between the batch's SELECT and its approve is not posted (M-2)."""
     conn = get_conn(db_path)
     try:
+        if publishable_only:
+            cur = conn.execute(
+                "UPDATE reviews SET response_status='approved', approved_at=datetime('now') "
+                f"WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
+                (review_id, restaurant_id, bulk_publish_window()))
+            conn.commit()
+            return cur.rowcount == 1
         cur = conn.execute("""
             UPDATE reviews
             SET response_status='approved', approved_at=datetime('now')
@@ -5592,13 +5666,15 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
 
     A reply the auto-approve rule published is the model's own text, not
     the owner's style: learning from it would feed the drafter its own
-    output (audit #15), so only replies a person approved are examples."""
+    output (audit #15), so only replies a person approved are examples. A
+    bulk publish (response_action='bulk_approved') posted drafts nobody read
+    one by one — the model's text again, not the owner's choice (M-3)."""
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
           AND response_status IN ('approved','posted')
-          AND COALESCE(response_action, '') != 'auto_approved'
+          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
           AND draft_response IS NOT NULL
           AND draft_response != ''
         ORDER BY id DESC
@@ -7103,7 +7179,11 @@ def build_reviews_export_csv(restaurant_id: int) -> str:
 
 
 def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = DB_PATH) -> dict:
-    """Return approved-as-is / edited / regenerated counts for the given window."""
+    """Return approved-as-is / edited / regenerated counts for the given window.
+
+    Only a person's handling of one draft is counted: 'auto_approved' (the
+    rule) and 'bulk_approved' (a publish-many, nobody read the draft) are
+    left out of every bucket and the total on purpose."""
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT response_action, COUNT(*) as cnt
@@ -8173,14 +8253,23 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
     grading itself. Those rows (response_action='auto_approved') are left
     out. A drafted reply the owner skipped is a "no" to the draft and counts
     against the band like an edit: it is in the denominator and the
-    rejected count, so a band the owner keeps skipping cannot earn trust."""
+    rejected count, so a band the owner keeps skipping cannot earn trust.
+
+    Two more ways a "yes" was counted that was not one (M-3): a draft the
+    owner regenerated before approving is a rejection of the draft they
+    were shown, like an edit; and a bulk publish (response_action=
+    'bulk_approved') read no single draft, so it is not evidence either way.
+    Ten 3-star replies each regenerated three times used to read as
+    edit_rate 0.0 and trusted."""
     conn = get_conn(db_path)
     since = f"-{int(days)} days"
     try:
         rows = conn.execute(
-            "SELECT rating, COUNT(*) AS n, SUM(COALESCE(draft_edited, 0)) AS edited FROM reviews "
+            "SELECT rating, COUNT(*) AS n, "
+            "SUM(CASE WHEN COALESCE(draft_edited, 0) = 1 OR COALESCE(regenerate_count, 0) > 0 "
+            "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') != 'auto_approved' "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()
         try:

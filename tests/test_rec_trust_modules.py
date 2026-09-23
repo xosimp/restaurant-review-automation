@@ -648,9 +648,13 @@ def test_order_trust_counts_only_owner_sent_unedited_orders(db_path):
     _po(db_path, rid, 420, 20, source="owner")
     _po(db_path, rid, 430, 15)                                    # before provenance existed: the owner's
     t = ordering.supplier_trust(rid, "s@x.com", db_path=db_path)
-    assert t["orders"] == 2 and t["trusted"] is False
+    # The edited order is the owner's and counts AGAINST the supplier
+    # (re-audit M-5): it used to be left out of the count entirely.
+    assert t["orders"] == 3 and t["edited"] == 1 and t["trusted"] is False
     _po(db_path, rid, 440, 12, source="owner")
-    assert ordering.supplier_trust(rid, "s@x.com", db_path=db_path)["trusted"] is True
+    assert ordering.supplier_trust(rid, "s@x.com", db_path=db_path)["trusted"] is False   # 1 of 4 edited
+    _po(db_path, rid, 450, 10, source="owner")
+    assert ordering.supplier_trust(rid, "s@x.com", db_path=db_path)["trusted"] is True    # 1 of 5
 
 
 def test_an_automatic_order_is_held_on_a_stale_count_and_says_why(db_path):
@@ -819,8 +823,11 @@ def test_the_campaign_read_dates_are_m_d_yy(db_path, monkeypatch):
     import guest_marketing as gm
     rid = _rid(db_path)
     monkeypatch.setattr(gm, "campaign_history", lambda r, limit=20, db_path=None: [
-        {"sent_count": 50, "clicks": 9, "segment": "all", "segment_label": "Everyone", "created_at": "2026-09-02 18:00:00"},
-        {"sent_count": 40, "clicks": 1, "segment": "all", "segment_label": "Everyone", "created_at": "2026-08-12 18:00:00"}])
+        # Both carried a link, so taps are measurable on each (re-audit M-22).
+        {"sent_count": 50, "clicks": 9, "segment": "all", "segment_label": "Everyone", "link_token": "a",
+         "created_at": "2026-09-02 18:00:00"},
+        {"sent_count": 40, "clicks": 1, "segment": "all", "segment_label": "Everyone", "link_token": "b",
+         "created_at": "2026-08-12 18:00:00"}])
     out = gm.diagnose(rid, db_path=db_path)
     blob = json.dumps(out)
     assert "9/2/26" in blob and "2026-09-02" not in blob

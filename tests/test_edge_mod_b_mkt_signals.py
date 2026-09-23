@@ -156,26 +156,30 @@ def test_two_posts_sharing_a_window_are_flagged_as_overlapping(db_path, monkeypa
 # ── Attribution #8 UTC timestamp vs local business date (MOD-MKT-16) ──────
 
 def test_an_evening_post_is_measured_from_its_own_local_night(db_path, monkeypatch):
-    """A6 Attribution #8 / MOD-MKT-16: posted 7:30pm Chicago on 9/18/26,
-    stored as 00:30 UTC on 9/19. Its window is 9/18-9/19 local; measured
-    from 9/19 it misses the night it was posted for."""
+    """A6 Attribution #8 / MOD-MKT-16, with re-audit M-23: posted 7:30pm
+    Chicago on 9/18/26, stored as 00:30 UTC on 9/19. Sales are daily totals
+    and most of 9/18's were rung before the post went out, so the window
+    starts the next local business day — the day's earlier trade is never
+    credited to it."""
     rid = _restaurant(db_path, tz="America/Chicago")
     sales = _flat_sales("2026-08-01", "2026-09-30")
-    sales["2026-09-18"] = 2000.0            # the night of the post
+    sales["2026-09-18"] = 2000.0            # the day of the post, mostly before it
     monkeypatch.setattr(ms, "daily_sales", lambda r: sales)
     pid = _post(db_path, rid, "2026-09-19 00:30:00")   # how _log_published stores it
     result = ms.attribution_for_post(rid, pid, db_path=db_path)
     assert result["ok"]
-    assert result["lift_pct"] == 50.0, result
+    assert result["lift_pct"] == 0.0, result
 
 
-def test_a_midday_post_is_unaffected_by_the_utc_offset(db_path, monkeypatch):
-    """A6 Attribution #8 control: noon Chicago is the same date in UTC."""
+def test_a_morning_post_is_read_on_its_local_clock(db_path, monkeypatch):
+    """A6 Attribution #8 control: 10am Chicago (15:00 UTC) is before the
+    day's trade, so its own day is in the window. Read on the UTC clock it
+    would look like a 3pm post and lose the day (re-audit M-23)."""
     rid = _restaurant(db_path, tz="America/Chicago")
     sales = _flat_sales("2026-08-01", "2026-09-30")
     sales["2026-09-18"] = 2000.0
     monkeypatch.setattr(ms, "daily_sales", lambda r: sales)
-    pid = _post(db_path, rid, "2026-09-18 17:00:00")
+    pid = _post(db_path, rid, "2026-09-18 15:00:00")
     assert ms.attribution_for_post(rid, pid, db_path=db_path)["lift_pct"] == 50.0
 
 

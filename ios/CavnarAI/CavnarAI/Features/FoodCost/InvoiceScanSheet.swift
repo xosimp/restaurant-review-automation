@@ -20,11 +20,13 @@ struct InvoiceLine: Decodable, Identifiable {
     let changePct: Double?
     let selected: Bool
     let note: String?
+    /// Already written — by the trusted-supplier rule, or an earlier apply.
+    let applied: Bool?
 
     var id: Int { index }
 
     enum CodingKeys: String, CodingKey {
-        case index, description, quantity, unit, note, selected
+        case index, description, quantity, unit, note, selected, applied
         case unitPrice = "unit_price"
         case lineTotal = "line_total"
         case ingredientId = "ingredient_id"
@@ -62,12 +64,21 @@ struct ScannedInvoice: Decodable {
     let ingredients: [InvoiceIngredient]
     let appliedAt: String?
     let duplicate: Bool?
+    /// The rule applied the lines it could check on its own; the rest
+    /// (flagged, unverified) still wait for the owner (M-4).
+    let awaitingOwner: Bool?
+    let autoAppliedCount: Int?
+
+    /// Whether the owner still has lines to decide on.
+    var isOpen: Bool { appliedAt == nil || awaitingOwner == true }
 
     enum CodingKeys: String, CodingKey {
         case id, supplier, lines, ingredients, duplicate
         case invoiceDate = "invoice_date"
         case totalCheck = "total_check"
         case appliedAt = "applied_at"
+        case awaitingOwner = "awaiting_owner"
+        case autoAppliedCount = "auto_applied_count"
     }
 }
 
@@ -144,7 +155,7 @@ final class InvoiceScanViewModel {
             }
             invoice = inv
             choices = Dictionary(uniqueKeysWithValues: inv.lines.map { line in
-                (line.index, Choice(include: line.selected, ingredientId: line.ingredientId,
+                (line.index, Choice(include: line.selected && line.applied != true, ingredientId: line.ingredientId,
                                     cost: line.proposedCost.map { Self.costString($0) } ?? ""))
             })
             await Haptic.success()
@@ -158,10 +169,10 @@ final class InvoiceScanViewModel {
         // Once is enough. After a success the button stayed, and a second
         // tap answered with a red "already applied" under the green success
         // (CLIENT-60); a new scan clears appliedCount.
-        guard let inv = invoice, !isApplying, appliedCount == nil, inv.appliedAt == nil else { return }
+        guard let inv = invoice, !isApplying, appliedCount == nil, inv.isOpen else { return }
         errorMessage = nil
         var lines: [ApplyBody.Line] = []
-        for line in inv.lines {
+        for line in inv.lines where line.applied != true {
             guard let c = choices[line.index], c.include else { continue }
             guard let ing = c.ingredientId,
                   let cost = FoodCostQuickEntryViewModel.parsedPrice(c.cost.replacingOccurrences(of: "$", with: "")),
@@ -327,15 +338,21 @@ struct InvoiceScanSheet: View {
                 HomeMixedText.make("Lines add up to \(Self.money(tc.linesSum)) against a total of \(Self.money(tc.invoiceTotal)) — check them against the paper.",
                                    size: 13.5, weight: 500, color: .cavnarAmber)
             }
-            if inv.appliedAt != nil {
+            if !inv.isOpen {
                 Text("This invoice was already applied.")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
             } else {
+                if inv.awaitingOwner == true {
+                    let n = inv.autoAppliedCount ?? 0
+                    HomeMixedText.make("Cavnar applied \(n) checked line\(n == 1 ? "" : "s") from this trusted supplier. The lines below still need you.",
+                                       size: 13.5, weight: 500, color: .cavnarAmber)
+                }
+                let open = inv.lines.filter { $0.applied != true }
                 VStack(spacing: 0) {
-                    ForEach(Array(inv.lines.enumerated()), id: \.element.id) { i, line in
+                    ForEach(Array(open.enumerated()), id: \.element.id) { i, line in
                         lineRow(line, ingredients: inv.ingredients)
-                        if i < inv.lines.count - 1 {
+                        if i < open.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                         }
                     }

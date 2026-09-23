@@ -72,7 +72,14 @@ struct ReviewsAnalyticsSection: View {
                 // an owner whose reviews do not yet support a cause sees
                 // nothing here, never a cause produced to fill the space.
                 if let diagnosis = viewModel.diagnosis {
-                    diagnosisCard(diagnosis, money: viewModel.revenueAtRisk)
+                    diagnosisCard(diagnosis)
+                }
+                // The whole restaurant's revenue range, from the move in its
+                // all-time rating — its own block, never inside a complaint's
+                // card, where it read as what that complaint costs (M-19).
+                if let m = viewModel.revenueAtRisk, m.available,
+                   let low = m.monthlyLow, let high = m.monthlyHigh {
+                    revenueBlock(low: low, high: high, m: m)
                 }
 
                 if let performance = viewModel.performance {
@@ -264,7 +271,7 @@ struct ReviewsAnalyticsSection: View {
     /// alternative and the confidence are not decoration — a single confident
     /// cause with nothing to weigh it against is exactly the shape of a
     /// plausible guess, and this card exists to not be that.
-    private func diagnosisCard(_ d: ReviewDiagnosis, money: RevenueAtRisk?) -> some View {
+    private func diagnosisCard(_ d: ReviewDiagnosis) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Why this is happening")
@@ -298,6 +305,13 @@ struct ReviewsAnalyticsSection: View {
             // refreshed — the same caveat the insight above uses.
             if let note = d.staleNote, !note.isEmpty {
                 CavnarCaveat(title: "Older read", detail: note)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
+            // A figure in the cause that could not be traced to the data,
+            // stored with the read so the card says so here too (M-17).
+            if let figs = d.unsupportedFigures, !figs.isEmpty {
+                CavnarCaveat.unverifiedFigures(figs)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             }
@@ -348,10 +362,6 @@ struct ReviewsAnalyticsSection: View {
                             }
                         }
                     }
-                }
-                if let m = money, m.available,
-                   let low = m.monthlyLow, let high = m.monthlyHigh {
-                    revenueBlock(low: low, high: high, m: m)
                 }
             }
             .padding(16)
@@ -412,8 +422,8 @@ struct ReviewsAnalyticsSection: View {
             Text("\("$" + abs(low).commaFormatted)–\("$" + abs(high).commaFormatted)")
                 .font(.cavnarNumber(19, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
-            Text("a month \(m.direction == "at_risk" ? "at risk" : "of upside") from the "
-                 + String(format: "%+.2f", m.ratingDelta ?? 0) + "★ move over 30 days")
+            Text("a month \(m.direction == "at_risk" ? "at risk" : "of upside") across the restaurant, from the "
+                 + String(format: "%+.2f", m.ratingDelta ?? 0) + "★ move in your all-time rating over 30 days")
                 .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk2)
             if let assumption = m.assumption {

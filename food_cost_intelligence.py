@@ -582,7 +582,12 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # 3. Ingredient price movement on the items that carry real spend.
     try:
         from inventory import compute_item_trends, build_price_watch
-        for w in build_price_watch(compute_item_trends(restaurant_id, items))[:4]:
+        # Filter to rises on real spend, price each one, THEN keep the top
+        # four by dollars (M-12). The watch list is sorted by the size of the
+        # % move, up or down, so cutting it to four first let parsley +80%
+        # and lemons -50% crowd out a $900-a-month beef rise.
+        _price_drivers = []
+        for w in build_price_watch(compute_item_trends(restaurant_id, items)):
             if not w.get("is_big_8") or (w.get("change_pct") or 0) <= 0:
                 continue
             # Monthly exposure = the price increase per unit, over the usage
@@ -594,7 +599,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             monthly = round(delta * usage * 30, 2)
             if monthly < MIN_DRIVER_DOLLARS:
                 continue
-            drivers.append({
+            _price_drivers.append({
                 "kind": "price", "label": f"{w['item']} price up {abs(w['change_pct']):.0f}%",
                 "dollars_monthly": monthly,
                 "confidence": "high" if w["kind"] == "trend" else "medium",
@@ -606,6 +611,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 "if_ignored": "the higher unit price flows into every plate using it",
                 "item": w["item"],
             })
+        _price_drivers.sort(key=lambda d: -d["dollars_monthly"])
+        drivers.extend(_price_drivers[:4])
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "price", _e))
 
@@ -639,20 +646,28 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     try:
         mp = il.menu_profitability(restaurant_id)
         target_pct = _food_cost_target(restaurant_id)
-        cands = [e for e in (mp.get("priced") or [])[:4]
-                 if not e.get("unit_warning") and e.get("units_sold")
-                 and _f(e.get("food_cost_pct")) > target_pct]
-        prov = _recipe_provenance(restaurant_id, [e["id"] for e in cands], db_path=db_path)
-        for e in cands:
-            fc = _f(e.get("food_cost_pct"))
+        # Every dish that sells and runs over target, priced by the dollars
+        # its gap costs at its own volume, THEN the top four (M-12). The
+        # priced list is sorted by food-cost %, dishes with nothing sold
+        # included, so cutting it to four first let four rarely sold dishes
+        # at 60% crowd out a best-seller at 38% worth ~$1,000 a month.
+        def _gap_monthly(e):
             # Dollars to bring this dish to the target at its current
             # volume. Never a suggestion to raise the price — just the size
             # of the gap.
             target_cost = _f(e.get("sell_price")) * target_pct / 100.0
-            monthly = round(max(0.0, _f(e["plate_cost"]) - target_cost)
-                            * _f(e["units_sold"]) * (30.0 / il._POPULARITY_WINDOW_DAYS), 2)
-            if monthly < MIN_DRIVER_DOLLARS:
-                continue
+            return round(max(0.0, _f(e["plate_cost"]) - target_cost)
+                         * _f(e["units_sold"]) * (30.0 / il._POPULARITY_WINDOW_DAYS), 2)
+        cands = [e for e in (mp.get("priced") or [])
+                 if not e.get("unit_warning") and _f(e.get("units_sold")) > 0
+                 and _f(e.get("food_cost_pct")) > target_pct
+                 and _gap_monthly(e) >= MIN_DRIVER_DOLLARS]
+        cands.sort(key=lambda e: -_gap_monthly(e))
+        cands = cands[:4]
+        prov = _recipe_provenance(restaurant_id, [e["id"] for e in cands], db_path=db_path)
+        for e in cands:
+            fc = _f(e.get("food_cost_pct"))
+            monthly = _gap_monthly(e)
             p = prov.get(e["id"]) or {"lines": 0, "unreviewed": 0, "ingredients": []}
             unreviewed = p["unreviewed"]
             confidence = "high" if not unreviewed else ("low" if unreviewed >= p["lines"] else "medium")
@@ -1205,9 +1220,13 @@ def _drivers_block(drv) -> str:
     # write and is exactly what verify_figures then rejects, costing the
     # passage its confidence for arithmetic that was correct. Giving it the
     # sum removes the incentive to compute one.
-    out.append(f"\nCombined: ${drv['total_monthly']:,.0f}/month across "
-               f"{len(drv['drivers'])} drivers. Quote this figure if you want a total — "
-               f"never add the drivers up yourself.")
+    # The de-duplicated total (M-10): the plain sum counts an ingredient
+    # once per driver it appears in — up to four times — and the model was
+    # told to quote it, while the web card showed the de-duplicated figure.
+    _combined = drv.get("total_monthly_deduplicated", drv["total_monthly"])
+    out.append(f"\nCombined: ${_combined:,.0f}/month across "
+               f"{len(drv['drivers'])} drivers, with no ingredient counted twice. Quote this "
+               f"figure if you want a total — never add the drivers up yourself.")
     return "\n".join(out)
 
 
@@ -1438,10 +1457,14 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
                                  labels, prompt, restaurant_id)
 
-    pp = ev["profitability"]
-    at_stake = (abs(pp["dollars_vs_last_month"])
-                if pp.get("available") and pp.get("dollars_vs_last_month") is not None
-                else drv["total_monthly"])
+    # One "at stake" figure, the same one the web card and iOS header show:
+    # what the drivers carry, with no ingredient counted twice (M-10). It
+    # used to be abs(dollars_vs_last_month) — a prime-cost RATIO move
+    # projected to the month — so a month $2,000 BETTER than the last read
+    # "$2,000/mo at stake" on Home (M-11); and without it, the plain sum
+    # that counts one ingredient up to four times. The month-over-month move
+    # is its own line in the profitability read, labelled as such.
+    at_stake = drv.get("total_monthly_deduplicated", drv["total_monthly"])
     _save_diagnosis(restaurant_id, drv, result, at_stake, db_path)
     result.update({"drivers": drv["drivers"][:6], "dollars_at_stake": round(at_stake, 2),
                    "window_days": DIAGNOSIS_WINDOW_DAYS, "stale": False, "ok": True})
@@ -1455,8 +1478,9 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
             INSERT INTO food_cost_diagnoses
                 (restaurant_id, window_days, headline, cause, alternative_cause,
                  what_would_confirm, drivers_json, operational_evidence, confidence,
-                 recommended_action, expected_outcome, dollars_at_stake, generated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+                 recommended_action, expected_outcome, dollars_at_stake, unsupported_figures,
+                 generated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
             ON CONFLICT(restaurant_id, window_days) DO UPDATE SET
                 headline=excluded.headline, cause=excluded.cause,
                 alternative_cause=excluded.alternative_cause,
@@ -1467,12 +1491,15 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 recommended_action=excluded.recommended_action,
                 expected_outcome=excluded.expected_outcome,
                 dollars_at_stake=excluded.dollars_at_stake,
+                unsupported_figures=excluded.unsupported_figures,
                 generated_at=excluded.generated_at
         """, (restaurant_id, DIAGNOSIS_WINDOW_DAYS, result["headline"], result["cause"],
               result["alternative_cause"], result["what_would_confirm"],
               json.dumps(drv["drivers"][:6]), json.dumps(result["operational_evidence"]),
               result["confidence"], result["recommended_action"], result["expected_outcome"],
-              round(_f(at_stake), 2)))
+              round(_f(at_stake), 2),
+              # Kept with the read so every surface shows the caveat (M-17).
+              json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None))
         conn.commit()
     finally:
         conn.close()
@@ -1524,6 +1551,7 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "recommended_action": row["recommended_action"],
         "expected_outcome": row["expected_outcome"],
         "dollars_at_stake": row["dollars_at_stake"],
+        "unsupported_figures": _j(row["unsupported_figures"] if "unsupported_figures" in row.keys() else None, []),
         "window_days": row["window_days"], "generated_at": row["generated_at"],
         "age_hours": round(age_h, 1) if age_h is not None else None, "stale": stale,
         # Owner-facing date of the read (M/D/YY) and, when it is past its

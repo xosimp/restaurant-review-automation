@@ -680,13 +680,14 @@ def _intel_home_kpi(restaurant):
     counts for the same restaurant."""
     if not getattr(restaurant, "competitor_intel", None):
         return {"value": "—", "sublabel": "no data yet"}
+    # Open recommendations — the count web Home shows (client_api.
+    # intel_open_recs): answered and withheld lines are not "ready" (M-20).
     try:
-        import json as _json
-        from competitor_intel_format import extract_recs
-        insight = _json.loads(restaurant.competitor_intel).get("insight", "")
-        n = len(extract_recs(insight))
+        from client_api import intel_open_recs
+        n = len(intel_open_recs(restaurant.id, restaurant=restaurant)["recs"])
         return {"value": str(n), "sublabel": f"recommendation{'' if n == 1 else 's'} ready"}
-    except Exception:
+    except Exception as e:
+        print(f"[mobile home] intel kpi failed: {e}")
         return {"value": "—", "sublabel": "no data yet"}
 
 
@@ -815,14 +816,20 @@ def _home_weekly_receipts(rid, active_keys, inv):
                              "emphasis": f"${int(round(waste_cost))} of {top.get('item', 'waste')} waste",
                              "text": "flagged before your next order"})
     if "marketing" in active_keys:
+        # Real pieces only — published, or made by a person — the count web
+        # Home uses (marketing.REAL_PIECE_SQL). Every log row counted:
+        # calendar markers, job drafts, each Regenerate and pieces already
+        # posted, all "drafted and ready to post" (M-27).
+        from marketing import REAL_PIECE_SQL, PIECE_ID_SQL
         row = _home_query(f"""
-            SELECT COUNT(*) AS n FROM marketing_content_log
+            SELECT COUNT(DISTINCT {PIECE_ID_SQL}) AS n FROM marketing_content_log
             WHERE restaurant_id=? AND julianday(created_at) >= julianday({week_start})
+              AND {REAL_PIECE_SQL}
         """, (rid,))
         n = int((row["n"] if row else 0) or 0)
         if n:
             receipts.append({"module": "marketing", "emphasis": f"{n} marketing {'piece' if n == 1 else 'pieces'}",
-                             "text": "drafted and ready to post"})
+                             "text": "made this week"})
     row = _home_query(f"""
         SELECT COUNT(*) AS n FROM alert_log
         WHERE restaurant_id=? AND julianday(fired_at) >= julianday({week_start})
@@ -952,8 +959,18 @@ def _do_mobile_home(current_user):
             "detail": "Negative reviews are still waiting on a reply",
             "cta": "Reply now", "secondary": None, "action": "open_module",
         })
-    if "reviews" in active_keys and rstats.get("awaiting_approval", 0) > 0:
-        n = rstats["awaiting_approval"]
+    # What one publish may post — recent, not urgent, not flagged — the same
+    # count web Home labels its button with (models.reply_queue_counts). This
+    # read every draft ever imported, so the phone and the web disagreed and
+    # the phone's label counted replies the tap would never post (M-2).
+    try:
+        from models import reply_queue_counts as _rqc
+        _publishable = _rqc(rid)["publishable"] if "reviews" in active_keys else 0
+    except Exception as e:
+        print(f"[mobile home] reply queue count failed for {rid}: {e}")
+        _publishable = 0
+    if "reviews" in active_keys and _publishable > 0:
+        n = _publishable
         needs_attention.append({
             "type": "reviews_awaiting_approval", "module": "reviews",
             "title": f"{n} review{'' if n == 1 else 's'} awaiting approval",
@@ -993,13 +1010,25 @@ def _do_mobile_home(current_user):
     # opportunistically right here (upsert-on-conflict, so a second load
     # the same day is a no-op) rather than via a separate scheduled job —
     # see value_delivered.py.
-    from value_delivered import compute_total_value_delivered, record_value_snapshot, get_value_history
-    total_value = compute_total_value_delivered(rid)
+    # The same headline web Home shows (value_delivered.headline, H-8): a
+    # monthly run-rate of what was measured, as this login may see it, with
+    # the modules it came from. A filtered figure is not the restaurant's,
+    # so it is neither snapshotted nor drawn against its history.
+    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history
     try:
-        record_value_snapshot(rid, total_value)
-    except Exception:
-        pass  # the chart just has one fewer data point — never worth failing Home over
-    value_history = get_value_history(rid, days=365)
+        _vh = _value_headline(rid, user=current_user)
+    except Exception as e:
+        print(f"[mobile home] value headline failed for {rid}: {e}")
+        _vh = {"monthly": 0, "by_module": [], "label": "measured, per month", "restaurant_wide": False}
+    total_value = _vh["monthly"]
+    if _vh.get("restaurant_wide"):
+        try:
+            record_value_snapshot(rid, total_value)
+        except Exception:
+            pass  # the chart just has one fewer data point — never worth failing Home over
+        value_history = get_value_history(rid, days=365)
+    else:
+        value_history = []
 
     # For Home's quiet-hours badge — reuses the exact same check
     # notify.py's own alert dispatch gates on, so "is it actually silenced
@@ -1098,10 +1127,15 @@ def _do_mobile_home(current_user):
         "restaurant_name": restaurant.name,
         "location_name": restaurant.location_name or None,
         "brand_color": restaurant.brand_color or None,
-        "reviews_awaiting_approval": rstats.get("awaiting_approval", 0),
+        "reviews_awaiting_approval": _publishable,
         "modules": modules_out,
         "needs_attention": needs_attention,
         "total_value_delivered": total_value,
+        # What total_value_delivered is (a monthly measured figure) and the
+        # modules it was measured on — the phone built its attribution from
+        # the modules switched on (H-8).
+        "value_label": _vh.get("label"),
+        "value_by_module": _vh.get("by_module") or [],
         "value_history": value_history,
         "quiet_hours_active": quiet_hours_active,
         "alert_quiet_end": restaurant.alert_quiet_end or None,
@@ -2982,6 +3016,15 @@ def mobile_guest_campaign_draft(current_user):
         restaurant = get_restaurant(rid)
         message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
         return jsonify(ok=True, message=message)
+    except ValueError as e:
+        # The guard refused the copy (an invented offer, a link, too long):
+        # say which, so the owner knows why nothing came back (M-24).
+        if str(e).startswith("campaign copy rejected: "):
+            return jsonify(ok=False, error="Cavnar didn't use that draft — "
+                           + str(e)[len("campaign copy rejected: "):] + ". Try again, or write it yourself."), 422
+        import ops
+        ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
     except Exception as e:
         import ops
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")

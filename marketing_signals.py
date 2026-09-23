@@ -117,8 +117,23 @@ def _local_post_time(stamp, tz_name):
     return naive.replace(tzinfo=timezone.utc).astimezone(restaurant_tz(tz_name)).replace(tzinfo=None)
 
 
+# A post's window starts on the day it went out only when it went out
+# before the day's trade began; otherwise the next day. Sales are daily
+# totals, and the whole post day used to be in the window, so a 3pm post
+# was credited with the lunch before it (M-23).
+POST_DAY_CUTOFF_HOUR = 11
+
+
+def _window_start(posted):
+    """The first business day the post can have influenced (a datetime at
+    midnight)."""
+    day = posted.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day if posted.hour < POST_DAY_CUTOFF_HOUR else day + timedelta(days=1)
+
+
 def _window_dates(posted, days):
-    return [(posted + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    first = _window_start(posted)
+    return [(first + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
 
 
 def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) -> dict:
@@ -161,10 +176,11 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
         return {"ok": False, "reason": "no_sales_yet"}
 
     # Same weekday, previous weeks — a Friday post measured against Fridays.
+    first = _window_start(posted)
     baseline_values = []
     for offset in range(1, BASELINE_WEEKS + 1):
         for i in range(days):
-            d = (posted + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
+            d = (first + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
             if d in sales:
                 baseline_values.append(sales[d])
     if len(baseline_values) < MIN_BASELINE_DAYS:
@@ -198,12 +214,12 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
             continue
     result["overlapping"] = bool(overlaps)
     result["overlaps_with"] = overlaps
-    result.update(_beyond_sales(restaurant_id, row, posted, window_dates, days, db_path))
+    result.update(_beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first=first))
     _cache_attribution(restaurant_id, content_log_id, result, db_path=db_path)
     return result
 
 
-def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path) -> dict:
+def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first=None) -> dict:
     """What else the post's window shows: the promoted dish's own units
     against the same weekdays before (menu_item_sales), reviews in the
     fortnight after that mention the dish or the topic, the guest list's
@@ -224,9 +240,10 @@ def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path) -> di
                 (restaurant_id, out["menu_item_id"])).fetchall()}
             win = [qty[d] for d in window_dates if d in qty]
             base = []
+            _first = first or _window_start(posted)
             for offset in range(1, BASELINE_WEEKS + 1):
                 for i in range(days):
-                    d = (posted + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
+                    d = (_first + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
                     if d in qty:
                         base.append(qty[d])
             if win and len(base) >= MIN_BASELINE_DAYS and sum(base) > 0:
@@ -280,12 +297,16 @@ def _cache_attribution(restaurant_id, content_log_id, result, db_path: str = DB_
         conn.execute(
             "INSERT OR REPLACE INTO marketing_attribution "
             "(restaurant_id, content_log_id, window_hours, baseline_sales, window_sales, lift_pct, item_lift_pct, "
-            " item_window_qty, item_baseline_qty, reviews_mentioning, guest_list_delta, engagement_rate, computed_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            " item_window_qty, item_baseline_qty, reviews_mentioning, guest_list_delta, engagement_rate, "
+            " verdict, noise_band_pct, computed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
             (restaurant_id, content_log_id, result["window_hours"], result["baseline_sales"],
              result["window_sales"], result["lift_pct"], result.get("item_lift_pct"), result.get("item_window_qty"),
              result.get("item_baseline_qty"), result.get("reviews_mentioning"), result.get("guest_list_delta"),
-             result.get("engagement_rate")),
+             result.get("engagement_rate"),
+             # The noise-band verdict travels with the row, so a reader
+             # colours from it rather than from the sign of lift_pct (M-23).
+             result.get("verdict"), result.get("noise_band_pct")),
         )
         conn.commit()
     except Exception as e:

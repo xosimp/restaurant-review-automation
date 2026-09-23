@@ -1137,7 +1137,11 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             if _dg and _dg.get("cause"):
                 diag_block = (
                     "\n\nROOT-CAUSE READ (stored, " + str(_dg.get("confidence")) + " confidence"
-                    + (f", produced {int(_dg['age_hours'])}h ago" if _dg.get("age_hours") is not None else "")
+                    # The read's date, not its age in hours: the prompt is
+                    # the stored read's fingerprint, and an hourly age made
+                    # every hour a new read (M-7).
+                    + (f", read of {_dg['as_of']}" if _dg.get("as_of") else "")
+                    + (", older than its refresh window" if _dg.get("stale") else "")
                     + "):\n- Most likely: " + _dg["cause"]
                     + (f"\n- Alternative: {_dg['alternative_cause']}" if _dg.get("alternative_cause") else "")
                     + (f"\n- What would confirm it: {_dg['what_would_confirm']}" if _dg.get("what_would_confirm") else "")
@@ -1187,6 +1191,17 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                 print(f"[inventory forecast log] {_fe}")
 
     has_why = "Most likely:" in diag_block
+
+    # Lines the owner already answered on Food Cost, so a reworded line
+    # cannot bring the same advice back — the prompt carries today's date,
+    # so the read is rewritten at least daily (M-8).
+    answered_block = ""
+    if restaurant_id:
+        try:
+            import insight_store as _ist_ans
+            answered_block = _ist_ans.do_not_repeat_block(restaurant_id, ("insight_food", "diag_food"))
+        except Exception as _ae:
+            print(f"[inventory answered lines] {_ae}")
 
     prompt = f"""You are an experienced restaurant CFO reviewing this restaurant's food cost.
 
@@ -1249,7 +1264,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
 - Do not use the owner name anywhere in the recommendations
-- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}"""
+- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}{answered_block}"""
 
 
     # One stored read per restaurant and prompt (audit #22). The prompt IS

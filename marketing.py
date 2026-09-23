@@ -325,6 +325,34 @@ def _content_origin(content_type):
         return "owner"
 
 
+# A real marketing piece: anything published, or content a person asked for
+# that is not a calendar marker. Scheduled-job drafts (origin 'job') and
+# calendar markers are log rows, not work anyone did. One definition, read
+# by every count of "pieces" and by value_delivered's cost avoidance (M-15,
+# M-27) — they each used to count raw rows.
+REAL_PIECE_SQL = ("((post_id IS NOT NULL AND TRIM(post_id) != '') "
+                  "OR (COALESCE(origin, 'owner')='owner' AND content_type NOT LIKE 'calendar\\_%' ESCAPE '\\'))")
+# One piece, however many times it was regenerated: a published row is its
+# own piece; unposted drafts of the same type and topic on the same day are
+# one piece (every Regenerate writes a row).
+PIECE_ID_SQL = ("(CASE WHEN post_id IS NOT NULL AND TRIM(post_id) != '' THEN 'p' || id "
+                "ELSE content_type || '|' || LOWER(TRIM(COALESCE(topic, ''))) || '|' || substr(created_at, 1, 10) END)")
+
+
+def count_pieces(restaurant_id, since_modifier, db_path=None) -> int:
+    """Distinct real pieces since `since_modifier` (an SQLite date modifier
+    such as 'start of month' or '-7 days')."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        return conn.execute(
+            f"SELECT COUNT(DISTINCT {PIECE_ID_SQL}) FROM marketing_content_log WHERE restaurant_id=? "
+            f"AND created_at >= datetime('now', ?) AND {REAL_PIECE_SQL}",
+            (restaurant_id, since_modifier)).fetchone()[0] or 0
+    finally:
+        conn.close()
+
+
 def pieces_this_month(restaurant_id, db_path=None) -> int:
     """Real marketing pieces this calendar month: content a person generated,
     plus anything published. "Pieces this month" counted every log row, so
@@ -335,10 +363,9 @@ def pieces_this_month(restaurant_id, db_path=None) -> int:
     try:
         try:
             return conn.execute(
-                "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? "
+                f"SELECT COUNT(DISTINCT {PIECE_ID_SQL}) FROM marketing_content_log WHERE restaurant_id=? "
                 "AND created_at >= date('now','start of month') "
-                "AND ((post_id IS NOT NULL AND TRIM(post_id) != '') "
-                "     OR (COALESCE(origin, 'owner')='owner' AND content_type NOT LIKE 'calendar\\_%' ESCAPE '\\'))",
+                f"AND {REAL_PIECE_SQL}",
                 (restaurant_id,)).fetchone()[0] or 0
         except Exception:
             return conn.execute(

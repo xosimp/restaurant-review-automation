@@ -438,8 +438,12 @@ def freshness(updated_at, stale_after_days: int = STALE_AFTER_DAYS) -> dict:
     else:
         return {"as_of": str(updated_at), "age_days": None, "stale": True}
     age = (datetime.now(timezone.utc) - when).days
-    return {"as_of": when.strftime("%Y-%m-%d"), "age_days": age,
-            "stale": age > stale_after_days}
+    # `as_of` is read by owners — on web, iOS and in Ask's answers — so it
+    # is M/D/YY like every owner-facing date (M-26); it read "from
+    # 2026-09-21". The ISO date stays beside it for anything that compares.
+    from time_utils import mdy
+    return {"as_of": mdy(when.strftime("%Y-%m-%d")), "as_of_iso": when.strftime("%Y-%m-%d"),
+            "age_days": age, "stale": age > stale_after_days}
 
 
 # ── what kind of claim is this ─────────────────────────────────────────────

@@ -22,6 +22,7 @@ def normalize_intel_text(text):
     text = re.sub(r'[–—]', '-', text)
     text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
     text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)(PRICE POSITIONING):', '\nPRICE POSITIONING:\n', text)
     text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
     return text
 
@@ -79,7 +80,7 @@ def parse_competitor_intel(text):
     section_lines = []
     in_section = False
     for line in lines:
-        if re.match(r"^(WHAT COMPETITORS|Recommendations?:?)", line, re.I):
+        if re.match(r"^(WHAT COMPETITORS|PRICE POSITIONING|Recommendations?:?)", line, re.I):
             in_section = True
         if in_section:
             section_lines.append(line)
@@ -104,6 +105,13 @@ def parse_competitor_intel(text):
             flush()
             current_section = "What competitors are doing poorly"
             bullets = []
+        elif re.match(r"PRICE POSITIONING", line, re.I):
+            # The paid "where these competitors sit on price" line. It is one
+            # sentence, not a bullet, and the parser only kept "-" lines, so
+            # it was dropped on every surface (M-28).
+            flush()
+            current_section = "Price positioning"
+            bullets = []
         elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
             flush()
             current_section = "recommendations"
@@ -118,6 +126,10 @@ def parse_competitor_intel(text):
                 part = re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", part.strip())).strip()
                 if part and not re.match(r'^(WHAT COMPETITORS|Recommendations?)', part, re.I):
                     rec_lines.append(part)
+        elif current_section == "Price positioning" and line:
+            b = re.sub(r'\*+', '', line).strip()
+            if b:
+                bullets.append(b)
     flush()
 
     nothing = any(_NOTHING_RE.match(r) for r in rec_lines)
@@ -147,12 +159,19 @@ def render_intro(intro, esc):
     return '<p style="font-size:13px;color:var(--ink);line-height:1.7;margin-bottom:14px">' + str(esc(intro)) + "</p>"
 
 
+def section_tone(name):
+    """'good' (doing well), 'bad' (doing poorly) or 'neutral' (price
+    positioning — a fact about the market, not a verdict)."""
+    up = (name or "").upper()
+    return "good" if "WELL" in up else ("bad" if "POORLY" in up else "neutral")
+
+
 def render_section(name, bullets, esc):
     if not bullets:
         return ""
-    is_good = "WELL" in name.upper()
-    color = "#16a34a" if is_good else "#dc2626"
-    icon = "✓" if is_good else "✗"
+    tone = section_tone(name)
+    color = {"good": "var(--green)", "bad": "var(--red)"}.get(tone, "var(--ink3)")
+    icon = {"good": "✓", "bad": "✗"}.get(tone, "·")
     out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + name + "</div>"
     for b in bullets:
         out += (

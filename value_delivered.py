@@ -156,12 +156,19 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> 
             # Months in which content was ACTUALLY produced — not months
             # since signup. One post in month one no longer bills the owner's
             # goodwill for every month after it.
+            #
+            # And only REAL pieces (marketing.REAL_PIECE_SQL): published, or
+            # made by a person — not the quiet-night job's own draft, not a
+            # calendar marker, and a Regenerate is not a second piece (M-15).
+            # A month nobody opened Marketing but a scheduled job drafted a
+            # post was credited $1,500 of work done.
+            from marketing import REAL_PIECE_SQL, PIECE_ID_SQL
             months = _scalar(conn,
                              "SELECT COUNT(DISTINCT substr(created_at,1,7)) "
-                             "FROM marketing_content_log WHERE restaurant_id=?",
+                             f"FROM marketing_content_log WHERE restaurant_id=? AND {REAL_PIECE_SQL}",
                              (restaurant_id,))
-            posts = _scalar(conn, "SELECT COUNT(*) FROM marketing_content_log "
-                                  "WHERE restaurant_id=?", (restaurant_id,))
+            posts = _scalar(conn, f"SELECT COUNT(DISTINCT {PIECE_ID_SQL}) FROM marketing_content_log "
+                                  f"WHERE restaurant_id=? AND {REAL_PIECE_SQL}", (restaurant_id,))
             if months:
                 items.append({
                     "key": "content",
@@ -288,6 +295,54 @@ def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
         "avoided": avoided(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "opportunity": opportunity(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "surfaced": surfaced(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+    }
+
+
+# What each module's measured dollars are called on the Home headline. Built
+# from delivered()["by_module"] only — what was actually measured — never
+# from the modules a restaurant has switched on (H-8): the phone credited
+# "reviews answered, posts drafted", which cannot produce measured value.
+MODULE_VALUE_LABELS = {"labor": "labor", "inventory": "food cost", "reviews": "rating",
+                       "marketing": "promoted-day sales", "other": "other measured changes"}
+
+
+def viewer_denied(user) -> set:
+    """The modules this login may not see (permissions.MODULE_VIEW_PERMISSIONS).
+    None or an admin: nothing denied. Fails closed: a lookup that errors
+    denies every module."""
+    if user is None or user.get("is_admin"):
+        return set()
+    try:
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        return {k for k, perm in MODULE_VIEW_PERMISSIONS.items() if not has_permission(user, perm)}
+    except Exception as e:
+        print(f"[value] permission lookup failed, denying all modules: {e}")
+        return {"reviews", "labor", "inventory", "marketing", "intel"}
+
+
+def headline(restaurant_id: int, user=None, db_path: str = DB_PATH) -> dict:
+    """The Home value headline as one viewer may see it (H-8).
+
+    `monthly` is delivered()["monthly"] — a MONTHLY run-rate of measured
+    improvements, labelled as such (it read "since you started" on the web
+    and "since you joined" on the phone, so one $420/month win read as $420
+    in total). `by_module` is where it came from, largest first. The
+    viewer's denied modules are applied before the sum, as /api/value does,
+    so a manager without Food Cost never sees margin dollars here either.
+    `restaurant_wide` is False when anything was filtered: that figure is
+    not the restaurant's, so it is never written as the day's snapshot."""
+    denied = viewer_denied(user)
+    d = delivered(restaurant_id, db_path=db_path, denied_modules=denied)
+    parts = sorted(((m, float(v)) for m, v in (d.get("by_module") or {}).items() if v),
+                   key=lambda x: -x[1])
+    return {
+        "monthly": int(round(d["monthly"] or 0)),
+        "by_module": [{"module": m, "label": MODULE_VALUE_LABELS.get(m, m), "monthly": round(v, 2)}
+                      for m, v in parts],
+        "wins": d.get("wins"),
+        "label": "measured, per month",
+        "caveat": d.get("caveat"),
+        "restaurant_wide": not denied,
     }
 
 

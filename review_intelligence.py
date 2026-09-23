@@ -48,7 +48,17 @@ writes its result to `review_diagnoses`.
 import json
 from datetime import datetime, timezone
 
-from models import DB_PATH, get_conn, REVIEW_TIME_AXIS_BARE
+import models as _models_mod
+from models import DB_PATH, REVIEW_TIME_AXIS_BARE
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): the
+    bound copy kept whatever models.get_conn was when this module was first
+    imported, so in a test run it read a previous test's database."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 _AXIS = REVIEW_TIME_AXIS_BARE
 
@@ -597,16 +607,25 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # Google's own published aggregate is a different number from our
     # review-analysis average and is labelled as such everywhere else in this
     # codebase; both are reported rather than blended.
+    #
+    # The GAP is like for like or it is nothing (M-18). Competitors' figures
+    # are their all-time Google ratings, so ours is our Google rating. The
+    # 90-day average of imported reviews moves far more than a public rating:
+    # a 4.6 restaurant in a rough month read "4.1 vs a 4.5 median (-0.40)"
+    # and the model wrote that it trails its market. Intel made the same fix
+    # (mobile_api own_rating). With no Google rating there is no gap.
+    google = _f(getattr(r, "gbp_rating", None)) or None
     return {
         "available": True,
         "our_rating_90d": ours_90d,
         "our_reviews_90d": (row["n"] if row else 0) or 0,
-        "our_google_rating": getattr(r, "gbp_rating", None),
+        "our_google_rating": google,
         "competitor_median": median,
         "competitor_best": {"name": max(comps, key=lambda c: _f(c["rating"])).get("name"),
                             "rating": max(_f(c["rating"]) for c in comps)},
         "competitor_count": len(comps),
-        "gap_vs_median": round(ours_90d - median, 2) if ours_90d else None,
+        "gap_vs_median": round(google - median, 2) if google else None,
+        "gap_basis": ("your Google rating against theirs" if google else None),
         "as_of": fresh.get("as_of"), "age_days": fresh.get("age_days"),
         "stale": fresh.get("stale"),
     }
@@ -709,29 +728,46 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     rests on, and the caller is expected to label it `forecast` via
     ai_guard.CLAIM_KINDS.
     """
+    # The published 5-9%-per-star range is about the DISPLAYED rating — the
+    # all-time average a guest sees on the listing — so the move it is
+    # applied to is that one (M-19): the all-time average now against the
+    # all-time average 30 days ago. It was applied to the last 30 days'
+    # average against the 60 before, a figure that swings far more than any
+    # public rating, so a rough month read as thousands at risk.
     conn = get_conn(db_path)
     cur = _one_row(conn, f"""
-        SELECT ROUND(AVG(rating),2) AS r, COUNT(*) AS n FROM reviews
-        WHERE restaurant_id=? AND deleted_at IS NULL
-          AND {_AXIS} >= datetime('now','-30 days')
+        SELECT AVG(rating) AS r, COUNT(*) AS n,
+               SUM(CASE WHEN {_AXIS} >= datetime('now','-30 days') THEN 1 ELSE 0 END) AS recent
+        FROM reviews
+        WHERE restaurant_id=? AND deleted_at IS NULL AND rating IS NOT NULL
     """, (restaurant_id,))
     prev = _one_row(conn, f"""
-        SELECT ROUND(AVG(rating),2) AS r, COUNT(*) AS n FROM reviews
-        WHERE restaurant_id=? AND deleted_at IS NULL
-          AND {_AXIS} >= datetime('now','-90 days')
-          AND {_AXIS} <  datetime('now','-30 days')
+        SELECT AVG(rating) AS r, COUNT(*) AS n FROM reviews
+        WHERE restaurant_id=? AND deleted_at IS NULL AND rating IS NOT NULL
+          AND {_AXIS} < datetime('now','-30 days')
     """, (restaurant_id,))
     conn.close()
 
     from notify import MIN_TREND_REVIEWS_PER_WEEK
     floor = MIN_TREND_REVIEWS_PER_WEEK * 4  # a month's worth at the weekly floor
-    if not cur or not prev or (cur["n"] or 0) < floor or (prev["n"] or 0) < floor:
+    if not cur or not prev or (cur["recent"] or 0) < floor or (prev["n"] or 0) < floor:
         return {"available": False,
-                "reason": f"needs {floor}+ reviews in both the last 30 days and the 60 before it"}
-    delta = _f(cur["r"]) - _f(prev["r"])
+                "reason": f"needs {floor}+ reviews in the last 30 days and a history before them"}
+    # Our all-time average is the displayed rating only if we hold the
+    # history the listing is built from.
+    try:
+        from models import get_restaurant as _gr_rar
+        _gcount = getattr(_gr_rar(restaurant_id), "gbp_review_count", None)
+    except Exception:
+        _gcount = None
+    if _gcount and (cur["n"] or 0) < 0.8 * float(_gcount):
+        return {"available": False,
+                "reason": (f"Cavnar holds {cur['n']} of the {int(_gcount)} reviews on your listing, so it "
+                           f"can't track the rating guests see")}
+    delta = round(_f(cur["r"]) - _f(prev["r"]), 2)
     if abs(delta) < MIN_RATING_DELTA_FOR_ESTIMATE:
         return {"available": False,
-                "reason": f"rating moved {delta:+.2f}★ — inside normal month-to-month noise"}
+                "reason": f"your all-time rating moved {delta:+.2f}★ in 30 days — inside normal noise"}
 
     monthly_sales = None
     source = None
@@ -769,7 +805,11 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "monthly_high": round(max(low, high)),
         "monthly_sales_basis": round(monthly_sales),
         "sales_source": source,
-        "reviews_recent": cur["n"], "reviews_prior": prev["n"],
+        "reviews_recent": cur["recent"], "reviews_prior": prev["n"],
+        # What moved, and that it is the whole restaurant's figure — not any
+        # one complaint's (it used to sit inside the first diagnosis card).
+        "rating_basis": "your all-time average rating — what a listing displays — now against 30 days ago",
+        "scope": "restaurant",
         "elasticity_low_pct": REVENUE_ELASTICITY_LOW * 100,
         "elasticity_high_pct": REVENUE_ELASTICITY_HIGH * 100,
         "assumption": ("Applies a published 5-9% revenue-per-star range for independent "
@@ -1099,7 +1139,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     today = restaurant_now(restaurant).strftime("%B %d, %Y")
 
     existing = {d["category"]: d for d in get_diagnoses(restaurant_id, db_path=db_path,
-                                                        include_stale=True)}
+                                                        include_stale=True, include_retired=True)}
     produced = []
     for cluster in clusters[:max_clusters]:
         prior = existing.get(cluster["category"])
@@ -1141,8 +1181,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             from ai_utils import parse_json_reply
             result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
                                          allowed, prompt, restaurant_id)
-            money = revenue_at_risk(restaurant_id, db_path=db_path)
-            _save_diagnosis(restaurant_id, cluster, result, money, db_path)
+            _save_diagnosis(restaurant_id, cluster, result, {}, db_path)
             result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
                            "window_days": cluster["window_days"], "stale": False})
             produced.append(result)
@@ -1165,8 +1204,8 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
             (restaurant_id, category, window_days, mention_count, cause, alternative_cause,
              evidence_review_ids, operational_evidence, confidence, what_would_confirm,
              recommended_action, expected_outcome, revenue_at_risk_low, revenue_at_risk_high,
-             generated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+             unsupported_figures, generated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
         ON CONFLICT(restaurant_id, category, window_days) DO UPDATE SET
             mention_count=excluded.mention_count, cause=excluded.cause,
             alternative_cause=excluded.alternative_cause,
@@ -1177,6 +1216,7 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
             expected_outcome=excluded.expected_outcome,
             revenue_at_risk_low=excluded.revenue_at_risk_low,
             revenue_at_risk_high=excluded.revenue_at_risk_high,
+            unsupported_figures=excluded.unsupported_figures,
             generated_at=excluded.generated_at
     """, (restaurant_id, cluster["category"], cluster["window_days"], cluster["mentions"],
           result["cause"], result["alternative_cause"],
@@ -1184,27 +1224,54 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
           json.dumps(result["operational_evidence"]),
           result["confidence"], result["what_would_confirm"],
           result["recommended_action"], result["expected_outcome"],
-          money.get("monthly_low") if money.get("available") else None,
-          money.get("monthly_high") if money.get("available") else None))
+          # The revenue range is the whole restaurant's (revenue_at_risk),
+          # not this cluster's: no longer stored against one diagnosis, where
+          # every reader took it as what the complaint costs (M-19).
+          None,
+          None,
+          # Figures in the cause the verifier could not trace to the data.
+          # Kept with the row so every surface reading it back shows the
+          # caveat; they were dropped on save, so the cause read as
+          # measured everywhere except the one response that wrote it (M-17).
+          json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None))
     conn.commit()
     conn.close()
 
 
 def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
-                  include_stale: bool = False) -> list:
-    """Stored diagnoses, newest first, each carrying its own age.
+                  include_stale: bool = False, include_retired: bool = False) -> list:
+    """Stored diagnoses, most important first, each carrying its own age.
+
+    Ordered the way complaint_clusters ranks the clusters — worst severity,
+    then mentions — not by generated_at (M-6). diagnose() writes clusters
+    most-severe first, one model call each, so "newest first" put the
+    least important cluster at [0], and [0] is what the Reviews insight's
+    "Why" line, the diagnosis card and the weekly digest's ACTION read.
+
+    A diagnosis whose category no longer clears the cluster floor is
+    retired: left out unless `include_retired`. A 120-day-old "parking"
+    cause kept coming back whenever nothing current existed.
 
     `stale` is computed rather than enforced: a diagnosis past its TTL is
     still the best answer available, and hiding it would leave the owner with
     the bare complaint count the module used to give them. The caller decides
     whether to show it with an "as of" or refresh it.
     """
+    try:
+        rank = {c["category"]: i for i, c in enumerate(complaint_clusters(restaurant_id, db_path=db_path))}
+    except Exception as e:
+        print(f"[review_intelligence] cluster rank failed for {restaurant_id}: {e}")
+        rank = None
     conn = get_conn(db_path)
     rows = _rows_raw(conn, """
         SELECT * FROM review_diagnoses WHERE restaurant_id=?
         ORDER BY generated_at DESC
     """, (restaurant_id,))
     conn.close()
+    if rank is not None:
+        if not include_retired:
+            rows = [r for r in rows if r["category"] in rank]
+        rows = sorted(rows, key=lambda r: rank.get(r["category"], len(rank)))
     out = []
     for r in rows:
         age_h = None
@@ -1233,8 +1300,7 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
             "confidence": r["confidence"], "what_would_confirm": r["what_would_confirm"],
             "recommended_action": r["recommended_action"],
             "expected_outcome": r["expected_outcome"],
-            "revenue_at_risk_low": r["revenue_at_risk_low"],
-            "revenue_at_risk_high": r["revenue_at_risk_high"],
+            "unsupported_figures": _j(r["unsupported_figures"] if "unsupported_figures" in r.keys() else None, []),
             "generated_at": r["generated_at"],
             "age_hours": round(age_h, 1) if age_h is not None else None,
             "stale": stale,

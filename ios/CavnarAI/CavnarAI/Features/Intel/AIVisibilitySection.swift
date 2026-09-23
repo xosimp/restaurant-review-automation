@@ -224,11 +224,17 @@ struct AIVisibilitySection: View {
                     // with whether a Yelp ID had been typed into Cavnar AI,
                     // which is this product's configuration, not the
                     // restaurant's standing anywhere.
+                    // nil when nothing on the listing could be read: a dash,
+                    // never 0%. Items that need the Google listing are left
+                    // out of the score while it can't be read (M-14).
+                    let listing = result.presenceScore ?? result.gbpScore
                     heroStat(
-                        value: "\(result.presenceScore ?? result.gbpScore ?? 0)%",
-                        tone: gbpTone(result.presenceScore ?? result.gbpScore ?? 0),
+                        value: listing.map { "\($0)%" } ?? "\u{2014}",
+                        tone: listing.map { gbpTone($0) } ?? Color.cavnarInk3,
                         label: "LISTING STRENGTH",
-                        sub: gbpScoreLabel(result.presenceScore ?? result.gbpScore ?? 0),
+                        sub: listing.map { gbpScoreLabel($0) + ((result.presenceUnmeasured ?? 0) > 0
+                                                               ? " \u{00B7} of \(result.presenceMeasured ?? 0) read" : "") }
+                            ?? "Not measured",
                         expandable: true, isExpanded: showGbpChecklist
                     )
                 }

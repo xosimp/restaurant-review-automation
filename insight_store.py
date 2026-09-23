@@ -204,6 +204,55 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
     return out
 
 
+def answered_lines(restaurant_id, prefixes, limit=12, db_path=DB_PATH) -> list:
+    """The words of the lines the owner has answered (Done, Not for us,
+    Track) under these key prefixes, while the answer still holds.
+
+    A line's key is a hash of its exact text, so an answer silenced only
+    those words: the read is regenerated at least daily, a rephrased line
+    got a new key, and the same advice came back the next day (M-8). The
+    insight prompts pass these to the model as "do not suggest again".
+    Sorted by key so the same answers give the same prompt (the stored
+    read's fingerprint)."""
+    if not restaurant_id or not prefixes:
+        return []
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return []
+    try:
+        where = " OR ".join("key LIKE ?" for _ in prefixes)
+        rows = conn.execute(
+            f"SELECT key, title FROM rec_instances WHERE restaurant_id=? AND ({where}) "
+            "AND title IS NOT NULL AND TRIM(title) != '' "
+            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
+            "AND status IN ('completed', 'dismissed', 'accepted') "
+            "ORDER BY key LIMIT ?",
+            (restaurant_id, *[f"{p}:%" for p in prefixes], int(limit))).fetchall()
+    except Exception as e:
+        print(f"[insight_store] answered lines failed: {e}")
+        return []
+    finally:
+        conn.close()
+    seen, out = set(), []
+    for r in rows:
+        t = re.sub(r"\s+", " ", str(r["title"])).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t[:200])
+    return out
+
+
+def do_not_repeat_block(restaurant_id, prefixes, db_path=DB_PATH) -> str:
+    """The prompt section carrying answered_lines, or "" when there are none."""
+    lines = answered_lines(restaurant_id, prefixes, db_path=db_path)
+    if not lines:
+        return ""
+    return ("\n\nALREADY ANSWERED - the owner has already answered these suggestions (done them, or "
+            "said they are not for this restaurant). Do NOT suggest any of them again, in these words "
+            "or in any other words:\n" + "\n".join(f"- {t}" for t in lines))
+
+
 def answered(restaurant_id, keys, db_path=DB_PATH) -> set:
     """The subset of `keys` the owner has answered (silenced everywhere)."""
     try:

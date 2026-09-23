@@ -187,7 +187,13 @@ def _add_event(conn, rec_id, rid, key, event, surface=None, user_id=None, role=N
 
 
 def _close(conn, rec_id, rid, key, status, meta=None):
-    conn.execute("UPDATE rec_instances SET status=?, closed_at=datetime('now') WHERE rec_id=? AND status='open'",
+    # An answer given to an episode that had already expired is still an
+    # answer: the episode takes the answer's status. It stayed 'expired',
+    # so the admin acceptance view and quiet_kinds counted an answered
+    # recommendation as ignored (M-31, H-22). Expiry itself only ever
+    # closes an open episode.
+    allowed = "('open')" if status == "expired" else "('open', 'expired')"
+    conn.execute(f"UPDATE rec_instances SET status=?, closed_at=datetime('now') WHERE rec_id=? AND status IN {allowed}",
                  (status, rec_id))
     if status == "expired":
         _add_event(conn, rec_id, rid, key, "expired", dedupe="expired", meta=meta)

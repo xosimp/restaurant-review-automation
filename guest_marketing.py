@@ -750,6 +750,28 @@ def _too_soon(contact, now):
 CAMPAIGN_MAX_CHARS = 300
 
 
+# Offer shapes ai_guard.unsupported_commitments (written for review replies)
+# does not name, because a reply never runs a promotion and a text does.
+_EXTRA_OFFER_RE = re.compile(
+    r"\b(half[- ]?price|half[- ]?off|b\.?o\.?g\.?o\b|buy one,? get one|two[- ]for[- ]one|2[- ]for[- ]1|"
+    r"\$\s?\d+(?:\.\d\d)?\s+off|discount(?:ed)?|on the house)\b", re.I)
+
+
+def invented_offers(text, allowed_source=""):
+    """Offers in guest-text copy that the owner never wrote down (M-24): a
+    freebie, a percentage or dollar off, half price, BOGO, a discount. An
+    offer whose words appear in the owner's own topic or menu notes is
+    theirs and is allowed. Returns the offending phrases."""
+    from ai_guard import unsupported_commitments
+    found = list(unsupported_commitments(text or ""))
+    for m in _EXTRA_OFFER_RE.finditer(text or ""):
+        ph = m.group(0).strip()
+        if ph and ph not in found:
+            found.append(ph)
+    src = re.sub(r"\s+", " ", (allowed_source or "").lower())
+    return [ph for ph in found if re.sub(r"\s+", " ", ph.lower()) not in src]
+
+
 def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
@@ -772,6 +794,9 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         "Rules: under 300 characters total (this is a real text message, not an email). "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
+        "Never invent an offer: no discount, percentage or dollars off, free item, half price, "
+        "buy-one-get-one or anything on the house, unless it is written in the topic or menu above, "
+        "in those words. The restaurant has not agreed to one.\n"
         "Return ONLY the message text, nothing else."
     )
     client = get_client()
@@ -792,6 +817,13 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     refusal = check_public_reply(text)
     if refusal:
         raise ValueError(f"campaign copy rejected: {refusal}")
+    # The comment above promised an offer the restaurant never agreed to is
+    # not sent unread, and only the link/phone check ran: "enjoy a free
+    # dessert with any entree" and "20% off all week" both passed (M-24).
+    offers = invented_offers(text, (topic or "") + " " + (p.get("menu_notes") or ""))
+    if offers:
+        raise ValueError("campaign copy rejected: it offers " + ", ".join(offers[:3])
+                         + ", which nobody told Cavnar the restaurant is running")
     # check_public_reply allows a 1,200-character review reply; a text
     # message has its own, much smaller budget.
     if len(text) > CAMPAIGN_MAX_CHARS:
@@ -1028,7 +1060,13 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
         return {"available": False, "reason": "fewer than two campaigns of ten or more texts — nothing to compare yet"}
     measured = [c for c in sent if c.get("visits_matched") is not None]
     basis = "came back" if len(measured) >= 2 else "taps"
-    pool = measured if basis == "came back" else sent
+    # Taps are only measurable on a campaign that carried a link: one with
+    # no link scored 0 and was named "weakest" for a number it could never
+    # have had (M-22).
+    pool = measured if basis == "came back" else [c for c in sent if c.get("link_token")]
+    if len(pool) < 2:
+        return {"available": False,
+                "reason": "fewer than two campaigns with a link or a matched visit — nothing to compare yet"}
 
     def rate(c):
         n = (c.get("visits_matched") if basis == "came back" else c.get("clicks")) or 0
@@ -1055,9 +1093,15 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
     alt = ("The day and hour it went out, not the audience — a Thursday-afternoon text and a Monday-morning one reach "
            "the same people in different moods." if seg_diff else
            "The audience had simply been texted more recently the second time; the frequency cap holds three days, not three weeks.")
-    confirm = ("Send the next campaign to the stronger segment only and read this line again in two weeks." if seg_diff else
+    # Two segments are not compared on raw rates (M-22): regulars come back
+    # whether or not they were texted, so the segment with more of them
+    # "wins" with no baseline for what it would have done anyway. No
+    # "send to that segment only" — only the test that would tell.
+    confirm = ("Send the same message to both segments on the same day, and hold a few guests in each back; "
+               "only against those held back does a gap say the text worked." if seg_diff else
                "Send the stronger message's shape again on the weaker one's weekday; if it holds, it was the message.")
-    conf = "high" if basis == "came back" and len(pool) >= 4 else ("medium" if len(pool) >= 3 else "low")
+    conf = ("low" if seg_diff else
+            ("high" if basis == "came back" and len(pool) >= 4 else ("medium" if len(pool) >= 3 else "low")))
     return {"available": True, "cause": cause, "alternative_cause": alt, "what_would_confirm": confirm,
             "operational_evidence": evidence, "confidence": conf,
             "summary": f"{len(pool)} campaigns measured by {basis}."
@@ -1296,7 +1340,10 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
         if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
             continue          # no POS calls on behalf of an account that asked for quiet
         sent_on = _date.fromisoformat(c["sent_on"])
-        start = _date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"] else sent_on
+        # From the day AFTER the send (M-22): the send day's orders include
+        # the lunch before a 3pm text, which is not a guest coming back.
+        start = (_date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"]
+                 else sent_on + _td(days=1))
         end = min(yesterday, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))
         if start > end:
             continue

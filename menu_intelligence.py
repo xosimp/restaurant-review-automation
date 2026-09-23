@@ -172,7 +172,10 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
         watch = build_price_watch(compute_item_trends(restaurant_id, items or []))
     except Exception as e:
         return {"available": False, "reason": f"price history unavailable: {e}"}
-    rises = [w for w in watch if (w.get("change_pct") or 0) > 0
+    # Sustained rises only (M-13): a one-week spike is what Price Watch itself
+    # calls "worth checking this week's invoice for an error" — a menu price
+    # is not changed on a figure that may be a misread.
+    rises = [w for w in watch if w.get("kind") == "trend" and (w.get("change_pct") or 0) > 0
              and w.get("old_price") and w.get("new_price")
              and w["new_price"] > w["old_price"]]
     if not rises:
@@ -181,10 +184,22 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     import inventory_ledger
     menu = {e["id"]: e for e in (inventory_ledger.menu_profitability(restaurant_id).get("priced") or [])}
 
-    conn = get_conn(db_path)
+    conn = _conn(db_path)
     try:
         ingredients = [dict(r) for r in conn.execute(
             "SELECT id, name, unit FROM ingredients WHERE restaurant_id=?", (restaurant_id,)).fetchall()]
+        # When each dish was last repriced from a suggestion. A rise that
+        # began before that is already in the price (M-13): measuring it
+        # again against the raised price asked for the whole increase a
+        # second time — $25 -> $31.25 -> $39.25 for one $2 rise.
+        try:
+            repriced = {r["menu_item_id"]: str(r["at"])[:10] for r in conn.execute(
+                "SELECT menu_item_id, MAX(created_at) AS at FROM reprice_decisions "
+                "WHERE restaurant_id=? AND menu_item_id IS NOT NULL GROUP BY menu_item_id",
+                (restaurant_id,)).fetchall()}
+        except Exception as e:
+            print(f"[menu_intelligence] reprice history unavailable for {restaurant_id}: {e}")
+            repriced = {}
         recipes = [dict(r) for r in conn.execute(
             "SELECT ri.menu_item_id, ri.ingredient_id, ri.qty_per_unit FROM recipe_ingredients ri "
             "JOIN menu_items m ON m.id=ri.menu_item_id WHERE m.restaurant_id=? AND m.is_active=1",
@@ -204,10 +219,13 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
         if not ing:
             continue          # ambiguous or unknown ingredient — not evidence
         per_unit = w["new_price"] - w["old_price"]
+        rise_began = (date.today() - timedelta(days=7 * int(w.get("weeks") or 0))).isoformat()
         for rec in (r for r in recipes if r["ingredient_id"] == ing["id"]):
             dish = menu.get(rec["menu_item_id"])
             if not dish:
                 continue
+            if repriced.get(dish["id"]) and repriced[dish["id"]] >= rise_began:
+                continue          # repriced since this rise began: already in the price
             inc = per_unit * float(rec["qty_per_unit"] or 0)
             d = by_dish.setdefault(dish["id"], {
                 "dish": dish["name"], "menu_item_id": dish["id"],

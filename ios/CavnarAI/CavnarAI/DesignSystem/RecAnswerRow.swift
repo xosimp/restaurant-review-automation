@@ -5,13 +5,24 @@ import SwiftUI
 /// the one door into rec_ledger for web and iOS (strategy_routes
 /// `_do_rec_event`). The web twin is `client_api.rec_controls_html`.
 enum RecAnswer: String, CaseIterable, Sendable {
-    /// "Done" — the owner did it. Never suggested again.
+    /// "Done" — the owner did it. Silenced for good, and the module's
+    /// insight is told not to suggest it again in other words.
     case completed
     /// "Not for us" — sent as `dismissed` with `kind: not_for_us`, the
     /// silence that keeps the recommendation from coming back.
     case notForUs
-    /// "Track" — the owner is acting on it; Cavnar measures what changes.
+    /// "Track" — starts a before-and-after tracker on the module's own
+    /// metric (strategy_routes.REC_TRACK_METRICS). Offered only where one
+    /// exists — see `defaults(for:)`.
     case accepted
+
+    /// The modules whose recommendations Track can measure. Intel has no
+    /// metric of its own, so it offers Done and Not for us only (M-8).
+    static let trackableModules: Set<String> = ["reviews", "food", "marketing", "labor"]
+
+    static func defaults(for module: String) -> [RecAnswer] {
+        trackableModules.contains(module) ? allCases : [.completed, .notForUs]
+    }
 
     /// The ledger's event name.
     var event: String {
@@ -33,12 +44,15 @@ enum RecAnswer: String, CaseIterable, Sendable {
         }
     }
 
-    /// The muted line that replaces the buttons once the server has it.
+    /// The muted line that replaces the buttons once the server has it —
+    /// used only when the server sends no `message` of its own (an older
+    /// server). The server's sentence says what actually happened: a
+    /// tracker on a named metric, or only hidden.
     var confirmation: String {
         switch self {
         case .completed: return "Done \u{2014} Cavnar won\u{2019}t suggest it again"
         case .notForUs:  return "Noted \u{2014} it won\u{2019}t come back"
-        case .accepted:  return "Tracking \u{2014} Cavnar will watch what changes"
+        case .accepted:  return "Noted \u{2014} hidden for 14 days"
         }
     }
 
@@ -46,7 +60,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
         switch self {
         case .completed: return "Marks this done so it isn't suggested again"
         case .notForUs:  return "Stops this recommendation coming back"
-        case .accepted:  return "Cavnar watches what changes after you act on it"
+        case .accepted:  return "Cavnar compares the numbers before and after you act on it"
         }
     }
 }
@@ -67,6 +81,9 @@ extension APIClient {
         /// from the owner's point of view.
         let recorded: Bool?
         let error: String?
+        /// What the answer actually did, in the owner's words (a tracker on
+        /// a named metric, or only hidden). Shown instead of `confirmation`.
+        let message: String?
     }
 
     /// Records the owner's answer to one recommendation. `module` defaults
@@ -95,7 +112,8 @@ struct RecAnswerRow: View {
     let key: String
     let surface: String
     var module: String? = nil
-    var answers: [RecAnswer] = RecAnswer.allCases
+    /// nil = the defaults for this row's module (`RecAnswer.defaults`).
+    var answers: [RecAnswer]? = nil
     /// Told once the server has the answer — lets a caller hide the action
     /// the answer belongs to (a reprice card's Set button).
     var onAnswered: ((RecAnswer) -> Void)? = nil
@@ -104,14 +122,18 @@ struct RecAnswerRow: View {
     /// Keyed by the rec key, not just "answered": a row inside a ForEach
     /// keyed by position keeps its @State when a reload removes the line
     /// above it, and the next recommendation must not inherit the answer.
-    private struct Outcome: Equatable { let key: String; let answer: RecAnswer }
+    private struct Outcome: Equatable { let key: String; let answer: RecAnswer; let message: String? }
     @State private var outcome: Outcome?
     @State private var busy = false
     @State private var errorMessage: String?
 
-    private var answered: RecAnswer? {
+    private var answered: Outcome? {
         guard let outcome, outcome.key == key else { return nil }
-        return outcome.answer
+        return outcome
+    }
+
+    private var shownAnswers: [RecAnswer] {
+        answers ?? RecAnswer.defaults(for: module ?? surface)
     }
 
     var body: some View {
@@ -121,7 +143,7 @@ struct RecAnswerRow: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .accessibilityHidden(true)
-                    Text(answered.confirmation)
+                    Text(answered.message ?? answered.answer.confirmation)
                         .font(.cavnarBody(12.5, weight: 500))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -130,7 +152,7 @@ struct RecAnswerRow: View {
                 .accessibilityElement(children: .combine)
             } else {
                 HStack(spacing: 16) {
-                    ForEach(answers, id: \.self) { answer in
+                    ForEach(shownAnswers, id: \.self) { answer in
                         Button {
                             Haptic.light()
                             Task { await submit(answer) }
@@ -172,7 +194,7 @@ struct RecAnswerRow: View {
                 return
             }
             Haptic.success()
-            outcome = Outcome(key: key, answer: answer)
+            outcome = Outcome(key: key, answer: answer, message: r.message)
             onAnswered?(answer)
         } catch is CancellationError {
             // The screen went away mid-send — nothing to say.
