@@ -452,7 +452,17 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     }
 
 
-def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
+def _window(days, as_of):
+    """(first day, last day or None) of a `days`-long window. Anchored on
+    today with no upper bound by default; on `as_of` (a past business date —
+    the nightly report) it ends there, so later events stay out."""
+    if as_of:
+        end = _as_date_str(as_of)
+        return (date.fromisoformat(end) - timedelta(days=days - 1)).isoformat(), end
+    return (date.today() - timedelta(days=days - 1)).isoformat(), None
+
+
+def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=None) -> dict:
     """How much of this week's recorded waste was actually counted, and how
     much was inferred from a recount coming in under expectation.
 
@@ -461,19 +471,22 @@ def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
     distinguished it, so a miscount was reported to the owner as money
     wasted. An owner can act on "you wasted $200 of produce"; they can only
     act on "$200 of the gap is unexplained" by counting more carefully.
+
+    `as_of`: the window ends on that date instead of today (see _window).
     """
     from models import get_conn
     conn = get_conn()
     try:
-        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        window_start, window_end = _window(days, as_of)
         rows = conn.execute(
             "SELECT COALESCE(e.source,'manual') AS src, "
             "       COALESCE(SUM(e.qty * COALESCE(i.unit_cost,0)), 0) AS cost "
             "FROM ingredient_stock_events e "
             "JOIN ingredients i ON i.id = e.ingredient_id AND i.restaurant_id = e.restaurant_id "
             "WHERE e.restaurant_id=? AND e.event_type='waste' AND e.event_date>=? "
-            "GROUP BY COALESCE(e.source,'manual')",
-            (restaurant_id, window_start),
+            + ("AND e.event_date<=? " if window_end else "")
+            + "GROUP BY COALESCE(e.source,'manual')",
+            (restaurant_id, window_start) + ((window_end,) if window_end else ()),
         ).fetchall()
     finally:
         conn.close()
@@ -491,7 +504,7 @@ def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
         # Which ingredients the unexplained gap is actually in. This used to
         # be aggregated away to a single dollar figure, which is the one
         # number an owner cannot act on — see inferred_variance below.
-        "top_inferred": inferred_variance(restaurant_id, days=days)["ingredients"][:5],
+        "top_inferred": inferred_variance(restaurant_id, days=days, as_of=as_of)["ingredients"][:5],
     }
 
 
@@ -508,7 +521,7 @@ MIN_VARIANCE_DOLLARS = 15.0
 MENU_PAGE_SIZE = 500
 
 
-def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
+def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=None) -> dict:
     """Where theoretical usage and actual usage disagree, by ingredient and
     by the dishes that ingredient goes into.
 
@@ -530,11 +543,14 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dic
     — this never guesses which dish is over-portioned, it reports which
     dishes are the candidates and how much of the consumption each accounts
     for.
+
+    `as_of`: the window ends on that date instead of today (see _window).
     """
     from models import get_conn
     conn = get_conn()
     try:
-        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        window_start, window_end = _window(days, as_of)
+        upto = " AND e.event_date<=?" if window_end else ""
         rows = conn.execute(
             """SELECT i.id, i.name, i.unit, COALESCE(i.unit_cost,0) AS unit_cost,
                       COALESCE(SUM(CASE WHEN e.event_type='waste' AND e.source='inferred'
@@ -543,10 +559,10 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dic
                  FROM ingredients i
                  JOIN ingredient_stock_events e
                    ON e.ingredient_id=i.id AND e.restaurant_id=i.restaurant_id
-                WHERE i.restaurant_id=? AND e.event_date>=?
+                WHERE i.restaurant_id=? AND e.event_date>=?""" + upto + """
                 GROUP BY i.id
                HAVING gap_qty > 0""",
-            (restaurant_id, window_start),
+            (restaurant_id, window_start) + ((window_end,) if window_end else ()),
         ).fetchall()
 
         out = []
@@ -580,10 +596,10 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dic
                       JOIN menu_items m ON m.id = ri.menu_item_id AND m.restaurant_id=?
                       LEFT JOIN menu_item_sales s
                         ON s.menu_item_id = m.id AND s.restaurant_id = m.restaurant_id
-                       AND s.business_date >= ?
+                       AND s.business_date >= ?{" AND s.business_date <= ?" if window_end else ""}
                      WHERE ri.ingredient_id IN ({marks})
                      GROUP BY ri.ingredient_id, m.id""",
-                (restaurant_id, window_start, *material_ids),
+                (restaurant_id, window_start, *((window_end,) if window_end else ()), *material_ids),
             ).fetchall():
                 consumed = float(d["qty_per_unit"] or 0) * float(d["units_sold"] or 0)
                 if consumed > 0:

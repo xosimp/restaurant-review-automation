@@ -114,12 +114,16 @@ def upcoming(restaurant_id, start=None, end=None, db_path=DB_PATH) -> list:
     return [dict(r) for r in rows]
 
 
-def typical_covers(restaurant_id, db_path=DB_PATH, weeks=8) -> dict:
+def typical_covers(restaurant_id, db_path=DB_PATH, weeks=8, before=None) -> dict:
     """{weekday: median covers} from the owner's own cover counts, so a
-    reservation figure can be read as a lift rather than a raw number."""
+    reservation figure can be read as a lift rather than a raw number.
+
+    `before` (a date): the `weeks` weeks ending the day before it, so one
+    night can be read against its typical weekday without counting itself
+    (the nightly report). Unset: the weeks ending today."""
     try:
         import covers
-        end = date.today()
+        end = (date.fromisoformat(str(before)[:10]) - timedelta(days=1)) if before else date.today()
         hist = covers.by_date(restaurant_id, (end - timedelta(weeks=weeks)).isoformat(), end.isoformat(), db_path=db_path)
     except Exception:
         return {}

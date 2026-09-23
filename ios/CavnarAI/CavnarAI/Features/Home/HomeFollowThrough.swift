@@ -80,6 +80,14 @@ struct CloseOutEntry: Decodable {
     let wentWrong: String?
     let eightySixed: String?
     let callouts: String?
+    // The six the nightly Daily Sales Report reads (closeout.DSR_FIELDS).
+    // Optional: a backend from before them simply omits the keys.
+    let equipment: String?
+    let vipGuests: String?
+    let maintenance: String?
+    let shiftNotes: String?
+    let generalNotes: String?
+    let influence: String?
 
     enum CodingKeys: String, CodingKey {
         case businessDate = "business_date"
@@ -88,6 +96,61 @@ struct CloseOutEntry: Decodable {
         case wentWrong = "went_wrong"
         case eightySixed = "eighty_sixed"
         case callouts = "callouts"
+        case equipment
+        case vipGuests = "vip_guests"
+        case maintenance
+        case shiftNotes = "shift_notes"
+        case generalNotes = "general_notes"
+        case influence
+    }
+}
+
+/// Everything a close-out can say, as the sheet edits it. All ten are sent
+/// on every save: an empty one is a cleared one.
+struct CloseOutDraft: Encodable {
+    var wentWell = ""
+    var wentWrong = ""
+    var eightySixed = ""
+    var callouts = ""
+    var equipment = ""
+    var vipGuests = ""
+    var maintenance = ""
+    var shiftNotes = ""
+    var generalNotes = ""
+    var influence = ""
+
+    init() {}
+
+    init(_ e: CloseOutEntry) {
+        wentWell = e.wentWell ?? ""
+        wentWrong = e.wentWrong ?? ""
+        eightySixed = e.eightySixed ?? ""
+        callouts = e.callouts ?? ""
+        equipment = e.equipment ?? ""
+        vipGuests = e.vipGuests ?? ""
+        maintenance = e.maintenance ?? ""
+        shiftNotes = e.shiftNotes ?? ""
+        generalNotes = e.generalNotes ?? ""
+        influence = e.influence ?? ""
+    }
+
+    var isEmpty: Bool {
+        [wentWell, wentWrong, eightySixed, callouts, equipment, vipGuests,
+         maintenance, shiftNotes, generalNotes, influence]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case wentWell = "went_well"
+        case wentWrong = "went_wrong"
+        case eightySixed = "eighty_sixed"
+        case callouts = "callouts"
+        case equipment
+        case vipGuests = "vip_guests"
+        case maintenance
+        case shiftNotes = "shift_notes"
+        case generalNotes = "general_notes"
+        case influence
     }
 }
 
@@ -557,28 +620,13 @@ final class HomeFollowThroughViewModel {
         await load()
     }
 
-    private struct CloseOutBody: Encodable {
-        let wentWell: String
-        let wentWrong: String
-        let eightySixed: String
-        let callouts: String
-        enum CodingKeys: String, CodingKey {
-            case wentWell = "went_well"
-            case wentWrong = "went_wrong"
-            case eightySixed = "eighty_sixed"
-            case callouts = "callouts"
-        }
-    }
-
     @discardableResult
-    func saveCloseOut(wentWell: String, wentWrong: String, eightySixed: String,
-                      callouts: String) async -> Bool {
+    func saveCloseOut(_ draft: CloseOutDraft) async -> Bool {
         errorMessage = nil
         do {
             let r: OKResponse = try await client.send(
                 "/mobile/api/closeout", method: .post,
-                body: CloseOutBody(wentWell: wentWell, wentWrong: wentWrong,
-                                   eightySixed: eightySixed, callouts: callouts),
+                body: draft,
                 retryTransient: false)
             guard r.ok else {
                 errorMessage = r.error ?? "Couldn't save that."
@@ -1031,22 +1079,19 @@ struct HomeFollowThrough: View {
 
 // MARK: - The handoff itself
 
-private enum CloseOutField: Hashable, CaseIterable { case well, wrong, eightySix, callouts }
+private enum CloseOutField: Hashable, CaseIterable {
+    case well, wrong, eightySix, callouts
+    case equipment, vips, maintenance, shiftNotes, generalNotes, influence
+}
 
 struct CloseOutSheet: View {
     let viewModel: HomeFollowThroughViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var wentWell = ""
-    @State private var wentWrong = ""
-    @State private var eightySixed = ""
-    @State private var callouts = ""
+    @State private var draft = CloseOutDraft()
     @State private var postedLabel: String?
     @FocusState private var focused: CloseOutField?
 
-    private var canSubmit: Bool {
-        ![wentWell, wentWrong, eightySixed, callouts]
-            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-    }
+    private var canSubmit: Bool { !draft.isEmpty }
 
     var body: some View {
         NavigationStack {
@@ -1059,14 +1104,32 @@ struct CloseOutSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     AccountSection(kicker: viewModel.closeOutDate ?? "Tonight") {
-                        AccountField(label: "What went well", text: $wentWell,
+                        AccountField(label: "What went well", text: $draft.wentWell,
                                      focus: $focused, field: CloseOutField.well)
-                        AccountField(label: "What went wrong", text: $wentWrong,
+                        AccountField(label: "What went wrong", text: $draft.wentWrong,
                                      focus: $focused, field: CloseOutField.wrong)
-                        AccountField(label: "What we ran out of", text: $eightySixed,
+                        AccountField(label: "What we ran out of", text: $draft.eightySixed,
                                      focus: $focused, field: CloseOutField.eightySix)
-                        AccountField(label: "Who didn't make it", text: $callouts,
+                        AccountField(label: "Who didn't make it", text: $draft.callouts,
                                      focus: $focused, field: CloseOutField.callouts,
+                                     showsDivider: false)
+                    }
+
+                    // The six the nightly report adds. All optional; the
+                    // manager's words go into the report exactly as written.
+                    AccountSection(kicker: "For the daily report") {
+                        AccountField(label: "Equipment", text: $draft.equipment,
+                                     focus: $focused, field: CloseOutField.equipment)
+                        AccountField(label: "VIP guests", text: $draft.vipGuests,
+                                     focus: $focused, field: CloseOutField.vips)
+                        AccountField(label: "Maintenance", text: $draft.maintenance,
+                                     focus: $focused, field: CloseOutField.maintenance)
+                        AccountField(label: "Shift notes", text: $draft.shiftNotes,
+                                     focus: $focused, field: CloseOutField.shiftNotes)
+                        AccountField(label: "General notes", text: $draft.generalNotes,
+                                     focus: $focused, field: CloseOutField.generalNotes)
+                        AccountField(label: "Why the day went how it did", text: $draft.influence,
+                                     focus: $focused, field: CloseOutField.influence,
                                      showsDivider: false)
                     }
 
@@ -1076,8 +1139,7 @@ struct CloseOutSheet: View {
 
                     Button {
                         Task {
-                            if await viewModel.saveCloseOut(wentWell: wentWell, wentWrong: wentWrong,
-                                                            eightySixed: eightySixed, callouts: callouts) {
+                            if await viewModel.saveCloseOut(draft) {
                                 Haptic.success()
                                 postedLabel = "Handed off"
                             }
@@ -1095,10 +1157,7 @@ struct CloseOutSheet: View {
             .keyboardNavToolbar($focused)
             .onAppear {
                 guard let c = viewModel.closeOut else { return }
-                wentWell = c.wentWell ?? ""
-                wentWrong = c.wentWrong ?? ""
-                eightySixed = c.eightySixed ?? ""
-                callouts = c.callouts ?? ""
+                draft = CloseOutDraft(c)
             }
             .cavnarPostedOverlay(postedLabel) { dismiss() }
         }

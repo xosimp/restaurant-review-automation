@@ -1754,6 +1754,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* background */
 .hb-card.quiet,[data-theme="dark"] .hb-card.quiet{background:var(--hb-inner);border-color:transparent;box-shadow:none}
 .hb-card.quiet:hover,[data-theme="dark"] .hb-card.quiet:hover{transform:none;box-shadow:none;border-color:var(--hb-line2)}
+/* Close-out: the four quick lines, then the DSR's six behind the same
+   ember-triangle disclosure the schedule's cost readout uses. */
+.co-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.co-more{margin-top:14px}
+.co-more summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink2);list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.co-more summary small{font-size:12.5px;font-weight:400;color:var(--ink3)}
+.co-more summary::-webkit-details-marker{display:none}
+.co-more summary:before{content:'';width:0;height:0;border-left:5px solid var(--ember);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .2s}
+.co-more[open] summary:before{transform:rotate(90deg)}
+.co-more .co-grid{margin-top:12px}
 .hb-card.quiet:after{display:none}
 /* warm secondaries */
 .hb-rec .no{background:linear-gradient(135deg,var(--hb-amber),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -2843,20 +2853,36 @@ svg:hover .hb-xh{opacity:1}
     // mdy() is the page's one date format (M/D/YY). This used to print the
     // raw ISO business_date, so one card on Home spoke a different date
     // language from every other.
+    // The six the nightly report adds, all optional, behind one disclosure
+    // so the four quick lines stay a 60-second job. Open when any is filled.
+    var more=[['co-equip','Equipment','Fryer 2 down',e.equipment],
+              ['co-vip','VIP guests','The Hendersons, table 12',e.vip_guests],
+              ['co-maint','Maintenance','Leak under the bar sink',e.maintenance],
+              ['co-shift','Shift notes','Short a busser from 7',e.shift_notes],
+              ['co-notes','General notes','New menu cards arrived',e.general_notes],
+              ['co-why','Why the day went how it did','Rain kept the patio empty',e.influence]];
+    var moreHtml='',anyMore=false;
+    for(var i=0;i<more.length;i++){moreHtml+=field(more[i][0],more[i][1],more[i][2],more[i][3]);if(more[i][3])anyMore=true;}
     return '<div class="hb-sh"><div><div class="k dim">End of the night</div><h2>Close-out <small>'+mdy(c.business_date)+(e.created_at?' · filed by '+esc(e.submitted_by||'a manager'):'')+'</small></h2></div></div>'
          + '<section class="hb-card quiet hb-rise" aria-label="Close-out">'
          + '<div class="hb-empty" style="padding:0 0 12px">Whoever closes writes four lines. They lead tomorrow morning\'s brief.</div>'
-         + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">'
+         + '<div class="co-grid">'
          + field('co-well','What went well','A section ran clean',e.went_well)
          + field('co-wrong','What went wrong','Ticket times over 20 min',e.went_wrong)
          + field('co-86','What we ran out of','Salmon, house red',e.eighty_sixed)
          + field('co-call','Who didn\'t make it','Dana — called out',e.callouts)
-         + '</div><div style="margin-top:14px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbSaveCloseout(this)">'+(e.created_at?'Update the handoff':'Hand off the night')+'</button></div>'
+         + '</div>'
+         + '<details class="co-more"'+(anyMore?' open':'')+'><summary>For the daily report <small>equipment, VIPs, maintenance, notes, and why the day went how it did</small></summary>'
+         + '<div class="co-grid">'+moreHtml+'</div></details>'
+         + '<div style="margin-top:14px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbSaveCloseout(this)">'+(e.created_at?'Update the handoff':'Hand off the night')+'</button></div>'
          + '</section>';
   }
   window.hbSaveCloseout=function(btn){
     var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
-    var body={went_well:v('co-well'),went_wrong:v('co-wrong'),eighty_sixed:v('co-86'),callouts:v('co-call')};
+    // All ten, every time: an empty field is a cleared one.
+    var body={went_well:v('co-well'),went_wrong:v('co-wrong'),eighty_sixed:v('co-86'),callouts:v('co-call'),
+              equipment:v('co-equip'),vip_guests:v('co-vip'),maintenance:v('co-maint'),
+              shift_notes:v('co-shift'),general_notes:v('co-notes'),influence:v('co-why')};
     var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Saving…'):function(){};
     fetch('/api/closeout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(apiJson).then(function(d){done();

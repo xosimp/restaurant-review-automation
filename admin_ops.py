@@ -517,7 +517,7 @@ def _now_ct():
     return datetime.now(ZoneInfo("America/Chicago"))
 
 
-def _fetched_at_ct(raw):
+def fetched_at_ct(raw):
     """restaurants.last_fetched_at as an aware Chicago time. models writes
     Chicago local with a 'T'; SQLite's datetime('now') (older rows, tests,
     hand fixes) is UTC with a space."""
@@ -539,7 +539,7 @@ def fetch_slots_missed(last_fetched_at, now=None) -> int:
     """How many review-fetch slots have come and gone (each given
     FETCH_SLOT_GRACE to finish) since this restaurant was last fetched.
     0 when it is current; None when it has never been fetched."""
-    last = _fetched_at_ct(last_fetched_at)
+    last = fetched_at_ct(last_fetched_at)
     if last is None:
         return None
     now = now or _now_ct()

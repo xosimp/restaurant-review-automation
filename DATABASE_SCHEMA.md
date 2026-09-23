@@ -153,7 +153,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 ## The owner's day
 
 - `alert_holds` — an alert raised mid-service, waiting for the rush to end (`release_at` UTC, `sent_at` once handled or dropped).
-- `close_outs` — one per restaurant per business date; a close-out filed after midnight belongs to the night before.
+- `close_outs` — one per restaurant per business date; a close-out filed after midnight belongs to the night before. The four quick lines (`went_well`, `went_wrong`, `eighty_sixed`, `callouts`) and the six the DSR reads (`equipment`, `vip_guests`, `maintenance`, `shift_notes`, `general_notes`, `influence` — Erik's "Influence/Result"), all optional free text, all the manager's own words (never rewritten; the DSR narrative is given them marked as manager-written). A re-file replaces only the fields it sends, so a pre-DSR app sending four keys never clears the other six; an empty string clears one.
 - `action_snoozes` — PK (restaurant_id, key); "not today" is a date, never a dismissal.
 - `pos_intraday` — PK (restaurant_id, business_date, captured_hour); net sales so far, and the same weekday/hour profile it builds for later weeks.
 - `restaurants` columns: `alert_hold_during_service` (default on), `preshift_nudge_hour` (0 = off).

@@ -974,6 +974,15 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "fiscal_period_scheme", "TEXT"),
         ("restaurants", "dsr_enabled", "INTEGER DEFAULT 1"),
         ("restaurants", "dsr_deadline_hour", "INTEGER DEFAULT 4"),
+        # The close-out's DSR fields (closeout.DSR_FIELDS): what the closer
+        # knows that no system records. All optional, all the manager's own
+        # words; `influence` is Erik's "Influence/Result" column.
+        ("close_outs", "equipment", "TEXT"),
+        ("close_outs", "vip_guests", "TEXT"),
+        ("close_outs", "maintenance", "TEXT"),
+        ("close_outs", "shift_notes", "TEXT"),
+        ("close_outs", "general_notes", "TEXT"),
+        ("close_outs", "influence", "TEXT"),
     ]
     try:
         for table, col, col_type in columns_to_add:
@@ -2419,7 +2428,8 @@ def init_db(db_path: str = DB_PATH):
         # The manager's 60-second handoff at close. The product cannot see
         # today's service — the POS syncs at 3am — so the only account of
         # what happened is the person who was there. It feeds the next
-        # morning's brief.
+        # morning's brief and the night's DSR. The six DSR columns
+        # (equipment … influence) are added by ensure_columns.
         """CREATE TABLE IF NOT EXISTS close_outs (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),

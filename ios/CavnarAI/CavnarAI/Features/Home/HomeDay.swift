@@ -231,7 +231,9 @@ struct HomeCloseOutCard: View {
     private var filedSummary: String {
         guard let c = viewModel.closeOut else { return "" }
         let who = c.submittedBy ?? "A manager"
-        let bits = [c.wentWrong, c.eightySixed.map { "86'd: \($0)" }, c.callouts.map { "callouts: \($0)" }]
+        // The same line the morning brief leads with (closeout.summarise).
+        let bits = [c.wentWrong, c.eightySixed.map { "86'd: \($0)" }, c.callouts.map { "callouts: \($0)" },
+                    c.equipment.map { "equipment: \($0)" }, c.maintenance.map { "maintenance: \($0)" }]
             .compactMap { $0 }
         return bits.isEmpty ? "\(who) filed tonight's handoff." : "\(who): " + bits.joined(separator: " · ")
     }
