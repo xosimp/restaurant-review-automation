@@ -359,31 +359,63 @@ def _plural(n: int, one: str, many: str = None) -> str:
 # a fact nobody has supplied yet.
 
 
+def shift_role_requirements(typical: dict = None, floors: dict = None, minimums: dict = None,
+                            critical: dict = None) -> dict:
+    """{role: (people, source)} one shift needs — the ONE definition the
+    generation prompt's requirements table and the coverage score share.
+
+    Each role takes the largest of: what this restaurant usually runs on
+    this weekday and daypart (typical), the owner's staffing floor for this
+    daypart, the owner's whole-day role minimum (only for roles that work
+    this daypart — a bar that opens at 4pm is not short at lunch), and the
+    shift profile's critical positions. They used to be read one OR the
+    other, in a fixed order, so a restaurant with role minimums set had its
+    usual headcount ignored by the score while the prompt asked for it."""
+    out, display = {}, {}
+
+    def put(role, n, source, owner=False):
+        key = (role or "").strip().lower()
+        try:
+            n = int(n or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if not key or n <= 0:
+            return
+        # The owner's spelling of a role wins over the history's.
+        if owner or key not in display:
+            display[key] = (role or "").strip()
+        if n > out.get(key, (0, None))[0]:
+            out[key] = (n, source)
+    typical = typical or {}
+    runs_here = {r.strip().lower() for r, n in typical.items() if n}
+    for role, n in typical.items():
+        put(role, n, "your usual staffing")
+    for role, n in (minimums or {}).items():
+        if not runs_here or role.strip().lower() in runs_here:
+            put(role, n, "your role minimums", owner=True)
+    for role, n in (floors or {}).items():
+        put(role, n, "your staffing floors", owner=True)
+    for role, n in (critical or {}).items():
+        put(role, n, "the shift profile", owner=True)
+    return {display[k]: v for k, v in out.items()}
+
+
 def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     """Is every required position filled?
 
-    Requirements come from the profile first, then the restaurant's own
-    role minimums, then what it typically runs on this shift. A restaurant
-    that has configured nothing still gets judged against its own history
-    rather than against a number this file invented.
+    Requirements come from shift_role_requirements: the largest of the
+    restaurant's usual headcount, its floors, its role minimums and the
+    profile's critical positions, per role. A restaurant that has
+    configured nothing is judged against its own history rather than
+    against a number this file invented.
     """
-    required = dict(ctx.profile.critical_positions or {})
-    source = "profile"
-    if not required and ctx.role_minimums:
-        # The owner's own floors, narrowed to the roles this daypart
-        # actually runs. "Minimum 2 bartenders" is a statement about a
-        # service day; a restaurant whose bar opens at five should not read
-        # as two bartenders short every lunch, which is what applying the
-        # figure to both halves of the day produced.
-        runs_here = {r.strip().lower() for r in (ctx.typical_headcount or {})}
-        required = {r: c for r, c in ctx.role_minimums.items()
-                    if c and (not runs_here or r.strip().lower() in runs_here)}
-        source = "your role minimums"
-    if not required:
-        required = {r: c for r, c in (ctx.typical_headcount or {}).items() if c}
-        source = "your usual staffing"
-    if not required:
+    reqs = shift_role_requirements(ctx.typical_headcount, ctx.role_floors, ctx.role_minimums,
+                                   ctx.profile.critical_positions)
+    if not reqs:
         return None
+    required = {r: n for r, (n, _src) in reqs.items()}
+    sources = sorted({src for _n, src in reqs.values()})
+    source = sources[0] if len(sources) == 1 else ", ".join(sources)
 
     on = ctx.by_role
     filled = missing = 0

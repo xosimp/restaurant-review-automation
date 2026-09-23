@@ -482,3 +482,22 @@ def test_the_delayed_publish_is_voided_when_the_week_was_edited_in_the_window(db
     delayed.run_due(now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3))
     assert sent == []
     assert not _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
+
+
+def test_an_edit_to_a_week_staff_already_have_tells_them(db, save_app, monkeypatch):
+    """The re-notify ran inside an `except` after the activity log, so it
+    only ran when logging failed — never. Staff whose shifts moved were not
+    told and the week was never stamped as changed since it went out."""
+    import mobile_api
+    rid = _restaurant(db, module_labor=1)
+    hid = _save(db, rid, W1, _week_csv(W1), published=True)
+    sv.append(rid, hid, "published", _week_csv(W1), saved_by="Owner")
+    told = []
+    monkeypatch.setattr(mobile_api, "_notify_changed_rows",
+                        lambda r, h, csv_text, actor: told.append((r, h)) or ["Ana"])
+    rows = _rows(_week_csv(W1))
+    rows[0]["shift_start"] = "12:00pm"
+    resp = _post_save(save_app, _bearer(db, rid), rows, history_id=hid, version=1)
+    assert resp.status_code == 200 and resp.get_json()["saved"]
+    assert told == [(rid, hid)]
+    assert resp.get_json()["changed_since_sent"] == ["Ana"]

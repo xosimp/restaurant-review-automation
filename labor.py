@@ -1334,6 +1334,23 @@ def _present_dayparts(row: dict) -> list:
     return present_dayparts({"shift_start": row.get("shift_start", ""), "shift_end": row.get("shift_end", "")})
 
 
+def _role_minimums_dict(raw) -> dict:
+    """restaurants.role_minimums_json as {role: people}, or {}."""
+    import json as _j
+    try:
+        data = _j.loads(raw) if isinstance(raw, str) and raw.strip() else (raw or {})
+    except Exception:
+        return {}
+    out = {}
+    for role, n in (data or {}).items() if isinstance(data, dict) else []:
+        try:
+            if int(n) > 0:
+                out[str(role)] = int(n)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
     """Typical headcount with the manager's settled adjustments on top: a
     role the manager has added a person to on Friday dinner week after week
@@ -2250,6 +2267,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         demand_by_date=demand_by_date,
         leader_rules=leader_rules,
         leadership_known=bool(_scores or leader_flags),
+        role_minimums=_role_minimums_dict(role_minimums_json),
         roles=_can_work,
         skip_dates=closed_dates or (),
     ))

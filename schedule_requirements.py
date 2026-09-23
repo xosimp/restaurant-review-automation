@@ -106,7 +106,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_by_day: dict = None, demand_by_date: dict = None,
                        leader_rules: list = None,
                        leadership_known: bool = False, roles: set = None,
-                       skip_dates=()) -> list:
+                       skip_dates=(), role_minimums: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -121,6 +121,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 profile's "needs a leader" cannot be judged without one of
                 those, so it is not asked of the model either.
     """
+    from shift_quality import shift_role_requirements
     skip = set(skip_dates or ())
     out = []
     for d in dates or []:
@@ -130,21 +131,26 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
         if not day:
             continue
         for part in DAYPARTS:
-            need = {}      # lower -> [display, required, floor, typical]
-            for role, n in ((typical_headcount or {}).get((day, part)) or {}).items():
-                key = (role or "").strip().lower()
-                if not key or not n:
-                    continue
-                e = need.setdefault(key, [role.strip(), 0, 0, 0])
-                e[3] = max(e[3], int(n))
+            # The same requirement the coverage score holds the draft to
+            # (shift_quality.shift_role_requirements): usual headcount, the
+            # owner's floors, their whole-day minimums for roles working this
+            # daypart, and the profile's critical positions — the largest of
+            # each per role.
+            profile_here = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
+            typical_here = (typical_headcount or {}).get((day, part)) or {}
+            floors_here = {}
             for role, spec in (role_floors or {}).items():
-                key = (role or "").strip().lower()
                 f = floor_for(spec or {}, day, part)
-                if not key or not f:
-                    continue
-                e = need.setdefault(key, [role.strip(), 0, 0, 0])
-                e[0] = role.strip()
-                e[2] = max(e[2], f)
+                if f:
+                    floors_here[role] = f
+            reqs = shift_role_requirements(typical_here, floors_here, role_minimums,
+                                           getattr(profile_here, "critical_positions", None))
+            need = {}      # lower -> [display, required, floor, typical]
+            for role, (n, _src) in reqs.items():
+                key = role.strip().lower()
+                floor = max([int(v) for r2, v in floors_here.items() if r2.strip().lower() == key] or [0])
+                typ = max([int(v or 0) for r2, v in typical_here.items() if r2.strip().lower() == key] or [0])
+                need[key] = [role.strip(), int(n), floor, typ]
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
@@ -168,8 +174,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if profile.requires_leader and leadership_known and not leader:
                 leader.append(f"somebody scoring {profile.leader_min_score:g}+ or authorised to close")
             roles_out = []
-            for _k, (name, _r, floor, typical) in sorted(need.items(), key=lambda kv: (-max(kv[1][2], kv[1][3]), kv[1][0].lower())):
-                roles_out.append({"role": name, "required": max(floor, typical), "floor": floor, "typical": typical})
+            for _k, (name, required, floor, typical) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
+                roles_out.append({"role": name, "required": required, "floor": floor, "typical": typical})
             out.append({"date": d, "day": day, "daypart": part, "roles": roles_out,
                         "target_hours": (daily_targets or {}).get(d), "demand": demand,
                         "leader": leader})
