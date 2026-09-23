@@ -115,11 +115,18 @@ def test_the_pulse_pushes_once_and_only_to_owners(db_path, monkeypatch):
 
 # ── coverage ──────────────────────────────────────────────────────────────
 
-def _schedule(db_path, rid, day, rows):
+def _schedule(db_path, rid, day, rows, published=True):
+    """A week containing `day`. Coverage reads only a PUBLISHED week (#13),
+    so the helper publishes unless told not to."""
     from models import save_schedule_history
     csv = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(
         f"{day.isoformat()},{day.strftime('%A')},{e},{r},{start},10:00pm,8," for e, r, start in rows)
-    save_schedule_history(rid, day.isoformat(), day.isoformat(), 40, 40, 30, csv, [], db_path=db_path)
+    hid = save_schedule_history(rid, day.isoformat(), day.isoformat(), 40, 40, 30, csv, [], db_path=db_path)
+    if published:
+        conn = get_conn(db_path)
+        conn.execute("UPDATE schedule_history SET published_at=datetime('now') WHERE id=?", (hid,))
+        conn.commit(); conn.close()
+    return hid
 
 
 def test_someone_scheduled_and_not_clocked_in_is_named(db_path, monkeypatch):

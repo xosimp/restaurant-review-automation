@@ -133,6 +133,23 @@ def _do_issue_reassign(u, issue_id):
     return {"ok": True, "issue": out}, 200
 
 
+def _do_issue_ask_cover(u, issue_id):
+    """One tap on a coverage issue's suggested cover: text (or email) that
+    person the cover request. Nothing else changes — the schedule moves only
+    when the manager decides who is on (intraday.ask_to_cover)."""
+    import intraday
+    from permissions import has_permission, LABOR_VIEW
+    if not has_permission(u, LABOR_VIEW):
+        return _forbidden("Only someone who can see Labor can ask a teammate to cover.")
+    name = (_body().get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "Who should be asked?"}, 400
+    if _limited(u, "issue_text", 20, 3600):
+        return _SLOW_DOWN
+    out = intraday.ask_to_cover(_rid(u), issue_id, name, user_id=u.get("id"))
+    return out, (200 if out.get("ok") else 400)
+
+
 def _do_routing_get(u):
     if not _principal(u):
         return _forbidden()
@@ -2164,6 +2181,7 @@ _ROUTES = [
     ("/issues", ["POST"], _do_issue_create, "issue_create"),
     ("/issues/<int:issue_id>/resolve", ["POST"], _do_issue_resolve, "issue_resolve"),
     ("/issues/<int:issue_id>/reassign", ["POST"], _do_issue_reassign, "issue_reassign"),
+    ("/issues/<int:issue_id>/ask-cover", ["POST"], _do_issue_ask_cover, "issue_ask_cover"),
     ("/issues/routing", ["GET"], _do_routing_get, "issue_routing_get"),
     ("/issues/routing", ["POST"], _do_routing_set, "issue_routing_set"),
     ("/goals", ["GET"], _do_goals_list, "goals_list"),
@@ -2297,6 +2315,20 @@ def issue_page(token):
             issue = issues.resolve_by_token(
                 token, note=(request.form.get("note") or "").strip()[:500] or None)
             done = "resolve"
+        elif action == "ask_cover":
+            # The manager the no-show was texted to, asking a suggested cover
+            # from the same page — one tap; the link is their authority.
+            import intraday
+            from ai_utils import ai_rate_limited
+            held = issues.by_token(token)
+            if not held:
+                abort(404)
+            if ai_rate_limited(f"issue_text:{held['restaurant_id']}", max_calls=20, window_secs=3600):
+                abort(429)
+            asked = intraday.ask_to_cover(held["restaurant_id"], held["id"],
+                                          (request.form.get("name") or "").strip()[:80], surface="issue_sms")
+            issue = issues.by_token(token)
+            done = {"asked": asked}
         else:
             abort(400)
     else:

@@ -80,12 +80,32 @@ struct AskProposal: Decodable, Identifiable, Hashable {
     let summary: String
     let route: Route
     let body: [String: AnyCodableValue]?
+    /// The ask_cavnar_actions row this card is. Answers are recorded against
+    /// it, so confirming one supplier order never settles another with the
+    /// same action name. Nil from an older backend.
+    let proposalId: Int?
+    /// What the owner is agreeing to beyond the one-line summary: the money,
+    /// who it goes to, the words that would go out.
+    let details: [Detail]?
+    let preview: String?
+    let atStake: Double?
 
-    var id: String { action + summary }
+    var id: String { proposalId.map { "p\($0)" } ?? (action + summary) }
 
     struct Route: Decodable, Hashable {
         let mobile: String
         let method: String
+    }
+
+    struct Detail: Decodable, Hashable {
+        let label: String
+        let value: String
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action, summary, route, body, details, preview
+        case proposalId = "proposal_id"
+        case atStake = "at_stake"
     }
 }
 
@@ -275,6 +295,8 @@ final class AskCavnarViewModel {
         let outcome: String
         let summary: String
         let conversation_id: Int?
+        let proposal_id: Int?
+        let reason: String?
     }
 
     private typealias PlainOK = APIClient.OKResponse
@@ -514,19 +536,25 @@ final class AskCavnarViewModel {
         return false
     }
 
-    func dismiss(_ proposal: AskProposal) async {
-        await record(proposal, outcome: "dismissed")
+    /// "Not now", with the owner's optional reason — Ask reads it before
+    /// proposing the same thing again.
+    func dismiss(_ proposal: AskProposal, reason: String? = nil) async {
+        await record(proposal, outcome: "dismissed", reason: reason)
     }
 
-    private func record(_ proposal: AskProposal, outcome: String) async {
+    private func record(_ proposal: AskProposal, outcome: String, reason: String? = nil) async {
+        let why = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanReason = (why?.isEmpty ?? true) ? nil : String(why!.prefix(300))
         let _: PlainOK? = try? await client.send(
             "/mobile/api/ask-cavnar/action", method: .post,
             body: ActionOutcomeBody(action: proposal.action, outcome: outcome,
-                                    summary: proposal.summary, conversation_id: conversationId))
+                                    summary: proposal.summary, conversation_id: conversationId,
+                                    proposal_id: proposal.proposalId, reason: cleanReason))
         // The status line the backend just wrote — mirrored locally so the
         // transcript on screen matches what a reopen would show.
         let verb = outcome == "confirmed" ? "Confirmed" : "Dismissed"
-        messages.append(ChatMessage(text: "[\(verb): \(proposal.summary)]", isUser: true, hasRevealed: true))
+        let tail = cleanReason.map { " — \($0)" } ?? ""
+        messages.append(ChatMessage(text: "[\(verb): \(proposal.summary)\(tail)]", isUser: true, hasRevealed: true))
     }
 
     /// Marks an answer as having already played its typewriter reveal, so

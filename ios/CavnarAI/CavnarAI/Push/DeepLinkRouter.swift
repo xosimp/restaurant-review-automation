@@ -18,13 +18,14 @@ final class DeepLinkRouter {
     /// Prefilled, never auto-sent: the owner decides whether to ask it.
     var pendingAskPrompt: String?
 
-    func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil) {
+    func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil,
+                               alertId: Int? = nil, recKey: String? = nil) {
         // What the product knew was how many notifications it SENT. Whether
         // any of them were worth sending had no answer anywhere — not for
         // the owner, not for Will. Best effort: a failure here must never
         // interfere with actually opening the thing.
         if !alertType.isEmpty {
-            Task { await Self.recordOpen(alertType) }
+            Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey) }
         }
         // Both of these are cross-module reads that arrive WITH a question
         // (data.ask_prompt), so they open the assistant on it rather than
@@ -58,12 +59,19 @@ final class DeepLinkRouter {
         pendingReviewID = reviewId
     }
 
-    private struct OpenedBody: Encodable { let type: String }
+    /// `alert_id` is the notification's own history row and `rec_key` the
+    /// recommendation it carried — both from the push payload, both optional
+    /// (a tap from the in-app history list has neither).
+    private struct OpenedBody: Encodable {
+        let type: String
+        let alert_id: Int?
+        let rec_key: String?
+    }
 
-    private static func recordOpen(_ alertType: String) async {
+    private static func recordOpen(_ alertType: String, alertId: Int? = nil, recKey: String? = nil) async {
         let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
             "/mobile/api/notifications/opened", method: .post,
-            body: OpenedBody(type: alertType), hapticOnError: false)
+            body: OpenedBody(type: alertType, alert_id: alertId, rec_key: recKey), hapticOnError: false)
     }
 
     func consumePendingReviewID() -> Int? {
