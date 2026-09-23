@@ -59,6 +59,32 @@ DEFAULT_CATEGORIES = ("Food", "Liquor", "Beer", "Wine", "Retail", "NA Beverage")
 UNMAPPED = "Unmapped"
 
 
+class Context:
+    """What every collector and the narrative receive for one night.
+
+    restaurant     the Restaurant row (fiscal calendar, targets, timezone)
+    business_date  datetime.date of the service being reported
+    db_path        the database to read (tests pass their own)
+    now_utc        naive UTC datetime the run started (freeze it in tests)
+
+    Collectors are `collect(ctx) -> block` in dsr/block_<name>.py; they never
+    raise for missing data (they return a non-ready block with a reason) and
+    they never call a model."""
+
+    def __init__(self, restaurant, business_date, db_path=None, now_utc=None):
+        from datetime import date as _date, datetime as _dt
+        from models import DB_PATH as _DB
+        self.restaurant = restaurant
+        self.restaurant_id = getattr(restaurant, "id", None)
+        self.business_date = business_date if isinstance(business_date, _date) else _date.fromisoformat(str(business_date)[:10])
+        self.db_path = db_path or _DB
+        self.now_utc = now_utc or _dt.utcnow()
+
+    @property
+    def day(self) -> str:
+        return self.business_date.isoformat()
+
+
 def block(status, source=None, reason=None, metrics=None, detail=None, block_name=None):
     """A validated block. Metrics must be numbers or None; a status other
     than ready must carry a reason (defaulting to the block's MISSING_TEXT)."""
