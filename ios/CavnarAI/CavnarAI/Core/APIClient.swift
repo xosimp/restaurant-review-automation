@@ -70,6 +70,17 @@ actor APIClient {
         /// True when retrying later could plausibly succeed — i.e. the write
         /// is worth queueing rather than discarding.
         var isRetryable: Bool { kind == .offline || kind == .timedOut }
+
+        /// A failure that says nothing about the thing being asked about: a
+        /// gateway answering for a restarting server (502/503/504 — every
+        /// deploy), a dropped connection, a body that wasn't ours. A status
+        /// poll waits these out; the job it is polling keeps running
+        /// server-side (CLIENT-41). The app itself answering with an error —
+        /// a 4xx, a 500 carrying its own message — is an outcome, not this.
+        var isTransientForPolling: Bool {
+            if let status { return [502, 503, 504].contains(status) }
+            return kind == .offline || kind == .timedOut || kind == .decoding || kind == .server
+        }
     }
 
     /// Thrown when the backend responds 401 with `session_expired: true` —

@@ -150,7 +150,8 @@ final class PublishScheduleViewModel {
             let r: ContactsResponse = try await client.send("/mobile/api/labor/staff-contacts")
             contacts = r.contacts
             if let start = r.weekStart {
-                weekLabel = r.weekEnd.map { "\(start) – \($0)" } ?? start
+                // M/D/YY, not the ISO dates the route sends (CLIENT-45).
+                weekLabel = r.weekEnd.map { CavnarDate.mdyRange(start, $0) } ?? CavnarDate.mdy(start)
             }
             let s: StatusResponse? = try? await client.send(
                 "/mobile/api/labor/schedule-share-status", hapticOnError: false)
@@ -223,8 +224,16 @@ final class PublishScheduleViewModel {
         }
     }
 
-    func publish() async {
+    /// True once this sheet has sent the week.
+    var hasSent: Bool { lastResult?.ok == true }
+
+    /// `resend` is the owner's explicit "send it to everyone again", behind
+    /// its own confirmation. Without it a second call after a successful
+    /// send does nothing: the button used to stay "Send to N staff" and a
+    /// second tap re-emailed the whole roster (CLIENT-36).
+    func publish(resend: Bool = false) async {
         guard !isPublishing else { return }
+        guard resend || !hasSent else { return }
         isPublishing = true
         publishError = nil
         defer { isPublishing = false }
@@ -264,6 +273,7 @@ final class PublishScheduleViewModel {
 /// the shifts never saw it.
 struct PublishScheduleSheet: View {
     @State private var viewModel = PublishScheduleViewModel()
+    @State private var confirmingResend = false
     @Environment(\.dismiss) private var dismiss
 
     /// The schedule_history row to send; nil means the latest.
@@ -388,7 +398,38 @@ struct PublishScheduleSheet: View {
             || (!viewModel.blockers.isEmpty && !viewModel.acknowledgeBlockers)
     }
 
+    @ViewBuilder
     private var publishButton: some View {
+        if viewModel.hasSent {
+            // Sent. Another send re-emails everyone, so it is a separate,
+            // quieter action that asks first (CLIENT-36).
+            Button {
+                confirmingResend = true
+            } label: {
+                Group {
+                    if viewModel.isPublishing {
+                        CavnarShimmerText(text: "Sending…")
+                    } else {
+                        Text("Send again to everyone")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(viewModel.isPublishing)
+            .confirmationDialog("Email this week to all \(viewModel.reachableCount) staff again?",
+                                isPresented: $confirmingResend, titleVisibility: .visible) {
+                Button("Send again") { Task { await viewModel.publish(resend: true) } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Everyone gets the email a second time, even if nothing changed.")
+            }
+        } else {
+            firstSendButton
+        }
+    }
+
+    private var firstSendButton: some View {
         Button {
             Task { await viewModel.publish() }
         } label: {

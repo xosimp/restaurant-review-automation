@@ -44,6 +44,16 @@ enum CavnarDate {
         return "\(m)/\(d)/\(String(format: "%02d", y % 100))"
     }
 
+    /// `9/21/26 · 6:45pm` for a Date, read on `timeZone`.
+    static func mdyTime(_ date: Date, in timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.hour, .minute], from: date)
+        guard let h = c.hour, let m = c.minute else { return mdy(date, in: timeZone) }
+        let hour12 = h % 12 == 0 ? 12 : h % 12
+        return "\(mdy(date, in: timeZone)) · \(hour12):\(String(format: "%02d", m))\(h < 12 ? "am" : "pm")"
+    }
+
     /// `9/21/26 · 6:45pm` from `2026-09-21 18:45:00` (or `T18:45`); the
     /// date alone when there is no time to show.
     static func mdyTime(_ iso: String) -> String {

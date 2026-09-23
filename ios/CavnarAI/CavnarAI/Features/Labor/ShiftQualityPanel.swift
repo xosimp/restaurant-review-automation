@@ -19,6 +19,10 @@ struct ShiftQualityPanel: View {
     /// as catching up rather than as the new truth.
     var isRescoring: Bool = false
     var overrideState: LaborViewModel.OverrideState = .idle
+    /// LaborViewModel.savedTick — a change shows "Change saved" for a few
+    /// seconds each time this moves.
+    var savedTick: Int = 0
+    @State private var showingSaved = false
     /// What the owner has said about each recommendation ("accepted" /
     /// "dismissed", by text) and where a ✓ or ✕ goes. When no handler is
     /// given the recommendations read as plain warnings, as before.
@@ -33,6 +37,14 @@ struct ShiftQualityPanel: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             overrideLine
+                .task(id: savedTick) {
+                    // Shown for a moment after each save, then gone — held
+                    // here rather than by the view model (CLIENT-62).
+                    guard savedTick > 0 else { return }
+                    showingSaved = true
+                    try? await Task.sleep(for: .seconds(4))
+                    showingSaved = false
+                }
             if let dimensions = customerDimensions, !dimensions.isEmpty {
                 dimensionGrid(dimensions)
             }
@@ -96,15 +108,15 @@ struct ShiftQualityPanel: View {
     private var overrideLine: some View {
         switch overrideState {
         case .idle:
-            EmptyView()
+            if showingSaved {
+                Text("Change saved — this is what your staff will receive.")
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarGreen)
+            }
         case .saving:
             Text("Saving your change…")
                 .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarInk3)
-        case .saved:
-            Text("Change saved — this is what your staff will receive.")
-                .font(.cavnarBody(13.5, weight: 600))
-                .foregroundStyle(Color.cavnarGreen)
         case .failed(let message):
             Text("\(message) The score above is out of date.")
                 .font(.cavnarBody(13.5, weight: 600))

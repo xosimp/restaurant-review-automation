@@ -99,6 +99,20 @@ final class FoodCostQuickEntryViewModel {
         return Double(trimmed)
     }
 
+    /// The price as the server's float() reads it: a plain "1234.5", from
+    /// the number the phone parsed. The typed text used to go up as typed,
+    /// so "1,234.50" (a grouping comma) or "3,50" (a decimal comma) failed
+    /// float() server-side and the row was dropped (CLIENT-31).
+    nonisolated static func wirePrice(_ value: Double) -> String {
+        let f = NumberFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = false
+        f.minimumFractionDigits = 0
+        f.maximumFractionDigits = 4
+        return f.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
     private struct QuickcountBody: Encodable {
         let items: [ItemPayload]
     }
@@ -109,9 +123,18 @@ final class FoodCostQuickEntryViewModel {
         let totalWeeklyImpact: Double?
         let submittedAt: String?
         let error: String?
+        /// Rows the server could not use, each with its reason
+        /// (_clean_quickcount_items). An ok:true answer can still carry
+        /// these, and they used to vanish without a word (CLIENT-31).
+        let rejected: [Rejected]?
+
+        struct Rejected: Decodable {
+            let name: String
+            let why: String?
+        }
 
         enum CodingKeys: String, CodingKey {
-            case ok, drift, error
+            case ok, drift, error, rejected
             case totalWeeklyImpact = "total_weekly_impact"
             case submittedAt = "submitted_at"
         }
@@ -140,10 +163,10 @@ final class FoodCostQuickEntryViewModel {
             guard !name.isEmpty else { return nil }
             // Only rows with a real price go up; the rest are reported in
             // rowsMissingAPrice so the owner sees what was left out.
-            guard Self.parsedPrice(item.priceText) != nil else { return nil }
+            guard let price = Self.parsedPrice(item.priceText) else { return nil }
             return ItemPayload(
                 name: name, unit: item.unit,
-                price: item.priceText.trimmingCharacters(in: .whitespaces),
+                price: Self.wirePrice(price),
                 usage: item.usageText.trimmingCharacters(in: .whitespaces)
             )
         }
@@ -160,6 +183,12 @@ final class FoodCostQuickEntryViewModel {
                 totalWeeklyImpact = response.totalWeeklyImpact
                 submittedAt = response.submittedAt
                 didSubmit = true
+                let rejected = response.rejected ?? []
+                if !rejected.isEmpty {
+                    errorMessage = "Not saved: " + rejected.map { row in
+                        row.why.map { "\(row.name) (\($0))" } ?? row.name
+                    }.joined(separator: ", ") + "."
+                }
             } else {
                 errorMessage = response.error ?? "Couldn't save your prices."
             }

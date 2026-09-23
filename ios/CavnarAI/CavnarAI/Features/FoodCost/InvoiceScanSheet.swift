@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import PhotosUI
 import Observation
@@ -128,7 +129,9 @@ final class InvoiceScanViewModel {
         defer { isScanning = false }
         do {
             guard let raw = try await item.loadTransferable(type: Data.self),
-                  let jpeg = Self.downscaledJPEG(raw) else {
+                  let jpeg = await Task.detached(priority: .userInitiated, operation: {
+                      Self.downscaledJPEG(raw)
+                  }).value else {
                 errorMessage = "That photo couldn't be read. Try another."
                 return
             }
@@ -152,13 +155,17 @@ final class InvoiceScanViewModel {
     }
 
     func apply() async {
-        guard let inv = invoice else { return }
+        // Once is enough. After a success the button stayed, and a second
+        // tap answered with a red "already applied" under the green success
+        // (CLIENT-60); a new scan clears appliedCount.
+        guard let inv = invoice, !isApplying, appliedCount == nil, inv.appliedAt == nil else { return }
         errorMessage = nil
         var lines: [ApplyBody.Line] = []
         for line in inv.lines {
             guard let c = choices[line.index], c.include else { continue }
             guard let ing = c.ingredientId,
-                  let cost = Double(c.cost.replacingOccurrences(of: "$", with: "")), cost > 0 else {
+                  let cost = FoodCostQuickEntryViewModel.parsedPrice(c.cost.replacingOccurrences(of: "$", with: "")),
+                  cost > 0 else {
                 errorMessage = "“\(line.description)” needs an ingredient and a cost, or untick it."
                 return
             }
@@ -188,17 +195,36 @@ final class InvoiceScanViewModel {
 
     /// Invoices are read, not admired: 2000px on the long side keeps every
     /// printed digit legible and the upload well under the server's 4.5 MB.
-    static func downscaledJPEG(_ data: Data, maxSide: CGFloat = 2000) -> Data? {
-        guard let image = UIImage(data: data) else { return nil }
-        let longest = max(image.size.width, image.size.height)
-        let scale = longest > maxSide ? maxSide / longest : 1
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        return resized.jpegData(compressionQuality: 0.8)
+    ///
+    /// Sampled straight from the file with ImageIO, which decodes only at
+    /// the target size. UIImage(data:) on the main actor decoded a 48 MP
+    /// photo to a ~190 MB bitmap first and froze the sheet while it did
+    /// (CLIENT-39); `scan` now runs this on a background task.
+    nonisolated static func downscaledJPEG(_ data: Data, maxSide: CGFloat = 2000) -> Data? {
+        // nonisolated: pure work on the bytes it is handed, safe off-main.
+        let noCache = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, noCache),
+              let options = thumbnailOptions(source, maxSide: maxSide),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+        else { return nil }
+        return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.8)
+    }
+
+    /// Thumbnail options for `source`: at most `maxSide` on the long edge,
+    /// never upscaled (a small photo keeps its own size), EXIF orientation
+    /// applied.
+    private nonisolated static func thumbnailOptions(_ source: CGImageSource, maxSide: CGFloat) -> CFDictionary? {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? CGFloat,
+              let height = props[kCGImagePropertyPixelHeight] as? CGFloat
+        else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: min(maxSide, max(width, height)),
+        ]
+        return options as CFDictionary
     }
 
     static func costString(_ v: Double) -> String {
@@ -290,7 +316,10 @@ struct InvoiceScanSheet: View {
 
     private func invoiceCard(_ inv: ScannedInvoice) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(([inv.supplier ?? "Supplier not read", inv.invoiceDate].compactMap { $0 }).joined(separator: " · ").uppercased())
+            // The invoice's own date, M/D/YY — it used to print as sent,
+            // 2026-09-18 (CLIENT-45).
+            Text(([inv.supplier ?? "Supplier not read", inv.invoiceDate.map(CavnarDate.mdy)].compactMap { $0 })
+                .joined(separator: " · ").uppercased())
                 .font(.cavnarBody(13.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)

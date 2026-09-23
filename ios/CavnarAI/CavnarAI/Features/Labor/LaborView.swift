@@ -417,13 +417,13 @@ struct LaborView: View {
 
     private func freshnessInfo(_ stats: LaborStats) -> DataFreshness? {
         guard let start = stats.dateRange.start, let end = stats.dateRange.end,
-              let startDate = Self.isoDayFormatter.date(from: start),
+              Self.isoDayFormatter.date(from: start) != nil,
               let endDate = Self.isoDayFormatter.date(from: end) else { return nil }
         let cal = Calendar.current
         let daysOld = cal.dateComponents([.day],
                                          from: cal.startOfDay(for: endDate),
                                          to: cal.startOfDay(for: Date())).day ?? 0
-        let rangeText = "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
+        let rangeText = CavnarDate.mdyRange(start, end)
         // `stale` drives a brighter, exclamation-shaped icon. It required
         // isLive, so sample data — the case with the most to disclose —
         // always drew the dim, plain "nothing to check" glyph.
@@ -540,11 +540,6 @@ struct LaborView: View {
         return f
     }()
 
-    private static let displayDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
-        return f
-    }()
 
     private func daysAwayLabel(_ days: Int) -> String {
         if days == 0 { return "today" }
@@ -809,6 +804,7 @@ struct LaborView: View {
                     ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
                                       isRescoring: viewModel.isRescoringQuality,
                                       overrideState: viewModel.overrideState,
+                                      savedTick: viewModel.savedTick,
                                       recommendationDecisions: viewModel.recommendationDecisions,
                                       onRecommendation: { text, accepted in
                                           Task { await viewModel.recordRecommendation(text, accepted: accepted) }
@@ -873,10 +869,10 @@ struct LaborView: View {
     /// the freshness popover already parses shift-data dates with.
     private func scheduleSubtitle(_ result: GeneratedSchedule) -> String? {
         var parts: [String] = []
+        // M/D/YY (CLIENT-45).
         if let first = result.weekDates?.first, let last = result.weekDates?.last,
-           let startDate = Self.isoDayFormatter.date(from: first),
-           let endDate = Self.isoDayFormatter.date(from: last) {
-            parts.append("\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))")
+           !first.isEmpty, !last.isEmpty {
+            parts.append(CavnarDate.mdyRange(first, last))
         }
         if let hours = result.hoursScheduled {
             parts.append("\(String(format: "%.1f", hours))h scheduled")

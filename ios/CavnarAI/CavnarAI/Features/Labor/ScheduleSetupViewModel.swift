@@ -514,17 +514,27 @@ final class ScheduleSetupViewModel {
                 Haptic.light()
                 return true
             }
-            roster[index] = previous
+            rollBack(to: previous)
             settingsToast = r.error ?? "Couldn't save that."
         } catch let error as APIClient.APIError {
-            roster[index] = previous
+            rollBack(to: previous)
             settingsToast = error.message
         } catch {
-            roster[index] = previous
+            rollBack(to: previous)
             settingsToast = "Couldn't save that."
         }
         Haptic.error()
         return false
+    }
+
+    /// Puts one person back as they were before a refused edit — found by
+    /// name again, because the roster can be reloaded while the save is in
+    /// flight. The index captured before the await then pointed at someone
+    /// else, and the rollback overwrote a new hire with the old row
+    /// (CLIENT-32).
+    private func rollBack(to previous: RosterMember) {
+        guard let i = roster.firstIndex(where: { $0.name == previous.name }) else { return }
+        roster[i] = previous
     }
 
     private struct PairBody: Encodable {

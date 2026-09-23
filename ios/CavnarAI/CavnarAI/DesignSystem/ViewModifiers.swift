@@ -995,3 +995,38 @@ extension View {
         modifier(CavnarTabSwipeNavigation(selection: selection, primaryTab: primaryTab, secondaryTab: secondaryTab))
     }
 }
+
+// MARK: - A List sized to its rows
+
+/// A List that sits inside a page's own ScrollView — kept a List for the
+/// system swipe-to-delete, with its own scrolling off — sized to the rows as
+/// they actually lay out.
+///
+/// It used to be sized `count * 56`: a fixed guess per row, so a wrapped
+/// name, a long note or a larger Dynamic Type size pushed rows past the
+/// frame, and with scrolling disabled they could not be reached at all
+/// (CLIENT-35). Each row reports its measured height; the List is the sum.
+enum CavnarFittedList {
+    /// Used until a row has been measured. Generous, so the first frame
+    /// lays out (and measures) every row rather than clipping the tail.
+    static let unmeasuredRowHeight: CGFloat = 72
+
+    /// The List's height: every row's measured content plus its vertical
+    /// list-row insets, never below the system's minimum row height.
+    static func height<ID: Hashable>(ids: [ID], measured: [ID: CGFloat], verticalInsets: CGFloat) -> CGFloat {
+        ids.reduce(0) { total, id in
+            total + max(44, (measured[id] ?? unmeasuredRowHeight) + verticalInsets)
+        }
+    }
+}
+
+extension View {
+    /// Reports this row's laid-out height under `id` for CavnarFittedList.
+    func cavnarReportsRowHeight<ID: Hashable>(_ id: ID, into heights: Binding<[ID: CGFloat]>) -> some View {
+        onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            heights.wrappedValue[id] = height
+        }
+    }
+}

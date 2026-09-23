@@ -10,6 +10,8 @@ struct DemandSignalsSection: View {
 
     @State private var showingAdd = false
     @State private var showingPaste = false
+    /// Each signal row's measured height — see CavnarFittedList.
+    @State private var signalRowHeights: [DemandSignal.ID: CGFloat] = [:]
 
     var body: some View {
         CavnarDropdown(
@@ -92,6 +94,7 @@ struct DemandSignalsSection: View {
                     List {
                         ForEach(viewModel.signals) { signal in
                             signalRow(signal)
+                                .cavnarReportsRowHeight(signal.id, into: $signalRowHeights)
                                 .listRowBackground(Color.clear)
                                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                                 .listRowSeparatorTint(Color.cavnarPaper3.opacity(0.5))
@@ -104,7 +107,8 @@ struct DemandSignalsSection: View {
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                     .scrollDisabled(true)
-                    .frame(height: CGFloat(viewModel.signals.count) * 58)
+                    .frame(height: CavnarFittedList.height(ids: viewModel.signals.map(\.id),
+                                                           measured: signalRowHeights, verticalInsets: 12))
                 }
             }
         }

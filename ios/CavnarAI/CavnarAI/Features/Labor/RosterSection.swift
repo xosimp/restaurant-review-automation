@@ -11,6 +11,8 @@ struct RosterSection: View {
     @State private var selected: RosterMember?
     @State private var showingPairEditor = false
     @State private var showingRules = false
+    /// Each pair row's measured height — see CavnarFittedList.
+    @State private var pairRowHeights: [StaffPair.ID: CGFloat] = [:]
 
     var body: some View {
         CavnarDropdown(
@@ -236,6 +238,7 @@ struct RosterSection: View {
                 List {
                     ForEach(viewModel.pairs) { pair in
                         pairRow(pair)
+                            .cavnarReportsRowHeight(pair.id, into: $pairRowHeights)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                             .listRowSeparatorTint(Color.cavnarPaper3.opacity(0.5))
@@ -250,7 +253,8 @@ struct RosterSection: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
-                .frame(height: CGFloat(viewModel.pairs.count) * 56)
+                .frame(height: CavnarFittedList.height(ids: viewModel.pairs.map(\.id),
+                                                       measured: pairRowHeights, verticalInsets: 12))
             }
         }
     }

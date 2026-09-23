@@ -105,9 +105,13 @@ struct ScheduleRulesSheet: View {
         }
         .task {
             await viewModel.loadRules()
-            sync()
+            syncUnlessEdited()
         }
-        .onChange(of: viewModel.rules) { _, _ in sync() }
+        // A reload (a save's answer, another device's change) refreshes
+        // the fields only while the manager hasn't touched them. It used to
+        // re-sync unconditionally whenever nothing had been synced into
+        // `drafts` yet, replacing a jurisdiction or floor mid-edit (CLIENT-60).
+        .onChange(of: viewModel.rules) { _, _ in syncUnlessEdited() }
     }
 
     // MARK: Jurisdiction
@@ -555,9 +559,24 @@ struct ScheduleRulesSheet: View {
 
     // MARK: Sync & parse
 
+    /// What the fields said right after the last sync — so an edit since
+    /// can be told apart from a sheet nobody has touched.
+    @State private var syncedSignature: Data?
+
+    private var fieldsSignature: Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try? encoder.encode(patch())
+    }
+
+    private func syncUnlessEdited() {
+        if synced, fieldsSignature != syncedSignature { return }
+        sync()
+    }
+
     private func sync() {
-        guard !synced || drafts.isEmpty else { return }
         synced = true
+        defer { syncedSignature = fieldsSignature }
         var next: [String: String] = [:]
         for field in Self.fields {
             if let v = viewModel.rules[field.key]?.display { next[field.key] = v }
