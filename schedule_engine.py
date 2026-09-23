@@ -2017,6 +2017,10 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["experienced"] = _staff.experienced_names(restaurant_id)
     except Exception:
         signals["experienced"] = set()
+    try:
+        signals["preferences"] = _staff.stated_preferences(restaurant_id)
+    except Exception:
+        signals["preferences"] = {}
     _reconcile_to_roster(signals)
     try:
         weights = get_quality_weights(restaurant_id)
@@ -2114,6 +2118,47 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
              + l["headline"] + (" Confirm by: " + l["confirm_by"] if l.get("confirm_by") else "")
              for l in links[:2]]
     return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
+
+
+def likely_edits(restaurant_id, rows: list, patterns: list = None) -> list:
+    """Draft rows that match an edit the manager keeps making: a person on a
+    weekday and daypart they have been taken off repeatedly, or a role's
+    start the manager keeps moving. [{kind, employee?, date, text}]."""
+    import shift_quality as _sq
+    if patterns is None:
+        patterns = _versions.learned_patterns(restaurant_id)
+    try:
+        import schedule_intel as _si
+        gone = _si.dismissed_patterns(restaurant_id)
+        patterns = [p for p in patterns if _si.pattern_key(p) not in gone]
+    except Exception:
+        pass
+    out, seen = [], set()
+    for r in rows or []:
+        name = (r.get("employee") or "").strip()
+        day = _sq._day_name(r.get("date") or "")
+        part = _sq.daypart_of(r.get("shift_start", ""))
+        for p in patterns:
+            if p.get("day") != day or p.get("daypart") != part:
+                continue
+            if p.get("kind") == "moved_off" and (p.get("employee") or "").strip().lower() == name.lower():
+                key = ("off", name, r.get("date"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"kind": "moved_off", "employee": name, "date": r.get("date"),
+                            "text": f"{name} is on {day} {'lunch' if part == 'morning' else 'dinner'} — you've taken "
+                                    f"them off it {p.get('times')} times recently."})
+            elif p.get("kind") == "retime_start" and (p.get("role") or "").strip().lower() == (r.get("role") or "").strip().lower():
+                want = (p.get("time") or p.get("to") or "").strip().lower().replace(" ", "")
+                have = (r.get("shift_start") or "").strip().lower().replace(" ", "")
+                key = ("retime", r.get("role"), r.get("date"))
+                if want and have and want != have and key not in seen:
+                    seen.add(key)
+                    out.append({"kind": "retime_start", "date": r.get("date"), "role": r.get("role"),
+                                "text": f"{r.get('role')} on {day} starts at {r.get('shift_start')} here — you usually "
+                                        f"move it to {p.get('time') or p.get('to')}."})
+    return out
 
 
 # The quality gate: a draft whose busy shifts are still capped by a staffing
@@ -2530,6 +2575,14 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         f"from their own attendance.")
             except Exception as _slx:
                 print(f"[schedule] overtime/standby read failed: {_slx}")
+            # Rows the manager has repeatedly edited away and the draft put
+            # back anyway: said before they have to do it again.
+            try:
+                result["likely_edits"] = likely_edits(restaurant_id, preview_rows)
+                for _le in result["likely_edits"][:3]:
+                    result["review"]["lines"].append(_le["text"])
+            except Exception as _lex:
+                print(f"[schedule] likely-edit read failed: {_lex}")
             _pc = result.get("projected_cost") or {}
             if _pc.get("overtime_hours"):
                 result["review"]["lines"].append(
@@ -2782,6 +2835,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             ratings_off_roster=result.get("ratings_off_roster") or [],
             overtime_forecast=result.get("overtime_forecast") or [],
             standby_days=result.get("standby_days") or [],
+            likely_edits=result.get("likely_edits") or [],
             gate=result.get("gate") or {"ran": False},
         )
         _q_now = (result.get("quality") or {}).get("score")

@@ -220,6 +220,8 @@ class ShiftContext:
     # Share of a shift able to cover a second station that counts as a
     # healthy floor (cross_training).
     cross_training_target: float = 0.34
+    # What staff said they want (staff_settings.stated_preferences).
+    preferences: dict = field(default_factory=dict)
 
     # ── Derived views every dimension wants ────────────────────────────
     @property
@@ -321,6 +323,7 @@ DEFAULT_WEIGHTS = {
     "pairings": 4,
     "stability": 2,
     "cross_training": 2,
+    "preferences": 3,
 }
 
 
@@ -1156,7 +1159,8 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         # would define the window and a thin day could never be short.
         required = {r: int(n) for r, n in ctx.role_minimums.items() if n}
         source = "your role minimums"
-    if not required:
+    peak_need = _peak_requirement(ctx)
+    if not required and not peak_need:
         return None
     rows = ctx.day_rows or ctx.rows
     spans = []
@@ -1185,6 +1189,23 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     slots = list(range(lo, hi, SLOT_MINUTES))
     total = covered = 0
     gaps = {}
+    peak_gaps = []
+    if peak_need:
+        # The daypart's busiest hour by this restaurant's own measured sales
+        # (at least three same-weekday readings): most of the usual crew for
+        # each role should be on for it. A floor held all afternoon can
+        # still leave the rush a person short.
+        hour, needs = peak_need
+        t = hour * 60
+        if lo <= t < hi:
+            for role, need in needs.items():
+                on = sum(1 for rl, s, e in spans if rl == role.strip().lower() and s <= t < e)
+                total += 1
+                if on >= need:
+                    covered += 1
+                else:
+                    peak_gaps.append({"role": role, "need": need, "on": on, "at": _fmt_minutes(t),
+                                      "worst_minute": t})
     for role, need in required.items():
         key = role.strip().lower()
         for t in slots:
@@ -1200,6 +1221,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     if not total:
         return None
     score = _pct(covered, total)
+    for g in peak_gaps:
+        gaps.setdefault(g["role"], {"short_slots": 0, "worst": g["worst_minute"], "worst_on": g["on"]})
+        required.setdefault(g["role"], g["need"])
     res = DimensionResult(
         key="coverage_curve", label="Coverage by the hour", score=score,
         weight=DEFAULT_WEIGHTS["coverage_curve"], floor=60,
@@ -1210,7 +1234,13 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
                                              for r, g in gaps.items()},
                "requirement_source": source},
     )
+    res.facts["peak_gaps"] = peak_gaps
+    for g in peak_gaps[:2]:
+        res.weaknesses.append(f"{g['role']} has {g['on']} on at {g['at']}, the busiest hour by your sales — "
+                              f"usually {g['need']}+ for the rush.")
     for role, g in sorted(gaps.items(), key=lambda kv: -kv[1]["short_slots"])[:3]:
+        if not g["short_slots"]:
+            continue
         need = required[role]
         res.weaknesses.append(
             f"{role} is under {need} for {g['short_slots'] * SLOT_MINUTES // 60}h{(g['short_slots'] * SLOT_MINUTES % 60) and ' 30m' or ''} "
@@ -1229,6 +1259,26 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
             res.weaknesses.append(
                 f"Sales peak around {_fmt_minutes(int(peak_hour) * 60)} with {on_peak} on, while the day tops out at {on_max} on.")
     return res
+
+
+# Share of a role's usual daypart headcount that should overlap the
+# daypart's busiest measured hour.
+PEAK_SHARE = 0.75
+
+
+def _peak_requirement(ctx: ShiftContext):
+    """(hour, {role: people}) for this daypart's busiest hour, from the
+    measured sales curve and the usual crew — or None without both."""
+    if not ctx.demand_curve or not ctx.typical_headcount:
+        return None
+    lo, hi = (0, DAYPART_CUTOVER // 60) if ctx.daypart == "morning" else (DAYPART_CUTOVER // 60, 24)
+    hours = {int(h): v for h, v in ctx.demand_curve.items() if lo <= int(h) < hi and v}
+    if not hours:
+        return None
+    hour = max(hours.items(), key=lambda kv: kv[1])[0]
+    import math
+    needs = {role: max(1, int(math.ceil(PEAK_SHARE * int(n)))) for role, n in ctx.typical_headcount.items() if n}
+    return (hour, needs) if needs else None
 
 
 def _fmt_minutes(m):
@@ -1313,6 +1363,49 @@ def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
+def dim_preferences(ctx: ShiftContext) -> DimensionResult | None:
+    """What people said they want, for the people on this shift: the
+    daypart they prefer, and a week near the hours they asked for (within
+    PREFERENCE_HOURS_BAND). Stated by staff in their own settings; never a
+    rule, weighted lightly, and silent for anybody who stated nothing."""
+    prefs = ctx.preferences or {}
+    if not prefs:
+        return None
+    checked = met = 0
+    misses = []
+    for name in ctx.people:
+        p = prefs.get(name)
+        if not p:
+            continue
+        parts = [x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")]
+        if parts:
+            checked += 1
+            if ctx.daypart in parts:
+                met += 1
+            else:
+                misses.append(f"{name} prefers {' or '.join('days' if x == 'morning' else 'nights' for x in parts)}")
+        want = p.get("desired_hours")
+        if want:
+            checked += 1
+            have = sum((a.get("hours") or 0) for a in (ctx.week_assignments.get(name) or []) if not a.get("prior"))
+            if abs(have - float(want)) <= float(want) * PREFERENCE_HOURS_BAND:
+                met += 1
+            else:
+                misses.append(f"{name} asked for about {float(want):g}h and has {have:g}h")
+    if not checked:
+        return None
+    res = DimensionResult(key="preferences", label="Staff preferences", score=_pct(met, checked),
+                          weight=DEFAULT_WEIGHTS["preferences"], facts={"checked": checked, "met": met, "misses": misses})
+    if misses:
+        res.weaknesses.append("; ".join(misses[:2]) + ".")
+    else:
+        res.strengths.append("Everybody here is on the shift and hours they asked for.")
+    return res
+
+
+PREFERENCE_HOURS_BAND = 0.2
+
+
 DIMENSIONS = {
     "coverage": dim_coverage,
     "coverage_curve": dim_coverage_curve,
@@ -1326,6 +1419,7 @@ DIMENSIONS = {
     "pairings": dim_pairings,
     "fatigue": dim_fatigue,
     "fairness": dim_fairness,
+    "preferences": dim_preferences,
     "stability": dim_stability,
     "cross_training": dim_cross_training,
 }
@@ -2179,6 +2273,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             availability=signals.get("availability") or {},
             experienced=set(signals.get("experienced") or ()),
             cross_training_target=float(signals.get("cross_training_target") or 0.34),
+            preferences=signals.get("preferences") or {},
         ))
     return contexts
 

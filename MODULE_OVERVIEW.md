@@ -34,7 +34,7 @@ After the backstops and before the sweep, three economic passes (`schedule_econo
 POS shift CSV (`date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes`) → `labor.py` loads and aggregates → labor % vs `labor_target_pct`, overtime detection (1.5× over 40h on the restaurant's own `week_start_day`-anchored workweek), overstaffed-day detection (high labor % on a day, contrasted against sales) → rendered on the Labor tab (web `#panel-labor`, iOS `LaborView`).
 
 ### Shift Quality Engine (`shift_quality.py`)
-Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per-shift facts: role, flagged constraints, closing, elsewhere-that-day, prior pattern, availability) feeds fourteen `DimensionResult`s combined via the `DIMENSIONS` registry into one 0–100 score:
+Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per-shift facts: role, flagged constraints, closing, elsewhere-that-day, prior pattern, availability) feeds fifteen `DimensionResult`s combined via the `DIMENSIONS` registry into one 0–100 score:
 
 | Dimension | Default weight | Critical floor |
 |---|---|---|
@@ -52,6 +52,11 @@ Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per
 | pairings | 4 | |
 | stability | 2 | |
 | cross_training | 2 | |
+| preferences | 3 | |
+
+Coverage by the hour also asks that, at a daypart's busiest hour by the restaurant's own measured sales (three or more same-weekday readings), 75% of each role's usual crew is on. Preferences scores the daypart and weekly hours staff said they want, only for people who stated them.
+
+**The score is the objective (`schedule_optimizer.py`).** After the hard-rule fix pass and before the owner sees the draft, a bounded local search (add, retime/extend, replace, swap, trim — generated from the weakest dimensions' facts, capped shifts first) takes each move that raises the week, re-checked against the full rule sweep (never adds a hard breach), the hours budget, the section cap on simultaneous servers and pending time off. Every change is recorded with why (`optimizer.changes`), and what no legal move could fix is said (`optimizer.unresolved`, e.g. only one bartender authorised to close). `/labor/schedule/optimize` runs it on the week on screen without saving. The budget trim picks, among equally discretionary rows, the one the score can best spare. A draft whose busy shifts are still capped by a staffing hole has those days regenerated once with what was wrong named in the prompt (`schedule_engine._quality_gate`); the better draft is kept. The review also names who the draft puts past the payroll-week ceiling, the days worth a standby, and rows matching an edit the manager keeps making (`likely_edits`).
 
 Weights are per-restaurant editable (`quality_weights_json`); `scripts/schedule_eval.py` replays saved weeks through the current code and is the check before any change to scoring. A shift is one date × daypart; a row counts in every daypart it is on the floor for (`present_dayparts`: its start's daypart, plus the other when it covers an hour of that daypart's core window), while its hours and week assignment count once. A profile's demand is settled per weekday from the restaurant's own sales (`profile_for_shift`), never the busiest of the days it covers. Experience withdraws when the history on file is too short for anybody to reach `EXPERIENCE_SHIFTS` and nobody is marked experienced (`staff_settings.experienced`). Fairness asks whether somebody on a closing, weekend or busy shift has more of that kind than their share among comparable people in their role. Labor efficiency treats under the day's target as fine when every required position (and every half hour, where measured) is covered. Invariants that hold everywhere:
 1. **No data → `None`, never `0`** — a dimension with nothing to measure withdraws and the rest renormalize. (A leadership dimension with zero ratings used to score `0` and cap otherwise-great shifts at nothing; fixed.)

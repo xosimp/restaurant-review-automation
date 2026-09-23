@@ -192,3 +192,34 @@ def test_typical_headcount_reads_recent_weeks_more_than_old_ones():
             shifts.append({"date": d, "employee": f"S{i}", "role": "Server", "shift_start": "5:00pm", "shift_end": "10:00pm"})
     typical = labor.historical_patterns(shifts)["typical_headcount"]
     assert typical[("Saturday", "night")]["Server"] == 5
+
+
+def test_the_busiest_measured_hour_needs_most_of_the_usual_crew():
+    rows = [row(SAT, n, "Server", start="5:00pm", end="7:00pm", hours=2) for n in ("A", "B")]
+    rows += [row(SAT, n, "Server", start="4:00pm", end="10:00pm", hours=6) for n in ("C",)]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile()],
+                        typical_headcount={("Saturday", "night"): {"Server": 4}},
+                        demand_curve={"Saturday": {"17": 0.2, "19": 0.4, "20": 0.2}})
+    curve = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage_curve")
+    assert curve["facts"]["peak_gaps"] and curve["facts"]["peak_gaps"][0]["at"] == "7:00pm"
+    assert any("busiest hour" in w for w in curve["weaknesses"])
+
+
+def test_stated_preferences_are_scored_lightly_and_only_when_stated():
+    rows = [row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
+    kw = dict(profiles=[sq.ShiftProfile()], typical_headcount={("Saturday", "night"): {"Server": 2}})
+    none = sq.score_rows(rows, **kw)
+    assert "preferences" in none["shifts"][0]["not_applicable"]
+    out = sq.score_rows(rows, preferences={"Ann": {"preferred_dayparts": ["morning"]}}, **kw)
+    pref = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "preferences")
+    assert pref["score"] == 0 and "Ann prefers days" in pref["weaknesses"][0]
+
+
+def test_a_row_the_manager_keeps_removing_is_flagged():
+    import schedule_engine as se
+    pats = [{"kind": "moved_off", "employee": "Ann", "day": "Saturday", "daypart": "night", "times": 3},
+            {"kind": "retime_start", "role": "Server", "day": "Saturday", "daypart": "night", "time": "4:30pm", "times": 2}]
+    out = se.likely_edits(1, [row(SAT, "Ann", "Server")], patterns=pats)
+    kinds = {o["kind"] for o in out}
+    assert kinds == {"moved_off", "retime_start"}
+    assert any("taken them off it 3 times" in o["text"] for o in out)
