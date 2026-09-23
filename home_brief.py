@@ -206,9 +206,19 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
 
 
-def undismiss(rid, key):
+def undismiss(rid, key, _card=True):
     """"Use again": the Home row goes, and so does the ledger's silence, so
-    the key can be said on every surface again."""
+    the key can be said on every surface again. The critically-low card is
+    answered for every item on it (dismiss), so "Use again" on the card
+    restores every item it answered, not only the first."""
+    if _card and (key or "").startswith("stock_low:"):
+        try:
+            quiet = _stock_quiet(rid)
+            for k in _current_stock_keys(rid):
+                if k != key and k in quiet:
+                    undismiss(rid, k, _card=False)
+        except Exception as e:
+            print(f"[home] stock card restore incomplete: {e}")
     conn = get_conn()
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()

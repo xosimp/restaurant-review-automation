@@ -439,6 +439,14 @@ def test_h13_hiding_the_low_stock_card_answers_every_item_on_it(db_path, monkeyp
     assert {"stock_low:Salmon", "stock_low:Chicken"} <= quiet
 
 
+def test_h13_use_again_on_the_low_stock_card_restores_every_item(db_path, monkeypatch):
+    rid = _rid(db_path)
+    monkeypatch.setattr(home_brief, "_current_stock_keys", lambda _rid: ["stock_low:Salmon", "stock_low:Chicken"])
+    home_brief.dismiss(rid, "stock_low:Salmon", kind="snooze")
+    home_brief.undismiss(rid, "stock_low:Salmon")
+    assert not ({"stock_low:Salmon", "stock_low:Chicken"} & rec_ledger.silenced_keys(rid))
+
+
 # ── H-14 the same news once ─────────────────────────────────────────────────
 
 def test_h14_the_brief_says_one_piece_of_news_once():
