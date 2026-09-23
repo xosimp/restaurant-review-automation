@@ -111,3 +111,12 @@ def test_one_review_by_id_is_scoped_to_its_restaurant(db):
     c.commit(); c.close()
     assert [r["id"] for r in models.get_reviews_data(a, review_id=rid_a)] == [rid_a]
     assert models.get_reviews_data(b, review_id=rid_a) == []
+
+
+def test_auto_publish_names_the_setup_gap_instead_of_a_count(db):
+    import strategy_routes
+    rid = create_restaurant(Restaurant(name="Pub Co", owner_email="p@x.com", module_labor=1), db_path=db)
+    off = strategy_routes._auto_publish_offer(rid)
+    assert off["eligible"] is False and off["missing"]
+    assert "no manager is set to receive issue texts" in off["reason"]
+    assert "no point-of-sale with live clock-ins is connected" in off["reason"]

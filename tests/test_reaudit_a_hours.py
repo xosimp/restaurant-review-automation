@@ -165,3 +165,22 @@ def test_a_reading_taken_before_close_is_labelled_as_of_its_hour(db_path):
         {"available": True, "net_sales": 4000.0, "typical": 5000.0, "pct": -20.0, "direction": "behind",
          "weekday": "Friday", "samples": 4, "hour": 21, "as_of": "9pm"}, None)
     assert title == "$4,000 by 9pm" and "typical" not in title
+
+
+def test_a_shift_after_midnight_is_checked_against_tonights_schedule(db_path, monkeypatch):
+    """The coverage check reads the business date's published week: at
+    12:50am during a 2am close, Friday's schedule is the one being worked,
+    and a 12:30am shift on it is 20 minutes late — not ignored."""
+    import intraday, pos
+    rid = _rid(db_path, opens={"Friday": "4:00pm"}, closes={"Friday": "2:00am"})
+    csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+           f"{FRI},Friday,Dana K,Barback,12:30am,2:00am,1.5,\n")
+    hid = models.save_schedule_history(rid, FRI.isoformat(), FRI.isoformat(), 2, 2, 30, csv, [], db_path=db_path)
+    c = get_conn(db_path)
+    c.execute("UPDATE schedule_history SET published_at=datetime('now') WHERE id=?", (hid,))
+    c.commit(); c.close()
+    seen = []
+    monkeypatch.setattr(pos, "fetch_clock_ins_today", lambda r, d: (seen.append(d) or [], "toast"))
+    gaps = intraday.coverage_gaps(rid, now_local=datetime(2026, 9, 26, 0, 50), db_path=db_path)
+    assert seen == [FRI]
+    assert [(m["employee"], m["minutes_late"]) for m in gaps["missing"]] == [("Dana K", 20)]

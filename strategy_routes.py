@@ -1654,6 +1654,15 @@ def _auto_publish_offer(rid) -> dict:
     if r is not None and int(getattr(r, "auto_publish_schedule", 0) or 0):
         return {"eligible": False, "reason": "Auto-publish is already on."}
     trust = schedule_publish_trust(rid)
+    # A week only counts as having run clean when something was watching it
+    # (schedule_intel.watched_dates); say what is missing instead of a
+    # "0 of 3" that no amount of good weeks would move.
+    import schedule_intel as _si_ap
+    missing = _si_ap.coverage_watch_missing(rid)
+    if trust < SCHEDULE_PUBLISH_TRUST_MIN and missing:
+        return {"eligible": False, "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN, "missing": missing,
+                "reason": ("Auto-publish needs proof that published weeks ran clean, and Cavnar can't watch "
+                           "a shift yet: " + "; ".join(missing) + ".")}
     if trust < SCHEDULE_PUBLISH_TRUST_MIN:
         return {"eligible": False, "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,
                 "reason": (f"{trust} of the {SCHEDULE_PUBLISH_TRUST_MIN} drafts in a row it needs went out unedited "

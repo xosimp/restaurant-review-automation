@@ -63,5 +63,8 @@ def test_auto_publish_is_offered_exactly_when_the_job_would_run(monkeypatch):
     monkeypatch.setattr(models, "schedule_publish_trust", lambda rid: models.SCHEDULE_PUBLISH_TRUST_MIN)
     assert sr._auto_publish_offer(1)["eligible"] is True
     monkeypatch.setattr(models, "schedule_publish_trust", lambda rid: models.SCHEDULE_PUBLISH_TRUST_MIN - 1)
+    # A restaurant Cavnar CAN watch (the setup-gap reason is its own test).
+    import schedule_intel
+    monkeypatch.setattr(schedule_intel, "coverage_watch_missing", lambda rid, db_path=None: [])
     off = sr._auto_publish_offer(1)
     assert off["eligible"] is False and "in a row" in off["reason"]

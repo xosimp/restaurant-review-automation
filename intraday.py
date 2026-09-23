@@ -246,10 +246,13 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     import pos
     import staff_settings as _ss
     from models import get_restaurant
-    from time_utils import restaurant_now
+    from time_utils import restaurant_now, business_date, BUSINESS_DAY_START_HOUR
     restaurant = restaurant or get_restaurant(restaurant_id)
     local = now_local or restaurant_now(restaurant, naive=True)
-    day = local.date()
+    # The service the clock is in, not the calendar day: at 12:30am during a
+    # 1am close, tonight's schedule is still the one being worked, and a shift
+    # listed for it that starts after midnight is due the next calendar day.
+    day = business_date(restaurant, local)
     scheduled = _todays_scheduled(restaurant_id, day, db_path=db_path)
     if not scheduled:
         return {"available": False, "reason": "no published schedule covers today"}
@@ -274,7 +277,9 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
                 continue
         if start is None:
             continue
-        due = local.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+        due = datetime.combine(day, start.time())
+        if start.hour < BUSINESS_DAY_START_HOUR:
+            due += timedelta(days=1)       # listed for tonight, starts after midnight
         if local < due + timedelta(minutes=grace_minutes):
             continue                      # not late yet
         if is_here(s["employee"], here, scheduled_keys):

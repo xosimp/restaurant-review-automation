@@ -18705,6 +18705,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(off.eligible){
       h+='<div class="int-offer"><div class="k">Auto-publish</div><div class="tx">'+num(off.reason||'')+'</div>'
         +'<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="acceptAutoPublishOffer(this)">Turn on auto-publish</button></div>';
+    }else if(off.missing&&off.missing.length&&off.reason){
+      /* A setup gap, not a count of good weeks: no week can count as clean
+         until Cavnar can watch a shift. */
+      h+='<div class="hb-empty" style="text-align:left"><b>Auto-publish</b> &mdash; '+esc(off.reason)+'</div>';
     }
     h+='<div class="lb2-sub" style="margin-top:14px">How much of the draft you keep<small>rows that went out exactly as Cavnar wrote them</small></div>';
     var wk=(acc.weeks||[]).slice().reverse(),bars='';

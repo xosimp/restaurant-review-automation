@@ -33,6 +33,16 @@ struct ScheduleIntelSection: View {
                     // how much of each draft survives, and whether the
                     // quality weights track this restaurant's outcomes.
                     if let offer = intel.autoPublishOffer, offer.eligible { autoPublishOfferCard(offer) }
+                    if let offer = intel.autoPublishOffer, !offer.eligible, !(offer.missing ?? []).isEmpty,
+                       let reason = offer.reason {
+                        // Why auto-publish can never be offered yet — a
+                        // setup gap, not a count of good weeks.
+                        VStack(alignment: .leading, spacing: 6) {
+                            kicker("Auto-publish", tone: .cavnarInk3)
+                            HomeMixedText.make(reason, size: 13.5, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     acceptanceBlock(intel.draftAcceptance)
                     if let calibration = intel.weightCalibration { calibrationBlock(calibration) }
                     if let revenue = intel.revenue, let value = revenue.value { revenueLine(revenue, value: value) }

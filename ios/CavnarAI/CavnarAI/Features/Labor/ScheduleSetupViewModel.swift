@@ -403,6 +403,9 @@ struct AutoPublishOffer: Codable, Equatable {
     let eligible: Bool
     let reason: String?
     let score: Double?
+    // What stops Cavnar watching a shift, so no week can count as clean yet
+    // ("no manager is set to receive issue texts"). Present only then.
+    var missing: [String]? = nil
 }
 
 /// `GET labor/intel` — the record behind the draft. Every figure here is

@@ -451,22 +451,31 @@ def could_hold(mentored: dict) -> dict:
 # were all true of every restaurant by default (re-audit A-19) — so those
 # reads are withheld for any date nobody was watching.
 
-def coverage_check_possible(restaurant_id, db_path=DB_PATH) -> bool:
-    """Conditions 1-3 above: whether run_coverage_check can open a coverage
-    issue for this restaurant at all."""
+def coverage_watch_missing(restaurant_id, db_path=DB_PATH) -> list:
+    """What stops run_coverage_check from watching this restaurant's nights,
+    in the owner's words — empty when it can. Conditions 1-3 above."""
     try:
         from models import get_restaurant
         import issues, pos
         r = get_restaurant(restaurant_id, db_path)
         if not r or not getattr(r, "module_labor", 0):
-            return False
+            return ["Labor isn't turned on"]
+        missing = []
         if "manager" not in issues.get_routing(restaurant_id, db_path):
-            return False
+            missing.append("no manager is set to receive issue texts (Account → Issues)")
         _name, mod = pos.connected_provider(restaurant_id)
-        return bool(mod) and getattr(mod, "fetch_clock_ins_today", None) is not None
+        if not (mod and getattr(mod, "fetch_clock_ins_today", None) is not None):
+            missing.append("no point-of-sale with live clock-ins is connected")
+        return missing
     except Exception as e:
-        print(f"[schedule_intel] coverage_check_possible failed for {restaurant_id}: {e}")
-        return False
+        print(f"[schedule_intel] coverage_watch_missing failed for {restaurant_id}: {e}")
+        return ["the coverage check could not be read"]
+
+
+def coverage_check_possible(restaurant_id, db_path=DB_PATH) -> bool:
+    """Conditions 1-3 above: whether run_coverage_check can open a coverage
+    issue for this restaurant at all."""
+    return not coverage_watch_missing(restaurant_id, db_path)
 
 
 def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
