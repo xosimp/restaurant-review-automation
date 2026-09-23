@@ -718,9 +718,15 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .lb2-hero .lb2-ai{margin-top:18px}
 /* cursor light on the big graphs only: Home's value graph and each module's hero chart */
 .lit{position:relative}
-.lit:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .25s ease;background:radial-gradient(360px circle at var(--mx,50%) var(--my,50%),rgba(200,75,47,.10),transparent 60%)}
+/* The light is one flat ember wash shaped by an eased (near-gaussian)
+   mask, with a fine grain inside it. A faint gradient over a dark ground
+   has only a couple of dozen 8-bit steps to fall through, and each step
+   read as a ring; the grain dithers the step edges away and fades out
+   with the light, so the card itself stays clean. Position eases toward
+   the cursor per frame (the brand layer's mousemove below). */
+.lit:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.22,.61,.36,1);background-color:rgba(200,75,47,.11);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='.07'/%3E%3C/svg%3E");background-size:180px 180px;-webkit-mask-image:radial-gradient(circle var(--lit-r,420px) at var(--mx,50%) var(--my,50%),#000 0%,rgba(0,0,0,.93) 8%,rgba(0,0,0,.8) 16%,rgba(0,0,0,.64) 24%,rgba(0,0,0,.48) 32%,rgba(0,0,0,.34) 40%,rgba(0,0,0,.22) 48%,rgba(0,0,0,.135) 56%,rgba(0,0,0,.075) 64%,rgba(0,0,0,.038) 72%,rgba(0,0,0,.016) 80%,rgba(0,0,0,.005) 90%,transparent 100%);mask-image:radial-gradient(circle var(--lit-r,420px) at var(--mx,50%) var(--my,50%),#000 0%,rgba(0,0,0,.93) 8%,rgba(0,0,0,.8) 16%,rgba(0,0,0,.64) 24%,rgba(0,0,0,.48) 32%,rgba(0,0,0,.34) 40%,rgba(0,0,0,.22) 48%,rgba(0,0,0,.135) 56%,rgba(0,0,0,.075) 64%,rgba(0,0,0,.038) 72%,rgba(0,0,0,.016) 80%,rgba(0,0,0,.005) 90%,transparent 100%)}
 .lit:hover:after{opacity:1}
-[data-theme="dark"] .lit:after{background:radial-gradient(360px circle at var(--mx,50%) var(--my,50%),rgba(224,100,68,.14),transparent 60%)}
+[data-theme="dark"] .lit:after{background-color:rgba(224,100,68,.14)}
 /* card tier: the informational surfaces outside Home */
 .ac-card,.fc2-fcp,.data-card,.card{box-shadow:var(--elev-card);transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}
 .ac-card:hover,.fc2-fcp:hover,.data-card:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 44px -22px rgba(14,12,10,.22)}
@@ -7291,12 +7297,25 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   var MOD = {reviews: 'reviews', labor: 'labor', inventory: 'inventory', marketing: 'marketing', competitor: 'intel', home: 'home'};
   function moduleOf(el) { var p = el.closest ? el.closest('.panel') : null; return p ? (MOD[(p.id || '').replace('panel-', '')] || '') : ''; }
   function workingFor(mod) { if (!act || !mod) return null; var w = act.working || []; for (var i = 0; i < w.length; i++) if (w[i].module === mod) return w[i]; return null; }
-  // cursor light on every lit surface
+  // Cursor light on the big graphs. The light glides toward the cursor
+  // (eased per animation frame) instead of jumping on every mousemove, and
+  // it enters from where the cursor came in rather than sliding across.
+  var _litEl = null, _litTx = 0, _litTy = 0, _litX = 0, _litY = 0, _litRaf = 0;
+  function _litStep() {
+    _litRaf = 0;
+    if (!_litEl) return;
+    var k = reduced() ? 1 : 0.16;
+    _litX += (_litTx - _litX) * k; _litY += (_litTy - _litY) * k;
+    _litEl.style.setProperty('--mx', _litX.toFixed(1) + 'px');
+    _litEl.style.setProperty('--my', _litY.toFixed(1) + 'px');
+    if (Math.abs(_litTx - _litX) > 0.3 || Math.abs(_litTy - _litY) > 0.3) _litRaf = window.requestAnimationFrame(_litStep);
+  }
   document.addEventListener('mousemove', function (e) {
     var c = e.target && e.target.closest ? e.target.closest('.lit') : null; if (!c) return;
     var r = c.getBoundingClientRect();
-    c.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
-    c.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+    _litTx = e.clientX - r.left; _litTy = e.clientY - r.top;
+    if (c !== _litEl) { _litEl = c; _litX = _litTx; _litY = _litTy; }
+    if (!_litRaf) _litRaf = window.requestAnimationFrame(_litStep);
   });
   function brandify() {
     var i, el;
