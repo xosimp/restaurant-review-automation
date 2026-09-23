@@ -32,10 +32,44 @@ enum SessionScope {
         generation += 1
         self.userId = userId ?? 0
         self.restaurantId = restaurantId ?? 0
+        // A different restaurant may keep a different clock.
+        RestaurantClock.reset()
     }
 
     /// A cache key private to this user at this restaurant.
     static func key(_ base: String) -> String { "\(base).u\(userId).r\(restaurantId)" }
+}
+
+/// The restaurant's own clock — its IANA time zone, as the server keeps it
+/// on `restaurants.timezone`.
+///
+/// Anything that names a time AT the restaurant (a scheduled post's slot,
+/// "today") has to be read on this clock, not the phone's: an owner in Los
+/// Angeles scheduling "11:00 Friday" for a Chicago restaurant means 11:00
+/// in the dining room (CLIENT-33). Until the restaurant's own zone has been
+/// read (`learn`), this is the server's default for a restaurant that never
+/// set one, America/Chicago — never the phone's zone.
+enum RestaurantClock {
+    static let serverDefault = TimeZone(identifier: "America/Chicago")!
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var zone: TimeZone?
+
+    static var timeZone: TimeZone { lock.withLock { zone } ?? serverDefault }
+    static var isKnown: Bool { lock.withLock { zone != nil } }
+
+    /// From any payload that carries the restaurant's zone (Account's
+    /// profile). An identifier this device doesn't know leaves it as it was.
+    static func learn(_ identifier: String?) {
+        guard let identifier, let tz = TimeZone(identifier: identifier) else { return }
+        lock.withLock { zone = tz }
+    }
+
+    /// Sign-in, sign-out and a location switch: the next restaurant's zone
+    /// is read again rather than assumed.
+    static func reset() {
+        lock.withLock { zone = nil }
+    }
 }
 
 @Observable

@@ -76,6 +76,7 @@ final class AccountViewModel {
         defer { isLoading = false }
         do {
             summary = try await client.send("/mobile/api/account")
+            RestaurantClock.learn(summary?.profile.timezone)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {

@@ -211,20 +211,31 @@ struct MarketingScheduleSheet: View {
     let viewModel: MarketingComposeViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var when = Date().addingTimeInterval(3600)
+    @State private var clock = RestaurantClock.timeZone
+
+    /// "Chicago", from the zone's identifier.
+    private var clockName: String {
+        clock.identifier.split(separator: "/").last.map { $0.replacingOccurrences(of: "_", with: " ") }
+            ?? clock.identifier
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Cavnar AI will publish this to \(platform.capitalized) for you. Times are your restaurant's own clock.")
+                    Text("Cavnar AI will publish this to \(platform.capitalized) for you. Times are your restaurant's own clock (\(clockName)).")
                         .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    // Shown and picked on the restaurant's clock, the same
+                    // one localStamp writes the slot in — so 11:00 here is
+                    // 11:00 in the dining room wherever the phone is.
                     DatePicker("When", selection: $when, in: Date()...,
                                displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.graphical)
                         .tint(Color.cavnarEmber)
+                        .environment(\.timeZone, clock)
 
                     Button {
                         Task {
@@ -250,6 +261,10 @@ struct MarketingScheduleSheet: View {
                 .padding(20)
             }
             .accountSheetChrome("Schedule")
+            .task {
+                await viewModel.learnRestaurantClock()
+                clock = RestaurantClock.timeZone
+            }
         }
     }
 }

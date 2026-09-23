@@ -493,7 +493,8 @@ struct MarketingView: View {
                     Text("Post to Instagram").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isPosting || viewModel.isOverLimit || compose.media == nil)
+                .disabled(viewModel.isPosting || viewModel.isOverLimit || compose.media == nil
+                          || viewModel.alreadyPosted(to: "Instagram"))
             }
             if viewModel.channels.facebook {
                 Button {
@@ -502,7 +503,7 @@ struct MarketingView: View {
                     Text("Post to Facebook").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isPosting || viewModel.isOverLimit)
+                .disabled(viewModel.isPosting || viewModel.isOverLimit || viewModel.alreadyPosted(to: "Facebook"))
             }
         }
     }
@@ -534,7 +535,7 @@ struct MarketingView: View {
                 Text("Post to Google").frame(maxWidth: .infinity)
             }
             .buttonStyle(CavnarPrimaryButtonStyle())
-            .disabled(viewModel.isPosting || viewModel.isOverLimit)
+            .disabled(viewModel.isPosting || viewModel.isOverLimit || viewModel.alreadyPosted(to: "Google"))
         }
     }
 
@@ -617,15 +618,13 @@ struct MarketingView: View {
         return viewModel.calendar[min(selectedDay, viewModel.calendar.count - 1)]
     }
 
-    /// "Sep 6 – 12" from the first and last day's dates.
+    /// "9/6/26 – 9/12/26" from the first and last day's dates (M/D/YY,
+    /// DESIGN_SYSTEM.md → Dates and times).
     private var weekRangeLabel: String? {
         guard let first = viewModel.calendar.first?.calendarDate,
               let last = viewModel.calendar.last?.calendarDate else { return nil }
-        let month = first.formatted(.dateTime.month(.abbreviated))
-        let lastMonth = last.formatted(.dateTime.month(.abbreviated))
-        let a = first.formatted(.dateTime.day())
-        let b = last.formatted(.dateTime.day())
-        return month == lastMonth ? "\(month) \(a) – \(b)" : "\(month) \(a) – \(lastMonth) \(b)"
+        let a = CavnarDate.mdy(first), b = CavnarDate.mdy(last)
+        return a == b ? a : "\(a) – \(b)"
     }
 
     private func select(_ index: Int) {
