@@ -178,7 +178,6 @@ def _owner_token(rid, username="owner"):
     return uid, auth.create_session(uid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: quiet hours of '9pm' are stored and silently disable quiet hours")
 @pytest.mark.parametrize("surface", ["web", "mobile"])
 def test_a_quiet_hours_value_that_is_not_hh_mm_is_refused_not_stored(db_path, app, surface):
     """A8 #21 / MOD-NOT-5 — refused (or normalised to 21:00); never stored as
@@ -197,7 +196,6 @@ def test_a_quiet_hours_value_that_is_not_hh_mm_is_refused_not_stored(db_path, ap
     assert resp.status_code == 400 or stored == "21:00", (resp.status_code, stored)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: a non-numeric daily cap 500s the whole alert-settings save")
 def test_a_non_numeric_daily_cap_is_a_field_error_not_a_server_error(db_path, app):
     """A8 #21 / MOD-NOT-5."""
     rid = _rid(db_path)
@@ -208,7 +206,6 @@ def test_a_non_numeric_daily_cap_is_a_field_error_not_a_server_error(db_path, ap
     assert resp.status_code == 400
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-5: digest_day is stored unvalidated by the alert-settings save")
 def test_an_unknown_digest_day_is_refused_by_the_alert_settings_save(db_path, app):
     """A8 #21 / MOD-NOT-5 — an invalid day means the digest never matches
     and silently stops."""
@@ -289,7 +286,6 @@ def test_a_single_labor_alert_is_delivered_with_the_unresponded_toggles_off(db_p
     assert (rid, "labor_over") in sent["push"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-8: owners with SMS and email both off never receive labor/trend/threshold pushes")
 def test_a_push_only_owner_still_gets_the_labor_alert(db_path, sent, monkeypatch):
     """A8 #27 / MOD-NOT-8."""
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
@@ -312,7 +308,6 @@ def _negative_review(db_path, rid, status, days_old=5, deleted=False):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-9: 'no response in 48h' ignores drafted-but-unposted reviews")
 def test_a_drafted_but_unposted_negative_review_triggers_the_no_response_alert(db_path, sent, monkeypatch):
     """A8 #28 / MOD-NOT-9 — auto-drafting makes 'drafted' the normal state of
     a review waiting on the owner."""
@@ -324,7 +319,6 @@ def test_a_drafted_but_unposted_negative_review_triggers_the_no_response_alert(d
     assert "no_response" in _alert_log(db_path, rid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-9: 'no response in 48h' fires for soft-deleted reviews")
 def test_a_soft_deleted_review_never_triggers_the_no_response_alert(db_path, sent, monkeypatch):
     """A8 #29 / MOD-NOT-9 — retention-purged rows are not actionable."""
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
@@ -373,7 +367,6 @@ class _CountingConn:
         return getattr(self._c, name)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-11: the hourly daily-alert pass does per-restaurant work for every restaurant, even those outside their 10am window")
 def test_restaurants_outside_their_10am_window_cost_nothing_on_the_hourly_pass(db_path, sent, monkeypatch):
     """A8 #33 / MOD-NOT-11 — 200 restaurants, all at 3am local: the pass
     must not issue a query per restaurant (it runs every hour, forever)."""
@@ -396,7 +389,6 @@ def test_restaurants_outside_their_10am_window_cost_nothing_on_the_hourly_pass(d
     assert n[0] < 200, f"{n[0]} queries for 200 restaurants none of which were due"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-16: a restart between collecting and flushing the 10am batch loses that day's alerts")
 def test_a_restart_mid_batch_does_not_lose_the_days_alerts(db_path, sent, monkeypatch):
     """A8 #34 / MOD-NOT-16 — the process dies after the checks collected a
     labor alert but before flush; the next hourly pass must re-collect it."""

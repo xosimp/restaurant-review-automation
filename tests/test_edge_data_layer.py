@@ -328,8 +328,6 @@ def test_a_retired_review_is_not_drafted(db_path):
     assert models.get_pending_drafts(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: the unresponded-negative alert query does not filter deleted_at, "
-                                       "so the owner is alerted about reviews the dashboard no longer shows")
 def test_a_retired_review_does_not_raise_a_no_response_alert(db_path, monkeypatch):
     rid = _rid(db_path)
     models.update_restaurant(rid, {"alert_no_response": 1, "urgent_via_email": 1}, db_path=db_path)

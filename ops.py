@@ -193,6 +193,26 @@ def claim_period(job: str, period: str) -> bool:
         return first_time
 
 
+def period_claimed(job: str, period: str) -> bool:
+    """Whether `job` already holds `period`, without claiming it. For work
+    that claims only once it has finished (notify's morning batch claims at
+    flush), so a pass can skip what an earlier pass completed. Fails open
+    (False): run again rather than silently skip."""
+    key = f"{job}:{period}"
+    if key in _claim_fallback:
+        return True
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            return conn.execute("SELECT 1 FROM job_period_claims WHERE job_key=?",
+                                (key,)).fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def release_period(job: str, period: str) -> None:
     """Give back a claim_period claim, so the next tick can try the work
     again. For jobs that claim BEFORE working (so two ticks cannot run it at

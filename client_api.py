@@ -2709,6 +2709,59 @@ def _normalize_phone_lenient(raw):
     return None
 
 
+_DIGEST_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _quiet_hour(raw):
+    """A quiet-hours bound as "HH:MM" (24h), None for blank, or raises
+    ValueError. is_in_quiet_hours reads only HH:MM and treats anything else
+    as "no quiet hours", so a stored "9pm" silently turned them off
+    (MOD-NOT-5). "9pm", "9:30 pm", "21" and "21:00" all normalise."""
+    s = str(raw or "").strip().lower().replace(".", "")
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?", s)
+    if not m:
+        raise ValueError(raw)
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if ap:
+        if not 1 <= h <= 12:
+            raise ValueError(raw)
+        h = (h % 12) + (12 if ap.startswith("p") else 0)
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        raise ValueError(raw)
+    return f"{h:02d}:{mi:02d}"
+
+
+def _validated_alert_fields(data):
+    """The alert-settings fields that are not simple switches, checked the
+    same way for the web save and its mobile twin. Returns (fields, error):
+    a field the owner typed that cannot be read is a 400 naming it, never a
+    500 for the whole save and never a value stored that quietly disables
+    the setting (MOD-NOT-5)."""
+    out = {}
+    try:
+        out["alert_quiet_start"] = _quiet_hour(data.get("alert_quiet_start"))
+        out["alert_quiet_end"] = _quiet_hour(data.get("alert_quiet_end"))
+    except ValueError:
+        return None, "Quiet hours need a time like 21:00 or 9pm."
+    if "alert_max_per_day" in data:
+        raw = data.get("alert_max_per_day")
+        try:
+            cap = int(raw or 0)
+        except (TypeError, ValueError):
+            return None, "The daily alert limit has to be a whole number."
+        if cap < 0:
+            return None, "The daily alert limit can't be negative."
+        out["alert_max_per_day"] = cap
+    if "digest_day" in data:
+        day = str(data.get("digest_day") or "monday").strip().lower()
+        if day not in _DIGEST_DAYS:
+            return None, "Pick a day of the week for the weekly digest."
+        out["digest_day"] = day
+    return out, None
+
+
 # The per-alert-type push switches, in the order the settings screens list
 # them. deliver_alert reads these columns; both clients now write them.
 _PUSH_COLUMNS = ("al_1star_push", "al_2star_push", "al_5star_push",
@@ -2761,6 +2814,9 @@ def save_alert_settings(current_user):
     from models import update_restaurant
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
+    checked, bad = _validated_alert_fields(data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
 
     # SMS requires real, server-verified consent — the modal's checkbox is a
     # UX nicety, not enforcement, since anyone can call this API directly.
@@ -2802,10 +2858,7 @@ def save_alert_settings(current_user):
         "alert_any_review":      int(bool(data.get("alert_any_review"))),
         "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
         "digest_enabled":        int(bool(data.get("digest_enabled"))),
-        "digest_day":            data.get("digest_day", "monday"),
-        "alert_quiet_start":     data.get("alert_quiet_start") or None,
-        "alert_quiet_end":       data.get("alert_quiet_end") or None,
-        "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
+        **checked,
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
     })

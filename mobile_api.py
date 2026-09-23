@@ -5203,6 +5203,9 @@ def mobile_save_alert_settings(current_user):
     from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
+    checked, bad = _capi._validated_alert_fields(data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
 
     # SMS requires real, server-verified consent — same rule as the web
     # endpoint (client_api.save_alert_settings): the client's checkbox is a
@@ -5240,13 +5243,10 @@ def mobile_save_alert_settings(current_user):
         "urgent_via_sms": int(sms_on),
         "urgent_via_email": int(bool(data.get("urgent_via_email"))),
         "digest_enabled": int(bool(data.get("digest_enabled"))),
-        "digest_day": data.get("digest_day", "monday"),
-        # "HH:MM" 24h strings, or None to turn quiet hours off entirely —
-        # is_in_quiet_hours() (models.py) already treats either field being
-        # empty as "no quiet window", so an empty string from the client
-        # correctly disables it rather than needing a separate flag.
-        "alert_quiet_start": data.get("alert_quiet_start") or None,
-        "alert_quiet_end": data.get("alert_quiet_end") or None,
+        # Quiet hours as "HH:MM" 24h, or None to turn them off (an empty
+        # string from the client disables them); digest_day and the daily
+        # cap checked with the web save's rules (MOD-NOT-5).
+        **checked,
         "al_1star_push": int(bool(data.get("al_1star_push"))),
         "al_2star_push": int(bool(data.get("al_2star_push"))),
         "al_5star_push": int(bool(data.get("al_5star_push"))),
