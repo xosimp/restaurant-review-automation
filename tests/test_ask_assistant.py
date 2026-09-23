@@ -421,7 +421,10 @@ def test_the_web_panel_fetches_its_opening():
     js = _source("templates", "dashboard.html")
     assert "/api/ask-cavnar/opening" in js
     assert "o.suggestions" in js, "the web panel must prefer the server's questions"
-    assert "o.briefing" in js, "the web panel must render the briefing"
+    # The opening leads with its headline; the bulleted briefing rows were
+    # removed from the web panel on the owner's call (9/23/26) — Home lists them.
+    assert "o.headline" in js, "the web panel must lead with the opening's headline"
+    assert "o.briefing" not in js, "the web panel no longer renders bulleted briefing rows"
 
 
 def test_the_ios_panel_fetches_its_opening():

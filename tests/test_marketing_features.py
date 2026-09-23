@@ -496,10 +496,15 @@ def test_attribution_says_nothing_when_there_is_no_pos_data(rid, db_path, monkey
 
 
 def test_attribution_says_nothing_without_enough_comparable_history(rid, db_path, monkeypatch):
+    # Posted two days ago, with sales every day since: the window has sales
+    # whether it starts on the post day (a morning post) or the day after (an
+    # evening one — marketing_signals._window_start). It used to post "now"
+    # with only today's sales, so after 11am local the window began tomorrow
+    # and the test read "no sales yet" instead of the case it is about.
     today = _now()
     monkeypatch.setattr(marketing_signals, "daily_sales",
-                        lambda r: {today.strftime("%Y-%m-%d"): 5000.0})
-    post_id = _post(db_path, rid, days_ago=0)
+                        lambda r: {(today - timedelta(days=i)).strftime("%Y-%m-%d"): 5000.0 for i in range(3)})
+    post_id = _post(db_path, rid, days_ago=2)
     assert marketing_signals.attribution_for_post(rid, post_id, db_path=db_path)["reason"] == "not_enough_history"
 
 

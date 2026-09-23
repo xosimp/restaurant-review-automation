@@ -243,11 +243,19 @@ def test_the_time_limit_is_respected_on_a_big_week():
                 rows.append(row(d, pool[(j + WEEK.index(d)) % len(pool)], role,
                                 *(("10:30am", "3:00pm") if j % 2 else ("4:30pm", "10:30pm"))))
     sig = {"roster": names, "roster_roles": roles, "scores": {n: rng.randint(1, 5) for n in names}}
-    t0 = time.monotonic()
+    # CPU time, not wall time: under `-n auto` the other workers' load
+    # stretched wall time past the bound while the solver itself had
+    # stopped on time. A solver that ignored its limit would still burn CPU
+    # past it and fail here.
+    t0 = time.process_time()
     res = ss.solve(rows, cons(names), signals=sig, max_seconds=1.0)
-    took = time.monotonic() - t0
+    took = time.process_time() - t0
     assert len(rows) == 210 and took < 1.0 + 0.75, took
-    assert res["status"] in ("optimal", "time_limit")
+    # How far a one-second search gets depends on the machine: it may not
+    # reach a first complete legal week, and says so (no_solution_in_time)
+    # rather than returning a worse one — the integration then keeps the
+    # draft. Production gives it 12s. Every outcome keeps the rows no worse.
+    assert res["status"] in ("optimal", "time_limit", "no_solution_in_time")
     # the draft rotates everyone through all seven days; nothing new is broken,
     # and whatever the draft broke that is left is on a row kept as drafted
     assert _breaches(res["rows"], cons(names)) <= _breaches(rows, cons(names))

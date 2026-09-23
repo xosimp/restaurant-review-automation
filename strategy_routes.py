@@ -823,7 +823,9 @@ def _do_memory_add(u):
 
 def _do_decisions(u):
     import decisions
-    rows = decisions.history(_rid(u), limit=40)
+    import issues
+    # Loss issues name the manager who approved the comps (re-audit A-8).
+    rows = decisions.history(_rid(u), limit=40, sees_loss=issues.viewer_sees_loss(u))
     if not _sees_food(u):
         rows = [r for r in rows if not ((r.get("outcome") or {}).get("metric") or "").startswith(("food_cost", "weekly_waste"))]
     return {"ok": True, "decisions": rows}, 200

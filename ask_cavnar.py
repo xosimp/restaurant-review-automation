@@ -509,12 +509,15 @@ def _memory_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
-def _decisions_context(restaurant_id):
+def _decisions_context(restaurant_id, viewer=None):
     """What this restaurant decided and what came of it (decisions.py) —
-    the assistant's memory of the owner's answers, not only its own advice."""
+    the assistant's memory of the owner's answers, not only its own advice.
+    Loss issues name the approving manager, so they are left out unless the
+    viewer has LOSS_VIEW (viewer_restaurant stamps _ask_sees_loss)."""
     try:
         import decisions
-        return decisions.context(restaurant_id)
+        loss = getattr(viewer, "_ask_sees_loss", False) if viewer is not None else False
+        return decisions.context(restaurant_id, sees_loss=loss)
     except Exception:
         return ""
 
@@ -714,7 +717,8 @@ def build_context(restaurant):
     # Keyed by what the viewer may see as well as by restaurant: an owner's
     # snapshot served from cache to a manager a minute later would carry
     # every figure the manager's copy leaves out.
-    key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))))
+    key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))),
+           bool(getattr(restaurant, "_ask_sees_loss", False)))
     cached = _CONTEXT_CACHE.get(key)
     if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
         return cached[1]
@@ -726,7 +730,7 @@ def build_context(restaurant):
     for always in (_memory_context, _decisions_context, _intelligence_context, _alerts_context, _commitments_context):
         try:
             # The alerts section is filtered to what this viewer may see.
-            section = always(restaurant.id, viewer=restaurant) if always is _alerts_context \
+            section = always(restaurant.id, viewer=restaurant) if always in (_alerts_context, _decisions_context) \
                 else always(restaurant.id)
             if section:
                 parts.append(section)

@@ -474,3 +474,23 @@ def test_an_approve_review_card_shows_the_reply_that_would_post(db_path):
     p = ask_cavnar_tools.build_proposal("approve_review", {"review_id": rev}, restaurant_id=rid)
     assert p["preview"] == "Sorry Al — we will do better."
     assert any("Slow service" in d["value"] for d in p["details"])
+
+
+def test_decisions_leave_loss_issues_out_for_a_login_without_loss_view(monkeypatch):
+    """Loss issues name the manager who approved the comps (re-audit A-8):
+    the /decisions route, Ask's decisions context and its read_decisions tool
+    all pass the viewer's LOSS_VIEW through to decisions.history."""
+    import ask_cavnar, ask_cavnar_tools, decisions, strategy_routes, issues as _iss
+    seen = []
+    monkeypatch.setattr(decisions, "history", lambda rid, limit=40, db_path=None, sees_loss=True: seen.append(("h", sees_loss)) or [])
+    monkeypatch.setattr(decisions, "context", lambda rid, db_path=None, sees_loss=True: seen.append(("c", sees_loss)) or "")
+    monkeypatch.setattr(_iss, "viewer_sees_loss", lambda u: False)
+    monkeypatch.setattr(strategy_routes, "_rid", lambda u: 1)
+    monkeypatch.setattr(strategy_routes, "_sees_food", lambda u: True)
+    strategy_routes._do_decisions({"id": 2, "role": "manager"})
+    manager_view = type("V", (), {"_ask_sees_loss": False, "id": 1})()
+    ask_cavnar._decisions_context(1, viewer=manager_view)
+    tool = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_decisions")
+    assert tool.get("wants_viewer") is True
+    tool["fn"](1, _viewer=manager_view)
+    assert seen == [("h", False), ("c", False), ("h", False)]

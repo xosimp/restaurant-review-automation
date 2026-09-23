@@ -1052,9 +1052,11 @@ def _read_platform_intelligence(restaurant_id):
             "note": "Aggregates over at least five restaurants; a band marked unavailable means too few similar restaurants yet."}
 
 
-def _read_decisions(restaurant_id, limit=20):
+def _read_decisions(restaurant_id, limit=20, _viewer=None):
     import decisions
-    rows = decisions.history(restaurant_id, limit=int(limit or 20))
+    # Loss issues name the approving manager: only for a LOSS_VIEW login.
+    loss = getattr(_viewer, "_ask_sees_loss", False) if _viewer is not None else False
+    rows = decisions.history(restaurant_id, limit=int(limit or 20), sees_loss=loss)
     return {"decisions": rows, "count": len(rows),
             "note": "Each row is what the owner did and what was measured — never a guess."}
 
@@ -1740,6 +1742,7 @@ TOOLS = [
         "kind": "read",
         "fn": _read_decisions,
         "module": None,
+        "wants_viewer": True,
         "spec": {
             "name": "read_decisions",
             "description": (
