@@ -443,7 +443,16 @@ final class AskCavnarViewModel {
     /// Fire a confirmed proposal. Runs the app's own endpoint, then writes
     /// the audit line — never the other way round, so a recorded
     /// "confirmed" always means it really ran.
+    ///
+    /// A false return always leaves the reason in `errorBanner`, and
+    /// `lastConfirmMayHaveRun` says whether the action may have happened
+    /// anyway. The bare catch here used to return false with no message,
+    /// and the card offered Confirm again as if nothing had happened — after
+    /// a timeout on a guest text blast or a supplier order that may already
+    /// have gone out, and after a refusal (quiet hours, a send limit) whose
+    /// reason the owner then never saw (CLIENT-19).
     func confirm(_ proposal: AskProposal) async -> Bool {
+        lastConfirmMayHaveRun = false
         do {
             let response: JobOrOK
             if proposal.route.method == "GET" {
@@ -452,21 +461,42 @@ final class AskCavnarViewModel {
                 response = try await client.send(proposal.route.mobile, method: .post,
                                                  body: proposal.body ?? [:])
             }
-            guard response.ok else { return false }
+            guard response.ok else {
+                errorBanner = response.error ?? "That didn't go through — nothing was sent."
+                return false
+            }
             // Schedule generation answers immediately with a job id and
             // does the actual work on a background thread. Taking that
             // first ok at face value meant the card said "Done" while the
             // schedule was still being built — and stayed saying it even
             // if the job then failed. Wait for the real outcome.
             if let jobId = response.jobId, !(await scheduleJobSucceeded(jobId)) {
+                errorBanner = "The schedule didn't finish building. Open Labor to see where it stopped."
                 return false
             }
             await record(proposal, outcome: "confirmed")
             return true
+        } catch is CancellationError {
+            return false
+        } catch let error as APIClient.APIError where error.status == nil && error.mayHaveReachedServer {
+            // No answer came back, but the request may have arrived and run.
+            lastConfirmMayHaveRun = true
+            errorBanner = "We lost the connection before this finished, so it may already have gone through. "
+                        + "Check before confirming again."
+            return false
+        } catch let error as APIClient.APIError {
+            // The server said no (its own reason), or the request never left.
+            errorBanner = error.message
+            return false
         } catch {
+            errorBanner = error.localizedDescription
             return false
         }
     }
+
+    /// Set by confirm() when its request timed out or dropped mid-flight —
+    /// the action may have run even though no answer arrived.
+    private(set) var lastConfirmMayHaveRun = false
 
     /// Polls the async schedule job to its real conclusion. Generation
     /// takes a little while (it's a live model call over the roster), so
@@ -541,6 +571,17 @@ final class AskCavnarViewModel {
             // The screen went away mid-request — roll the turn back silently.
             if messages.last?.isUser == true { messages.removeLast() }
             question = asked
+        } catch is StreamCutAfterProgress {
+            // Tools already ran server-side before the stream died. Asking
+            // again through the plain route re-billed the model and every
+            // tool it called, and could repeat a write proposal (CLIENT-28).
+            // The server may still finish and file the answer, so point the
+            // owner at the chat history rather than re-asking on their behalf.
+            if messages.last?.isUser == true { messages.removeLast() }
+            question = asked
+            errorBanner = "The connection dropped while Cavnar AI was working on this. "
+                        + "Its answer may still land in your chat history — check there before asking again."
+            Task { await refreshConversations() }
         } catch {
             // Streaming failed before any answer arrived (connection refused,
             // a proxy stripping the response, decode failure on the first
@@ -582,12 +623,38 @@ final class AskCavnarViewModel {
     /// loop — same events, same fallback-on-failure shape.
     private func streamAnswer(for question: String) async throws {
         var gotAnswer = false
+        // Any progress event means the server's loop is running tools on
+        // this question; from then on a failure must not trigger a re-ask.
+        var sawProgress = false
+        do {
+            try await consumeStream(for: question, gotAnswer: &gotAnswer, sawProgress: &sawProgress)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if sawProgress && !gotAnswer { throw StreamCutAfterProgress() }
+            throw error
+        }
+        if !gotAnswer {
+            // The stream closed with no "answer"/"error" event at all — a
+            // proxy that buffers/drops SSE, most likely. Before any progress,
+            // the caller's plain-request fallback is safe; after it, it is
+            // a second paid run of the same question.
+            if sawProgress { throw StreamCutAfterProgress() }
+            throw APIClient.APIError(message: "Stream ended without an answer.")
+        }
+    }
+
+    /// The stream failed after the server had started work on the question.
+    struct StreamCutAfterProgress: Error {}
+
+    private func consumeStream(for question: String, gotAnswer: inout Bool, sawProgress: inout Bool) async throws {
         for try await event in await client.stream(
             "/mobile/api/ask-cavnar/stream",
             body: StreamBody(question: question, conversation_id: conversationId,
                              new_conversation: wantsNewConversation)) {
             switch event.type {
             case "progress":
+                sawProgress = true
                 statusLabel = event.label
                 if let raw = event.state, let mapped = CavnarOrbState(rawValue: raw) {
                     orbState = mapped
@@ -604,12 +671,6 @@ final class AskCavnarViewModel {
             default:
                 break
             }
-        }
-        if !gotAnswer {
-            // The stream closed with no "answer"/"error" event at all — a
-            // proxy that buffers/drops SSE, most likely. Let the caller's
-            // catch block run the plain-request fallback.
-            throw APIClient.APIError(message: "Stream ended without an answer.")
         }
     }
 

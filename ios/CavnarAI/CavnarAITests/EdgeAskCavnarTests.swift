@@ -30,9 +30,7 @@ final class EdgeAskCavnarTests: XCTestCase {
         let vm = AskCavnarViewModel(client: client)
         let ok = await vm.confirm(try proposal())
         XCTAssertFalse(ok)
-        XCTExpectFailure("CLIENT-19: a transport failure on Confirm returns false with no message, and the card re-enables Confirm", strict: true) {
-            XCTAssertNotNil(vm.errorBanner, "the owner must be told it may already have happened and where to check")
-        }
+        XCTAssertNotNil(vm.errorBanner, "the owner must be told it may already have happened and where to check")
     }
 
     func testARefusedConfirmCarriesTheServersReason() async throws {
@@ -42,9 +40,7 @@ final class EdgeAskCavnarTests: XCTestCase {
         let vm = AskCavnarViewModel(client: client)
         let ok = await vm.confirm(try proposal())
         XCTAssertFalse(ok)
-        XCTExpectFailure("CLIENT-19: confirm()'s bare catch drops the server's error (quiet hours, limits)", strict: true) {
-            XCTAssertEqual(vm.errorBanner, "Quiet hours — texts can't go out until 9am.")
-        }
+        XCTAssertEqual(vm.errorBanner, "Quiet hours — texts can't go out until 9am.")
     }
 
     func testASuccessfulConfirmRecordsTheOutcomeAfterRunning() async throws {
@@ -83,9 +79,7 @@ final class EdgeAskCavnarTests: XCTestCase {
         let vm = AskCavnarViewModel(client: client)
         vm.question = "How did labor look on Friday?"
         await vm.submit()
-        XCTExpectFailure("CLIENT-28: the plain-request fallback always runs after a stream error, re-billing the model and its tools", strict: true) {
-            XCTAssertEqual(fallbackAsks.value, 0, "once progress arrived, the question must not be asked a second time")
-        }
+        XCTAssertEqual(fallbackAsks.value, 0, "once progress arrived, the question must not be asked a second time")
     }
 
     func testAStreamThatFailsBeforeAnyProgressFallsBack() async {

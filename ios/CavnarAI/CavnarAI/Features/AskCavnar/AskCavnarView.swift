@@ -769,7 +769,9 @@ private struct ProposalCard: View {
     // `Phase`, not `State`: a nested type named State shadows SwiftUI's
     // @State wrapper and the file stops compiling.
     @State private var phase: Phase = .pending
-    private enum Phase { case pending, working, done, failed }
+    private enum Phase { case pending, working, done, failed, uncertain }
+    /// Why the last Confirm didn't go through, in the server's words.
+    @State private var failure: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -787,16 +789,19 @@ private struct ProposalCard: View {
                 // CavnarShimmerText takes text + color only (see ViewModifiers);
                 // it sets its own type. Same call shape as AddCompetitorSheet.
                 CavnarShimmerText(text: "Working…", color: Color.cavnarInk)
-            case .pending, .failed:
+            case .pending, .failed, .uncertain:
                 HStack(spacing: 8) {
                     Button {
                         Task {
                             phase = .working
                             let ok = await viewModel?.confirm(proposal) ?? false
-                            phase = ok ? .done : .failed
+                            failure = ok ? nil : viewModel?.errorBanner
+                            phase = ok ? .done : (viewModel?.lastConfirmMayHaveRun == true ? .uncertain : .failed)
                         }
                     } label: {
-                        Text("Confirm")
+                        // After a timeout the action may already have run,
+                        // so a second tap is labelled for what it is.
+                        Text(phase == .uncertain ? "Send again anyway" : "Confirm")
                             .font(.cavnarBody(14, weight: 700))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16).padding(.vertical, 8)
@@ -820,10 +825,11 @@ private struct ProposalCard: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if phase == .failed {
-                    Text("That didn't go through — try again.")
+                if phase == .failed || phase == .uncertain {
+                    Text(failure ?? "That didn't go through — try again.")
                         .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(phase == .uncertain ? Color.cavnarAmber : Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
