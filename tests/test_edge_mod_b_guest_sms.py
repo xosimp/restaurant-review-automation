@@ -299,8 +299,15 @@ def test_the_campaign_route_does_not_text_the_whole_list_inside_the_request(db_p
     make one Twilio call per guest on a request thread."""
     rid = _rid(db_path)
     _consented(db_path, rid, 30)
+    # Only a text sent ON the request thread counts. The background sender
+    # the route hands the list to may already be texting by the time the
+    # response is read; that is the behaviour asked for, and counting its
+    # texts made this test fail whenever that thread won the race.
+    import threading
+    request_thread = threading.current_thread()     # the Flask test client runs the request here
     inline = []
-    monkeypatch.setattr(gm, "send_sms", lambda phone, msg, **kw: inline.append(phone) or True)
+    monkeypatch.setattr(gm, "send_sms", lambda phone, msg, **kw: (
+        inline.append(phone) if threading.current_thread() is request_thread else None) or True)
     create_user(rid, "owner", "owner@x.test", "pw-owner-1", db_path=db_path)
     app = Flask(__name__)
     app.register_blueprint(mobile_api.mobile_bp)
