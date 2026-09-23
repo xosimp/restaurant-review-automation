@@ -106,7 +106,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_by_day: dict = None, demand_by_date: dict = None,
                        leader_rules: list = None,
                        leadership_known: bool = False, roles: set = None,
-                       skip_dates=(), role_minimums: dict = None) -> list:
+                       skip_dates=(), role_minimums: dict = None,
+                       demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
+                       section_cap: int = 0, cap_roles=None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -120,7 +122,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     leadership_known — whether anybody is rated or authorised to close. A
                 profile's "needs a leader" cannot be judged without one of
                 those, so it is not asked of the model either.
+    demand_curve — {weekday: {hour: share}} measured sales by the hour; with
+                it each shift also carries its half-hour needs across service
+                (staffing_curve.half_hour_needs, interpolated from the hourly
+                readings), the same needs the coverage-by-the-hour score
+                judges. Without it nothing changes.
+    section_cap / cap_roles — the section count and the roles it counts: no
+                requirement, whole-shift or half-hour, asks for more of them
+                than the cap (staffing_curve.cap_requirement).
     """
+    import staffing_curve as _curve
     from shift_quality import shift_role_requirements
     skip = set(skip_dates or ())
     out = []
@@ -151,10 +162,30 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 floor = max([int(v) for r2, v in floors_here.items() if r2.strip().lower() == key] or [0])
                 typ = max([int(v or 0) for r2, v in typical_here.items() if r2.strip().lower() == key] or [0])
                 need[key] = [role.strip(), int(n), floor, typ]
+            # Held under the section cap, as the scorer holds it.
+            held = {}
+            if section_cap:
+                capped, held = _curve.cap_requirement({v[0]: v[1] for v in need.values()}, section_cap, cap_roles)
+                for k, v in need.items():
+                    v[1] = int(capped.get(v[0], v[1]))
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
                 continue
+            half = {}
+            curve_here = (demand_curve or {}).get(day) or {}
+            if curve_here and typical_here:
+                lo, hi = _service_window(day, part, open_times, close_times)
+                # Normalised over the daypart's half of the day, as the scorer
+                # does, then kept to the hours the restaurant is open.
+                whole = (0, _sq.DAYPART_CUTOVER) if part == "morning" else (_sq.DAYPART_CUTOVER, 48 * 60)
+                needs = {m: n for m, n in _curve.half_hour_needs(curve_here, typical_here, *whole).items()
+                         if lo <= m < hi}
+                if section_cap:
+                    needs = {m: _curve.cap_requirement(n, section_cap, cap_roles)[0] for m, n in needs.items()}
+                if roles is not None:
+                    needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
+                half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1}
             profile = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
             demand = profile.demand
             leader = []
@@ -176,10 +207,29 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             roles_out = []
             for _k, (name, required, floor, typical) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
                 roles_out.append({"role": name, "required": required, "floor": floor, "typical": typical})
-            out.append({"date": d, "day": day, "daypart": part, "roles": roles_out,
-                        "target_hours": (daily_targets or {}).get(d), "demand": demand,
-                        "leader": leader})
+            row = {"date": d, "day": day, "daypart": part, "roles": roles_out,
+                   "target_hours": (daily_targets or {}).get(d), "demand": demand,
+                   "leader": leader}
+            if half:
+                row["half_hours"] = half
+            if held:
+                row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held}
+            out.append(row)
     return out
+
+
+def _service_window(day: str, part: str, open_times: dict = None, close_times: dict = None) -> tuple:
+    """(lo, hi) minutes of one daypart's service: opening to the 3pm
+    changeover, or the changeover to close, from the hours on file; the
+    whole half of the day when they are not."""
+    split = _sq.DAYPART_CUTOVER
+    open_m = _minutes((open_times or {}).get(day))
+    close_m = _minutes((close_times or {}).get(day))
+    if close_m is not None and close_m < 5 * 60:
+        close_m += 24 * 60                      # a close after midnight
+    if part == "morning":
+        return (open_m if open_m is not None and open_m < split else 0), split
+    return split, (close_m if close_m is not None and close_m > split else 24 * 60)
 
 
 def requirements_block(rows: list) -> str:
@@ -196,6 +246,9 @@ def requirements_block(rows: list) -> str:
         bits.append(f"{r['demand']} demand")
         if r.get("leader"):
             bits.append("leader: " + "; ".join(r["leader"]))
+        if r.get("half_hours"):
+            from staffing_curve import ramp_text
+            bits.append("by the half hour: " + ramp_text(r["half_hours"]))
         lines.append(" | ".join(bits))
     return ("\n\nSHIFT REQUIREMENTS — priority 2. One line per shift you are writing: the people each role "
             "needs on it, the day's hours target, the demand level the shift is scored at, and who it needs "
@@ -209,7 +262,14 @@ def requirements_block(rows: list) -> str:
             "  The day target is that day's share of the weekly hours budget: use up to it when the day's "
             "shifts need the hours to meet these numbers, and leave it unspent when they do not — a day "
             "under its target with every shift covered is a good day.\n"
+            + (_HALF_HOUR_NOTE if any(r.get("half_hours") for r in rows) else "")
             + "\n".join(lines))
+
+
+_HALF_HOUR_NOTE = ("  \"by the half hour\" is how many of a role that shift needs on at once as its sales climb "
+                   "and fall — read from this restaurant's hourly sales and interpolated to the half hour: \"Server "
+                   "2 from 11:00am, 4 from 12:00pm\" means two on from eleven and four from noon. Stagger starts "
+                   "and ends to follow it; the shift's number above is its whole crew across the daypart.\n")
 
 
 def experience_block(tenure: dict, names: list, leader_flags: dict = None,

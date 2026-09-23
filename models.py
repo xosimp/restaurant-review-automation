@@ -496,6 +496,7 @@ class Restaurant:
     role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
     patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
+    role_cross_training_json: Optional[str] = None  # {"Server": 40} % of a role on a shift able to cover a second station
     trim_to_budget: int              = 1     # the deterministic trim past the hours budget (schedule_economics)
     reservation_provider: Optional[str] = None  # reservation_feeds provider code
     reservation_api_key: Optional[str]  = None
@@ -702,6 +703,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_requirements_json", "TEXT"),
         ("restaurants", "foh_roles_json", "TEXT"),
         ("restaurants", "patio_roles_json", "TEXT"),
+        ("restaurants", "role_cross_training_json", "TEXT"),
         ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
         ("restaurants", "reservation_provider", "TEXT"),
         ("restaurants", "reservation_api_key", "TEXT"),
@@ -2802,7 +2804,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
-        "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json",
+        "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -3175,6 +3177,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_requirements_json=row["role_requirements_json"] if "role_requirements_json" in row.keys() else None,
         foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
         patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
+        role_cross_training_json=row["role_cross_training_json"] if "role_cross_training_json" in row.keys() else None,
         trim_to_budget=(row["trim_to_budget"] if row["trim_to_budget"] is not None else 1) if "trim_to_budget" in row.keys() else 1,
         reservation_provider=row["reservation_provider"] if "reservation_provider" in row.keys() else None,
         reservation_api_key=row["reservation_api_key"] if "reservation_api_key" in row.keys() else None,

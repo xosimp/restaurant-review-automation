@@ -522,4 +522,25 @@ final class ScheduleReviewDecodingTests: XCTestCase {
         XCTAssertEqual(whatIf.bestScore, 81)
         XCTAssertEqual(whatIf.verdict, "Three points available by moving one closer.")
     }
+
+    /// Fatigue is judged once for the week: it arrives under
+    /// `week_dimensions` with its share of the week score, and the roll-up's
+    /// week-level entry is not a customer-facing shift dimension.
+    func testWeekLevelMeasuresDecodeAndStayOutOfTheShiftGrid() throws {
+        let json = """
+        {"checked": true, "score": 80, "band": "good",
+         "dimensions": [{"key": "coverage", "label": "Coverage", "score": 90, "customer_facing": true, "shifts": 14},
+                        {"key": "fatigue", "label": "Fatigue", "score": 92, "shifts": 0, "worst": null,
+                         "customer_facing": false, "week_level": true}],
+         "week_dimensions": [{"key": "fatigue", "label": "Fatigue", "score": 92, "weight": 7.0, "share": 0.083,
+                              "strengths": [], "weaknesses": ["Trey B. works 7 days in a row this week."],
+                              "facts": {"strained": ["Trey B."], "tracked": 12}, "week_level": true}]}
+        """
+        let q = try JSONDecoder().decode(ScheduleQuality.self, from: Data(json.utf8))
+        XCTAssertEqual(q.customerDimensions.map(\.key), ["coverage"])
+        let fatigue = try XCTUnwrap(q.weekDimensions?.first)
+        XCTAssertEqual(fatigue.score, 92)
+        XCTAssertEqual(fatigue.why, "Trey B. works 7 days in a row this week.")
+        XCTAssertEqual(fatigue.shareText, "8%")
+    }
 }

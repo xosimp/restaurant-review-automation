@@ -937,6 +937,35 @@ def _v(kind, index, row, detail):
             "detail": detail, "hard": kind in HARD, "no_show": kind in NO_SHOW, "label": LABELS.get(kind, kind)}
 
 
+def role_cross_training(restaurant) -> dict:
+    """{role lower: share 0-1} — the owner's cross-training target per role
+    (restaurants.role_cross_training_json, stored as whole percents like
+    {"Server": 40}). A role left out takes shift_quality's default for it."""
+    raw = _load_json(getattr(restaurant, "role_cross_training_json", None), {}) if restaurant else {}
+    out = {}
+    for k, v in (raw or {}).items():
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        if str(k).strip() and n == n:
+            out[str(k).strip().lower()] = max(0.0, min(100.0, n)) / 100.0
+    return out
+
+
+# Soft breaches the fix pass still repairs (shift_quality.apply_fixes): a
+# missed run of days off is fixed by handing one of the person's shifts to a
+# legal teammate. It stays soft — it never blocks publishing — but it is no
+# longer only a warning nothing acts on.
+FIXABLE_SOFT = frozenset({"days_off"})
+
+
+def fixable(viols: list) -> list:
+    """The violations the fix pass is handed: every hard breach, and the soft
+    ones it knows how to repair (FIXABLE_SOFT)."""
+    return [v for v in (viols or []) if v.get("hard") or v.get("kind") in FIXABLE_SOFT]
+
+
 def summarize(viols: list) -> dict:
     hard = [v for v in viols if v["hard"]]
     soft = [v for v in viols if not v["hard"]]

@@ -76,7 +76,7 @@ The accept/dismiss ledger for recommendations (a kind shown ten times and never 
 `quality_score`, `quality_band`, `quality_confidence` (the headline, so the list never parses the blob), `what_if_json`, `superseded_by` (a draft replaced by a newer draft of the same week), `republished_at` (an edit to a sent week re-notified the people whose shifts changed).
 
 ### `restaurants.compliance_json` / `restaurants.role_floors_json` and the new columns
-`jurisdiction` (a compliance pack code), `role_arrival_json`, `role_requirements_json`, `foh_roles_json`, `patio_roles_json`, `trim_to_budget`, `reservation_provider`, `reservation_api_key`.
+`jurisdiction` (a compliance pack code), `role_arrival_json`, `role_requirements_json`, `foh_roles_json`, `patio_roles_json`, `role_cross_training_json` (`{"Server": 40}` — the % of a role on a shift that should cover a second station; unset roles take `shift_quality.CROSS_TRAINING_DEFAULTS`), `trim_to_budget`, `reservation_provider`, `reservation_api_key`.
 The scheduling rules (`schedule_rules.DEFAULTS` keys) and the per-role, per-daypart staffing floors — the setting that replaced the compiled-in pizza-cook rule.
 
 ### `staff_capabilities`

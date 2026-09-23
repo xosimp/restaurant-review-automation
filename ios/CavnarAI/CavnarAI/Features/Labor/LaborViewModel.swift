@@ -266,6 +266,29 @@ struct QualityDimension: Codable, Identifiable, Equatable {
     }
 }
 
+/// A measure of the whole week (fatigue): judged once per person per week
+/// and weighted once into the week score — `share` is the part of the week
+/// score it carries — never repeated on every shift a tired person works.
+struct QualityWeekDimension: Codable, Identifiable, Equatable {
+    let key: String
+    let label: String
+    let score: Int
+    let share: Double?
+    let strengths: [String]?
+    let weaknesses: [String]?
+
+    var id: String { key }
+
+    /// The measure's first finding, or its strength when there is none.
+    var why: String? { weaknesses?.first ?? strengths?.first }
+
+    /// "8%" — the part of the week score it makes up.
+    var shareText: String? {
+        guard let share, share > 0 else { return nil }
+        return "\(Int((share * 100).rounded()))%"
+    }
+}
+
 /// What a shift was judged against. Monday lunch and Saturday dinner are
 /// different jobs, and the profile is what says so.
 struct QualityProfile: Codable, Equatable {
@@ -511,6 +534,9 @@ struct ScheduleQuality: Codable, Equatable {
     // What the optimizer changed before the draft was shown, stored with
     // the week's quality. Absent on older payloads.
     let optimizer: ScheduleOptimizer?
+    /// Measures of the whole week (fatigue), judged once. Absent on older
+    /// payloads.
+    let weekDimensions: [QualityWeekDimension]?
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {
@@ -532,6 +558,7 @@ struct ScheduleQuality: Codable, Equatable {
         case belowProfile = "below_profile"
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
         case recommendationItems = "recommendation_items"
+        case weekDimensions = "week_dimensions"
     }
 
     /// The server's kind for a recommendation, falling back to the prefix

@@ -92,6 +92,10 @@ def objective(quality: dict) -> float:
     scored = [s for s in (quality or {}).get("shifts") or [] if s.get("scored")]
     if not scored:
         return 0.0
+    # The week score before rounding, week-level measures (fatigue) included
+    # at their share — the shift mean alone no longer sees them.
+    if (quality or {}).get("raw_score") is not None:
+        return float(quality["raw_score"])
     num = sum(s["score"] * sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     den = sum(sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     return num / (den or 1.0)
@@ -115,7 +119,26 @@ def _problems(quality: dict) -> list:
             else:
                 cost = (sq.SCORE_MAX - d["score"]) * d["weight"] / total * w
             out.append((cost, s, d))
+    out.extend(_week_problems(quality))
     out.sort(key=lambda t: -t[0])
+    return out
+
+
+def _week_problems(quality: dict) -> list:
+    """(cost, shift, dimension) for a week-level measure under 100 (fatigue
+    is judged once for the week, not on each shift): one entry per shift a
+    strained person works, so the moves stay the per-date ones _moves_for
+    already builds, each costed at the measure's share of the week."""
+    out = []
+    shifts = [s for s in (quality or {}).get("shifts") or [] if s.get("scored")]
+    for d in (quality or {}).get("week_dimensions") or []:
+        if d.get("score", 100) >= sq.SCORE_MAX:
+            continue
+        names = set((d.get("facts") or {}).get("strained") or [])
+        cost = (sq.SCORE_MAX - d["score"]) * float(d.get("share") or 0)
+        for s in shifts:
+            if names & set(s.get("people") or []):
+                out.append((cost, s, d))
     return out
 
 
@@ -578,11 +601,15 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     except (TypeError, ValueError):
         cap = 0
 
+    # The roles the cap counts together: front of house, as the rule sweep,
+    # the requirement and the backstop count them (servers by default).
+    cap_roles = {str(x).strip().lower() for x in (getattr(constraints, "foh_roles", None) or ())} or {"server"}
+
     def _server_peaks(rs):
         from schedule_engine import _peak_server_overlap
         by = {}
         for r in rs:
-            if (r.get("role") or "").strip().lower() == "server":
+            if (r.get("role") or "").strip().lower() in cap_roles:
                 by.setdefault(r.get("date"), []).append(r)
         return {d: _peak_server_overlap(v)[0] for d, v in by.items()}
     peaks_before = _server_peaks(current_rows) if cap > 0 else {}

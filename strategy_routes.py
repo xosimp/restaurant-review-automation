@@ -1041,6 +1041,20 @@ def _do_demand_signal_delete(u, signal_id):
     return {"ok": True}, 200
 
 
+def _cross_training_defaults(restaurant_id) -> dict:
+    """{role: default percent} for the roles this restaurant schedules, so
+    the rules screen shows what a blank field means."""
+    import shift_quality as _sq
+    roles = set()
+    try:
+        import staff_settings as _ss
+        roles |= {(e.get("role") or "").strip() for e in (_ss.roster(restaurant_id) or [])}
+    except Exception:
+        pass
+    roles.discard("")
+    return {r: int(round(_sq.cross_training_target_for(r) * 100)) for r in sorted(roles)}
+
+
 def _do_compliance_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the rules.")
@@ -1060,6 +1074,11 @@ def _do_compliance_get(u):
             "role_requirements": _sr._load_json(getattr(r, "role_requirements_json", None), {}),
             "foh_roles": _sr._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"],
             "patio_roles": _sr._load_json(getattr(r, "patio_roles_json", None), []),
+            # Cross-training target per role, whole percents; a role left
+            # out uses the default shown beside it (shift_quality).
+            "role_cross_training": _sr._load_json(getattr(r, "role_cross_training_json", None), {}),
+            "cross_training_defaults": _cross_training_defaults(_rid(u)),
+            "cross_training_default": int(round(__import__("shift_quality").CROSS_TRAINING_DEFAULT * 100)),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
             "closures": _sr.closures(r),
             "certifications": list(__import__("staff_settings").CERTIFICATIONS),
@@ -1124,6 +1143,17 @@ def _do_compliance_set(u):
             clean = sorted({str(x).strip()[:60] for x in b[key] if str(x).strip()})
             settings[col] = _j.dumps(clean) if clean else None
             out[key] = clean
+    if "role_cross_training" in b and isinstance(b.get("role_cross_training"), dict):
+        clean = {}
+        for k, v in b["role_cross_training"].items():
+            if not str(k).strip() or v is None or v == "":
+                continue
+            try:
+                clean[str(k).strip()[:60]] = int(max(0, min(100, round(float(v)))))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"The cross-training target for {str(k)[:60]} must be a percent from 0 to 100."}, 400
+        settings["role_cross_training_json"] = _j.dumps(clean) if clean else None
+        out["role_cross_training"] = clean
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))
@@ -1247,7 +1277,7 @@ def _do_schedule_apply_fixes(u):
         c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
     signals, weights = _quality_signals(_rid(u), inputs)
-    out = _sq.apply_fixes(rows, [v for v in viols if v["hard"]], profiles=inputs.get("shift_profiles") or None,
+    out = _sq.apply_fixes(rows, _sr.fixable(viols), profiles=inputs.get("shift_profiles") or None,
                           rule_constraints=c,
                           weights=weights, **signals)
     fixed_rows = out["rows"]

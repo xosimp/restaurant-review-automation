@@ -11087,7 +11087,7 @@ function renderShiftQuality(quality, whatIf, prevScore) {
   document.getElementById('sq-band').textContent = band;
   _renderQualityDelta(prevScore, score);
   renderQualityConfidence(quality.confidence);
-  renderQualityDimensions(quality.dimensions || []);
+  renderQualityDimensions(quality.dimensions || [], quality.week_dimensions || []);
   renderQualityWarnings(quality);
   renderQualityOptimizer();
   renderQualityRatePrompt();
@@ -11267,21 +11267,41 @@ function renderQualityConfidence(confidence) {
     + (low && top ? '<div class="sq-prov-why">' + num(top) + '</div>' : '');
 }
 
-function renderQualityDimensions(dimensions) {
+function _qDimRow(label, score) {
+  var tone = _qTone(score);
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">'
+    + '<span style="flex:0 0 148px;font-size:14px;color:rgba(255,255,255,.72)">' + _escHtml(label) + '</span>'
+    + '<span style="flex:1;height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;display:block">'
+    + '<span style="display:block;height:7px;border-radius:999px;width:' + Math.max(4, score) + '%;'
+    + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
+    + '<span style="flex:0 0 44px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14px;'
+    + 'font-weight:700;color:rgba(255,255,255,.88)">' + score + '%</span></div>';
+}
+
+// Shift measures, then the measures of the whole week (fatigue): judged
+// once per person per week and weighted once, never repeated per shift.
+function renderQualityDimensions(dimensions, weekDims) {
   var el = document.getElementById('sq-dimensions');
   if (!el) return;
   var html = '', i;
   for (i = 0; i < dimensions.length; i++) {
     var d = dimensions[i];
-    if (!d.customer_facing) continue;
-    var tone = _qTone(d.score);
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">'
-      + '<span style="flex:0 0 148px;font-size:14px;color:rgba(255,255,255,.72)">' + _escHtml(d.label) + '</span>'
-      + '<span style="flex:1;height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;display:block">'
-      + '<span style="display:block;height:7px;border-radius:999px;width:' + Math.max(4, d.score) + '%;'
-      + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
-      + '<span style="flex:0 0 44px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14px;'
-      + 'font-weight:700;color:rgba(255,255,255,.88)">' + d.score + '%</span></div>';
+    if (!d.customer_facing || d.week_level) continue;
+    html += _qDimRow(d.label, d.score);
+  }
+  weekDims = weekDims || [];
+  if (weekDims.length) {
+    html += '<div style="margin:12px 0 7px;font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Across the week</div>';
+    for (i = 0; i < weekDims.length; i++) {
+      var w = weekDims[i];
+      html += _qDimRow(w.label, w.score);
+      var why = (w.weaknesses && w.weaknesses.length) ? w.weaknesses[0] : ((w.strengths && w.strengths[0]) || '');
+      var share = Math.round((w.share || 0) * 100);
+      if (why || share) {
+        html += '<div style="margin:-2px 0 8px 158px;font-size:13px;line-height:1.5;color:var(--ink3)">'
+          + _escHtml(why) + (share ? ' <span class="hb-num">' + share + '%</span> of the week score.' : '') + '</div>';
+      }
+    }
   }
   el.innerHTML = html;
 }
@@ -18376,7 +18396,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var seen={},out=[],i,k,floors=(_rules&&_rules.role_floors)||{};
     function add(r){r=String(r||'').trim();if(!r||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
     for(k in floors)if(floors.hasOwnProperty(k))add(k);
-    var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{}],x;
+    var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{},(_rules&&_rules.role_cross_training)||{}],x;
     for(x=0;x<extra.length;x++)for(k in extra[x])if(extra[x].hasOwnProperty(k))add(k);
     var lists=[(_rules&&_rules.foh_roles)||[],(_rules&&_rules.patio_roles)||[]];
     for(x=0;x<lists.length;x++)for(i=0;i<lists[x].length;i++)add(lists[x][i]);
@@ -18457,6 +18477,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="rul-row" data-arr-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-arr-n min="0" max="240" step="5" value="'+(has?Math.abs(+m):'')+'" placeholder="—" aria-label="'+esc(roles[i])+' minutes"'+(ro?' disabled':'')+'><span class="lbl">minutes</span><select class="ac-select" data-arr-dir aria-label="Before or after open"'+(ro?' disabled':'')+'><option value="before"'+(before?' selected':'')+'>before open</option><option value="after"'+(before?'':' selected')+'>after open</option></select></div>';
     }
     h+='</div>';
+    // Cross-training: the share of each role on a shift that should be able
+    // to cover a second station. Blank takes the default shown.
+    var ctv=d.role_cross_training||{},ctd=d.cross_training_defaults||{},ctDef=(d.cross_training_default==null?34:d.cross_training_default);
+    h+='<div class="lb2-sub">Cross-training<small>how much of each role on a shift should be able to cover a second station; 0 means not expected</small></div><div id="rul-cross">';
+    if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
+    for(i=0;i<roles.length;i++){var cv=ctv[roles[i]],hasCv=cv!==undefined&&cv!==null,cdf=ctd[roles[i]]!==undefined?ctd[roles[i]]:ctDef;
+      h+='<div class="rul-row" data-ct-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-ct-n min="0" max="100" step="5" value="'+(hasCv?esc(cv):'')+'" placeholder="'+esc(cdf)+'" aria-label="'+esc(roles[i])+' cross-training target, percent"'+(ro?' disabled':'')+'><span class="lbl">% can cover another station</span></div>';
+    }
+    h+='</div>';
     // Certifications a role needs, from the known list.
     h+='<div class="lb2-sub">Certifications<small>what a role must hold; a shift without it is named</small></div><div id="rul-certs">';
     if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
@@ -18532,6 +18561,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var arrs=document.querySelectorAll('#rules-body [data-arr-role]'),arrivals={};
     for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value,ad=arrs[i].querySelector('[data-arr-dir]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=ad==='before'?-Math.abs(+an):Math.abs(+an);}
     body.role_arrivals=arrivals;
+    var cts=document.querySelectorAll('#rules-body [data-ct-role]'),cross={};
+    for(i=0;i<cts.length;i++){var cn=cts[i].querySelector('[data-ct-n]').value;if(cn==='')continue;cross[cts[i].getAttribute('data-ct-role')]=Math.max(0,Math.min(100,+cn));}
+    body.role_cross_training=cross;
     var crs=document.querySelectorAll('#rules-body [data-cert-role]'),reqs={};
     for(i=0;i<crs.length;i++){var picked=_chipVals(crs[i],'data-cert');if(picked.length)reqs[crs[i].getAttribute('data-cert-role')]=picked;}
     body.role_requirements=reqs;

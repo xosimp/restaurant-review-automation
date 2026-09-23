@@ -459,6 +459,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         prior_pattern=_people["prior_pattern"],
         experienced=_people["experienced"],
         focus=list(focus) if focus else None,
+        # Half-hour needs from the sales curve and the section cap over the
+        # front-of-house roles, for the requirements table (staffing_curve).
+        hourly_profile=_safe_hourly_profile(restaurant_id),
+        section_cap_roles=sorted(constraints.foh_roles or {"server"}),
+        open_times=constraints.open_times or {},
+        close_times=constraints.close_times or {},
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["holiday_lift"] = holiday
@@ -1097,7 +1103,7 @@ def _row_fields_look_sane(row: dict) -> bool:
 
 def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
                        hours_scheduled: float, restaurant_id: int,
-                       close_times: dict, role_buffers: dict, constraints=None) -> tuple:
+                       close_times: dict, role_buffers: dict, constraints=None, scorer_for=None) -> tuple:
     """Deterministic post-generation pass that adds real shifts on the days
     furthest under their own per-day target when the AI's output lands well
     under the week's PAR hours budget.
@@ -1116,6 +1122,10 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     role's typical time block anywhere in the week. Every added row is
     tagged in its notes so it's visible, never silent.
 
+    Among the legal people for the thin role, the one whose shift costs the
+    week the least Shift Quality is taken when `scorer_for` gives a scorer
+    (the fewest hours first is the order and the tie-break).
+
     Returns (preview_rows, hours_added, added_dates) where added_dates is
     {date: shifts_added_count}.
     """
@@ -1130,6 +1140,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     if remaining_budget <= 0:
         return preview_rows, 0.0, {}
     total_gap = remaining_budget
+    scorer = scorer_for(preview_rows) if scorer_for else None
 
     import datetime as _dt_topup
     import json as _json_avail
@@ -1293,44 +1304,50 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
                 continue
         _rel = (getattr(constraints, "reliability", None) or {}) if constraints is not None else {}
-        employee = min(pool, key=lambda e: (hours_by_employee.get(e, 0.0), float((_rel.get(e) or {}).get("no_show_rate") or 0)))
+        ordered = sorted(pool, key=lambda e: (hours_by_employee.get(e, 0.0),
+                                              float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
 
-        new_row = {
-            "date": target_date, "day": day_name, "employee": employee, "role": role,
+        probe = {
+            "date": target_date, "day": day_name, "employee": "", "role": role,
             "shift_start": start, "shift_end": end, "scheduled_hours": "0",
             "notes": "added — PAR hours top-up",
         }
-        _enforce_close_time(new_row, day_name, close_times, role_buffers)
-        if new_row.get("needs_review"):
+        _enforce_close_time(probe, day_name, close_times, role_buffers)
+        if probe.get("needs_review"):
             # Template (borrowed from another day) doesn't produce a sane
             # shift once capped to this day's close time — skip rather
             # than fabricate a number, same discipline _enforce_close_time
             # itself follows.
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
-        s_min, e_min = _parse_time_to_minutes(new_row["shift_start"]), _parse_time_to_minutes(new_row["shift_end"])
+        s_min, e_min = _parse_time_to_minutes(probe["shift_start"]), _parse_time_to_minutes(probe["shift_end"])
         if s_min is None or e_min is None or e_min <= s_min:
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
-        new_row["scheduled_hours"] = str(round((e_min - s_min) / 60, 1))
-        hrs = float(new_row["scheduled_hours"])
-        if hrs <= 0:
+        probe["scheduled_hours"] = str(round((e_min - s_min) / 60, 1))
+        hrs = float(probe["scheduled_hours"])
+        if hrs <= 0 or hrs > remaining_gap + 0.01:
+            # Nothing to add, or it would cross the ceiling; the ceiling wins.
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
-        _cap = constraints.max_hours(employee) if constraints is not None else _WEEKLY_HOURS_CEILING
-        _base = sum((constraints.base_hours.get(employee.lower()) or {}).values()) if constraints is not None else 0.0
-        if hours_by_employee.get(employee, 0.0) + _base + hrs > _cap:
+        legal = []
+        for employee in ordered:
+            new_row = dict(probe, employee=employee)
+            _cap = constraints.max_hours(employee) if constraints is not None else _WEEKLY_HOURS_CEILING
+            _base = sum((constraints.base_hours.get(employee.lower()) or {}).values()) if constraints is not None else 0.0
+            if hours_by_employee.get(employee, 0.0) + _base + hrs > _cap:
+                continue
+            if constraints is not None and not constraints.rest_ok(
+                    employee, new_row, [r for r in preview_rows if (r.get("employee") or "") == employee])[0]:
+                continue
+            new_row["notes"] = "added — coverage top-up"
+            legal.append((employee, new_row))
+            if len(legal) >= FILL_SCORE_CANDIDATES:
+                break
+        if not legal:
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
-        if constraints is not None and not constraints.rest_ok(
-                employee, new_row, [r for r in preview_rows if (r.get("employee") or "") == employee])[0]:
-            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
-            continue
-        if hrs > remaining_gap + 0.01:
-            # Would cross the ceiling; the ceiling wins.
-            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
-            continue
-        new_row["notes"] = "added — coverage top-up"
+        employee, new_row = _fill_pick(scorer, preview_rows, legal)
 
         preview_rows.append(new_row)
         hours_added += hrs
@@ -1518,7 +1535,7 @@ def _peak_server_overlap(day_rows: list) -> tuple:
 
 
 def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict,
-                              max_overlap: int = None) -> tuple:
+                              max_overlap: int = None, roles=None, scorer_for=None) -> tuple:
     """Deterministic backstop for the "never more than N servers at once"
     hard cap already stated in hours_notes.
 
@@ -1552,6 +1569,12 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     owner never set, undid role floors above 7 servers, and reported the
     cut nowhere (SCHED-8). _SERVER_MAX_OVERLAP stays as the documented
     figure for callers that pass it explicitly.
+
+    `roles` are the roles the cap counts together — the restaurant's front
+    of house (schedule_rules.Constraints.foh_roles), the same set the rule
+    sweep and the requirement use; servers alone when not given. Among the
+    rows in the most discretionary tier at the peak, the cut that costs the
+    week the least Shift Quality is taken when `scorer_for` gives a scorer.
     """
     try:
         _cap = int(max_overlap) if max_overlap and int(max_overlap) > 0 else 0
@@ -1560,9 +1583,11 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     if not _cap:
         return preview_rows, 0, {}
 
+    counted = {str(x).strip().lower() for x in (roles or ()) if str(x).strip()} or {"server"}
+    scorer = scorer_for(preview_rows) if scorer_for else None
     by_date: dict = {}
     for r in preview_rows:
-        if (r.get("role") or "").strip().lower() == "server":
+        if (r.get("role") or "").strip().lower() in counted:
             by_date.setdefault(r.get("date"), []).append(r)
 
     trimmed_dates: dict = {}
@@ -1606,27 +1631,57 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 start = _parse_time_to_minutes(r.get("shift_start", "")) or 0
                 return (0 if is_topup else 1, 0 if is_second_leg else 1, -start)
 
-            candidate = min(active, key=_priority)
+            ranked = sorted(active, key=_priority)
+            candidate = ranked[0]
+            if scorer is not None and len(ranked) > 1:
+                # The tier says which cuts are the discretionary ones; the
+                # score says which of them the floor can best spare.
+                tier = _priority(candidate)[:2]
+                pool = [r for r in ranked if _priority(r)[:2] == tier][:FILL_SCORE_CANDIDATES]
+                options = []
+                for r in pool:
+                    cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap)
+                    if cut is False:
+                        continue
+                    trial = [x for x in preview_rows if x is not r] + ([cut] if cut is not None else [])
+                    options.append((id(r), trial))
+                import time as _time_cap
+                if len(options) > 1 and _time_cap.monotonic() - scorer.started <= FILL_SCORE_SECONDS:
+                    key, _val = scorer.best(options)
+                    candidate = next((r for r in pool if id(r) == key), candidate)
             start_min = _parse_time_to_minutes(candidate.get("shift_start", ""))
             if start_min is None:
                 break
-            new_end = peak_time
-            if new_end - start_min < 30:
+            cut = _overlap_cut(candidate, peak_time, day_name, close_times, role_buffers, _cap)
+            if cut is None:
                 day_rows.remove(candidate)
                 preview_rows.remove(candidate)
-            else:
-                candidate["shift_end"] = _format_minutes_to_time(new_end)
-                if day_name:
-                    _enforce_close_time(candidate, day_name, close_times, role_buffers)
-                final_end = _parse_time_to_minutes(candidate["shift_end"])
-                candidate["scheduled_hours"] = str(round((final_end - start_min) / 60, 1))
-                note = (candidate.get("notes") or "").strip()
-                candidate["notes"] = f"{note} (trimmed — over the {_cap}-server cap)" if note else f"trimmed — over the {_cap}-server cap"
+            elif cut is not False:
+                candidate.update(cut)
 
             rows_trimmed += 1
             trimmed_dates[date] = trimmed_dates.get(date, 0) + 1
 
     return preview_rows, rows_trimmed, trimmed_dates
+
+
+def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int):
+    """The row cut to end at `peak_time` (a new dict), None when that would
+    leave under half an hour (the row goes), False when it cannot be read."""
+    start_min = _parse_time_to_minutes(row.get("shift_start", ""))
+    if start_min is None:
+        return False
+    if peak_time - start_min < 30:
+        return None
+    out = dict(row)
+    out["shift_end"] = _format_minutes_to_time(peak_time)
+    if day_name:
+        _enforce_close_time(out, day_name, close_times, role_buffers)
+    final_end = _parse_time_to_minutes(out["shift_end"])
+    out["scheduled_hours"] = str(round((final_end - start_min) / 60, 1))
+    note = (out.get("notes") or "").strip()
+    out["notes"] = f"{note} (trimmed — over the {cap}-server cap)" if note else f"trimmed — over the {cap}-server cap"
+    return out
 
 
 def _window_overlap(row: dict, window: tuple) -> bool:
@@ -1655,9 +1710,61 @@ def _daypart_windows(constraints, day_name: str) -> list:
     return [("morning", (open_m, _DAYPART_SPLIT)), ("night", (_DAYPART_SPLIT, close_m))]
 
 
+# The fill-in and trim passes (#12): each chooses, among the legal options
+# its own rules allow, the one that costs the week the least Shift Quality.
+# The pass's order still says which options are on the table and breaks a
+# tie; the score only chooses among them. At most this many options are
+# scored per choice, and past FILL_SCORE_SECONDS a pass goes back to its
+# own order, so a 250-person week never waits on it.
+FILL_SCORE_CANDIDATES = 6
+FILL_SCORE_SECONDS = 6.0
+
+
+def _pass_scorer(restaurant_id, result, signals=None, weights=None):
+    """scorer_for(rows) -> shift_quality.LocalScorer for the passes, built
+    from the same signals the week is scored with (read once), or None when
+    they cannot be read. Each scorer re-scores only the dates a move
+    touches, so choosing between six options costs a fraction of one
+    whole-week score."""
+    import time as _time
+    import shift_quality as _sqp
+    try:
+        if signals is None:
+            signals, weights = _quality_signals(restaurant_id, result)
+    except Exception as _sx:
+        print(f"[schedule] score-aware passes unavailable: {_sx}")
+        return None
+    profiles = result.get("shift_profiles") or None
+    t0 = _time.monotonic()
+
+    def scorer_for(rows):
+        if _time.monotonic() - t0 > FILL_SCORE_SECONDS * 4:
+            return None                   # the passes as a whole are out of time
+        try:
+            sc = _sqp.LocalScorer(rows, profiles=profiles, weights=weights, **signals)
+        except Exception as _lx:
+            print(f"[schedule] local scorer failed: {_lx}")
+            return None
+        return sc
+    return scorer_for
+
+
+def _fill_pick(scorer, rows, legal):
+    """(employee, row) from `legal` — [(employee, new_row)] in the pass's own
+    order — whose added row costs the week the least score; the first when
+    there is no scorer, one option, or the pass is out of time."""
+    if scorer is None or len(legal) < 2:
+        return legal[0]
+    import time as _time
+    if _time.monotonic() - scorer.started > FILL_SCORE_SECONDS:
+        return legal[0]
+    key, _val = scorer.best([(k, rows + [row]) for k, (_e, row) in enumerate(legal)])
+    return legal[key] if key is not None else legal[0]
+
+
 def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, restaurant_id: int,
                         close_times: dict, role_buffers: dict, floors: dict = None,
-                        constraints=None) -> tuple:
+                        constraints=None, scorer_for=None) -> tuple:
     """Deterministic backstop for the owner's per-role, per-daypart staffing
     floors (schedule_rules.role_floors): "at least 1 line cook on lunch and
     2 at dinner, 3 on Saturday night". A prompt-only floor plateaus below
@@ -1672,11 +1779,16 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     from another shift of that role in the same daypart this week when one
     exists, else the daypart's slice of the opening hours.
 
+    Among the legal people (the fewest hours first), the one whose shift
+    costs the week the least Shift Quality is taken when `scorer_for` gives
+    a scorer (shift_quality.LocalScorer, _pass_scorer).
+
     Returns (preview_rows, rows_added, added_dates).
     """
     floors = floors if floors is not None else {}
     if not floors:
         return preview_rows, 0, {}
+    scorer = scorer_for(preview_rows) if scorer_for else None
     from models import get_staff_availability
     import json as _json_avail
     if constraints is None:
@@ -1741,28 +1853,40 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                     pool = {e for e in pool if constraints.window_ok(e, date, start, end)[0]}
                     if not pool:
                         break
-                    # The fewest hours so far, and among those the most reliable.
+                    # The fewest hours so far, and among those the most reliable,
+                    # is the order; the score chooses among the first few
+                    # legal ones (_fill_pick).
                     _rel = getattr(constraints, "reliability", None) or {}
-                    employee = min(pool, key=lambda e: (hours_by_employee.get(e, 0.0), float((_rel.get(e) or {}).get("no_show_rate") or 0)))
-                    new_row = {"date": date, "day": day_name, "employee": employee, "role": role_name,
-                               "shift_start": start, "shift_end": end, "scheduled_hours": "0",
-                               "notes": f"added — {role_name} floor"}
-                    _enforce_close_time(new_row, day_name, close_times, role_buffers)
-                    s_min = _parse_time_to_minutes(new_row["shift_start"])
-                    e_min = _parse_time_to_minutes(new_row["shift_end"])
-                    if new_row.get("needs_review") or s_min is None or e_min is None or e_min <= s_min:
+                    ordered = sorted(pool, key=lambda e: (hours_by_employee.get(e, 0.0),
+                                                          float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
+                    probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
+                             "shift_start": start, "shift_end": end, "scheduled_hours": "0",
+                             "notes": f"added — {role_name} floor"}
+                    _enforce_close_time(probe, day_name, close_times, role_buffers)
+                    s_min = _parse_time_to_minutes(probe["shift_start"])
+                    e_min = _parse_time_to_minutes(probe["shift_end"])
+                    if probe.get("needs_review") or s_min is None or e_min is None or e_min <= s_min:
                         break
                     hrs = round((e_min - s_min) / 60, 1)
-                    base = sum((constraints.base_hours.get(employee.lower()) or {}).values())
-                    if hours_by_employee.get(employee, 0.0) + base + hrs > constraints.max_hours(employee):
-                        tried.add(employee)
+                    legal = []
+                    for employee in ordered:
+                        new_row = dict(probe, employee=employee)
+                        base = sum((constraints.base_hours.get(employee.lower()) or {}).values())
+                        if hours_by_employee.get(employee, 0.0) + base + hrs > constraints.max_hours(employee):
+                            tried.add(employee)
+                            continue
+                        ok, _why = constraints.rest_ok(employee, new_row, rows_by_person.get(employee.lower(), []))
+                        if not ok:
+                            tried.add(employee)
+                            continue
+                        new_row["scheduled_hours"] = str(hrs)
+                        legal.append((employee, new_row))
+                        if len(legal) >= FILL_SCORE_CANDIDATES:
+                            break
+                    if not legal:
                         continue
-                    ok, _why = constraints.rest_ok(employee, new_row, rows_by_person.get(employee.lower(), []))
-                    if not ok:
-                        tried.add(employee)
-                        continue
+                    employee, new_row = _fill_pick(scorer, preview_rows, legal)
                     filled += 1
-                    new_row["scheduled_hours"] = str(hrs)
                     preview_rows.append(new_row)
                     rows_by_person.setdefault(employee.lower(), []).append(new_row)
                     working_on_date.setdefault(date, set()).add(employee)
@@ -2049,6 +2173,15 @@ def _quality_signals(restaurant_id, result, **extra):
             lim = c.hours_limits.get(n.lower())
             if lim:
                 signals["hours_limits"][n] = lim
+        # One section cap for the requirement, the score, the backstop and
+        # the repair loop: the section count over the front-of-house roles.
+        signals["section_cap"] = int(getattr(c, "section_cap", 0) or 0)
+        signals["cap_roles"] = sorted(getattr(c, "foh_roles", None) or {"server"})
+    try:
+        from models import get_restaurant as _gr_ct
+        signals["cross_training_targets"] = _rules.role_cross_training(_gr_ct(restaurant_id))
+    except Exception:
+        signals["cross_training_targets"] = {}
     try:
         import schedule_intel as _si
         signals["ledger"] = result.get("fairness_ledger") if result.get("fairness_ledger") is not None else _si.fairness_ledger(restaurant_id)
@@ -2526,10 +2659,20 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
 
             # Closed dates and days the generation accepted as not trading.
             _constraints.closed_dates = set(getattr(_constraints, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
+            # Every fill-in and trim pass below chooses among its legal
+            # options by what each costs the week's Shift Quality, scored
+            # locally (only the dates a move touches). The signals are read
+            # once here and shared.
+            _pass_sig, _pass_w = None, None
+            try:
+                _pass_sig, _pass_w = _quality_signals(restaurant_id, result)
+            except Exception as _psx:
+                print(f"[schedule] pass signals unavailable: {_psx}")
+            _scorer_for = _pass_scorer(restaurant_id, result, _pass_sig, _pass_w) if _pass_sig is not None else None
             preview_rows, pizza_rows_added, pizza_added_dates = _ensure_role_floors(
                 preview_rows, result.get("week_dates", []), result.get("week_days", []),
                 restaurant_id, _close_times, _role_close_buffers,
-                floors=_constraints.role_floors, constraints=_constraints,
+                floors=_constraints.role_floors, constraints=_constraints, scorer_for=_scorer_for,
             )
             if pizza_rows_added:
                 hours_scheduled = _safe_hours_sum(preview_rows)
@@ -2538,7 +2681,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             preview_rows, hours_added, added_dates = _top_up_hours_gap(
                 preview_rows, result.get("daily_target_hours", {}),
                 result.get("hours_budget", 0), hours_scheduled, restaurant_id,
-                _close_times, _role_close_buffers, constraints=_constraints,
+                _close_times, _role_close_buffers, constraints=_constraints, scorer_for=_scorer_for,
             )
             if hours_added:
                 hours_scheduled = round(hours_scheduled + hours_added, 1)
@@ -2550,6 +2693,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             preview_rows, rows_trimmed, trimmed_dates = _trim_server_overlap_cap(
                 preview_rows, _close_times, _role_close_buffers,
                 max_overlap=getattr(_restaurant_for_sched, 'section_count', None),
+                roles=getattr(_constraints, "foh_roles", None), scorer_for=_scorer_for,
             )
             if rows_trimmed:
                 hours_scheduled = _safe_hours_sum(preview_rows)
@@ -2565,7 +2709,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _curve = _hourly_profile(restaurant_id)
             except Exception:
                 _curve = {}
-            preview_rows, _staggered = _econ.stagger_same_starts(preview_rows, _curve)
+            _stagger_scorer = _scorer_for(preview_rows) if (_scorer_for and _curve) else None
+            preview_rows, _staggered = _econ.stagger_same_starts(
+                preview_rows, _curve, score_fn=_stagger_scorer.score if _stagger_scorer else None)
             result["staggered"] = _staggered
             result["hourly_profile_ready"] = bool(_curve)
             result["trimmed"] = []
@@ -2578,13 +2724,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                             _rainy.add(_w.get("date"))
                     except (TypeError, ValueError):
                         pass
+                # The same local scorer the fill-in passes use: a removal
+                # re-scores only its own date (it used to re-score the week).
                 _score_fn = None
                 try:
-                    import shift_quality as _sqt
-                    import schedule_optimizer as _optt
-                    _tsig, _tw = _quality_signals(restaurant_id, result)
-                    _tprof = result.get("shift_profiles") or None
-                    _score_fn = lambda _rs: _optt.objective(_sqt.score_rows(_rs, profiles=_tprof, weights=_tw, **_tsig))
+                    _trim_scorer = _scorer_for(preview_rows) if _scorer_for else None
+                    _score_fn = _trim_scorer.score if _trim_scorer is not None else None
                 except Exception as _tx:
                     print(f"[schedule] score-aware trim unavailable: {_tx}")
                 preview_rows, _trimmed, _hours_trimmed = _econ.trim_to_budget(
@@ -2623,13 +2768,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _fixes, _unfixed = [], []
             _hard = [v for v in _viols if v["hard"]
                      and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
-            if _hard:
+            # A missed run of days off is fixed here too (one of the person's
+            # shifts to a legal teammate, least score cost); which rows may
+            # move is limited to the editable days inside apply_fixes.
+            _days_off = [v for v in _rules.fixable(_viols) if not v["hard"]]
+            if _hard or _days_off:
                 try:
                     _sig, _w = _quality_signals(restaurant_id, result)
                     _profiles_for_fix = result.get("shift_profiles") or None
                     import shift_quality as _sqf
-                    _out = _sqf.apply_fixes(preview_rows, _hard, profiles=_profiles_for_fix, weights=_w,
-                                            rule_constraints=_constraints, **_sig)
+                    _out = _sqf.apply_fixes(preview_rows, _hard + _days_off, profiles=_profiles_for_fix, weights=_w,
+                                            rule_constraints=_constraints, only_dates=_editable, **_sig)
                     if _out.get("fixes"):
                         preview_rows = _out["rows"]
                         _fixes = _out["fixes"]
@@ -2715,6 +2864,23 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _roster_low = {n.strip().lower() for n in (result.get("roster") or [])}
             _off = sorted(n for n in (result.get("operational_scores") or {}) if n.strip().lower() not in _roster_low) if _roster_low else []
             result["ratings_off_roster"] = _off
+            # The section cap against what this restaurant's own history
+            # runs: every requirement is held to the cap, and where the
+            # history runs over it the owner is told the cap is probably
+            # wrong, rather than every such shift quietly scoring short.
+            try:
+                import staffing_curve as _stc
+                _cap_roles = getattr(_constraints, "foh_roles", None) or {"server"}
+                _conf = _stc.cap_conflicts(result.get("typical_headcount") or {},
+                                           getattr(_constraints, "section_cap", 0), _cap_roles)
+                result["section_cap_conflicts"] = _conf
+                _line = _stc.cap_conflict_line(
+                    _conf, "servers" if set(_cap_roles) == {"server"} else "front-of-house staff")
+                if _line:
+                    result["review"]["lines"].append(_line)
+            except Exception as _scx:
+                print(f"[schedule] section cap check failed: {_scx}")
+                result["section_cap_conflicts"] = []
             if _off:
                 result["review"]["lines"].append(
                     f"{len(_off)} Operational Score{'s' if len(_off) != 1 else ''} belong to names not on the roster "
@@ -3027,6 +3193,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             slices=result.get("slices") or [],
             not_scheduled=result.get("not_scheduled") or [],
             ratings_off_roster=result.get("ratings_off_roster") or [],
+            # Shifts whose usual front-of-house crew is over the section
+            # count (staffing_curve.cap_conflicts): the cap is probably wrong.
+            section_cap_conflicts=result.get("section_cap_conflicts") or [],
             overtime_forecast=result.get("overtime_forecast") or [],
             standby_days=result.get("standby_days") or [],
             likely_edits=result.get("likely_edits") or [],
@@ -3227,6 +3396,15 @@ def _rules_for_swaps(c) -> dict:
         "time_windows": dict(c.time_windows or {}),
         "pending_off": {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()},
     }
+
+
+def _safe_hourly_profile(restaurant_id) -> dict:
+    """_hourly_profile, or {} (today's behaviour) when it cannot be read."""
+    try:
+        return _hourly_profile(restaurant_id) or {}
+    except Exception as _hx:
+        print(f"[schedule] hourly profile unavailable: {_hx}")
+        return {}
 
 
 def _hourly_profile(restaurant_id) -> dict:

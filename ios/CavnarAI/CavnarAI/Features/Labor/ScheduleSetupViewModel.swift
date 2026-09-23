@@ -748,6 +748,11 @@ final class ScheduleSetupViewModel {
     var roleRequirements: [String: [String]] = [:]
     var fohRoles: [String] = []
     var patioRoles: [String] = []
+    /// Cross-training target per role, whole percents; a role left out
+    /// uses `crossTrainingDefaults[role]` (else `crossTrainingDefault`).
+    var roleCrossTraining: [String: Int] = [:]
+    var crossTrainingDefaults: [String: Int] = [:]
+    var crossTrainingDefault = 34
     var trimToBudget = true
     var ruleCertifications: [String] = []
     var reservationFeed: ReservationFeedStatus?
@@ -770,6 +775,9 @@ final class ScheduleSetupViewModel {
         let roleRequirements: [String: [String]]?
         let fohRoles: [String]?
         let patioRoles: [String]?
+        let roleCrossTraining: [String: Int]?
+        let crossTrainingDefaults: [String: Int]?
+        let crossTrainingDefault: Int?
         let trimToBudget: Bool?
         let certifications: [String]?
         let reservationFeed: ReservationFeedStatus?
@@ -781,6 +789,9 @@ final class ScheduleSetupViewModel {
             case roleRequirements = "role_requirements"
             case fohRoles = "foh_roles"
             case patioRoles = "patio_roles"
+            case roleCrossTraining = "role_cross_training"
+            case crossTrainingDefaults = "cross_training_defaults"
+            case crossTrainingDefault = "cross_training_default"
             case trimToBudget = "trim_to_budget"
             case reservationFeed = "reservation_feed"
             case reservationProviders = "reservation_providers"
@@ -797,6 +808,7 @@ final class ScheduleSetupViewModel {
         var roleRequirements: [String: [String]]? = nil
         var fohRoles: [String]? = nil
         var patioRoles: [String]? = nil
+        var roleCrossTraining: [String: Int]? = nil
         var trimToBudget: Bool? = nil
         var reservationProvider: String?? = nil
         var reservationApiKey: String?? = nil
@@ -808,6 +820,7 @@ final class ScheduleSetupViewModel {
             case roleRequirements = "role_requirements"
             case fohRoles = "foh_roles"
             case patioRoles = "patio_roles"
+            case roleCrossTraining = "role_cross_training"
             case trimToBudget = "trim_to_budget"
             case reservationProvider = "reservation_provider"
             case reservationApiKey = "reservation_api_key"
@@ -824,6 +837,7 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(roleRequirements, forKey: .roleRequirements)
             try c.encodeIfPresent(fohRoles, forKey: .fohRoles)
             try c.encodeIfPresent(patioRoles, forKey: .patioRoles)
+            try c.encodeIfPresent(roleCrossTraining, forKey: .roleCrossTraining)
             try c.encodeIfPresent(trimToBudget, forKey: .trimToBudget)
             if let p = reservationProvider { try c.encode(p, forKey: .reservationProvider) }
             if let k = reservationApiKey { try c.encode(k, forKey: .reservationApiKey) }
@@ -847,6 +861,9 @@ final class ScheduleSetupViewModel {
             roleRequirements = r.roleRequirements ?? [:]
             fohRoles = r.fohRoles ?? []
             patioRoles = r.patioRoles ?? []
+            roleCrossTraining = r.roleCrossTraining ?? [:]
+            crossTrainingDefaults = r.crossTrainingDefaults ?? [:]
+            crossTrainingDefault = r.crossTrainingDefault ?? 34
             trimToBudget = r.trimToBudget ?? true
             ruleCertifications = r.certifications ?? []
             reservationFeed = r.reservationFeed
@@ -882,6 +899,7 @@ final class ScheduleSetupViewModel {
             if let v = r.roleRequirements { roleRequirements = v }
             if let v = r.fohRoles { fohRoles = v }
             if let v = r.patioRoles { patioRoles = v }
+            if let v = r.roleCrossTraining { roleCrossTraining = v }
             if let v = r.trimToBudget { trimToBudget = v }
             if let v = r.reservationFeed { reservationFeed = v }
             // The pack and its applied values only come from a GET.

@@ -82,6 +82,9 @@ struct ShiftQualityPanel: View {
             if let dimensions = customerDimensions, !dimensions.isEmpty {
                 dimensionGrid(dimensions)
             }
+            if let week = quality.weekDimensions, !week.isEmpty {
+                weekMeasures(week)
+            }
             if !warnings.isEmpty { warningBlock }
             if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty { recommendationsBlock(recs) }
             if !suppressedKinds.isEmpty { hiddenKindsNote }
@@ -203,6 +206,36 @@ struct ShiftQualityPanel: View {
                         .font(.cavnarNumber(14.5, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                         .frame(width: 46, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    /// The measures of the whole week (fatigue), judged once per person and
+    /// weighted once — the same rows as the grid, under their own kicker,
+    /// with the finding and the part of the week score each carries.
+    private func weekMeasures(_ dims: [QualityWeekDimension]) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            AccountKicker(text: "Across the week")
+            ForEach(dims) { dim in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        Text(dim.label)
+                            .font(.cavnarBody(14.5))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .frame(width: 132, alignment: .leading)
+                        QualityBar(score: dim.score, tone: toneFor(dim.score))
+                        Text("\(dim.score)%")
+                            .font(.cavnarNumber(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                            .frame(width: 46, alignment: .trailing)
+                    }
+                    if let why = dim.why {
+                        HomeMixedText.make(
+                            why + (dim.shareText.map { " \($0) of the week score." } ?? ""),
+                            size: 13, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
