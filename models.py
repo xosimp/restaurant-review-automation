@@ -2811,7 +2811,7 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     not touched.
     """
     rid = int(restaurant_id)
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = get_conn(db_path)
     conn.execute("PRAGMA foreign_keys=OFF")          # must be set outside the transaction
     deleted = {}
     try:

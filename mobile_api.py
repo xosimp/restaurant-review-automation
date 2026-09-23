@@ -493,14 +493,39 @@ def mobile_register():
 
     from models import create_restaurant, Restaurant
     from auth import create_user
-    rid = create_restaurant(Restaurant(
-        name=restaurant_name,
-        owner_email=email,
-        owner_name=owner_name or None,
-        owner_phone=phone,
-        sign_off_name=restaurant_name,
-    ))
-    uid = create_user(restaurant_id=rid, username=username, email=email, password=password)
+    import hashlib as _hl_su
+    import ops as _ops_su
+    import sqlite3 as _sq_su
+    # One signup per email at a time. The check above and the two inserts
+    # below are separate commits, so a double-tap passed the check twice,
+    # created two restaurants, and the second create_user failed on the
+    # unique username: an orphan restaurant with no login, and a 500
+    # (DATA-62). The claim is keyed by a hash, not the address.
+    _su_key = _hl_su.sha256(email.encode("utf-8")).hexdigest()[:24]
+    if not _ops_su.claim_cooldown("signup:" + _su_key, 10):
+        return jsonify(ok=False, error="An account with that email or username already exists. Try signing in instead."), 409
+    rid = None
+    try:
+        rid = create_restaurant(Restaurant(
+            name=restaurant_name,
+            owner_email=email,
+            owner_name=owner_name or None,
+            owner_phone=phone,
+            sign_off_name=restaurant_name,
+        ))
+        uid = create_user(restaurant_id=rid, username=username, email=email, password=password)
+    except Exception as e:
+        # Nothing half-made is left behind, and the email may try again.
+        if rid is not None:
+            try:
+                import models as _models_su
+                _models_su.delete_restaurant(rid)
+            except Exception as _del_e:
+                _ops_su.capture(_del_e, job="signup_rollback", context=f"restaurant_id={rid}")
+        _ops_su.release_period("cooldown", "signup:" + _su_key)
+        if isinstance(e, _sq_su.IntegrityError):
+            return jsonify(ok=False, error="An account with that email or username already exists. Try signing in instead."), 409
+        raise
     _clear_attempts(ip)
 
     try:

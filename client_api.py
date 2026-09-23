@@ -3034,6 +3034,16 @@ def client_upload_data(current_user):
             return jsonify(ok=False, error="CSV has no data rows")
 
     # Save it
+    # The shifts CSV and the per-day history YoY generation reads are two
+    # writes. The CSV committed first and a failed history write was only
+    # printed, so the upload half-applied — new CSV live, old history — and
+    # still reported success (DATA-62). The previous CSV is kept, and put
+    # back if the history cannot be written.
+    _prev_shifts = None
+    if data_type == "shifts":
+        from models import get_client_data as _gcd_prev
+        _prev_row = _gcd_prev(restaurant_id) or {}
+        _prev_shifts = (_prev_row.get("shifts_csv"), _prev_row.get("shifts_source") or "upload")
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
     # The AI insight is cached for five minutes with no invalidation, so a
     # fresh upload showed the previous data's narrative beside the new
@@ -3049,10 +3059,22 @@ def client_upload_data(current_user):
             _ot_flags = [f for f in _shift_analysis.get("overtime_risk", []) if f.get("status") == "overtime"]
             # Persist per-day breakdown for YoY schedule generation
             try:
-                from models import save_labor_daily_history as _sldh
-                _sldh(restaurant_id, _shift_analysis.get("by_day", {}))
+                import models as _models_dh
+                _models_dh.save_labor_daily_history(restaurant_id, _shift_analysis.get("by_day", {}))
             except Exception as _dh_e:
-                print(f"[daily history] {_dh_e}")
+                import ops as _ops_dh
+                _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")
+                try:
+                    save_client_data(restaurant_id, "shifts", _prev_shifts[0], source=_prev_shifts[1])
+                    invalidate_insight_cache(restaurant_id)
+                    _restored = True
+                except Exception as _rb_e:
+                    _ops_dh.capture(_rb_e, job="shifts_upload_restore", context=f"restaurant_id={restaurant_id}")
+                    _restored = False
+                return jsonify(ok=False, error=(
+                    "The upload could not be saved completely, so your previous shift data is still in place. "
+                    "Please try again." if _restored else
+                    "The upload could not be saved completely. Please upload it again.")), 500
             # Persist this upload as a labor_history snapshot so trend chart is immediately correct
             try:
                 from models import save_labor_snapshot as _sls
@@ -3063,7 +3085,10 @@ def client_upload_data(current_user):
                          _shift_analysis["total_labor_cost"],
                          _shift_analysis["total_sales"])
             except Exception as _snap_e:
-                print(f"[labor snapshot] {_snap_e}")
+                # The trend chart's snapshot; not what YoY generation reads,
+                # so the upload stands — but it is reported, not printed.
+                import ops as _ops_snap
+                _ops_snap.capture(_snap_e, job="shifts_upload_snapshot", context=f"restaurant_id={restaurant_id}")
             try:
                 from webhooks import fire_webhook as _fw_labor
                 _fw_labor(restaurant_id, "labor.updated", {

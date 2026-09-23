@@ -116,12 +116,23 @@ def create_client(current_user):
             location_group=data.get("location_group","").strip() or None,
             location_name=data.get("location_name","").strip() or None,
         ))
-        create_user(
-            restaurant_id=rid,
-            username=data["username"],
-            email=data["owner_email"],
-            password=data["password"],
-        )
+        try:
+            create_user(
+                restaurant_id=rid,
+                username=data["username"],
+                email=data["owner_email"],
+                password=data["password"],
+            )
+        except Exception:
+            # A double-clicked Create passed the duplicate check twice and
+            # left an orphan restaurant with no login (DATA-62): take the
+            # half-made one back out before reporting the failure.
+            try:
+                import models as _models_cc
+                _models_cc.delete_restaurant(rid)
+            except Exception as _del_e:
+                _ops.capture(_del_e, job="create_client_rollback", context=f"restaurant_id={rid}")
+            raise
         # Set module access directly from checkboxes
         def _flag(key, default=0):
             try: return int(data.get(key, default))

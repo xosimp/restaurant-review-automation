@@ -334,7 +334,6 @@ def test_an_edit_and_its_version_commit_together(db_path, monkeypatch):
 
 # ── DATA-58 · staff name claim ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-58: claim_staff_name is six separate commits, so a failure after the membership is written leaves the name taken with no PIN and the retry is refused")
 def test_a_claim_that_fails_half_way_can_be_retried(db_path, monkeypatch):
     rid = _restaurant(db_path)
     models.init_manual_team_members(db_path)
@@ -378,7 +377,6 @@ def _upload(client, raw):
                        content_type="multipart/form-data", headers={"X-CSRF": CSRF})
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-62: the shift CSV commits first and the daily-history write fails separately with only a print, so the upload half-applies and reports success")
 def test_a_failed_history_write_is_reported_and_the_upload_is_atomic(db_path, monkeypatch):
     rid = _restaurant(db_path)
     owner = create_user(rid, "owner", "owner@atomic.test", "pw-atomic-1", db_path=db_path)
@@ -401,7 +399,6 @@ def test_a_failed_history_write_is_reported_and_the_upload_is_atomic(db_path, mo
     assert body.get("ok") is not True, "the upload reported success with its history write lost"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-62: signup creates the restaurant in its own commit before create_user, so a double-tap leaves an orphan restaurant and a 500")
 def test_two_concurrent_signups_with_one_email_leave_one_restaurant(db_path, monkeypatch):
     monkeypatch.setenv("ALLOW_PUBLIC_SIGNUP", "1")
     monkeypatch.setattr(emails, "send_signup_welcome_email", lambda *a, **k: True)
@@ -421,3 +418,29 @@ def test_two_concurrent_signups_with_one_email_leave_one_restaurant(db_path, mon
     conn.close()
     assert n == 1, f"{n} restaurants for one signup — {n - 1} orphaned with no login"
     assert sorted(statuses) == [201, 409], statuses
+
+
+def test_an_admin_create_client_whose_login_fails_leaves_no_orphan_restaurant(db_path, monkeypatch):
+    """The admin twin of the signup case (DATA-62): the duplicate check
+    passes, the restaurant is created, and the login insert fails — as a
+    double-clicked Create does. The half-made restaurant is taken back out."""
+    import admin_routes
+    admin_rid = _restaurant(db_path)
+    admin = create_user(admin_rid, "will", "will@atomic.test", "admin-pass-1", is_admin=True, db_path=db_path)
+
+    def login_insert_fails(*a, **k):
+        raise sqlite3.IntegrityError("UNIQUE constraint failed: users.username")
+    monkeypatch.setattr(admin_routes, "create_user", login_insert_fails)
+    app = Flask(__name__)
+    app.register_blueprint(admin_routes.admin_bp)
+    c = app.test_client()
+    c.set_cookie("session_token", create_session(admin, db_path=db_path))
+    body = c.post("/admin/create-client", json={
+        "restaurant_name": "Orphan Grill", "owner_email": "orphan@atomic.test",
+        "username": "orphangrill", "password": "long-enough-1"}).get_json()
+
+    assert body["ok"] is False
+    conn = models.get_conn(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM restaurants WHERE owner_email='orphan@atomic.test'").fetchone()[0]
+    conn.close()
+    assert n == 0, "the failed create left a restaurant with no login"

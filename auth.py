@@ -1577,6 +1577,28 @@ def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
     return out
 
 
+def _unfinished_claim(restaurant_id, wanted, phone, db_path):
+    """This phone's own claim of `wanted` that stopped before its PIN was set.
+
+    claim_staff_name is several commits (identity, membership, claim stamp,
+    PIN, token). A failure after the membership was written — a lock, a full
+    disk — left the name taken with no PIN, and the employee's retry was
+    refused as "not available", with no way back but the manager (DATA-58).
+    The same verified phone may finish it: the steps it repeats are
+    idempotent, and the signup token is only consumed once it is done."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT m.employee_name, m.job_role FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE m.restaurant_id=? AND m.is_active=1 AND m.pin_hash IS NULL "
+            "AND LOWER(TRIM(m.employee_name))=LOWER(?) "
+            "AND (m.claimed_by_phone=? OR u.phone=?)",
+            (restaurant_id, wanted, phone, phone)).fetchone()
+    finally:
+        conn.close()
+    return {"name": row["employee_name"], "job_role": row["job_role"]} if row else None
+
+
 def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
                      pin: str, db_path: str = DB_PATH) -> dict:
     """Turn a verified phone plus a roster name into a real staff account.
@@ -1604,7 +1626,7 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
     # than trusted from the list the client was shown a moment ago.
     available = {c["name"].strip().lower(): c for c in
                  claimable_names(restaurant_id, db_path=db_path)}
-    match = available.get(wanted.lower())
+    match = available.get(wanted.lower()) or _unfinished_claim(restaurant_id, wanted, phone, db_path)
     if not match:
         raise SignupError("That name isn't available. Ask your manager.")
 
