@@ -269,6 +269,7 @@ ALERT_TAB = {
     "edit_downgrade": "reviews", "resp_approved": "reviews", "unresponded": "reviews",
     "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
+    "schedule_publish_held": "labor", "shift_request": "labor", "labor_reminder": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
     "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
@@ -288,9 +289,31 @@ BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "
                              "connection_lost", "monthly_review",
                              # A promised supplier order that did not go out:
                              # a delivery that will not come (MOD-FC-10).
-                             "order_send_voided"})
+                             "order_send_voided",
+                             # A week that was supposed to go to staff and
+                             # did not: the owner must hear it at any level,
+                             # having been told when it would go out (A-18).
+                             "schedule_publish_held",
+                             # Manager tasks, not briefings (re-audit A-6): a
+                             # drop request for tonight unheard because the
+                             # owner chose "calm" is a shift nobody covers.
+                             "shift_request", "labor_reminder"})
 BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
+
+# Sent by their own rules, never refused by the budget, and so never counted
+# against it (re-audit A-5): an issue or a coverage gap is the routed
+# manager's work, and daily_briefing is the alerts' own morning bundle. The
+# budget counted all of these, so a morning brief plus Monday's three plan
+# issues spent it, and the pulse, the staff notices and the closing summary
+# were then refused, silently.
+UNBUDGETED_TYPES = frozenset({"issue", "issue_escalated", "coverage", "daily_briefing"})
+
+
+def budgeted_briefing_types():
+    """The briefings BRIEFING_NORMAL_PER_DAY is a budget OF."""
+    from models import NON_ALERT_TYPES
+    return tuple(t for t in NON_ALERT_TYPES if t not in BRIEFING_ALWAYS and t not in UNBUDGETED_TYPES)
 
 
 # ── thresholds from the restaurant's own band ────────────────────────────────
@@ -497,7 +520,7 @@ def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH
             return True
         if level == "calm":
             return alert_type in BRIEFING_CALM
-        n = count_briefings_today(restaurant_id, db_path)
+        n = count_briefings_today(restaurant_id, db_path, types=budgeted_briefing_types())
         if n >= BRIEFING_NORMAL_PER_DAY:
             print(f"[notify] rid={restaurant_id} {alert_type} held — briefing budget "
                   f"({n}/{BRIEFING_NORMAL_PER_DAY}) reached")

@@ -642,7 +642,7 @@ def run_labor_reminders(db_path=DB_PATH):
         data = {"tab": "labor"}
         if w["history_id"]:
             data["history_id"] = w["history_id"]
-        if _reach(r.id, "coverage", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
+        if _reach(r.id, "labor_reminder", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
             sent["n"] += 1
 
     def _failed(r, e):

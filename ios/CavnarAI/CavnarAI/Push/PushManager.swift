@@ -20,10 +20,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             guard let router, let tap = heldTap else { return }
             heldTap = nil
             router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt,
-                                         alertId: tap.alertId, recKey: tap.recKey)
+                                         alertId: tap.alertId, recKey: tap.recKey,
+                                         module: tap.module, restaurantId: tap.restaurantId)
         }
     }
-    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?, alertId: Int?, recKey: String?)?
+    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?, alertId: Int?, recKey: String?,
+                          module: String?, restaurantId: Int?)?
 
     /// Whether the phone will actually show anything. A denial is permanent
     /// and silent: the app never asked, so an owner who tapped "Don't Allow"
@@ -332,6 +334,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // (time-to-open) and to the recommendation's trail.
         let alertId = Self.reviewId(from: cavnar["alert_id"])
         let recKey = (cavnar["rec_key"] as? String).map { String($0.prefix(160)) }
+        // Where it opens (push.NOTIFICATION_MODULE, the web's own map) and
+        // which location it is about (A-7 / A-14). Both optional: an older
+        // server sends neither and the router falls back to its mirror.
+        let module = (cavnar["module"] as? String).map { String($0.prefix(32)) }
+        let restaurantId = Self.reviewId(from: cavnar["restaurant_id"])
         // Every action we register is .foreground and lands on the same
         // screen the notification itself does, so the action identifier
         // changes nothing here — it is the tap that matters. Dismissals are
@@ -339,11 +346,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
             guard let router else {
-                heldTap = (alertType, reviewId, askPrompt, alertId, recKey)
+                heldTap = (alertType, reviewId, askPrompt, alertId, recKey, module, restaurantId)
                 return
             }
             router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-                                         alertId: alertId, recKey: recKey)
+                                         alertId: alertId, recKey: recKey,
+                                         module: module, restaurantId: restaurantId)
         }
     }
 

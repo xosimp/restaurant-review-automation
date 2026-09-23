@@ -2412,6 +2412,9 @@ def run_quarterly_summaries():
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
+AUTO_PUBLISH_UNDO_MINUTES = 120
+
+
 def run_auto_publish_schedules():
     """Friday, 9am local: queue the Thursday draft to go to staff at 11am,
     with the two hours as the undo window — for owners who turned it on AND
@@ -2490,14 +2493,21 @@ def run_auto_publish_schedules():
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
             continue
         try:
-            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]}, 120,
+            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]},
+                                      AUTO_PUBLISH_UNDO_MINUTES,
                                       label=f"Publishing the week of {mdy(row['week_start'])} to staff")
-            from strategy_jobs import _reach
+            from strategy_jobs import _reach, _clock
+            # The real send time. The job's window runs 9am to 2pm local, so
+            # a late pass queued it for up to 3:59pm while the notice still
+            # said "at 11am" (re-audit A-18).
+            from datetime import timedelta as _td
+            goes = restaurant_now(r, naive=True) + _td(minutes=AUTO_PUBLISH_UNDO_MINUTES)
+            at = _clock(goes.hour, goes.minute)
             _reach(r.id, "schedule_publish_pending",
-                   f"Next week's schedule goes to staff at 11am",
+                   f"Next week's schedule goes to staff at {at}",
                    f"The week of {mdy(row['week_start'])} is unchanged from the draft. Undo from Home before then if you'd rather look first.",
                    {"delayed_action_id": action["id"]}, DB_PATH,
-                   subject=f"Publishing next week's schedule at 11am — {r.name}")
+                   subject=f"Publishing next week's schedule at {at} — {r.name}")
             queued += 1
         except Exception as e:
             _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")

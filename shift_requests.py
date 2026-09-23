@@ -588,7 +588,10 @@ def _email_staff(restaurant_id, people, subject, lines, db_path) -> int:
 def _tell_managers(restaurant_id, title, body, db_path):
     try:
         import strategy_jobs
-        strategy_jobs._reach(restaurant_id, "coverage", title, body, {"tab": "labor"}, db_path, lines=[body])
+        # Its own type (re-audit A-6). As "coverage" it was P1 (broke Focus
+        # mode), labelled "Someone hasn't clocked in", opened Reviews on iOS
+        # and was dropped by the "calm" level and the briefing budget.
+        strategy_jobs._reach(restaurant_id, "shift_request", title, body, {"tab": "labor"}, db_path, lines=[body])
     except Exception as e:
         print(f"[shift_requests] manager notice failed rid={restaurant_id}: {e!r}")
 

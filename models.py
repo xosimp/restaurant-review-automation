@@ -7194,10 +7194,15 @@ NON_ALERT_TYPES = (
     "issue", "issue_escalated", "coverage", "demand_opportunity",
     "while_away", "connection_lost", "schedule_publish_pending", "order_send_pending",
     "order_send_voided",
+    # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
+    # request and what became of it, and the 9am "waiting on you in Labor".
+    "shift_request", "labor_reminder",
+    # Auto-publish's held notice and a milestone (re-audit A-18).
+    "schedule_publish_held", "milestone",
 )
 
 
-def count_briefings_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+def count_briefings_today(restaurant_id: int, db_path: str = DB_PATH, types=None) -> int:
     """Briefing-style notifications sent so far in the restaurant's own day —
     the NON_ALERT_TYPES rows count_alerts_today deliberately excludes.
 
@@ -7205,17 +7210,21 @@ def count_briefings_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
     with no budget of their own: a POS-connected owner could receive a
     morning brief, a pre-shift nudge, a pre-dinner pulse, a coverage push, a
     demand opportunity and a closing summary in one day, none of which
-    counted. notify.briefing_allowed reads this."""
+    counted. notify.briefing_allowed reads this, passing `types` — only the
+    briefings the budget governs (notify.budgeted_briefing_types)."""
     # fired_at is UTC; comparing its date to the local date reset this
     # budget at 7pm Chicago — the same bug count_alerts_today fixed.
     since = _local_day_start_utc(restaurant_id)
-    placeholders = ",".join("?" * len(NON_ALERT_TYPES))
+    types = tuple(types) if types is not None else NON_ALERT_TYPES
+    if not types:
+        return 0
+    placeholders = ",".join("?" * len(types))
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             f"SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? "
             f"AND fired_at >= ? AND alert_type IN ({placeholders})",
-            (restaurant_id, since, *NON_ALERT_TYPES)).fetchone()
+            (restaurant_id, since, *types)).fetchone()
         return int((row["n"] if row else 0) or 0)
     except Exception:
         return 0

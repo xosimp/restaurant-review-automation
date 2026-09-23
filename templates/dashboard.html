@@ -17836,7 +17836,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(_rv.moves.length){
       /* Overtime the rows on screen create, with a same-role person who has
          room. One tap stages the move like any edit; Save keeps it. */
-      h+='<div class="sr-grp"><div class="sr-k">Overtime you can move</div>';
+      h+='<div class="sr-grp"><div class="sr-k">Over hours you can move</div>';
       for(i=0;i<_rv.moves.length;i++){var mv=_rv.moves[i]||{},cd=mv.candidate||{};
         h+='<div class="sr-line warn"><span class="d"></span><span><b>'+esc(mv.employee)+'</b> <span class="hb-num">'+_schedHrs(+mv.hours||0)+'h</span>, <span class="hb-num">'+_schedHrs(+mv.over||0)+'h</span> over &mdash; '
           +esc(cd.employee)+' has room for the '+esc(mdy(cd.date))+' '+esc(cd.shift_start||'')+' shift'

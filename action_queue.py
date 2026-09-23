@@ -101,7 +101,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     # ── issues nobody has picked up ──
     try:
         import issues
-        for i in issues.list_issues(restaurant_id, status="unresolved", limit=10, db_path=db_path):
+        for i in issues.list_issues(restaurant_id, status="unresolved", limit=10, db_path=db_path,
+                                    sees_loss=issues.viewer_sees_loss(viewer)):   # A-8
             waiting = i["status"] == "open"
             add(f"issue:{i['id']}", "issue", i["title"],
                 "critical" if (waiting and i["severity"] == "high") else

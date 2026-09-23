@@ -203,7 +203,7 @@ struct ScheduleReviewPanel: View {
     /// room. One tap moves the shift and saves the week.
     private var overtimeBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("OVERTIME YOU CAN MOVE")
+            Text("OVER HOURS YOU CAN MOVE")
                 .font(.cavnarBody(11, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarEmber)

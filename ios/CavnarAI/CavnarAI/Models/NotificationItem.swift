@@ -16,9 +16,12 @@ struct NotificationItem: Codable, Identifiable {
     /// P0/P1: only worth anything while it can still be acted on.
     let urgent: Bool?
     let unread: Bool?
+    /// Where the row opens — the server's module map (push.NOTIFICATION_
+    /// MODULE), the same one the web bell uses. Optional for older servers.
+    let module: String?
 
     enum CodingKeys: String, CodingKey {
-        case type, label, priority, urgent, unread
+        case type, label, priority, urgent, unread, module
         case firedAt = "fired_at"
         case reviewId = "review_id"
     }

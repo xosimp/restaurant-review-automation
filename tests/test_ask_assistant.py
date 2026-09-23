@@ -202,7 +202,7 @@ def test_the_team_tool_says_so_rather_than_inventing_a_roster(db_path):
 
 # ── 4. alerts ────────────────────────────────────────────────────────────
 
-def _alert(db_path, rid, alert_type="new_negative_review", review_id=None, days_ago=1):
+def _alert(db_path, rid, alert_type="1star", review_id=None, days_ago=1):
     conn = get_conn(db_path)
     conn.execute("INSERT INTO alert_log (restaurant_id, review_id, alert_type, fired_at) "
                  "VALUES (?,?,?, datetime('now', ?))",
@@ -222,7 +222,7 @@ def test_an_answered_alert_stops_counting_as_outstanding(db_path):
     conn.commit()
     conn.close()
     _alert(db_path, rid, review_id=row["id"])
-    _alert(db_path, rid, alert_type="labor_over_target")
+    _alert(db_path, rid, alert_type="labor_over")
     out = tools._read_alerts(rid)
     assert len(out["alerts"]) == 2
     assert out["outstanding"] == 1
@@ -242,7 +242,7 @@ def test_the_snapshot_says_plainly_when_nothing_has_fired(db_path):
 
 def test_the_snapshot_lists_what_still_needs_the_owner(db_path):
     rid = _restaurant(db_path)
-    _alert(db_path, rid, alert_type="labor_over_target")
+    _alert(db_path, rid, alert_type="labor_over")
     assert "Still needing action" in ask_cavnar._alerts_context(rid)
 
 
@@ -377,7 +377,7 @@ def test_alerts_and_memory_reach_the_snapshot_without_a_module(db_path):
     rid = _restaurant(db_path)
     models.set_service_tier(rid, "starter_marketing", db_path=db_path)
     models.remember_ask_fact(rid, "Wants labor under 26%", db_path=db_path)
-    _alert(db_path, rid, alert_type="labor_over_target")
+    _alert(db_path, rid, alert_type="labor_over")
     snapshot = ask_cavnar.build_context(models.get_restaurant(rid, db_path=db_path))
     assert "WHAT THIS OWNER HAS TOLD YOU BEFORE" in snapshot
     assert "ALERTS" in snapshot
@@ -482,7 +482,7 @@ def test_a_window_the_model_phrased_badly_still_reads_alerts(db_path):
     """Found by the re-audit: days="abc" raised, and the caught error read to
     the owner as though nothing had fired."""
     rid = _restaurant(db_path)
-    _alert(db_path, rid, alert_type="labor_over_target", days_ago=0)
+    _alert(db_path, rid, alert_type="labor_over", days_ago=0)
     for bad in ("abc", None, "", 0, -5, 3.7, "7", 10000):
         out = tools._read_alerts(rid, days=bad)
         assert out["alerts"], "days=%r lost a real alert" % bad

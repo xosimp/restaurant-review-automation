@@ -720,9 +720,15 @@ def price_overtime_moves(forecast: list, role_rates=None, default_rate=None) -> 
         if not c:
             continue
         rate = rates.get(str(c.get("role") or "").strip().lower()) or (float(base) if base else None)
-        hours_off = round(min(float(f.get("over") or 0), float(c.get("hours") or 0)), 1)
+        # Only hours past the weekly OVERTIME line earn the premium. Being
+        # past a personal cap (Ana's 25h) is a different flag with no
+        # premium in it: pricing it as overtime told an owner a move saved
+        # "$70 in overtime pay" on a 32h week (re-audit A-4). Entries built
+        # before overtime_hours existed fall back to `over`.
+        ot = f.get("overtime_hours", f.get("over"))
+        hours_off = round(min(float(ot or 0), float(c.get("hours") or 0)), 1)
         c["overtime_hours_avoided"] = hours_off
-        c["saves"] = round(hours_off * rate * OVERTIME_PREMIUM) if rate else None
+        c["saves"] = round(hours_off * rate * OVERTIME_PREMIUM) if (rate and hours_off > 0) else None
         if c["saves"]:
             f["text"] = f["text"] + f" That saves about ${c['saves']:,} in overtime pay."
     return forecast
@@ -745,6 +751,11 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
         base_hours = constraints.base_hours if base_hours is None else base_hours
         bucket = constraints.bucket if bucket is None else bucket
         max_hours = constraints.max_hours if max_hours is None else max_hours
+        if ceiling is None:
+            ceiling = (getattr(constraints, "compliance", None) or {}).get("weekly_hours_ceiling")
+    # The weekly overtime line: 40, or the restaurant's own compliance
+    # ceiling. A person's cap (max_hours) may sit below it; that is a limit,
+    # not overtime (re-audit A-4).
     ceil = float(ceiling or WEEKLY_HOURS_CEILING)
 
     def _cap(name):
@@ -832,13 +843,18 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
                 break
         from time_utils import mdy
         published = round(_base(low, b), 1)
+        overtime = round(max(0.0, total - ceil), 1)
+        past = (f"{over:g}h past the {ceil:g}h overtime line" if overtime > 0.05 and cap >= ceil - 0.05
+                else f"{over:g}h past their {cap:g}h limit"
+                + (f", {overtime:g}h of it overtime" if overtime > 0.05 else ""))
         text = (f"{name} is scheduled for {round(total, 1):g}h in the payroll week{f' of {mdy(b)}' if b else ''} — "
-                f"{over:g}h past {cap:g}h")
+                f"{past}")
         text += f" ({published:g}h already published)." if published else "."
         if pick:
             text += (f" {pick['employee']} ({pick['role'] or 'same role'}, {pick['headroom']:g}h of room) could take "
                      f"the {mdy(pick['date'])} {pick['shift_start']}–{pick['shift_end']} shift.")
         out.append({"employee": name, "bucket": b, "hours": round(total, 1), "draft_hours": round(h, 1),
-                    "published_hours": published, "ceiling": cap, "over": over, "candidate": pick, "text": text})
+                    "published_hours": published, "ceiling": cap, "over": over,
+                    "overtime_line": ceil, "overtime_hours": overtime, "candidate": pick, "text": text})
     out.sort(key=lambda x: (-x["over"], x["employee"]))
     return out

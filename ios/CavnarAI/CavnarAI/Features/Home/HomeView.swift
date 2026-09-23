@@ -370,6 +370,14 @@ struct HomeView: View {
             }
             .task { await viewModel.load() }
             .task { await notificationsBadge.refresh() }
+            // A tapped push about another location switched to it
+            // (DeepLinkRouter) — Home shows that location now, not the old one.
+            .onChange(of: deepLinkRouter.locationSwitches) { _, _ in
+                Task {
+                    await viewModel.load()
+                    await notificationsBadge.refresh()
+                }
+            }
             // Reopening the app after a shift should not show morning's
             // numbers as if they were current (audit 4.2).
             .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.load() }

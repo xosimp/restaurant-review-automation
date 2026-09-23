@@ -409,11 +409,29 @@ def reassign(restaurant_id, issue_id, contact_id, db_path=DB_PATH):
     return get_issue(restaurant_id, issue_id, db_path)
 
 
-def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH):
+def viewer_sees_loss(user) -> bool:
+    """Whether this login may read loss issues (comp/void concentration).
+    They name the approving manager, and are meant for the owner — never for
+    the routed manager who may be their subject. None is an internal caller
+    (the scheduler, reports to the owner). Fails closed."""
+    if user is None or (isinstance(user, dict) and user.get("is_admin")):
+        return True
+    try:
+        from permissions import has_permission, LOSS_VIEW
+        return bool(has_permission(user, LOSS_VIEW))
+    except Exception:
+        return False
+
+
+def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH, sees_loss=True):
+    """`sees_loss=False` leaves out kind='loss' — every listing a manager can
+    read passes viewer_sees_loss(viewer) (re-audit A-8)."""
     conn = get_conn(db_path)
     try:
         sql = "SELECT * FROM ops_issues WHERE restaurant_id=?"
         args = [restaurant_id]
+        if not sees_loss:
+            sql += " AND kind!='loss'"
         if status == "unresolved":
             sql += " AND status!='resolved'"
         elif status:
@@ -426,16 +444,17 @@ def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH):
         conn.close()
 
 
-def summary(restaurant_id, db_path=DB_PATH):
+def summary(restaurant_id, db_path=DB_PATH, sees_loss=True):
     """Counts and the oldest unacknowledged issue — what the brief and the
-    portfolio view show."""
+    portfolio view show. `sees_loss` as list_issues."""
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT SUM(status='open') AS open_n, SUM(status='acknowledged') AS ack_n, "
             "MIN(CASE WHEN status='open' THEN created_at END) AS oldest_open, "
             "SUM(status='resolved' AND resolved_at >= datetime('now','-7 days')) AS resolved_7d "
-            "FROM ops_issues WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            "FROM ops_issues WHERE restaurant_id=?" + ("" if sees_loss else " AND kind!='loss'"),
+            (restaurant_id,)).fetchone()
     finally:
         conn.close()
     oldest_h = None

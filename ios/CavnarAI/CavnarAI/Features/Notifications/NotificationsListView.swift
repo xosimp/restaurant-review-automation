@@ -169,7 +169,8 @@ struct NotificationsListView: View {
                                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         Button {
                             Haptic.light()
-                            deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId)
+                            deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId,
+                                                                 module: item.module)
                             dismiss()
                         } label: {
                             HStack(spacing: 10) {

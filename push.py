@@ -54,7 +54,9 @@ _JWT_REMINT_REASONS = {"ExpiredProviderToken", "InvalidProviderToken", "TooManyP
 
 # Alert types where several genuinely distinct events happen in one day, so
 # the date-keyed collapse id would silently overwrite all but the last.
-_UNCOLLAPSIBLE_TYPES = {"login", "staff_signin", "issue", "issue_escalated", "coverage"}
+_UNCOLLAPSIBLE_TYPES = {"login", "staff_signin", "issue", "issue_escalated", "coverage",
+                        # each is its own staff request or held order (A-6, A-22)
+                        "shift_request", "order_send_held"}
 
 
 class PushNotConfigured(RuntimeError):
@@ -208,7 +210,64 @@ PRIORITY = {
     "weekly_review": P4_SUMMARY, "monthly_review": P4_SUMMARY,
     "any_review": P5_LOW, "ai_visibility_drop": P5_LOW, "demand_opportunity": P5_LOW,
     "competitor_move": P3_INFO, "review_request_nudge": P5_LOW,
+    # A staff request waiting on a decision is worth today, not worth
+    # breaking a Focus mode for; it used to ride "coverage" at P1 (A-6).
+    "shift_request": P2_OPPORTUNITY, "labor_reminder": P3_INFO,
+    # Held: the week did not go out and a person has to send it (A-18).
+    "schedule_publish_held": P2_OPPORTUNITY, "schedule_publish_pending": P3_INFO,
+    "milestone": P3_INFO, "order_send_held": P2_OPPORTUNITY,
+    "order_send_pending": P3_INFO, "order_send_voided": P2_OPPORTUNITY,
 }
+# Which module a notification opens — the web tab ids (?tab=). The ONE map:
+# client_api._NOTIFICATION_MODULE is this dict (the bell's rows carry it),
+# and every push payload carries `module` from it, so iOS routes on what the
+# server says instead of a two-type copy that sent every food-cost, intel,
+# coverage and order push to Reviews (re-audit A-7). iOS keeps a mirror
+# only as the fallback for an old payload.
+NOTIFICATION_MODULE = {
+    "1star": "reviews", "2star": "reviews", "3star": "reviews", "5star": "reviews",
+    "any_review": "reviews", "health": "reviews", "edit_downgrade": "reviews",
+    "resp_approved": "reviews", "neg_spike": "reviews", "no_response": "reviews",
+    "unresponded": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
+    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
+    "schedule_publish_pending": "labor", "schedule_publish_held": "labor",
+    "shift_request": "labor", "labor_reminder": "labor",
+    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
+    "order_send_pending": "inventory", "order_send_held": "inventory", "order_send_voided": "inventory",
+    "ai_visibility_drop": "competitor", "competitor_move": "competitor",
+    "review_request_nudge": "reviews",
+    "demand_opportunity": "marketing",
+    # Cross-module reads that arrive with their own question, so they open
+    # the assistant rather than guessing a module (iOS does the same).
+    "morning_brief": "ask", "daily_briefing": "ask", "intraday_pulse": "ask",
+    "closing_summary": "ask", "weekly_review": "ask", "monthly_review": "ask",
+    "outcome_achieved": "ask", "milestone": "ask", "while_away": "reviews",
+    "issue": "account", "issue_escalated": "account",
+    # Not a product module — the web dashboard's bell reads this field
+    # directly; iOS's DeepLinkRouter has its own "login" special-case.
+    "login": "account", "staff_signin": "account", "connection_lost": "account",
+}
+
+
+def module_of(alert_type) -> str:
+    return NOTIFICATION_MODULE.get(alert_type or "", "reviews")
+
+
+# Notifications that ask someone to DO something. Everything else — the
+# briefs, summaries, wins, milestones, sign-ins, a reply that went out — is
+# news. Ask counted every non-review row as "still needing action", so an
+# owner heard they had six alerts outstanding when those were briefs and
+# sign-ins (re-audit A-21). The while-away nudge counts only these too (A-23).
+ACTIONABLE_TYPES = frozenset({
+    "health", "1star", "2star", "3star", "neg_spike", "edit_downgrade", "no_response",
+    "unresponded", "negative_trend", "rating_threshold",
+    "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held",
+    "schedule_drafted",
+    "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided",
+    "ai_visibility_drop", "issue", "issue_escalated", "connection_lost",
+})
+
+
 # An unmapped type is informational, not urgent. The old code had no priority
 # at all and deliver_alert's unknown-type fallback was the HEALTH channel
 # triplet — the most permissive default in the system.
@@ -475,7 +534,10 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     if badge is not None:
         aps["badge"] = badge
     try:
-        rid = device_token_row["restaurant_id"] if "restaurant_id" in device_token_row.keys() else None
+        # The sound setting of the location the alert is ABOUT, not of the
+        # location this phone happened to register at (A-14).
+        rid = (data or {}).get("restaurant_id") or \
+            (device_token_row["restaurant_id"] if "restaurant_id" in device_token_row.keys() else None)
         if rid:
             _c = get_conn(db_path)
             _r = _c.execute("SELECT push_sound, alert_health_bypass_quiet FROM restaurants WHERE id=?", (rid,)).fetchone()
@@ -791,6 +853,13 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     owner-only content (the morning brief's prime cost and loss signals) must
     pass it — None keeps the everyone-at-the-restaurant behaviour."""
     global _queued
+    # Every payload names the location it is about and the module it opens.
+    # A group owner's phone registered at location B receives location A's
+    # alerts (get_device_tokens), and with no restaurant_id a tap opened A's
+    # review inside B — not found, and the open recorded against B (A-14).
+    data = dict(data or {})
+    data.setdefault("restaurant_id", restaurant_id)
+    data.setdefault("module", module_of(alert_type))
     try:
         tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
         if user_ids is not None:
