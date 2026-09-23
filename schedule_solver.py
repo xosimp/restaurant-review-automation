@@ -26,11 +26,16 @@ This module keeps the draft's shape and re-solves the assignment:
               manager or keyholder on every daypart when the owner asks
   objective   a cost that mirrors the Shift Quality dimensions an assignment
               can move (strength against demand, leadership rules, training
-              cover, fairness of closes and weekends, fatigue, reliability,
-              stability, stated preferences, pairings) — cheap enough to
-              evaluate millions of times. The final choice between the draft
-              and the solver's answers is made by shift_quality.score_rows,
-              the same judge the owner's number comes from.
+              cover, fairness of closes and weekends and the multi-week
+              rotation, fatigue, reliability, experience, stability, stated
+              preferences, pairings, cross-training) — cheap enough to
+              evaluate millions of times. The dimensions only the shape can
+              move (coverage, coverage by the hour, labor efficiency, sales
+              per labor hour) are constants to it. The final choice between
+              the draft and the solver's answers is made by
+              shift_quality.score_rows over every dimension in
+              shift_quality.DIMENSIONS, the same judge the owner's number
+              comes from.
 
 The search is complete: backtracking over the most-constrained unit first,
 forward checking after every assignment (a person removed from every unit
@@ -93,6 +98,8 @@ K_PREFERENCE = 1.0        # a daypart they said they do not want
 K_CROSS = 0.2             # nobody who can flex to a second station
 K_OFF_ROLE = 0.3          # a cross-trained fill-in rather than the role's own
 K_PENDING = 40.0          # a day they have asked off (pending, soft)
+K_ROT_WEEKEND = 1.5       # a weekend shift for somebody the rotation says is due a weekend off
+K_ROT_CLOSE = 1.5         # a close for somebody the rotation says should rest from closing
 K_CHANGE = 0.02           # a different person from the draft's: ties keep the draft
 K_CLOSE = 0.5             # per close they already have this week
 K_WEEKEND = 0.3           # per weekend shift they already have
@@ -262,6 +269,14 @@ class Problem:
                 self.avoid[a].add(b)
                 self.avoid[b].add(a)
         self.unavailable = {_low(k): set(v or ()) for k, v in (s.get("availability") or {}).items()}
+        # The multi-week rotation (schedule_intel.rotation_plan), per role:
+        # who is due a weekend off, who should rest from closing — what
+        # fairness now judges a week against.
+        self.rot_weekend, self.rot_rest = {}, {}
+        for role, plan in (((s.get("rotation") or {}).get("roles")) or {}).items():
+            key = _low(role)
+            self.rot_weekend[key] = {self.pidx[_low(n)] for n in (plan.get("weekend_due") or []) if _low(n) in self.pidx}
+            self.rot_rest[key] = {self.pidx[_low(n)] for n in (plan.get("rest_from_close") or []) if _low(n) in self.pidx}
         c = self.c
         self.cap = [float(c.max_hours(n)) if c is not None else sq.WEEKLY_HOURS_CEILING for n in self.names]
         self.base_hours = [dict((getattr(c, "base_hours", None) or {}).get(_low(n)) or {}) for n in self.names]
@@ -824,6 +839,10 @@ class Problem:
                 s = self._neutral(u)
             out["strength"] = K_STRENGTH * u.dw * max(0.0, 5.0 - float(s)) * (
                 wn.get("operational_strength", 1) + wn.get("demand_match", 1)) / 2.0
+        if u.weekend and any(p in self.rot_weekend.get(r, ()) for r in u.roles):
+            out["rotation_weekend"] = K_ROT_WEEKEND * wn.get("fairness", 1)
+        if u.closing and any(p in self.rot_rest.get(r, ()) for r in u.roles):
+            out["rotation_close"] = K_ROT_CLOSE * wn.get("fairness", 1)
         rate = self.no_show[p]
         if rate:
             k = K_RELIABILITY_EXPOSED if (rate >= sq.UNRELIABLE_RATE and u.hard) else K_RELIABILITY * rate
@@ -1813,6 +1832,8 @@ _WHY = {
     "stability_part": lambda P, u, o, n: f"{P.names[n]} usually works that daypart",
     "preference": lambda P, u, o, n: f"{P.names[o]} asked for {'nights' if 'night' in P.pref_parts[o] else 'days'}",
     "cross": lambda P, u, o, n: f"{P.names[n]} can cover a second station",
+    "rotation_weekend": lambda P, u, o, n: f"{P.names[o]} is due a weekend off by the rotation",
+    "rotation_close": lambda P, u, o, n: f"{P.names[o]} has closed more than their share and is due a rest from it",
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
 }
 

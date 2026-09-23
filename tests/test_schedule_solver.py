@@ -324,3 +324,29 @@ def test_the_solver_leads_what_cavnar_changed_and_carries_its_stats():
     # a solver that changed nothing leaves the optimizer's own summary alone
     kept = ss.merge_into_optimizer(opt, dict(s, applied=False, changes=[]))
     assert kept["changes"] == [] and kept["before_score"] == 100 and kept["solver"]["applied"] is False
+
+
+# ── the current objective: rotation-aware fairness and sales per labor hour ──
+
+def test_the_rotation_moves_a_weekend_off_the_person_due_one():
+    names = ["Ann", "Bob", "Cat"]
+    rows = [row(WEEK[5], "Ann"), row(WEEK[1], "Bob"), row(WEEK[2], "Cat")]
+    rotation = {"roles": {"Server": {"people": names, "weekend_due": ["Ann"], "weekend_streak": {"Ann": 4},
+                                     "rest_from_close": [], "next_close": []}}}
+    sig = {"roster": names, "roster_roles": {n: "Server" for n in names}, "rotation": rotation,
+           "typical_headcount": {("Saturday", "night"): {"Server": 1}}}
+    out = ss.improve(rows, {}, signals=sig, constraints=cons(names))
+    assert out["applied"] and out["after_score"] > out["before_score"]
+    assert [r["employee"] for r in out["rows"] if r["date"] == WEEK[5]] != ["Ann"]
+    assert any("due a weekend off" in c["reason"] for c in out["changes"] if c["kind"] == "reassign")
+
+
+def test_sales_per_labor_hour_is_judged_and_reassignment_leaves_it_alone():
+    rows, names, sig = _judge_case()
+    sig = dict(sig, splh_targets={"Saturday": {"night": 60.0}, "Tuesday": {"night": 60.0}},
+               daypart_sales={"Saturday": {"night": 900.0}, "Tuesday": {"night": 400.0}})
+    out = ss.improve(rows, {}, signals=sig, constraints=cons(names))
+    before = {d["key"]: d["score"] for d in sq.score_rows(rows, **sig)["dimensions"]}
+    after = {d["key"]: d["score"] for d in out["quality"]["dimensions"]}
+    assert "splh" in sq.DIMENSIONS and "splh" in before and before["splh"] == after["splh"]
+    assert out["applied"]

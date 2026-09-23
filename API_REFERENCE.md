@@ -120,6 +120,17 @@ grep -n '"/labor/' strategy_routes.py            # the _ROUTES table (registered
 python3 scripts/repo_inventory.py                     # every rule, by blueprint, from the live url_map
 ```
 
+## Schedule experiments (admin only)
+
+- `GET /admin/api/schedule-experiments` — per experiment and arm: weeks, draft
+  acceptance (share of rows sent unedited) with a 90% interval, issues and
+  labor % from `schedule_outcomes`, the draft's Shift Quality, the verdict
+  under the minimum-sample rule, and every pin in force.
+- `POST /admin/api/schedule-experiments/pin` `{restaurant_id, experiment, arm}` —
+  pin a restaurant to an arm (`"off"` = the control) or unpin (`arm: null`).
+- No owner route returns an arm. The generation payload's `optimizer.solver`
+  carries the solver's stats (status, proved optimal, seconds, slots), not the arm.
+
 ## Intelligence engine
 
 - `GET /admin/api/intelligence` (admin) — the Intelligence page payload.

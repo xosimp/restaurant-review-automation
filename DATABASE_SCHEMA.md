@@ -66,6 +66,9 @@ A member of staff asking to drop a published shift: `history_id`, the shift, `re
 ### `schedule_outcomes`
 One row per published week, date and daypart: scheduled hours and people, the day's sales split by the intraday morning share, labor %, coverage and no-show issues that day, the mean review rating. Written by the Monday job (`schedule_intel.record_outcomes`), keyed `(history_id, date, daypart)`; read into the prompt as "what published weeks actually did" and by the chemistry suggestions and the cohort ratio features.
 
+### `schedule_experiment_weeks` / `schedule_experiment_pins`
+The live A/B of schedule generation (`schedule_experiments`, admin-only). One row per generated week and experiment, keyed `(history_id, experiment)`: the `arm` (a hash of restaurant and week, so a regeneration keeps it), whether it was `pinned` (and by `env` or `restaurant` — pinned weeks stay out of the comparison), the draft's `quality_score`, and whether the solver's week was kept (`solver_applied`). `schedule_experiment_pins` pins one restaurant to an arm (`off` = the control), keyed `(restaurant_id, experiment)` — the per-restaurant kill switch; `SCHEDULE_EXPERIMENT_PIN` is the global one. Both created at boot by `init_db`.
+
 ### `schedule_recommendation_events` / `schedule_pattern_dismissals` / `staff_first_seen`
 The accept/dismiss ledger for recommendations (a kind shown ten times and never accepted stops being shown); the owner's dismissed learned patterns; and the earliest date and most shifts ever seen per name, so tenure survives the rolling upload window.
 
