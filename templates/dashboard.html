@@ -1582,7 +1582,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-card.hero{padding:30px 32px;border-radius:20px;overflow:hidden}
 #hb-focus{margin-top:28px}
 #panel-home .hb-sh{margin-bottom:16px}
-.hb-card.hero:before{content:'';position:absolute;inset:-1px;background:radial-gradient(560px 240px at 0% 0%,var(--hb-tint2),transparent 62%);pointer-events:none}
 .hb-card.hero>*{position:relative}
 .hb-card.rail{border-left:3px solid var(--hb-warn)}
 .hb-card.rail.good{border-left-color:var(--hb-good)}
@@ -1590,6 +1589,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-h3{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .hb-h3 .cnt{font-family:'Space Grotesk',sans-serif;letter-spacing:0;color:var(--ink3);font-weight:600}
 .hb-grid{display:grid;gap:16px;margin-top:16px}
+#hb-attn-card{margin-top:22px}
 .hb-grid.c2{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
 .hb-grid.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .hb-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
@@ -1747,11 +1747,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-card:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 24px 44px -22px rgba(14,12,10,.24)}
 [data-theme="dark"] .hb-card:hover{border-color:rgba(255,255,255,.12);box-shadow:var(--elev-2)}
 /* foreground */
-.hb-card.hero{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28),0 40px 90px -40px var(--hb-glow)}
-[data-theme="dark"] .hb-card.hero{box-shadow:var(--elev-2),0 40px 100px -40px var(--hb-glow)}
+.hb-card.hero{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28)}
+[data-theme="dark"] .hb-card.hero{box-shadow:var(--elev-2)}
 .hb-card.hero:hover{transform:translateY(-3px)}
-.hb-card.hero:before{inset:-35% -25%;background:radial-gradient(closest-side at 28% 30%,var(--hb-tint2),transparent 72%),radial-gradient(closest-side at 82% 78%,var(--hb-halo),transparent 70%);animation:hbAmbient 6s ease-in-out infinite alternate}
-@keyframes hbAmbient{from{transform:translate(-5%,-7%) scale(1)}to{transform:translate(5%,6%) scale(1.06)}}
 .hb-card.hero .hb-h3 .hb-kicker{color:var(--hb-amber)}
 /* background */
 .hb-card.quiet,[data-theme="dark"] .hb-card.quiet{background:var(--hb-inner);border-color:transparent;box-shadow:none}
@@ -1792,7 +1790,7 @@ svg:hover .hb-xh{opacity:1}
 /* reveal when it scrolls into view, not when it renders under the fold */
 .hb-rise{animation-play-state:paused}
 .hb-rise.cm-inview{animation-play-state:running}
-@media (prefers-reduced-motion:reduce){.hb-card.hero:before,.hb-join .ln:before,.hb-rec.new,.hb-live i:after,.hb-tl .it{animation:none!important}.hb-tl .it{opacity:1}.hb-card:hover,.hb-card.hero:hover,.hb-stat:hover,.hb-focus .ev>span:hover{transform:none}.hb-rise{animation-play-state:running}}
+@media (prefers-reduced-motion:reduce){.hb-join .ln:before,.hb-rec.new,.hb-live i:after,.hb-tl .it{animation:none!important}.hb-tl .it{opacity:1}.hb-card:hover,.hb-card.hero:hover,.hb-stat:hover,.hb-focus .ev>span:hover{transform:none}.hb-rise{animation-play-state:running}}
 @media (max-width:1000px){.hb-grid.c2,.hb-grid.c3,.hb-recs,.hb-sig.cards{grid-template-columns:1fr}.hb-card.hero{padding:22px 20px}.hb-sig.cards .hb-sg{border-bottom:none;margin-bottom:0;padding:20px 22px 18px}}
 </style>
 
@@ -3543,9 +3541,8 @@ svg:hover .hb-xh{opacity:1}
 .lb2-ops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:34px;padding-top:26px;border-top:1px solid var(--hb-line)}
 .lb2-op{position:relative;padding:22px 24px 20px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
 [data-theme="dark"] .lb2-op{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
-.lb2-op:hover{box-shadow:var(--elev-hero);transform:translateY(-1px)}
+.lb2-op:hover{transform:translateY(-1px)}
 .lb2-op:before{content:'';position:absolute;left:0;top:0;right:0;height:3px;background:linear-gradient(90deg,var(--ember),var(--ember2) 55%,transparent);pointer-events:none}
-.lb2-op.ember:after{content:'';position:absolute;right:-20%;top:-55%;width:62%;height:150%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(16px);pointer-events:none}
 .lb2-op>*{position:relative}
 .lb2-op .hd{display:flex;align-items:center;gap:14px}
 .lb2-op .ic{width:46px;height:46px}
@@ -4100,7 +4097,7 @@ svg:hover .hb-xh{opacity:1}
       <div id="lb2-timeoff-body" class="lb2-op-body">Loading&hellip;</div>
       <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
     </section>
-    <section class="lb2-op ember" id="lb2-covers" aria-label="Covers">
+    <section class="lb2-op" id="lb2-covers" aria-label="Covers">
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
       <div id="lb2-covers-body" class="lb2-op-body">Loading&hellip;</div>
       <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
@@ -6476,8 +6473,9 @@ svg:hover .hb-xh{opacity:1}
       hand-copied 90-line blocks that had already drifted in their comments. #}
 {% macro pos_card(label, mark, ident, sync_error, last_synced, sync_fn, disconnect_fn, open_fn) -%}
   <div class="ac-conn" data-conn="{{ label|lower|replace(' ','-') }}">
+    {% set _wide = 'rpower' in mark %}
     {% if ident and not sync_error %}
-      <div class="ic on" aria-hidden="true"><img src="{{ mark }}" alt=""></div>
+      <div class="ic on" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
       <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced {{ last_synced[:16].replace('T',' ') }} UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
       <div class="a">
         <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
@@ -6494,15 +6492,15 @@ svg:hover .hb-xh{opacity:1}
         <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
       </div>
     {% else %}
-      <div class="ic" aria-hidden="true"><img src="{{ mark }}" alt=""></div>
+      <div class="ic" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
       <div class="t"><b>{{ label }}</b><span>Not connected &mdash; powers live labor and sales data</span></div>
       <div class="a"><button onclick="{{ open_fn }}()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
     {% endif %}
   </div>
 {%- endmacro %}
 
-{% set _pos_on = (restaurant.toast_restaurant_guid and not restaurant.toast_sync_error) or (restaurant.square_location_id and not restaurant.square_sync_error) or (restaurant.clover_merchant_id and not restaurant.clover_sync_error) %}
-{% set _pos_err = (restaurant.toast_restaurant_guid and restaurant.toast_sync_error) or (restaurant.square_location_id and restaurant.square_sync_error) or (restaurant.clover_merchant_id and restaurant.clover_sync_error) %}
+{% set _pos_on = (restaurant.toast_restaurant_guid and not restaurant.toast_sync_error) or (restaurant.square_location_id and not restaurant.square_sync_error) or (restaurant.clover_merchant_id and not restaurant.clover_sync_error) or (restaurant.rpower_store_mid and not restaurant.rpower_sync_error) %}
+{% set _pos_err = (restaurant.toast_restaurant_guid and restaurant.toast_sync_error) or (restaurant.square_location_id and restaurant.square_sync_error) or (restaurant.clover_merchant_id and restaurant.clover_sync_error) or (restaurant.rpower_store_mid and restaurant.rpower_sync_error) %}
 {% set _conn_count = (1 if restaurant.gmb_refresh_token else 0) + (1 if restaurant.ig_token else 0) + (1 if _pos_on else 0) %}
 {% set _profile_done = (1 if restaurant.owner_name else 0) + (1 if restaurant.owner_phone else 0) + (1 if restaurant.timezone else 0) + (1 if restaurant.voice_notes else 0) %}
 {% set _alerts_on = restaurant.alert_1star or restaurant.alert_2star or restaurant.alert_health or restaurant.alert_neg_spike or restaurant.alert_negative_trend or restaurant.alert_no_response or restaurant.alert_5star or restaurant.alert_rating_threshold or restaurant.alert_labor_over or restaurant.alert_any_review %}
@@ -6683,7 +6681,7 @@ svg:hover .hb-xh{opacity:1}
         </div>
 
         {% if _is_owner %}
-        <div class="ac-card accent">
+        <div class="ac-card">
           <div class="ac-card-h"><div><h3>Staff join code</h3><p>Post it in the back of house. A new hire downloads Cavnar AI, taps <b>Create your account</b>, types it, picks their name off your roster and sets their own PIN. You don&rsquo;t have to do anything.</p></div>
             <div class="r"><button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New code</button></div></div>
           <div class="ac-code" id="staff-join-code" aria-label="Staff join code">&mdash;</div>
@@ -6889,7 +6887,7 @@ svg:hover .hb-xh{opacity:1}
         {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
         {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
         {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
-        <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/rpower.png" alt=""></div><div class="t"><b>RPower POS</b><span>Not connected yet &mdash; talk to your Cavnar rep to enable</span></div><div class="a"><button class="cbtn cbtn-secondary cbtn-sm" onclick="location.href='mailto:will@cavnar.ai?subject=Connect%20RPower%20POS'">Contact us</button></div></div>
+        {{ pos_card('RPower POS', '/static/brand/integrations/rpower.png', restaurant.rpower_store_mid, restaurant.rpower_sync_error, restaurant.rpower_last_synced, 'rpowerSyncNow', 'rpowerDisconnect', 'openRpowerConnect') }}
         <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
       </div>
 
@@ -8015,6 +8013,26 @@ function toastSyncNow(btn){
     else toast(d.error||'Sync failed','error');
   }).catch(function(){ btn.disabled=false; btn.textContent='↻ Sync'; toast('Request failed','error'); });
 }
+// RPower: the token is issued to Cavnar, not the restaurant, so Connect
+// explains that and asks Will; Sync and Disconnect work like every POS.
+function rpowerSyncNow(btn){
+  btn.disabled = true; btn.textContent = 'Syncing\u2026';
+  fetch('/api/rpower/sync',{method:'POST'}).then(apiJson).then(function(d){
+    btn.disabled = false; btn.textContent = '\u21bb Sync';
+    if (d.ok) toast('RPower sync started \u2014 sales and labor update shortly','success');
+    else toast(d.error||'Sync failed','error');
+  }).catch(function(){ btn.disabled=false; btn.textContent='\u21bb Sync'; toast('Request failed','error'); });
+}
+function rpowerDisconnect(btn){
+  if (!confirm('Disconnect RPower? Synced data stays. Reconnecting goes through Cavnar.')) return;
+  btn.disabled = true;
+  fetch('/api/rpower/disconnect',{method:'POST'}).then(apiJson).then(function(d){
+    if (d.ok){ toast('RPower disconnected','success'); setTimeout(function(){ window.location.reload(); },600); }
+    else { btn.disabled=false; toast(d.error||'Failed','error'); }
+  }).catch(function(){ btn.disabled=false; toast('Request failed','error'); });
+}
+function openRpowerConnect(){ var m=document.getElementById('rpower-connect-modal'); if(m) m.style.display='flex'; }
+function closeRpowerConnect(){ var m=document.getElementById('rpower-connect-modal'); if(m) m.style.display='none'; }
 function toastDisconnect(btn){
   if (!confirm('Disconnect Toast POS? Existing synced labor data will remain.')) return;
   btn.disabled = true;
@@ -17025,6 +17043,20 @@ document.addEventListener('click', function(e) {
 
 <!-- Change password modal — body level so position:fixed always covers viewport -->
 <!-- Toast POS connect modal -->
+<div id="rpower-connect-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeRpowerConnect()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55)">
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closeRpowerConnect()">&#x2715;</button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      <img src="/static/brand/integrations/rpower.png" alt="" style="height:22px;width:auto">
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect RPower POS</div>
+    </div>
+    <div style="font-size:15px;color:var(--ink2);line-height:1.55;margin:12px 0 20px">RPower issues the connection key to Cavnar, not to your restaurant, so there&rsquo;s nothing for you to paste. Ask and Will connects your store &mdash; your sales, labor and the nightly Daily Sales Report start flowing once it&rsquo;s linked.</div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="closeRpowerConnect()">Not now</button>
+      <a class="cbtn cbtn-primary cbtn-sm" href="mailto:will@cavnar.ai?subject=Connect%20RPower%20for%20{{ restaurant.name|urlencode }}" onclick="closeRpowerConnect()">Ask Will to connect it</a>
+    </div>
+  </div>
+</div>
 <div id="toast-client-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeToastClientModal()">
   <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
     <button class="cbtn cbtn-close" aria-label="Close" onclick="closeToastClientModal()">&#x2715;</button>

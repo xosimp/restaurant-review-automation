@@ -136,7 +136,9 @@ def test_every_disclosure_declares_its_state():
 def test_pos_connections_come_from_one_macro():
     s = _src()
     assert s.count("{% macro pos_card(") == 1
-    assert s.count("{{ pos_card(") == 3
+    # Toast, Square, Clover and RPower — every POS card, one macro, so a
+    # connected POS never reads "Not connected" from a static stub.
+    assert s.count("{{ pos_card(") == 4
 
 
 def test_dark_is_the_only_theme():

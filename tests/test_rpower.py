@@ -615,3 +615,15 @@ def test_a_long_range_is_chunked(db_path):
 def test_a_backwards_range_yields_nothing(db_path):
     from datetime import date
     assert list(rpower._chunk_range(date(2026, 5, 1), date(2026, 4, 1))) == []
+
+
+def test_the_owner_card_syncs_and_disconnects_but_never_takes_a_token():
+    """The account card's RPower row is the shared POS card: Sync and a
+    principal-only Disconnect are client routes; saving a token stays
+    admin-only, because RPOWER issues it to Cavnar."""
+    import rpower_routes
+    src = open(rpower_routes.__file__).read()
+    assert '"/api/rpower/sync", methods=["POST"]' in src
+    assert '"/api/rpower/disconnect", methods=["POST"]' in src
+    assert 'principal_only(current_user, "the RPower connection")' in src
+    assert "/api/rpower/save" not in src and "/admin/rpower/save/" in src
