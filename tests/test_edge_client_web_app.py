@@ -171,7 +171,6 @@ def test_a_two_location_owner_gets_the_location_switcher(app_run):
     assert len(handlers) == 2, handlers
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-17: an apostrophe in a location name is decoded back into the inline onclick's JS string, a SyntaxError")
 def test_the_location_switcher_survives_an_apostrophe_in_the_name(app_run):
     handlers = _switcher_handlers(app_run["dashboard"]["html"])
     assert handlers

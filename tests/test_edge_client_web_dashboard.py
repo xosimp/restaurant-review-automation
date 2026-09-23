@@ -119,7 +119,6 @@ def test_the_audited_loaders_still_start_on_a_loading_placeholder(src, fn, eleme
     assert "Loading" in src
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12/CLIENT-58: these loaders have an empty .catch (or none) and bare-return on ok:false, so a failure leaves 'Loading…' on screen forever")
 @pytest.mark.parametrize("fn,element", LOADERS)
 def test_a_loader_replaces_its_loading_placeholder_when_the_request_fails(src, fn, element):
     body = _function(src, fn)
@@ -136,7 +135,6 @@ def test_the_recovery_email_status_starts_on_loading(src):
     assert "jget('/api/account/security-summary'" in src
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: the security-summary callback only handles d.ok, so a failure leaves 'Recovery email: Loading…'")
 def test_the_recovery_email_status_says_so_when_the_summary_fails(src):
     i = src.index("jget('/api/account/security-summary'")
     cb = _block_from(src, i)
@@ -147,7 +145,6 @@ def test_there_are_fetch_sites_to_check(src):
     assert src.count("fetch(") > 100
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: ~200 fetch sites call r.json() without checking r.ok, so an HTML error page reads as a network failure")
 def test_no_fetch_parses_json_without_looking_at_the_status(src):
     blind = re.findall(r"\.then\(\s*function\s*\(\s*(\w+)\s*\)\s*\{\s*return\s+\1\.json\(\)\s*;?\s*\}\s*\)", src)
     assert not blind, "%d status-blind r.json() sites" % len(blind)
@@ -182,7 +179,6 @@ def test_the_audited_pollers_are_still_on_intervals(src):
         assert "fetch(" in tick(src) + fetcher(src)
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-37: web pollers ignore document.hidden and fire for the life of a background tab")
 @pytest.mark.parametrize("poller", sorted(POLLERS))
 def test_a_poller_pauses_while_the_tab_is_hidden(src, poller):
     tick, fetcher = POLLERS[poller]
@@ -191,7 +187,6 @@ def test_a_poller_pauses_while_the_tab_is_hidden(src, poller):
         _has_global_fetch_guard(src, "document.hidden")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-13: only Home reads session_expired; pollers keep hitting 401s and the page never asks the owner to sign in")
 @pytest.mark.parametrize("poller", sorted(POLLERS))
 def test_a_poller_stops_and_sends_the_owner_to_sign_in_when_the_session_expires(src, poller):
     _tick, fetcher = POLLERS[poller]
@@ -204,7 +199,6 @@ def test_home_already_reacts_to_an_expired_session(src):
     assert "if(d&&d.session_expired)location.reload()" in src
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-13: session_expired is read in exactly one place (Home); every other module fails silently")
 def test_session_expiry_is_handled_outside_home(src):
     readers = src.count("session_expired")
     assert readers > 1 or _has_global_fetch_guard(src, "session_expired"), readers
@@ -258,13 +252,11 @@ def test_the_header_name_rule_exists(src):
     assert any("height:56px" in d for d in _css_rules_for(src, ".hdr"))
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-15: .hdr-restaurant has no truncation, so a long restaurant name wraps to 5 lines inside the 56px header")
 def test_a_long_restaurant_name_is_truncated_in_the_header(src):
     decls = "".join(_css_rules_for(src, ".hdr-restaurant"))
     assert "text-overflow:ellipsis" in decls and "white-space:nowrap" in decls and "overflow:hidden" in decls, decls
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-15: nothing collapses .hdr-right on a phone, so Sign out and Account sit off-screen at 320-375px")
 def test_the_header_right_side_collapses_on_a_phone(src):
     found = False
     for m in re.finditer(r"@media[^{]*max-width:\s*(\d+)px[^{]*\{", src):
@@ -287,7 +279,6 @@ def test_the_busy_helper_exists(src):
     assert "function cbtnBusy(btn, label)" in src
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-16: review actions never disable their button, so a double click posts to Google and fires the webhook twice")
 @pytest.mark.parametrize("fn", REVIEW_ACTIONS)
 def test_a_review_action_blocks_a_second_click_while_in_flight(src, fn):
     body = _function(src, fn)
@@ -306,7 +297,6 @@ def test_skip_already_tells_the_owner_when_it_failed(src):
     assert _reports_failure(_function(src, "skipR"))
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-16: approveR and markPosted have no else for ok:false and no .catch, so a failure is silent")
 @pytest.mark.parametrize("fn", ["approveR", "markPosted"])
 def test_a_review_action_tells_the_owner_when_it_failed(src, fn):
     assert _reports_failure(_function(src, fn)), fn
@@ -330,7 +320,6 @@ def test_a_guest_blast_that_lost_its_response_does_not_invite_a_blind_resend(src
     assert "disabled = false" not in catch and "try again" not in catch.lower(), catch
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-19: Ask Cavnar's Confirm re-enables silently after a network error, inviting a duplicate side-effecting action")
 def test_ask_confirm_after_a_network_error_says_the_outcome_is_unknown(src):
     catch = _catch_bodies(_function(src, "_runAskCavnarProposal"))[-1]
     assert "disabled = false" not in catch, catch
@@ -344,7 +333,6 @@ def test_the_template_picker_still_renders_rows(src):
     assert "insertTemplate" in body and "t.body" in body
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-18: a template body is concatenated into an inline onclick; a double quote ends the attribute (breaks the row, can inject attributes)")
 def test_no_template_text_is_concatenated_into_an_inline_onclick(src):
     body = _function(src, "_renderTmplPicker")
     for m in re.finditer(r"onclick=\"[^\"]*'\s*\+\s*([^+]+?)\s*\+", body):
@@ -371,7 +359,6 @@ def test_the_status_dot_still_maps_the_overall_state(src):
     assert "DOT_COLORS[overall]" in body
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-43: an unknown or unreadable /api/status paints the dot green ('operational')")
 def test_an_unknown_status_is_not_painted_operational(src):
     body = _function(src, "updateStatusDots")
     assert "'#22c55e'" not in body.split("DOT_COLORS[overall]", 1)[1][:40], body
@@ -383,12 +370,10 @@ def test_the_theme_is_forced_dark_before_paint(src):
     assert "document.documentElement.setAttribute('data-theme','dark')" in src[:2000]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-38: every dashboard load POSTs /api/theme (a database write) although the theme is hard-forced dark")
 def test_the_dashboard_does_not_post_the_theme_on_load(src):
     assert "fetch('/api/theme'" not in src
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-38: the per-tab /api/log-activity POST has no .catch (an unhandled rejection on every failed tab switch)")
 def test_the_tab_switch_activity_log_handles_its_own_failure(src):
     i = src.index("fetch('/api/log-activity'")
     stmt = src[i:src.index(";\n", i)]
@@ -397,7 +382,6 @@ def test_the_tab_switch_activity_log_handles_its_own_failure(src):
 
 # ── CLIENT-48: errors through alert() ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-48: schedule generation, profile save and staff actions report errors with alert()")
 def test_the_dashboard_reports_errors_without_alert(src):
     scripts = "\n".join(re.findall(r"<script(?![^>]*src=)[^>]*>(.*?)</script>", src, re.S))
     calls = re.findall(r"(?<![\w.])alert\(", scripts)
