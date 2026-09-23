@@ -34,6 +34,13 @@ LATE_TOLERANCE_HOURS = 6
 
 MAX_ATTEMPTS = 3
 
+# One tick stops taking on posts after this long (MOD-MKT-3). An Instagram
+# publish can wait several seconds on its container, and a popular slot
+# across many restaurants used to hold the one scheduler thread for as long
+# as 200 serial publishes took. Unclaimed rows stay 'scheduled' and the next
+# tick (five minutes later) carries on; the status column is the cursor.
+TICK_BUDGET_SECONDS = 600
+
 
 def _local_now(restaurant_id):
     from time_utils import restaurant_now_by_id
@@ -96,9 +103,13 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
                 "reached_platform": True}
 
     if not payload.get("ok"):
-        # The platform answered and said no. Definite, so retrying is safe.
+        # `maybe_live`: the publish call itself got a 5xx, a 429, an
+        # unreadable body or no answer, any of which can hide a post Meta
+        # accepted — never retried (MOD-MKT-4). Anything else is the
+        # platform saying no, or a step before publishing failing; nothing
+        # reached the feed, so retrying is safe.
         return {"ok": False, "error": payload.get("error") or "The post didn't go through.",
-                "reached_platform": False}
+                "reached_platform": bool(payload.get("maybe_live"))}
 
     post_id = payload.get("post_id")
     # Instagram and Facebook log their own content row inside social_routes;
@@ -423,8 +434,12 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
     finally:
         conn.close()
 
+    import time as _time
+    started = _time.monotonic()
     published = failed = skipped = 0
     for row in rows:
+        if _time.monotonic() - started > TICK_BUDGET_SECONDS:
+            break
         when = _parse_local(row["scheduled_for"])
         if when is None:
             _finish(row["id"], "failed", error="Unreadable scheduled time", db_path=db_path)

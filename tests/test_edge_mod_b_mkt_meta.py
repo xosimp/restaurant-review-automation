@@ -227,7 +227,6 @@ def test_a_callback_with_no_code_writes_nothing(app, db_path, monkeypatch):
     assert fake.calls == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-oauth-3: a 200 token-exchange answer that is not JSON makes r.json() raise; the callback 500s instead of showing the popup's error")
 def test_a_non_json_token_exchange_answer_ends_in_the_popups_error_not_a_500(app, db_path, monkeypatch):
     """A6 Meta #3: an edge proxy page with a 200 status."""
     rid = _restaurant(db_path)
@@ -247,7 +246,6 @@ def _expiring(db_path, name="Expiring Co", with_fb=True):
     return _restaurant(db_path, name=name, **fields)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: refresh_expiring_tokens calls Graph oauth/access_token with no timeout= from the scheduler thread")
 def test_the_token_refresh_job_names_a_timeout_on_every_graph_call(db_path, monkeypatch):
     """A6 Meta #4 / MOD-MKT-2: one hung refresh stalls the single scheduler
     thread — every job, not just marketing."""
@@ -275,7 +273,6 @@ def test_a_real_refresh_saves_both_new_tokens_and_a_later_expiry(db_path, monkey
     assert r.fb_token_expires == r.ig_token_expires
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-oauth-5: a 200 refresh answer with no access_token keeps the old token but still pushes ig_token_expires 60 days out")
 def test_a_refresh_that_hands_back_no_token_does_not_push_the_expiry_out(db_path, monkeypatch):
     """A6 Meta #5: the old token was not renewed, so the stored expiry must
     not move — otherwise the job stops trying for ~53 days while the real

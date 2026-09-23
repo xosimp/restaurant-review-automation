@@ -1984,9 +1984,11 @@ No preamble on them, no closing encouragement, no sign-off.{forecast_instruction
 
 Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
 brand voice. No corporate language. The whole brief must be under 60 words."""
-        import anthropic as _anth
-        from ai_utils import create_with_retry, extract_text, model_for
-        _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
+        # The shared, bounded client (timeout, no hidden SDK retries): an
+        # unbounded one here was invisible to the timeout lint behind its
+        # `import anthropic as _anth` alias (MOD-MKT-2).
+        from ai_utils import create_with_retry, extract_text, model_for, get_client
+        _client = get_client()
         msg = create_with_retry(
             _client,
             model=model_for("marketing_insight"),

@@ -325,7 +325,6 @@ def test_a_platform_disconnected_after_scheduling_is_never_called_and_the_owner_
 # ── #18 5xx / 429 / non-JSON from media_publish or /feed (MOD-MKT-4) ──────
 
 @pytest.mark.parametrize("status", [500, 502, 503, 429])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-4: a 5xx/429 from /feed is treated as a definite refusal and the post is re-queued (can double-post)")
 def test_an_ambiguous_answer_from_facebook_feed_is_never_retried(db_path, monkeypatch, mail, status):
     """A6 queue #18 / MOD-MKT-4: a 5xx or 429 after the request reached Meta
     may still have published. Retrying can put a second copy on the feed."""
@@ -340,7 +339,6 @@ def test_an_ambiguous_answer_from_facebook_feed_is_never_retried(db_path, monkey
     assert "may already be live" in (row["error"] or "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-4: a 500 from Instagram media_publish is treated as definite and the post is re-queued")
 def test_an_ambiguous_answer_from_instagram_media_publish_is_never_retried(db_path, monkeypatch, mail):
     """A6 queue #18 / MOD-MKT-4, the Instagram door."""
     rid = _restaurant(db_path)
@@ -355,7 +353,6 @@ def test_an_ambiguous_answer_from_instagram_media_publish_is_never_retried(db_pa
     assert "may already be live" in (row["error"] or "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-4: a non-JSON (HTML 502) body from media-create raises, is classed 'reached platform', and the post is failed for good though nothing was published")
 def test_a_gateway_page_from_instagram_media_create_leaves_the_post_retryable(db_path, monkeypatch, mail):
     """A6 queue #18 / MOD-MKT-4 converse: media-create failing means nothing
     was published, so the post must stay queued for the next tick rather
@@ -401,7 +398,6 @@ def _status_counts(db_path):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-3: run_due_posts publishes up to 200 rows serially with no wall-clock budget")
 def test_a_tick_with_250_due_posts_stops_on_a_wall_clock_budget_and_leaves_the_rest_scheduled(db_path, monkeypatch):
     """A6 queue #19 / MOD-MKT-3: each Instagram publish can take ~20s (the
     container poll). A popular slot across many restaurants must not hold

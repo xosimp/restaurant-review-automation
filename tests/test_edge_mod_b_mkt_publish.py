@@ -206,7 +206,6 @@ IMG = "https://dashboard.cavnar.ai/m/tok.jpg"
 
 # ── #2 no timeout (MOD-MKT-2) ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: _do_post_to_facebook calls Graph /feed with no timeout=")
 def test_the_facebook_publish_names_a_timeout_on_its_graph_call(db_path, monkeypatch):
     """A6 direct #2 / MOD-MKT-2: a black-holed Graph connection must not
     hang the scheduler thread or a request thread forever."""
@@ -217,7 +216,6 @@ def test_the_facebook_publish_names_a_timeout_on_its_graph_call(db_path, monkeyp
     assert all(kw.get("timeout") for _m, _u, kw in fake.calls), fake.calls
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: _do_post_to_instagram makes its create/poll/publish Graph calls with no timeout=")
 def test_the_instagram_publish_names_a_timeout_on_every_graph_call(db_path, monkeypatch, sleeps):
     """A6 direct #2 / MOD-MKT-2."""
     rid = _restaurant(db_path)
@@ -254,7 +252,6 @@ def _untimed_calls(path):
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: 12 aliased `_req.get/_req.post` Graph calls in social_routes/scheduler/admin_routes have no timeout")
 def test_no_requests_call_on_the_meta_paths_goes_out_without_a_timeout_even_under_an_alias():
     """MOD-MKT-2: the AST scan the finding asks for, over the three files
     that make Meta calls through `import requests as _req`."""
@@ -264,7 +261,6 @@ def test_no_requests_call_on_the_meta_paths_goes_out_without_a_timeout_even_unde
     assert offenders == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: scripts/check_timeouts.py only knows the literal names requests/_requests/httpx/_httpx, so `_req.get(...)` passes")
 def test_the_timeout_lint_sees_a_call_made_through_an_import_alias(tmp_path):
     """MOD-MKT-2: the repo lint itself, pointed at one aliased untimed call."""
     spec = importlib.util.spec_from_file_location("check_timeouts_edge", os.path.join(ROOT, "scripts", "check_timeouts.py"))
@@ -291,7 +287,6 @@ def test_the_timeout_lint_still_catches_the_plain_spelling(tmp_path):
 
 # ── #3 non-JSON error body ────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-3 (MOD-MKT-4): a non-JSON Graph error body makes r.json() raise inside /api/post-to-facebook, which 500s instead of refusing in JSON")
 def test_a_gateway_page_from_facebook_comes_back_as_a_json_refusal(app, db_path, monkeypatch):
     """A6 direct #3: Meta's edge answers an HTML 502 now and then; the
     owner's browser does r.json() on whatever comes back."""
@@ -306,7 +301,6 @@ def test_a_gateway_page_from_facebook_comes_back_as_a_json_refusal(app, db_path,
 
 # ── #4 the Instagram container ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-4: a container whose status_code is ERROR is still sent to media_publish (the poll only breaks on FINISHED)")
 def test_an_instagram_container_that_errors_is_never_sent_to_media_publish(db_path, monkeypatch, sleeps):
     """A6 direct #4: Meta rejected the image (wrong aspect ratio, unreachable
     URL). Publishing it anyway is a guaranteed failure with Meta's wording."""
@@ -433,7 +427,6 @@ def test_a_restaurant_without_marketing_cannot_post_to_google(app, db_path, monk
 
 # ── #8 empty caption ──────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-8: _do_post_to_facebook sends an empty message to Graph /feed instead of refusing locally")
 def test_an_empty_facebook_post_is_refused_without_calling_graph(db_path, monkeypatch):
     """A6 direct #8: an empty caption is always an owner mistake (a stale
     compose box); it should be refused here, not by Meta."""
@@ -456,7 +449,6 @@ def test_the_shared_publish_path_refuses_an_empty_body_before_any_platform(db_pa
 
 # ── #9 Meta's raw error text (MOD-MKT-18) ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: social_routes returns Meta's raw error.message ('(#200) ...') to the owner verbatim")
 def test_a_meta_permission_error_is_explained_not_echoed(app, db_path, monkeypatch):
     """A6 direct #9 / MOD-MKT-18: "(#200) If posting to a page, requires
     both pages_read_engagement and pages_manage_posts" means nothing to an
@@ -474,7 +466,6 @@ def test_a_meta_permission_error_is_explained_not_echoed(app, db_path, monkeypat
 
 # ── #10 an Instagram post holds its request thread (MOD-MKT-3) ────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-3: _do_post_to_instagram sleeps up to 20s (10 x 2s) inside the calling request/scheduler thread")
 def test_an_instagram_post_does_not_park_the_calling_thread_for_the_whole_container_poll(db_path, monkeypatch, sleeps):
     """A6 direct #10 / MOD-MKT-3: with gunicorn --threads 4, four owners
     posting to Instagram at once take the whole platform for 20s. The
@@ -488,7 +479,6 @@ def test_an_instagram_post_does_not_park_the_calling_thread_for_the_whole_contai
 
 # ── MOD-MKT-18: the two debug routes ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: /api/debug-insights queries a hard-coded post id with fb_page_token=None for a restaurant with no Facebook connection")
 def test_debug_insights_makes_no_graph_call_for_a_restaurant_without_facebook(app, db_path, monkeypatch):
     """MOD-MKT-18: a live authenticated route that reads someone else's
     hard-coded post. (Not a deletion recommendation — see CLAUDE.md.)"""

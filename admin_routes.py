@@ -1790,7 +1790,7 @@ def refresh_ig_token(restaurant_id, current_user):
             "client_id":         os.getenv("META_APP_ID",""),
             "client_secret":     app_secret,
             "fb_exchange_token": restaurant.ig_token,
-        })
+        }, timeout=(5, 20))
         if r.status_code != 200:
             return jsonify(ok=False, error=f"IG refresh failed: {r.text[:200]}")
 
@@ -1806,7 +1806,7 @@ def refresh_ig_token(restaurant_id, current_user):
                 "client_id":         os.getenv("META_APP_ID",""),
                 "client_secret":     app_secret,
                 "fb_exchange_token": restaurant.fb_page_token,
-            })
+            }, timeout=(5, 20))
             if r2.status_code == 200:
                 update_data["fb_page_token"]    = r2.json().get("access_token", restaurant.fb_page_token)
                 update_data["fb_token_expires"] = new_expires

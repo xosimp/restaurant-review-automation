@@ -1118,13 +1118,22 @@ def refresh_expiring_tokens():
                 continue  # Not expiring soon
 
             try:
+                # Timed (MOD-MKT-2): this runs on the one scheduler thread, and
+                # a black-holed Graph connection stopped every job with it.
                 resp = _req.get(graph_url("oauth/access_token"), params={
                     "grant_type": "fb_exchange_token",
                     "client_id": app_id, "client_secret": app_secret,
                     "fb_exchange_token": r.ig_token,
-                })
-                if resp.status_code == 200:
-                    new_token   = resp.json().get("access_token", r.ig_token)
+                }, timeout=(5, 20))
+                try:
+                    new_token = (resp.json() or {}).get("access_token") if resp.status_code == 200 else None
+                except Exception:
+                    new_token = None
+                if new_token:
+                    # Only a token Meta actually handed back moves the expiry.
+                    # A 200 with no access_token used to keep the old token and
+                    # still push its expiry 60 days out, so the job stopped
+                    # trying while the real token died (MOD-A6-oauth-5).
                     new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
                     update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
                     if r.fb_page_token:
@@ -1132,14 +1141,18 @@ def refresh_expiring_tokens():
                             "grant_type": "fb_exchange_token",
                             "client_id": app_id, "client_secret": app_secret,
                             "fb_exchange_token": r.fb_page_token,
-                        })
-                        if resp2.status_code == 200:
-                            update_data["fb_page_token"]    = resp2.json().get("access_token", r.fb_page_token)
+                        }, timeout=(5, 20))
+                        try:
+                            fb_token = (resp2.json() or {}).get("access_token") if resp2.status_code == 200 else None
+                        except Exception:
+                            fb_token = None
+                        if fb_token:
+                            update_data["fb_page_token"]    = fb_token
                             update_data["fb_token_expires"] = new_expires
                     update_restaurant(r.id, update_data)
                     log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
                 else:
-                    log.warning(f"Token refresh failed for {r.name}: {resp.text[:100]}")
+                    log.warning(f"Token refresh failed for {r.name}: {resp.status_code} {(resp.text or '')[:100]}")
             except Exception as e:
                 log.error(f"Token refresh error for {r.name}: {e}")
 
