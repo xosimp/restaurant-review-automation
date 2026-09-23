@@ -6,23 +6,48 @@ the POS syncs at 3am, reviews land days later, labor is settled after the
 pay period. So the one account of what actually happened tonight is the
 person who was standing in it, and nothing asked them.
 
-Four questions, none of them typing-heavy, all optional:
+Four quick questions, none of them typing-heavy, all optional:
 
   * what went well            (the thing worth repeating)
   * what went wrong           (the thing worth fixing)
   * what you ran out of       (86s — tomorrow's order, in tonight's words)
   * who didn't make it        (callouts — tomorrow's schedule problem)
 
+and, for the nightly Daily Sales Report (dsr/block_closeout.py), six more,
+also optional: equipment, VIP guests, maintenance, shift notes, general
+notes, and `influence` — Erik's "Influence/Result" column, the closer's own
+read of why the day went the way it did.
+
 It is a HANDOFF, not a report: it is written by whoever closed and read by
 whoever opens, and it appears in the next morning's brief. Nothing here is
-scored, ranked or fed to a model — an owner reading their GM's own sentence
-is the point.
+scored or ranked, and nothing rewrites it: an owner reading their GM's own
+sentence is the point. It IS read by a model — the DSR narrative
+(dsr/narrative.py) is given these notes, marked as the manager's own words,
+alongside the night's measured facts — so treat every field as untrusted
+text wherever a prompt carries it.
 """
 from datetime import date, timedelta
 
 from models import get_conn, DB_PATH
 
-FIELDS = ("went_well", "went_wrong", "eighty_sixed", "callouts")
+# The four quick lines first, then the six the Daily Sales Report adds.
+# Order is the order every surface shows them in.
+FIELDS = ("went_well", "went_wrong", "eighty_sixed", "callouts",
+          "equipment", "vip_guests", "maintenance", "shift_notes", "general_notes", "influence")
+DSR_FIELDS = FIELDS[4:]
+# What each field is called wherever it is shown (web, iOS, the DSR).
+LABELS = {
+    "went_well": "What went well",
+    "went_wrong": "What went wrong",
+    "eighty_sixed": "What we ran out of",
+    "callouts": "Who didn't make it",
+    "equipment": "Equipment",
+    "vip_guests": "VIP guests",
+    "maintenance": "Maintenance",
+    "shift_notes": "Shift notes",
+    "general_notes": "General notes",
+    "influence": "Why the day went how it did",
+}
 MAX_LEN = 1000
 
 
@@ -38,26 +63,36 @@ def business_date_for(restaurant, now_local=None):
 def save(restaurant_id, fields, user_id=None, submitted_by=None, business_date=None,
          db_path=DB_PATH, restaurant=None):
     """Write tonight's close-out. Re-filing the same night replaces it —
-    a manager correcting what they typed is not a second close-out."""
+    a manager correcting what they typed is not a second close-out.
+
+    Replaces the fields it is SENT; a field the request leaves out keeps
+    what was filed. Web and the current app always send all ten (an empty
+    string clears one), but an app build from before the DSR fields knows
+    only the first four, and re-filing from it must not wipe the six a
+    manager wrote from the web."""
     from models import get_restaurant
     restaurant = restaurant or get_restaurant(restaurant_id)
     day = (business_date or business_date_for(restaurant)).isoformat() \
         if not isinstance(business_date, str) else business_date
-    values = {k: (str(fields.get(k) or "").strip()[:MAX_LEN] or None) for k in FIELDS}
-    if not any(values.values()):
+    fields = fields if isinstance(fields, dict) else {}
+    values = {k: (str(fields.get(k) or "").strip()[:MAX_LEN] or None) for k in FIELDS if k in fields}
+    existing = get(restaurant_id, day, db_path=db_path) or {}
+    merged = {k: (values[k] if k in values else existing.get(k)) for k in FIELDS}
+    if not any(merged.values()):
         raise ValueError("Write at least one line — otherwise there is nothing to hand over.")
+    cols = ", ".join(FIELDS)
+    marks = ",".join("?" for _ in FIELDS)
+    sent = [k for k in FIELDS if k in values]
+    updates = "".join(f"{k}=excluded.{k}, " for k in sent)
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT INTO close_outs (restaurant_id, business_date, submitted_by, user_id, "
-            "went_well, went_wrong, eighty_sixed, callouts) VALUES (?,?,?,?,?,?,?,?) "
+            f"INSERT INTO close_outs (restaurant_id, business_date, submitted_by, user_id, {cols}) "
+            f"VALUES (?,?,?,?,{marks}) "
             "ON CONFLICT(restaurant_id, business_date) DO UPDATE SET "
             "submitted_by=excluded.submitted_by, user_id=excluded.user_id, "
-            "went_well=excluded.went_well, went_wrong=excluded.went_wrong, "
-            "eighty_sixed=excluded.eighty_sixed, callouts=excluded.callouts, "
-            "created_at=datetime('now')",
-            (restaurant_id, day, submitted_by, user_id, values["went_well"],
-             values["went_wrong"], values["eighty_sixed"], values["callouts"]))
+            f"{updates}created_at=datetime('now')",
+            (restaurant_id, day, submitted_by, user_id, *(merged[k] for k in FIELDS)))
         conn.commit()
     finally:
         conn.close()
@@ -161,6 +196,12 @@ def summarise(entry) -> str:
         bits.append(f"86'd: {entry['eighty_sixed']}")
     if entry.get("callouts"):
         bits.append(f"callouts: {entry['callouts']}")
+    # What the opener walks into: a broken fryer or a leak is this
+    # morning's problem, not just the report's.
+    if entry.get("equipment"):
+        bits.append(f"equipment: {entry['equipment']}")
+    if entry.get("maintenance"):
+        bits.append(f"maintenance: {entry['maintenance']}")
     if not bits and entry.get("went_well"):
         bits.append(entry["went_well"])
     return f"{who} at close — " + " · ".join(bits) if bits else ""

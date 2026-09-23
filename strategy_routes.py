@@ -425,8 +425,9 @@ def _do_action_snooze(u):
 
 def _do_closeout_get(u):
     """Tonight's close-out (or the last one filed), and the questions to
-    answer. Any console login may read and write it: the person who closes
-    is usually not the owner."""
+    answer — the four quick lines and the six the Daily Sales Report adds
+    (`dsr_fields`), with what each is called. Any console login may read
+    and write it: the person who closes is usually not the owner."""
     import closeout
     from models import get_restaurant
     r = get_restaurant(_rid(u))
@@ -434,7 +435,8 @@ def _do_closeout_get(u):
     return {"ok": True, "business_date": day.isoformat(),
             "closeout": closeout.get(_rid(u), day.isoformat()),
             "previous": closeout.latest(_rid(u), before=(day.isoformat())),
-            "fields": list(closeout.FIELDS)}, 200
+            "fields": list(closeout.FIELDS), "dsr_fields": list(closeout.DSR_FIELDS),
+            "labels": dict(closeout.LABELS)}, 200
 
 
 def _do_closeout_save(u):

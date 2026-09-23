@@ -497,8 +497,13 @@ def test_attribution_says_nothing_when_there_is_no_pos_data(rid, db_path, monkey
 
 def test_attribution_says_nothing_without_enough_comparable_history(rid, db_path, monkeypatch):
     today = _now()
+    # Sales on the post day AND the day after: a post read as going out
+    # after POST_DAY_CUTOFF_HOUR has a window that starts tomorrow, so with
+    # today alone this answered "no_sales_yet" every afternoon and evening
+    # and the history rule it exists for was never reached.
     monkeypatch.setattr(marketing_signals, "daily_sales",
-                        lambda r: {today.strftime("%Y-%m-%d"): 5000.0})
+                        lambda r: {today.strftime("%Y-%m-%d"): 5000.0,
+                                   (today + timedelta(days=1)).strftime("%Y-%m-%d"): 5000.0})
     post_id = _post(db_path, rid, days_ago=0)
     assert marketing_signals.attribution_for_post(rid, post_id, db_path=db_path)["reason"] == "not_enough_history"
 

@@ -219,23 +219,24 @@ def _cached_periods(restaurant):
     return periods if isinstance(periods, list) else None
 
 
-def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
-    """One row per date in week_dates that NWS has a forecast for — NWS only
-    forecasts about a week out, so later dates in the week may be omitted
-    entirely rather than guessed at. Returns [] on any failure (no
-    restaurant, no coordinates, NWS unreachable) — never blocks schedule
-    generation.
+def _periods_by_date(restaurant, db_path=DB_PATH):
+    """({date: daytime period}, {date: night period}) from the cached NWS
+    forecast, refreshed when it is older than _CACHE_HOURS. ({}, {}) on any
+    failure (no coordinates, NWS unreachable) — never raises.
 
-    Each row: {"date", "day_name", "high_f", "short_forecast", "precip_pct"}.
-    """
-    if not restaurant:
-        return []
-
+    What the cache held before a refresh replaces it is kept too. NWS drops
+    a day's daytime period once it has passed, so a refresh at 11pm has
+    nothing for today — and the nightly report asks about today. A date the
+    new forecast no longer covers is answered from the older forecast (up
+    to _STALE_OK_HOURS old, as for a failed refresh); a date both cover
+    takes the newer one."""
     periods = _cached_periods(restaurant)
+    previous = None
     if periods is None:
+        previous = _stale_periods(restaurant)
         lat, lon = _geocode(restaurant, db_path=db_path)
         if lat is None or lon is None:
-            return []
+            return {}, {}
         key = ("nws", db_path, restaurant.id, lat, lon)
         failure = "backing_off" if _backing_off(key) else None
         if failure is None:
@@ -251,28 +252,56 @@ def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
                           else _TRANSIENT_BACKOFF_SECS)
             periods = _stale_periods(restaurant) or []
 
-    if not periods:
-        return []
-
-    by_date = {}
-    for p in periods:
-        if not p.get("isDaytime"):
-            continue  # one row per calendar day — skip the "...Night" periods
+    by_day, by_night = {}, {}
+    for p in list(previous or []) + list(periods or []):
         pdate = (p.get("startTime") or "")[:10]
         if pdate:
-            by_date[pdate] = p
+            (by_day if p.get("isDaytime") else by_night)[pdate] = p
+    return by_day, by_night
 
-    rows = []
-    for d in week_dates:
-        p = by_date.get(d)
-        if not p:
-            continue
-        precip = (p.get("probabilityOfPrecipitation") or {}).get("value")
-        rows.append({
-            "date": d,
-            "day_name": p.get("name", ""),
-            "high_f": p.get("temperature"),
-            "short_forecast": p.get("shortForecast", ""),
-            "precip_pct": precip,
-        })
-    return rows
+
+def _row(d, p):
+    precip = (p.get("probabilityOfPrecipitation") or {}).get("value")
+    return {
+        "date": d,
+        "day_name": p.get("name", ""),
+        "high_f": p.get("temperature"),
+        "short_forecast": p.get("shortForecast", ""),
+        "precip_pct": precip,
+    }
+
+
+def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
+    """One row per date in week_dates that NWS has a forecast for — NWS only
+    forecasts about a week out, so later dates in the week may be omitted
+    entirely rather than guessed at. Returns [] on any failure (no
+    restaurant, no coordinates, NWS unreachable) — never blocks schedule
+    generation.
+
+    Each row: {"date", "day_name", "high_f", "short_forecast", "precip_pct"}.
+    One row per calendar day: the "...Night" periods are skipped.
+    """
+    if not restaurant:
+        return []
+    by_day, _night = _periods_by_date(restaurant, db_path=db_path)
+    return [_row(d, by_day[d]) for d in week_dates if d in by_day]
+
+
+def forecast_for_day(restaurant, day, db_path=DB_PATH):
+    """The forecast NWS gave for one date, day and night:
+    {"day": row or None, "night": row or None}, where a night row carries
+    `low_f` instead of `high_f`. Both None on any failure.
+
+    For the nightly report: after close the daytime period may be gone from
+    every copy of the forecast Cavnar holds, and "Tonight" is then the only
+    reading of the evening that was served. It is a FORECAST either way —
+    nothing here is observed weather."""
+    if not restaurant:
+        return {"day": None, "night": None}
+    d = str(day)[:10]
+    by_day, by_night = _periods_by_date(restaurant, db_path=db_path)
+    night = None
+    if d in by_night:
+        night = _row(d, by_night[d])
+        night["low_f"] = night.pop("high_f")
+    return {"day": _row(d, by_day[d]) if d in by_day else None, "night": night}
