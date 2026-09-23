@@ -4366,7 +4366,7 @@ def mobile_update_profile(current_user):
     try:
         update_restaurant(current_user["restaurant_id"], updates, expected_version=expected_version_from(data))
     except StaleWrite as e:
-        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
     _log_account_event(current_user["restaurant_id"], "profile_updated", current_user)
     return jsonify(ok=True)
 
@@ -5279,7 +5279,7 @@ def mobile_save_alert_settings(current_user):
     if expected is not None and restaurant_version(rid) != expected:
         # Before the contacts are touched: a stale form changes nothing (DATA-28).
         e = StaleWrite(restaurant_version(rid))
-        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
 
     # A real error instead of silently dropping the extras — the client
     # already hides its own "+ Add" past 2, so this only fires for a
@@ -5342,7 +5342,7 @@ def mobile_save_alert_settings(current_user):
     try:
         update_restaurant(rid, _fields, expected_version=expected)
     except StaleWrite as e:
-        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
     _log_account_event(rid, "alert_settings_saved", current_user)
     return jsonify(ok=True)
 

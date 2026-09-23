@@ -2554,9 +2554,13 @@ class StaleWrite(RuntimeError):
     stamping toast_last_synced has nothing to conflict with).
     """
 
+    # Our own wording, safe to hand a client as-is (routes use this, never
+    # str(e) — see tests/test_intel_integrity.py).
+    user_message = ("Someone else changed these settings while you were editing. "
+                    "Reload and make your change again.")
+
     def __init__(self, current_version):
-        super().__init__("Someone else changed these settings while you were editing. "
-                         "Reload and make your change again.")
+        super().__init__(self.user_message)
         self.current_version = current_version
 
 
