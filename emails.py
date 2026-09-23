@@ -986,6 +986,29 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
     """)
 
 
+def _pay_sig(restaurant_id) -> str:
+    import hashlib
+    import hmac
+    key = (os.getenv("SECRET_KEY") or "").encode()
+    return hmac.new(key, f"pay:{int(restaurant_id)}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def pay_link(restaurant_id, period="monthly") -> str:
+    """A payment link that never expires: /pay/<rid>.<sig>/<period>."""
+    import config
+    return f"{config.base_url().rstrip('/')}/pay/{int(restaurant_id)}.{_pay_sig(restaurant_id)}/{period}"
+
+
+def read_pay_token(token):
+    import hmac
+    try:
+        rid_s, sig = str(token).split(".", 1)
+        rid = int(rid_s)
+    except (ValueError, AttributeError):
+        return None
+    return rid if hmac.compare_digest(sig, _pay_sig(rid)) else None
+
+
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None,
                        restaurant_id: int = None,
@@ -1013,11 +1036,19 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     label = plan["label"]
     saving = annual_saving(module_count)
 
-    # Generate dynamic Stripe checkout links — both monthly and annual
-    checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly",
-                                              restaurant_id=restaurant_id, modules=modules)
-    checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual",
-                                              restaurant_id=restaurant_id, modules=modules)
+    # Links to our own /pay route, which mints a fresh Checkout Session when
+    # clicked. A raw Checkout Session URL expires in 24 hours and could not
+    # be regenerated, so an owner opening onboarding mail days later hit a
+    # dead link (MOD-BIL-5). Without a restaurant id there is nothing to
+    # mint against, so those still get direct links.
+    if restaurant_id:
+        checkout_monthly = pay_link(restaurant_id, "monthly")
+        checkout_annual = pay_link(restaurant_id, "annual")
+    else:
+        checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly",
+                                                  restaurant_id=restaurant_id, modules=modules)
+        checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual",
+                                                  restaurant_id=restaurant_id, modules=modules)
 
     annual_price    = f"{_pm(plan['annual'])}/yr"
     annual_monthly  = f"{_pm(round(plan['annual'] / 12.0))}/mo"
@@ -1395,6 +1426,9 @@ def _checkout_metadata(restaurant_name, module_count, restaurant_id=None, module
     return meta
 
 
+_PRICE_IDS = {}
+
+
 def create_stripe_checkout(module_count: int, owner_email: str,
                             restaurant_name: str,
                             billing_period: str = "monthly",
@@ -1438,15 +1472,30 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             else:
                 product_id = _stripe.Product.create(name=product_name).id
 
-            # Create a fresh price each time (amount may vary)
+            # One Price per product, amount and interval, reused: every
+            # checkout used to create two new Prices, so the Stripe account
+            # filled with thousands of identical ones (MOD-BIL-10). Found by
+            # lookup_key (in this process first, then Stripe), created once.
+            lookup = f"cavnar-{product_id}-{int(unit_amount)}-{interval if recurring else 'once'}"
+            if lookup in _PRICE_IDS:
+                return _PRICE_IDS[lookup]
+            try:
+                found = _stripe.Price.list(lookup_keys=[lookup], active=True, limit=1)
+                if getattr(found, "data", None):
+                    _PRICE_IDS[lookup] = found.data[0].id
+                    return _PRICE_IDS[lookup]
+            except Exception:
+                pass
             kwargs = dict(
                 product=product_id,
                 unit_amount=unit_amount,
                 currency="usd",
+                lookup_key=lookup,
             )
             if recurring:
                 kwargs["recurring"] = {"interval": interval}
-            return _stripe.Price.create(**kwargs).id
+            _PRICE_IDS[lookup] = _stripe.Price.create(**kwargs).id
+            return _PRICE_IDS[lookup]
 
         period_label = "Annual" if billing_period == "annual" else "Monthly"
         setup_price_id   = get_or_create_price(

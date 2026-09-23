@@ -296,6 +296,32 @@ FROM_EMAIL            = config.from_email()
 WILL_EMAIL            = config.will_email()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
+@webhook_bp.route("/pay/<token>/<period>")
+def pay_link_route(token, period):
+    """Where a payment email's buttons go. Mints a fresh Checkout Session on
+    every click, so the email's link never expires (MOD-BIL-5). Public: the
+    signed token names one restaurant and nothing else."""
+    from emails import read_pay_token, create_stripe_checkout
+    from markupsafe import escape as _esc_pay
+    page = ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Cavnar AI</title><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,"
+            "sans-serif;max-width:480px;margin:12vh auto;padding:24px;color:#0e0c0a\"><h2>%s</h2><p>%s</p></div>")
+    rid = read_pay_token(token)
+    if not rid or period not in ("monthly", "annual"):
+        return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
+    r = get_restaurant(rid)
+    if not r:
+        return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
+    if (r.billing_status or "").lower() in ("active", "past_due"):
+        return page % ("You're all set", f"{_esc_pay(r.name)} is already paid for. Nothing more to do."), 200
+    modules = [k for k in ("reviews", "labor", "inventory", "marketing") if getattr(r, f"module_{k}", 0)]
+    url = create_stripe_checkout(max(1, len(modules)), r.owner_email, r.name, period,
+                                 restaurant_id=rid, modules=modules)
+    if not url:
+        return page % ("We couldn't open checkout", "Try again in a minute, or write to will@cavnar.ai."), 503
+    return redirect(url)
+
+
 @webhook_bp.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     import stripe
@@ -342,6 +368,23 @@ _BILLING_STATE_EVENTS = {
     "customer.subscription.updated", "customer.subscription.deleted", "invoice.paid",
     "invoice.payment_failed", "charge.refunded", "charge.dispute.created",
 }
+
+
+def _second_subscription(rid, sub_id, session_id) -> bool:
+    """Record the restaurant's subscription; True when it already has a
+    different one."""
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT subscription_id FROM stripe_subscriptions WHERE restaurant_id=?", (rid,)).fetchone()
+        if row and row["subscription_id"] != sub_id:
+            return True
+        if not row:
+            conn.execute("INSERT INTO stripe_subscriptions (restaurant_id, subscription_id, session_id) VALUES (?,?,?)",
+                         (rid, sub_id, session_id))
+            conn.commit()
+        return False
+    finally:
+        conn.close()
 
 
 def _event_restaurant(event):
@@ -431,6 +474,21 @@ def _stripe_dispatch(event):
         sub_id      = sess.get("subscription", "") or ""
         email       = (sess.get("customer_details") or {}).get("email") or sess.get("customer_email") or ""
         rid = _restaurant_from_metadata(meta) or _restaurant_for_stripe(customer_id, email)
+        if rid and sub_id and _second_subscription(rid, sub_id, sess.get("id")):
+            # Paid in both the monthly and the annual tab: the first
+            # subscription stands, this one is cancelled and Will is told to
+            # refund its setup fee (MOD-BIL-5).
+            try:
+                import stripe as _stripe_dup
+                _stripe_dup.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+                _stripe_dup.Subscription.cancel(sub_id)
+                _dup_note = "The second subscription was cancelled."
+            except Exception as _de:
+                _dup_note = f"Cancelling it failed ({_safe_err(_de)}); cancel {sub_id} in Stripe."
+            send_alert(f"⚠ Second checkout for the same restaurant — {meta.get('restaurant') or email}",
+                       f"Restaurant {rid} completed a second checkout (subscription {sub_id}). {_dup_note} "
+                       "Refund the second setup fee in Stripe.")
+            return jsonify(ok=True, duplicate_subscription=True)
         if rid:
             updates = {"billing_status": "active"}
             if customer_id:
@@ -656,6 +714,16 @@ def _stripe_dispatch(event):
         # until someone read that email — indefinitely, at Cavnar's API cost.
         # auth.login_required/mobile_login_required read billing_status.
         revoked_rid = _restaurant_for_stripe(customer_id, email)
+        if revoked_rid and sub.get("id"):
+            # The ended subscription no longer counts as the restaurant's one
+            # live subscription; a later re-subscribe is a first checkout.
+            _c_sub = get_conn()
+            try:
+                _c_sub.execute("DELETE FROM stripe_subscriptions WHERE restaurant_id=? AND subscription_id=?",
+                               (revoked_rid, sub["id"]))
+                _c_sub.commit()
+            finally:
+                _c_sub.close()
         if revoked_rid:
             try:
                 for _rid in _sibling_restaurant_ids(revoked_rid):
@@ -915,6 +983,12 @@ def docusign_webhook():
             # From here on only emails are sent; a failure in them must not
             # release the claim (that would re-send on DocuSign's retry).
             claimed_key = None
+            # A re-sent contract signed by a client who is already paying is a
+            # contract update, not onboarding: no second setup-fee link and
+            # no welcome email (MOD-BIL-6).
+            if row and (getattr(get_restaurant(row["id"]), "billing_status", "") or "").lower() in ("active", "past_due"):
+                print(f"Envelope {envelope_id} signed by an already-paying client — no payment or welcome email")
+                row = None
             if row and _resend_key():
                 r = dict(row)
                 mods = sum([

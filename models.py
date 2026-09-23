@@ -1207,6 +1207,15 @@ def init_db(db_path: str = DB_PATH):
         # Stripe does not deliver in order; an older event arriving later
         # (an invoice.paid created before the cancellation) must not undo a
         # newer one (MOD-BIL-1).
+        # The subscription a restaurant's checkout created. Paying in both the
+        # monthly and the annual tab made two live subscriptions and two
+        # setup charges (MOD-BIL-5); the second is cancelled against this.
+        """CREATE TABLE IF NOT EXISTS stripe_subscriptions (
+            restaurant_id   INTEGER PRIMARY KEY,
+            subscription_id TEXT NOT NULL,
+            session_id      TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         """CREATE TABLE IF NOT EXISTS stripe_billing_clock (
             restaurant_id      INTEGER PRIMARY KEY,
             last_event_created INTEGER NOT NULL,

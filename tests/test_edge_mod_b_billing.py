@@ -406,7 +406,6 @@ def test_a_signed_contract_sends_the_payment_link_and_the_welcome_once(db_path, 
     assert _password_hash(db_path, uid) != before
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-6: signing a re-sent contract resets an active owner's password and re-sends the setup-fee payment link")
 def test_a_second_envelope_for_an_active_client_neither_resets_the_password_nor_rebills(db_path, ds):
     """A10 #32 / MOD-BIL-6."""
     rid = _restaurant(db_path, docusign_envelope_id="env_2", contract_status="sent", billing_status="active",
@@ -430,7 +429,6 @@ def test_signing_the_superseded_envelope_still_counts(db_path, ds):
 
 # ── Payment links ───────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-5: payment emails embed raw Stripe Checkout Session URLs that expire and cannot be regenerated")
 def test_the_payment_email_links_to_a_cavnar_pay_route_not_a_raw_checkout_session(db_path, monkeypatch):
     """A10 #35 / MOD-BIL-5 — an owner opening onboarding mail days later
     must land somewhere that mints a fresh session."""
@@ -444,7 +442,6 @@ def test_the_payment_email_links_to_a_cavnar_pay_route_not_a_raw_checkout_sessio
     assert "checkout.stripe.com" not in html
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-5: completing both the monthly and the annual checkout creates two subscriptions and two setup charges")
 def test_completing_both_plans_does_not_leave_two_live_subscriptions(db_path, hook, stripe_fake):
     """A10 #36 / MOD-BIL-5 — the owner opened both tabs and paid in both.
     The second subscription must be cancelled (or never allowed to form)."""
@@ -459,7 +456,6 @@ def test_completing_both_plans_does_not_leave_two_live_subscriptions(db_path, ho
     assert stopped, "both subscriptions stay live and both setup fees are charged"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-10: every checkout creates new Stripe Prices instead of reusing one per tier")
 def test_checkout_creation_reuses_prices_instead_of_creating_new_ones(db_path, stripe_fake, monkeypatch):
     """MOD-BIL-10 — two payment emails for the same tier create the setup
     and retainer Prices once, not twice."""
