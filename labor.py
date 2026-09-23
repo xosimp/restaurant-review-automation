@@ -3,7 +3,7 @@ labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
 import csv, json, math, re, time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 
@@ -299,11 +299,12 @@ def get_hourly_rate(restaurant_id: int) -> float:
 
 
 def get_labor_target(restaurant_id: int) -> float:
-    """Get per-client labor target % from DB."""
+    """Per-client labor target % — notify.labor_target_for, the one
+    resolver every surface reads (re-audit A-3)."""
     try:
         from models import get_restaurant
-        r = get_restaurant(restaurant_id)
-        return r.labor_target_pct if r and r.labor_target_pct else 30.0
+        from notify import labor_target_for
+        return labor_target_for(get_restaurant(restaurant_id))
     except Exception:
         return 30.0
 
@@ -424,19 +425,51 @@ def _covers_guidance(analysis: dict) -> str:
             f"was lost or that service was slow, and never recommend adding staff on this evidence alone.")
 
 
-def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD) -> dict:
+# Current-state labor reads (Home, the 10am alert, the manager's labor issue,
+# the Labor tab and its note) cover this many days ending on the latest shift
+# on file. POS syncs merge into shifts_csv with no window (pos.
+# save_synced_shifts keeps every date outside the synced range), so after six
+# months of Toast the "current" labor % was a 180-day average and the alert
+# key labor_over:<first date ever> never changed (re-audit A-12). Relative to
+# the data's own latest date, not today, so a hand-uploaded period is still
+# read whole.
+CURRENT_WINDOW_DAYS = 28
+
+
+def current_window(shifts, window_days=CURRENT_WINDOW_DAYS):
+    """The shifts inside the trailing `window_days` ending on the latest
+    dated shift; all of them when window_days is None."""
+    if not window_days or not shifts:
+        return shifts
+    dates = sorted({str(x.get("date") or "")[:10] for x in shifts if x.get("date")})
+    if not dates:
+        return shifts
+    try:
+        start = (date.fromisoformat(dates[-1]) - timedelta(days=window_days - 1)).isoformat()
+    except ValueError:
+        return shifts
+    return [x for x in shifts if not x.get("date") or str(x.get("date"))[:10] >= start]
+
+
+def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
+                                  window_days=CURRENT_WINDOW_DAYS) -> dict:
     """Load shifts and analyse with client-specific hourly rate and target.
 
     `client_data` is the restaurant's client_data row when the caller has
     already read it. It was read twice here (once for is_live, again inside
     load_shifts_for_restaurant) and again by the inventory read beside it on
-    Home — three reads of the whole shifts blob for one page (MOD-HOME-2)."""
+    Home — three reads of the whole shifts blob for one page (MOD-HOME-2).
+
+    `window_days` bounds the read to the current period (CURRENT_WINDOW_DAYS,
+    see above). Pass None for the whole file — only the per-day history
+    archive wants that."""
     if client_data is _UNREAD:
         from models import get_client_data
         client_data = get_client_data(restaurant_id)
     is_live = bool(client_data and client_data.get("shifts_csv"))
     # The labelled preview: is_live=False travels with the result.
-    shifts = load_shifts_for_restaurant(restaurant_id, allow_sample=True, client_data=client_data)
+    shifts = current_window(load_shifts_for_restaurant(restaurant_id, allow_sample=True,
+                                                       client_data=client_data), window_days)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
     from models import get_role_rates, compute_blended_rate
@@ -696,7 +729,7 @@ def analyse_shifts(shifts: list[dict],
         labor_pct  = (labor_cost / d["sales"] * 100) if d["sales"] else 0
         d["labor_cost"] = round(labor_cost, 2)
         d["labor_pct"]  = round(labor_pct, 1)
-        if labor_pct > OVERSTAFF_THRESHOLD:
+        if labor_pct >= OVERSTAFF_THRESHOLD:        # one comparison with the alert (A-29)
             # Format date as M/D/YY
             try:
                 fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
@@ -751,8 +784,13 @@ def analyse_shifts(shifts: list[dict],
         weekly_hours[emp][week_key] = weekly_hours[emp].get(week_key, 0) + actual
 
     def _wk_label(wk):
+        # M/D/YY: the week label reaches the owner and the labor note's
+        # prompt, which echoes it — "Sep 21" was off the one date format
+        # (re-audit A-25).
+        from time_utils import mdy
         try:
-            return datetime.strptime(wk, "%Y-%m-%d").strftime("%b %-d")
+            datetime.strptime(wk, "%Y-%m-%d")
+            return mdy(wk)
         except Exception:
             return str(wk)
 
@@ -1173,7 +1211,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     greeting = f"{owner_name}," if owner_name else "Hi,"
     from time_utils import restaurant_now_by_id
     _local_now = restaurant_now_by_id(restaurant_id) if restaurant_id else datetime.now(ZoneInfo('America/Chicago'))
-    today_labor = _local_now.strftime("%B %d, %Y")
+    from time_utils import mdy as _mdy
+    today_labor = _mdy(_local_now)
 
     # Guard: sample data is not this restaurant's data. load_shifts_for_restaurant
     # substitutes a bundled fictional week when nothing has been uploaded, and
@@ -1222,7 +1261,9 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
             if history:
                 trend_lines = []
                 for h in history:
-                    trend_lines.append(f"{h['period_start']} to {h['period_end']}: {h['labor_pct']}% labor")
+                    # M/D/YY — the model repeats what it is given (A-25).
+                    from time_utils import mdy_range as _mdy_range
+                    trend_lines.append(f"{_mdy_range(h['period_start'], h['period_end'])}: {h['labor_pct']}% labor")
                 trend_context = f"\n- Previous uploads (for trend comparison): {'; '.join(trend_lines)}"
                 # Only call it a trend when the two periods are actually
                 # comparable. Snapshots cover whatever window each upload

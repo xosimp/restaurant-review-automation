@@ -839,8 +839,10 @@ def _do_time_off_decide(u, request_id):
     row = time_off.decide(_rid(u), request_id, decision == "approve", decided_by=u.get("id"), note=b.get("note"))
     if not row:
         return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    from time_utils import mdy_range
+    # The account log is owner-facing: M/D/YY, not the stored ISO (A-25).
     log_account_event(_rid(u), "time_off_decided", current_user=u,
-                      detail=f"{row['employee_name']} {row['start_date']}–{row['end_date']}: {row['status']}")
+                      detail=f"{row['employee_name']} {mdy_range(row['start_date'], row['end_date'])}: {row['status']}")
     out = {"ok": True, "request": row}
     if row["status"] == "approved":
         # A week staff already have may put them on those days: name each

@@ -172,7 +172,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
-    target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    from notify import labor_target_for as _labor_target_for
+    target   = _labor_target_for(restaurant)
     owner    = restaurant.owner_name if restaurant else None
     staff_notes = get_staff_notes(restaurant_id) or None
 

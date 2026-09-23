@@ -296,9 +296,16 @@ BRIEFING_NORMAL_PER_DAY = 4
 # ── thresholds from the restaurant's own band ────────────────────────────────
 # A 4.0★ floor and a 30% labor target were the defaults for every
 # restaurant, so a 4.7★ place never heard about a slide to 4.2 and a 24%
-# operation was "under target" all the way to 29%. When the owner has not
-# set one, the default is derived from their own last eight weeks; the
-# owner's explicit setting always wins.
+# operation was "under target" all the way to 29%. These bands describe the
+# restaurant's own last eight weeks. They are NOT thresholds any more
+# (re-audit A-2 / A-3): a derived figure was presented as "your threshold"
+# and "your target", compared unlike with unlike (recent reviews against
+# Google's lifetime rating), and disagreed with Home. Thresholds are the
+# owner's settings — labor_target_for and RATING_FLOOR_DEFAULT.
+
+# The rating floor Settings shows until the owner changes it.
+RATING_FLOOR_DEFAULT = 4.0
+
 
 def baseline_rating_floor(restaurant_id, db_path=DB_PATH):
     try:
@@ -322,19 +329,31 @@ def baseline_labor_target(restaurant_id, db_path=DB_PATH):
         return None
 
 
+DEFAULT_LABOR_TARGET_PCT = 30.0
+
+
 def labor_target_for(restaurant, db_path=DB_PATH) -> float:
-    """The labor % target every "over target" check measures against: the
-    owner's own setting, else their eight-week band, else 30. The alert and
-    the labor issue read it from here, so they cannot disagree about what
-    the target is (#34)."""
-    rid = getattr(restaurant, "id", None)
-    own = getattr(restaurant, "labor_target_pct", None)
+    """The ONE labor % target every "over target" check measures against:
+    the owner's own setting (Settings shows it, 30 until they change it),
+    else 30. The alert, the labor issue, Home, the Labor tab
+    (labor.get_labor_target) and the labor note all read it from here, so
+    no two surfaces can disagree about the target (#34, re-audit A-3).
+
+    The alert and the issue used to fall back to an eight-week band
+    (trailing labor + 2) while Home used 30, so one morning read as a win on
+    Home and "3.5pts over your 26% target" by SMS — and a band that follows
+    the trailing figure rises with bad performance, silencing the alert at
+    exactly the wrong time. A derived figure is not "your target"; the
+    band is no longer used as one. Takes a Restaurant or a row dict."""
+    own = restaurant.get("labor_target_pct") if isinstance(restaurant, dict) \
+        else getattr(restaurant, "labor_target_pct", None)
     try:
-        if own:
-            return float(own)
+        value = float(own)
+        if value > 0:
+            return value
     except (TypeError, ValueError):
         pass
-    return float((baseline_labor_target(rid, db_path) if rid else None) or 30.0)
+    return DEFAULT_LABOR_TARGET_PCT
 
 
 # ── who an alert's push may reach (#33) ──────────────────────────────────────
@@ -1141,42 +1160,19 @@ def _hhmm(text):
 
 
 def _parse_setting_time(value):
-    """'11:00am' / '9:30pm' / '17:30' -> (hour, minute), or None."""
-    raw = str(value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    ampm = None
-    for suffix in ("am", "pm"):
-        if raw.endswith(suffix):
-            ampm, raw = suffix, raw[:-2]
-            break
-    parts = raw.split(":")
-    try:
-        hour = int(parts[0])
-        minute = int(parts[1]) if len(parts) > 1 else 0
-    except (ValueError, IndexError):
-        return None
-    if ampm == "pm" and hour < 12:
-        hour += 12
-    if ampm == "am" and hour == 12:
-        hour = 0
-    return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else None
+    """'11:00am' / '9:30pm' / '17:30' -> (hour, minute), or None.
+    time_utils.parse_clock is the one parser; this name stays for callers."""
+    from time_utils import parse_clock
+    return parse_clock(value)
 
 
 def _open_window(restaurant, weekday_name):
     """((open_h, open_m), (close_h, close_m)) for this weekday, or None when
-    the restaurant has not configured hours."""
-    import json as _json
-
-    def _load(raw):
-        try:
-            return _json.loads(raw) if raw else {}
-        except Exception:
-            return {}
-
-    opens = _parse_setting_time(_load(getattr(restaurant, "open_times_json", None)).get(weekday_name))
-    closes = _parse_setting_time(_load(getattr(restaurant, "close_times_json", None)).get(weekday_name))
-    return (opens, closes) if (opens or closes) else None
+    the restaurant has not configured hours. Raw clock readings: a close at
+    or after midnight is NOT comparable with a same-day time — ask
+    time_utils.is_open_at / service_window instead."""
+    from time_utils import opening_hours
+    return opening_hours(restaurant, weekday_name)
 
 
 def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_local=None):
@@ -1186,13 +1182,16 @@ def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_
     if alert_type in RUSH_EXEMPT_TYPES:
         return None
     try:
-        from datetime import time as _time, timezone as _timezone
+        from datetime import timezone as _timezone
         from time_utils import restaurant_now, restaurant_tz
         r = models.get_restaurant(restaurant_id, db_path)
         if r is not None and not bool(getattr(r, "alert_hold_during_service", 1)):
             return None
         local = now_local or restaurant_now(r, naive=True)
-        window = _open_window(r, local.strftime("%A")) if r is not None else None
+        from time_utils import is_open_at, service_window
+        # Hours configured for today: a rush only counts while open. The
+        # close may be past midnight (A-1) — is_open_at reads it as such.
+        hours_set = r is not None and service_window(r, local.date()) is not None
         for start, end in RUSH_WINDOWS:
             s_h, s_m = _hhmm(start)
             e_h, e_m = _hhmm(end)
@@ -1200,13 +1199,8 @@ def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_
             ends = local.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
             if not (begins <= local < ends):
                 continue
-            if window:
-                opens, closes = window
-                # Closed through this window: not a rush.
-                if opens and local.time() < _time(*opens):
-                    continue
-                if closes and local.time() >= _time(*closes):
-                    continue
+            if hours_set and not is_open_at(r, local):
+                continue                  # closed through this window: not a rush
             return ends.replace(tzinfo=restaurant_tz(r)).astimezone(_timezone.utc)
         return None
     except Exception as e:
@@ -2302,17 +2296,18 @@ LABOR_ALERT_MAX_PERIOD_AGE_DAYS = 21
 
 
 def _short_period(start, end) -> str:
-    """"Aug 25-31" for an alert body. The SMS and the push carried no period
-    at all, so a figure from months ago read as this week's."""
-    from datetime import datetime as _d
+    """"8/25/26 – 8/31/26" for an alert body. The SMS and the push carried
+    no period at all, so a figure from months ago read as this week's. M/D/YY
+    like every owner-facing date — "Aug 25-31" was the one exception
+    (re-audit A-25)."""
+    from datetime import date as _date
+    from time_utils import mdy_range
     try:
-        a = _d.strptime(str(start)[:10], "%Y-%m-%d")
-        b = _d.strptime(str(end)[:10], "%Y-%m-%d")
+        _date.fromisoformat(str(start)[:10])
+        _date.fromisoformat(str(end)[:10])
     except (ValueError, TypeError):
         return str(start or "the last synced period")
-    if a.month == b.month:
-        return f"{a.strftime('%b')} {a.day}-{b.day}"
-    return f"{a.strftime('%b %-d')}-{b.strftime('%b %-d')}"
+    return mdy_range(str(start)[:10], str(end)[:10])
 
 
 def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
@@ -2423,7 +2418,13 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         # ── Rating drops below threshold ───────────────────────
         if r["alert_rating_threshold"] and not _already_alerted("rating_threshold"):
             gbp_rating = r["gbp_rating"]
-            floor      = r["alert_rating_floor"] or baseline_rating_floor(rid, db_path) or 4.0
+            # The owner's floor from Settings (4.0 until they change it),
+            # compared with Google's published rating — like with like. A
+            # floor derived from the last eight weeks' NEW reviews is a
+            # different measure: an improving place (recent 4.9, floor 4.7)
+            # was told its lifetime 4.5 had "dropped" below a threshold it
+            # never set, and a declining one was never told (re-audit A-2).
+            floor      = r["alert_rating_floor"] or RATING_FLOOR_DEFAULT
             if gbp_rating is not None and gbp_rating < floor:
                 sms  = (
                     f"⚠️ {name}: Google rating dropped to {gbp_rating:.1f}★ "
@@ -2456,7 +2457,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             c2.close()
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]
-                target = r["labor_target_pct"] or baseline_labor_target(rid, db_path) or 30.0
+                target = labor_target_for(dict(r))
                 # One definition of "over target" (thresholds.py) shared with
                 # the labor issue and Home. Any overage at all used to fire
                 # this, so 30.2% against 30% was a text (#34).

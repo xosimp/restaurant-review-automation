@@ -47,18 +47,25 @@ def _median(values):
     return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
 
 
-def capture(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
+def capture(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None, business_day=None):
     """Store net sales so far today, under this local hour.
+
+    The reading is filed under the service's BUSINESS date: at 12:30am
+    during a Friday that closes at 1:00am it is Friday's figure, stored at
+    captured_hour 24 so it still sorts after Friday's 11pm reading — the
+    last reading is the night's total (day_total), and the calendar date
+    would have started Saturday with Friday's sales (A-1 / A-20).
 
     Returns {"ok": False, "reason"} for a POS that cannot be read during
     service — a normal state, not an error.
     """
     import pos
     from models import get_restaurant
-    from time_utils import restaurant_now
+    from time_utils import restaurant_now, business_date
     restaurant = restaurant or get_restaurant(restaurant_id)
     local = now_local or restaurant_now(restaurant, naive=True)
-    day = local.date()
+    day = business_day or business_date(restaurant, local)
+    hour = local.hour + 24 * max(0, (local.date() - day).days)
     try:
         net, provider = pos.fetch_sales_today(restaurant_id, day)
     except pos.POSCapabilityError as e:
@@ -73,12 +80,12 @@ def capture(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
             "net_sales, provider) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(restaurant_id, business_date, captured_hour) DO UPDATE SET "
             "net_sales=excluded.net_sales, created_at=datetime('now')",
-            (restaurant_id, day.isoformat(), local.hour, local.strftime("%A"),
+            (restaurant_id, day.isoformat(), hour, day.strftime("%A"),
              float(net), provider))
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "net_sales": float(net), "hour": local.hour, "provider": provider}
+    return {"ok": True, "net_sales": float(net), "hour": hour, "provider": provider}
 
 
 def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):

@@ -694,18 +694,12 @@ DEFAULT_SERVICE_HOURS = (10, 23)
 
 
 def _open_now(r, local):
-    """True when the restaurant is inside its opening hours, or inside a
-    plain daytime window when it hasn't set any."""
-    from notify import _open_window
-    window = _open_window(r, local.strftime("%A"))
-    if not window:
-        return DEFAULT_SERVICE_HOURS[0] <= local.hour < DEFAULT_SERVICE_HOURS[1]
-    opens, closes = window
-    if opens and local.time() < __import__("datetime").time(*opens):
-        return False
-    if closes and local.time() >= __import__("datetime").time(*closes):
-        return False
-    return True
+    """True when the restaurant is inside its opening hours — including a
+    close at or after midnight, which is last night's service still running
+    (time_utils.is_open_at, A-1) — or inside a plain daytime window when it
+    hasn't set hours for today."""
+    from time_utils import is_open_at
+    return is_open_at(r, local, default_hours=DEFAULT_SERVICE_HOURS)
 
 
 def run_intraday_capture(db_path=DB_PATH):
@@ -1025,14 +1019,62 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
 
 def _close_hour(r, local):
     """The hour this restaurant is done for the night, rounded up past any
-    half hour, or 22 when it hasn't set hours."""
-    from notify import _open_window
-    window = _open_window(r, local.strftime("%A"))
-    closes = window[1] if window else None
-    if not closes:
-        return DEFAULT_SERVICE_HOURS[1] - 1
-    hour = closes[0] + (1 if closes[1] else 0)
-    return min(hour, 23)
+    half hour, or 22 when it hasn't set hours — for the business date
+    `local` belongs to. A close past midnight is 24+ (1:00am -> 25): it is
+    the same night's close, not the next calendar day's (A-1 / A-11)."""
+    from datetime import datetime as _dt
+    from time_utils import business_date
+    day = business_date(r, local)
+    since = _closing_send_at(r, day) - _dt.combine(day, _dt.min.time())
+    return int(since.total_seconds() // 3600)
+
+
+def _closing_send_at(r, day):
+    """When the closing summary for the service on business date `day` is
+    due: its close, rounded up to the next hour past any half hour, or
+    22:00 when that weekday has no close set. A close at or after midnight
+    is the next calendar morning — still `day`'s service."""
+    from datetime import datetime as _dt, time as _time, timedelta as _td
+    from time_utils import opening_hours, service_window
+    hours = opening_hours(r, day.strftime("%A"))
+    if not hours or not hours[1]:
+        return _dt.combine(day, _time(DEFAULT_SERVICE_HOURS[1] - 1, 0))
+    closes = service_window(r, day)[1]
+    if closes.minute:
+        closes = closes.replace(minute=0) + _td(hours=1)
+    return closes
+
+
+def _as_of_label(summary, r, day):
+    """"9pm" when the night's last reading was taken before close (a POS
+    that couldn't be read at close), else None — so a partial figure is
+    never presented as the night's total (A-20)."""
+    hour = summary.get("hour")
+    if hour is None:
+        return None
+    from datetime import datetime as _dt, timedelta as _td
+    close_at = _closing_send_at(r, day)
+    taken = _dt.combine(day, _dt.min.time()) + _td(hours=int(hour))
+    return _clock(int(hour) % 24) if taken + _td(hours=1) <= close_at else None
+
+
+# The closing summary goes out in this many hours after close, or not at all
+# (a summary at breakfast is the morning brief's job).
+CLOSING_SUMMARY_WINDOW_HOURS = 2
+
+
+def _closing_due_day(r, local):
+    """The business date whose closing summary is due at `local`, or None.
+    The candidate services are yesterday's (a late close lands after
+    midnight) and today's. Owned by the business date, not the calendar
+    date: a Friday that closes at 1:00am is summarised at 1am Saturday as
+    FRIDAY, and Thursday's 10pm close is not re-sent then (A-11)."""
+    from datetime import timedelta as _td
+    for day in (local.date() - _td(days=1), local.date()):
+        send_at = _closing_send_at(r, day)
+        if send_at <= local < send_at + _td(hours=CLOSING_SUMMARY_WINDOW_HOURS):
+            return day
+    return None
 
 
 def run_closing_summary(db_path=DB_PATH):
@@ -1046,7 +1088,7 @@ def run_closing_summary(db_path=DB_PATH):
 
     P4: passive, no sound, no Focus break. It is a summary, not an alert.
     """
-    import closeout, intraday, ops, push, scheduler
+    import closeout, intraday, ops
     from models import is_in_quiet_hours
     from time_utils import restaurant_now
     sent = 0
@@ -1054,17 +1096,26 @@ def run_closing_summary(db_path=DB_PATH):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
         local = restaurant_now(r, naive=True)
-        hour = _close_hour(r, local)
-        if not scheduler.local_due(r, hour, until=min(hour + 2, 24),
-                                   claim_key="closing_summary", now_local=local):
+        day = _closing_due_day(r, local)
+        if day is None:
+            continue
+        if not ops.claim_period(f"closing_summary:{r.id}", day.isoformat()):
             continue
         # An owner who asked not to be disturbed at night meant this too.
         # It is in tomorrow's brief either way.
         if is_in_quiet_hours(r.id, db_path=db_path):
             continue
         try:
-            day = closeout.business_date_for(r, now_local=local)
+            # The hourly captures stop at close, so the last one was taken
+            # up to an hour before it: one more reading now is the night's
+            # real total (A-20). A POS that can't be read during service
+            # just keeps what it has.
+            try:
+                intraday.capture(r.id, now_local=local, db_path=db_path, restaurant=r, business_day=day)
+            except Exception as ce:
+                ops.capture(ce, job="closing_capture", context=f"restaurant_id={r.id}")
             summary = intraday.closing_summary(r.id, day=day, db_path=db_path, restaurant=r)
+            summary["as_of"] = _as_of_label(summary, r, day)
             note = closeout.get(r.id, day, db_path=db_path)
             title, body = _closing_text(summary, note)
             if not title:
@@ -1086,7 +1137,13 @@ def _closing_text(summary, note):
     anyway is how a summary becomes something people turn off.
     """
     lines = []
-    if summary.get("available"):
+    as_of = summary.get("as_of")
+    if as_of and summary.get("net_sales") is not None:
+        # The last reading predates close: a part of the night, said as
+        # such, and never compared with other nights' full totals (A-20).
+        title = f"${summary['net_sales']:,.0f} by {as_of}"
+        lines.append(f"The POS wasn't read at close, so this is the figure as of {as_of}.")
+    elif summary.get("available"):
         pct = summary.get("pct") or 0
         word = "behind" if summary["direction"] == "behind" else "ahead of"
         if abs(pct) < 5:

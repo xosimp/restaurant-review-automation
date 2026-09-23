@@ -3439,7 +3439,10 @@ def client_upload_data(current_user):
             # Persist per-day breakdown for YoY schedule generation
             try:
                 import models as _models_dh
-                _models_dh.save_labor_daily_history(restaurant_id, _shift_analysis.get("by_day", {}))
+                # The whole upload for the per-day archive, not only the
+                # current window the analysis above reads (re-audit A-12).
+                _models_dh.save_labor_daily_history(restaurant_id, analyse_shifts_for_restaurant(
+                    restaurant_id, window_days=None).get("by_day", {}))
             except Exception as _dh_e:
                 import ops as _ops_dh
                 _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")

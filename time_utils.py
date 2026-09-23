@@ -150,3 +150,124 @@ def mdy_range(start, end) -> str:
     """`9/14/26 – 9/20/26`, or a single date when both ends are the same day."""
     a, b = mdy(start), mdy(end)
     return a if a == b or not b else f"{a} – {b}"
+
+
+# ── Opening hours ────────────────────────────────────────────────────────────
+# One reading of a restaurant's hours for every "is it open / when does it
+# close" question. Hours are stored per weekday as the owner typed them
+# ("4:00pm", "1:00am", or "01:00" from the web's <input type=time>), and a
+# close at or after midnight is the NEXT calendar day's clock: Friday
+# "4:00pm"–"1:00am" is one service running into Saturday. Comparing that
+# close as a same-day time read the restaurant as closed all day, which
+# silently stopped every intraday job for any late-night place (A-1).
+#
+# A service belongs to the day it OPENED — its business date. The hours past
+# midnight are that business date's, not the new calendar day's.
+
+# Before this hour, "today" is still last night's service (close-outs,
+# closing summaries and captures filed at 1am belong to yesterday).
+BUSINESS_DAY_START_HOUR = 5
+
+
+def parse_clock(value):
+    """'11:00am' / '9:30pm' / '17:30' / '12:00am' -> (hour, minute), or None."""
+    raw = str(value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    ampm = None
+    for suffix in ("am", "pm"):
+        if raw.endswith(suffix):
+            ampm, raw = suffix, raw[:-2]
+            break
+    parts = raw.split(":")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+    except (ValueError, IndexError):
+        return None
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else None
+
+
+def opening_hours(restaurant, weekday_name):
+    """((open_h, open_m) or None, (close_h, close_m) or None) as configured
+    for this weekday, or None when neither is set. The raw clock readings —
+    use service_window() for real datetimes."""
+    import json as _json
+
+    def _load(raw):
+        try:
+            return _json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    if restaurant is None:
+        return None
+    opens = parse_clock(_load(getattr(restaurant, "open_times_json", None)).get(weekday_name))
+    closes = parse_clock(_load(getattr(restaurant, "close_times_json", None)).get(weekday_name))
+    return (opens, closes) if (opens or closes) else None
+
+
+def service_window(restaurant, day):
+    """(opens_at, closes_at) as naive local datetimes for the service whose
+    business date is `day`, or None when that weekday has no hours set.
+
+    A close at or before the open (1:00am after a 4:00pm open, or 12:00am)
+    is the next morning. With only a close set, the day starts at
+    BUSINESS_DAY_START_HOUR, so a bare "1:00am" close is still read as
+    tonight's late close rather than a service that ended before breakfast.
+    With only an open set, the service runs to midnight."""
+    from datetime import datetime as _dt, time as _time, timedelta as _td
+    hours = opening_hours(restaurant, day.strftime("%A"))
+    if not hours:
+        return None
+    opens, closes = hours
+    start = _dt.combine(day, _time(*opens)) if opens else \
+        _dt.combine(day, _time(BUSINESS_DAY_START_HOUR, 0))
+    end = _dt.combine(day, _time(*closes)) if closes else _dt.combine(day + _td(days=1), _time(0, 0))
+    if end <= start:
+        end += _td(days=1)
+    return start, end
+
+
+def open_service_day(restaurant, local):
+    """The business date of the service open at `local`, or None when the
+    restaurant is closed then (by its configured hours). Yesterday's
+    service is checked first: at 12:30am after a 1:00am-close Friday, it is
+    still Friday's service."""
+    from datetime import timedelta as _td
+    for day in (local.date() - _td(days=1), local.date()):
+        window = service_window(restaurant, day)
+        if window and window[0] <= local < window[1]:
+            return day
+    return None
+
+
+def is_open_at(restaurant, local, default_hours=None):
+    """True when the restaurant is open at naive local time `local`.
+
+    Handles a close at or after midnight (see service_window). When today's
+    weekday has no hours set, `default_hours` ((open_hour, close_hour)) is
+    the fallback window; without one, an unconfigured day reads as closed —
+    unless last night's late service is still running."""
+    if open_service_day(restaurant, local) is not None:
+        return True
+    if service_window(restaurant, local.date()) is not None:
+        return False
+    if default_hours:
+        return default_hours[0] <= local.hour < default_hours[1]
+    return False
+
+
+def business_date(restaurant, local):
+    """The service date `local` belongs to: the service open right now if
+    there is one, else the calendar date — except before
+    BUSINESS_DAY_START_HOUR, when it is still last night."""
+    from datetime import timedelta as _td
+    day = open_service_day(restaurant, local)
+    if day is not None:
+        return day
+    return (local.date() - _td(days=1)) if local.hour < BUSINESS_DAY_START_HOUR else local.date()
