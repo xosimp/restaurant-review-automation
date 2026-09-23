@@ -222,4 +222,4 @@ def test_a_row_the_manager_keeps_removing_is_flagged():
     out = se.likely_edits(1, [row(SAT, "Ann", "Server")], patterns=pats)
     kinds = {o["kind"] for o in out}
     assert kinds == {"moved_off", "retime_start"}
-    assert any("taken them off it 3 times" in o["text"] for o in out)
+    assert any("taken them off it in 3 recent weeks" in o["text"] for o in out)

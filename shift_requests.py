@@ -372,7 +372,7 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
                 raise ShiftRequestError(why or f"{name} cannot take that shift")
         fresh[j] = dict(fresh[j], employee=name,
                         notes=((fresh[j].get("notes") or "").strip() + f" (covered for {row['employee_name']})").strip())
-        write_on(conn, restaurant_id, fresh_hist["id"], "edited", _se._rows_to_csv_text(fresh), saved_by=(actor or name))
+        write_on(conn, restaurant_id, fresh_hist["id"], "swap", _se._rows_to_csv_text(fresh), saved_by=(actor or name))
         conn.commit()
         out = _get(conn, row["id"])
     except LookupError:
@@ -497,7 +497,7 @@ def _execute_swap(restaurant_id, req: dict, actor, from_status, db_path, accepte
         a, b = _swap_legal(restaurant_id, req, db_path, rows=rows)
         rows[a] = dict(rows[a], employee=req["target_name"], notes=((rows[a].get("notes") or "").strip() + f" (swapped with {req['employee_name']})").strip())
         rows[b] = dict(rows[b], employee=req["employee_name"], notes=((rows[b].get("notes") or "").strip() + f" (swapped with {req['target_name']})").strip())
-        write_on(conn, restaurant_id, hist["id"], "edited", _rows_to_csv_text(rows), saved_by=(actor or "swap"))
+        write_on(conn, restaurant_id, hist["id"], "swap", _rows_to_csv_text(rows), saved_by=(actor or "swap"))
         conn.commit()
         out = _get(conn, req["id"])
     except LookupError:

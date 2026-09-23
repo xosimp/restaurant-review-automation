@@ -530,7 +530,7 @@ def _hard_count(rows, constraints) -> int:
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
              max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
-             max_server_overlap: int = None) -> dict:
+             max_server_overlap: int = None, only_dates=None) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
 
     Returns {rows, changes: [{kind, reason, gain}], before_score, after_score,
@@ -555,6 +555,12 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     if not current.get("checked"):
         out["stopped"] = "nothing to score"
         return out
+    # A partial redo: the days the owner kept are not the search's to touch.
+    only = set(only_dates) if only_dates else None
+
+    def _kept(rs):
+        return sorted(tuple(sorted(r.items())) for r in rs if only is not None and r.get("date") not in only)
+    kept_before = _kept(current_rows) if only is not None else None
     base_hard = _hard_count(current_rows, constraints)
     if base_hard >= 10 ** 9:
         out["stopped"] = "the rule check could not run, so nothing was changed"
@@ -623,6 +629,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 tabu.add(sig)
                 continue
             if not _servers_ok(trial_rows):
+                tabu.add(sig)
+                continue
+            if only is not None and _kept(trial_rows) != kept_before:
                 tabu.add(sig)
                 continue
             try:

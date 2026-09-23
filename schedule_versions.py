@@ -16,7 +16,18 @@ import logging
 import sqlite3
 from datetime import datetime
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports). A
+    bound copy — and a db_path default bound to DB_PATH — sent a test's
+    patched models.get_conn to the real database. The module's own DB_PATH
+    default means "whatever models uses now"."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 log = logging.getLogger(__name__)
 
@@ -423,37 +434,30 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
     retime_end, headcount_add / headcount_cut, role_change, leader_swap,
     up to 8). Returned as facts, and rendered into the prompt so the next
     draft starts where the manager keeps ending up."""
-    from shift_quality import daypart_of
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute(
-            "SELECT v.diff_json, v.created_at FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
-            "WHERE v.restaurant_id=? AND v.reason='edited' AND v.created_at >= datetime('now', ?) "
-            "ORDER BY v.created_at DESC LIMIT 200", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
-    finally:
-        conn.close()
+    from shift_quality import present_dayparts
+    from schedule_learning import edited_weeks
+    # Once per WEEK, from that week's net change between the draft and the
+    # manager's final version: counted per save, taking Bob off, putting him
+    # back and taking him off again in one week read as "2 times recently",
+    # and an undone edit taught the opposite of what the manager kept.
     counts = {}
-    for r in rows:
-        try:
-            d = json.loads(r["diff_json"] or "{}") or {}
-        except Exception:
-            continue
+    for w in edited_weeks(restaurant_id, weeks, db_path):
+        d = w.get("diff") or {}
+        seen = set()
+
+        def _key(kind, name, date, start, end, day_hint):
+            try:
+                day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+            except Exception:
+                day = day_hint or ""
+            part = present_dayparts({"shift_start": start or "", "shift_end": end or ""})[0]
+            return (kind, (name or "").strip(), day, part)
         for m in d.get("moved") or []:
-            try:
-                day = datetime.strptime(m["date"], "%Y-%m-%d").strftime("%A")
-            except Exception:
-                day = m.get("day") or ""
-            part = daypart_of(m.get("shift_start", ""))
-            k = ("moved_off", (m.get("from") or "").strip(), day, part)
-            counts[k] = counts.get(k, 0) + 1
-            k2 = ("moved_on", (m.get("to") or "").strip(), day, part)
-            counts[k2] = counts.get(k2, 0) + 1
+            seen.add(_key("moved_off", m.get("from"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
+            seen.add(_key("moved_on", m.get("to"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
         for rm in d.get("removed") or []:
-            try:
-                day = datetime.strptime(rm["date"], "%Y-%m-%d").strftime("%A")
-            except Exception:
-                day = rm.get("day") or ""
-            k = ("moved_off", (rm.get("employee") or "").strip(), day, daypart_of(rm.get("shift_start", "")))
+            seen.add(_key("moved_off", rm.get("employee"), rm.get("date"), rm.get("shift_start"), rm.get("shift_end"), rm.get("day")))
+        for k in seen:
             counts[k] = counts.get(k, 0) + 1
     out = []
     for (kind, name, day, part), n in sorted(counts.items(), key=lambda kv: -kv[1]):
@@ -462,10 +466,10 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
         pretty = {"morning": "lunch/day", "night": "dinner/night"}.get(part, part)
         if kind == "moved_off":
             out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n,
-                        "text": f"The manager has taken {name} off {day} {pretty} {n} times recently — avoid scheduling them there."})
+                        "text": f"The manager has taken {name} off {day} {pretty} in {n} recent weeks — avoid scheduling them there."})
         else:
             out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n,
-                        "text": f"The manager has put {name} on {day} {pretty} {n} times recently — a good default for them."})
+                        "text": f"The manager has put {name} on {day} {pretty} in {n} recent weeks — a good default for them."})
     out = out[:12]
     # What else the manager keeps settling on — retimes, headcount per role,
     # role changes, a leader swapped onto a busy night — from the net change
@@ -480,6 +484,10 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
 
 
 def prompt_block(patterns: list) -> str:
+    # Headcount the manager keeps adding or cutting is already IN the
+    # requirements table (labor.apply_learned_headcount); saying it again
+    # here asked the model for the same extra person twice.
+    patterns = [p for p in (patterns or []) if p.get("kind") not in ("headcount_add", "headcount_cut")]
     if not patterns:
         return ""
     return ("\n\nWHAT THE MANAGER KEEPS CHANGING (learned from their edits to past drafts — treat as a "

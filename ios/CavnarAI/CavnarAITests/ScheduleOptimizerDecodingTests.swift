@@ -143,4 +143,14 @@ final class ScheduleOptimizerDecodingTests: XCTestCase {
         XCTAssertTrue(intel.weightCalibration?.reason?.hasPrefix("1 published week") ?? false)
         XCTAssertEqual(intel.autoPublishOffer?.eligible, false)
     }
+
+    /// A row whose scheduled_hours arrived as a number (one server path wrote
+    /// a float) used to fail the whole response.
+    func testScheduleRowReadsHoursAsTextOrNumber() throws {
+        let json = #"[{"date": "2026-09-12", "employee": "Ana", "role": "Server", "scheduled_hours": 7.5},"# +
+                   #" {"date": "2026-09-12", "employee": "Bob", "role": "Server", "scheduled_hours": "6.0"},"# +
+                   #" {"date": "2026-09-12", "employee": "Cy", "role": "Server", "scheduled_hours": 6}]"#
+        let rows = try JSONDecoder().decode([ScheduleRow].self, from: Data(json.utf8))
+        XCTAssertEqual(rows.map(\.scheduledHours), ["7.5", "6.0", "6.0"])
+    }
 }

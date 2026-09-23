@@ -20,7 +20,18 @@ a model; nothing crosses a tenant.
 import json
 from datetime import date, datetime, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports). A
+    bound copy — and a db_path default bound to DB_PATH — sent a test's
+    patched models.get_conn to the real database. The module's own DB_PATH
+    default means "whatever models uses now"."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 OUTCOME_WEEKS = 12
 LEDGER_WEEKS = 8
@@ -61,6 +72,32 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
         if not weeks:
             return {"written": 0}
         share = _morning_share(conn, restaurant_id)
+        # Issues are stamped in UTC; the schedule's dates and dayparts are
+        # the restaurant's own. A 7pm Central no-show is 00:00 UTC the next
+        # day: matched on the UTC date it landed on the wrong day and was
+        # counted against both dayparts.
+        try:
+            from models import get_restaurant as _gr
+            from zoneinfo import ZoneInfo as _ZI
+            _tz = _ZI((getattr(_gr(restaurant_id), "timezone", None) or "America/Chicago"))
+        except Exception:
+            from zoneinfo import ZoneInfo as _ZI
+            _tz = _ZI("America/Chicago")
+        issue_at = {}
+        try:
+            for (created,) in conn.execute(
+                    "SELECT created_at FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage','no_show') "
+                    "AND created_at >= date(?, '-2 days')",
+                    (restaurant_id, min(w["week_start"] for w in weeks if w["week_start"]))).fetchall():
+                try:
+                    utc = datetime.fromisoformat(str(created).replace("Z", "")).replace(tzinfo=_ZI("UTC"))
+                except ValueError:
+                    continue
+                local = utc.astimezone(_tz)
+                key = (local.strftime("%Y-%m-%d"), "morning" if local.hour < 15 else "night")
+                issue_at[key] = issue_at.get(key, 0) + 1
+        except Exception as _ix:
+            print(f"[outcomes] issues unavailable for restaurant {restaurant_id}: {_ix}")
         for w in weeks:
             rows = rows_from_csv(w["schedule_csv"])
             by = {}
@@ -82,18 +119,19 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                         wd = day["day_of_week"]
                     s = share.get(wd, 0.4)
                     sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
-                try:
-                    issues = conn.execute(
-                        "SELECT COUNT(*) FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage','no_show') AND substr(created_at,1,10)=?",
-                        (restaurant_id, d)).fetchone()[0]
-                except Exception:
-                    issues = 0
-                try:
-                    rv = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id=? AND substr(review_date,1,10)=?",
-                                      (restaurant_id, d)).fetchone()
-                    rating, n_reviews = (round(float(rv[0]), 2) if rv and rv[0] else None), (rv[1] if rv else 0)
-                except Exception:
-                    rating, n_reviews = None, 0
+                issues = issue_at.get((d, part), 0)
+                # A review carries a date, not a time: it can't be split
+                # between lunch and dinner, so it is recorded once, on the
+                # daypart that carried the day's most hours — not on both.
+                main_part = max((p2 for (d2, p2) in by if d2 == d), key=lambda p2: by[(d, p2)]["hours"])
+                rating, n_reviews = None, 0
+                if part == main_part:
+                    try:
+                        rv = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id=? AND substr(review_date,1,10)=?",
+                                          (restaurant_id, d)).fetchone()
+                        rating, n_reviews = (round(float(rv[0]), 2) if rv and rv[0] else None), (rv[1] if rv else 0)
+                    except Exception as _rx:
+                        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
                 conn.execute(
                     "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
                     "review_rating, reviews) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
@@ -241,7 +279,10 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
                 d = datetime.strptime(r["date"], "%Y-%m-%d")
             except ValueError:
                 continue
-            if d.weekday() >= 5:
+            # Friday to Sunday, the weekend the scorer's fairness and the
+            # prompt count (shift_quality._WEEKEND) — this ledger counted only
+            # Saturday and Sunday, so the two disagreed about who had them.
+            if d.weekday() >= 4:
                 e["weekend"] += 1
             if r["date"] in holidays:
                 e["holiday"] += 1

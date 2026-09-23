@@ -182,7 +182,8 @@ def test_drop_decide_claim_writes_the_cover_back_as_a_version(db_path, rid, monk
     rows = sv.rows_from_csv(csv_now)
     mon = next(r for r in rows if r["date"] == WEEK[0])
     assert mon["employee"] == "Bob" and "covered for Ana" in mon["notes"]
-    assert sv.list_versions(rid, hid, db_path=db_path)[-1]["reason"] == "edited"
+    # A staff cover is its own kind of version, never read as the manager's edit.
+    assert sv.list_versions(rid, hid, db_path=db_path)[-1]["reason"] == "swap"
     assert srq.mine(rid, "Ana", db_path=db_path)[0]["status"] == "covered"
 
 

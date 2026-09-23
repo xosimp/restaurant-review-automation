@@ -275,7 +275,9 @@ def test_outcomes_are_recorded_per_published_daypart_and_read_back(db_path, rid)
     conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, labor_pct) VALUES (?,?,?,?,?)",
                  (rid, "2026-09-05", "Saturday", 10000, 28.5))
     conn.execute("INSERT INTO ops_issues (restaurant_id, kind, title, created_at) VALUES (?,?,?,?)",
-                 (rid, "coverage", "Short a server", "2026-09-05 18:30:00"))
+                 # ops_issues.created_at is UTC (datetime('now')): 23:30 UTC is
+                 # 6:30pm Central, a dinner issue.
+                 (rid, "coverage", "Short a server", "2026-09-05 23:30:00"))
     conn.commit(); conn.close()
     out = intel.record_outcomes(rid, db_path=db_path, today=dt.date(2026, 9, 22))
     assert out["written"] == 2

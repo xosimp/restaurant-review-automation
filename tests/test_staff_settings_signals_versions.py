@@ -221,5 +221,5 @@ def test_learned_patterns_need_a_repeat(db_path, rid):
     assert ("moved_on", "Bob", "Saturday", "night") in kinds
     assert all(p["times"] == 2 for p in learned)
     block = sv.prompt_block(learned)
-    assert "taken Ana off Saturday dinner/night 2 times" in block
+    assert "taken Ana off Saturday dinner/night in 2 recent weeks" in block
     assert sv.learned_patterns(rid, min_repeats=3, db_path=db_path) == []

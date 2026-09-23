@@ -430,6 +430,13 @@ def run_quality_calibration(db_path=DB_PATH):
                 bumped.append(f"{key} +{CALIBRATION_STEP} (clean weeks score it {gap:.0f} higher)")
         if not bumped:
             continue
+        # Once per new published week. The same evidence read again next
+        # week bumped the same dimensions again (stability 2 -> 4 -> 6 -> 8
+        # on unchanged data), ratcheting toward the cap on nothing new.
+        newest = max((row["week_start"] for row in rows if row["week_start"]), default=None)
+        import ops as _ops_cal
+        if newest and not _ops_cal.claim_period("quality_calibration", f"{r.id}:{newest}"):
+            continue
         update_restaurant(r.id, {"quality_weights_json": _j.dumps(merged)}, db_path=db_path)
         try:
             record_capability_change(r.id, "quality_weights_calibrated", subject="weights",

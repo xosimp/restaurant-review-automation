@@ -137,7 +137,11 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         if len(vs) < 2:
             continue
         base = next((v for v in vs if v["reason"] == "generated"), vs[0])
-        final = vs[-1]
+        # The manager's last word, not a staff swap or cover after it: those
+        # are the staff's choices, and read as the manager's they taught the
+        # draft "the manager keeps taking Bob off Saturday".
+        mgr = [v for v in vs if v["reason"] != "swap"]
+        final = mgr[-1] if mgr else vs[-1]
         if final["version"] <= base["version"]:
             continue
         b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(final["schedule_csv"])
@@ -196,11 +200,14 @@ def _slot_heads(rows: list) -> tuple:
         d = (r.get("date") or "")[:10]
         if not (n and role and d):
             continue
-        part = _part(r.get("shift_start"))
-        if part == "unknown":
-            continue
-        k = (d, part, role.lower())
-        out.setdefault(k, set()).add(n)
+        # Every daypart the shift is on the floor for — the rule the scorer
+        # and the requirements table count by — so a 2-10pm server the
+        # manager adds teaches "+1 dinner", not "+1 lunch".
+        from shift_quality import present_dayparts
+        for part in present_dayparts(r):
+            if part == "unknown":
+                continue
+            out.setdefault((d, part, role.lower()), set()).add(n)
         names.setdefault(role.lower(), {})
         names[role.lower()][role] = names[role.lower()].get(role, 0) + 1
     return out, names

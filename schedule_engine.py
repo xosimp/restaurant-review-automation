@@ -133,6 +133,17 @@ def _no_shift_data_message(restaurant_id, restaurant=None):
             "this restaurant has its own shifts on file.")
 
 
+def _soft_fail(what, exc, restaurant_id):
+    """An input the draft can do without failed to load: the draft still
+    goes ahead, but the failure is said — a silent {} made "keep these two
+    apart" vanish from both the prompt and the score with nobody told."""
+    print(f"[schedule] {what} unavailable for restaurant {restaurant_id}: {exc}")
+    try:
+        _ops.capture(exc, job="schedule_inputs", context=f"restaurant_id={restaurant_id} input={what}")
+    except Exception as _cx:
+        print(f"[schedule] could not record that failure: {_cx}")
+
+
 def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     """Shared logic for both schedule endpoints.
 
@@ -166,11 +177,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     staff_notes = get_staff_notes(restaurant_id) or None
 
     # Employee availability
-    from models import get_staff_availability as _gsa, init_staff_availability as _isa
+    # The table is created at boot (init_db); no DDL on a generation.
+    from models import get_staff_availability as _gsa
     try:
-        _isa()
         staff_availability = _gsa(restaurant_id) or []
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('staff_availability', _sfx, restaurant_id)
         staff_availability = []
 
     # Compute next week dates — the restaurant's week, not the server's
@@ -300,24 +312,28 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     signals_by_date = {}
     try:
         signals_by_date = _signals.by_date(restaurant_id, next_week_dates)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('signals_by_date', _sfx, restaurant_id)
         signals_by_date = {}
     pairs = {}
     try:
         pairs = _staff.pair_sets(restaurant_id)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('pairs', _sfx, restaurant_id)
         pairs = {}
     reliability = {}
     try:
         reliability = _staff.reliability(restaurant_id)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('reliability', _sfx, restaurant_id)
         reliability = {}
     learned = []
     try:
         import schedule_intel as _intel
-        learned = [p for p in _versions.learned_patterns(restaurant_id)
-                   if _intel.pattern_key(p) not in _intel.dismissed_patterns(restaurant_id)]
-    except Exception:
+        _gone = _intel.dismissed_patterns(restaurant_id)     # one read, not one per pattern
+        learned = [p for p in _versions.learned_patterns(restaurant_id) if _intel.pattern_key(p) not in _gone]
+    except Exception as _sfx:
+        _soft_fail('learned', _sfx, restaurant_id)
         learned = []
     # The money and the record: what a holiday did here last time, sales per
     # labor hour by daypart, what published weeks actually did, who has
@@ -326,15 +342,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     import schedule_intel as _intel
     holiday = {}
     try:
-        holiday = _econ.holiday_lift(restaurant_id, next_week_dates)
-        for d, h in holiday.items():
-            e = signals_by_date.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
-            label = h["name"] + (f" ({h['lift_pct']:+d}% here last year)" if h.get("lift_pct") is not None else "")
-            if label not in e["labels"]:
-                e["labels"].append(label)
-            if h.get("lift_pct") is not None:
-                e["lift_pct"] = h["lift_pct"] if e.get("lift_pct") is None else max(e["lift_pct"], h["lift_pct"])
-    except Exception:
+        holiday = _merge_holiday_lift(restaurant_id, next_week_dates, signals_by_date)
+    except Exception as _hx:
+        print(f"[schedule] holiday lift unavailable: {_hx}")
         holiday = {}
     # The events block states only a lift this restaurant measured; the
     # prompt used to assert "20-40% higher covers" for any holiday (SCHED-33).
@@ -345,17 +355,20 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     splh = {}
     try:
         splh = _econ.splh_by_daypart(restaurant_id)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('splh', _sfx, restaurant_id)
         splh = {}
     outcomes = {}
     try:
         outcomes = _intel.outcomes_by_daypart(restaurant_id)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('outcomes', _sfx, restaurant_id)
         outcomes = {}
     ledger = {}
     try:
         ledger = _intel.fairness_ledger(restaurant_id)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('ledger', _sfx, restaurant_id)
         ledger = {}
     stated_prefs, learned_prefs = {}, {}
     try:
@@ -366,7 +379,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     could_hold = {}
     try:
         could_hold = _intel.could_hold(_intel.mentoring(restaurant_id))
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('could_hold', _sfx, restaurant_id)
         could_hold = {}
     revenue = {"value": None, "source": None}
     try:
@@ -383,11 +397,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
                       ("prior_pattern", get_prior_shift_pattern)):
         try:
             _people[_key] = _fn(restaurant_id) or {}
-        except Exception:
+        except Exception as _sfx:
+            _soft_fail('people[_key]', _sfx, restaurant_id)
             _people[_key] = {}
     try:
         _people["experienced"] = sorted(_staff.experienced_names(restaurant_id))
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail('people["experienced"]', _sfx, restaurant_id)
         _people["experienced"] = []
     extra_blocks = (_rules.prompt_block(constraints)
                     + _signals.prompt_block(signals_by_date, next_week_dates)
@@ -1803,6 +1819,23 @@ def stored_daily_targets(restaurant_id, history_id) -> dict:
     return out
 
 
+def _merge_holiday_lift(restaurant_id, dates, signals_by_date: dict) -> dict:
+    """Fold what each holiday this week did here last year into the dated
+    demand signals, in place. One implementation for the generation and the
+    live rescore — the rescore used to skip it, so a holiday week's score
+    jumped on the first edit when "peak" fell back to "normal"."""
+    import schedule_economics as _econ
+    holiday = _econ.holiday_lift(restaurant_id, dates)
+    for d, h in holiday.items():
+        e = signals_by_date.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
+        label = h["name"] + (f" ({h['lift_pct']:+d}% here last year)" if h.get("lift_pct") is not None else "")
+        if label not in e.setdefault("labels", []):
+            e["labels"].append(label)
+        if h.get("lift_pct") is not None:
+            e["lift_pct"] = h["lift_pct"] if e.get("lift_pct") is None else max(e["lift_pct"], h["lift_pct"])
+    return holiday
+
+
 def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=None):
     """Rebuild the engine's inputs for a schedule nobody just generated.
 
@@ -1880,6 +1913,17 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["pairs"] = _staff.pair_sets(restaurant_id)
             out["reliability"] = _staff.reliability(restaurant_id)
             out["demand_by_date"] = _signals.by_date(restaurant_id, dates)
+            try:
+                _merge_holiday_lift(restaurant_id, dates, out["demand_by_date"])
+            except Exception as _hx:
+                print(f"[schedule] live holiday lift unavailable: {_hx}")
+            # The same person at a sibling location that day, as generation
+            # scores it.
+            try:
+                from models import sibling_location_shifts as _sibs
+                out["elsewhere"] = _sibs(restaurant_id, dates) or {}
+            except Exception as _ex:
+                print(f"[schedule] live sibling shifts unavailable: {_ex}")
             out["prior_week_assignments"] = _prior_week_assignments(restaurant_id, before=dates[0])
             out["pending_time_off"] = {n: sorted(d) for n, d in c.pending_off.items()}
     except Exception as _cx:
@@ -2198,7 +2242,7 @@ def likely_edits(restaurant_id, rows: list, patterns: list = None) -> list:
                 seen.add(key)
                 out.append({"kind": "moved_off", "employee": name, "date": r.get("date"),
                             "text": f"{name} is on {day} {'lunch' if part == 'morning' else 'dinner'} — you've taken "
-                                    f"them off it {p.get('times')} times recently."})
+                                    f"them off it in {p.get('times')} recent weeks."})
             elif p.get("kind") == "retime_start" and (p.get("role") or "").strip().lower() == (r.get("role") or "").strip().lower():
                 want = (p.get("time") or p.get("to") or "").strip().lower().replace(" ", "")
                 have = (r.get("shift_start") or "").strip().lower().replace(" ", "")
@@ -2310,6 +2354,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             week_start = week_start or _base.get("week_start")
         result = (_build_schedule_result(restaurant_id, week_start=week_start, focus=list(focus))
                   if focus else _build_schedule_result(restaurant_id, week_start=week_start))
+        # A partial redo rewrites only these days; the passes below that can
+        # change rows (fixes, the repair loop, the budget trim) leave the
+        # owner's kept days exactly as they were.
+        _editable = set(dates) if (dates and base_history_id) else None
         if _pinned:
             # Only the asked-for days were written; the rest come from the
             # draft the owner is keeping.
@@ -2525,7 +2573,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 preview_rows, _trimmed, _hours_trimmed = _econ.trim_to_budget(
                     preview_rows, result.get("hours_budget", 0), result.get("daily_target_hours") or {},
                     constraints=_constraints, floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
-                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_score_fn)
+                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_score_fn,
+                    only_dates=_editable)
                 result["trimmed"] = _trimmed
                 result["hours_trimmed"] = _hours_trimmed
                 if _trimmed:
@@ -2555,7 +2604,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # for the owner and never counted as coverage.
             _viols = _rules.violations(preview_rows, _constraints)
             _fixes, _unfixed = [], []
-            _hard = [v for v in _viols if v["hard"]]
+            _hard = [v for v in _viols if v["hard"]
+                     and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
             if _hard:
                 try:
                     _sig, _w = _quality_signals(restaurant_id, result)
@@ -2581,7 +2631,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     preview_rows, _t2, _h2 = _econ.trim_to_budget(
                         preview_rows, _hb2, result.get("daily_target_hours") or {}, constraints=_constraints,
                         floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
-                        patio_roles=_constraints.patio_roles)
+                        patio_roles=_constraints.patio_roles, only_dates=_editable)
                     if _t2:
                         result["trimmed"] = (result.get("trimmed") or []) + _t2
                         result["hours_trimmed"] = round((result.get("hours_trimmed") or 0) + _h2, 1)
@@ -2610,7 +2660,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _ores = _opt.optimize(preview_rows, result, signals=_osig, weights=_ow, constraints=_constraints,
                                       hours_budget=(result.get("hours_budget") or 0)
                                       if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) else None,
-                                      max_server_overlap=getattr(_restaurant_for_sched, "section_count", None))
+                                      max_server_overlap=getattr(_restaurant_for_sched, "section_count", None),
+                                      only_dates=_editable)
                 result["optimizer"] = _opt.summary(_ores, _osig)
                 if _ores.get("changes"):
                     preview_rows = _ores["rows"]

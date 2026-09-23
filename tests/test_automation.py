@@ -198,7 +198,7 @@ def test_auto_publish_queues_only_with_the_switch_and_the_record(db_path, monkey
     out = scheduler.run_auto_publish_schedules()
     assert out["queued"] == 1 and reached == ["schedule_publish_pending"]
     q = delayed.pending(rid, db_path=db_path)
-    assert q[0]["payload"] == {"schedule_id": draft} and "Publishing the week of 2099-01-04" in q[0]["label"]
+    assert q[0]["payload"] == {"schedule_id": draft} and "Publishing the week of 1/4/99" in q[0]["label"]        # M/D/YY for owners
 
 
 def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, monkeypatch):

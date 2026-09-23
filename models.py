@@ -4664,7 +4664,7 @@ def init_schedule_versions(db_path: str = DB_PATH):
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
         version        INTEGER NOT NULL,
-        reason         TEXT    NOT NULL,          -- 'generated' | 'edited' | 'published' | 'fixes'
+        reason         TEXT    NOT NULL,          -- 'generated' | 'edited' | 'published' | 'fixes' | 'swap' (staff drop/cover)
         schedule_csv   TEXT    NOT NULL,
         quality_json   TEXT,
         diff_json      TEXT,                      -- vs the previous version

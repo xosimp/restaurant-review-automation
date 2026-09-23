@@ -1689,8 +1689,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _high_risk_days.append(f"{_dn} ({_rate}% historical no-show rate)")
     if _high_risk_days:
         _noshows_block = (f"\n\nNO-SHOW RISK (from historical data): {', '.join(_high_risk_days)}. "
-                          f"On these days, consider scheduling one extra flex staff member or note "
-                          f"in the summary that a standby should be on-call.")
+                          f"On these days, say in the summary that a standby should be on call — do not add "
+                          f"a person beyond the requirements for it.")
 
     # Detect cross-trained employees from shift history (appear with 2+ distinct roles)
     _emp_roles = {}
@@ -2317,6 +2317,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                         "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(continue for every shift)\n---SUMMARY---\n"
                         "- bullet 1\n- bullet 2\n- bullet 3")
 
+    # One output rule, matching the contract actually requested: the JSON
+    # schema, or the CSV text fallback. Both used to be stated at once.
+    _format_rule = ("DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your "
+                    "response — not before the JSON, not in a \"<think>\" block, not inside any field. Output only the "
+                    "JSON object the schema describes."
+                    if structured else
+                    "DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your "
+                    "response — not before the CSV, not in a \"<think>\" block, not between rows, not woven into the notes "
+                    "column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV "
+                    "rows, then \"---SUMMARY---\", then the bullets. Start your response with \"date,day,employee...\" "
+                    "immediately and do not deviate from that format at any point.")
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}
 
 CONTEXT:
@@ -2336,13 +2347,13 @@ Each summary bullet: one short clause, 10 words or fewer, plain language — the
 
 No emoji anywhere in the CSV notes or summary bullets — plain professional text only.
 
-DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your response — not before the CSV, not in a "<think>" block, not between rows, not woven into the notes column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV rows, then "---SUMMARY---", then the bullets. Start your response with "date,day,employee..." immediately and do not deviate from that format at any point.
+{_format_rule}
 
 Rows for a non-routine addition — a food runner, a second/extra staff member added for volume, a role or arrival time called out by a special rule above — are exactly where column order most often gets scrambled, because they don't follow the same repeating pattern as the rest of the week. Before writing one of these rows, slow down internally (without narrating it) and confirm you are about to write, in order: date, day, employee, role, shift_start, shift_end, scheduled_hours, notes — a real weekday word in the day column and a real person's name in the employee column, same as every other row. Never let a special role name or rule override push into the day or employee position.
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
-- Base each day's staffing on the YoY same-day data when available — that is your primary projection
+- The YoY same-day data, when available, is what the per-day hour targets were built from; headcount per shift comes from the SHIFT REQUIREMENTS table
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 {_ceiling_line}{_hours_rule}
 
@@ -2350,7 +2361,7 @@ ROLE STAGGER RULE (universal — applies to every restaurant):
 - Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Add headcount only when YoY data or a flagged event justifies it — never to consume an hours budget.
 
 SERVER CLOSING STAGGER RULE (universal — applies to every restaurant, including busy nights like Mondays and weekends, unless RESTAURANT HOURS & SHIFT RULES below explicitly says otherwise):
-- Never schedule every server on a shift to close at the same time. Dinner rush tapers off well before actual closing — real restaurants don't pay a full server lineup to stand around a dead dining room for the last hour. Keep only 1-2 servers on through close to handle stragglers and closing side-work; end the rest of that shift's servers' shifts once volume visibly drops (commonly ~8:30-9pm, adjust to this restaurant's own patterns). A busier night justifies scheduling MORE servers earlier in the shift, not keeping more of them until close.
+- Never schedule every server on a shift to close at the same time. Dinner rush tapers off well before actual closing — real restaurants don't pay a full server lineup to stand around a dead dining room for the last hour. Keep only 1-2 servers on through close to handle stragglers and closing side-work (never fewer than a staffing floor you were given for that time — the owner's floors win); end the rest of that shift's servers' shifts once volume visibly drops (commonly ~8:30-9pm, adjust to this restaurant's own patterns). A busier night justifies scheduling MORE servers earlier in the shift, not keeping more of them until close.
 
 {_days_off_block}CROSS-TRAINING:
 - When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee costs nothing extra and keeps headcount lean.

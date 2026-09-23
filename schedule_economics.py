@@ -436,7 +436,7 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3) ->
 def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constraints=None, floors: dict = None,
                    splh: dict = None, rainy_dates: set = None, patio_roles: set = None,
                    tolerance: float = TRIM_TOLERANCE, score_fn=None,
-                   score_seconds: float = TRIM_SCORE_SECONDS) -> tuple:
+                   score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None) -> tuple:
     """Remove the most discretionary hours until the week is within the
     budget. Order: rows the top-up added, then the later leg of a double,
     then the latest starter of a role on the day furthest over its own
@@ -498,6 +498,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     def removable(r):
         if r.get("needs_review") or id(r) in no_show:
             return False
+        if only_dates and r.get("date") not in only_dates:
+            return False          # a day the owner kept in a partial redo
         d, role, part = r.get("date"), (r.get("role") or "").strip().lower(), _daypart(r)
         if not (d and role):
             return False
