@@ -696,8 +696,33 @@ def issue_key(category) -> str:
 
 
 def driver_key(driver) -> str:
+    """A price driver is the price-spike alert's own news, so it carries that
+    alert's key ("price_spike:<item>") and one answer silences both."""
+    kind, item = _driver_parts(driver)
+    if kind == "price" and item:
+        return f"price_spike:{item}"
     label = str((driver or {}).get("label") or (driver or {}).get("what") or "")
     return f"food_cost_driver:{label[:40]}"
+
+
+_DRIVER_LABELS = (("waste", r"^(.+?) waste above tolerance$"), ("portion", r"^(.+?) usage over recipe$"),
+                  ("price", r"^(.+?) price up (\d+)%$"), ("sourcing", r"^(.+?) cheaper from (.+)$"),
+                  ("menu", r"^(.+?) runs at ([\d.]+)% food cost$"))
+
+
+def _driver_parts(driver):
+    """(kind, item) of a driver, read from its label when the trimmed shape
+    (fci.executive_brief's fix_first) dropped them."""
+    import re
+    d = driver or {}
+    kind, item = d.get("kind"), d.get("item")
+    if not kind:
+        label = str(d.get("label") or d.get("what") or "").strip()
+        for k, pat in _DRIVER_LABELS:
+            m = re.match(pat, label)
+            if m:
+                return k, m.group(1)
+    return kind, item
 
 
 def driver_action(driver) -> str:
@@ -710,16 +735,8 @@ def driver_action(driver) -> str:
     shapes cost_drivers fixes."""
     import re
     d = driver or {}
-    kind, item = d.get("kind"), d.get("item")
     label = str(d.get("label") or d.get("what") or "").strip()
-    if not kind:
-        for k, pat in (("waste", r"^(.+?) waste above tolerance$"), ("portion", r"^(.+?) usage over recipe$"),
-                       ("price", r"^(.+?) price up (\d+)%$"), ("sourcing", r"^(.+?) cheaper from (.+)$"),
-                       ("menu", r"^(.+?) runs at ([\d.]+)% food cost$")):
-            m = re.match(pat, label)
-            if m:
-                kind, item = k, m.group(1)
-                break
+    kind, item = _driver_parts(d)
     if not kind or not item:
         return label
     if kind == "waste":

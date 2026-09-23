@@ -109,6 +109,7 @@ td.r,th.r{text-align:right}
 .btn:hover{border-color:var(--ink4)}.btn.p{background:var(--ember);border-color:var(--ember);color:#fff}.btn.p:hover{filter:brightness(1.1)}
 .btn.d{color:var(--red);border-color:rgba(227,51,63,.35)}.btn.d:hover{background:var(--red-bg)}
 .btn.s{font-size:11px;padding:3px 8px}
+.btn.on{border-color:var(--ember);color:var(--ember)}
 .btn:disabled{opacity:.5;cursor:default}
 .lnk{background:none;border:none;color:var(--ember2);font-weight:600;cursor:pointer;padding:0;font-size:12px}
 .lnk:hover{text-decoration:underline}
@@ -174,6 +175,7 @@ td.r,th.r{text-align:right}
       <a href="#emails" data-v="emails">Emails <span class="cnt" id="n-mail" hidden></span></a>
       <a href="#jobs" data-v="jobs">Jobs <span class="cnt" id="n-jobs" hidden></span></a>
       <a href="#intelligence" data-v="intelligence">Intelligence</a>
+      <a href="#recommendations" data-v="recommendations">Recommendation acceptance</a>
       <a href="#issues" data-v="issues">Support &amp; issues <span class="cnt" id="n-issues" hidden></span></a>
       <div class="sec">Sales</div>
       <a href="/admin/audits">Restaurant audits</a>
@@ -299,7 +301,7 @@ function renderTable(id){
 function sortTable(id, key){ const t=window._tables[id]; if(t.key===key){ t.dir = t.dir==='asc'?'desc':'asc'; } else { t.key=key; t.dir='desc'; } $(id).innerHTML = renderTable(id); }
 
 // ── router ──────────────────────────────────────────────────────────────────
-const VIEWS = {overview, clients: clientsView, locations, onboarding, integrations, ai, alerts, emails, billing, jobs, issues, system, intelligence};
+const VIEWS = {overview, clients: clientsView, locations, onboarding, integrations, ai, alerts, emails, billing, jobs, issues, system, intelligence, recommendations};
 async function route(){
   const h = (location.hash || '#overview').slice(1); const [name, arg] = h.split('/'); const q = new URLSearchParams(location.search);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === name));
@@ -561,6 +563,59 @@ async function intelligence(){
     <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
 }
 
+// ── Recommendation acceptance (internal only) ──────────────────────────────
+// rec_ledger episodes: shown → opened → evidence → accepted → completed →
+// outcome. Ignored episodes count in every denominator. No owner sees this.
+let _recDays = 30;
+function recDays(n){ _recDays = n; route(); }
+async function recommendations(arg){
+  const rid = arg ? parseInt(arg, 10) : null;
+  const d = await api('/admin/api/recommendations?days=' + _recDays + (rid ? '&restaurant_id=' + rid : ''));
+  if(!d.ok) throw new Error('recommendations failed');
+  const T = d.total, pct = v => v==null ? '—' : Math.round(v*100)+'%';
+  const ci = T.accept_ci90 ? `90%: ${pct(T.accept_ci90[0])}–${pct(T.accept_ci90[1])}` : '';
+  const who = rid ? ((d.by_restaurant[0]||{}).group || ('#'+rid)) : 'All restaurants';
+  const top = Math.max(1, ...d.funnel.map(f=>f.n));
+  const cmpCols = [
+    {h:'Group',key:'group'},
+    {h:'n',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},
+    {h:'Opened',key:'open_rate',r:true,cell:r=>`<span class="num">${pct(r.open_rate)}</span>`},
+    {h:'Accepted',key:'accept_rate',r:true,cell:r=>`<span class="num">${pct(r.accept_rate)}</span>${r.accept_ci90?` <span class="dim">${pct(r.accept_ci90[0])}–${pct(r.accept_ci90[1])}</span>`:''}`},
+    {h:'Completed',key:'complete_rate',r:true,cell:r=>`<span class="num">${pct(r.complete_rate)}</span>`},
+    {h:'Improved',key:'outcome_rate',r:true,cell:r=>`<span class="num">${pct(r.outcome_rate)}</span>`},
+    {h:'Ignored',key:'ignore_rate',r:true,cell:r=>`<span class="num">${pct(r.ignore_rate)}</span>`},
+    {h:'RAS',key:'ras',r:true,cell:r=>r.ras==null?'<span class="dim">n&lt;'+d.min_n+'</span>':`<span class="num">${r.ras}</span>`}];
+  const cmp = (title, rows, id) => `<div><div class="k" style="margin-bottom:6px">${esc(title)}</div>${rows.length ? table(cmpCols, rows, {id, sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`;
+  const restCols = cmpCols.slice(); restCols[0] = {h:'Restaurant',key:'group',cell:r=>`<a href="#recommendations/${r.restaurant_id}">${esc(r.group)}</a>`};
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations · internal only</div><h1>Recommendation acceptance</h1>
+      <div class="sub">${esc(who)} · last ${d.days} days. Every recommendation any surface showed, followed to what the owner did and whether it worked. Unanswered after 14 days counts as ignored, in every denominator. The score needs ${d.min_n}+ recommendations.</div></div>
+      <div>${[7,30,90].map(n=>`<button class="btn s${n===d.days?' on':''}" onclick="recDays(${n})">${n}d</button>`).join(' ')}${rid?' <a class="btn s" href="#recommendations">All restaurants</a>':''}</div></div>
+    <div class="grid g6" style="margin-bottom:14px">${kpi(T.ras==null?'—':T.ras,'Acceptance score', T.ras==null?'':(T.ras>=40?'good':(T.ras<20?'bad':'')), T.ras==null?('n='+T.n):'')}${kpi(pct(T.accept_rate),'Accepted', '', ci)}${kpi(pct(T.open_rate),'Opened')}${kpi(pct(T.complete_rate),'Completed')}${kpi(pct(T.outcome_rate),'Improved, of taken')}${kpi(T.median_hours_to_act==null?'—':T.median_hours_to_act+'h','Median time to act')}</div>
+    <div class="dim" style="margin:-6px 0 14px;white-space:normal">Score = 100 × (${d.weights.opened} × opened + ${d.weights.accepted} × accepted + ${d.weights.completed} × completed + ${d.weights.outcome} × improved-of-taken). ${fmtN(T.n||0)} recommendations · ${fmtN(T.ignored||0)} ignored · ${fmtN(T.dismissed||0)} dismissed · ${fmtN(T.snoozed||0)} snoozed.</div>
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card"><div class="ch"><h2>Funnel</h2></div><div class="cb">${d.funnel.map(f=>`<div style="display:grid;grid-template-columns:130px 1fr 60px;gap:8px;align-items:center;padding:4px 0"><span>${esc(f.step)}</span><span style="height:10px;border-radius:5px;background:var(--paper3);overflow:hidden"><i style="display:block;height:100%;width:${Math.round(100*f.n/top)}%;background:var(--ember)"></i></span><span class="num r">${fmtN(f.n)}</span></div>`).join('')}</div></div>
+      <div class="card"><div class="ch"><h2>Watch</h2></div><div class="cb">
+        <div class="k" style="margin-bottom:4px">Most ignored kinds (n ≥ 5)</div>
+        ${d.most_ignored.length ? d.most_ignored.map(r=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${esc(r.group)}</span><span class="num">${pct(r.ignore_rate)} of ${fmtN(r.n)}</span></div>`).join('') : '<div class="empty">None yet.</div>'}
+        <div class="k" style="margin:10px 0 4px">Fatigue — ${d.min_n}+ shown, 75%+ dismissed or ignored</div>
+        ${d.fatigue.length ? d.fatigue.map(r=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><a href="#recommendations/${r.restaurant_id}">${esc(r.group)}</a><span class="num">${pct(r.dismiss_rate + r.ignore_rate)} of ${fmtN(r.n)}</span></div>`).join('') : '<div class="empty">No restaurant is tuning it out.</div>'}
+      </div></div>
+    </div>
+    <div class="grid g2" style="margin-bottom:14px">
+      ${cmp('With a dollar figure vs without', d.by_dollars, 'rec-dollars')}
+      ${cmp('Cavnar prepares it vs the owner does it', d.by_cavnar_completes, 'rec-cavnar')}
+      ${cmp('Cross-module vs one module', d.by_cross_module, 'rec-cross')}
+      ${cmp('Model-written vs rule-written', d.by_model_written, 'rec-model')}
+      ${cmp('By confidence band', d.by_confidence, 'rec-conf')}
+      ${cmp('By surface first shown', d.by_surface, 'rec-surface')}
+      ${cmp('By module', d.by_module, 'rec-module')}
+      ${cmp('By who answered', d.by_role, 'rec-role')}
+    </div>
+    ${cmp('By kind', d.by_kind, 'rec-kind')}
+    ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}`;
+}
+
 // ── Alerts & notifications ──────────────────────────────────────────────────
 let _nf = 'all';
 async function alerts(){
@@ -736,7 +791,7 @@ async function clientView(id, qs){
   const hdr = `
     <div class="head"><div><div class="k ember">${esc(c.brand!==c.name?c.brand+' · ':'')}Client #${c.id}${c.is_demo?' · DEMO':''}</div><h1>${esc(c.name)}${c.location_name?' <span class="sub" style="font-size:14px">— '+esc(c.location_name)+'</span>':''}</h1>
       <div class="sub" style="margin-top:4px">${hb(c.health)} ${bill(c.billing.status)} <span class="b ${c.billing.contract_status==='signed'?'ok':'warn'} nodot">contract ${esc(c.billing.contract_status)}</span> · owner <b style="color:var(--ink)">${esc(login?login.username:'no login')}</b>${c.owner_name?' ('+esc(c.owner_name)+')':''} · ${esc(c.owner_email||'')}${c.owner_phone?' · '+esc(c.owner_phone):''} · joined ${fmtD(c.created_at)} · last active <span class="num">${ago(c.last_active)}</span> · ${d.siblings.length+1} location${d.siblings.length?'s':''}</div></div>
-      <div class="r"><a class="btn" href="/admin/view-as/${c.id}">View as client</a><a class="btn" href="/admin/client-settings/${c.id}">Settings</a><a class="btn" href="/admin/client-data/${c.id}">Data</a><a class="btn p" href="#client/${c.id}?tab=actions">Actions</a></div></div>
+      <div class="r"><a class="btn" href="/admin/view-as/${c.id}">View as client</a><a class="btn" href="/admin/client-settings/${c.id}">Settings</a><a class="btn" href="/admin/client-data/${c.id}">Data</a><a class="btn" href="#recommendations/${c.id}">Recommendations</a><a class="btn p" href="#client/${c.id}?tab=actions">Actions</a></div></div>
     <div class="tabs">${TABS.map(t=>`<a href="#client/${c.id}?tab=${t}" class="${tab===t?'on':''}">${t==='ai'?'AI':t[0].toUpperCase()+t.slice(1)}${t==='errors'&&d.errors.length?' <span class="cnt bad">'+d.errors.length+'</span>':''}${t==='overview'&&c.issues.length?' <span class="cnt warn">'+c.issues.length+'</span>':''}</a>`).join('')}</div>`;
   let body = '';
   if(tab==='overview') body = `

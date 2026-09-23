@@ -24,6 +24,7 @@ from models import DB_PATH
 
 
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
+from thresholds import LABOR_OVER_TARGET_PTS, REPLY_OWED_MAX_AGE_DAYS
 
 TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -270,7 +271,8 @@ ALERT_TAB = {
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
     "order_send_voided": "inventory",
-    "ai_visibility_drop": "competitor",
+    "ai_visibility_drop": "competitor", "competitor_move": "competitor",
+    "review_request_nudge": "reviews",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "while_away": "reviews",
 }
@@ -318,6 +320,140 @@ def baseline_labor_target(restaurant_id, db_path=DB_PATH):
         return round(min(45.0, max(15.0, float(v) + 2.0)), 1)
     except Exception:
         return None
+
+
+def labor_target_for(restaurant, db_path=DB_PATH) -> float:
+    """The labor % target every "over target" check measures against: the
+    owner's own setting, else their eight-week band, else 30. The alert and
+    the labor issue read it from here, so they cannot disagree about what
+    the target is (#34)."""
+    rid = getattr(restaurant, "id", None)
+    own = getattr(restaurant, "labor_target_pct", None)
+    try:
+        if own:
+            return float(own)
+    except (TypeError, ValueError):
+        pass
+    return float((baseline_labor_target(rid, db_path) if rid else None) or 30.0)
+
+
+# ── who an alert's push may reach (#33) ──────────────────────────────────────
+# deliver_alert pushed every alert to every phone at the restaurant, so a
+# manager whose role cannot open Food Cost was pushed the food-waste and
+# price alerts, and a labor-only login heard about reviews it cannot read.
+# A push now goes to the logins whose permissions include the module the
+# alert is about — the same permission that gates the screen it opens.
+def _tab_permission():
+    import permissions as _p
+    return {"reviews": _p.REVIEWS_VIEW, "labor": _p.LABOR_VIEW, "inventory": _p.FOOD_COST_VIEW,
+            "competitor": _p.INTEL_VIEW, "account": _p.TEAM_INVITE}
+
+
+def alert_permissions(alert_types) -> set:
+    """The permissions a login must hold to be pushed these alert types, or
+    None when one of them is not tied to a module (no narrowing)."""
+    need = set()
+    by_tab = _tab_permission()
+    for t in alert_types or ():
+        perm = by_tab.get(ALERT_TAB.get(t or ""))
+        if perm is None:
+            return None
+        need.add(perm)
+    return need
+
+
+def _has_devices(restaurant_id, db_path: str = DB_PATH) -> bool:
+    try:
+        from push import get_device_tokens
+        return bool(get_device_tokens(restaurant_id, db_path, for_delivery=True))
+    except Exception:
+        return False
+
+
+def alert_audience(restaurant_id: int, alert_types, db_path: str = DB_PATH):
+    """User ids whose devices may receive this alert's push, or None for
+    "everyone the restaurant's devices belong to" (an unclassified type, or
+    no devices at all). An empty set means devices exist but none belongs
+    to a login permitted to see it."""
+    need = alert_permissions(alert_types)
+    if need is None:
+        return None
+    try:
+        from push import get_device_tokens
+        from permissions import has_permission
+        from auth import _grants_for
+        uids = sorted({int(t.get("user_id") or 0) for t in
+                       (get_device_tokens(restaurant_id, db_path, for_delivery=True) or []) if t.get("user_id")})
+        if not uids:
+            return None             # no phones at all: nothing to narrow
+        conn = models.get_conn(db_path)
+        try:
+            rows = conn.execute(f"SELECT id, role, is_admin FROM users WHERE id IN ({','.join('?' * len(uids))})",
+                                uids).fetchall()
+            out = set()
+            for u in rows:
+                user = {"id": u["id"], "role": u["role"], "is_admin": u["is_admin"],
+                        "grants": _grants_for(conn, u["id"], restaurant_id)}
+                if all(has_permission(user, p) for p in need):
+                    out.add(int(u["id"]))
+        finally:
+            conn.close()
+        return out
+    except Exception as e:
+        # Fail open to the old behaviour rather than silence a real alert,
+        # and say so.
+        print(f"[notify] audience check failed for rid={restaurant_id}: {e}")
+        return None
+
+
+# ── one identity per alert in the recommendation trail ──────────────────────
+# Every alert is presented through rec_ledger with a stable key, so an answer
+# given anywhere (Home "not for us", an issue resolved, an Ask dismissal)
+# silences the same news here, and "how often was this sent, and was it ever
+# acted on" has an answer. Keys carry their subject: "labor_over:2026-09-01",
+# "stock_low:Salmon", "competitor_move:Luigi's", "review:123".
+ALERT_MODULE = {"reviews": "reviews", "labor": "labor", "inventory": "food", "competitor": "intel",
+                "account": "ops"}
+_CHANNEL_SURFACE = {"sms": "alert_sms", "email": "alert_email", "push": "alert_push"}
+
+
+def alert_rec(alert_type, subject=None, title=None, dollar_value=None, review_id=None) -> dict:
+    """One recommendation this alert carries. `subject` defaults to the
+    review for a review alert, else none (the type alone is the key)."""
+    import rec_ledger
+    if subject is None and review_id:
+        # A guest lowering their review is new news about an answered one.
+        key = rec_ledger.rec_key("review_edit" if alert_type == "edit_downgrade" else "review", review_id)
+    else:
+        key = rec_ledger.rec_key(alert_type, subject)
+    return {"key": key, "module": ALERT_MODULE.get(ALERT_TAB.get(alert_type or ""), "ops"),
+            "title": title, "dollar_value": dollar_value, "kind": alert_type}
+
+
+def never_silenced(alert_type) -> bool:
+    """Health and safety (P0) reach the owner whatever they answered before."""
+    from push import priority_of, P0_CRITICAL
+    return priority_of(alert_type) == P0_CRITICAL
+
+
+def silenced_keys(restaurant_id, db_path: str = DB_PATH) -> set:
+    try:
+        import rec_ledger
+        return rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[notify] silenced_keys unavailable for rid={restaurant_id}: {e}")
+        return set()
+
+
+def _present_alert(restaurant_id, recs, channels, db_path: str = DB_PATH):
+    if not recs or not channels:
+        return
+    try:
+        import rec_ledger
+        for ch in channels:
+            rec_ledger.present_many(restaurant_id, [dict(r) for r in recs], _CHANNEL_SURFACE[ch], db_path=db_path)
+    except Exception as e:
+        print(f"[notify] rec_ledger present failed for rid={restaurant_id}: {e}")
 
 
 def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH) -> bool:
@@ -806,13 +942,16 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
     conn = models.get_conn(db_path)
     try:
         try:
-            conn.execute(sql, args)
+            cur = conn.execute(sql, args)
         except Exception:
             # init_db owns these columns now; this is the self-healing retry
             # for a database opened before it ran (ai_utils._ensure_usage_schema
             # is the same pattern). No DDL on the happy path.
-            conn.execute(sql, args)
+            cur = conn.execute(sql, args)
         conn.commit()
+        # The row's id travels in the push payload, so the open can name the
+        # notification it answers (#39).
+        return cur.lastrowid
     finally:
         conn.close()
 
@@ -878,11 +1017,13 @@ def record_notification(restaurant_id: int, alert_type: str, review_id: int = No
     carried labels and routing rules for them, matching nothing.
 
     These do not count toward the daily cap (models.NON_ALERT_TYPES).
+    Returns the alert_log id (for the push payload), or None.
     """
     try:
-        _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
+        return _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
     except Exception as e:
         print(f"[notify] could not record {alert_type} for rid={restaurant_id}: {e}")
+        return None
 
 
 def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PATH,
@@ -1074,7 +1215,7 @@ def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_
 
 
 def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
-               review_id=None, db_path: str = DB_PATH, value: float = None):
+               review_id=None, db_path: str = DB_PATH, value: float = None, meta: dict = None):
     """Queue an alert for after the rush.
 
     Deduped against what is already waiting: the alert_log row that normally
@@ -1091,11 +1232,13 @@ def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
         if existing:
             print(f"[notify] rid={restaurant_id} {alert_type} already waiting — not queued twice")
             return
+        import json as _json
         conn.execute(
             "INSERT INTO alert_holds (restaurant_id, alert_type, subject, html, sms_text, "
-            "review_id, release_at, value) VALUES (?,?,?,?,?,?,?,?)",
+            "review_id, release_at, value, meta_json) VALUES (?,?,?,?,?,?,?,?,?)",
             (restaurant_id, alert_type, subject, html, sms_text, review_id,
-             release_at.strftime("%Y-%m-%d %H:%M:%S"), value))
+             release_at.strftime("%Y-%m-%d %H:%M:%S"), value,
+             _json.dumps(meta) if meta else None))
         conn.commit()
     finally:
         conn.close()
@@ -1151,9 +1294,16 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         if _release_suppressed(rid, db_path):
             continue
         try:
+            import json as _json
+            try:
+                meta = _json.loads(h.get("meta_json") or "null") or {}
+            except (TypeError, ValueError):
+                meta = {}
             deliver_alert(h["restaurant_id"], h["alert_type"], h["sms_text"], h["subject"],
                           h["html"], review_id=h["review_id"], db_path=db_path,
-                          value=h.get("value"))
+                          value=h.get("value"), recs=meta.get("recs"),
+                          audience_types=meta.get("audience_types"),
+                          covered_types=meta.get("covered_types"))
             sent += 1
         except Exception as e:
             print(f"[notify] held alert {h['id']} failed: {e}")
@@ -1206,8 +1356,12 @@ def _mark_sent(hold_id, db_path: str = DB_PATH):
 # reached the owner's phone this morning, these skip EMAIL only — the owner
 # still gets the push and any SMS they turned on, and their inbox gets one
 # Cavnar email in the morning instead of three.
+# "no_response" is the name the alert is actually raised under — the set held
+# only "unresponded", so the waiting-reviews email was never folded (#6). A
+# combined morning notification ("daily_briefing") is folded when every item
+# in it is one of these (see _email_alert's covered_types).
 BRIEF_COVERED_TYPES = {"labor_over", "food_waste", "negative_trend",
-                       "rating_threshold", "ai_visibility_drop", "unresponded"}
+                       "rating_threshold", "ai_visibility_drop", "unresponded", "no_response"}
 
 
 def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
@@ -1230,15 +1384,19 @@ def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
 
 
 def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path: str = DB_PATH,
-                 review_id: int = None):
+                 review_id: int = None, covered_types=None):
     """Send an alert email unless the morning brief already covered it on the
     owner's phone today. Returns True when it sent.
 
     Also the one place the CTA button's href is resolved — see
     CTA_PLACEHOLDER. Every email path reaches this function, including a
     held alert released hours later, so there is no way to send one that
-    still points at the dashboard root."""
-    if alert_type in BRIEF_COVERED_TYPES and brief_pushed_today(restaurant_id, db_path):
+    still points at the dashboard root.
+
+    `covered_types` are the alert types a combined notification carries;
+    it is folded only when the brief covers every one of them."""
+    types = list(covered_types or [alert_type])
+    if types and all(t in BRIEF_COVERED_TYPES for t in types) and brief_pushed_today(restaurant_id, db_path):
         print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
         return False
     resolved = _resolve_cta(html, alert_type, review_id)
@@ -1247,7 +1405,8 @@ def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path:
 
 def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
                   html: str, review_id: int = None, db_path: str = DB_PATH,
-                  value: float = None):
+                  value: float = None, recs: list = None, audience_types=None,
+                  covered_types=None):
     """Send one alert on whichever channels this restaurant has on for that
     type, log it, and fire the webhook. The single delivery path: an alert
     raised now goes straight here, and one held through a rush comes here
@@ -1262,6 +1421,14 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     checked when the alert is RAISED; re-checking at release would drop a
     held alert whose release happens to land in a window it was never
     subject to.
+
+    It DOES check the recommendation trail: `recs` are what this alert
+    tells the owner (rec_ledger keys). When the owner has already answered
+    every one of them anywhere — dismissed it on Home, resolved the issue —
+    nothing is sent, unless it is a health alert. Each channel that goes out
+    is presented on its own surface (alert_sms / alert_email / alert_push).
+    The push goes only to logins permitted to read the module it is about
+    (`audience_types`, default this alert's own type).
     """
     conn = models.get_conn(db_path)
     try:
@@ -1270,6 +1437,12 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         conn.close()
     if not row:
         return
+    recs = [r for r in (recs or [alert_rec(alert_type, title=subject, review_id=review_id)]) if r and r.get("key")]
+    if recs and not never_silenced(alert_type):
+        quiet = silenced_keys(restaurant_id, db_path)
+        if all(r["key"] in quiet for r in recs):
+            print(f"[notify] rid={restaurant_id} {alert_type} not sent — the owner already answered it")
+            return
     global_sms = bool(row["urgent_via_sms"])
     global_email = bool(row["urgent_via_email"])
     contacts = get_alert_contacts(restaurant_id, sms_consent_only=True, db_path=db_path) if global_sms else []
@@ -1316,6 +1489,9 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         "critical_low":       (None, None, None),
         "price_spike":        (None, None, None),
         "ai_visibility_drop": (None, None, None),
+        # Opted into by alert_competitor_move (default on); the global SMS
+        # and email switches answer the channel question.
+        "competitor_move":    (None, None, None),
         # The combined morning batch folds the daily operational alerts into
         # one message. It fell through to the unresponded triplet below, so
         # an owner with "no reply after 48h" reminders off heard about none
@@ -1341,12 +1517,17 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     # push doesn't, so the per-type toggle alone is the gate) — and it's a
     # no-op anyway if the owner never registered a device.
     via_push  = _on(push_col, 1)
+    channels = []
     if via_sms and contacts:
+        texted = False
         for c in contacts:
-            send_sms(c["phone"], sms_text)
+            texted = bool(send_sms(c["phone"], sms_text)) or texted
+        if texted:
+            channels.append("sms")
     if via_email and owner_email:
-        _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path,
-                     review_id=review_id)
+        if _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path,
+                        review_id=review_id, covered_types=covered_types):
+            channels.append("email")
     # Logged BEFORE the push, not after: the push payload now carries the
     # app-icon badge, which is this login's unread count over alert_log. A
     # push sent first badges the phone with a number that excludes the very
@@ -1357,14 +1538,23 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     # on a machine/CI runner with no local reviews.db, crashing) against
     # the wrong database regardless of what db_path the caller actually
     # passed in.
-    _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
+    alert_id = _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
     if via_push:
         try:
-            from push import fire_push as _fp
-            _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
-                data={"alert_type": alert_type, "review_id": review_id}, db_path=db_path)
-        except Exception:
-            pass
+            audience = alert_audience(restaurant_id, audience_types or [alert_type], db_path)
+            if audience is None or audience:
+                from push import fire_push as _fp
+                # alert_id and rec_key ride the payload so the open names
+                # the notification it answers (#39).
+                _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
+                    data={"alert_type": alert_type, "review_id": review_id, "alert_id": alert_id,
+                          "rec_key": recs[0]["key"] if recs else None},
+                    db_path=db_path, user_ids=audience)
+                if audience or _has_devices(restaurant_id, db_path):
+                    channels.append("push")
+        except Exception as e:
+            print(f"[notify] push for {alert_type} rid={restaurant_id} failed: {e}")
+    _present_alert(restaurant_id, recs, channels, db_path)
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)
@@ -1394,11 +1584,12 @@ _batch = None
 
 
 class _Pending:
-    __slots__ = ("alert_type", "sms_text", "subject", "lines", "value")
+    __slots__ = ("alert_type", "sms_text", "subject", "lines", "value", "recs")
 
-    def __init__(self, alert_type, sms_text, subject, lines, value):
+    def __init__(self, alert_type, sms_text, subject, lines, value, recs=None):
         self.alert_type, self.sms_text = alert_type, sms_text
         self.subject, self.lines, self.value = subject, lines or [], value
+        self.recs = recs or [alert_rec(alert_type, title=subject)]
 
 
 # The once-a-day claims a batched pass has EARNED, written only when the batch
@@ -1452,7 +1643,7 @@ def _deliver_pending(restaurant_id, item, db_path):
     html = _alert_email_html(_restaurant_name(restaurant_id), item.subject, item.lines,
                              restaurant_id=restaurant_id)
     _deliver_or_hold(restaurant_id, item.alert_type, item.sms_text, item.subject, html,
-                     db_path=db_path, value=item.value)
+                     db_path=db_path, value=item.value, recs=item.recs)
 
 
 def _restaurant_name(restaurant_id):
@@ -1484,8 +1675,13 @@ def _deliver_combined(restaurant_id, items, db_path):
                  "Open Cavnar AI and ask about any of it.")
     html = _alert_email_html(name, f"Your morning, in one place", lines,
                              cta_label="Open the dashboard", restaurant_id=restaurant_id)
+    # The combined push reaches only logins permitted every module it
+    # mentions; the email folds into the brief only when the brief covers
+    # every item; each item keeps its own recommendation key.
+    types = [i.alert_type for i in items]
     _deliver_or_hold(restaurant_id, "daily_briefing", _strip_tags(sms_text), subject, html,
-                     db_path=db_path)
+                     db_path=db_path, recs=[r for i in items for r in i.recs],
+                     audience_types=types, covered_types=types)
     # Each folded type still records itself, so next week's repeat windows
     # (_already_alerted / _recent) and the history behave exactly as before.
     for item in items:
@@ -1498,36 +1694,49 @@ def _strip_tags(text: str) -> str:
 
 
 def _deliver_or_hold(restaurant_id, alert_type, sms_text, subject, html,
-                     db_path=DB_PATH, value=None, review_id=None):
+                     db_path=DB_PATH, value=None, review_id=None, recs=None,
+                     audience_types=None, covered_types=None):
     release_at = rush_release_at(restaurant_id, alert_type, db_path)
     if release_at is not None:
+        meta = {k: v for k, v in (("recs", recs), ("audience_types", audience_types),
+                                  ("covered_types", covered_types)) if v}
         hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
-                   review_id=review_id, db_path=db_path, value=value)
+                   review_id=review_id, db_path=db_path, value=value, meta=meta or None)
         return
     deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
-                  review_id=review_id, db_path=db_path, value=value)
+                  review_id=review_id, db_path=db_path, value=value, recs=recs,
+                  audience_types=audience_types, covered_types=covered_types)
 
 
 def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
                 html: str = None, review_id: int = None, db_path: str = DB_PATH,
-                value: float = None, lines: list = None) -> bool:
+                value: float = None, lines: list = None, recs: list = None) -> bool:
     """Raise one alert: quiet hours / daily cap / hard ceiling, then either
     collect it into this morning's batch, hold it through a rush, or deliver
     it now. Returns False when it was suppressed outright.
 
     blast() inside fire_review_alerts() is the review-side twin of this; the
-    daily jobs call this one. Both end at deliver_alert."""
+    daily jobs call this one. Both end at deliver_alert.
+
+    `recs` are the recommendation keys it carries (alert_rec); when every
+    one is silenced by an earlier answer it is not raised at all."""
+    recs = recs or [alert_rec(alert_type, title=subject, review_id=review_id)]
+    if not never_silenced(alert_type):
+        quiet = silenced_keys(restaurant_id, db_path)
+        if recs and all(r["key"] in quiet for r in recs):
+            print(f"[notify] rid={restaurant_id} {alert_type} not raised — the owner already answered it")
+            return False
     if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
         return False
     if _batch is not None and alert_type in DAILY_BATCH_TYPES:
         _batch.setdefault(restaurant_id, []).append(
-            _Pending(alert_type, sms_text, subject, lines, value))
+            _Pending(alert_type, sms_text, subject, lines, value, recs))
         return True
     if html is None:
         html = _alert_email_html(_restaurant_name(restaurant_id), subject, lines or [],
                                  restaurant_id=restaurant_id)
     _deliver_or_hold(restaurant_id, alert_type, sms_text, subject, html,
-                     db_path=db_path, value=value, review_id=review_id)
+                     db_path=db_path, value=value, review_id=review_id, recs=recs)
     return True
 
 
@@ -1910,13 +2119,16 @@ def fire_response_approved_alert(restaurant_id: int, review_id: int,
         if r["owner_email"] and (r["al_1star_email"] if "al_1star_email" in r.keys() else 1):
             _email_alert(restaurant_id, r["owner_email"], subject, html, "resp_approved",
                          db_path, review_id=review_id)
-        _log_alert(restaurant_id, "resp_approved", review_id, db_path=db_path)
+        alert_id = _log_alert(restaurant_id, "resp_approved", review_id, db_path=db_path)
         try:
-            from push import fire_push as _fp
-            _fp(restaurant_id, "resp_approved", subject, body,
-                data={"alert_type": "resp_approved", "review_id": review_id}, db_path=db_path)
-        except Exception:
-            pass
+            audience = alert_audience(restaurant_id, ["resp_approved"], db_path)
+            if audience is None or audience:
+                from push import fire_push as _fp
+                _fp(restaurant_id, "resp_approved", subject, body,
+                    data={"alert_type": "resp_approved", "review_id": review_id, "alert_id": alert_id},
+                    db_path=db_path, user_ids=audience)
+        except Exception as e:
+            print(f"[notify] resp_approved push failed rid={restaurant_id}: {e}")
     except Exception as e:
         print(f"[notify] resp_approved alert error rid={restaurant_id}: {e}")
 
@@ -2016,11 +2228,15 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
           AND r.response_status IN ('pending', 'drafted')
           AND r.deleted_at IS NULL    -- not about a review the dashboard no longer shows (DATA-60)
           AND r.fetched_at <= datetime('now', '-48 hours')
+          -- Only a reply still owed: a review the guest WROTE in the last
+          -- REPLY_OWED_MAX_AGE_DAYS. Imported history (a first Google
+          -- connect brings years of it) re-alerted every day forever (#6).
+          AND datetime(COALESCE(NULLIF(r.review_date, ''), r.fetched_at)) >= datetime('now', ?)
           AND """ + models.in_service_sql("rest.billing_status") + """
           AND rest.alert_no_response = 1
           AND (rest.urgent_via_sms = 1 OR rest.urgent_via_email = 1 OR rest.al_unres_push = 1)
         GROUP BY r.restaurant_id
-    """).fetchall()
+    """, (f"-{REPLY_OWED_MAX_AGE_DAYS} days",)).fetchall()
     conn.close()
 
     deadline = _pass_deadline(local_hour)
@@ -2032,15 +2248,7 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
             continue
         name        = row["name"]
         n           = row["overdue_count"]
-        # 24h dedup
-        conn2 = models.get_conn(db_path)
-        already = conn2.execute("""
-            SELECT id FROM alert_log
-            WHERE restaurant_id=? AND alert_type='no_response'
-            AND fired_at >= datetime('now', '-24 hours')
-        """, (rid,)).fetchone()
-        conn2.close()
-        if already:
+        if not _no_response_is_news(rid, n, db_path):
             continue
 
         review_word = "reviews" if n > 1 else "review"
@@ -2057,7 +2265,35 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
             f"<strong>{n} negative {review_word}</strong> have been waiting for a "
             f"response for over 48 hours.",
             "Responding promptly helps protect your rating.",
-        ], db_path=db_path)
+        ], db_path=db_path, value=float(n),
+            recs=[alert_rec("no_response", title=f"{n} negative {review_word} waiting on a reply")])
+
+
+# The same waiting reviews are not news every morning (#18). Said again only
+# when more are waiting than last time, or once this long has passed.
+NO_RESPONSE_REPEAT_DAYS = 7
+
+
+def _no_response_is_news(restaurant_id, n, db_path: str = DB_PATH) -> bool:
+    """Whether "N reviews waiting" is worth saying today. It used to repeat
+    every 24 hours about the same reviews; now it repeats when the count
+    has grown since the last one, or after NO_RESPONSE_REPEAT_DAYS."""
+    conn = models.get_conn(db_path)
+    try:
+        last = conn.execute(
+            "SELECT value, fired_at >= datetime('now', '-24 hours') AS today, "
+            "fired_at >= datetime('now', ?) AS recent FROM alert_log "
+            "WHERE restaurant_id=? AND alert_type='no_response' ORDER BY id DESC LIMIT 1",
+            (f"-{NO_RESPONSE_REPEAT_DAYS} days", restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not last:
+        return True
+    if last["today"]:
+        return False
+    if not last["recent"]:
+        return True
+    return last["value"] is not None and n > float(last["value"])
 
 
 # A labor snapshot older than this is history, not news. The alert used to
@@ -2117,7 +2353,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         if via_email and not owner_email:
             print(f"[notify] rid={rid} has email alerts on but no owner_email — email suppressed")
 
-        def _fire(sms_text, subject, lines, alert_type):
+        def _fire(sms_text, subject, lines, alert_type, recs=None):
             # One delivery path for every alert in the product. This used to
             # be a bespoke closure that sent SMS, email, push, log and
             # webhook itself — which is why these alert types were the only
@@ -2127,7 +2363,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # fire in the same 10am pass they are folded into one morning
             # notification, and that needs the sentences, not a finished
             # email (see DAILY_BATCH_TYPES).
-            raise_alert(rid, alert_type, sms_text, subject, lines=lines, db_path=db_path)
+            raise_alert(rid, alert_type, sms_text, subject, lines=lines, db_path=db_path, recs=recs)
 
         def _already_alerted(alert_type):
             # A 7-day window, not 24h — this job runs once a day, so a
@@ -2221,7 +2457,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]
                 target = r["labor_target_pct"] or baseline_labor_target(rid, db_path) or 30.0
-                if actual > target:
+                # One definition of "over target" (thresholds.py) shared with
+                # the labor issue and Home. Any overage at all used to fire
+                # this, so 30.2% against 30% was a text (#34).
+                if actual - target >= LABOR_OVER_TARGET_PTS:
+                    from time_utils import mdy_range
                     over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])
                     sms  = (
@@ -2232,8 +2472,10 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                     _fire(sms, f"Labor over target — {name}", [
                         f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
                         f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
-                        f"Period: {recent['period_start']} – {recent['period_end']}",
-                    ], "labor_over")
+                        # M/D/YY, never the stored ISO dates (#16).
+                        f"Period: {mdy_range(recent['period_start'], recent['period_end'])}",
+                    ], "labor_over", recs=[alert_rec("labor_over", subject=str(recent["period_start"])[:10],
+                                                     title=f"Labor {actual:.1f}% against a {target:.0f}% target")])
 
 
 def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
@@ -2307,6 +2549,50 @@ def _ai_visibility_drop(runs: list):
     return s_now, s_prev, int(round(moved))
 
 
+def _price_spike_impact(restaurant_id, item):
+    """(monthly $ exposure, [dishes it hits]) for a climbing ingredient, from
+    the two places that already compute them: food_cost_intelligence.
+    cost_drivers (price x recorded usage) and menu_intelligence.
+    reprice_suggestions (the dishes, per plate and per month). The alert
+    carried only "Salmon is up 12%" — no size, no dish, nothing to do (#25).
+    Either half missing is reported as missing, never guessed."""
+    exposure, dishes = None, []
+    try:
+        import food_cost_intelligence as _fci
+        for d in (_fci.cost_drivers(restaurant_id) or {}).get("drivers") or []:
+            if d.get("kind") == "price" and str(d.get("item") or "").lower() == str(item).lower():
+                exposure = float(d.get("dollars_monthly") or 0) or None
+                break
+    except Exception as e:
+        print(f"[notify] price exposure unavailable rid={restaurant_id}: {e}")
+    try:
+        import menu_intelligence as _mi
+        for sg in (_mi.reprice_suggestions(restaurant_id) or {}).get("suggestions") or []:
+            if any(str(dr.get("ingredient") or "").lower() == str(item).lower() for dr in sg.get("drivers") or []):
+                dishes.append({"dish": sg.get("dish"), "per_plate": sg.get("increase_per_plate"),
+                               "monthly": sg.get("monthly_margin_lost"),
+                               "suggested_price": sg.get("suggested_price"), "sell_price": sg.get("sell_price")})
+    except Exception as e:
+        print(f"[notify] reprice suggestions unavailable rid={restaurant_id}: {e}")
+    return exposure, dishes
+
+
+def _dish_line(dishes) -> str:
+    if not dishes:
+        return ""
+    parts = []
+    for d in dishes[:3]:
+        bit = _html.escape(str(d.get("dish") or "?"))
+        if d.get("per_plate"):
+            bit += f" (+${float(d['per_plate']):.2f} a plate"
+            if d.get("suggested_price") and d.get("sell_price"):
+                bit += f"; ${float(d['sell_price']):.2f} → ${float(d['suggested_price']):.2f} keeps its margin"
+            bit += ")"
+        parts.append(bit)
+    more = len(dishes) - len(parts)
+    return "Dishes it hits: " + "; ".join(parts) + (f" and {more} more" if more > 0 else "") + "."
+
+
 def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """The two daily triggers added by the settings audit — food waste and
     an AI-visibility drop — run right after check_daily_alerts(). Same
@@ -2338,9 +2624,9 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             c2.close()
             return row is not None
 
-        def _fire(alert_type, sms_text, subject, lines, value=None):
-            raise_alert(rid, alert_type, sms_text, subject, lines=lines,
-                        db_path=db_path, value=value)
+        def _fire(alert_type, sms_text, subject, lines, value=None, recs=None):
+            return raise_alert(rid, alert_type, sms_text, subject, lines=lines,
+                               db_path=db_path, value=value, recs=recs)
 
         # ── Food waste ────────────────────────────────────────
         if r["alert_food_waste"] and not _recent("food_waste"):
@@ -2387,6 +2673,10 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 from inventory import analysis_for
                 items, is_live, analysis = analysis_for(rid)
                 crit = (analysis or {}).get("critical_low") or [] if (items and is_live) else []
+                # One recommendation per item ("stock_low:Salmon"): an item
+                # the owner already answered is left out, the rest still go.
+                quiet = silenced_keys(rid, db_path)
+                crit = [x for x in crit if alert_rec("stock_low", subject=x.get("item", "?"))["key"] not in quiet]
                 if crit:
                     names = ", ".join(x.get("item", "?") for x in crit[:3])
                     _fire("critical_low",
@@ -2394,7 +2684,10 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                           f"Running out before delivery — {name}",
                           [f"{len(crit)} item(s) won't last until the next delivery.",
                            f"Soonest: {names}.", "Open Food Cost to send the order."],
-                          value=float(len(crit)))
+                          value=float(len(crit)),
+                          recs=[alert_rec("stock_low", subject=x.get("item", "?"),
+                                          title=f"{x.get('item', '?')} runs out before the next delivery")
+                                for x in crit[:10]])
             except Exception as e:
                 import ops
                 ops.capture(e, job="notify.critical_low", context=f"rid={rid}", db_path=db_path)
@@ -2407,15 +2700,29 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 _pw_items, _pw_live = load_inventory_for_restaurant(rid)
                 watch = build_price_watch(compute_item_trends(rid, _pw_items)) if (_pw_items and _pw_live) else []
                 big = [w for w in watch if w.get("is_big_8") and (w.get("change_pct") or 0) >= 5]
+                quiet = silenced_keys(rid, db_path)
+                big = [w for w in big if alert_rec("price_spike", subject=w["item"])["key"] not in quiet]
                 if big:
                     top = big[0]
+                    exposure, dishes = _price_spike_impact(rid, top["item"])
+                    money = f" — about ${exposure:,.0f}/month" if exposure else ""
+                    dish_line = _dish_line(dishes)
                     _fire("price_spike",
-                          f"Cavnar AI: {top['item']} is up {abs(top['change_pct']):.0f}% at {name}.",
+                          f"Cavnar AI: {top['item']} is up {abs(top['change_pct']):.0f}% at {name}{money}."
+                          + (f" Hits {', '.join(d['dish'] for d in dishes[:2])}." if dishes else ""),
                           f"Ingredient price climbing — {name}",
                           [f"{top['item']} moved from ${top['old_price']:.2f} to ${top['new_price']:.2f}"
                            f" ({abs(top['change_pct']):.0f}%).",
-                           top.get("action_hint") or "", "Open Food Cost to see Price Watch."],
-                          value=float(top.get("change_pct") or 0))
+                           (f"At what you use, that is about <strong>${exposure:,.0f} a month</strong>."
+                            if exposure else ""),
+                           dish_line,
+                           top.get("action_hint") or "",
+                           "Open Food Cost to reprice the affected dishes." if dishes
+                           else "Open Food Cost to see Price Watch."],
+                          value=float(exposure) if exposure else None,
+                          recs=[alert_rec("price_spike", subject=top["item"],
+                                          title=f"{top['item']} up {abs(top['change_pct']):.0f}%",
+                                          dollar_value=exposure)])
             except Exception as e:
                 import ops
                 ops.capture(e, job="notify.price_spike", context=f"rid={rid}", db_path=db_path)
@@ -2442,3 +2749,143 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                            "Open Intel → AI Visibility for the full picture."])
             except Exception as e:
                 print(f"[notify] ai visibility check error rid={rid}: {e}")
+
+
+
+# ── Competitor movement (#48) ─────────────────────────────────────────────────
+# competitor_snapshots has recorded every competitor's rating and review count
+# on each weekly run, and models.competitor_movement / competitor_roster_changes
+# read them — and nothing ever told the owner. Once a week: a tracked
+# competitor whose rating moved at least this far, or a new one in the set.
+COMPETITOR_MOVE_MIN = 0.2
+# The movement window: the last two weekly runs, with a little slack.
+COMPETITOR_MOVE_WINDOW_DAYS = 15
+COMPETITOR_ALERT_WEEKDAY = 0            # Monday, after Sunday's refresh
+COMPETITOR_ALERT_MAX_ITEMS = 3
+
+
+def competitor_changes(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """[{name, place_id, kind: "moved"|"new", line, evidence}] worth telling
+    the owner about this week, biggest first. Evidence is the review counts
+    the move rests on — a rating move is only as real as the reviews behind
+    it, and the owner should be able to see that."""
+    out = []
+    try:
+        for m in models.competitor_movement(restaurant_id, days=COMPETITOR_MOVE_WINDOW_DAYS, db_path=db_path) or []:
+            change = float(m.get("rating_change") or 0)
+            if abs(change) + 1e-9 < COMPETITOR_MOVE_MIN:
+                continue
+            added = int(m.get("reviews_added") or 0)
+            evidence = (f"{m.get('reviews_then') or 0} → {m.get('reviews_now') or 0} Google reviews"
+                        + (f" ({added} new)" if added else " (no new reviews — Google recalculated)"))
+            word = "up" if change > 0 else "down"
+            out.append({"name": m.get("name") or "A competitor", "place_id": m.get("place_id"), "kind": "moved",
+                        "rating_now": m.get("rating_now"), "size": abs(change),
+                        "line": f"{m.get('name') or 'A competitor'} is {word} {abs(change):.1f}★ "
+                                f"({m.get('rating_then'):.1f} → {m.get('rating_now'):.1f})",
+                        "evidence": evidence})
+    except Exception as e:
+        print(f"[notify] competitor movement unavailable rid={restaurant_id}: {e}")
+    try:
+        roster = models.competitor_roster_changes(restaurant_id, db_path=db_path) or {}
+        fresh = False
+        if roster.get("ok") and roster.get("compared_to"):
+            from datetime import date as _date, timedelta as _td
+            try:
+                fresh = _date.fromisoformat(str(roster["compared_to"])[:10]) >= _date.today() - _td(days=8)
+            except ValueError:
+                fresh = False
+        if fresh and roster.get("arrived"):
+            conn = models.get_conn(db_path)
+            try:
+                for a in roster["arrived"][:COMPETITOR_ALERT_MAX_ITEMS]:
+                    snap = conn.execute("SELECT rating, review_count FROM competitor_snapshots WHERE restaurant_id=? "
+                                        "AND place_id=? ORDER BY captured_at DESC LIMIT 1",
+                                        (restaurant_id, a["place_id"])).fetchone()
+                    rating = snap["rating"] if snap else None
+                    count = snap["review_count"] if snap else None
+                    out.append({"name": a.get("name") or "A new place", "place_id": a["place_id"], "kind": "new",
+                                "rating_now": rating, "size": 1.0,
+                                "line": f"New nearby: {a.get('name') or 'a new place'}"
+                                        + (f", {float(rating):.1f}★" if rating else ""),
+                                "evidence": (f"{int(count)} Google reviews" if count is not None
+                                             else "review count not reported yet")})
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[notify] competitor roster unavailable rid={restaurant_id}: {e}")
+    out.sort(key=lambda c: (c["kind"] != "moved", -c["size"]))
+    return out
+
+
+def check_competitor_alerts(db_path: str = DB_PATH, local_hour: int = None, today_local=None):
+    """Monday, inside the morning window in the restaurant's own timezone:
+    one alert per restaurant about competitor moves and arrivals. Through
+    raise_alert, so quiet hours, the owner's cap, the hard ceiling and the
+    rush hold all apply; off when alert_competitor_move is (it defaults on).
+    Each competitor is its own recommendation ("competitor_move:<name>"),
+    and one the owner already answered is left out. A given competitor at a
+    given rating is told once (claim per place and rating)."""
+    import ops
+    conn = models.get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT id, name, timezone FROM restaurants
+            WHERE COALESCE(alert_competitor_move, 1) = 1
+              AND EXISTS (SELECT 1 FROM competitor_snapshots s WHERE s.restaurant_id = restaurants.id)
+              AND """ + models.in_service_sql() + """
+        """).fetchall()
+    finally:
+        conn.close()
+    sent = 0
+    deadline = _pass_deadline(local_hour)
+    for r in _in_window_only(rows, "id", local_hour):
+        if _past(deadline):
+            break
+        rid, name = r["id"], r["name"]
+        try:
+            from time_utils import restaurant_now_by_id
+            local = today_local or restaurant_now_by_id(rid, naive=True)
+            if local_hour is not None and local.weekday() != COMPETITOR_ALERT_WEEKDAY:
+                continue
+            # The week is claimed only on the day the check is meant to run,
+            # so an earlier day's pass cannot spend it.
+            if local_hour is not None and not ops.claim_period(f"competitor_alerts:{rid}", local.strftime("%G-W%V")):
+                continue
+            quiet = silenced_keys(rid, db_path)
+            changes, claimed = [], []
+            for c in competitor_changes(rid, db_path):
+                rec = alert_rec("competitor_move", subject=c["name"], title=c["line"])
+                if rec["key"] in quiet:
+                    continue
+                level = f"{c['kind']}:{float(c['rating_now'] or 0):.1f}"
+                if not ops.claim_period(f"competitor_move_told:{rid}:{c['place_id']}", level):
+                    continue
+                claimed.append((f"competitor_move_told:{rid}:{c['place_id']}", level))
+                changes.append((c, rec))
+                if len(changes) >= COMPETITOR_ALERT_MAX_ITEMS:
+                    break
+            if not changes:
+                continue
+            lead = changes[0][0]
+            n = len(changes)
+            sms = (f"Cavnar AI · {name}: {lead['line']} — {lead['evidence']}."
+                   + (f" And {n - 1} more competitor change{'' if n == 2 else 's'}." if n > 1 else ""))
+            lines = [f"<strong>{_html.escape(c['line'])}</strong> — {_html.escape(c['evidence'])}." for c, _ in changes]
+            lines.append("From Google's public ratings on this week's competitor check. A move on a handful "
+                         "of reviews can be noise; the review counts say how much is behind it.")
+            if raise_alert(rid, "competitor_move", sms, f"Competitor change nearby — {name}", lines=lines,
+                           db_path=db_path, recs=[rec for _, rec in changes]):
+                sent += 1
+            else:
+                # Held back by quiet hours or the owner's cap: not told, so
+                # the news is not spent — next week's pass can still say it.
+                for job, period in claimed:
+                    ops.release_period(job, period)
+        except Exception as e:
+            try:
+                ops.capture(e, job="notify.competitor_move", context=f"rid={rid}", db_path=db_path)
+            except Exception:
+                pass
+            print(f"[notify] competitor alert error rid={rid}: {e}")
+    return {"sent": sent}

@@ -494,9 +494,11 @@ def _may_assign(user) -> bool:
 
 
 # Home's attention keys, as the rec_ledger key the SAME news carries on the
-# brief and the queue — "reviews waiting" is one piece of news whichever
-# surface says it, so one answer silences it everywhere.
-LEDGER_KEY = {"awaiting_approval": "reviews_waiting", "critical_low": "running_low"}
+# brief, the queue and the ALERT (notify.alert_rec) — "reviews waiting" is one
+# piece of news whichever surface says it, so one answer silences it
+# everywhere. Items whose key carries a subject ("labor_over:<period>",
+# "stock_low:<item>") set it where they are built.
+LEDGER_KEY = {"awaiting_approval": "no_response"}
 
 
 def ledger_key(key):
@@ -728,8 +730,9 @@ def _build(current_user):
     upcoming = []
     ask = []
 
-    def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None):
-        attention.append({"key": key, "severity": severity, "title": title, "detail": detail, "module": module,
+    def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None,
+                 rec_key=None):
+        attention.append({"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
                           "action": {"label": action_label, "kind": action, "module": module},
                           "since": since, "evidence": evidence, "location": restaurant.location_name or None})
 
@@ -976,7 +979,10 @@ def _build(current_user):
             if over > LABOR_OVER_TARGET_PTS:
                 add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
                          f"Across the last {days} days of shifts" + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
-                         since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales")
+                         since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales",
+                         # The labor alert's key: its latest period.
+                         rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
+                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"))
             elif over <= 0:
                 add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under your {labor_target:.0f}% target over {days} days.", "labor")
             if ot_now:
@@ -1061,7 +1067,8 @@ def _build(current_user):
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
-                         evidence=f"{len(reorder)} more to reorder soon")
+                         evidence=f"{len(reorder)} more to reorder soon",
+                         rec_key=f"stock_low:{crit[0].get('item', '?')}")
             # The CFO read. The module's morning headline was
             # "$X recoverable/month" — a waste-recovery estimate, when the
             # question an operator opens with is where their margin is. Food
@@ -1339,7 +1346,7 @@ def _build(current_user):
         silenced = set()
     answered = set(dismissed) | silenced
     for a in attention:
-        a["rec_key"] = ledger_key(a["key"])
+        a["rec_key"] = a.get("rec_key") or ledger_key(a["key"])
         a["dismissable"] = a["severity"] != "critical"
         a["times_hidden"] = hidden_counts.get(a["rec_key"], 0)
     attention = [a for a in attention if not (a["dismissable"] and (a["rec_key"] in answered))]

@@ -2439,6 +2439,23 @@ def admin_api_intelligence(current_user):
     return jsonify(**_dash.build())
 
 
+@admin_bp.route("/admin/api/recommendations")
+@admin_required
+def admin_api_recommendations(current_user):
+    """Recommendation Acceptance (internal only): the funnel from shown to
+    improved, the score, and what moves it. ?days=30&restaurant_id=N."""
+    import admin_ops
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    try:
+        rid = int(request.args.get("restaurant_id")) if request.args.get("restaurant_id") else None
+    except (TypeError, ValueError):
+        rid = None
+    return jsonify(**admin_ops.recommendation_acceptance(days=days, restaurant_id=rid))
+
+
 @admin_bp.route("/admin/api/clients")
 @admin_required
 def admin_api_clients(current_user):

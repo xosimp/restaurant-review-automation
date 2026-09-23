@@ -266,7 +266,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             older = rs.get("older") or 0
             # Said separately, never added in: history is not owed a reply.
             older_bit = (f" ({older} older one{'' if older == 1 else 's'} not counted)" if older else "")
-            lines.append({"key": "reviews", "tone": "bad" if urgent else "action", "rec": "reviews_waiting",
+            lines.append({"key": "reviews", "tone": "bad" if urgent else "action", "rec": "no_response",
                           "critical": bool(urgent),
                           "text": f"{rs['waiting']} review{'' if rs['waiting'] == 1 else 's'} from the last "
                                   f"30 days waiting on a reply{extra}{older_bit}.",
@@ -277,7 +277,8 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         low = _safe(_critical_low, restaurant_id) or []
         if low:
             named = ", ".join(low[:3]) + (f" and {len(low) - 3} more" if len(low) > 3 else "")
-            lines.append({"key": "stock", "tone": "bad", "rec": "running_low",
+            # The alert's own key for the first item ("stock_low:Salmon").
+            lines.append({"key": "stock", "tone": "bad", "rec": f"stock_low:{low[0]}",
                           "text": f"Running low: {named}.",
                           "ask": "What do I need to order today?"})
 
@@ -694,7 +695,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             _notify.record_notification(restaurant_id, "morning_brief", db_path=db_path)
             data = {"ask_prompt": lead["ask"]}
             if lead.get("rec"):
-                data["rec"] = lead["rec"]          # so the tap is recorded as "opened"
+                data["rec_key"] = lead["rec"]      # the tap is recorded as "opened" (notifications/opened)
             push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
                            data=data, db_path=db_path, user_ids={u["id"]})
             _safe(_present, restaurant_id, brief, "brief_push", u["id"], db_path)

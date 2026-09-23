@@ -52,7 +52,7 @@ def test_reviews_waiting_on_a_reply_are_in_the_brief(db_path):
     line = _lines(rid, db_path)["reviews"]
     assert "2 reviews from the last 30 days waiting on a reply" in line["text"]
     assert "1 of them 2 stars or worse" in line["text"]
-    assert line["ask"] and line["rec"] == "reviews_waiting" and line["critical"] is True
+    assert line["ask"] and line["rec"] == "no_response" and line["critical"] is True
     assert "older" not in line["text"]
 
 

@@ -44,10 +44,10 @@ def test_the_experienced_flag_is_stored_and_read(db_path):
     assert ss.experienced_names(rid, db_path=db_path) == set()
 
 
-def test_auto_publish_is_offered_only_after_clean_weeks(monkeypatch):
+def test_auto_publish_is_offered_exactly_when_the_job_would_run(monkeypatch):
+    """The offer reads the same trust rule as the Friday job — an offer the
+    job would then refuse ("armed: false") is not an offer."""
     import strategy_routes as sr
-    import schedule_versions as sv
-    monkeypatch.setattr(models, "get_restaurant", lambda rid: Restaurant(name="R", owner_email="o@x.test", auto_publish_schedule=0))
 
     class _C:
         def execute(self, *a):
@@ -58,11 +58,10 @@ def test_auto_publish_is_offered_only_after_clean_weeks(monkeypatch):
 
         def close(self):
             pass
+    monkeypatch.setattr(models, "get_restaurant", lambda rid: Restaurant(name="R", owner_email="o@x.test", auto_publish_schedule=0))
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: _C())
-    clean = {"weeks": [{"changes": 1, "unchanged_share": 0.98}] * 3}
-    monkeypatch.setattr(sv, "acceptance", lambda rid, weeks=3: clean)
+    monkeypatch.setattr(models, "schedule_publish_trust", lambda rid: models.SCHEDULE_PUBLISH_TRUST_MIN)
     assert sr._auto_publish_offer(1)["eligible"] is True
-    monkeypatch.setattr(sv, "acceptance", lambda rid, weeks=3: {"weeks": [{"changes": 9, "unchanged_share": 0.7}] * 3})
-    assert sr._auto_publish_offer(1)["eligible"] is False
-    monkeypatch.setattr(sv, "acceptance", lambda rid, weeks=3: {"weeks": clean["weeks"][:2]})
-    assert sr._auto_publish_offer(1)["eligible"] is False
+    monkeypatch.setattr(models, "schedule_publish_trust", lambda rid: models.SCHEDULE_PUBLISH_TRUST_MIN - 1)
+    off = sr._auto_publish_offer(1)
+    assert off["eligible"] is False and "in a row" in off["reason"]

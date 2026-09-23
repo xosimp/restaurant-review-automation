@@ -241,9 +241,9 @@ def test_that_one_worked_names_real_dates_not_a_window_the_owner_never_set():
 def test_the_brief_email_reads_m_d_yy_and_its_links_carry_the_key(db_path):
     import morning_brief
     html = morning_brief._email_html({"date": "2026-09-23", "lines": [
-        {"key": "reviews", "rec": "reviews_waiting", "tone": "bad", "text": "2 reviews", "ask": "Which?"}]}, "Trust Co")
+        {"key": "reviews", "rec": "no_response", "tone": "bad", "text": "2 reviews", "ask": "Which?"}]}, "Trust Co")
     assert "9/23/26" in html and "2026-09-23" not in html
-    assert "rec=reviews_waiting" in html and "src=brief_email" in html
+    assert "rec=no_response" in html and "src=brief_email" in html
 
 
 def test_home_toasts_format_result_dates():
@@ -266,9 +266,9 @@ def test_a_no_on_home_is_a_no_in_the_brief(db_path):
     r = models.get_restaurant(rid, db_path=db_path)
     keys = lambda: [l["key"] for l in morning_brief.build(rid, restaurant=r, db_path=db_path)["lines"]]
     assert "reviews" in keys()
-    home_brief.dismiss(rid, "reviews_waiting", kind="not_for_us", user_id=1)
+    home_brief.dismiss(rid, "no_response", kind="not_for_us", user_id=1)
     assert "reviews" not in keys()
-    home_brief.undismiss(rid, "reviews_waiting")
+    home_brief.undismiss(rid, "no_response")
     assert "reviews" in keys()
 
 
@@ -276,10 +276,10 @@ def test_the_brief_drops_what_home_already_said_today_unless_critical(db_path):
     import morning_brief
     rid = _rid(db_path)
     brief = {"lines": [{"key": "schedule", "rec": "schedule:next-week", "text": "x", "tone": "action"},
-                       {"key": "reviews", "rec": "reviews_waiting", "critical": True, "text": "y", "tone": "bad"},
+                       {"key": "reviews", "rec": "no_response", "critical": True, "text": "y", "tone": "bad"},
                        {"key": "today", "text": "z", "tone": "neutral"}]}
     rec_ledger.present_many(rid, [{"key": "schedule:next-week", "module": "labor"},
-                                  {"key": "reviews_waiting", "module": "reviews"}], "home", db_path=db_path)
+                                  {"key": "no_response", "module": "reviews"}], "home", db_path=db_path)
     out = morning_brief._dedupe(rid, brief, db_path=db_path)
     assert [l["key"] for l in out["lines"]] == ["reviews", "today"]
     # the brief's own showings never count against it
@@ -370,7 +370,7 @@ def test_home_records_every_card_and_attention_item_as_shown(db_path):
     c.close()
     assert {a["rec_key"] for a in p["attention"]} <= shown
     assert {r["key"] for r in p["recommendations"]} <= shown
-    assert "reviews_waiting" in shown, "Home's drafted-replies item carries the brief's key"
+    assert "no_response" in shown, "Home's drafted-replies item carries the brief's key"
 
 
 def test_needs_attention_can_be_answered_except_a_critical_item(db_path):
@@ -426,3 +426,35 @@ def test_unsourced_claims_are_gone():
                   "Better than most independents", "accounts that post weekly hold reach",
                   "things nearby restaurants are doing that you aren't", "len(ot) * 38", "ot_count * 38"):
         assert claim not in src, claim
+
+
+# ── keys shared with the alerts, Ask's own reasons, cover requests ─────────
+
+def test_home_keys_are_the_alert_keys():
+    """A "not for us" on Home must silence the matching alert, so a card
+    carries the alert's own key (notify.alert_rec)."""
+    assert bi.driver_key({"label": "Ribeye price up 12%"}) == "price_spike:Ribeye"
+    assert bi.driver_key({"kind": "price", "item": "Salmon", "label": "Salmon price up 8%"}) == "price_spike:Salmon"
+    assert bi.driver_key({"label": "Salmon waste above tolerance"}) == "food_cost_driver:Salmon waste above tolerance"
+    assert home_brief.ledger_key("awaiting_approval") == "no_response"
+    src = open("home_brief.py").read()
+    assert 'rec_key=f"stock_low:{crit[0]' in src and 'f"labor_over:{' in src
+
+
+def test_decisions_show_the_reason_the_owner_gave_ask(db_path):
+    rid = _rid(db_path)
+    pid = models.log_ask_action(rid, "send_guest_campaign", summary="Text the club", outcome="proposed",
+                                db_path=db_path)
+    models.log_ask_action(rid, "send_guest_campaign", summary="Text the club", outcome="dismissed",
+                          proposal_id=pid, reason="we just texted them", db_path=db_path)
+    row = next(r for r in decisions.history(rid, db_path=db_path) if r["key"] == f"ask:{pid}")
+    assert row["answer"] == "dismissed" and row["reason"] == "we just texted them"
+
+
+def test_home_issue_rows_offer_to_ask_a_suggested_cover():
+    s = open("templates/dashboard.html").read()
+    a = s.index('id="panel-home"'); b = s.index("<!-- /panel-home -->")
+    panel = s[a:b]
+    assert "data-cover-issue" in panel and "/ask-cover'" in panel and "to cover</button>" in panel
+    swift = open("ios/CavnarAI/CavnarAI/Features/Home/HomeDay.swift").read()
+    assert "/ask-cover" in swift and "coversToAsk" in swift

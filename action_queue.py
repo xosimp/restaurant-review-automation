@@ -133,7 +133,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         finally:
             conn.close()
         if row and row["n"]:
-            add("reviews_waiting", "reviews",
+            add("no_response", "reviews",
                 f"{row['n']} review{'' if row['n'] == 1 else 's'} from the last 30 days waiting on a reply",
                 # A guest who left 1-2 stars this month is waiting: Home calls
                 # that critical, and so does the queue (it is never deduped).
@@ -146,29 +146,41 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     try:
         conn = get_conn(db_path)
         try:
-            # Confirming or dismissing writes its OWN row rather than
-            # updating the proposal, so "still proposed" means no later row
-            # settled it — without this the queue kept asking about
-            # something the owner had already confirmed.
+            # Confirming or dismissing writes its OWN row. A proposal is
+            # settled by a row that names it (proposal_id) — or, from an
+            # older client that sent no id, by any later answer to the same
+            # action. Grouping by action + summary used to merge two
+            # different proposals into one item and settle both with one
+            # answer; each proposal is its own item now, keyed "ask:<id>"
+            # exactly as rec_ledger and Ask key it.
             rows = conn.execute(
-                "SELECT p.action, p.summary, MAX(p.created_at) AS at FROM ask_cavnar_actions p "
+                "SELECT p.id, p.action, p.summary, p.created_at AS at FROM ask_cavnar_actions p "
                 "WHERE p.restaurant_id=? AND p.outcome='proposed' "
                 "AND p.created_at >= datetime('now','-7 days') "
                 "AND NOT EXISTS (SELECT 1 FROM ask_cavnar_actions s WHERE s.restaurant_id=p.restaurant_id "
-                "                AND s.action=p.action AND s.outcome!='proposed' "
-                "                AND s.created_at >= p.created_at) "
-                "GROUP BY p.action, p.summary ORDER BY at DESC LIMIT 5", (restaurant_id,)).fetchall()
+                "                AND s.outcome!='proposed' AND ("
+                "                    s.proposal_id = p.id OR "
+                "                    (s.proposal_id IS NULL AND s.action=p.action AND s.created_at >= p.created_at))) "
+                "ORDER BY p.created_at DESC, p.id DESC LIMIT 20", (restaurant_id,)).fetchall()
         finally:
             conn.close()
+        seen_summaries = set()
         for r in rows:
-            # One key per proposal, not per KIND of proposal: `proposal:{action}`
-            # meant snoozing one "send the order" hid every order proposal.
-            add(f"proposal:{r['action']}:{(r['summary'] or '')[:60]}", "proposal",
-                r["summary"] or r["action"].replace("_", " "),
-                "watch", {"label": "Open Ask", "module": "ask"},
+            # The same sentence proposed twice is one thing to answer: keep
+            # the newest.
+            label = (r["summary"] or r["action"].replace("_", " ")).strip()
+            if label.lower() in seen_summaries:
+                continue
+            seen_summaries.add(label.lower())
+            add(f"ask:{r['id']}", "proposal", label, "watch",
+                # Opens THIS proposal: Ask is asked about it by name.
+                {"label": "Open it", "module": "ask", "proposal_id": r["id"],
+                 "ask": f"Show me the proposal you made: {label}"},
                 detail="Proposed, never confirmed or dismissed", module="ask")
-    except Exception:
-        pass
+            if len(seen_summaries) >= 5:
+                break
+    except Exception as e:
+        print(f"[action_queue] proposals unavailable: {e}")
 
     # ── money left on the table in Food Cost ──
     if getattr(restaurant, "module_inventory", 0) and _sees(viewer, "inventory"):
@@ -204,6 +216,57 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                     module="inventory")
         except Exception:
             pass
+
+    # ── what the team is waiting on ──
+    # Requests nobody answered and a drafted week staff do not have yet —
+    # the same things strategy_jobs.labor_waiting reminds the manager of at
+    # 9am, here as things to finish, each with its own key.
+    if getattr(restaurant, "module_labor", 0) and _sees(viewer, "labor"):
+        from time_utils import mdy
+        conn = get_conn(db_path)
+        try:
+            try:
+                reqs = conn.execute(
+                    "SELECT id, employee_name, date, shift_start, kind FROM shift_change_requests "
+                    "WHERE restaurant_id=? AND status='pending' AND date >= ? ORDER BY date, shift_start LIMIT 10",
+                    (restaurant_id, today.isoformat())).fetchall()
+            except Exception:
+                reqs = []
+            try:
+                offs = conn.execute(
+                    "SELECT id, employee_name, start_date, end_date FROM staff_time_off "
+                    "WHERE restaurant_id=? AND status='pending' AND end_date >= ? ORDER BY start_date LIMIT 10",
+                    (restaurant_id, today.isoformat())).fetchall()
+            except Exception:
+                offs = []
+            try:
+                unsent = conn.execute(
+                    "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? "
+                    "AND h.week_start >= ? AND h.week_start <= ? AND h.published_at IS NULL "
+                    "AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history p "
+                    "WHERE p.restaurant_id=h.restaurant_id AND p.week_start=h.week_start "
+                    "AND p.published_at IS NOT NULL) ORDER BY h.id DESC LIMIT 1",
+                    (restaurant_id, today.isoformat(), (today + timedelta(days=3)).isoformat())).fetchone()
+            except Exception:
+                unsent = None
+        finally:
+            conn.close()
+        for r in reqs:
+            what = "swap" if (r["kind"] or "") == "swap" else "drop"
+            add(f"shift_request:{r['id']}", "shift_request",
+                f"{r['employee_name']} asked to {what} {mdy(r['date'])} {r['shift_start'] or ''}".rstrip(),
+                "important", {"label": "Answer it", "module": "labor"},
+                detail="Waiting on your answer", module="labor")
+        for r in offs:
+            add(f"time_off:{r['id']}", "time_off",
+                f"{r['employee_name']} asked for time off from {mdy(r['start_date'])}",
+                "important", {"label": "Answer it", "module": "labor"},
+                detail=f"Through {mdy(r['end_date'])}", module="labor")
+        if unsent:
+            add(f"schedule_unsent:{unsent['id']}", "schedule",
+                f"The week of {mdy(unsent['week_start'])} is drafted but staff don't have it",
+                "critical", {"label": "Send now", "module": "labor", "history_id": unsent["id"]},
+                detail="It starts within three days", module="labor")
 
     # ── next week's schedule ──
     if getattr(restaurant, "module_labor", 0) and _sees(viewer, "labor") and today.weekday() >= 3:

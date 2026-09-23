@@ -123,12 +123,14 @@ struct SuggestedPair: Codable, Identifiable, Equatable {
     let shared: Int?
     let cleanRate: Double?
     let evidence: String?
+    let recKey: String?
 
     var id: String { "\(a)|\(b)" }
 
     enum CodingKeys: String, CodingKey {
         case a, b, kind, shared, evidence
         case cleanRate = "clean_rate"
+        case recKey = "rec_key"
     }
 }
 
@@ -488,6 +490,36 @@ final class ScheduleSetupViewModel {
     var dayparts: [String] { choices?.daypart ?? ["any", "morning", "night", "off"] }
     var days: [String] { choices?.days ?? LaborDayOfWeek.allNames }
     var certificationChoices: [String] { choices?.certifications ?? ruleCertifications }
+    private struct PairRecEvent: Encodable {
+        let key: String
+        let event: String
+        let kind: String?
+        let surface = "labor"
+        let module = "schedule"
+    }
+    private struct PairRecResponse: Decodable { let ok: Bool }
+
+    /// "Ignore" holds on every device: the server stops suggesting the pair.
+    func ignoreSuggestion(_ pair: SuggestedPair) {
+        ignoredSuggestions.insert(pair.id)
+        guard let key = pair.recKey else { return }
+        Task {
+            let _: PairRecResponse? = try? await client.send(
+                "/mobile/api/recs/event", method: .post,
+                body: PairRecEvent(key: key, event: "dismissed", kind: "not_for_us"), hapticOnError: false)
+        }
+    }
+
+    /// Logged as taken when the pair is added from a suggestion.
+    func addSuggestedPair(_ pair: SuggestedPair) async {
+        if let key = pair.recKey {
+            let _: PairRecResponse? = try? await client.send(
+                "/mobile/api/recs/event", method: .post,
+                body: PairRecEvent(key: key, event: "accepted", kind: nil), hapticOnError: false)
+        }
+        _ = await addPair(a: pair.a, b: pair.b, kind: pair.kind ?? "prefer", note: pair.evidence)
+    }
+
     /// Suggested pairs not yet added or ignored.
     var openSuggestions: [SuggestedPair] {
         suggestedPairs.filter { s in
@@ -995,6 +1027,29 @@ final class ScheduleSetupViewModel {
             autoPublishError = error.message
         } catch {
             autoPublishError = "Couldn't turn on auto-publish."
+        }
+    }
+
+    /// Apply the suggested quality weights — the owner's decision; the
+    /// engine never changes them on its own.
+    var isApplyingWeights = false
+    var calibrationNotice: String?
+
+    private struct EmptyBody: Encodable {}
+
+    func applySuggestedWeights() async {
+        isApplyingWeights = true
+        calibrationNotice = nil
+        defer { isApplyingWeights = false }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/labor/quality/calibration/apply", method: .post, body: EmptyBody(), hapticOnError: false)
+            calibrationNotice = r.ok ? "Applied — the next score uses these weights." : (r.error ?? "Couldn't apply them.")
+            if r.ok { Haptic.success() }
+        } catch let error as APIClient.APIError {
+            calibrationNotice = error.message
+        } catch {
+            calibrationNotice = "Couldn't apply them."
         }
     }
 

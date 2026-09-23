@@ -26,10 +26,12 @@ struct LaborOvertimeEntry: Codable, Identifiable {
     // so an "OT allowed" employee reads as a deliberate staffing choice
     // instead of a red flag.
     let otAllowed: Bool?
+    /// What the hours past 40 cost over straight time that week.
+    let premium: Double?
     var id: String { "\(employee ?? "")-\(week ?? "")" }
 
     enum CodingKeys: String, CodingKey {
-        case employee, hours, week, status
+        case employee, hours, week, status, premium
         case totalHours = "total_hours"
         case otAllowed = "ot_allowed"
     }
@@ -62,12 +64,15 @@ struct LaborOverstaffedDay: Codable, Identifiable {
     let laborPct: Double
     let laborCost: Double
     let sales: Double
+    /// Labor above the target on that day's own sales.
+    let overTargetDollars: Double?
     var id: String { date }
 
     enum CodingKeys: String, CodingKey {
         case date, day, sales
         case laborPct = "labor_pct"
         case laborCost = "labor_cost"
+        case overTargetDollars = "over_target_dollars"
     }
 }
 
@@ -500,6 +505,9 @@ struct ScheduleQuality: Codable, Equatable {
     // Recommendation kinds the engine left out because the owner never
     // acts on them. Absent on older payloads.
     let suppressedRecommendationKinds: [String]?
+    /// Each recommendation with the kind the server filed it under, so the
+    /// app never classifies a sentence itself. Absent on older payloads.
+    let recommendationItems: [RecommendationItem]?
     // What the optimizer changed before the draft was shown, stored with
     // the week's quality. Absent on older payloads.
     let optimizer: ScheduleOptimizer?
@@ -523,6 +531,13 @@ struct ScheduleQuality: Codable, Equatable {
         case recommendations, confidence, best, worst, reason
         case belowProfile = "below_profile"
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
+        case recommendationItems = "recommendation_items"
+    }
+
+    /// The server's kind for a recommendation, falling back to the prefix
+    /// rule only for an older payload.
+    func kind(of text: String) -> String {
+        recommendationItems?.first { $0.text == text }?.kind ?? Self.recommendationKind(text)
     }
 
     /// The ledger's kind for a recommendation sentence, by its opening
@@ -534,9 +549,17 @@ struct ScheduleQuality: Codable, Equatable {
         if t.hasPrefix("Pair ") { return "strength" }
         if t.hasPrefix("Trim about") { return "hours" }
         if t.hasPrefix("Give ") { return "fatigue" }
+        if t.hasPrefix("Spread the busy") { return "fatigue" }
         if t.hasPrefix("Rate the") { return "ratings" }
         return "other"
     }
+}
+
+/// One Shift Quality recommendation as the server filed it.
+struct RecommendationItem: Codable, Equatable {
+    let text: String
+    let kind: String
+    let key: String?
 }
 
 /// One change the Shift Quality optimizer made to the draft, with why.
@@ -698,6 +721,60 @@ struct HolidayLift: Codable, Equatable {
 
 /// What an edit moves in hours and overtime-priced dollars, against the
 /// rows the manager started from.
+/// A day likely to lose somebody to a no-show, and who could be on call.
+struct StandbyDay: Codable, Identifiable, Equatable {
+    struct Person: Codable, Equatable {
+        let employee: String
+        let role: String?
+        let shiftStart: String?
+        let shiftEnd: String?
+        enum CodingKeys: String, CodingKey {
+            case employee, role
+            case shiftStart = "shift_start"
+            case shiftEnd = "shift_end"
+        }
+    }
+    let date: String
+    let day: String?
+    let chanceOfANoShow: Double?
+    let standby: Person?
+    var id: String { date }
+    enum CodingKeys: String, CodingKey {
+        case date, day, standby
+        case chanceOfANoShow = "chance_of_a_no_show"
+    }
+}
+
+/// Somebody the week pushes past the weekly ceiling, and the same-role
+/// person with room who could take one of their shifts.
+struct OvertimeMove: Decodable, Identifiable, Equatable {
+    struct Candidate: Decodable, Equatable {
+        let employee: String
+        let role: String?
+        let date: String?
+        let shiftStart: String?
+        let shiftEnd: String?
+        let hours: Double?
+        let saves: Double?
+        enum CodingKeys: String, CodingKey {
+            case employee, role, date, hours, saves
+            case shiftStart = "shift_start"
+            case shiftEnd = "shift_end"
+        }
+    }
+    let employee: String
+    let hours: Double?
+    let over: Double?
+    let text: String?
+    let candidate: Candidate
+    let recKey: String?
+    var id: String { "\(employee)-\(candidate.date ?? "")-\(candidate.shiftStart ?? "")" }
+    enum CodingKeys: String, CodingKey {
+        case employee, hours, over, text, candidate
+        case recKey = "rec_key"
+    }
+}
+
 struct EditCostDelta: Codable, Equatable {
     let hoursBefore: Double?
     let hoursAfter: Double?
@@ -1048,8 +1125,12 @@ struct GeneratedSchedule: Codable {
     // because Improve with Cavnar replaces the optimizer on screen.
     var optimizer: ScheduleOptimizer?
     let gate: ScheduleGate?
+    // The days most likely to lose somebody to a no-show, each naming who
+    // is off and could be on call.
+    let standbyDays: [StandbyDay]?
 
     enum CodingKeys: String, CodingKey {
+        case standbyDays = "standby_days"
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
         case trimmed, staggered, departments, optimizer, gate
         case whatIf = "what_if"
@@ -1164,6 +1245,9 @@ final class LaborViewModel {
     var timeOffExpanded = false
     var timeOffBusyId: Int?
     var timeOffError: String?
+    // "Ana is still on the published schedule for Fri 9/25 5:00pm — cover or
+    // move those shifts." Set when an approval lands on a published shift.
+    var timeOffWarning: String?
     var timeOffPending: Int { timeOff.filter { $0.status == "pending" }.count }
     var isSavingAvailability = false
     var availabilityError: String?
@@ -1413,7 +1497,13 @@ final class LaborViewModel {
 
     private struct TimeOffListResponse: Decodable { let ok: Bool; let requests: [TimeOffRequest] }
     private struct TimeOffDecideBody: Encodable { let decision: String }
-    private struct TimeOffDecideResponse: Decodable { let ok: Bool; let request: TimeOffRequest?; let error: String? }
+    private struct TimeOffDecideResponse: Decodable {
+        let ok: Bool
+        let request: TimeOffRequest?
+        let error: String?
+        // Approved time off that lands on shifts staff already have.
+        let warning: String?
+    }
 
     func loadTimeOff() async {
         do {
@@ -1426,7 +1516,7 @@ final class LaborViewModel {
     }
 
     func decideTimeOff(_ id: Int, approve: Bool) async {
-        timeOffBusyId = id; timeOffError = nil
+        timeOffBusyId = id; timeOffError = nil; timeOffWarning = nil
         defer { timeOffBusyId = nil }
         do {
             let r: TimeOffDecideResponse = try await client.send(
@@ -1434,6 +1524,7 @@ final class LaborViewModel {
                 body: TimeOffDecideBody(decision: approve ? "approve" : "deny"))
             if r.ok, let updated = r.request {
                 if let i = timeOff.firstIndex(where: { $0.id == id }) { timeOff[i] = updated }
+                timeOffWarning = r.warning
                 await Haptic.success()
             } else {
                 timeOffError = r.error ?? "Couldn't decide that."
@@ -1585,6 +1676,9 @@ final class LaborViewModel {
             overriddenRows = []
             hasUnsavedFixes = false
             scoreDelta = nil
+            // A conflict forced this, not the owner: the proposal is left
+            // unanswered (it expires as ignored), not logged as declined.
+            optimizerRecKey = nil
             optimizerUnsaved = false
             overrideState = .idle
             saveConflict = nil
@@ -1607,7 +1701,7 @@ final class LaborViewModel {
 
     private struct ViolationsBody: Encodable {
         let rows: [ScheduleRow]
-        let baselineRows: [ScheduleRow]
+        let baselineRows: [ScheduleRow]?
         enum CodingKeys: String, CodingKey {
             case rows
             case baselineRows = "baseline_rows"
@@ -1617,6 +1711,111 @@ final class LaborViewModel {
     private struct ViolationsResponse: Decodable {
         let ok: Bool
         let cost: EditCostDelta?
+        let overtimeMoves: [OvertimeMove]?
+        enum CodingKeys: String, CodingKey {
+            case ok, cost
+            case overtimeMoves = "overtime_moves"
+        }
+    }
+
+    // Overtime the rows on screen create, each with a same-role person who
+    // has room and what moving the shift saves. Refreshed with every check.
+    var overtimeMoves: [OvertimeMove] = []
+
+    /// The overtime moves for the week as it stands, before any edit.
+    func refreshOvertimeMoves() async {
+        guard let rows = scheduleResult?.previewRows, !rows.isEmpty else {
+            overtimeMoves = []
+            return
+        }
+        do {
+            let r: ViolationsResponse = try await client.send(
+                "/mobile/api/labor/schedule/violations", method: .post,
+                body: ViolationsBody(rows: rows, baselineRows: nil), hapticOnError: false)
+            if r.ok { overtimeMoves = r.overtimeMoves ?? [] }
+        } catch {
+            // A courtesy, like the cost readout.
+        }
+    }
+
+    private struct RecEventBody: Encodable {
+        let key: String
+        let event: String
+        let surface: String
+        let module: String
+        var kind: String? = nil
+    }
+
+    /// A response to a schedule recommendation, for the ledger. Fire and forget.
+    func postRecEvent(_ key: String?, _ event: String, kind: String? = nil) {
+        guard let key else { return }
+        Task {
+            let _: RecordResponse? = try? await client.send(
+                "/mobile/api/recs/event", method: .post,
+                body: RecEventBody(key: key, event: event, surface: "schedule_review", module: "schedule", kind: kind),
+                hapticOnError: false)
+        }
+    }
+
+    // The ledger key of the Improve-with-Cavnar proposal on screen.
+    var optimizerRecKey: String?
+
+    /// One tap: the shift goes to the same-role person with room and the
+    /// week is re-scored and saved, like any other override.
+    func applyOvertimeMove(_ move: OvertimeMove) async {
+        guard let rows = scheduleResult?.previewRows,
+              let row = rows.first(where: {
+                  $0.date == move.candidate.date
+                      && ($0.employee ?? "").lowercased() == move.employee.lowercased()
+                      && ($0.shiftStart ?? "") == (move.candidate.shiftStart ?? "")
+              }) else { return }
+        await overrideEmployee(rowId: row.id, to: move.candidate.employee)
+        if let key = move.recKey {
+            let _: RecordResponse? = try? await client.send(
+                "/mobile/api/recs/event", method: .post,
+                body: RecEventBody(key: key, event: "accepted", surface: "schedule_review", module: "schedule"),
+                hapticOnError: false)
+        }
+    }
+
+    private struct RecordResponse: Decodable { let ok: Bool }
+
+    private struct StandbyAskBody: Encodable {
+        let date: String
+        let employee: String
+        let shiftStart: String?
+        let shiftEnd: String?
+        enum CodingKeys: String, CodingKey {
+            case date, employee
+            case shiftStart = "shift_start"
+            case shiftEnd = "shift_end"
+        }
+    }
+
+    private struct StandbyAskResponse: Decodable {
+        let ok: Bool
+        let message: String?
+        let error: String?
+    }
+
+    // Standby asks sent this session, by date, with what the server said.
+    var standbyAsked: [String: String] = [:]
+
+    /// Email the named standby asking whether they can be on call that day.
+    func askStandby(_ day: StandbyDay) async {
+        guard let person = day.standby else { return }
+        do {
+            let r: StandbyAskResponse = try await client.send(
+                "/mobile/api/labor/standby/ask", method: .post,
+                body: StandbyAskBody(date: day.date, employee: person.employee,
+                                     shiftStart: person.shiftStart, shiftEnd: person.shiftEnd))
+            standbyAsked[day.date] = r.ok ? (r.message ?? "Asked \(person.employee).") : (r.error ?? "Couldn't ask.")
+            if r.ok { Haptic.success() }
+        } catch let error as APIClient.APIError {
+            standbyAsked[day.date] = error.message
+        } catch {
+            standbyAsked[day.date] = "Couldn't ask \(person.employee)."
+        }
     }
 
     /// "+6h · +$90 · 2h overtime" for the rows on screen against the
@@ -1630,7 +1829,10 @@ final class LaborViewModel {
             let r: ViolationsResponse = try await client.send(
                 "/mobile/api/labor/schedule/violations", method: .post,
                 body: ViolationsBody(rows: rows, baselineRows: base), hapticOnError: false)
-            if r.ok { editCost = r.cost }
+            if r.ok {
+                editCost = r.cost
+                overtimeMoves = r.overtimeMoves ?? []
+            }
         } catch {
             // The readout is a courtesy; the save path reports its own errors.
         }
@@ -1668,7 +1870,7 @@ final class LaborViewModel {
         do {
             let r: RecommendationResponse = try await client.send(
                 "/mobile/api/labor/schedule/recommendation", method: .post,
-                body: RecommendationBody(kind: ScheduleQuality.recommendationKind(text),
+                body: RecommendationBody(kind: scheduleResult?.quality?.kind(of: text) ?? ScheduleQuality.recommendationKind(text),
                                          key: String(text.prefix(200)), action: action),
                 hapticOnError: false)
             if r.ok {
@@ -1679,6 +1881,21 @@ final class LaborViewModel {
             }
         } catch {
             recommendationDecisions[text] = previous
+        }
+    }
+
+    /// Ask for a hidden recommendation kind back ("Show again").
+    func restoreRecommendationKind(_ kind: String) async {
+        do {
+            let r: RecommendationResponse = try await client.send(
+                "/mobile/api/labor/schedule/recommendation", method: .post,
+                body: RecommendationBody(kind: kind, key: "", action: "restored"), hapticOnError: false)
+            if r.ok {
+                suppressedRecommendationKinds = r.suppressedKinds ?? []
+                Haptic.light()
+            }
+        } catch {
+            return
         }
     }
 
@@ -1802,9 +2019,11 @@ final class LaborViewModel {
         let quality: ScheduleQuality?
         let whatIf: ScheduleWhatIf?
         let error: String?
+        let recKey: String?
         enum CodingKeys: String, CodingKey {
             case ok, rows, optimizer, quality, error
             case whatIf = "what_if"
+            case recKey = "rec_key"
         }
     }
 
@@ -1837,6 +2056,7 @@ final class LaborViewModel {
                 result.whatIf = response.whatIf ?? result.whatIf
                 hasUnsavedFixes = true
                 optimizerUnsaved = true
+                optimizerRecKey = response.recKey
                 overrideState = .idle
             }
             scheduleResult = result
@@ -2175,7 +2395,10 @@ final class LaborViewModel {
             }
             scheduleResult = current
             cacheSchedule(current)
-            if save && sameRows { hasUnsavedFixes = false; optimizerUnsaved = false }
+            if save && sameRows {
+                if optimizerUnsaved { postRecEvent(optimizerRecKey, "accepted"); optimizerRecKey = nil }
+                hasUnsavedFixes = false; optimizerUnsaved = false
+            }
             overrideState = .idle
             if response.saved ?? false {
                 // The version just written is now the latest; the next
@@ -2578,6 +2801,7 @@ final class LaborViewModel {
                     ratedInPrompt = [:]
                     suppressedRecommendationKinds = result.quality?.suppressedRecommendationKinds ?? []
                     await loadLatestVersion()
+                    await refreshOvertimeMoves()
                 }
                 return
             } catch is CancellationError {

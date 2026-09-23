@@ -128,12 +128,18 @@ def history(restaurant_id, limit=40, db_path=DB_PATH):
             pass
         # Proposals from Ask, settled.
         try:
-            for row in conn.execute("SELECT action, summary, outcome, created_at FROM ask_cavnar_actions "
+            for row in conn.execute("SELECT action, summary, outcome, created_at, proposal_id, reason "
+                                    "FROM ask_cavnar_actions "
                                     "WHERE restaurant_id=? AND outcome IN ('confirmed','dismissed') "
                                     "ORDER BY id DESC LIMIT 40", (restaurant_id,)).fetchall():
-                key = f"ask:{row['action']}:{(row['summary'] or '')[:40]}"
+                # "ask:<proposal id>" — the key Ask, the queue and rec_ledger
+                # share; an answer from an older client names no proposal.
+                key = (f"ask:{row['proposal_id']}" if row["proposal_id"] else
+                       f"ask:{row['action']}:{(row['summary'] or '')[:40]}")
                 r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=str(row["created_at"] or "")[:10])
                 r["answer"] = row["outcome"]
+                if row["reason"] and not r.get("reason"):
+                    r["reason"] = row["reason"]      # the owner's own "why not"
         except Exception:
             pass
     finally:

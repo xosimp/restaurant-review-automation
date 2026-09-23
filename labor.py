@@ -548,8 +548,12 @@ def analyse_shifts(shifts: list[dict],
     if role_rates is None:
         role_rates = {"_default": hourly_rate}
     covers_by_date = covers_by_date or {}
+    from thresholds import LABOR_OVER_TARGET_PTS, STRONG_DAY_SALES_MULTIPLE
     LABOR_TARGET = labor_target
-    OVERSTAFF_THRESHOLD = labor_target
+    # A day is "overstaffed" only past the same margin every other surface
+    # uses (thresholds.LABOR_OVER_TARGET_PTS). With no margin, 30.1% against
+    # a 30% target was "where the money is going".
+    OVERSTAFF_THRESHOLD = labor_target + LABOR_OVER_TARGET_PTS
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": [], "labor_cost": 0})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     overtime_flags = []
@@ -661,6 +665,7 @@ def analyse_shifts(shifts: list[dict],
 
     overtime_premium = 0.0
     overtime_hours_total = 0.0
+    premium_by_emp_week = {}
     for (emp, wk), rows in _emp_week_rows.items():
         wk_hours = sum(_shift_hours(r) for r in rows)
         if wk_hours <= OVERTIME_THRESHOLD_HOURS:
@@ -671,11 +676,17 @@ def analyse_shifts(shifts: list[dict],
                    / wk_hours) if wk_hours else hourly_rate
         premium = ot_hours * blended * (OVERTIME_MULTIPLIER - 1.0)
         overtime_premium += premium
+        premium_by_emp_week[(emp, wk)] = round(premium, 2)
         for r in rows:
             h = _shift_hours(r)
             if h <= 0:
                 continue
             by_day[r.get("date") or ""]["labor_cost"] += premium * (h / wk_hours)
+
+    # A strong day by this restaurant's own sales: a multiple of its median
+    # costed day, not a fixed $2,500 that meant nothing across restaurants.
+    _day_sales = sorted(v["sales"] for v in by_day.values() if v.get("sales"))
+    _strong_floor = (_day_sales[len(_day_sales) // 2] * STRONG_DAY_SALES_MULTIPLE) if _day_sales else None
 
     # Find overstaffed days
     overstaffed = []
@@ -695,8 +706,11 @@ def analyse_shifts(shifts: list[dict],
             overstaffed.append({"date": fmt_date, "day": real_day,
                                  "labor_pct": round(labor_pct, 1),
                                  "labor_cost": round(labor_cost, 2),
-                                 "sales": d["sales"]})
-        elif labor_pct < (LABOR_TARGET - 3) and d["sales"] > 2500:
+                                 "sales": d["sales"],
+                                 # Labor spent above the target on that day's
+                                 # own sales: what hitting target would have saved.
+                                 "over_target_dollars": round(max(0.0, labor_cost - d["sales"] * LABOR_TARGET / 100.0), 0)})
+        elif labor_pct < (LABOR_TARGET - LABOR_OVER_TARGET_PTS) and _strong_floor and d["sales"] >= _strong_floor:
             try:
                 fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
@@ -757,6 +771,10 @@ def analyse_shifts(shifts: list[dict],
                     "week_start": wk,
                     "status": "overtime",
                     "hours_estimated": hours_are_estimated,
+                    # What those hours past 40 cost over straight time, from
+                    # the same blended rate the headline premium uses — so a
+                    # row says what it is worth, not only that it happened.
+                    "premium": premium_by_emp_week.get((emp, wk)),
                 })
             continue
         max_hrs = max(weeks.values())
@@ -1115,6 +1133,37 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
                                              qualified, b),
                 })
     return misses
+
+
+# One labor note per restaurant per data state, shared by web and iOS. It
+# used to be regenerated every five minutes under a separate key on each
+# device, so an owner read different "Recommendations" on the phone and the
+# laptop for the same numbers. Bounded; process-local like the other caches.
+_NOTE_CACHE = {}
+_NOTE_CACHE_MAX = 500
+
+
+def _analysis_fingerprint(analysis: dict) -> str:
+    import hashlib
+    keys = ("period", "date_range", "overall_labor_pct", "total_labor_cost", "total_sales", "labor_target",
+            "overstaffed_days", "overtime_risk", "dow_summary")
+    blob = json.dumps({k: (analysis or {}).get(k) for k in keys}, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:20]
+
+
+def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
+    """get_claude_insights, once per (restaurant, data fingerprint)."""
+    key = (restaurant_id, _analysis_fingerprint(analysis))
+    hit = _NOTE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    note = get_claude_insights(analysis, restaurant_id=restaurant_id, **kwargs)
+    if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
+        _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
+    for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
+        _NOTE_CACHE.pop(k, None)          # one state per restaurant
+    _NOTE_CACHE[key] = note
+    return note
 
 
 def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
