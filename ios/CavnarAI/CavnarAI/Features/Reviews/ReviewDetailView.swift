@@ -318,6 +318,9 @@ struct ReviewDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarGlassButtonStyle(isProminent: true, isDisabled: viewModel.isSubmitting))
+                    // Disabled, not just dimmed: each tap is a paid draft
+                    // (CLIENT-55).
+                    .disabled(viewModel.isSubmitting)
                 }
                 .padding(14)
                 .background(Color.cavnarEmber.opacity(0.12))
@@ -408,6 +411,8 @@ struct ReviewDetailView: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(CavnarGlassButtonStyle(isProminent: true, isDisabled: viewModel.isSubmitting))
+                            // Each tap posts to Google (CLIENT-55).
+                            .disabled(viewModel.isSubmitting)
                         }
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)

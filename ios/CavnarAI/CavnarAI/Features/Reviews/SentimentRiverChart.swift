@@ -88,23 +88,36 @@ struct SentimentRiverChart: View {
         }
 
         // Rating line, drawn left-to-right after the bands have risen.
+        // Only through weeks that had reviews: a week with none has
+        // avg_rating 0, which is a missing measurement, not a rating — it
+        // plotted below the chart and could end the line on "0.0★"
+        // (CLIENT-54). The line simply bridges the gap.
         let ln = CavnarChart.easeOut(CavnarChart.window(t, from: 0.55, length: 0.45))
-        let ratings = weeks.map(\.avgRating)
-        let lo = 3.8, hi = 5.0
+        let rated = (0..<n).filter { weeks[$0].total > 0 && weeks[$0].avgRating > 0 }
+        guard let lastRated = rated.last else { return drawLabels(&ctx, size: size, n: n, x: x) }
+        // The axis reaches down to the lowest real rating rather than
+        // clipping a 3.4 week off the bottom.
+        let lo = min(3.8, (rated.map { weeks[$0].avgRating }.min() ?? 3.8) - 0.2), hi = 5.0
         func ry(_ v: Double) -> CGFloat { plot.maxY - CGFloat((v - lo) / (hi - lo)) * plot.height * 0.9 }
-        let linePath = CavnarChart.smoothPath((0..<n).map { CGPoint(x: x($0), y: ry(ratings[$0])) })
-        ctx.drawLayer { layer in
-            layer.clip(to: Path(CGRect(x: plot.minX - 4, y: 0, width: plot.width * ln + 8, height: size.height)))
-            CavnarChart.glowStroke(&layer, linePath, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 2.2, blur: 6)
+        if rated.count > 1 {
+            let linePath = CavnarChart.smoothPath(rated.map { CGPoint(x: x($0), y: ry(weeks[$0].avgRating)) })
+            ctx.drawLayer { layer in
+                layer.clip(to: Path(CGRect(x: plot.minX - 4, y: 0, width: plot.width * ln + 8, height: size.height)))
+                CavnarChart.glowStroke(&layer, linePath, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 2.2, blur: 6)
+            }
         }
         if ln >= 1 {
-            let end = CGPoint(x: x(n - 1), y: ry(ratings[n - 1]))
+            let end = CGPoint(x: x(lastRated), y: ry(weeks[lastRated].avgRating))
             let breathe = 1 + 0.5 * sin(clock * 2.2)
             CavnarChart.hotDot(&ctx, at: end, radius: 3.5, halo: 7 * breathe)
-            CavnarChart.text(&ctx, CavnarChart.number(String(format: "%.1f★", ratings[n - 1]), size: 13, weight: 700),
+            CavnarChart.text(&ctx, CavnarChart.number(String(format: "%.1f★", weeks[lastRated].avgRating), size: 13, weight: 700),
                              at: CGPoint(x: end.x - 10, y: end.y - 12), anchor: .trailing)
         }
 
+        drawLabels(&ctx, size: size, n: n, x: x)
+    }
+
+    private func drawLabels(_ ctx: inout GraphicsContext, size: CGSize, n: Int, x: (Int) -> CGFloat) {
         for i in 0..<n {
             CavnarChart.text(&ctx, CavnarChart.label(weeks[i].label, size: 10.5), at: CGPoint(x: x(i), y: size.height - 12))
         }

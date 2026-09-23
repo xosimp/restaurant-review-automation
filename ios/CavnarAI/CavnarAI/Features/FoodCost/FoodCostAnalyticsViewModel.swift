@@ -73,6 +73,8 @@ final class FoodCostAnalyticsViewModel {
             // View went away mid-fetch; not a failure.
         } catch let error as APIClient.APIError {
             if analytics == nil { errorMessage = error.message }
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             if analytics == nil { errorMessage = "Couldn't load food cost right now." }
         }

@@ -132,10 +132,8 @@ final class EdgeLaborSchedulingTests: XCTestCase {
     func testACancelledStatsLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = LaborViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: LaborViewModel.load has no CancellationError branch", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     // MARK: CLIENT-29 / CLIENT-62 — overrides

@@ -90,7 +90,17 @@ struct ReviewsListView: View {
     @ViewBuilder
     private var inboxContent: some View {
         Group {
-            if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
+            if viewModel.reviews.isEmpty && !viewModel.isLoading, let error = viewModel.errorMessage {
+                // A failed load is not an empty inbox (CLIENT-30): it used to
+                // hide the empty state and then render nothing at all.
+                VStack(spacing: 8) {
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") { Task { await viewModel.reload() } }
+                }
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.filter == .all {
                 CavnarEmptyHearth(
                     title: "No reviews yet",
                     message: "New reviews land here automatically once your platforms are connected."
@@ -119,7 +129,21 @@ struct ReviewsListView: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
                     }
-                    if viewModel.filteredReviews.isEmpty {
+                    // A refresh or chip change that failed over rows already
+                    // on screen: say so above them, with the way to retry.
+                    if let error = viewModel.errorMessage {
+                        HStack(spacing: 10) {
+                            Text(error)
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarRed)
+                            Spacer(minLength: 8)
+                            Button("Retry") { Task { await viewModel.reload() } }
+                                .font(.cavnarBody(14, weight: 600))
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
+                    if viewModel.filteredReviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                         Text(viewModel.searchText.isEmpty ? "No \(viewModel.filter.rawValue.lowercased()) reviews" : "Nothing matches \u{201C}\(viewModel.searchText)\u{201D}")
                             .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk3)
@@ -175,7 +199,12 @@ struct ReviewsListView: View {
         .overlay {
             if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingOrb() }
         }
-        .cavnarEmberRefreshable { await viewModel.load() }
+        .cavnarEmberRefreshable { await viewModel.reload() }
+        // Each chip is answered by the server over the whole inbox, not by
+        // filtering the page already on the phone.
+        .onChange(of: viewModel.filter) { _, _ in
+            Task { await viewModel.reload() }
+        }
     }
 
     private var inboxFilters: some View {
@@ -214,7 +243,7 @@ struct ReviewsListView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Text(f.rawValue).font(.cavnarBody(14.5, weight: 600))
-                                if n > 0 {
+                                if let n, n > 0 {
                                     Text("\(n)").font(.cavnarNumber(13, weight: 700))
                                         .foregroundStyle(on ? Color.white.opacity(0.85) : Color.cavnarEmber2)
                                 }

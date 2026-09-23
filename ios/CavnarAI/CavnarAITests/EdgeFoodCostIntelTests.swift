@@ -183,18 +183,14 @@ final class EdgeFoodCostIntelTests: XCTestCase {
     func testACancelledIntelLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = IntelViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: IntelViewModel.load reports a cancelled load as \"Couldn't load competitor intel.\"", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     func testACancelledScheduleHistoryLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = ScheduleHistoryViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: ScheduleHistoryViewModel.load reports a cancelled load as an error", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 }

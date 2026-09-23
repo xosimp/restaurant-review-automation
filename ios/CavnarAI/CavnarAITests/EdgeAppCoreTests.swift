@@ -97,6 +97,18 @@ enum EdgeHTTP {
         "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")"
     }
 
+    /// Runs a load the way SwiftUI runs a view's `.task` that is torn down
+    /// by navigating away: the task is cancelled, and URLSession answers the
+    /// in-flight request with URLError.cancelled (the handler's job). A
+    /// URLError.cancelled on a task nobody cancelled is a different thing —
+    /// a pin rejection — and must surface as an error (CLIENT-24).
+    @MainActor
+    static func tornDown(_ load: @escaping @MainActor () async -> Void) async {
+        let task = Task { @MainActor in await load() }
+        task.cancel()
+        await task.value
+    }
+
     /// Waits (bounded) until `condition` holds — for a request to reach a
     /// handler that is deliberately holding it open.
     static func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 3) async {

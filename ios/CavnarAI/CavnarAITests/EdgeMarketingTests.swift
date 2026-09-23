@@ -168,10 +168,8 @@ final class EdgeMarketingTests: XCTestCase {
     func testACancelledContactsLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = GuestTextClubViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: GuestTextClubViewModel.load reports a cancelled load as \"Couldn't load guest contacts.\"", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     // MARK: CLIENT-10 — social posts twice

@@ -41,15 +41,23 @@ actor APIClient {
         /// — and a caller that needs that detail decodes `body` itself.
         let status: Int?
         let body: Data?
+        /// False only when the request certainly never reached the server —
+        /// no connection was made (offline, host unreachable). A timeout or
+        /// a connection dropped mid-request may have been received and
+        /// acted on, so a write that failed that way must not be replayed
+        /// blindly: a review approve would post to Google twice (CLIENT-6).
+        let mayHaveReachedServer: Bool
         var errorDescription: String? { message }
 
         /// `kind` defaults to `.server` so existing call sites that only pass
         /// a message keep compiling and behaving as before.
-        init(kind: Kind = .server, message: String, status: Int? = nil, body: Data? = nil) {
+        init(kind: Kind = .server, message: String, status: Int? = nil, body: Data? = nil,
+             mayHaveReachedServer: Bool = true) {
             self.kind = kind
             self.message = message
             self.status = status
             self.body = body
+            self.mayHaveReachedServer = mayHaveReachedServer
         }
 
         /// The refusal's body decoded as `T`, or nil when there was none or
@@ -625,14 +633,21 @@ actor APIClient {
             guard deviceIsOffline else {
                 // Online, but that attempt could not get out. Retryable.
                 return APIError(kind: .timedOut,
-                                message: "That didn't get through. Tap to try again.")
+                                message: "That didn't get through. Tap to try again.",
+                                mayHaveReachedServer: false)
             }
             return APIError(kind: .offline,
-                            message: "You're offline — this'll go through once you're back on Wi-Fi or cell.")
+                            message: "You're offline — this'll go through once you're back on Wi-Fi or cell.",
+                            mayHaveReachedServer: false)
         case .timedOut:
             return APIError(kind: .timedOut,
                             message: "The server took too long to answer. Tap to retry.")
-        case .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            // No connection was ever made, so nothing was received.
+            return APIError(kind: .timedOut,
+                            message: "Couldn't make a connection to the server. Tap to retry.",
+                            mayHaveReachedServer: false)
+        case .networkConnectionLost:
             return APIError(kind: .timedOut,
                             message: "The connection dropped mid-request. Tap to retry.")
         case .cancelled, .serverCertificateUntrusted, .serverCertificateHasBadDate,

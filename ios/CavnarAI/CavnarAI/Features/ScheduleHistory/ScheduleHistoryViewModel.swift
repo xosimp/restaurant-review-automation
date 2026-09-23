@@ -53,6 +53,8 @@ final class ScheduleHistoryViewModel {
             history = response.history
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load schedule history."
         }
@@ -210,6 +212,8 @@ final class ScheduleHistoryDetailViewModel {
             detail = fetched
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load this schedule."
         }
