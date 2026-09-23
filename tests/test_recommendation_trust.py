@@ -420,9 +420,12 @@ def test_the_reprice_list_carries_its_key_and_drops_an_answered_dish(db_path, mo
 
 
 def test_both_reprice_routes_exist():
-    import hosted_dashboard  # noqa: F401  (registers the blueprints)
-    rules = {r.rule for r in hosted_dashboard.app.url_map.iter_rules()}
-    assert "/api/food-cost/reprice/apply" in rules and "/mobile/api/food-cost/reprice/apply" in rules
+    """The contract Home's cards call: a web and a mobile twin over one body."""
+    import inspect
+    import mobile_api
+    assert '@client_bp.route("/api/food-cost/reprice/apply", methods=["POST"])' in inspect.getsource(client_api)
+    assert '@mobile_bp.route("/food-cost/reprice/apply", methods=["POST"])' in inspect.getsource(mobile_api)
+    assert 'mobile_reprice_apply' in inspect.getsource(client_api.reprice_apply)
 
 
 # ── #31 intel ───────────────────────────────────────────────────────────────
@@ -784,6 +787,30 @@ def test_not_for_us_retires_the_segment(db_path):
     assert gm.dismiss_winback(rid, d["id"], db_path=db_path)["ok"]
     nxt = gm.winback_suggestion(rid, db_path=db_path)
     assert not nxt["available"] or nxt["draft"]["segment"] != "lapsed_60"
+
+
+def test_an_expired_quiet_night_draft_is_neither_approved_nor_revived(db_path):
+    import marketing_drafts as md
+    rid = _rid(db_path)
+    d = md.save_draft(rid, "Come in Tuesday!", topic="Tuesday quiet night", db_path=db_path)
+    c = _conn(db_path)
+    c.execute("UPDATE marketing_drafts SET status='expired' WHERE id=?", (d["id"],))
+    c.commit(); c.close()
+    out = md.approve_draft(d["id"], rid, role="client", db_path=db_path)
+    assert out["ok"] is False and "expired" in out["error"]
+    out = md.save_draft(rid, "Come in Thursday!", draft_id=d["id"], db_path=db_path)
+    assert out["ok"] is False and "expired" in out["error"]
+    c = _conn(db_path)
+    assert c.execute("SELECT status FROM marketing_drafts WHERE id=?", (d["id"],)).fetchone()[0] == "expired"
+    c.close()
+
+
+def test_the_web_drafts_list_offers_nothing_on_an_expired_draft():
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("templates", "dashboard.html").read_text()
+    i = src.index("function loadMktDrafts(")
+    body = src[i:src.index("function useMktDraft(", i)]
+    assert "'Expired'" in body and "(approved || expired) ? ''" in body and "(expired ? '' :" in body
 
 
 # ── #16 dates ───────────────────────────────────────────────────────────────

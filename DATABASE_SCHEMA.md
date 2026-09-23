@@ -38,7 +38,7 @@ The tenant row (191 columns). Everything else hangs off `restaurants.id`. The li
 ## Reviews
 
 ### `reviews` (models.py)
-`restaurant_id` + `platform` (google/yelp/csv/manual) + `external_id` — **unique on `(restaurant_id, platform, external_id)`**, deliberately including `restaurant_id` in the key (a global-unique key let two tenants sharing a `google_place_id` silently steal each other's reviews). Carries the raw review (`author`, `rating` 1–5, `text`, `review_date`, `fetched_at`), Claude's analysis (`sentiment`, `categories` JSON, `summary`, `urgency`), and the response workflow (`draft_response`, `response_status`: pending/drafted/approved/posted/skipped, `approved_at`, `posted_at`, `draft_edited`, `regenerate_count`, `deleted_at`).
+`restaurant_id` + `platform` (google/yelp/csv/manual) + `external_id` — **unique on `(restaurant_id, platform, external_id)`**, deliberately including `restaurant_id` in the key (a global-unique key let two tenants sharing a `google_place_id` silently steal each other's reviews). Carries the raw review (`author`, `rating` 1–5, `text`, `review_date`, `fetched_at`), Claude's analysis (`sentiment`, `categories` JSON, `summary`, `urgency`), and the response workflow (`draft_response`, `response_status`: pending/drafted/approved/posted/skipped, `approved_at`, `posted_at`, `draft_edited`, `regenerate_count`, `deleted_at`). `response_action` is approved_as_is / edited / regenerated / **auto_approved** — the last is the auto-approve rule's own approval and is never counted by `auto_approve_trust` or used as a style example. `original_draft` is the model's text as it stood before the owner's first edit (kept, never overwritten; reset by a regenerate). `skipped_at` dates a skip, which counts against the band's trust.
 
 ### `review_requests`
 Outbound "please leave us a review" asks — tracks `customer_phone`, send state.
@@ -141,11 +141,11 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Marketing
 
-`marketing_drafts`, `marketing_scheduled_posts`, `marketing_content_log` (each row tagged with `menu_item_id`, `occasion`, `post_kind`), `marketing_media`, `marketing_links`, `marketing_attribution`, `content_calendar_cache`, `guest_campaigns`, `guest_campaign_recipients` (which guests each campaign reached, matched back through the connected POS), `guest_contacts`, `sms_optin_invites`.
+`marketing_drafts`, `marketing_scheduled_posts`, `marketing_content_log` (each row tagged with `menu_item_id`, `occasion`, `post_kind`), `marketing_media`, `marketing_links`, `marketing_attribution`, `content_calendar_cache`, `guest_campaigns`, `guest_campaign_recipients` (which guests each campaign reached, matched back through the connected POS), `guest_contacts`, `sms_optin_invites`, `guest_campaign_drafts` (a campaign Cavnar drafted for the owner — the win-back text for a lapsed segment: `segment`, `segment_size`, `message` as drafted, `sent_message` as sent, `status` pending/sent/dismissed, `rec_key` `winback:<segment>`; never sent without the owner). `marketing_content_log.origin` is owner / job / marker, so "pieces this month" (`marketing.pieces_this_month`) counts content a person made or published, not calendar markers or the weekly job's drafts. `marketing_drafts.status` can be `expired` (a quiet-night draft past its night): never approved, sent or revived by an edit.
 
 ## Food Cost / Inventory
 
-`ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `menu_item_sales` (per-item units from the POS, the basis of dish lift and depletion), `recipe_ingredients`, `recipe_drafts` (model-drafted, accepted line by line), `purchase_orders`, `forecast_log` (every waste forecast, scored later), `food_cost_diagnoses` and `review_diagnoses` (the stored root-cause reads the 6am jobs write).
+`ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `menu_item_sales` (per-item units from the POS, the basis of dish lift and depletion), `recipe_ingredients`, `recipe_drafts` (model-drafted, accepted line by line; `accepted_lines_json` and `edited_lines` record what the owner actually accepted beside the draft's `lines_json`), `recipe_ingredients.source` (owner / draft_accepted / draft_edited — a plate cost resting on a draft accepted unedited is not confirmed, and the menu cost driver's confidence says so), `purchase_orders` (`source` owner/automatic, `draft_items_json`, `edited` — supplier trust counts only owner-sent, unedited orders), `reprice_decisions` (every price set that followed a reprice suggestion: `old_price`, `suggested_price`, `chosen_price`, `source` one_tap/manual), `forecast_log` (every waste forecast, scored later), `food_cost_diagnoses` and `review_diagnoses` (the stored root-cause reads the 6am jobs write).
 
 ## The owner's day
 
@@ -185,6 +185,10 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 ## Email
 
 `email_log` (every send, for the Account "email history" view and debugging), `email_suppressions` (bounces/opt-outs), `onboarding_emails` (day-2/7/30 sequence state), `weekly_reports`, `login_reports`, `client_data` (miscellaneous cached client-facing snapshots).
+
+## AI reads
+
+`insight_cache` (`insight_store.py`): one stored model read per `(restaurant_id, kind)` — reviews, food, marketing — with the `fingerprint` of the prompt it was written from. A read is reused while the fingerprint matches (and for at most a week), so web and iOS show the same words and a new read is written only when the data changes.
 
 ## Conventions that apply across this schema
 

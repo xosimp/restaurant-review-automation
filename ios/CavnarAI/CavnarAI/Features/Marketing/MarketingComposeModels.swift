@@ -111,6 +111,34 @@ struct MarketingDraft: Decodable, Identifiable {
     }
 
     var isApproved: Bool { status == "approved" }
+
+    /// A quiet-night post or guest text still unapproved three days after it
+    /// was written is retired server-side: its night has passed. `status`
+    /// stays a String so this, and any status added later, decodes rather
+    /// than failing the whole drafts list.
+    var isExpired: Bool { status == "expired" }
+
+    /// Approve is offered only on a live, not-yet-approved draft.
+    var canApprove: Bool { !isApproved && !isExpired }
+
+    /// Opening it in the composer is the path to posting, scheduling or
+    /// sending — none of which an expired draft may take.
+    var canOpenInComposer: Bool { !isExpired }
+
+    /// The badge. An unknown status reads as itself rather than as "Draft".
+    var statusLabel: String {
+        switch status {
+        case "approved": return "Approved"
+        case "expired": return "Expired"
+        case "draft", "": return "Draft"
+        default: return status.capitalized
+        }
+    }
+
+    /// The one-line reason under an expired draft, or nil.
+    var expiredNote: String? {
+        isExpired ? "Its night has passed, so it can\u{2019}t be approved or sent." : nil
+    }
 }
 
 /// Reach and engagement for a period, against the period before it. The old

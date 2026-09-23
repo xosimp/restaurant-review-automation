@@ -453,6 +453,7 @@ day is a short page.
 | Tool with nothing to show | `.fc2-tool-empty` — a bold one-line state, then what is missing and where it gets fixed. A Load that resolves to a bare sentence reads as if nothing happened |
 | Paste-to-draft | `.fc2-menu-draft` — ai tone (`--sf-ai`); a textarea, one secondary button, an `.ac-status` line that carries the result and the next batch |
 | Escaping | `esc()` / `num()` (numbers → `.hb-num`) |
+| Recommendation answer row | `.rec-ans` via `recControlsHtml(key, surface, module)` (JS) or `client_api.rec_controls_html` (server-rendered insight HTML) — Done / Not for us / Track as `cbtn-text cbtn-inline cbtn-sm` with `data-rec-key`; one delegated listener posts `/api/recs/event` and swaps the row for a muted `.rec-ans-done` sentence. Home's `.hb-rec-ans` answer row, inline under a module's recommendation line (`.rec-line` under a read, `.rec-cites` for the reviews an Intel recommendation cites). An answered line is not rendered again anywhere |
 | Diagnosis block | `.diag` via `renderDiagnosis(id, dg)` — cause / also fits / what would tell them apart / evidence pills / confidence. One shape for reviews, labor and marketing; renders only when `dg.cause` exists |
 | Per-check dots | `.in2-qc` (`.on` lit ember, `.off` dim) in `.in2-q` rows — one dot per run, oldest first, with an `n/asked` count |
 | Decision row | `.ac-row` + `.ac-chip` answer (`done` / `not for us` / `tracking` / `measured`) — Account → What you've decided |
@@ -502,6 +503,7 @@ day is a short page.
 | Sheet anatomy | `AccountHero` → `AccountSection` → `AccountKVRow` |
 | Pill / chip / tile | `AccountPill`, `AccountChip`, `AccountStatTile` |
 | Button | `CavnarPrimaryButtonStyle`, `CavnarSecondaryButtonStyle` |
+| Recommendation answer row | `RecAnswerRow` (`DesignSystem/RecAnswerRow.swift`) — Done / Not for us / Track as small text buttons, POSTs `/mobile/api/recs/event`, then a muted confirmation line. The same row under every module recommendation (Reviews, Food Cost, Marketing, Intel) |
 | Field | `AccountField`, `CavnarFloatingField`, `CavnarDropdown` |
 | Switch with its record | `AccountSwitchRow(label:detail:isOn:busy:)` — the `detail` is the owner's own record behind the switch (Automation & trust) |
 | Score movement | `ScoreDeltaChip(delta:)` — "+3" green / "−2" red capsule in the number face (`ShiftQualityPanel.swift`) |

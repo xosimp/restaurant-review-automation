@@ -44,14 +44,22 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
             # Editing an approved draft sends it back to draft — otherwise
             # "approved" would mean "someone approved some earlier version of
             # this", which is worse than no approval at all.
+            # An expired draft (a quiet-night post whose night has passed —
+            # strategy_jobs.expire_quiet_night_drafts) is not revived by an
+            # edit: saving it again would make "come in Tuesday" approvable
+            # on Thursday.
             n = conn.execute(
                 "UPDATE marketing_drafts SET body=?, content_type=?, topic=?, media_id=?, "
                 "status='draft', approved_by=NULL, approved_at=NULL, updated_at=datetime('now') "
-                "WHERE id=? AND restaurant_id=?",
+                "WHERE id=? AND restaurant_id=? AND COALESCE(status,'draft') != 'expired'",
                 (body, content_type, topic, media_id or None, draft_id, restaurant_id),
             ).rowcount
             conn.commit()
             if not n:
+                gone = conn.execute("SELECT status FROM marketing_drafts WHERE id=? AND restaurant_id=?",
+                                    (draft_id, restaurant_id)).fetchone()
+                if gone and gone["status"] == "expired":
+                    return {"ok": False, "error": "That draft expired — its night has passed. Start a new one."}
                 return {"ok": False, "error": "That draft no longer exists."}
             return {"ok": True, "id": draft_id, "status": "draft"}
 
@@ -131,6 +139,14 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
     finally:
         conn.close()
     if not n:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT status FROM marketing_drafts WHERE id=? AND restaurant_id=?",
+                               (draft_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if row and row["status"] == "expired":
+            return {"ok": False, "error": "That draft expired — its night has passed, so it can't be approved."}
         return {"ok": False, "error": "That draft is already approved or no longer exists."}
     return {"ok": True, "id": draft_id, "status": "approved"}
 

@@ -288,6 +288,11 @@ final class MarketingComposeViewModel {
     /// Invited teammates can write but not release; the server decides and
     /// the message comes back from it, so the rule is never duplicated here.
     func approve(_ draft: MarketingDraft) async {
+        // The row never offers it; this holds even if a caller does.
+        guard draft.canApprove else {
+            if let note = draft.expiredNote { draftError = note }
+            return
+        }
         do {
             let response: OKResponse = try await client.send(
                 "/mobile/api/marketing/drafts/\(draft.id)/approve", method: .post)

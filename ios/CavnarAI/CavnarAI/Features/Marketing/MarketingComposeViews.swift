@@ -388,15 +388,25 @@ struct MarketingDraftsView: View {
                     .font(.cavnarBody(16, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
-                Text(draft.isApproved ? "Approved" : "Draft")
+                Text(draft.statusLabel)
                     .font(.cavnarBody(15, weight: 700))
-                    .foregroundStyle(draft.isApproved ? Color.cavnarGreen : Color.cavnarEmber2)
+                    .foregroundStyle(draft.isApproved ? Color.cavnarGreen
+                                     : (draft.isExpired ? Color.cavnarInk3 : Color.cavnarEmber2))
             }
             Text(draft.body)
                 .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
+            // Retired server-side: a quiet-night piece whose night passed
+            // before anyone approved it. Said once, muted, and nothing below
+            // offers to release it.
+            if let note = draft.expiredNote {
+                Text(note)
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if let who = draft.createdByName {
                 Text(draft.isApproved && draft.approvedByName != nil
@@ -407,7 +417,9 @@ struct MarketingDraftsView: View {
             }
 
             HStack(spacing: 14) {
-                if let onUse {
+                // "Open" puts it in the composer — the road to Post, Schedule
+                // and Send — so an expired draft doesn't get it. Delete stays.
+                if let onUse, draft.canOpenInComposer {
                     Button {
                         Haptic.selection()
                         onUse(draft)
@@ -415,7 +427,7 @@ struct MarketingDraftsView: View {
                         Text("Open").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarEmber)
                     }
                 }
-                if !draft.isApproved {
+                if draft.canApprove {
                     Button {
                         Task { await viewModel.approve(draft) }
                     } label: {

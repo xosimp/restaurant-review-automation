@@ -106,6 +106,9 @@ struct MarketingView: View {
                 MarketingQueueView(viewModel: compose)
             case .drafts:
                 MarketingDraftsView(viewModel: compose) { draft in
+                    // An expired draft can't be posted or sent; the row
+                    // doesn't offer Open, and this holds regardless.
+                    guard draft.canOpenInComposer else { return }
                     viewModel.draft = draft.body
                     viewModel.hasDraft = true
                     if let type = draft.contentType { viewModel.selectedType = type }
