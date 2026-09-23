@@ -15,6 +15,9 @@ from sales_audit_schema import public_schema, STATUSES
 import sales_audit_cheatsheet as cheatsheet
 
 audit_bp = Blueprint("sales_audit", __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(audit_bp)
 
 
 @audit_bp.app_template_filter("money")

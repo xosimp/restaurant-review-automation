@@ -22,6 +22,9 @@ from auth import login_required
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 client_bp = Blueprint('client', __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(client_bp)
 
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.

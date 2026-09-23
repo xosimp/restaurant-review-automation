@@ -255,3 +255,34 @@ def digest_lines(db_path=DB_PATH, hours=24):
     finally:
         conn.close()
     return out
+
+
+# ── JSON bodies that are not objects (SEC-32) ────────────────────────────────
+
+_BODY_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _reject_non_object_json():
+    """before_request: a JSON body must be an object. Nearly every handler
+    does `data = request.get_json() or {}` and then `data.get(...)`, so a body
+    of "x" or [1] raised AttributeError and answered 500 with a traceback in
+    the log — about 170 routes, including the unauthenticated sign-in ones.
+    One check here instead of 170 isinstance tests. A body that is not valid
+    JSON at all is left to the handler (Flask already answers that 400)."""
+    from flask import request, jsonify
+    if request.method not in _BODY_METHODS or not request.is_json:
+        return None
+    body = request.get_json(silent=True)
+    if body is None or isinstance(body, dict):
+        return None
+    return jsonify(ok=False, error="The request body must be a JSON object."), 400
+
+
+def json_object_guard(blueprint):
+    """Attach the check above to a blueprint that reads JSON bodies. Not for
+    webhook receivers, which take whatever shape the sender posts and verify
+    it by signature."""
+    if not getattr(blueprint, "_json_object_guard", False):
+        blueprint.before_request(_reject_non_object_json)
+        blueprint._json_object_guard = True
+    return blueprint

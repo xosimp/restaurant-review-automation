@@ -15,6 +15,9 @@ from auth import verify_password, create_session, delete_session, get_sessions_f
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 auth_bp = Blueprint('auth', __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(auth_bp)
 
 # ── Login rate limiting ────────────────────────────────────────────────────────
 # Tracks failed login attempts per IP: {ip: [timestamp, timestamp, ...]}

@@ -47,6 +47,9 @@ import client_api as _capi
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(mobile_bp)
 
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.
