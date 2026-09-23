@@ -1143,6 +1143,7 @@ document.documentElement.classList.add('pjs-loading');
 </script>
 </head>
 <body>
+<meta name="cavnar-restaurant-id" content="{{ current_user.restaurant_id }}">
 {% include "_csrf_fetch.html" %}
 <script src="/static/cavnar-orb.js"></script>
 

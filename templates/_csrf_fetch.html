@@ -1,7 +1,13 @@
 <script>
 /* CSRF double-submit: echo the csrf_js cookie back as an X-CSRF header on
    every same-origin state-changing fetch. Must load before any other script
-   so all later fetch() calls go through the wrapper. ES5 only. */
+   so all later fetch() calls go through the wrapper. ES5 only.
+
+   A page rendered for one location also names it on every same-origin
+   request (X-Cavnar-Restaurant-Id, from the cavnar-restaurant-id meta tag).
+   The active location is per session, so a switch in one tab used to send
+   another tab's next Save into the new location (DATA-10); the server now
+   answers such a request 409 and asks for a reload. */
 (function(){
   var _origFetch = window.fetch;
   if (!_origFetch) return;
@@ -9,19 +15,31 @@
     var m = document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
+  function _pageRid(){
+    var el = document.querySelector('meta[name="cavnar-restaurant-id"]');
+    return el ? (el.getAttribute('content') || '') : '';
+  }
+  function _setHeader(init, name, value){
+    var h = init.headers || {};
+    if (typeof Headers !== 'undefined' && h instanceof Headers) {
+      h.set(name, value);
+    } else {
+      h[name] = value;
+    }
+    init.headers = h;
+  }
   window.fetch = function(input, init){
     var url = (typeof input === 'string') ? input : ((input && input.url) || '');
     var external = /^https?:\/\//i.test(url) && url.indexOf(window.location.origin) !== 0;
     var method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     if (!external && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
       init = init || {};
-      var h = init.headers || {};
-      if (typeof Headers !== 'undefined' && h instanceof Headers) {
-        h.set('X-CSRF', _csrfTok());
-      } else {
-        h['X-CSRF'] = _csrfTok();
-      }
-      init.headers = h;
+      _setHeader(init, 'X-CSRF', _csrfTok());
+    }
+    var rid = _pageRid();
+    if (!external && rid && (typeof input === 'string' || init)) {
+      init = init || {};
+      _setHeader(init, 'X-Cavnar-Restaurant-Id', rid);
     }
     return _origFetch.call(window, input, init);
   };

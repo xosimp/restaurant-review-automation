@@ -2939,8 +2939,36 @@ def login_required(f):
             from flask import jsonify as _jsonify_mp
             return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
                                module_forbidden=True, module=unauthorised), 403
+        moved = _tab_location_moved(user)
+        if moved:
+            return moved
         return f(*args, **kwargs, current_user=user)
     return decorated
+
+
+# The one route a tab rendered for an old location must still reach.
+_TAB_LOCATION_EXEMPT = frozenset({"client.switch_location"})
+
+
+def _tab_location_moved(user):
+    """A 409 when the page that sent this request was rendered for a
+    different location than the session now has, else None.
+
+    The active location lives on the session, not the tab, so after an owner
+    switched to Wicker Park in tab B, tab A — still showing Lakeview's
+    settings — saved Lakeview's form into Wicker Park, and a Lakeview job
+    polled from tab A answered "Job not found" (DATA-10). The dashboard names
+    the location it was rendered for on every request (_csrf_fetch.html);
+    a request that names none (the phone, a script) is unaffected."""
+    raw = (request.headers.get("X-Cavnar-Restaurant-Id") or "").strip()
+    if not raw.isdigit() or request.endpoint in _TAB_LOCATION_EXEMPT:
+        return None
+    if int(raw) == int(user.get("restaurant_id") or 0):
+        return None
+    from flask import jsonify as _jsonify_tl
+    return _jsonify_tl(ok=False, location_changed=True, restaurant_id=user.get("restaurant_id"),
+                       error="You switched to another location in a different tab. "
+                             "Reload this page to keep working here."), 409
 
 # Support accounts (role='support', is_admin=0) may READ the admin console
 # and open a view-as session; every other admin write needs the admin bit.
