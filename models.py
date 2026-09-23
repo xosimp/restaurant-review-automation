@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
 CREATE TABLE IF NOT EXISTS reviews (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id       INTEGER NOT NULL REFERENCES restaurants(id),
-    platform            TEXT    NOT NULL CHECK(platform IN ('google','yelp','csv','manual')),
+    platform            TEXT    NOT NULL CHECK(platform IN ('google','yelp','csv','manual','tripadvisor','doordash','ubereats')),
     external_id         TEXT    NOT NULL,
     author              TEXT,
     rating              INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
     top_issues_json TEXT,       -- [["food_quality",3],...]
     sent_at         TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_weekly_reports_restaurant ON weekly_reports(restaurant_id);
 
 CREATE TABLE IF NOT EXISTS service_status (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -894,14 +895,37 @@ def ensure_columns(db_path: str = DB_PATH):
         # eight live questions on a request thread (MOD-INT-5).
         ("ai_visibility_runs", "payload_json", "TEXT"),
     ]
-    for table, col, col_type in columns_to_add:
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-            conn.commit()
-            print(f"Added column {table}.{col}")
-        except Exception:
-            pass  # Column already exists
-    conn.close()
+    try:
+        for table, col, col_type in columns_to_add:
+            # "no such table" too: a table an init_* helper creates later in
+            # boot is migrated when ensure_columns runs again after it.
+            if _apply_migration(conn, f"ALTER TABLE {table} ADD COLUMN {col} {col_type}",
+                                also_tolerate=("no such table",)):
+                conn.commit()
+                print(f"Added column {table}.{col}")
+    finally:
+        conn.close()
+
+
+# The only failures a boot migration may treat as "already applied". Every
+# migration used to be `try/except: pass`, so "database is locked" (an
+# overlapped container, worker.py, a `railway ssh sqlite3` session) was read
+# as "column exists", init_db returned normally and the app served on a
+# drifted schema (DATA-11). Anything else now raises and fails the boot.
+_MIGRATION_ALREADY_APPLIED = ("duplicate column name", "already exists")
+
+
+def _apply_migration(conn, sql, also_tolerate=()):
+    """Run one boot migration. True if it applied, False if it was already
+    applied; any other failure raises."""
+    try:
+        conn.execute(sql)
+        return True
+    except sqlite3.OperationalError as e:
+        msg = str(e).lower()
+        if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
+            return False
+        raise
 
 def _reviews_unique_is_global(conn) -> bool:
     """True while `reviews` still carries the old UNIQUE(platform, external_id)."""
@@ -969,6 +993,60 @@ def _migrate_reviews_unique(conn):
         except Exception:
             pass
         print(f"[migrate] reviews re-key FAILED, table left untouched: {e}")
+
+
+_OLD_REVIEW_PLATFORM_CHECK = "CHECK(platform IN ('google','yelp','csv','manual'))"
+_REVIEW_PLATFORM_CHECK = "CHECK(platform IN ('google','yelp','csv','manual','tripadvisor','doordash','ubereats'))"
+
+
+def _migrate_reviews_platform_check(conn):
+    """Widen reviews.platform's CHECK to the third-party imports.
+
+    The CSV import (client_api.import_tripadvisor) writes 'tripadvisor',
+    'doordash' and 'ubereats', which the CHECK refused: every row was
+    rejected, save_reviews logged it, and the route told the owner
+    "imported: N" with nothing stored (DATA-21). SQLite cannot alter a CHECK,
+    so this is the same rebuild as _migrate_reviews_unique — new table, copy,
+    swap, one transaction — and a no-op once the table has the wider CHECK.
+    The table's indexes are captured first and replayed after the swap.
+    """
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").fetchone()
+        create = (row[0] if row else "") or ""
+        if _OLD_REVIEW_PLATFORM_CHECK not in create:
+            return
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(reviews)").fetchall()]
+        col_list = ", ".join(cols)
+        indexes = [r[0] for r in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='reviews' AND sql IS NOT NULL").fetchall()]
+        import re as _re
+        new_create, n = _re.subn(r'^CREATE TABLE\s+(?:"reviews"|reviews)(?=\s*\()', "CREATE TABLE reviews_platforms",
+                                 create.replace(_OLD_REVIEW_PLATFORM_CHECK, _REVIEW_PLATFORM_CHECK), count=1)
+        if n != 1:
+            print("[migrate] reviews platform CHECK: could not rewrite CREATE statement, leaving as is")
+            return
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP TABLE IF EXISTS reviews_platforms")
+        conn.execute(new_create)
+        conn.execute(f"INSERT INTO reviews_platforms ({col_list}) SELECT {col_list} FROM reviews")
+        conn.execute("DROP TABLE reviews")
+        conn.execute("ALTER TABLE reviews_platforms RENAME TO reviews")
+        for sql in indexes:
+            conn.execute(sql)
+        conn.execute("COMMIT")
+        conn.execute("PRAGMA foreign_keys=ON")
+        print("[migrate] reviews.platform now accepts tripadvisor, doordash and ubereats")
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        except Exception:
+            pass
+        print(f"[migrate] reviews platform CHECK FAILED, table left untouched: {e}")
 
 
 def _ensure_place_id_uniqueness(conn):
@@ -1305,6 +1383,10 @@ def init_db(db_path: str = DB_PATH):
             gbp_score INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        # Read per restaurant, newest first (MOD-PERF-6), and pruned by
+        # created_at alone (ops.prune_ledgers, DATA-40).
+        "CREATE INDEX IF NOT EXISTS idx_aivis_runs_rest ON ai_visibility_runs(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_aivis_runs_created ON ai_visibility_runs(created_at)",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -1345,6 +1427,7 @@ def init_db(db_path: str = DB_PATH):
             method        TEXT NOT NULL DEFAULT 'email',
             status        TEXT NOT NULL DEFAULT 'sent'
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_requests_rest ON review_requests(restaurant_id, sent_at)",  # MOD-PERF-6
         """CREATE TABLE IF NOT EXISTS service_status (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             service_key TEXT NOT NULL UNIQUE,
@@ -1395,6 +1478,9 @@ def init_db(db_path: str = DB_PATH):
             fired_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_log_restaurant ON alert_log(restaurant_id, fired_at)",
+        # ops.prune_ledgers deletes by fired_at alone, which the index above
+        # cannot serve (DATA-40).
+        "CREATE INDEX IF NOT EXISTS idx_alert_log_fired ON alert_log(fired_at)",
         # Per-LOGIN notification read state. restaurants.notifications_seen_at
         # was one stamp for the whole restaurant, so a co-owner opening the
         # bell cleared their partner's unread badge — and the two clients
@@ -1628,6 +1714,7 @@ def init_db(db_path: str = DB_PATH):
             computed_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(content_log_id, window_hours)
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_marketing_attr_rest ON marketing_attribution(restaurant_id)",  # MOD-PERF-6
         # Beyond total sales: the promoted dish's own units, reviews that
         # mentioned it, and the guest list's move in the post's window.
         "ALTER TABLE marketing_attribution ADD COLUMN item_lift_pct REAL",
@@ -1883,6 +1970,7 @@ def init_db(db_path: str = DB_PATH):
             message_id    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_email_log_restaurant ON email_log(restaurant_id, sent_at)",
+        "CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)",   # prune_ledgers (DATA-40)
         # Addresses Resend told us are undeliverable or that reported us as
         # spam. Suppressed at send time: retrying a hard bounce forever, or
         # continuing to mail someone who hit "report spam", is exactly what
@@ -2378,13 +2466,17 @@ def init_db(db_path: str = DB_PATH):
         # After the CREATE, so a fresh database gets the column too.
         "ALTER TABLE forecast_log ADD COLUMN signed_error_pct REAL",
     ]
-    for m in migrations:
-        try:
-            conn.execute(m)
-        except Exception:
-            pass  # column already exists
-    conn.commit()
+    try:
+        for m in migrations:
+            # "no such table": a few of these touch a table an init_* helper
+            # creates later in boot (users, on a fresh file).
+            _apply_migration(conn, m, also_tolerate=("no such table",))
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
     _migrate_reviews_unique(conn)
+    _migrate_reviews_platform_check(conn)
     _ensure_place_id_uniqueness(conn)
     # Chats existed before conversations did — fold any pre-conversation
     # messages into one chat per restaurant so they show up in history.
@@ -2394,8 +2486,11 @@ def init_db(db_path: str = DB_PATH):
     except Exception as e:
         print(f"ask_cavnar legacy adoption skipped: {e}")
     conn.close()
-    # Ensure any columns managed by ensure_columns() are present before seeding
-    ensure_columns()
+    # Ensure any columns managed by ensure_columns() are present before seeding.
+    # On THIS database: a bare ensure_columns() migrated the default
+    # DB_PATH as well, so the restore drill's init_db(scratch) ran a
+    # migration on production (DATA-44).
+    ensure_columns(db_path)
     # The tables that grew their own init_* helper after day one. Creating
     # them here means a request path never has to: a CREATE TABLE IF NOT
     # EXISTS on every read took SQLite's write lock for nothing.
@@ -2409,6 +2504,10 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # Job claims, runs, failures, async jobs and the scheduler lease — at
+    # boot, not on each claim (DATA-6).
+    import ops as _ops
+    _ops.init_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     print(f"Database initialised at {db_path}")
@@ -2495,10 +2594,54 @@ class StaleWrite(RuntimeError):
     stamping toast_last_synced has nothing to conflict with).
     """
 
+    # Our own wording, safe to hand a client as-is (routes use this, never
+    # str(e) — see tests/test_intel_integrity.py).
+    user_message = ("Someone else changed these settings while you were editing. "
+                    "Reload and make your change again.")
+
     def __init__(self, current_version):
-        super().__init__("Someone else changed these settings while you were editing. "
-                         "Reload and make your change again.")
+        super().__init__(self.user_message)
         self.current_version = current_version
+
+
+# Process-local caches built FROM a restaurant's row (home_brief's payload,
+# ask_cavnar's context) register here, and update_restaurant tells them the
+# row changed. A settings save left Home and Ask answering from the old row
+# for up to a minute (DATA-39). A registry rather than imports, so the data
+# layer does not reach up into the modules that read it.
+_restaurant_change_listeners = []
+
+
+def on_restaurant_change(fn):
+    if fn not in _restaurant_change_listeners:
+        _restaurant_change_listeners.append(fn)
+    return fn
+
+
+def _notify_restaurant_change(restaurant_id):
+    for fn in list(_restaurant_change_listeners):
+        try:
+            fn(restaurant_id)
+        except Exception as e:
+            print(f"[models] restaurant-change listener {getattr(fn, '__name__', fn)} failed: {e}")
+
+
+def expected_version_from(data) -> Optional[int]:
+    """The `expected_version` a whole-form save carries, or None.
+
+    Settings routes never passed one, so update_restaurant's compare-and-
+    swap was dead code: a stale phone form silently reverted never_say — the
+    only gate on auto-published replies — saved a minute earlier from the
+    web (DATA-28). A route passes this through; a client that sends the
+    row_version it loaded gets a 409 instead of a silent revert, and one
+    that sends nothing keeps last-write-wins."""
+    v = (data or {}).get("expected_version")
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def restaurant_version(restaurant_id: int, db_path: str = DB_PATH) -> int:
@@ -2513,6 +2656,26 @@ def restaurant_version(restaurant_id: int, db_path: str = DB_PATH) -> int:
         return 0
     finally:
         conn.close()
+
+
+# Columns _restaurant_from_row converts with int()/float(). A value that
+# does not convert makes the row fail to hydrate, and get_all_restaurants
+# then skips it — the restaurant leaves every scheduled job (DATA-43). So a
+# write that would store one is refused here instead.
+_NUMERIC_RESTAURANT_FIELDS = {"week_start_day": int, "monthly_revenue_target": float}
+
+
+def _check_numeric_fields(updates):
+    for k, cast in _NUMERIC_RESTAURANT_FIELDS.items():
+        v = updates.get(k)
+        if k not in updates or v is None or isinstance(v, (int, float)):
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        try:
+            cast(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{k} must be a number, not {v!r}") from None
 
 
 def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
@@ -2574,6 +2737,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
     import credentials as _cred
@@ -2617,6 +2781,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     # that writes and then re-reads in the same request would otherwise be
     # served the row as it was before its own write.
     _invalidate_request_cache(restaurant_id)
+    # And the process caches built from this row (Home, Ask) — DATA-39.
+    _notify_restaurant_change(restaurant_id)
     # Keep the organization key in step with the group name an admin typed.
     # location_group remains the field the admin console writes; this is what
     # turns that string into the real grouping key without the console having
@@ -2675,6 +2841,72 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     conn.close()
     _invalidate_request_cache(restaurant_id)
     return now
+
+
+def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Remove a restaurant and every row that belongs to it, in one
+    transaction. Returns {table: rows_deleted}.
+
+    There was no deletion routine: deletion_requested_at was a flag nothing
+    acted on, and DELETE FROM restaurants failed on the ~70 child tables
+    that reference it (DATA-61). This is the routine. It is deliberately
+    NOT called by anything yet — when to run it after a request (the 30-day
+    notice request_account_deletion describes), who confirms it, and what
+    happens to Stripe and to the nightly snapshots that still hold the rows
+    are decisions for the operator, not for a background job to make.
+
+    What goes: every row in every table with a restaurant_id column, the
+    restaurants row, and then any row left pointing (by foreign key) at a
+    row this removed — sessions of a deleted login, versions of a deleted
+    schedule — until none is left. A login whose home restaurant this is but
+    who still has an active membership elsewhere is re-homed there rather
+    than deleted. Foreign-key violations that existed before the call are
+    not touched.
+    """
+    rid = int(restaurant_id)
+    conn = get_conn(db_path)
+    conn.execute("PRAGMA foreign_keys=OFF")          # must be set outside the transaction
+    deleted = {}
+    try:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        had_orphans = {tuple(v) for v in conn.execute("PRAGMA foreign_key_check")}
+        conn.execute("BEGIN IMMEDIATE")
+        if "memberships" in tables:
+            for uid, other in conn.execute(
+                    "SELECT u.id, (SELECT m.restaurant_id FROM memberships m WHERE m.user_id=u.id "
+                    "  AND m.restaurant_id<>? AND COALESCE(m.is_active,1)=1 ORDER BY m.restaurant_id LIMIT 1) "
+                    "FROM users u WHERE u.restaurant_id=?", (rid, rid)).fetchall():
+                if other is not None:
+                    conn.execute("UPDATE users SET restaurant_id=? WHERE id=?", (other, uid))
+        for t in tables:
+            cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}
+            if "restaurant_id" in cols:
+                n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
+                if n:
+                    deleted[t] = n
+        n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
+        if n:
+            deleted["restaurants"] = n
+        for _ in range(20):
+            orphans = [v for v in conn.execute("PRAGMA foreign_key_check")
+                       if tuple(v) not in had_orphans and v[1] is not None]
+            if not orphans:
+                break
+            for table, rowid, _parent, _fk in orphans:
+                if conn.execute(f'DELETE FROM "{table}" WHERE rowid=?', (rowid,)).rowcount:
+                    deleted[table] = deleted.get(table, 0) + 1
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        finally:
+            conn.close()
+    _invalidate_request_cache(rid)
+    return deleted
 
 
 def _request_cache():
@@ -2744,6 +2976,11 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
 def _restaurant_from_row(row) -> Restaurant:
     """Row -> Restaurant. Split out so callers that already hold the row can
     hydrate from it instead of re-querying by id (see get_all_restaurants)."""
+    # One keys() call per row, not one per optional column: sqlite3.Row
+    # builds a fresh list on every keys(), ~190 of them per restaurant,
+    # for every restaurant every scheduled job hydrates (MOD-PERF-2).
+    if not isinstance(row, dict):
+        row = dict(zip(row.keys(), row))
     return Restaurant(
         id=row["id"], name=row["name"], owner_email=row["owner_email"],
         google_place_id=row["google_place_id"], yelp_business_id=row["yelp_business_id"],
@@ -3140,7 +3377,7 @@ def _cross_source_copy(conn, r: "Review"):
 
 
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
-                 downgrades: list = None) -> tuple[int, list]:
+                 downgrades: list = None, rejected: list = None) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
 
     Returns (new_count, new_review_objects). Pass a list as `downgrades` to
@@ -3247,6 +3484,10 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
                 unexpected.append((r.external_id, str(e)))
     conn.commit()
     conn.close()
+    if rejected is not None:
+        # Same out-parameter shape as `downgrades`: rows refused for a reason
+        # other than "this restaurant already has it" (DATA-21).
+        rejected.extend(unexpected)
     if edited:
         print(f"[reviews] {edited} review(s) were edited by their author and have been updated")
     if unexpected:
@@ -3278,6 +3519,7 @@ def get_pending_analysis(restaurant_id: int, limit: int = 50,
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=0
           AND COALESCE(analysis_attempts, 0) < ?
+          AND deleted_at IS NULL      -- retired by the retention setting (DATA-60)
         ORDER BY fetched_at DESC LIMIT ?
     """, (restaurant_id, MAX_AI_ATTEMPTS, limit)).fetchall()
     conn.close()
@@ -3292,6 +3534,7 @@ def get_pending_drafts(restaurant_id: int, limit: int = 50,
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=1 AND response_status='pending'
           AND COALESCE(draft_attempts, 0) < ?
+          AND deleted_at IS NULL      -- retired by the retention setting (DATA-60)
         ORDER BY
             CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
             fetched_at DESC
@@ -3633,6 +3876,7 @@ def init_email_log(db_path: str = DB_PATH):
         error TEXT,
         message_id TEXT
     )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)")   # prune_ledgers (DATA-40)
     conn.commit()
     conn.close()
 
@@ -5206,6 +5450,19 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     user = validate_reset_token(token, db_path)
     if not user:
         return False
+    # Burn the token first, conditionally, so exactly one submission can
+    # win. Validate-then-update-by-id let two concurrent submissions both
+    # pass validation and both set a password (DATA-50).
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE users SET reset_token=NULL, reset_token_expires=NULL "
+                           "WHERE id=? AND reset_token=?", (user["id"], _hash_reset_token(token)))
+        conn.commit()
+        won = cur.rowcount == 1
+    finally:
+        conn.close()
+    if not won:
+        return False
     # Ends every session and clears must_reset_password (SEC-7, SEC-8).
     from auth import update_password
     update_password(user["id"], new_password, db_path=db_path)
@@ -5829,12 +6086,42 @@ def get_all_restaurants(db_path: str = DB_PATH) -> list:
     result = []
     for row in rows:
         # Per-row guard kept: one malformed row must not cost the caller the
-        # whole list, which is what the old per-row try/except bought.
+        # whole list. But a row that fails is reported, not dropped in
+        # silence: it leaves every scheduled job with it, and nothing else
+        # would ever say so (DATA-43 / MOD-PERF-5).
         try:
             result.append(_restaurant_from_row(row))
-        except Exception:
-            pass
+        except Exception as e:
+            _report_unhydratable(row, e, db_path)
     return result
+
+
+# (db_path, restaurant_id) -> monotonic time last reported. A row that cannot
+# hydrate fails on every call; the failure digest needs it once an hour,
+# not once per job and page view.
+_hydration_reported = {}
+
+
+def _report_unhydratable(row, exc, db_path):
+    import time as _time
+    try:
+        rid = row["id"]
+    except Exception:
+        rid = None
+    key = (str(db_path), rid)
+    now = _time.monotonic()
+    last = _hydration_reported.get(key)
+    if last is not None and now - last < 3600:
+        return
+    _hydration_reported[key] = now
+    print(f"[models] restaurant {rid} could not be loaded and is skipped: {exc}")
+    try:
+        import ops
+        ops.capture(exc, job="restaurant_hydration",
+                    context=f"restaurant_id={rid} — skipped by get_all_restaurants, so every scheduled job skips it",
+                    db_path=db_path if db_path != DB_PATH else None)
+    except Exception:
+        pass
 
 def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
     """Get all restaurants scheduled for digest on a given day of week."""
@@ -5844,6 +6131,10 @@ def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
         FROM restaurants r
         JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
         WHERE r.digest_day=? AND r.digest_enabled=1 AND r.module_reviews=1
+          -- A cancelled, paused or deleting account gets no weekly digest
+          -- (DATA-51); unknown/NULL billing stays in service (in_service).
+          AND """ + in_service_sql("r.billing_status") + """
+          AND r.deletion_requested_at IS NULL
     """, (day.lower(),)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -7148,6 +7439,7 @@ def init_competitor_snapshots(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_compsnap_rest_time "
                  "ON competitor_snapshots(restaurant_id, captured_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_compsnap_captured ON competitor_snapshots(captured_at)")  # DATA-40
     conn.commit()
     conn.close()
 
@@ -7343,6 +7635,7 @@ def init_ai_visibility_queries(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_run ON ai_visibility_query_runs(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_rest ON ai_visibility_query_runs(restaurant_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_created ON ai_visibility_query_runs(created_at)")  # DATA-40
     conn.commit()
     conn.close()
 

@@ -1160,6 +1160,7 @@ document.documentElement.classList.add('pjs-loading');
 </script>
 </head>
 <body>
+<meta name="cavnar-restaurant-id" content="{{ current_user.restaurant_id }}">
 {% include "_csrf_fetch.html" %}
 <script>
 /* Every dashboard request goes through here (CLIENT-12, CLIENT-13). ES5 only.

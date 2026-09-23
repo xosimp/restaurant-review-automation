@@ -75,7 +75,7 @@ def instagram_callback():
     r = _req.get(graph_url("oauth/access_token"), params={
         "client_id": app_id, "client_secret": app_secret,
         "redirect_uri": redirect_uri, "code": code,
-    })
+    }, timeout=(5, 20))
     if r.status_code != 200:
         print(f"IG token exchange failed: {r.text}")
         return (
@@ -90,11 +90,11 @@ def instagram_callback():
     r2 = _req.get(graph_url("oauth/access_token"), params={
         "grant_type": "fb_exchange_token", "client_id": app_id,
         "client_secret": app_secret, "fb_exchange_token": short_token,
-    })
+    }, timeout=(5, 20))
     long_token = r2.json().get("access_token", short_token)
 
     # Get Facebook pages
-    r3 = _req.get(graph_url("me/accounts"), params={"access_token": long_token})
+    r3 = _req.get(graph_url("me/accounts"), params={"access_token": long_token}, timeout=(5, 20))
     pages = r3.json().get("data", [])
     ig_user_id = None
     page_token = long_token
@@ -104,7 +104,7 @@ def instagram_callback():
         r4 = _req.get(graph_url(page['id']), params={
             "fields": "instagram_business_account",
             "access_token": page.get("access_token", long_token),
-        })
+        }, timeout=(5, 20))
         ig_data = r4.json().get("instagram_business_account")
         if ig_data:
             ig_user_id = ig_data.get("id")
@@ -174,6 +174,10 @@ def post_to_instagram(current_user):
     return jsonify(**payload), status
 
 
+# How long the same photo and caption are refused after a publish started.
+IG_PUBLISH_DEDUP_MINUTES = 10
+
+
 def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     """Shared by the web route above and mobile_api.py's own post-to-instagram."""
     import requests as _req
@@ -190,15 +194,29 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     if not image_url:
         return {"ok": False, "error": "Instagram requires an image. Paste a public image URL into the Image URL field before posting."}, 200
 
+    # One publish of this photo and caption at a time. An immediate publish
+    # carried no claim, so a re-click during the ~20-second processing poll
+    # (or the phone and the laptop at once) made a second public post
+    # (DATA-25). The claim is given back only when Meta definitely refused;
+    # a timeout may already be live, so it stands for the cooldown.
+    import hashlib as _hl_ig
+    import ops as _ops_ig
+    _claim = "ig_publish:%s:%s" % (restaurant_id, _hl_ig.sha256(
+        (image_url + "\x1f" + caption).encode("utf-8")).hexdigest()[:24])
+    if not _ops_ig.claim_cooldown(_claim, IG_PUBLISH_DEDUP_MINUTES):
+        return {"ok": False, "duplicate": True,
+                "error": "This post is already being published. Check Instagram before posting it again."}, 409
+
     r1 = _req.post(graph_url(f"{ig_user_id}/media"), data={
         "image_url":    image_url,
         "caption":      caption,
         "access_token": token,
-    })
+    }, timeout=(5, 30))
 
     if r1.status_code != 200:
         err = r1.json().get("error",{}).get("message","Unknown error")
         print(f"IG media create failed: {r1.text}")
+        _ops_ig.release_period("cooldown", _claim)      # nothing was posted
         return {"ok": False, "error": err}, 200
 
     creation_id = r1.json().get("id")
@@ -209,7 +227,8 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
         _time.sleep(2)
         _status = _req.get(
             graph_url(creation_id),
-            params={"fields": "status_code", "access_token": token}
+            params={"fields": "status_code", "access_token": token},
+            timeout=(5, 10),
         ).json().get("status_code", "")
         if _status == "FINISHED":
             break
@@ -218,10 +237,11 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     r2 = _req.post(graph_url(f"{ig_user_id}/media_publish"), data={
         "creation_id":  creation_id,
         "access_token": token,
-    })
+    }, timeout=(5, 30))
 
     if r2.status_code != 200:
         err = r2.json().get("error",{}).get("message","Publish failed")
+        _ops_ig.release_period("cooldown", _claim)      # Meta refused it; nothing is live
         return {"ok": False, "error": err}, 200
 
     post_id = r2.json().get("id")
@@ -431,7 +451,7 @@ def _do_post_to_facebook(restaurant_id, caption, topic):
     r = _req.post(graph_url(f"{restaurant.fb_page_id}/feed"), data={
         "message":      caption,
         "access_token": restaurant.fb_page_token,
-    })
+    }, timeout=(5, 30))
     if r.status_code != 200:
         err = r.json().get("error",{}).get("message","Unknown error")
         print(f"FB post failed: {r.text}")

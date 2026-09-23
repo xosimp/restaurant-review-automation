@@ -119,12 +119,23 @@ def create_client(current_user):
             location_group=data.get("location_group","").strip() or None,
             location_name=data.get("location_name","").strip() or None,
         ))
-        create_user(
-            restaurant_id=rid,
-            username=data["username"],
-            email=data["owner_email"],
-            password=data["password"],
-        )
+        try:
+            create_user(
+                restaurant_id=rid,
+                username=data["username"],
+                email=data["owner_email"],
+                password=data["password"],
+            )
+        except Exception:
+            # A double-clicked Create passed the duplicate check twice and
+            # left an orphan restaurant with no login (DATA-62): take the
+            # half-made one back out before reporting the failure.
+            try:
+                import models as _models_cc
+                _models_cc.delete_restaurant(rid)
+            except Exception as _del_e:
+                _ops.capture(_del_e, job="create_client_rollback", context=f"restaurant_id={rid}")
+            raise
         # Set module access directly from checkboxes
         def _flag(key, default=0):
             try: return int(data.get(key, default))
@@ -1736,6 +1747,9 @@ def refresh_menu_notes(restaurant_id, current_user):
         return jsonify(ok=False, error=_safe_err(e))
 
 
+RESEND_WELCOME_COOLDOWN_MINUTES = 5
+
+
 @admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def resend_welcome_email(restaurant_id, current_user):
@@ -1759,6 +1773,16 @@ def resend_welcome_email(restaurant_id, current_user):
             conn.close()
             return jsonify(ok=False, error="No client user found")
         conn.close()
+
+        # A double-click reset the password twice, so the password in the
+        # first email was dead before the client opened it (DATA-38). One
+        # reset per restaurant per few minutes; a second press inside that
+        # changes nothing.
+        import ops as _ops_rw
+        if not _ops_rw.claim_cooldown(f"resend_welcome:{restaurant_id}", RESEND_WELCOME_COOLDOWN_MINUTES):
+            return jsonify(ok=True, email=restaurant.owner_email, already_sent=True,
+                           message="A welcome email with a new password went out a few minutes ago, "
+                                   "so nothing was changed and no second email was sent.")
 
         # Generate a new temporary password
         alphabet = string.ascii_letters + string.digits
@@ -1857,7 +1881,7 @@ def refresh_ig_token(restaurant_id, current_user):
             "client_id":         os.getenv("META_APP_ID",""),
             "client_secret":     app_secret,
             "fb_exchange_token": restaurant.ig_token,
-        })
+        }, timeout=(5, 20))
         if r.status_code != 200:
             return jsonify(ok=False, error=f"IG refresh failed: {r.text[:200]}")
 
@@ -1873,7 +1897,7 @@ def refresh_ig_token(restaurant_id, current_user):
                 "client_id":         os.getenv("META_APP_ID",""),
                 "client_secret":     app_secret,
                 "fb_exchange_token": restaurant.fb_page_token,
-            })
+            }, timeout=(5, 20))
             if r2.status_code == 200:
                 update_data["fb_page_token"]    = r2.json().get("access_token", restaurant.fb_page_token)
                 update_data["fb_token_expires"] = new_expires

@@ -131,8 +131,6 @@ def test_minute_duties_run_after_a_short_pass(db_path, monkeypatch):
     assert ran == ["delayed"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-3: the scheduler is one serial thread and delayed.run_due only runs "
-                                       "after the review fetch returns, so undo-window sends wait out a 3-hour pass")
 def test_minute_duties_run_while_a_long_pass_is_in_progress(db_path, monkeypatch):
     import scheduler
     fetch_started, release, delayed_ran = threading.Event(), threading.Event(), threading.Event()
@@ -154,8 +152,6 @@ def test_minute_duties_run_while_a_long_pass_is_in_progress(db_path, monkeypatch
     assert during, "delayed actions did not run while the fetch pass was in progress"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-3: the heartbeat is stamped only at the end of a tick, so every long "
-                                       "pass marks the scheduler as an outage on the public status page")
 def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, monkeypatch):
     import scheduler, status_manager
     status_manager.seed_default_services()
@@ -246,8 +242,6 @@ def test_a_cancelled_restaurant_is_not_fetched(db_path, monkeypatch, state):
     assert fetched == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51: get_restaurants_for_digest filters only digest_day/enabled/"
-                                       "module_reviews, so a cancelled owner keeps getting weekly digests")
 @pytest.mark.parametrize("state", ["churned", "paused"])
 def test_a_cancelled_restaurant_gets_no_weekly_digest(db_path, state):
     from auth import create_user, init_auth
@@ -259,8 +253,6 @@ def test_a_cancelled_restaurant_gets_no_weekly_digest(db_path, state):
     assert models.get_restaurants_for_digest("monday", db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51: delayed.run_due executes pending auto-publish / supplier-order "
-                                       "actions for an account cancelled inside the undo window")
 def test_a_cancelled_restaurant_s_queued_action_does_not_run(db_path, monkeypatch):
     import delayed
     rid = _rid(db_path)
@@ -309,8 +301,6 @@ def test_a_cancelled_restaurant_s_guests_are_not_texted(db_path, monkeypatch):
 
 # ── the follow-up job's transaction (DATA-52) ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: run_review_request_followups holds one write transaction across "
-                                       "its whole Twilio loop, so every request's session write waits behind it")
 def test_followups_commit_each_claim_before_sending(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=3)
@@ -335,8 +325,6 @@ class _Killed(BaseException):
     """A deploy's SIGTERM: not an Exception, so nothing in the loop catches it."""
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: a crash mid-loop rolls back every stamp after the texts went out, "
-                                       "so the next hourly run texts the same guests again")
 def test_a_follow_up_run_killed_mid_loop_does_not_re_text_guests_already_reached(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=2)
@@ -383,8 +371,6 @@ def test_fetch_coverage_age_is_reported_per_restaurant(db_path):
 
 # ── scheduled posts across time zones (DATA-31) ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-31: run_due_posts takes the 200 earliest rows by local-time string, so "
-                                       "a due Eastern post sits behind 200 not-yet-due Pacific posts")
 def test_a_due_post_is_picked_even_behind_200_undue_ones(db_path, monkeypatch):
     import marketing_publish
     pacific = _rid(db_path, name="Pacific", timezone="America/Los_Angeles")
@@ -441,8 +427,6 @@ def _alias_scan():
     return hits
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-16: the timeout lint only knows the names requests/_requests/httpx/"
-                                       "_httpx; 12 calls through `import requests as _req` have no timeout")
 def test_every_outbound_http_call_names_a_timeout_whatever_the_import_alias():
     hits = _alias_scan()
     assert not hits, "outbound calls with no timeout:\n" + "\n".join(hits)
@@ -461,8 +445,6 @@ def test_the_timeout_lint_flags_a_plain_requests_call(tmp_path, monkeypatch):
     assert len(_lint_on(tmp_path, monkeypatch, "import requests\nrequests.get('https://x.test')\n")) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-16: an aliased import (`import requests as _req`) is invisible to the "
-                                       "timeout lint, which prints OK")
 def test_the_timeout_lint_flags_an_aliased_requests_call(tmp_path, monkeypatch):
     assert len(_lint_on(tmp_path, monkeypatch, "import requests as _req\n_req.get('https://x.test')\n")) == 1
 
@@ -498,8 +480,6 @@ def test_token_refresh_continues_after_one_restaurant_fails(db_path, monkeypatch
     assert models.get_restaurant(bad, db_path=db_path).ig_token == "tok-bad"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-49/DATA-16: the token refresh calls the Graph API with no timeout, "
-                                       "so one unanswered connection hangs the scheduler thread")
 def test_every_token_refresh_call_names_a_timeout(db_path, monkeypatch):
     import requests, scheduler
     monkeypatch.setenv("META_APP_ID", "app")
@@ -512,8 +492,6 @@ def test_every_token_refresh_call_names_a_timeout(db_path, monkeypatch):
     assert calls and all(k.get("timeout") for k in calls), calls
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-49: the refresh is claimed once per day at the job level, so a "
-                                       "restaurant whose refresh failed waits a full day for another attempt")
 def test_a_failed_token_refresh_is_retried_the_same_day(db_path, monkeypatch):
     import requests, scheduler
     monkeypatch.setenv("META_APP_ID", "app")

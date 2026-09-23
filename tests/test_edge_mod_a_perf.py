@@ -98,7 +98,6 @@ def test_a_tick_that_runs_the_fetch_still_reaches_every_per_tick_job(monkeypatch
         assert name in events, events
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-1: per-tick jobs sit behind the multi-hour review fetch in one thread")
 def test_held_alerts_and_scheduled_posts_are_released_while_the_fetch_is_still_running(monkeypatch):
     events = _one_tick_with_a_long_fetch(monkeypatch)
     end = events.index("fetch_end")
@@ -106,7 +105,6 @@ def test_held_alerts_and_scheduled_posts_are_released_while_the_fetch_is_still_r
     assert events.index("run_due_posts") < end
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-1: the lease heartbeat is refreshed only at the top of the loop, not during a long fetch")
 def test_the_scheduler_lease_is_refreshed_while_the_fetch_is_running(monkeypatch):
     events = _one_tick_with_a_long_fetch(monkeypatch)
     start, end = events.index("fetch_start"), events.index("fetch_end")
@@ -122,7 +120,6 @@ def _insert_restaurants(db_path, n):
     c.commit(); c.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-2: _restaurant_from_row calls row.keys() ~190 times per restaurant")
 def test_hydrating_every_restaurant_calls_row_keys_a_bounded_number_of_times_per_row(monkeypatch, db_path):
     _insert_restaurants(db_path, 200)
     counter = {"n": 0}
@@ -169,21 +166,18 @@ def test_a_period_is_claimed_once(monkeypatch, db_path):
     assert ops.claim_period("edge_job", "2026-09-22") is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: claim_period runs a full-table prune DELETE on every call")
 def test_claiming_a_period_issues_no_delete(monkeypatch, db_path):
     statements = _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")
     assert not [s for s in statements if s.strip().upper().startswith("DELETE")], statements
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: claim_period runs CREATE TABLE IF NOT EXISTS on every call")
 def test_claiming_a_period_runs_no_schema_ddl(monkeypatch, db_path):
     statements = _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")
     assert not [s for s in statements if "CREATE TABLE" in s.upper()], statements
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: job_period_claims has no index on claimed_at, so the prune scans the table")
 def test_the_claim_prune_uses_an_index(monkeypatch, db_path):
     _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")  # the table exists after a claim, whoever creates it
@@ -196,7 +190,6 @@ def test_the_claim_prune_uses_an_index(monkeypatch, db_path):
 
 # ── MOD-PERF-4: one run_due pass drains every due action ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-4: delayed.run_due executes at most 20 actions per tick")
 def test_one_run_due_pass_executes_every_due_action(monkeypatch, redirect):
     import delayed
     ran = []
@@ -223,7 +216,6 @@ def test_run_due_executes_due_actions_oldest_first_and_only_once(monkeypatch, re
 
 # ── MOD-PERF-5: a malformed row must not vanish silently ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-5: get_all_restaurants swallows a hydration error with a bare pass")
 def test_a_restaurant_with_a_malformed_numeric_column_is_kept_or_reported(monkeypatch, redirect):
     good = models.create_restaurant(models.Restaurant(name="Good", owner_email="g@x.com"), db_path=redirect)
     bad = models.create_restaurant(models.Restaurant(name="Bad", owner_email="b@x.com"), db_path=redirect)
@@ -253,10 +245,7 @@ _HOT_QUERIES = {
 }
 
 
-@pytest.mark.parametrize("table", [
-    pytest.param(t, marks=pytest.mark.xfail(strict=True, reason=f"MOD-PERF-6: {t} has no index leading on restaurant_id"))
-    for t in sorted(_HOT_QUERIES)
-])
+@pytest.mark.parametrize("table", sorted(_HOT_QUERIES))
 def test_a_per_restaurant_hot_query_does_not_scan_the_whole_table(db_path, table):
     c = sqlite3.connect(db_path)
     plan = [r[3] for r in c.execute("EXPLAIN QUERY PLAN " + _HOT_QUERIES[table], (1,))]
@@ -266,7 +255,6 @@ def test_a_per_restaurant_hot_query_does_not_scan_the_whole_table(db_path, table
 
 # ── MOD-PERF-7: the emailed backup has a size ceiling ───────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-7: backup_db reads/encrypts/base64s the whole DB into one email with no size check")
 def test_the_emailed_backup_is_skipped_and_recorded_above_a_configured_size(monkeypatch, redirect, tmp_path):
     import scheduler
     import resend

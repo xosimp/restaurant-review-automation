@@ -90,56 +90,160 @@ def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH):
         conn.close()
 
 
-def run_due(db_path=DB_PATH, now=None, limit=20):
-    """Execute every pending row whose time has come. Each row is claimed
-    with an atomic status flip, so two runners cannot both send it."""
-    now_s = _utc(now)
+# A row still 'running' this long after it was claimed belongs to a process
+# that died mid-handler (a deploy's SIGTERM kills the scheduler's daemon
+# thread without its finally blocks). Longer than any handler takes.
+RUNNING_STALE_MINUTES = 30
+
+# One run_due pass stops taking new rows after this long, so it cannot hold
+# the scheduler past its tick; what is left is still due, oldest first, on
+# the next pass.
+RUN_DUE_MAX_SECONDS = 240
+_BATCH = 50
+
+
+def reap_interrupted(db_path=DB_PATH):
+    """Mark actions left 'running' by a dead process as failed, with a
+    reason, and report them. They used to stay 'running' forever: no reaper,
+    no failure recorded, gone from the owner's feed (DATA-19). Not re-run:
+    a publish or an order killed mid-send may have partly gone out, and
+    sending it again blind is worse than asking (marketing_publish.
+    reap_stuck_publishes is the same stance). Returns how many."""
+    cutoff = _utc(datetime.now(timezone.utc) - timedelta(minutes=RUNNING_STALE_MINUTES))
+    message = ("Interrupted by a restart while it was running, so it may have partly gone out. "
+               "Check before doing it again — it was not retried automatically.")
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id FROM delayed_actions WHERE status='pending' AND execute_at <= ? "
-            "ORDER BY execute_at ASC LIMIT ?", (now_s, limit)).fetchall()
-        ids = [r["id"] for r in rows]
+            "SELECT id, restaurant_id, kind FROM delayed_actions WHERE status='running' "
+            "AND COALESCE(executed_at, execute_at) < ?", (cutoff,)).fetchall()
+        reaped = []
+        for r in rows:
+            cur = conn.execute(
+                "UPDATE delayed_actions SET status='failed', executed_at=?, result_json=? "
+                "WHERE id=? AND status='running'",
+                (_utc(), json.dumps({"ok": False, "error": message, "interrupted": True}), r["id"]))
+            if cur.rowcount == 1:
+                reaped.append(dict(r))
+        conn.commit()
     finally:
         conn.close()
-    ran = failed = 0
-    for aid in ids:
+    if reaped:
+        import ops
+        for r in reaped:
+            ops.capture(RuntimeError("delayed action interrupted mid-run"), job=f"delayed:{r['kind']}",
+                        context=f"restaurant_id={r['restaurant_id']} id={r['id']}")
+    return len(reaped)
+
+
+def _out_of_service(restaurant_id, db_path):
+    """True when the account was cancelled, paused or asked to be deleted
+    inside the undo window: its queued publish or supplier order must not
+    go out in its name (DATA-51)."""
+    import models
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT billing_status, deletion_requested_at FROM restaurants WHERE id=?",
+                           (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return True
+    return (not models.in_service(row)) or bool(row["deletion_requested_at"])
+
+
+def run_due(db_path=DB_PATH, now=None, limit=None):
+    """Execute every pending row whose time has come, oldest first. Each row
+    is claimed with an atomic status flip, so two runners cannot both send
+    it. Drains the whole backlog in batches, bounded by RUN_DUE_MAX_SECONDS
+    (or `limit` rows): 20 a tick was 240 an hour, so a Friday-11am burst of
+    auto-publishes went out over hours (MOD-PERF-4). Rows a dead process
+    left 'running' are reaped first (reap_interrupted)."""
+    import time as _time
+    now_s = _utc(now)
+    try:
+        reap_interrupted(db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="delayed_reap")
+    started = _time.monotonic()
+    ran = failed = skipped = taken = 0
+    while True:
+        if limit is not None and taken >= limit:
+            break
+        if _time.monotonic() - started > RUN_DUE_MAX_SECONDS:
+            break
         conn = get_conn(db_path)
         try:
-            cur = conn.execute("UPDATE delayed_actions SET status='running' WHERE id=? AND status='pending'", (aid,))
-            conn.commit()
-            claimed = cur.rowcount == 1
-            row = conn.execute("SELECT * FROM delayed_actions WHERE id=?", (aid,)).fetchone()
+            rows = conn.execute(
+                "SELECT id FROM delayed_actions WHERE status='pending' AND execute_at <= ? "
+                "ORDER BY execute_at ASC, id ASC LIMIT ?", (now_s, _BATCH)).fetchall()
+            ids = [r["id"] for r in rows]
         finally:
             conn.close()
-        if not claimed or not row:
-            continue
-        action = _row(row)
+        if not ids:
+            break
+        for aid in ids:
+            if limit is not None and taken >= limit:
+                break
+            taken += 1
+            outcome = _run_one(aid, db_path)
+            ran += outcome == "done"
+            failed += outcome == "failed"
+            skipped += outcome == "cancelled"
+    out = {"ran": ran, "failed": failed}
+    if skipped:
+        out["cancelled"] = skipped
+    return out
+
+
+def _run_one(aid, db_path):
+    """Claim and execute one row. Returns its final status, or None if
+    another runner had it."""
+    conn = get_conn(db_path)
+    try:
+        # executed_at is the claim time while 'running' (reap_interrupted);
+        # it is overwritten with the finish time below.
+        cur = conn.execute("UPDATE delayed_actions SET status='running', executed_at=? "
+                           "WHERE id=? AND status='pending'", (_utc(), aid))
+        conn.commit()
+        claimed = cur.rowcount == 1
+        row = conn.execute("SELECT * FROM delayed_actions WHERE id=?", (aid,)).fetchone()
+    finally:
+        conn.close()
+    if not claimed or not row:
+        return None
+    action = _row(row)
+    if _out_of_service(action["restaurant_id"], db_path):
+        result, status = {"ok": False, "error": "The account is no longer active, so this was not sent."}, "cancelled"
+    else:
+        result, status = _execute(action, row, aid, db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE delayed_actions SET status=?, executed_at=?, result_json=? WHERE id=?",
+                     (status, _utc(), json.dumps(result, default=str)[:4000], aid))
+        conn.commit()
+    finally:
+        conn.close()
+    return status
+
+
+def _execute(action, row, aid, db_path):
+    """Run the row's handler. Returns (result, status)."""
+    try:
+        # When it was queued rides alongside (not in the payload): a
+        # handler that promises "unchanged since it was queued" needs it.
+        _token = _queued_at.set(row["created_at"])
         try:
-            # When it was queued rides alongside (not in the payload): a
-            # handler that promises "unchanged since it was queued" needs it.
-            _token = _queued_at.set(row["created_at"])
-            try:
-                result = HANDLERS[action["kind"]](action["restaurant_id"], action["payload"], db_path)
-            finally:
-                _queued_at.reset(_token)
-            ok = bool((result or {}).get("ok", True))
-            status = "done" if ok else "failed"
-            ran += 1 if ok else 0
-            failed += 0 if ok else 1
-        except Exception as e:
-            import ops
-            ops.capture(e, job=f"delayed:{action['kind']}", context=f"restaurant_id={action['restaurant_id']} id={aid}")
-            result, status = {"ok": False, "error": str(e)[:300]}, "failed"
-            failed += 1
-        conn = get_conn(db_path)
-        try:
-            conn.execute("UPDATE delayed_actions SET status=?, executed_at=?, result_json=? WHERE id=?",
-                         (status, _utc(), json.dumps(result, default=str)[:4000], aid))
-            conn.commit()
+            result = HANDLERS[action["kind"]](action["restaurant_id"], action["payload"], db_path)
         finally:
-            conn.close()
-    return {"ran": ran, "failed": failed}
+            _queued_at.reset(_token)
+        ok = bool((result or {}).get("ok", True))
+        return result, ("done" if ok else "failed")
+    except Exception as e:
+        import ops
+        ops.capture(e, job=f"delayed:{action['kind']}", context=f"restaurant_id={action['restaurant_id']} id={aid}")
+        return {"ok": False, "error": str(e)[:300]}, "failed"
 
 
 # ── handlers ────────────────────────────────────────────────────────────────

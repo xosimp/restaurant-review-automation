@@ -1232,6 +1232,14 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         else:
             failed += 1
 
+        # Stamped and committed per guest, straight after that guest's send
+        # (DATA-52 / MOD-MKT-10). The stamps used to be written inside one
+        # transaction held across the whole Twilio loop: every request's
+        # write waited behind it, and a crash mid-loop rolled back the stamps
+        # of guests already texted, so the next hourly run texted them all
+        # again. Now nothing is held during a send, a guest reached is
+        # recorded before the next one is tried, and a guest the crash
+        # interrupted is simply picked up by the next run.
         conn.execute(
             "UPDATE guest_contacts SET last_review_requested_at=? WHERE id=?",
             (now_local.isoformat(), row["contact_id"])
@@ -1241,7 +1249,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
             "VALUES (?,?,?,?,?,?)",
             (row["restaurant_id"], row["name"] or "", "", row["phone"], "sms_auto", "sent" if ok else "failed")
         )
-    conn.commit()
+        conn.commit()
     conn.close()
     return {"sent": sent, "failed": failed, "skipped_no_place_id": skipped,
             "deferred_quiet_hours": deferred}

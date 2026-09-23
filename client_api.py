@@ -57,8 +57,21 @@ def _cache_get(key):
         return entry[1]
     return None
 
+# Bounded: a plain dict never evicted grew one entry per restaurant and
+# insight kind for the life of the process (DATA-32).
+_INSIGHT_CACHE_MAX = 2000
+
+
 def _cache_set(key, value):
-    _insight_cache[key] = (datetime.utcnow(), value)
+    now = datetime.utcnow()
+    _insight_cache.pop(key, None)          # re-inserted below, so dict order stays oldest-first
+    while _insight_cache:
+        k = next(iter(_insight_cache))
+        if len(_insight_cache) >= _INSIGHT_CACHE_MAX or (now - _insight_cache[k][0]).total_seconds() >= _INSIGHT_TTL:
+            _insight_cache.pop(k, None)
+        else:
+            break
+    _insight_cache[key] = (now, value)
 
 
 def _analysis_fingerprint(analysis) -> str:
@@ -81,6 +94,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
     The food-cost keys carry a fingerprint of the analysis after the
     restaurant id, so they are matched by prefix rather than by equality.
     """
+    narrow = prefixes
     prefixes = prefixes or ("labor-insight:", "mobile-labor-insight:",
                             "inv-insight:", "mobile-inv-insight:",
                             # Was missing, so a freshly-approved reply or a
@@ -92,6 +106,16 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
     for key in [k for k in _insight_cache
                 if any(k == p + suffix or k.startswith(p + suffix + ":") for p in prefixes)]:
         _insight_cache.pop(key, None)
+    if narrow is None:
+        # The whole dataset changed (an upload, a sync): Home and Ask are
+        # built from it too, and kept answering from the pre-upload
+        # snapshot for up to a minute (DATA-39).
+        try:
+            import home_brief, ask_cavnar
+            home_brief.invalidate(int(restaurant_id))
+            ask_cavnar.invalidate_context(int(restaurant_id))
+        except Exception as e:
+            print(f"[cache] Home/Ask invalidation failed for {restaurant_id}: {e}")
 
 # ── Shared handler bodies ────────────────────────────────────────────────────
 # Plain, Flask-independent helpers behind the web (client_bp) routes below.
@@ -763,10 +787,15 @@ def import_tripadvisor(current_user):
         if rating < 1 or rating > 5:
             continue
         full_text = (title + " — " + text) if title else text
+        # A stable key from the review itself. It was hash(text) — salted per
+        # process, so a re-upload after any deploy duplicated every review —
+        # plus the row index, which a re-exported file shifts (DATA-21).
+        import hashlib as _hl
+        _key = _hl.sha256("\x1f".join((author, date, str(rating), full_text)).encode("utf-8")).hexdigest()[:24]
         reviews.append(Review(
             restaurant_id=rid,
             platform="tripadvisor",
-            external_id=f"ta_import_{i}_{hash(text[:40])}",
+            external_id=f"ta_import_{_key}",
             author=author or "TripAdvisor Guest",
             rating=rating,
             text=full_text,
@@ -782,16 +811,26 @@ def import_tripadvisor(current_user):
         for rv in reviews:
             rv.platform = plat_override
 
-    new_count, new_objs = save_reviews(reviews)
-    # Trigger AI processing in background
+    rejected = []
+    new_count, new_objs = save_reviews(reviews, rejected=rejected)
+    if rejected and not new_count:
+        # Nothing stored is not a success, whatever was parsed (DATA-21).
+        return jsonify(ok=False, error="None of these reviews could be saved. Nothing was imported — "
+                                       "contact support if this keeps happening.",
+                       imported=0, new=0, rejected=len(rejected)), 500
+    # Trigger AI processing in background. analyser has no
+    # process_new_reviews; the ImportError was swallowed, so an import was
+    # never analysed until the next fetch cycle's analyse_pending.
     if new_objs:
         try:
             import threading as _t
-            from analyser import process_new_reviews as _proc
-            _t.Thread(target=_proc, args=(new_objs,), daemon=True).start()
-        except Exception:
-            pass
-    return jsonify(ok=True, imported=len(reviews), new=new_count)
+            from analyser import analyse_pending as _proc
+            _t.Thread(target=_proc, args=(rid,), daemon=True).start()
+        except Exception as e:
+            import ops
+            ops.capture(e, job="review_import_analysis", context=f"restaurant_id={rid}")
+    return jsonify(ok=True, imported=len(reviews) - len(rejected), new=new_count,
+                   **({"rejected": len(rejected)} if rejected else {}))
 
 @client_bp.route("/api/response-performance")
 @login_required
@@ -2411,24 +2450,32 @@ def _do_regenerate_draft(review_id, restaurant_id):
 
 
 def _do_save_draft(review_id, restaurant_id, draft_text):
-    from models import update_draft
     draft = (draft_text or "").strip()
     if not draft:
         return {"ok": False, "error": "Draft cannot be empty"}, 200
+    # One conditional write. It used to set response_status='drafted'
+    # unconditionally, so a draft saved from a second tab after the reply
+    # went live marked a live Google reply as an unsent draft — which
+    # retract then refused, stranding it (DATA-26). A posted or approved
+    # reply is not a draft to overwrite.
     conn = get_conn()
-    row = conn.execute("SELECT id FROM reviews WHERE id=? AND restaurant_id=?",
-                       (review_id, restaurant_id)).fetchone()
-    conn.close()
+    try:
+        cur = conn.execute(
+            "UPDATE reviews SET draft_response=?, response_status='drafted', draft_edited=1, "
+            "draft_needs_review=0, draft_review_reason=NULL "
+            "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
+            (draft, review_id, restaurant_id))
+        conn.commit()
+        if cur.rowcount == 1:
+            return {"ok": True}, 200
+        row = conn.execute("SELECT response_status FROM reviews WHERE id=? AND restaurant_id=?",
+                           (review_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
     if not row:
         return {"ok": False, "error": "Review not found"}, 200
-    update_draft(review_id, draft)
-    conn = get_conn()
-    conn.execute(
-        "UPDATE reviews SET response_status='drafted', draft_edited=1 WHERE id=? AND restaurant_id=?",
-        (review_id, restaurant_id)
-    )
-    conn.commit(); conn.close()
-    return {"ok": True}, 200
+    return {"ok": False, "error": "This reply has already been sent. Retract it before editing it.",
+            "response_status": row["response_status"]}, 409
 
 
 @client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
@@ -2760,18 +2807,15 @@ def get_alert_settings(current_user):
 @client_bp.route("/api/alert-settings", methods=["POST"])
 @login_required
 def save_alert_settings(current_user):
-    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
-    from models import update_restaurant
+    from notify import sync_alert_contacts, consent_on_record
+    from models import update_restaurant, StaleWrite, expected_version_from, restaurant_version
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
-
-    # SMS requires real, server-verified consent — the modal's checkbox is a
-    # UX nicety, not enforcement, since anyone can call this API directly.
-    # Turning SMS on without sms_consent=true in the payload is silently
-    # downgraded to off rather than trusted on faith.
-    sms_requested = bool(data.get("urgent_via_sms"))
-    sms_consented = bool(data.get("sms_consent"))
-    sms_on = sms_requested and sms_consented
+    expected = expected_version_from(data)
+    if expected is not None and restaurant_version(rid) != expected:
+        # Before the contacts are touched: a stale form changes nothing (DATA-28).
+        e = StaleWrite(restaurant_version(rid))
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
 
     # Sync contacts — max 2. A real error instead of silently dropping the
     # extras — the client already hides its own "+ Add" past 2, but a
@@ -2779,17 +2823,29 @@ def save_alert_settings(current_user):
     raw_contacts = data.get("contacts") or []
     if len(raw_contacts) > 2:
         return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
-    new_contacts = raw_contacts[:2]
-    existing = get_alert_contacts(rid)
-    for ec in existing:
-        delete_alert_contact(ec["id"])
-    for nc in new_contacts:
-        phone = _normalize_phone_lenient(nc.get("phone") or "")
-        name  = (nc.get("name")  or "").strip()
-        if phone:
-            add_alert_contact(rid, name, phone, sms_consent=sms_on)
+    new_contacts = [((nc.get("name") or "").strip(), _normalize_phone_lenient(nc.get("phone") or ""))
+                    for nc in raw_contacts[:2]]
 
-    update_restaurant(rid, {
+    # SMS requires real, server-verified consent — the modal's checkbox is a
+    # UX nicety, not enforcement, since anyone can call this API directly.
+    # Turning SMS on without sms_consent=true in the payload is downgraded to
+    # off rather than trusted on faith — unless the flag was simply not sent
+    # and every number already has consent on record (DATA-24).
+    sms_requested = bool(data.get("urgent_via_sms"))
+    if "sms_consent" in data:
+        sms_consented = bool(data.get("sms_consent"))
+    else:
+        sms_consented = consent_on_record(rid, [p for _n, p in new_contacts])
+    sms_on = sms_requested and sms_consented
+    try:
+        sync_alert_contacts(rid, new_contacts, sms_consent=(sms_on if "sms_consent" in data else None))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="alert_contacts_save", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Your alert contacts could not be saved, so nothing was changed. "
+                                       "Please try again."), 500
+
+    _fields = {
         "alert_1star":           int(bool(data.get("alert_1star"))),
         "alert_2star":           int(bool(data.get("alert_2star"))),
         "alert_health":          int(bool(data.get("alert_health"))),
@@ -2811,7 +2867,11 @@ def save_alert_settings(current_user):
         "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
-    })
+    }
+    try:
+        update_restaurant(rid, _fields, expected_version=expected)
+    except StaleWrite as e:
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
     return jsonify(ok=True)
 
 
@@ -3002,6 +3062,16 @@ def client_upload_data(current_user):
             return jsonify(ok=False, error="CSV has no data rows")
 
     # Save it
+    # The shifts CSV and the per-day history YoY generation reads are two
+    # writes. The CSV committed first and a failed history write was only
+    # printed, so the upload half-applied — new CSV live, old history — and
+    # still reported success (DATA-62). The previous CSV is kept, and put
+    # back if the history cannot be written.
+    _prev_shifts = None
+    if data_type == "shifts":
+        from models import get_client_data as _gcd_prev
+        _prev_row = _gcd_prev(restaurant_id) or {}
+        _prev_shifts = (_prev_row.get("shifts_csv"), _prev_row.get("shifts_source") or "upload")
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
     # The AI insight is cached for five minutes with no invalidation, so a
     # fresh upload showed the previous data's narrative beside the new
@@ -3017,10 +3087,22 @@ def client_upload_data(current_user):
             _ot_flags = [f for f in _shift_analysis.get("overtime_risk", []) if f.get("status") == "overtime"]
             # Persist per-day breakdown for YoY schedule generation
             try:
-                from models import save_labor_daily_history as _sldh
-                _sldh(restaurant_id, _shift_analysis.get("by_day", {}))
+                import models as _models_dh
+                _models_dh.save_labor_daily_history(restaurant_id, _shift_analysis.get("by_day", {}))
             except Exception as _dh_e:
-                print(f"[daily history] {_dh_e}")
+                import ops as _ops_dh
+                _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")
+                try:
+                    save_client_data(restaurant_id, "shifts", _prev_shifts[0], source=_prev_shifts[1])
+                    invalidate_insight_cache(restaurant_id)
+                    _restored = True
+                except Exception as _rb_e:
+                    _ops_dh.capture(_rb_e, job="shifts_upload_restore", context=f"restaurant_id={restaurant_id}")
+                    _restored = False
+                return jsonify(ok=False, error=(
+                    "The upload could not be saved completely, so your previous shift data is still in place. "
+                    "Please try again." if _restored else
+                    "The upload could not be saved completely. Please upload it again.")), 500
             # Persist this upload as a labor_history snapshot so trend chart is immediately correct
             try:
                 from models import save_labor_snapshot as _sls
@@ -3031,7 +3113,10 @@ def client_upload_data(current_user):
                          _shift_analysis["total_labor_cost"],
                          _shift_analysis["total_sales"])
             except Exception as _snap_e:
-                print(f"[labor snapshot] {_snap_e}")
+                # The trend chart's snapshot; not what YoY generation reads,
+                # so the upload stands — but it is reported, not printed.
+                import ops as _ops_snap
+                _ops_snap.capture(_snap_e, job="shifts_upload_snapshot", context=f"restaurant_id={restaurant_id}")
             try:
                 from webhooks import fire_webhook as _fw_labor
                 # analyse_shifts returns overall_labor_pct and per-day hours;
@@ -3272,7 +3357,15 @@ def _do_food_cost_quickcount(restaurant_id, items):
         except Exception:
             existing_fc = {}
 
-    prev = existing_fc.get("current")  # rotate current → previous
+    # Rotate current → previous — once per day. A second count the same day
+    # (a double-submit, a correction) replaces today's count and keeps the
+    # real baseline; it used to rotate again, so last week's prices were
+    # replaced by this week's and every drift read zero (DATA-27).
+    today_count = existing_fc.get("current")
+    if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
+        prev = existing_fc.get("previous") or None
+    else:
+        prev = today_count
     new_current = {"submitted_at": now_str, "items": items}
 
     # Compute price drift vs previous submission

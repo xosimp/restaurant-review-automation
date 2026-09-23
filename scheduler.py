@@ -1094,6 +1094,13 @@ def run_daily_depletion_sync():
         log.error(f"run_daily_depletion_sync error: {e}")
 
 
+# Graph calls a restaurant's token refresh may make in one day. The job is
+# attempted hourly from 7am; a restaurant whose refresh succeeded is no longer
+# expiring and drops out, one whose refresh failed (a timeout, a Graph 5xx)
+# is tried again the next hour rather than the next day (DATA-49).
+TOKEN_REFRESH_ATTEMPTS_PER_DAY = 3
+
+
 def refresh_expiring_tokens():
     """Refresh Instagram and Facebook tokens expiring within 7 days."""
     try:
@@ -1108,6 +1115,7 @@ def refresh_expiring_tokens():
             return
 
         restaurants = get_all_restaurants()
+        today = _chi_now().date().isoformat()
         soon = (_chi_now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
         for r in restaurants:
@@ -1116,13 +1124,18 @@ def refresh_expiring_tokens():
             expires = r.ig_token_expires or "2000-01-01"
             if expires > soon:
                 continue  # Not expiring soon
+            if not any(_ops.claim_period(f"refresh_tokens_attempt:{r.id}", f"{today}#{n}")
+                       for n in range(TOKEN_REFRESH_ATTEMPTS_PER_DAY)):
+                continue  # tried enough today
 
             try:
+                # A timeout: this runs on the scheduler thread, where one
+                # unanswered connection stopped every job (DATA-16).
                 resp = _req.get(graph_url("oauth/access_token"), params={
                     "grant_type": "fb_exchange_token",
                     "client_id": app_id, "client_secret": app_secret,
                     "fb_exchange_token": r.ig_token,
-                })
+                }, timeout=(5, 20))
                 if resp.status_code == 200:
                     new_token   = resp.json().get("access_token", r.ig_token)
                     new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
@@ -1132,7 +1145,7 @@ def refresh_expiring_tokens():
                             "grant_type": "fb_exchange_token",
                             "client_id": app_id, "client_secret": app_secret,
                             "fb_exchange_token": r.fb_page_token,
-                        })
+                        }, timeout=(5, 20))
                         if resp2.status_code == 200:
                             update_data["fb_page_token"]    = resp2.json().get("access_token", r.fb_page_token)
                             update_data["fb_token_expires"] = new_expires
@@ -1270,6 +1283,43 @@ _BACKUP_SCRUB_COLUMNS = [
 ]
 
 
+# The emailed copy is skipped, and the skip reported, above this many bytes
+# of encrypted file (MOD-PERF-7). Resend caps a message at 40 MB and the
+# attachment travels base64'd, so ~25 MB is the most that reliably arrives;
+# past it the only off-volume copy has to live somewhere other than email.
+BACKUP_EMAIL_MAX_BYTES = int(os.getenv("BACKUP_EMAIL_MAX_BYTES", str(25 * 1024 * 1024)))
+_BACKUP_CHUNK = 3 * 1024 * 1024           # a multiple of 3, so base64 chunks join cleanly
+
+
+def _encrypt_file_chunked(src_path, dest_path, key):
+    """Encrypt src to dest one chunk at a time: one Fernet token per line.
+
+    The old copy was Fernet(key).encrypt(f.read()) — the whole database
+    read, then encrypted, then base64'd, three to four times its size in
+    the web process's memory every night (DATA-18). A file of one token
+    (the old format) decrypts with the same loop (docs/ops/RECOVERY.md)."""
+    from cryptography.fernet import Fernet
+    fernet = Fernet(key.encode())
+    with open(src_path, "rb") as src, open(dest_path, "wb") as dst:
+        while True:
+            chunk = src.read(_BACKUP_CHUNK)
+            if not chunk:
+                break
+            dst.write(fernet.encrypt(chunk) + b"\n")
+
+
+def _base64_file(path):
+    import base64
+    parts = []
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(_BACKUP_CHUNK)
+            if not chunk:
+                break
+            parts.append(base64.b64encode(chunk).decode())
+    return "".join(parts)
+
+
 def _write_consistent_snapshot(dest_path):
     """Consistent copy of a LIVE WAL database.
 
@@ -1283,20 +1333,33 @@ def _write_consistent_snapshot(dest_path):
     """
     import sqlite3
     from models import DB_PATH
-    src = sqlite3.connect(DB_PATH, timeout=30)
+    # Written under a temporary name and renamed into place only once it
+    # passes its integrity check. A snapshot that failed the check used to
+    # stay on disk under today's name, so "the newest snapshot" — what a
+    # restore and the restore drill pick — was the corrupt one (DATA-34).
+    partial = dest_path + ".partial"
     try:
-        dst = sqlite3.connect(dest_path)
+        src = sqlite3.connect(DB_PATH, timeout=30)
         try:
-            src.backup(dst)
-            # Integrity-check the artifact itself, so a corrupt backup is
-            # caught here rather than during an emergency restore.
-            result = dst.execute("PRAGMA integrity_check").fetchone()
-            if not result or result[0] != "ok":
-                raise RuntimeError(f"backup integrity_check failed: {result}")
+            dst = sqlite3.connect(partial)
+            try:
+                src.backup(dst)
+                # Integrity-check the artifact itself, so a corrupt backup is
+                # caught here rather than during an emergency restore.
+                result = dst.execute("PRAGMA integrity_check").fetchone()
+                if not result or result[0] != "ok":
+                    raise RuntimeError(f"backup integrity_check failed: {result}")
+            finally:
+                dst.close()
         finally:
-            dst.close()
+            src.close()
+        os.replace(partial, dest_path)
     finally:
-        src.close()
+        for leftover in (partial, partial + "-journal", partial + "-wal", partial + "-shm"):
+            try:
+                os.unlink(leftover)
+            except FileNotFoundError:
+                pass
 
 
 def _redact_snapshot(path):
@@ -1352,7 +1415,6 @@ def backup_db():
     BACKUP_ENCRYPTION_KEY to be set — without it the local backup still runs
     and the email is skipped rather than sent in the clear.
     """
-    import base64
     from models import DB_PATH
 
     WILL_EMAIL = config.will_email()
@@ -1403,17 +1465,23 @@ def backup_db():
         return
 
     redacted_path = local_path + ".redacted"
+    enc_path = local_path + ".enc"
     try:
-        from cryptography.fernet import Fernet
         import shutil as _shutil
         # Redact a COPY. The email is the artifact that leaves the server;
         # the local snapshot stays whole so a restore is a restore.
         _shutil.copy2(local_path, redacted_path)
         _redact_snapshot(redacted_path)
-        with open(redacted_path, "rb") as f:
-            payload = Fernet(key.encode()).encrypt(f.read())
+        _encrypt_file_chunked(redacted_path, enc_path, key)
         enc_name = filename + ".enc"
-        size_kb = round(len(payload) / 1024, 1)
+        enc_bytes = os.path.getsize(enc_path)
+        size_kb = round(enc_bytes / 1024, 1)
+        if enc_bytes > BACKUP_EMAIL_MAX_BYTES:
+            # Too big to arrive as an attachment, and building it means
+            # holding it in memory. Said out loud rather than attempted: the
+            # local snapshot is intact, but there is no off-volume copy.
+            raise RuntimeError(f"encrypted backup is {size_kb} KB, over BACKUP_EMAIL_MAX_BYTES "
+                               f"({BACKUP_EMAIL_MAX_BYTES} bytes) — email copy skipped, no off-volume copy tonight")
 
         import resend as _resend
         _resend.api_key = _resend_key()
@@ -1436,7 +1504,7 @@ def backup_db():
 </div>"""),
             "attachments": [{
                 "filename": enc_name,
-                "content":  base64.b64encode(payload).decode(),
+                "content":  _base64_file(enc_path),
             }],
         })
         log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB) to {WILL_EMAIL}")
@@ -1450,11 +1518,12 @@ def backup_db():
         # The redacted copy exists only to be encrypted and attached. Leaving
         # it on the volume would double the backup directory's size and put a
         # second, restore-useless file next to every real snapshot.
-        try:
-            if os.path.exists(redacted_path):
-                os.unlink(redacted_path)
-        except OSError as e:
-            log.warning(f"backup_db: could not remove {redacted_path}: {e}")
+        for _tmp in (redacted_path, enc_path):
+            try:
+                if os.path.exists(_tmp):
+                    os.unlink(_tmp)
+            except OSError as e:
+                log.warning(f"backup_db: could not remove {_tmp}: {e}")
 
 
 # An owner who has signed in this many times has found their way around.
@@ -2465,6 +2534,114 @@ def run_restore_drill():
     return report
 
 
+def _minute_duties():
+    """The per-tick work that owes the owner minutes, not hours: scheduled
+    posts, delayed actions whose undo window closed, issue escalations and
+    held notifications, and alerts held through a rush. Each is idempotent
+    and claims its own rows, so running it an extra time is harmless."""
+    try:
+        from marketing_publish import run_due_posts
+        # Not named `_due`: that name is scheduler_loop's hour gate.
+        _posts = run_due_posts(base_url=config.base_url())
+        if _posts.get("published") or _posts.get("failed"):
+            log.info(f"Scheduled posts: {_posts}")
+    except Exception as e:
+        log.error(f"Scheduled post run failed: {e}")
+    try:
+        import delayed as _delayed
+        _dl = _delayed.run_due()
+        if _dl.get("ran") or _dl.get("failed"):
+            log.info(f"Delayed actions: {_dl}")
+    except Exception as e:
+        _ops.capture(e, job="delayed_actions")
+    try:
+        import issues as _issues
+        _issues.tick()
+    except Exception as e:
+        _ops.capture(e, job="issues_tick")
+    try:
+        import notify as _notify_rel
+        _notify_rel.release_due_alerts()
+    except Exception as e:
+        _ops.capture(e, job="release_held_alerts")
+
+
+def _pulse_interval():
+    """How often the pulse fires while a job runs: once a tick, and well
+    inside the lease's stale window so a live runner never looks dead."""
+    return max(0.05, min(float(SCHEDULER_TICK_SECONDS), _ops.SCHEDULER_LEASE_STALE_SECONDS / 3.0))
+
+
+class _PulsedOps:
+    """scheduler_loop's view of ops: every attribute is ops' own, except
+    run_job, which runs the job with a pulse beside it.
+
+    The loop is one thread. A gated job that ran long — the review fetch is
+    bounded at three hours, the weekly sweeps likewise — used to hold up
+    everything after it in the tick (DATA-3 / MOD-PERF-1): an undo-window
+    supplier order or auto-publish, a scheduled post, an issue escalation
+    and a held alert all waited the whole pass out; the heartbeat went
+    stale, so the status page showed an outage; and the lease, renewed only
+    at the top of the loop, went stale too, so a standby process took it
+    and ran the same tick beside the holder (DATA-4).
+
+    The pulse is a short-lived thread that, while one job runs, renews the
+    lease, stamps the heartbeat and runs _minute_duties once per
+    _pulse_interval(), starting as soon as the job starts if the duties are
+    due. Morning briefs stay on the loop thread: the 5-6am diagnoses must
+    finish before a 7am local brief reads them.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last = None               # time.monotonic() the duties last ran
+
+    def __getattr__(self, name):
+        return getattr(_ops, name)
+
+    def duties_due(self):
+        return self._last is None or time.monotonic() - self._last >= _pulse_interval()
+
+    def run_duties(self, renew_lease=False):
+        with self._lock:
+            if renew_lease and not _ops.acquire_scheduler_lease():
+                log.error("Scheduler lease lost mid-pass — another process now holds it")
+            if renew_lease:
+                try:
+                    record_scheduler_heartbeat()
+                except Exception:
+                    pass
+            _minute_duties()
+            self._last = time.monotonic()
+
+    def _pulse(self, started, stop):
+        started.wait()
+        while not stop.is_set():
+            wait = 0.0 if self._last is None else max(0.0, self._last + _pulse_interval() - time.monotonic())
+            if stop.wait(wait):
+                return
+            try:
+                self.run_duties(renew_lease=True)
+            except Exception as e:
+                log.error(f"Scheduler pulse failed: {e}")
+
+    def run_job(self, name, fn, *args, **kwargs):
+        started, stop = threading.Event(), threading.Event()
+
+        def body(*a, **k):
+            started.set()
+            return fn(*a, **k)
+        pulse = threading.Thread(target=self._pulse, args=(started, stop), daemon=True,
+                                 name=f"scheduler-pulse-{name}")
+        pulse.start()
+        try:
+            return _ops.run_job(name, body, *args, **kwargs)
+        finally:
+            stop.set()
+            started.set()
+            pulse.join()
+
+
 def scheduler_loop():
     # No module-level "already ran" globals any more — every gate below is
     # ops.claim_period(), which is DB-backed and survives redeploys. See
@@ -2473,6 +2650,9 @@ def scheduler_loop():
 
 
     _lease_lost_logged = False
+    # Every `_ops.run_job(...)` below runs with a pulse beside it; every
+    # other `_ops.` name is ops' own (_PulsedOps).
+    _ops = _PulsedOps()
 
     while True:
         try:
@@ -2490,6 +2670,12 @@ def scheduler_loop():
             if _lease_lost_logged:
                 log.info("Scheduler lease acquired — this process is now the runner")
                 _lease_lost_logged = False
+            # Stamped at the top as well as the bottom: a tick that runs a
+            # long job is a live scheduler, not an outage (DATA-3).
+            try:
+                record_scheduler_heartbeat()
+            except Exception:
+                pass
 
             now   = _chi_now()
             today = now.date()
@@ -2617,7 +2803,9 @@ def scheduler_loop():
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
 
-            if _due(now, 7) and _ops.claim_period("refresh_tokens", str(today)):
+            # Hourly from 7am: a restaurant whose refresh failed is retried
+            # within the day (refresh_expiring_tokens caps the attempts).
+            if _due(now, 7) and _ops.claim_period("refresh_tokens", f"{today}-{now.hour}"):
                 log.info("Refreshing expiring IG/FB tokens...")
                 _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
@@ -2735,37 +2923,19 @@ def scheduler_loop():
                 from strategy_jobs import run_demand_opportunity
                 _ops.run_job("demand_opportunity", run_demand_opportunity)
 
-            # Every tick — an alert held through lunch or dinner service goes
-            # out as soon as that rush ends (notify.rush_release_at).
-            try:
-                import notify as _notify_rel
-                _notify_rel.release_due_alerts()
-            except Exception as e:
-                _ops.capture(e, job="release_held_alerts")
+            # Every tick — scheduled posts, delayed actions whose undo window
+            # closed, issue escalations, alerts held through a rush. Skipped
+            # when a job's pulse ran them within the last interval.
+            if _ops.duties_due():
+                _ops.run_duties()
 
-            # Every tick — issue escalations and held notifications need
-            # minutes, not hours; morning briefs go at each restaurant's own
-            # local hour and claim themselves per restaurant per day.
-            try:
-                import issues as _issues
-                _issues.tick()
-            except Exception as e:
-                _ops.capture(e, job="issues_tick")
+            # Every tick — morning briefs go at each restaurant's own local
+            # hour and claim themselves per restaurant per day.
             try:
                 import morning_brief as _mb
                 _mb.run_due()
             except Exception as e:
                 _ops.capture(e, job="morning_brief")
-
-            # Every tick — run any delayed action whose undo window has
-            # closed (delayed.py: auto-publish, trusted-supplier send).
-            try:
-                import delayed as _delayed
-                _dl = _delayed.run_due()
-                if _dl.get("ran") or _dl.get("failed"):
-                    log.info(f"Delayed actions: {_dl}")
-            except Exception as e:
-                _ops.capture(e, job="delayed_actions")
 
             # Daily — drop login-attempt rows older than two days.
             if _ops.claim_period("prune_login_attempts", str(today)):
@@ -2774,22 +2944,6 @@ def scheduler_loop():
                     _security.prune_login_attempts()
                 except Exception as e:
                     _ops.capture(e, job="prune_login_attempts")
-
-            # Every tick — publish anything whose scheduled slot has arrived.
-            # This is why the loop no longer sleeps for an hour: a post the
-            # owner set for 11am should go out at 11am, not at 11:59.
-            try:
-                from marketing_publish import run_due_posts
-                _base = config.base_url()
-                # Not named `_due`: any assignment to a name inside this
-                # function makes it local for the WHOLE function, so the
-                # `_due(now, H)` gates above would raise UnboundLocalError on
-                # every tick and no scheduled job would ever run.
-                _posts = run_due_posts(base_url=_base)
-                if _posts.get("published") or _posts.get("failed"):
-                    log.info(f"Scheduled posts: {_posts}")
-            except Exception as e:
-                log.error(f"Scheduled post run failed: {e}")
 
             try:
                 record_scheduler_heartbeat()

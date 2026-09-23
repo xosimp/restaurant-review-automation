@@ -393,19 +393,12 @@ def test_a_manager_can_still_upload_shifts(world):
 
 # ── TripAdvisor / third-party review import (appendix #13) ──────────────────
 #
-# Found while writing these (not in SEC.md): reviews.platform carries
-# CHECK(platform IN ('google','yelp','csv','manual')) in init_db()'s schema,
-# and the re-key migration copies that CREATE statement verbatim. The
-# importer saves every row as 'tripadvisor' (or a 'doordash'/'ubereats'
-# override), so save_reviews() rejects them all while the route answers
-# ok=True, imported=N, new=0. Separately, the route's background step imports
-# analyser.process_new_reviews, which does not exist; the ImportError is
-# swallowed, so the "AI drafting in the background" the admin screen promises
-# never starts (analyse_pending in the daily pipeline is the only catch-up).
-
-CSV_IMPORT_CHECK = ("NEW (found writing SEC tests, not in SEC.md): reviews.platform CHECK allows only "
-                    "google/yelp/csv/manual, so every tripadvisor/doordash/ubereats import row is rejected "
-                    "by the database while the route reports ok")
+# Found while writing these (not in SEC.md), both fixed with DATA-21:
+# reviews.platform's CHECK refused 'tripadvisor'/'doordash'/'ubereats', so
+# every imported row was rejected while the route answered ok=True
+# (models._migrate_reviews_platform_check widens it), and the route's
+# background step imported analyser.process_new_reviews, which does not
+# exist, so no analysis started (it now runs analyse_pending).
 
 TA_EXPORT = (
     "Rating,Title,Review Text,Reviewer,Date\n"
@@ -480,7 +473,6 @@ def test_a_review_import_with_no_file_is_refused(world):
     assert r.get_json()["ok"] is False
 
 
-@pytest.mark.xfail(strict=True, reason=CSV_IMPORT_CHECK)
 def test_imported_tripadvisor_reviews_are_stored_with_their_title_and_platform(world):
     _login(world, world["owner"])
     body = _import_reviews(world, b"\xef\xbb\xbf" + TA_EXPORT.encode("utf-8")).get_json()
@@ -491,7 +483,6 @@ def test_imported_tripadvisor_reviews_are_stored_with_their_title_and_platform(w
     assert rows[1]["text"] == "Lovely — Great pasta and kind staff"
 
 
-@pytest.mark.xfail(strict=True, reason=CSV_IMPORT_CHECK)
 def test_a_review_import_takes_an_allowed_platform_override_and_ignores_others(world):
     _login(world, world["owner"])
     first = "rating,text,author\n4,Fast delivery,Ann\n"
@@ -502,7 +493,6 @@ def test_a_review_import_takes_an_allowed_platform_override_and_ignores_others(w
         ("Ann", "doordash"), ("Bob", "tripadvisor")]
 
 
-@pytest.mark.xfail(strict=True, reason="NEW (found writing SEC tests, not in SEC.md): the import's background step imports analyser.process_new_reviews, which does not exist; the ImportError is swallowed and no analysis is started")
 def test_a_review_import_starts_background_analysis_of_the_new_reviews(world, monkeypatch):
     # Isolated from the CHECK defect above: save_reviews is stubbed to report
     # one new review, so the only thing under test is the background hand-off.

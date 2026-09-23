@@ -312,6 +312,10 @@ def invalidate(rid=None):
         _CACHE.pop(k, None)
 
 
+import models as _models_listen
+_models_listen.on_restaurant_change(lambda rid: invalidate(rid))   # a settings save (DATA-39)
+
+
 def invalidate_user(user_id):
     """Drop one login's cached Homes — every location's and its group brief.
     What a location switch needs: it used to call invalidate() with no rid,

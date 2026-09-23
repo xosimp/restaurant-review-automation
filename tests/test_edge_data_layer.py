@@ -109,8 +109,6 @@ def _columns(path, table):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-11: every boot migration swallows any exception, so 'database is "
-                                       "locked' is treated as 'column exists' and init_db returns on a drifted schema")
 def test_a_locked_database_fails_the_boot_migration_loudly(tmp_path, monkeypatch):
     path = str(tmp_path / "boot.db")
     models.init_db(path)
@@ -139,8 +137,6 @@ def test_a_locked_database_fails_the_boot_migration_loudly(tmp_path, monkeypatch
     assert raised or migrated, "init_db returned normally and the app would serve on the drifted schema"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-11: hosted_dashboard wraps every init_* in one try/except that prints "
-                                       "'DB init error' and carries on, so a failed boot is promoted as healthy")
 def test_a_failed_boot_init_stops_the_process():
     src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
     at = src.index('print(f"DB init error: {_e}")')
@@ -162,8 +158,6 @@ def _default_db_path():
     return inspect.signature(models.ensure_columns).parameters["db_path"].default
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-44: init_db(db_path) calls ensure_columns() with no argument, so it "
-                                       "migrates the default ./reviews.db as well as the database it was given")
 def test_init_db_touches_only_the_database_it_was_given(tmp_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", _REAL_GET_CONN)   # the redirect would hide where it writes
     default = _default_db_path()
@@ -224,8 +218,6 @@ def test_a_google_review_saves_through_the_same_path(db_path):
                                 rating=2, text="cold")], db_path=db_path)[0] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: reviews.platform CHECK allows only google/yelp/csv/manual, so "
-                                       "every TripAdvisor/DoorDash/UberEats row is rejected while the route reports ok")
 @pytest.mark.parametrize("platform", [None, "doordash", "ubereats"])
 def test_a_third_party_import_stores_what_it_reports(importer, db_path, platform):
     body = importer["post"](TA_CSV, platform=platform).get_json()
@@ -234,16 +226,24 @@ def test_a_third_party_import_stores_what_it_reports(importer, db_path, platform
     assert stored == body["imported"] == 2, f"route said imported={body.get('imported')}, stored {stored}"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: nothing stored but the route still answers ok=True — a refusal "
-                                       "is never reported to the owner")
 def test_an_import_that_stores_nothing_is_not_reported_as_success(importer, db_path):
     body = importer["post"](TA_CSV).get_json()
     if _stored(db_path, importer["rid"]) == 0:
         assert body["ok"] is False, f"nothing was stored and the owner was told {body}"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: the import's external_id is hash(text) (salted per process) plus "
-                                       "the row index, so a re-upload after a deploy duplicates every review")
+def test_an_import_whose_every_row_is_refused_says_so(importer, db_path, monkeypatch):
+    """The refusal branch itself: the CHECK no longer refuses these rows, so
+    stand in for any other reason the database turns every row away."""
+    def refuses_all(reviews, db_path=models.DB_PATH, downgrades=None, rejected=None):
+        rejected.extend((r.external_id, "CHECK constraint failed") for r in reviews)
+        return 0, []
+    monkeypatch.setattr(models, "save_reviews", refuses_all)
+    body = importer["post"](TA_CSV).get_json()
+    assert body["ok"] is False and body["imported"] == 0, body
+    assert _stored(db_path, importer["rid"]) == 0
+
+
 def test_a_reimport_after_a_restart_dedupes(importer, db_path, monkeypatch):
     import builtins
     assert importer["post"](TA_CSV).get_json()["ok"] is True
@@ -308,15 +308,12 @@ def _retired_negative(db_path, rid):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: get_pending_analysis does not filter deleted_at, so reviews the "
-                                       "retention setting retired are still sent to the model")
 def test_a_retired_review_is_not_sent_for_analysis(db_path):
     rid = _rid(db_path)
     _retired_negative(db_path, rid)
     assert models.get_pending_analysis(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: get_pending_drafts does not filter deleted_at")
 def test_a_retired_review_is_not_drafted(db_path):
     rid = _rid(db_path)
     _retired_negative(db_path, rid)
@@ -328,8 +325,6 @@ def test_a_retired_review_is_not_drafted(db_path):
     assert models.get_pending_drafts(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: the unresponded-negative alert query does not filter deleted_at, "
-                                       "so the owner is alerted about reviews the dashboard no longer shows")
 def test_a_retired_review_does_not_raise_a_no_response_alert(db_path, monkeypatch):
     rid = _rid(db_path)
     models.update_restaurant(rid, {"alert_no_response": 1, "urgent_via_email": 1}, db_path=db_path)
@@ -362,8 +357,6 @@ def test_a_live_unanswered_negative_does_raise_the_alert(db_path, monkeypatch):
 
 # ── restaurant deletion (DATA-61) ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-61: there is no deletion routine; deletion_requested_at is a flag "
-                                       "nothing acts on and 72 FKs make DELETE FROM restaurants fail")
 def test_delete_restaurant_removes_every_row_in_every_table_with_a_restaurant_id(two_restaurants):
     db = two_restaurants["db_path"]
     a, b = two_restaurants["rid_a"], two_restaurants["rid_b"]
@@ -404,8 +397,6 @@ def test_one_malformed_row_does_not_cost_the_rest_of_the_list(db_path):
     assert good in [r.id for r in models.get_all_restaurants(db_path=db_path)]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-43: get_all_restaurants drops a row that fails to hydrate with a bare "
-                                       "except/pass, so one client silently leaves every scheduled job")
 def test_a_skipped_row_is_reported_to_ops(db_path, monkeypatch):
     bad = _rid(db_path, name="Bad")
     conn = models.get_conn(db_path)
@@ -418,8 +409,6 @@ def test_a_skipped_row_is_reported_to_ops(db_path, monkeypatch):
     assert any(str(bad) in (ctx or "") for _job, ctx in captured), captured
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-43: update_restaurant does not type-check, so one non-numeric write "
-                                       "makes the restaurant vanish from get_all_restaurants")
 def test_a_bad_settings_value_cannot_make_a_restaurant_vanish_from_every_job(db_path):
     rid = _rid(db_path)
     try:

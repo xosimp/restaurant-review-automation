@@ -593,16 +593,37 @@ _CONTEXT_BUILDERS = (
 # the tool layer reads live data anyway whenever detail matters.
 _CONTEXT_CACHE = {}
 _CONTEXT_TTL_SECONDS = 60
+# Bounded like home_brief._CACHE: it was a plain dict never evicted, one entry
+# per restaurant and permission set for the life of the process (DATA-32).
+_CONTEXT_CACHE_MAX = 2000
+
+
+def _context_cache_put(key, context):
+    import time
+    now = time.time()
+    _CONTEXT_CACHE.pop(key, None)          # re-inserted below, so dict order stays oldest-first
+    while _CONTEXT_CACHE:
+        k = next(iter(_CONTEXT_CACHE))
+        if len(_CONTEXT_CACHE) >= _CONTEXT_CACHE_MAX or now - _CONTEXT_CACHE[k][0] >= _CONTEXT_TTL_SECONDS:
+            _CONTEXT_CACHE.pop(k, None)
+        else:
+            break
+    _CONTEXT_CACHE[key] = (now, context)
 
 
 def invalidate_context(restaurant_id=None):
     """Drop a cached snapshot. Called after anything that changes the numbers
-    underneath it — a confirmed action, a sync, an upload."""
+    underneath it — a confirmed action, a sync, an upload, a settings save
+    (models.on_restaurant_change)."""
     if restaurant_id is None:
         _CONTEXT_CACHE.clear()
     else:
         for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
             _CONTEXT_CACHE.pop(key, None)
+
+
+import models as _models_listen
+_models_listen.on_restaurant_change(invalidate_context)
 
 
 def build_context(restaurant):
@@ -662,7 +683,7 @@ def build_context(restaurant):
     # back to a bare placeholder the way it used to for a restaurant with
     # zero active modules — date/holiday/identity info isn't module-gated.
     context = "\n".join(parts)
-    _CONTEXT_CACHE[key] = (time.time(), context)
+    _context_cache_put(key, context)
     return context
 
 

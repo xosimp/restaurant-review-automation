@@ -22,6 +22,8 @@ This documents **patterns and resource groups**, not every individual route — 
 
 The outbound-webhook config routes (`GET/POST/DELETE /api/webhook`, `POST /api/webhook/test`) are in `client_bp`, not `webhook_bp`. `audit_app.py` is a separate standalone Flask app (the digital audit scorecard on :9000), not a blueprint. There is no web `/register` and no web `/me`; both exist only under `/mobile/api/` (and `/staff/api/me`). `hosted_dashboard` refuses to boot if two rules share a (path, method).
 
+Two 409s a client may meet on writes. **`location_changed`**: the dashboard names the location a page was rendered for in `X-Cavnar-Restaurant-Id` (sent by `templates/_csrf_fetch.html` from the `cavnar-restaurant-id` meta tag); `auth.login_required` refuses a request whose id is not the session's current location, except `/api/switch-location` (DATA-10). A request without the header is unaffected. **Stale form**: a whole-form settings save (the phone profile save, both alert-settings saves) may carry `expected_version` — the `row_version` it loaded — and gets 409 with `current_version` if the row has moved on (`models.expected_version_from`, DATA-28); without it the save is last-write-wins as before.
+
 ## The `_m()` delegation pattern
 
 58 of `client_bp`'s `/api/*` handlers are one line (the rest own their body or share a `_do_*` with mobile — see *Which pattern to use* below):

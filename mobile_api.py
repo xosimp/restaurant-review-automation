@@ -499,14 +499,39 @@ def mobile_register():
 
     from models import create_restaurant, Restaurant
     from auth import create_user
-    rid = create_restaurant(Restaurant(
-        name=restaurant_name,
-        owner_email=email,
-        owner_name=owner_name or None,
-        owner_phone=phone,
-        sign_off_name=restaurant_name,
-    ))
-    uid = create_user(restaurant_id=rid, username=username, email=email, password=password)
+    import hashlib as _hl_su
+    import ops as _ops_su
+    import sqlite3 as _sq_su
+    # One signup per email at a time. The check above and the two inserts
+    # below are separate commits, so a double-tap passed the check twice,
+    # created two restaurants, and the second create_user failed on the
+    # unique username: an orphan restaurant with no login, and a 500
+    # (DATA-62). The claim is keyed by a hash, not the address.
+    _su_key = _hl_su.sha256(email.encode("utf-8")).hexdigest()[:24]
+    if not _ops_su.claim_cooldown("signup:" + _su_key, 10):
+        return jsonify(ok=False, error="An account with that email or username already exists. Try signing in instead."), 409
+    rid = None
+    try:
+        rid = create_restaurant(Restaurant(
+            name=restaurant_name,
+            owner_email=email,
+            owner_name=owner_name or None,
+            owner_phone=phone,
+            sign_off_name=restaurant_name,
+        ))
+        uid = create_user(restaurant_id=rid, username=username, email=email, password=password)
+    except Exception as e:
+        # Nothing half-made is left behind, and the email may try again.
+        if rid is not None:
+            try:
+                import models as _models_su
+                _models_su.delete_restaurant(rid)
+            except Exception as _del_e:
+                _ops_su.capture(_del_e, job="signup_rollback", context=f"restaurant_id={rid}")
+        _ops_su.release_period("cooldown", "signup:" + _su_key)
+        if isinstance(e, _sq_su.IntegrityError):
+            return jsonify(ok=False, error="An account with that email or username already exists. Try signing in instead."), 409
+        raise
     _clear_attempts(ip)
 
     try:
@@ -4262,7 +4287,10 @@ def mobile_update_email(current_user):
     _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
                       and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
     if _moves_contact:
-        conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+        # Bumps row_version like update_restaurant does, or a form loaded
+        # before this change would still look current (DATA-28).
+        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
+                     (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
     import models as _models_inv
@@ -4327,7 +4355,11 @@ def mobile_update_profile(current_user):
         cat = (data.get("category") or "").strip().lower()
         if cat == "" or _valid_category(cat):
             updates["category"] = cat or None
-    update_restaurant(current_user["restaurant_id"], updates)
+    from models import StaleWrite, expected_version_from
+    try:
+        update_restaurant(current_user["restaurant_id"], updates, expected_version=expected_version_from(data))
+    except StaleWrite as e:
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
     _log_account_event(current_user["restaurant_id"], "profile_updated", current_user)
     return jsonify(ok=True)
 
@@ -4536,17 +4568,42 @@ def mobile_send_2fa_test(current_user):
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
-    # This login's own setup challenge, never a sign-in in progress (SEC-20).
+    # This login's own setup challenge, never a sign-in in progress (SEC-20),
+    # and one code a minute per login: each press was a paid SMS, and a
+    # double-tap replaced the code the owner had already received (DATA-42).
     from auth import issue_two_fa_challenge
+    from models import get_conn as _gc_2fa
+    _c2 = _gc_2fa()
+    try:
+        _recent = _c2.execute(
+            "SELECT 1 FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose='setup' "
+            "AND created_at > datetime('now','-60 seconds') LIMIT 1", (rid, current_user["id"])).fetchone()
+    finally:
+        _c2.close()
+    if _recent:
+        return jsonify(ok=False, error="A code was just sent. Use that one, or wait a minute to send another."), 429
     _pending, code = issue_two_fa_challenge(rid, current_user["id"], "setup")
+
+    def _unsent():
+        # Nothing reached the owner, so the one-a-minute limit must not
+        # refuse their retry.
+        _c3 = _gc_2fa()
+        try:
+            _c3.execute("DELETE FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose='setup'",
+                        (rid, current_user["id"]))
+            _c3.commit()
+        finally:
+            _c3.close()
     if method == "sms":
         phone = restaurant.owner_phone
         try:
             from notify import send_2fa_sms
             sent = send_2fa_sms(phone, restaurant.name or "your restaurant", code)
         except Exception as e:
+            _unsent()
             return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}"), 500
         if not sent:
+            _unsent()
             return jsonify(ok=False, error="Couldn't send the code — text delivery failed. Try again in a moment."), 502
         masked = "(•••) •••-" + "".join(c for c in phone if c.isdigit())[-4:]
         return jsonify(ok=True, masked=masked, method="sms")
@@ -4554,8 +4611,10 @@ def mobile_send_2fa_test(current_user):
         from emails import send_2fa_code
         sent = send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
     except Exception as e:
+        _unsent()
         return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}"), 500
     if not sent:
+        _unsent()
         # send_2fa_code swallows its own failures (missing RESEND_API_KEY,
         # a non-200 from Resend) and just returns False rather than raising
         # — without this check the route reported ok=True regardless, so
@@ -4894,6 +4953,20 @@ def mobile_create_staff(current_user):
     except PinError as pe:
         return jsonify(ok=False, error=str(pe)), 400
 
+    # The same name twice is the same person twice: a double-submit used to
+    # find the username taken, invent a suffix and create a second identity
+    # with the same name and PIN (DATA-37). Two different people who share
+    # a name need names that tell them apart on the sign-in list anyway.
+    conn = get_conn()
+    try:
+        dup = conn.execute("SELECT 1 FROM memberships WHERE restaurant_id=? AND COALESCE(is_active,1)=1 "
+                           "AND LOWER(TRIM(employee_name))=LOWER(?)", (rid, name)).fetchone()
+    finally:
+        conn.close()
+    if dup:
+        return jsonify(ok=False, error=f"{name} already has a staff account. To add a different person "
+                                       f"with the same name, add something that tells them apart."), 409
+
     base = "".join(c for c in name.lower() if c.isalnum()) or "staff"
     username, suffix = f"{base}.{rid}", 1
     from auth import get_user_by_username
@@ -5226,16 +5299,15 @@ def mobile_export_data(current_user):
 @mobile_bp.route("/account/alert-settings", methods=["POST"])
 @mobile_login_required
 def mobile_save_alert_settings(current_user):
-    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
+    from notify import sync_alert_contacts, consent_on_record
+    from models import StaleWrite, expected_version_from, restaurant_version
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
-
-    # SMS requires real, server-verified consent — same rule as the web
-    # endpoint (client_api.save_alert_settings): the client's checkbox is a
-    # UX nicety, not enforcement, since anyone can call this API directly.
-    sms_requested = bool(data.get("urgent_via_sms"))
-    sms_consented = bool(data.get("sms_consent"))
-    sms_on = sms_requested and sms_consented
+    expected = expected_version_from(data)
+    if expected is not None and restaurant_version(rid) != expected:
+        # Before the contacts are touched: a stale form changes nothing (DATA-28).
+        e = StaleWrite(restaurant_version(rid))
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
 
     # A real error instead of silently dropping the extras — the client
     # already hides its own "+ Add" past 2, so this only fires for a
@@ -5244,17 +5316,27 @@ def mobile_save_alert_settings(current_user):
     raw_contacts = data.get("contacts") or []
     if len(raw_contacts) > 2:
         return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
-    new_contacts = raw_contacts[:2]
-    existing = get_alert_contacts(rid)
-    for ec in existing:
-        delete_alert_contact(ec["id"])
-    for nc in new_contacts:
-        phone = _capi._normalize_phone_lenient(nc.get("phone") or "")
-        name = (nc.get("name") or "").strip()
-        if phone:
-            add_alert_contact(rid, name, phone, sms_consent=sms_on)
+    new_contacts = [((nc.get("name") or "").strip(), _capi._normalize_phone_lenient(nc.get("phone") or ""))
+                    for nc in raw_contacts[:2]]
 
-    update_restaurant(rid, {
+    # SMS requires real, server-verified consent — same rule as the web
+    # endpoint (client_api.save_alert_settings), including a flag that was
+    # not sent keeping consent already on record (DATA-24).
+    sms_requested = bool(data.get("urgent_via_sms"))
+    if "sms_consent" in data:
+        sms_consented = bool(data.get("sms_consent"))
+    else:
+        sms_consented = consent_on_record(rid, [p for _n, p in new_contacts])
+    sms_on = sms_requested and sms_consented
+    try:
+        sync_alert_contacts(rid, new_contacts, sms_consent=(sms_on if "sms_consent" in data else None))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="alert_contacts_save", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Your alert contacts could not be saved, so nothing was changed. "
+                                       "Please try again."), 500
+
+    _fields = {
         "alert_1star": int(bool(data.get("alert_1star"))),
         "alert_2star": int(bool(data.get("alert_2star"))),
         "alert_health": int(bool(data.get("alert_health"))),
@@ -5284,7 +5366,11 @@ def mobile_save_alert_settings(current_user):
         "alert_ai_visibility_drop": int(bool(data.get("alert_ai_visibility_drop"))),
         "alert_extra_emails": _clean_email_list(data.get("alert_extra_emails")),
         "push_sound": 0 if data.get("push_sound") is False else 1,
-    })
+    }
+    try:
+        update_restaurant(rid, _fields, expected_version=expected)
+    except StaleWrite as e:
+        return jsonify(ok=False, error=e.user_message, current_version=e.current_version), 409
     _log_account_event(rid, "alert_settings_saved", current_user)
     return jsonify(ok=True)
 

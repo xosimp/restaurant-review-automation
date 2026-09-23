@@ -312,7 +312,6 @@ def _negative_review(db_path, rid, status, days_old=5, deleted=False):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-9: 'no response in 48h' ignores drafted-but-unposted reviews")
 def test_a_drafted_but_unposted_negative_review_triggers_the_no_response_alert(db_path, sent, monkeypatch):
     """A8 #28 / MOD-NOT-9 — auto-drafting makes 'drafted' the normal state of
     a review waiting on the owner."""
@@ -324,7 +323,6 @@ def test_a_drafted_but_unposted_negative_review_triggers_the_no_response_alert(d
     assert "no_response" in _alert_log(db_path, rid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-9: 'no response in 48h' fires for soft-deleted reviews")
 def test_a_soft_deleted_review_never_triggers_the_no_response_alert(db_path, sent, monkeypatch):
     """A8 #29 / MOD-NOT-9 — retention-purged rows are not actionable."""
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)

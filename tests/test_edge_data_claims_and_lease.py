@@ -58,8 +58,6 @@ def test_a_healthy_claim_is_granted_once_per_job_and_period(db_path):
     assert ops.claim_period("daily_alerts", "2026-09-23") is True
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-22: a claim whose INSERT fails (disk full / read-only / locked) returns "
-                                       "False with no log and no memo, so every scheduled job silently stops")
 def test_a_claim_that_cannot_be_written_is_logged_and_memoised(db_path, monkeypatch):
     errors = []
     monkeypatch.setattr(ops.log, "error", lambda msg, *a, **k: errors.append(str(msg)))
@@ -70,8 +68,6 @@ def test_a_claim_that_cannot_be_written_is_logged_and_memoised(db_path, monkeypa
     assert any("backup_db:2026-09-22" in e for e in errors), "the refused claim was not logged"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-22: a period granted from the in-memory fallback during an open "
-                                       "failure is granted AGAIN by the durable insert once the database returns")
 def test_a_period_run_during_an_outage_is_not_run_again_when_the_database_returns(db_path, monkeypatch):
     real = models.get_conn
     calls = {"n": 0}
@@ -90,8 +86,6 @@ def test_a_period_run_during_an_outage_is_not_run_again_when_the_database_return
 
 # ── the fallback memo (DATA-45) ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-45: _claim_fallback is a set and .pop() evicts an arbitrary key, "
-                                       "not the oldest as its comment says")
 def test_the_fallback_evicts_the_oldest_key(monkeypatch):
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
     extra = 10
@@ -113,8 +107,6 @@ def test_the_fallback_never_exceeds_its_ceiling(monkeypatch):
 
 # ── claim cost at scale (DATA-6) ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-6: every claim_period runs DELETE ... WHERE claimed_at < ... and "
-                                       "job_period_claims has no index on claimed_at, so each claim is a full scan")
 def test_claim_period_does_not_scan_the_claims_table(db_path, monkeypatch):
     import sqlite3
     real = models.get_conn
@@ -153,8 +145,6 @@ def _ensure_ledger_tables(db_path):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-40: prune_ledgers' retention DELETEs have no usable index on the date "
-                                       "column, so each is a full scan under the write lock")
 def test_every_retention_delete_uses_an_index(db_path):
     import sqlite3
     _ensure_ledger_tables(db_path)
@@ -215,8 +205,6 @@ def test_a_standby_process_cannot_take_a_freshly_renewed_lease(db_path, monkeypa
     assert ops.scheduler_lease_holder()["owner"] == ops._LEASE_OWNER
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-4: the lease is renewed only at tick start, so a pass longer than "
-                                       "SCHEDULER_LEASE_STALE_SECONDS loses it and a standby runs the same tick")
 def test_a_long_pass_keeps_its_lease(db_path, monkeypatch):
     """The stale window is shrunk to one second and the 'fetch' runs its
     items through the real bounded_map for a little over two, standing in
@@ -258,8 +246,6 @@ def test_a_claim_whose_run_finished_is_not_reclaimed(db_path):
     assert ops.claim_period("daily_alerts", "2026-09-22-10") is False
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-20: a job killed after its claim keeps the claim for the whole period; "
-                                       "nothing makes an unfinished run's claim re-claimable")
 def test_a_claim_whose_run_never_finished_can_be_reclaimed_after_its_timeout(db_path):
     """A deploy SIGKILLs the process mid-run: the claim row stands, job_runs
     has a start and no finish. Hours later the job must be allowed to run."""

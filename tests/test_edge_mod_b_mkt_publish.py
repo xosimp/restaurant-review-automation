@@ -206,7 +206,6 @@ IMG = "https://dashboard.cavnar.ai/m/tok.jpg"
 
 # ── #2 no timeout (MOD-MKT-2) ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: _do_post_to_facebook calls Graph /feed with no timeout=")
 def test_the_facebook_publish_names_a_timeout_on_its_graph_call(db_path, monkeypatch):
     """A6 direct #2 / MOD-MKT-2: a black-holed Graph connection must not
     hang the scheduler thread or a request thread forever."""
@@ -217,7 +216,6 @@ def test_the_facebook_publish_names_a_timeout_on_its_graph_call(db_path, monkeyp
     assert all(kw.get("timeout") for _m, _u, kw in fake.calls), fake.calls
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: _do_post_to_instagram makes its create/poll/publish Graph calls with no timeout=")
 def test_the_instagram_publish_names_a_timeout_on_every_graph_call(db_path, monkeypatch, sleeps):
     """A6 direct #2 / MOD-MKT-2."""
     rid = _restaurant(db_path)
@@ -254,7 +252,6 @@ def _untimed_calls(path):
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: 12 aliased `_req.get/_req.post` Graph calls in social_routes/scheduler/admin_routes have no timeout")
 def test_no_requests_call_on_the_meta_paths_goes_out_without_a_timeout_even_under_an_alias():
     """MOD-MKT-2: the AST scan the finding asks for, over the three files
     that make Meta calls through `import requests as _req`."""
@@ -264,7 +261,6 @@ def test_no_requests_call_on_the_meta_paths_goes_out_without_a_timeout_even_unde
     assert offenders == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: scripts/check_timeouts.py only knows the literal names requests/_requests/httpx/_httpx, so `_req.get(...)` passes")
 def test_the_timeout_lint_sees_a_call_made_through_an_import_alias(tmp_path):
     """MOD-MKT-2: the repo lint itself, pointed at one aliased untimed call."""
     spec = importlib.util.spec_from_file_location("check_timeouts_edge", os.path.join(ROOT, "scripts", "check_timeouts.py"))

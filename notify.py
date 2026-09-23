@@ -442,6 +442,79 @@ def add_alert_contact(restaurant_id: int, name: str, phone: str,
     return contact_id
 
 
+def consent_on_record(restaurant_id: int, phones, db_path: str = DB_PATH) -> bool:
+    """True when every one of `phones` is already a consented contact here.
+    What a save that did not re-send sms_consent is taken to mean: the
+    numbers' owners consented before, and nobody withdrew it (DATA-24)."""
+    phones = [p for p in phones if p]
+    if not phones:
+        return False
+    conn = models.get_conn(db_path)
+    try:
+        have = {r["phone"] for r in conn.execute(
+            "SELECT phone FROM alert_contacts WHERE restaurant_id=? AND sms_consent=1", (restaurant_id,))}
+    finally:
+        conn.close()
+    return all(p in have for p in phones)
+
+
+def sync_alert_contacts(restaurant_id: int, contacts, sms_consent=None, db_path: str = DB_PATH) -> None:
+    """Make this restaurant's alert contacts exactly `contacts` — a list of
+    (name, phone), phones already normalised — in ONE write transaction.
+
+    The routes used to read the list, delete each row and insert each new
+    one, every step its own commit (DATA-24). So a double-clicked Save left
+    four rows and every alert SMS went out twice; every save restamped
+    sms_consent_at, destroying the A2P/TCPA evidence of when consent was
+    given; a save that failed part-way left the restaurant with no contacts
+    at all; and a client that omitted sms_consent re-created consented
+    numbers without it.
+
+    Now a number already on file keeps its row and its consent timestamp.
+    `sms_consent` True grants consent to numbers that lack it (stamped now),
+    False withdraws it, None — the flag was not sent — leaves each number's
+    consent as it is. Numbers not in `contacts` are removed, duplicates of
+    one number collapse to its oldest row, and any failure rolls the whole
+    change back."""
+    wanted, seen = [], set()
+    for name, phone in contacts:
+        if phone and phone not in seen:
+            seen.add(phone)
+            wanted.append(((name or "").strip(), phone.strip()))
+    consent_at = None
+    if sms_consent:
+        from time_utils import restaurant_now_by_id
+        consent_at = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = {}
+        for r in conn.execute("SELECT id, phone FROM alert_contacts WHERE restaurant_id=? ORDER BY id",
+                              (restaurant_id,)).fetchall():
+            if r["phone"] in existing or r["phone"] not in seen:
+                conn.execute("DELETE FROM alert_contacts WHERE id=?", (r["id"],))
+            else:
+                existing[r["phone"]] = r["id"]
+        for name, phone in wanted:
+            cid = existing.get(phone)
+            if cid is None:
+                conn.execute("INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent, sms_consent_at) "
+                             "VALUES (?,?,?,?,?)", (restaurant_id, name, phone, int(bool(sms_consent)), consent_at))
+                continue
+            conn.execute("UPDATE alert_contacts SET name=? WHERE id=?", (name, cid))
+            if sms_consent:
+                conn.execute("UPDATE alert_contacts SET sms_consent=1, sms_consent_at=? "
+                             "WHERE id=? AND COALESCE(sms_consent,0)=0", (consent_at, cid))
+            elif sms_consent is not None:
+                conn.execute("UPDATE alert_contacts SET sms_consent=0, sms_consent_at=NULL WHERE id=?", (cid,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def delete_alert_contact(contact_id: int, db_path: str = DB_PATH):
     conn = models.get_conn(db_path)
     conn.execute("DELETE FROM alert_contacts WHERE id=?", (contact_id,))
@@ -1841,7 +1914,10 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
         FROM reviews r
         JOIN restaurants rest ON rest.id = r.restaurant_id
         WHERE r.sentiment='negative'
-          AND r.response_status = 'pending'
+          -- 'drafted' is still unanswered: with auto-drafting it is the
+          -- normal state of a review waiting on the owner (MOD-NOT-9).
+          AND r.response_status IN ('pending', 'drafted')
+          AND r.deleted_at IS NULL    -- not about a review the dashboard no longer shows (DATA-60)
           AND r.fetched_at <= datetime('now', '-48 hours')
           AND """ + models.in_service_sql("rest.billing_status") + """
           AND rest.alert_no_response = 1

@@ -114,8 +114,6 @@ def test_switching_location_moves_the_session_to_the_new_location(app):
     assert get_session_user(token)["restaurant_id"] == wicker
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-10: the active location is per session, and no write carries "
-                                       "the location its page was rendered for, so tab A saves into B")
 def test_a_write_from_a_tab_rendered_for_another_location_is_refused(app):
     lakeview, wicker, client = _two_location_owner(app)
     models.update_restaurant(lakeview, {"alert_1star": 1, "alert_5star": 1})
@@ -137,8 +135,6 @@ def test_a_write_from_a_tab_rendered_for_another_location_is_refused(app):
     assert resp.status_code == 409 or _alert_state(lakeview)["contacts"] == ["+15125550111"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-10: read_async_job is scoped to the session's new location, "
-                                       "so a job started in tab A answers 'Job not found' after tab B switches")
 def test_a_job_started_in_one_tab_is_still_pollable_after_another_tab_switches(app):
     lakeview, wicker, client = _two_location_owner(app)
     ops.start_async_job("job-lakeview-1", "schedule", lakeview)
@@ -150,6 +146,18 @@ def test_a_job_started_in_one_tab_is_still_pollable_after_another_tab_switches(a
     # Either the tab gets its own result, or it is told plainly that the
     # location changed underneath it. "Job not found" is neither.
     assert resp.status_code in (200, 409), resp.get_json()
+
+
+def test_a_stale_tab_can_still_switch_location_and_a_current_tab_is_untouched(app):
+    """The other side of the DATA-10 refusal: switching is the way out of a
+    stale tab, and a tab rendered for the session's location saves as ever."""
+    lakeview, wicker, client = _two_location_owner(app)
+    assert client.post("/api/switch-location", json={"restaurant_id": wicker}).status_code == 200
+    back = client.post("/api/switch-location", headers=_rendered_for(lakeview), json={"restaurant_id": lakeview})
+    assert back.status_code == 200 and back.get_json()["ok"] is True
+    resp = client.post("/api/alert-settings", headers=_rendered_for(lakeview), json={
+        "contacts": [], "alert_1star": 1, "alert_5star": 0, "urgent_via_email": 1})
+    assert resp.status_code == 200 and get_restaurant(lakeview).alert_5star == 0
 
 
 # ── DATA-53 · a removed teammate's phone ────────────────────────────────────
@@ -244,8 +252,6 @@ def test_an_invited_teammate_ends_up_with_the_role_they_were_invited_as():
     assert role == "manager"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-56: create_user commits the login with the default 'client' "
-                                       "role and set_user_role narrows it in a separate commit")
 def test_an_invited_user_never_exists_with_the_client_role():
     rid = _loc("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "owner-pass-1")
@@ -256,8 +262,6 @@ def test_an_invited_user_never_exists_with_the_client_role():
     assert _roles_at_insert("dana@ej.test") == ["member"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-56: when the role-narrowing commit fails, the invited login "
-                                       "is left live with the primary-login 'client' role")
 def test_an_invite_whose_role_write_fails_leaves_no_owner_level_login(monkeypatch):
     rid = _loc("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "owner-pass-1")

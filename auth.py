@@ -1839,6 +1839,28 @@ def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
     return out
 
 
+def _unfinished_claim(restaurant_id, wanted, phone, db_path):
+    """This phone's own claim of `wanted` that stopped before its PIN was set.
+
+    claim_staff_name is several commits (identity, membership, claim stamp,
+    PIN, token). A failure after the membership was written — a lock, a full
+    disk — left the name taken with no PIN, and the employee's retry was
+    refused as "not available", with no way back but the manager (DATA-58).
+    The same verified phone may finish it: the steps it repeats are
+    idempotent, and the signup token is only consumed once it is done."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT m.employee_name, m.job_role FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE m.restaurant_id=? AND m.is_active=1 AND m.pin_hash IS NULL "
+            "AND LOWER(TRIM(m.employee_name))=LOWER(?) "
+            "AND (m.claimed_by_phone=? OR u.phone=?)",
+            (restaurant_id, wanted, phone, phone)).fetchone()
+    finally:
+        conn.close()
+    return {"name": row["employee_name"], "job_role": row["job_role"]} if row else None
+
+
 def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
                      pin: str, db_path: str = DB_PATH) -> dict:
     """Turn a verified phone plus a roster name into a real staff account.
@@ -1866,7 +1888,7 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
     # than trusted from the list the client was shown a moment ago.
     available = {c["name"].strip().lower(): c for c in
                  claimable_names(restaurant_id, db_path=db_path)}
-    match = available.get(wanted.lower())
+    match = available.get(wanted.lower()) or _unfinished_claim(restaurant_id, wanted, phone, db_path)
     if not match:
         raise SignupError("That name isn't available. Ask your manager.")
 
@@ -2023,7 +2045,7 @@ def _end_staff_sessions_for_membership(membership_id: int, restaurant_id: int,
 
 def create_user(restaurant_id: int, username: str, email: str,
                 password: str, is_admin: bool = False,
-                db_path: str = DB_PATH) -> int:
+                db_path: str = DB_PATH, role: str = None) -> int:
     conn = get_conn(db_path)
     # Scored/stamped at creation too, not just on a later change — an
     # account whose password was never touched since Will set it up used
@@ -2034,7 +2056,14 @@ def create_user(restaurant_id: int, username: str, email: str,
     # A staff-PIN identity (the @staff.invalid address both staff paths
     # mint) is an employee from the start, never the 'client' column default
     # a console login gets (SEC-1).
-    role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
+    #
+    # `role`, when given, is written with the row itself. A teammate invite
+    # used to insert the 'client' default — the primary-login role — and
+    # narrow it in a second commit, so for that window, or for good if the
+    # second write failed, an invited teammate held owner-level access
+    # (DATA-56).
+    if not role:
+        role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
     cur = conn.execute("""
         INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at,
                            password_strength, role)
@@ -2200,11 +2229,6 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
         suffix += 1
         candidate = f"{username}{suffix}"
     conn.close()
-    try:
-        user_id = create_user(restaurant_id, candidate, email, temp_password,
-                              is_admin=False, db_path=db_path)
-    except sqlite3.IntegrityError:
-        return {"ok": False, "error": "That email is already in use."}
     # 'member' marks an invited teammate. The role column's existing
     # vocabulary is 'client' (every restaurant's primary login, the default)
     # and 'owner' (Will's multi-restaurant login that can switch its active
@@ -2212,8 +2236,13 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     # gated invite/revoke on role == 'owner', which no client login has, so
     # the whole Team feature was invisible and 403'd for every real account.
     # The distinction that actually matters is "primary login vs. someone
-    # that login invited", and that's what this value records.
-    set_user_role(user_id, role, db_path=db_path)
+    # that login invited", and that's what this value records — written
+    # with the row, never narrowed afterwards (DATA-56).
+    try:
+        user_id = create_user(restaurant_id, candidate, email, temp_password,
+                              is_admin=False, db_path=db_path, role=role)
+    except sqlite3.IntegrityError:
+        return {"ok": False, "error": "That email is already in use."}
     # An invited teammate also gets a membership, so authorization for this
     # login resolves through the same Identity → Tenant → Role path every
     # other account now uses rather than falling back to users.role.
@@ -3276,8 +3305,36 @@ def login_required(f):
         if view_as_write_denied(user):
             from flask import jsonify as _jsonify_vr
             return _jsonify_vr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
+        moved = _tab_location_moved(user)
+        if moved:
+            return moved
         return f(*args, **kwargs, current_user=user)
     return decorated
+
+
+# The one route a tab rendered for an old location must still reach.
+_TAB_LOCATION_EXEMPT = frozenset({"client.switch_location"})
+
+
+def _tab_location_moved(user):
+    """A 409 when the page that sent this request was rendered for a
+    different location than the session now has, else None.
+
+    The active location lives on the session, not the tab, so after an owner
+    switched to Wicker Park in tab B, tab A — still showing Lakeview's
+    settings — saved Lakeview's form into Wicker Park, and a Lakeview job
+    polled from tab A answered "Job not found" (DATA-10). The dashboard names
+    the location it was rendered for on every request (_csrf_fetch.html);
+    a request that names none (the phone, a script) is unaffected."""
+    raw = (request.headers.get("X-Cavnar-Restaurant-Id") or "").strip()
+    if not raw.isdigit() or request.endpoint in _TAB_LOCATION_EXEMPT:
+        return None
+    if int(raw) == int(user.get("restaurant_id") or 0):
+        return None
+    from flask import jsonify as _jsonify_tl
+    return _jsonify_tl(ok=False, location_changed=True, restaurant_id=user.get("restaurant_id"),
+                       error="You switched to another location in a different tab. "
+                             "Reload this page to keep working here."), 409
 
 # Support accounts (role='support', is_admin=0) may READ the admin console
 # and open a view-as session; every other admin write needs the admin bit.
