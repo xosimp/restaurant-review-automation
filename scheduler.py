@@ -2809,6 +2809,16 @@ def scheduler_loop():
                 from strategy_jobs import run_milestones
                 _ops.run_job("milestones", run_milestones)
 
+            # 8am — the recommendation trail (rec_ledger): answers held by
+            # the older ledgers carried in (after 6am's outcome verdicts), and
+            # recommendations nobody answered in two weeks closed as ignored.
+            if _due(now, 8) and _ops.claim_period("rec_ledger", str(today)):
+                import rec_ledger as _rl
+
+                def _rec_ledger_pass():
+                    return {"synced": _rl.sync_existing(), "expired": _rl.expire_stale()}
+                _ops.run_job("rec_ledger", _rec_ledger_pass)
+
             # Sunday 5am — let each restaurant's own clean and troubled weeks
             # nudge its quality weights (strategy_jobs.run_quality_calibration).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):

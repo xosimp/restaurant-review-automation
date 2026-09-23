@@ -1258,6 +1258,40 @@ def _do_schedule_optimize(u):
             "quality": quality, "what_if": what_if}, 200
 
 
+def _do_rec_event(u):
+    """An owner's response to any recommendation, from any client: opened,
+    evidence viewed, accepted, dismissed (hide / not_for_us / done),
+    snoozed, completed. The one door into rec_ledger for web and iOS."""
+    import rec_ledger as _rl
+    from datetime import datetime as _dt, timedelta as _td
+    b = _body()
+    key = b.get("key")
+    event = b.get("event")
+    if not isinstance(key, str) or not key.strip() or event not in _rl.EVENTS or event in ("shown", "expired", "outcome"):
+        return {"ok": False, "error": "key and a response are required"}, 400
+    surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
+    meta = {}
+    silence = None
+    until = None
+    if event == "dismissed":
+        kind = b.get("kind") if b.get("kind") in _rl.SILENCE_DAYS else "hide"
+        meta["kind"] = kind
+        reason = b.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            meta["reason"] = reason.strip()[:200]
+    if event == "snoozed":
+        try:
+            days = max(1, min(30, int(b.get("days") or 1)))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "days must be a number"}, 400
+        until = (_dt.utcnow() + _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(b.get("module"), str):
+        meta["module"] = b["module"][:20]
+    ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
+                    meta=meta or None, silence_days=silence, snooze_until=until)
+    return {"ok": True, "recorded": ok}, 200
+
+
 def _do_shift_requests_list(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see shift requests.")
@@ -2082,6 +2116,7 @@ _ROUTES = [
     ("/labor/schedule/optimize", ["POST"], _do_schedule_optimize, "schedule_optimize"),
     ("/labor/ratings/unmatched", ["GET"], _do_ratings_unmatched, "ratings_unmatched"),
     ("/labor/ratings/match", ["POST"], _do_ratings_match, "ratings_match"),
+    ("/recs/event", ["POST"], _do_rec_event, "rec_event"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),

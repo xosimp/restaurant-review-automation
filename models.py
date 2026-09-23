@@ -2535,6 +2535,9 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # One identity and event trail for every recommendation (rec_ledger).
+    from rec_ledger import init_rec_ledger
+    init_rec_ledger(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
     # boot, not on each claim (DATA-6).
     import ops as _ops
