@@ -165,6 +165,9 @@ def instagram_callback():
 @login_required
 def post_to_instagram(current_user):
     """Post a caption to Instagram. Client must have connected their account."""
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_instagram(
         current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
@@ -519,6 +522,9 @@ def post_insights(current_user):
 @login_required
 def post_to_facebook(current_user):
     """Post to Facebook Page."""
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_facebook(
         current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")

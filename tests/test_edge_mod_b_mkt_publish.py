@@ -362,7 +362,6 @@ def _publish_request(s, path, rid):
 
 
 @pytest.mark.parametrize("path", PUBLISH_PATHS)
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: every publish/schedule route is only login_required; a 'member' who cannot approve can publish directly")
 def test_an_invited_teammate_who_cannot_approve_cannot_publish_either(app, db_path, monkeypatch, sleeps, path):
     """A6 direct #6 / MOD-MKT-17: approve_draft refuses role 'member'; the
     routes that actually put copy on the public feed must refuse it too."""
@@ -389,7 +388,6 @@ def test_the_primary_login_can_still_publish_on_every_route(app, db_path, monkey
 # ── #7 no Marketing module ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("path", ["/api/post-to-facebook", "/api/post-to-instagram"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: /api/post-to-facebook and /api/post-to-instagram are missing from auth._MODULE_PREFIXES, so they skip the Marketing module gate")
 def test_a_restaurant_without_marketing_cannot_publish_through_the_web_post_routes(app, db_path, monkeypatch, sleeps, path):
     """A6 direct #7 / MOD-MKT-17."""
     rid = _restaurant(db_path, module_marketing=0)

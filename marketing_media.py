@@ -147,6 +147,10 @@ def list_media(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> l
 
 
 def delete_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """True only when a photo of this restaurant's was actually deleted. A
+    photo a draft or a queued post still needs is kept (the foreign keys on
+    both refuse it) and reported as not deleted, not raised."""
+    import sqlite3
     conn = get_conn(db_path)
     try:
         n = conn.execute(
@@ -154,6 +158,41 @@ def delete_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> b
             (media_id, restaurant_id),
         ).rowcount
         conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return False
     finally:
         conn.close()
     return bool(n)
+
+
+def media_in_use(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether a draft or a not-yet-published post of this restaurant's
+    still points at the photo."""
+    conn = get_conn(db_path)
+    try:
+        return bool(conn.execute(
+            "SELECT 1 FROM marketing_scheduled_posts WHERE media_id=? AND restaurant_id=? "
+            "AND status IN ('scheduled', 'publishing') "
+            "UNION ALL SELECT 1 FROM marketing_drafts WHERE media_id=? AND restaurant_id=? LIMIT 1",
+            (media_id, restaurant_id, media_id, restaurant_id)).fetchone())
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def remove_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """The delete route's answer, with its HTTP status. It said ok=True for a
+    photo that was not this restaurant's, or not there at all (MOD-MKT-18),
+    and a photo a queued post needed ended in a bare 500 (MOD-A6-media-9)."""
+    if media_in_use(media_id, restaurant_id, db_path=db_path):
+        return {"ok": False, "status": 409,
+                "error": "A scheduled post or a draft still uses this photo. "
+                         "Remove it there first, then delete the photo."}
+    if delete_media(media_id, restaurant_id, db_path=db_path):
+        return {"ok": True, "status": 200}
+    if get_media_token(media_id, restaurant_id, db_path=db_path):
+        return {"ok": False, "status": 409,
+                "error": "A post still uses this photo, so it was kept."}
+    return {"ok": False, "status": 404, "error": "That photo isn't in your library."}

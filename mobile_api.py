@@ -1575,6 +1575,9 @@ def mobile_create_google_post(current_user):
     marketing_content_log on success so it counts toward "pieces this
     month" exactly like a published Instagram post does."""
     import gmb as _gmb
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
 
@@ -3042,10 +3045,10 @@ def mobile_list_media(current_user):
 @mobile_bp.route("/marketing/media/<int:media_id>", methods=["DELETE"])
 @mobile_login_required
 def mobile_delete_media(media_id, current_user):
-    from marketing_media import delete_media
-    rid = current_user["restaurant_id"]
-    delete_media(media_id, rid)
-    return jsonify(ok=True)
+    from marketing_media import remove_media
+    result = remove_media(media_id, current_user["restaurant_id"])
+    status = result.pop("status")
+    return jsonify(**result), status
 
 
 # ── Scheduling ────────────────────────────────────────────────────────────
@@ -3063,6 +3066,11 @@ def mobile_schedule(current_user):
     if request.method == "GET":
         return jsonify(ok=True, posts=_mp.list_scheduled(rid))
 
+    # Queueing a post is publishing it later: the same approval rule as the
+    # post-now routes (MOD-MKT-17).
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     result = _mp.schedule_post(
         rid, data.get("platform"), data.get("body"), data.get("scheduled_for"),
@@ -3235,6 +3243,9 @@ def mobile_marketing_insight(current_user):
 @mobile_login_required
 def mobile_post_to_instagram(current_user):
     from social_routes import _do_post_to_instagram
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_instagram(
         current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
@@ -3246,6 +3257,9 @@ def mobile_post_to_instagram(current_user):
 @mobile_login_required
 def mobile_post_to_facebook(current_user):
     from social_routes import _do_post_to_facebook
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_facebook(
         current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")

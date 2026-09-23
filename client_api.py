@@ -2200,9 +2200,8 @@ def marketing_media_api(current_user):
 @client_bp.route("/api/marketing/media/<int:media_id>", methods=["DELETE"])
 @login_required
 def marketing_media_delete(media_id, current_user):
-    from marketing_media import delete_media
-    delete_media(media_id, current_user["restaurant_id"])
-    return jsonify(ok=True)
+    """Web twin — the one body is mobile_api.mobile_delete_media."""
+    return _m("mobile_delete_media")(media_id, current_user)
 
 
 @client_bp.route("/api/marketing/schedule", methods=["GET", "POST"])
@@ -2309,6 +2308,9 @@ def post_to_google(current_user):
     put a Google post on Google. Mobile got this route first
     (mobile_api.mobile_create_google_post); this is the web half."""
     import gmb as _gmb
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     if not _gmb.is_connected(rid):

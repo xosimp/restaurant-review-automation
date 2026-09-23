@@ -344,7 +344,6 @@ def _referenced_photo(db_path, rid):
 
 
 @pytest.mark.parametrize("path", ["/api/marketing/media/{id}", "/mobile/api/marketing/media/{id}"])
-@pytest.mark.xfail(strict=True, reason="MOD-A6-media-9: the media_id foreign key blocks the delete, but delete_media lets the IntegrityError escape and the route 500s with no reason")
 def test_deleting_a_photo_a_scheduled_post_needs_is_refused_with_a_reason(app, db_path, path):
     """A6 Media #9 (MOD-MKT-18 said the delete was allowed; on a database
     built by init_db the FK refuses it — the defect is the 500)."""
@@ -368,7 +367,6 @@ def test_a_photo_a_scheduled_post_needs_is_still_there_after_a_delete_attempt(ap
 
 
 @pytest.mark.parametrize("path", ["/api/marketing/media/{id}", "/mobile/api/marketing/media/{id}"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-18: DELETE on a photo id that is not yours (or does not exist) returns ok=True")
 def test_deleting_someone_elses_photo_does_not_report_success(app, db_path, path):
     """MOD-MKT-18: the delete is correctly scoped, but says it worked."""
     mine = _restaurant(db_path, name="Mine Co")
@@ -452,7 +450,6 @@ def test_a_draft_is_kept_up_to_the_limit_and_refused_one_character_past_it(app, 
 
 # ── Drafts #7 approval is not enforced at publish (MOD-MKT-17) ────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-17: approval is advisory — a teammate refused at /approve can still schedule the same copy")
 def test_a_teammate_cannot_route_around_approval_by_scheduling_the_draft(app, db_path):
     """A6 Drafts #7 / MOD-MKT-17: write → refused approval → schedule it
     anyway. The last step must be refused too."""
