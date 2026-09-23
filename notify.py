@@ -4,6 +4,7 @@ Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
 import os
+import re
 import config
 import html as _html
 import requests
@@ -68,7 +69,14 @@ HEALTH_KEYWORDS = [
 ]
 
 
+_PHONE_EXTENSION = re.compile(r"\s*(?:x|ext\.?|extension|#)\s*\d+\s*$", re.IGNORECASE)
+
+
 def _normalize_phone(phone: str) -> str:
+    # A text cannot reach an extension, and its digits appended to the number
+    # made "(630) 555-0123 x45" into +630555012345, someone else's number
+    # abroad (MOD-A6-optin-17).
+    phone = _PHONE_EXTENSION.sub("", phone or "")
     digits = "".join(c for c in phone if c.isdigit() or c == "+")
     if digits.startswith("+"):
         return digits

@@ -5354,7 +5354,7 @@ svg:hover .hb-xh{opacity:1}
          which is not something an owner has for a picture on their phone. -->
     <div id="mkt-photo-row" style="display:none;align-items:center;gap:10px;flex:1;min-width:240px">
       <img id="mkt-photo-thumb" alt="" style="display:none;width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--paper3)">
-      <input type="file" id="mkt-photo-input" accept="image/*" style="display:none" onchange="uploadMktPhoto(this)">
+      <input type="file" id="mkt-photo-input" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="uploadMktPhoto(this)">
       <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('mkt-photo-input').click()" id="mkt-photo-btn">Add a photo</button>
       <button class="cbtn cbtn-secondary cbtn-sm" style="display:none" onclick="clearMktPhoto()" id="mkt-photo-clear">Remove</button>
       <span id="mkt-photo-status" style="font-size:11px;color:var(--ink3)"></span>
@@ -9161,13 +9161,40 @@ function postToFacebook(){
 // phone or their desktop.
 window._mktPhotoId = null;
 window._mktPhotoUrl = '';
+// Downscaled in the browser first (2048px long edge, JPEG): a camera photo is
+// often bigger than the 5 MB request cap, and the server keeps 1440px anyway
+// (MOD-MKT-14). Anything the browser can't draw goes up as it is.
+function _mktShrinkPhoto(file, done){
+  var canvas = document.createElement('canvas');
+  if(!window.FileReader || !canvas.toBlob){ done(file); return; }
+  var reader = new FileReader();
+  reader.onload = function(){
+    var img = new Image();
+    img.onload = function(){
+      var max = 2048, w = img.naturalWidth, h = img.naturalHeight;
+      if(w <= max && h <= max && file.size <= 3000000){ done(file); return; }
+      var scale = Math.min(1, max / Math.max(w, h));
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function(blob){ done(blob || file); }, 'image/jpeg', 0.86);
+    };
+    img.onerror = function(){ done(file); };
+    img.src = reader.result;
+  };
+  reader.onerror = function(){ done(file); };
+  reader.readAsDataURL(file);
+}
 function uploadMktPhoto(input){
   var file = input.files && input.files[0];
   if(!file) return;
   var status = document.getElementById('mkt-photo-status');
   if(status) status.textContent = 'Uploading…';
+  _mktShrinkPhoto(file, function(ready){ _mktSendPhoto(input, ready, status); });
+}
+function _mktSendPhoto(input, file, status){
   var form = new FormData();
-  form.append('file', file);
+  form.append('file', file, (file && file.name) || 'photo.jpg');
   fetch('/api/marketing/media', {method:'POST', body: form})
     .then(function(r){ return r.json(); })
     .then(function(d){

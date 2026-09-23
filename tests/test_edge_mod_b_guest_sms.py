@@ -189,7 +189,6 @@ def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, 
     assert [c["phone"] for c in gm.get_guest_contacts(rid, db_path=db_path)] == ["+442079460958"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-optin-17: a US number typed with an extension becomes a different (foreign) number")
 def test_a_us_number_with_an_extension_is_stored_as_that_us_number_or_refused(db_path, web):
     """A6 SMS #17 — '(630) 555-0123 x45' must not become +630555012345."""
     rid = _rid(db_path)

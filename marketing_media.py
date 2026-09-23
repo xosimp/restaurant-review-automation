@@ -34,11 +34,25 @@ log = logging.getLogger(__name__)
 MAX_EDGE = 1440
 JPEG_QUALITY = 86
 
-# What a phone camera actually produces. Anything bigger is a mistake or an
-# attack, and is refused before it is read into memory.
-MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+# The largest photo the app can actually receive. hosted_dashboard caps
+# every request body at 5 MB and the iOS app sends base64 (+33%), so the
+# 12 MB promised here could never be reached — a bigger photo died on an
+# HTML 413 instead of this message (MOD-MKT-14). Both clients downscale
+# before uploading (2048 px on the long edge), which keeps a real photo far
+# under this.
+MAX_UPLOAD_BYTES = int(3.5 * 1024 * 1024)
+MAX_UPLOAD_LABEL = "3.5 MB"
 
-ALLOWED_MIME = {"image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"}
+# Pixels, read from the file header BEFORE anything is decoded. A 20 KB PNG
+# can declare a 13000x13000 canvas, and decoding it cost ~580 MB in the one
+# web process (MOD-MKT-13). 50 MP still admits a 48 MP phone photo.
+MAX_PIXELS = 50_000_000
+
+# Only what Pillow here can decode. HEIC/HEIF were listed, but no HEIF
+# decoder is installed, so a desktop HEIC passed this gate and then failed
+# as "didn't open as a photo" (MOD-MKT-14). The iOS app converts to JPEG
+# before it uploads, so this only turns a confusing failure into a clear one.
+ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 
 
 class MediaError(Exception):
@@ -58,8 +72,11 @@ def store_image(restaurant_id: int, raw: bytes, mime: str = "", db_path: str = D
     if not raw:
         raise MediaError("That file was empty.")
     if len(raw) > MAX_UPLOAD_BYTES:
-        raise MediaError("That photo is too large — pick one under 12MB.")
-    if mime and mime.lower().split(";")[0].strip() not in ALLOWED_MIME:
+        raise MediaError(f"That photo is too large — pick one under {MAX_UPLOAD_LABEL}.")
+    kind = mime.lower().split(";")[0].strip() if mime else ""
+    if kind in ("image/heic", "image/heif"):
+        raise MediaError("HEIC photos can't be read here yet — save it as a JPEG and add it again.")
+    if kind and kind not in ALLOWED_MIME:
         raise MediaError("That file isn't a photo Cavnar AI can post.")
 
     try:
@@ -68,7 +85,17 @@ def store_image(restaurant_id: int, raw: bytes, mime: str = "", db_path: str = D
         raise MediaError("Image processing isn't available on this server.") from e
 
     try:
+        # open() reads only the header; nothing is decoded until load().
         img = Image.open(io.BytesIO(raw))
+        width, height = img.size
+    except Exception as e:
+        raise MediaError("That file didn't open as a photo.") from e
+    if width * height > MAX_PIXELS:
+        raise MediaError("That image is far larger than a photo needs to be. Pick a smaller one.")
+    try:
+        if img.format == "JPEG":
+            # Decode a JPEG at a reduced scale when it is bigger than needed.
+            img.draft("RGB", (MAX_EDGE * 2, MAX_EDGE * 2))
         # EXIF orientation, or every photo shot in portrait arrives sideways.
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")

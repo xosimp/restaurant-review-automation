@@ -49,14 +49,15 @@ final class MarketingComposeViewModel {
         enum CodingKeys: String, CodingKey { case imageBase64 = "image_base64" }
     }
 
-    /// Re-encoded to JPEG here as well as on the server — a 12-megapixel HEIC
-    /// base64'd is a several-megabyte request body over a restaurant's wifi,
-    /// and the server is going to downscale it anyway.
+    /// Downscaled (2048 px long edge) and re-encoded to JPEG here as well as
+    /// on the server. A full-resolution photo base64'd went over the server's
+    /// 5 MB request cap and failed with no reason (MOD-MKT-14); the server
+    /// keeps 1440 px anyway.
     func upload(_ image: UIImage) async {
         isUploading = true
         mediaError = nil
         defer { isUploading = false }
-        guard let data = image.jpegData(compressionQuality: 0.85) else {
+        guard let data = Self.downscaled(image).jpegData(compressionQuality: 0.85) else {
             mediaError = "That photo couldn't be read."
             return
         }
@@ -72,6 +73,21 @@ final class MarketingComposeViewModel {
             mediaError = error.message
         } catch {
             mediaError = "Couldn't upload that photo."
+        }
+    }
+
+    /// The photo at no more than `maxEdge` pixels on its long edge.
+    static func downscaled(_ image: UIImage, maxEdge: CGFloat = 2048) -> UIImage {
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let longest = max(pixelWidth, pixelHeight)
+        guard longest > maxEdge else { return image }
+        let ratio = maxEdge / longest
+        let target = CGSize(width: (pixelWidth * ratio).rounded(), height: (pixelHeight * ratio).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
         }
     }
 

@@ -163,7 +163,6 @@ class _DecodedTheBomb(BaseException):
     test pass on the wrong path."""
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-13: store_image decodes the full canvas (exif_transpose/convert) before any pixel-count check")
 def test_a_tiny_file_with_a_huge_canvas_is_refused_before_it_is_decoded(db_path, monkeypatch, bomb_png):
     """A6 Media #5 / MOD-MKT-13: the check has to be on the image size read
     from the header, not on the compressed byte count. The guard stops the
@@ -257,7 +256,6 @@ def test_the_real_app_accepts_an_ordinary_upload_from_the_app(real_app_uploads):
 
 
 @pytest.mark.parametrize("which", ["mobile_big", "web_big"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: hosted_dashboard registers no 413 handler, so a body over MAX_CONTENT_LENGTH gets Flask's HTML page and the clients show 'Upload failed'")
 def test_an_upload_over_the_body_cap_gets_a_json_refusal_the_client_can_show(real_app_uploads, which):
     """A6 Media #6 / MOD-MKT-14: the web JS does r.json() and iOS decodes
     JSON; an HTML 413 dead-ends both with no reason."""
@@ -280,7 +278,6 @@ def _source_max_content_length():
     raise AssertionError("MAX_CONTENT_LENGTH assignment not found in hosted_dashboard.py")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: MAX_UPLOAD_BYTES (12 MB, and its 'pick one under 12MB' message) is above the app's 5 MB body cap, so it can never fire")
 def test_the_per_photo_limit_the_owner_is_told_is_one_the_app_can_actually_receive(real_app_uploads):
     """A6 Media #6 / MOD-MKT-14. The mobile path base64-encodes (+33%), so
     the stated limit has to fit under the cap after encoding."""
@@ -291,7 +288,6 @@ def test_the_per_photo_limit_the_owner_is_told_is_one_the_app_can_actually_recei
 
 # ── Media #7 HEIC (MOD-MKT-14) ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: image/heic and image/heif pass ALLOWED_MIME but no HEIF decoder is registered with Pillow (pillow-heif is not installed)")
 def test_every_format_the_upload_gate_accepts_is_one_the_server_can_decode():
     """A6 Media #7 / MOD-MKT-14: a HEIC from a desktop file picker passes the
     MIME gate and then fails "That file didn't open as a photo"."""
