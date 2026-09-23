@@ -117,6 +117,46 @@ def test_a_stop_that_leads_the_message_still_works(db_path, body):
     assert _unsubscribed(db_path, "+15551234567") == [1]
 
 
+@pytest.mark.parametrize("readd", ["manual", "public_optin", "toast_import"])
+def test_a_deleted_guest_who_said_stop_comes_back_unsubscribed(db_path, texts, readd):
+    """CLIENT-34 — deleting a contact used to hard-delete their STOP with
+    them, so the same number re-imported from the POS, re-typed by the
+    owner or re-submitted on the join page was textable again. The owner's
+    list stops showing the deleted guest; only the guest's own START undoes
+    the STOP."""
+    rid = _rid(db_path)
+    cid = gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    gm.handle_inbound_sms("+15551234567", "STOP", db_path=db_path)
+    gm.delete_guest_contact(cid, rid, db_path=db_path)
+    assert gm.get_guest_contacts(rid, db_path=db_path) == []
+
+    if readd == "manual":
+        gm.add_guest_contact_manual(rid, "5551234567", name="Ana", db_path=db_path)
+    elif readd == "public_optin":
+        gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    else:
+        gm.add_guest_contact_manual(rid, "(555) 123-4567", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [1]
+    assert gm.phone_opted_out("+15551234567", db_path=db_path)
+    gm.send_campaign(rid, "Pasta night", db_path=db_path)
+    assert texts == []
+
+    # Their own START is the one way back.
+    gm.handle_inbound_sms("+15551234567", "START", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [0]
+    assert not gm.phone_opted_out("+15551234567", db_path=db_path)
+
+
+def test_deleting_a_guest_who_never_said_stop_leaves_no_opt_out(db_path):
+    """CLIENT-34 control: an ordinary delete does not invent a STOP."""
+    rid = _rid(db_path)
+    cid = gm.add_guest_contact_public_optin(rid, "5551234567", name="Ana", db_path=db_path)
+    gm.delete_guest_contact(cid, rid, db_path=db_path)
+    gm.add_guest_contact_manual(rid, "5551234567", db_path=db_path)
+    assert _unsubscribed(db_path, "+15551234567") == [0]
+    assert not gm.phone_opted_out("+15551234567", db_path=db_path)
+
+
 def test_the_help_reply_names_the_restaurant_it_is_for(db_path):
     """A6 SMS #18 — a HELP reply has to identify the program (the carrier
     requirement for a HELP response is program name plus how to stop)."""

@@ -55,6 +55,18 @@ CREATE TABLE IF NOT EXISTS sms_optin_invites (
     UNIQUE(restaurant_id, external_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_optin_invites_phone ON sms_optin_invites(phone, sent_at);
+-- A STOP that outlives the contact row it was recorded on (CLIENT-34).
+-- Deleting a guest used to hard-delete their STOP with them, so the same
+-- number re-imported from the POS or re-typed by the owner came back
+-- textable. restaurant_id 0 is a STOP to the shared platform number.
+CREATE TABLE IF NOT EXISTS guest_sms_optouts (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL DEFAULT 0,
+    phone          TEXT    NOT NULL,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, phone)
+);
+CREATE INDEX IF NOT EXISTS idx_guest_sms_optouts_phone ON guest_sms_optouts(phone);
 """
 
 
@@ -213,6 +225,22 @@ def add_guest_contact_sms_optin(restaurant_id, phone, name=None, db_path=DB_PATH
     return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
 
 
+def _record_optout(phone, restaurant_id=0, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (?,?)",
+                     (int(restaurant_id or 0), _normalize_phone(phone)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _opted_out_here(conn, restaurant_id, phone) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM guest_sms_optouts WHERE phone=? AND restaurant_id IN (0, ?) LIMIT 1",
+        (phone, int(restaurant_id or 0))).fetchone() is not None
+
+
 def _upsert_contact(restaurant_id, phone, name, consent, db_path):
     phone = _normalize_phone(phone)
     conn = get_conn(db_path)
@@ -250,11 +278,15 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
         conn.commit()
         contact_id = existing["id"]
     else:
+        # A number that texted STOP (here, or to the shared number) comes
+        # back unsubscribed, however it comes back: a POS import, an owner
+        # re-typing it, the public form. Only their own START undoes it.
+        stopped = _opted_out_here(conn, restaurant_id, phone)
         cur = conn.execute(
             "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, "
-            "last_visit, visit_count) VALUES (?,?,?,?,?,?,?)",
+            "last_visit, visit_count, unsubscribed) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, (name or "").strip() or None, phone, int(consent), now_iso,
-             now_iso, 1 if consent else 0)
+             now_iso, 1 if consent else 0, 1 if stopped else 0)
         )
         conn.commit()
         contact_id = cur.lastrowid
@@ -264,11 +296,22 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
 
 def delete_guest_contact(contact_id, restaurant_id, db_path=DB_PATH):
     """Scoped to restaurant_id — a client must never be able to delete
-    another restaurant's contact by guessing an id."""
+    another restaurant's contact by guessing an id.
+
+    The row goes (the owner's list no longer shows them), but a STOP it
+    carried is kept in guest_sms_optouts first, so the same number added
+    again later is added unsubscribed (CLIENT-34)."""
     conn = get_conn(db_path)
-    conn.execute("DELETE FROM guest_contacts WHERE id=? AND restaurant_id=?", (contact_id, restaurant_id))
-    conn.commit()
-    conn.close()
+    try:
+        row = conn.execute("SELECT phone, unsubscribed FROM guest_contacts WHERE id=? AND restaurant_id=?",
+                           (contact_id, restaurant_id)).fetchone()
+        if row and row["unsubscribed"]:
+            conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (?,?)",
+                         (int(restaurant_id), row["phone"]))
+        conn.execute("DELETE FROM guest_contacts WHERE id=? AND restaurant_id=?", (contact_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_guest_visit(contact_id, restaurant_id, db_path=DB_PATH):
@@ -309,12 +352,14 @@ def phone_opted_out(phone, db_path=DB_PATH) -> bool:
     a guest who has not consented to THIS restaurant (an opt-in invite, a
     review request an owner typed in) honours a STOP sent to any of them
     (MOD-MKT-11, MOD-MKT-12)."""
+    phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     try:
-        return conn.execute(
-            "SELECT 1 FROM guest_contacts WHERE phone=? AND unsubscribed=1 LIMIT 1",
-            (_normalize_phone(phone),)
-        ).fetchone() is not None
+        return (conn.execute(
+            "SELECT 1 FROM guest_contacts WHERE phone=? AND unsubscribed=1 LIMIT 1", (phone,)
+        ).fetchone() is not None or conn.execute(
+            "SELECT 1 FROM guest_sms_optouts WHERE phone=? LIMIT 1", (phone,)
+        ).fetchone() is not None)
     finally:
         conn.close()
 
@@ -330,11 +375,16 @@ HELP_KEYWORDS  = {"help", "info"}
 
 
 def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
+    """The guest's own START (handle_inbound_sms) — the one thing that undoes
+    a STOP, including one kept after their contact row was deleted."""
+    phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     conn.execute(
         "UPDATE guest_contacts SET unsubscribed=0 WHERE restaurant_id=? AND phone=?",
-        (restaurant_id, _normalize_phone(phone))
+        (restaurant_id, phone)
     )
+    conn.execute("DELETE FROM guest_sms_optouts WHERE phone=? AND restaurant_id IN (0, ?)",
+                 (phone, int(restaurant_id or 0)))
     conn.commit()
     conn.close()
 
@@ -486,6 +536,9 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
     if _is_stop(body):
         conn = get_conn(db_path)
         conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
+        # Kept apart from the contact rows, which an owner can delete.
+        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)",
+                     (phone,))
         conn.commit()
         conn.close()
         _mark_invite_response(phone, "stop", db_path=db_path)
