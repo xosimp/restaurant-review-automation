@@ -3179,6 +3179,9 @@ _UNGATED_PREFIXES = (
     "/api/milestones", "/mobile/api/milestones", "/api/monthly-review", "/mobile/api/monthly-review",
     "/api/morning-brief", "/mobile/api/morning-brief", "/api/closeout", "/mobile/api/closeout",
     "/api/tasks", "/mobile/api/tasks",
+    # The nightly DSR: one report across every module, each block (and each
+    # loss or owner-only line) withheld per login by dsr.access.
+    "/api/dsr", "/mobile/api/dsr",
     # An owner's answer to any recommendation, from any surface (rec_ledger).
     "/api/recs/", "/mobile/api/recs/",
     # Comps and voids: LOSS_VIEW, checked in the handler.

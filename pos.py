@@ -30,7 +30,8 @@ PROVIDER_API = ("is_connected", "sync_to_db", "build_shifts_csv")
 # rather than return an empty list, because "nothing sold" and "I can't see
 # what sold" lead to opposite conclusions everywhere downstream.
 DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
-            "fetch_sales_today", "fetch_clock_ins_today", "fetch_order_customers")
+            "fetch_sales_today", "fetch_clock_ins_today", "fetch_order_customers",
+            "fetch_day_sales", "fetch_day_closed")
 
 
 def _load_providers():
@@ -288,3 +289,134 @@ def fetch_clock_ins_today(restaurant_id, business_date):
     if fn is None:
         raise POSCapabilityError(f"{name} has no live clock-in feed")
     return fn(restaurant_id, business_date), name
+
+
+# ── the nightly DSR's reads (dsr/) ──────────────────────────────────────────
+
+# What comes off GROSS to make NET, by name. The owner's own definition is
+# still open (docs/plans/DSR_ENGINE_PLAN.md §11 Q2: "what comes off gross —
+# comps, discounts, voids, tax?"), so it lives here once: every provider
+# returns the parts, and this tuple alone decides the subtraction for the
+# day, each department, each hour and each item. Drop "comps" to keep comps
+# in net; a new name must be a part every provider reports.
+NET_DEDUCTIONS = ("discounts", "comps")
+
+
+class POSAuthError(Exception):
+    """The POS rejected Cavnar's credentials. Not a capability gap and not a
+    blip: retrying will not help until someone reconnects it."""
+
+
+def _auth_failure(exc) -> bool:
+    if type(exc).__name__.endswith("AuthError"):          # rpower.RPowerAuthError
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status in (401, 403)                           # a requests.HTTPError from Toast
+
+
+def net_of(parts) -> float:
+    """GROSS less every NET_DEDUCTIONS figure present in `parts`. A deduction
+    a provider cannot separate is None and subtracts nothing here — it is
+    already inside another one (Toast rings comps as discounts)."""
+    parts = parts or {}
+    gross = float(parts.get("gross") or 0.0)
+    off = sum(float(parts[k]) for k in NET_DEDUCTIONS if parts.get(k) is not None)
+    return round(gross - off, 2)
+
+
+def _money(v):
+    return None if v is None else round(float(v), 2)
+
+
+def fetch_day_sales(restaurant_id, business_date):
+    """One business date's sales, for the DSR.
+
+    Returns (data, provider_name), where data is
+      {"gross", "net", "transactions", "guests", "discounts", "comps",
+       "voids", "refunds", "tax", "by_department": {pos department: net},
+       "by_hour": {"HH": net}, "items": [{"name", "department", "qty", "net"}],
+       "net_deductions", "source_checks"}
+
+    GROSS is every item sold, at the price it was rung, before any discount
+    or comp: the POS's sale lines plus the value of comped items. It never
+    includes tax, tips or gratuities, service fees, non-sale lines (gift
+    cards, deposits, pay-ins), refunds or voided lines.
+
+    NET is GROSS minus exactly the figures named in NET_DEDUCTIONS — today
+    discounts and comps. Tax, voids and refunds are reported beside it and
+    never subtracted: a voided line was never a sale, tax is not the
+    restaurant's money, and a refund is its own event, not a negative sale
+    of tonight's. On RPOWER this net equals fetch_business_days' figure (the
+    same lines through the same sales-type rules), so the DSR and every
+    other surface agree.
+
+    `guests` is None when the POS does not track covers; `comps` is None
+    where the POS rings comps as discounts (Toast). by_department, by_hour
+    and items are netted by the same rule. `source_checks` carries the POS's
+    own totals beside ours, for verifying field semantics on a first live
+    night.
+
+    Raises POSCapabilityError when there is no POS or it cannot report a day
+    this way (never an empty result, which would read as a night with no
+    sales), POSAuthError when the POS rejected the credentials, and lets
+    anything else the provider raised through as a transient failure the
+    caller may retry.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_day_sales", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} does not report a day's sales detail through Cavnar yet")
+    try:
+        raw = fn(restaurant_id, business_date)
+    except NotImplementedError as e:
+        # Connected, but unable to answer for THIS restaurant (Toast demo
+        # mode) — a capability gap, not a failure.
+        raise POSCapabilityError(str(e) or f"{name} cannot report this day")
+    except Exception as e:
+        if _auth_failure(e):
+            raise POSAuthError(str(e)) from e
+        raise
+    return _net_day(raw), name
+
+
+def _net_day(raw):
+    """A provider's parts, netted by NET_DEDUCTIONS in one place."""
+    total = {k: raw.get(k) for k in ("gross", "discounts", "comps")}
+    items = [{"name": it.get("name"), "department": it.get("department"),
+              "qty": round(float(it.get("qty") or 0), 3), "net": net_of(it.get("parts"))}
+             for it in raw.get("items") or []]
+    return {
+        "gross": _money(raw.get("gross") or 0.0),
+        "net": net_of(total),
+        "transactions": int(raw.get("transactions") or 0),
+        "guests": int(raw["guests"]) if raw.get("guests") else None,
+        "discounts": _money(raw.get("discounts")),
+        "comps": _money(raw.get("comps")),
+        "voids": _money(raw.get("voids")),
+        "refunds": _money(raw.get("refunds")),
+        "tax": _money(raw.get("tax")),
+        "by_department": {k: net_of(v) for k, v in (raw.get("by_department") or {}).items()},
+        "by_hour": {k: net_of(v) for k, v in sorted((raw.get("by_hour") or {}).items())},
+        "items": items,
+        "net_deductions": list(NET_DEDUCTIONS),
+        "source_checks": raw.get("source_checks") or {},
+    }
+
+
+def fetch_day_closed(restaurant_id, business_date):
+    """Whether the POS itself has closed `business_date` (RPOWER's closeday
+    record). Returns (closed, provider_name).
+
+    Raises POSCapabilityError where the POS keeps no such record — the DSR
+    pipeline then treats the day as closed a grace period after the
+    restaurant's close time — and lets a transient failure propagate, so
+    "couldn't ask" is never read as either answer."""
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_day_closed", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} keeps no close-day record Cavnar can read")
+    return bool(fn(restaurant_id, business_date)), name
