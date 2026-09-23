@@ -895,14 +895,37 @@ def ensure_columns(db_path: str = DB_PATH):
         # eight live questions on a request thread (MOD-INT-5).
         ("ai_visibility_runs", "payload_json", "TEXT"),
     ]
-    for table, col, col_type in columns_to_add:
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-            conn.commit()
-            print(f"Added column {table}.{col}")
-        except Exception:
-            pass  # Column already exists
-    conn.close()
+    try:
+        for table, col, col_type in columns_to_add:
+            # "no such table" too: a table an init_* helper creates later in
+            # boot is migrated when ensure_columns runs again after it.
+            if _apply_migration(conn, f"ALTER TABLE {table} ADD COLUMN {col} {col_type}",
+                                also_tolerate=("no such table",)):
+                conn.commit()
+                print(f"Added column {table}.{col}")
+    finally:
+        conn.close()
+
+
+# The only failures a boot migration may treat as "already applied". Every
+# migration used to be `try/except: pass`, so "database is locked" (an
+# overlapped container, worker.py, a `railway ssh sqlite3` session) was read
+# as "column exists", init_db returned normally and the app served on a
+# drifted schema (DATA-11). Anything else now raises and fails the boot.
+_MIGRATION_ALREADY_APPLIED = ("duplicate column name", "already exists")
+
+
+def _apply_migration(conn, sql, also_tolerate=()):
+    """Run one boot migration. True if it applied, False if it was already
+    applied; any other failure raises."""
+    try:
+        conn.execute(sql)
+        return True
+    except sqlite3.OperationalError as e:
+        msg = str(e).lower()
+        if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
+            return False
+        raise
 
 def _reviews_unique_is_global(conn) -> bool:
     """True while `reviews` still carries the old UNIQUE(platform, external_id)."""
@@ -2349,12 +2372,15 @@ def init_db(db_path: str = DB_PATH):
         # After the CREATE, so a fresh database gets the column too.
         "ALTER TABLE forecast_log ADD COLUMN signed_error_pct REAL",
     ]
-    for m in migrations:
-        try:
-            conn.execute(m)
-        except Exception:
-            pass  # column already exists
-    conn.commit()
+    try:
+        for m in migrations:
+            # "no such table": a few of these touch a table an init_* helper
+            # creates later in boot (users, on a fresh file).
+            _apply_migration(conn, m, also_tolerate=("no such table",))
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
     _migrate_reviews_unique(conn)
     _ensure_place_id_uniqueness(conn)
     # Chats existed before conversations did — fold any pre-conversation
@@ -2365,8 +2391,11 @@ def init_db(db_path: str = DB_PATH):
     except Exception as e:
         print(f"ask_cavnar legacy adoption skipped: {e}")
     conn.close()
-    # Ensure any columns managed by ensure_columns() are present before seeding
-    ensure_columns()
+    # Ensure any columns managed by ensure_columns() are present before seeding.
+    # On THIS database: a bare ensure_columns() migrated the default
+    # DB_PATH as well, so the restore drill's init_db(scratch) ran a
+    # migration on production (DATA-44).
+    ensure_columns(db_path)
     # The tables that grew their own init_* helper after day one. Creating
     # them here means a request path never has to: a CREATE TABLE IF NOT
     # EXISTS on every read took SQLite's write lock for nothing.

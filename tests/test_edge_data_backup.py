@@ -162,8 +162,6 @@ def test_the_offsite_copy_is_streamed_not_read_whole(tmp_path, monkeypatch):
 
 # ── the restore drill's reach (DATA-44) ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-44: the drill's init_db(scratch) calls ensure_columns() with no "
-                                       "argument, so it migrates the live database the drill promises not to touch")
 def test_the_restore_drill_migrates_only_the_scratch_copy(tmp_path, monkeypatch, _scratch):
     import inspect
     default = inspect.signature(models.ensure_columns).parameters["db_path"].default

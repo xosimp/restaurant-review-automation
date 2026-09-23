@@ -835,6 +835,10 @@ try:
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")
+    # Fail the boot. Carrying on served every request on a half-migrated
+    # schema and let a refused restore (above) promote as healthy; a failed
+    # deploy instead leaves the previous container serving (DATA-11).
+    raise
 
 # ── Admin account seed (module-level so it runs under Gunicorn too) ──────────
 try:

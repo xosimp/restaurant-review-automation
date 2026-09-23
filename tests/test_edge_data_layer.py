@@ -109,8 +109,6 @@ def _columns(path, table):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-11: every boot migration swallows any exception, so 'database is "
-                                       "locked' is treated as 'column exists' and init_db returns on a drifted schema")
 def test_a_locked_database_fails_the_boot_migration_loudly(tmp_path, monkeypatch):
     path = str(tmp_path / "boot.db")
     models.init_db(path)
@@ -139,8 +137,6 @@ def test_a_locked_database_fails_the_boot_migration_loudly(tmp_path, monkeypatch
     assert raised or migrated, "init_db returned normally and the app would serve on the drifted schema"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-11: hosted_dashboard wraps every init_* in one try/except that prints "
-                                       "'DB init error' and carries on, so a failed boot is promoted as healthy")
 def test_a_failed_boot_init_stops_the_process():
     src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
     at = src.index('print(f"DB init error: {_e}")')
@@ -162,8 +158,6 @@ def _default_db_path():
     return inspect.signature(models.ensure_columns).parameters["db_path"].default
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-44: init_db(db_path) calls ensure_columns() with no argument, so it "
-                                       "migrates the default ./reviews.db as well as the database it was given")
 def test_init_db_touches_only_the_database_it_was_given(tmp_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", _REAL_GET_CONN)   # the redirect would hide where it writes
     default = _default_db_path()

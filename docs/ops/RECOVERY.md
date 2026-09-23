@@ -44,7 +44,12 @@ Railway outage or a crashed process.
    not affected by a rollback.
 3. If the process is crash-looping, read the deploy logs. `hosted_dashboard`
    runs `init_db()` and `ensure_columns()` at boot; a migration that raises
-   will loop.
+   will loop. Since DATA-11 that includes "database is locked" and any
+   other failure of the boot init chain (logged as `DB init error:`): the
+   process exits rather than serving on a half-migrated schema. A lock is
+   usually another process holding the file — an overlapped container,
+   `worker.py`, or an open `railway ssh sqlite3` session; close it and
+   redeploy.
 
 **What keeps working:** nothing. This is a full outage.
 **Data loss:** none — the volume survives.
