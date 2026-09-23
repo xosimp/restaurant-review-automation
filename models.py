@@ -1213,6 +1213,19 @@ def init_db(db_path: str = DB_PATH):
         # Every DocuSign envelope a restaurant has been sent. Re-sending a
         # contract replaced docusign_envelope_id, so a client who then signed
         # the FIRST email's envelope matched nothing (MOD-BIL-6).
+        # Answers to paid, retryable requests (invoice and recipe scans),
+        # keyed by the client's Idempotency-Key: a retry after a timeout is
+        # answered from the first result instead of a second model call
+        # (CLIENT-21). Kept 7 days.
+        """CREATE TABLE IF NOT EXISTS idempotent_responses (
+            restaurant_id INTEGER NOT NULL,
+            route         TEXT    NOT NULL,
+            idem_key      TEXT    NOT NULL,
+            status        INTEGER,
+            payload_json  TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, route, idem_key)
+        )""",
         """CREATE TABLE IF NOT EXISTS docusign_envelopes (
             envelope_id   TEXT PRIMARY KEY,
             restaurant_id INTEGER NOT NULL,

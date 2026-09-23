@@ -1721,6 +1721,71 @@ def _do_morning_brief_settings(u):
 
 # ── registration: every body on both blueprints ───────────────────────────────
 
+def _idempotent(body, route):
+    """Answer a repeated request (same restaurant, route and Idempotency-Key)
+    from the first one's result. The key is derived from the uploaded file
+    on iOS, so tapping Scan again after a timeout no longer pays for a
+    second model read of the same invoice (CLIENT-21). A request still in
+    flight is answered 409 rather than started twice; a failure (5xx) is
+    not remembered, so a real retry runs."""
+    import json as _json
+
+    def wrapped(u, **kw):
+        key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
+        if not key:
+            return body(u, **kw)
+        rid = _rid(u)
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM idempotent_responses WHERE created_at < datetime('now','-7 days')")
+            row = conn.execute("SELECT status, payload_json, created_at >= datetime('now','-10 minutes') AS fresh "
+                               "FROM idempotent_responses WHERE restaurant_id=? AND route=? AND idem_key=?",
+                               (rid, route, key)).fetchone()
+            if row and row["payload_json"] is not None:
+                conn.commit()
+                return _json.loads(row["payload_json"]), int(row["status"] or 200)
+            if row and row["fresh"]:
+                conn.commit()
+                return {"ok": False, "in_progress": True,
+                        "error": "That scan is still being read — check back in a moment."}, 409
+            conn.execute("INSERT OR REPLACE INTO idempotent_responses (restaurant_id, route, idem_key) VALUES (?,?,?)",
+                         (rid, route, key))
+            conn.commit()
+        finally:
+            conn.close()
+        try:
+            payload, status = body(u, **kw)
+        except BaseException:
+            _forget(rid, route, key)
+            raise
+        if status >= 500:
+            _forget(rid, route, key)
+        else:
+            conn = get_conn()
+            try:
+                conn.execute("UPDATE idempotent_responses SET status=?, payload_json=? "
+                             "WHERE restaurant_id=? AND route=? AND idem_key=?",
+                             (status, _json.dumps(payload, default=str), rid, route, key))
+                conn.commit()
+            finally:
+                conn.close()
+        return payload, status
+    wrapped.__name__ = body.__name__
+    return wrapped
+
+
+def _forget(rid, route, key):
+    from models import get_conn
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM idempotent_responses WHERE restaurant_id=? AND route=? AND idem_key=?",
+                     (rid, route, key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
     ("/issues", ["GET"], _do_issues_list, "issues_list"),
@@ -1740,7 +1805,7 @@ _ROUTES = [
     ("/food-cost/dish-scorecard", ["GET"], _do_dish_scorecard, "dish_scorecard"),
     ("/food-cost/reprice", ["GET"], _do_reprice, "reprice"),
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),
-    ("/food-cost/invoices", ["POST"], _do_invoice_scan, "invoice_scan"),
+    ("/food-cost/invoices", ["POST"], _idempotent(_do_invoice_scan, "invoice_scan"), "invoice_scan"),
     ("/food-cost/invoices/<int:import_id>", ["GET"], _do_invoice_get, "invoice_get"),
     ("/food-cost/invoices/<int:import_id>/apply", ["POST"], _do_invoice_apply, "invoice_apply"),
     ("/actions", ["GET"], _do_actions, "actions_list"),
@@ -1799,7 +1864,7 @@ _ROUTES = [
     ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
     ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),
     ("/labor/reservations/sync", ["POST"], _do_reservation_sync, "reservation_sync"),
-    ("/food-cost/recipes/scan", ["POST"], _do_recipe_scan, "recipe_scan"),
+    ("/food-cost/recipes/scan", ["POST"], _idempotent(_do_recipe_scan, "recipe_scan"), "recipe_scan"),
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),

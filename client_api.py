@@ -3573,6 +3573,12 @@ def review_request_stats(current_user):
 @client_bp.route("/api/gbp-debug")
 @login_required
 def gbp_debug(current_user):
+    # Raw Google Business Profile API bodies (account ids, location names):
+    # Cavnar staff only. Any logged-in login, a teammate included, could read
+    # them (SEC audit "debug endpoints"). Candidate for removal after
+    # verifying nothing else calls it.
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Not found"), 404
     import requests as _req
     from gmb import get_valid_token, get_gmb_account_id
     from models import get_restaurant

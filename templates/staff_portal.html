@@ -161,7 +161,7 @@
       <div class="pinmsg" id="pinmsg"></div>
     </div>
     <footer>
-      <a class="cbtn cbtn-secondary" href="/staff/logout">Sign out</a>
+      <form method="post" action="/staff/logout" style="display:inline"><button type="submit" class="cbtn cbtn-secondary">Sign out</button></form>
     </footer>
   </section>
 </div>
@@ -658,7 +658,10 @@
       if (!d.ok) { msg.textContent = d.error || 'Could not change your PIN.'; return; }
       msg.style.color = 'var(--green)';
       msg.textContent = 'PIN changed. Signing you back in…';
-      setTimeout(function(){ window.location = '/staff/logout'; }, 1400);
+      setTimeout(function(){
+        fetch('/staff/logout', {method: 'POST'}).then(function(){ window.location = '/staff/'; })
+          .catch(function(){ window.location = '/staff/'; });
+      }, 1400);
     }).catch(function(){ msg.textContent = 'Could not change your PIN.'; });
   };
 })();

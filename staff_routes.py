@@ -339,6 +339,19 @@ def signup_claim():
 
 @staff_bp.route("/logout", methods=["POST", "GET"])
 def portal_logout():
+    """A GET only asks. It used to sign out, so any page could end a shift
+    session on the pass tablet with an <img src=/staff/logout> — the same
+    hole /logout had (SEC-34). The staff cookie is SameSite=Lax, so the POST
+    is only ever authenticated from the portal's own form."""
+    if request.method != "POST":
+        if not request.cookies.get("staff_session"):
+            return redirect(url_for("staff.portal_entry"))
+        return ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>Sign out</title><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,"
+                "sans-serif;max-width:420px;margin:15vh auto;padding:24px;text-align:center\"><h2>Sign out?</h2>"
+                "<form method='post' action='/staff/logout'><button type='submit' class='cbtn cbtn-primary' "
+                "style='padding:12px 22px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:16px'>"
+                "Sign out</button></form><p><a href='/staff/home'>Back to my shifts</a></p></div>")
     token = request.cookies.get("staff_session")
     if token:
         try:

@@ -431,3 +431,26 @@ def csrf_statuses():
 @pytest.mark.parametrize("path", [p for p, _ in _AUTH_JSON_POSTS])
 def test_every_session_json_post_under_auth_requires_the_csrf_header(csrf_statuses, path):
     assert csrf_statuses[path] == 403
+
+
+def test_the_gbp_debug_route_is_admin_only(db_path):
+    rid, owner, mgr = _setup(db_path)
+    assert _web(db_path, mgr).get("/api/gbp-debug").status_code == 404
+    assert _web(db_path, owner).get("/api/gbp-debug").status_code == 404
+
+
+def test_staff_sign_out_asks_on_get_and_acts_on_post(db_path):
+    import staff_routes
+    app = _app()
+    app.register_blueprint(staff_routes.staff_bp)
+    c = app.test_client()
+    rid = create_restaurant(Restaurant(name="S", owner_email="s@x.test"), db_path=db_path)
+    uid = create_user(rid, "emp.s", "emp.s@staff.invalid", "x" * 24, db_path=db_path)
+    upsert_membership(uid, rid, "employee", employee_name="Emp", db_path=db_path)
+    tok = auth.create_staff_session(uid, rid, db_path=db_path)
+    c.set_cookie("staff_session", tok)
+    page = c.get("/staff/logout")
+    assert page.status_code == 200 and "Sign out?" in page.get_data(as_text=True)
+    assert get_session_user(tok, db_path=db_path) is not None
+    assert c.post("/staff/logout").status_code == 302
+    assert get_session_user(tok, db_path=db_path) is None

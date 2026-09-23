@@ -252,13 +252,16 @@ struct StaffSignupView: View {
                 .font(.cavnarHeadline(25))
                 .foregroundStyle(Color.cavnarInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text("4 digits. You'll use this here and on the restaurant's tablet — don't share it.")
+            Text("4 to 8 digits. You'll use this here and on the restaurant's tablet — don't share it.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 12) {
-                ForEach(0..<4, id: \.self) { index in
+                // At least four dots, one more for each digit past four: the
+                // pad used to submit at the fourth digit, so a 5-8 digit PIN
+                // the server accepts could never be chosen here (CLIENT-3).
+                ForEach(0..<max(4, pin.count), id: \.self) { index in
                     Circle()
                         .fill(index < pin.count ? Color.cavnarEmber : Color.cavnarPaper3)
                         .frame(width: 14, height: 14)
@@ -277,11 +280,20 @@ struct StaffSignupView: View {
                 onDigit: { digit in
                     guard pin.count < 8, !loading else { return }
                     pin.append(digit)
-                    if pin.count == 4 { Task { await claim() } }
+                    if pin.count == 8 { Task { await claim() } }
                 },
                 onDelete: { if !pin.isEmpty { pin.removeLast() } },
                 onClear: { pin = ""; error = nil }
             )
+
+            Button {
+                Task { await claim() }
+            } label: {
+                Text("Use this PIN")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle())
+            .disabled(pin.count < 4 || loading)
         }
     }
 
