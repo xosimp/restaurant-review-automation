@@ -168,7 +168,6 @@ def _evt(eid, etype, obj, created):
     return {"id": eid, "type": etype, "created": created, "data": {"object": obj}}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-1: a delayed invoice.paid re-activates a cancelled customer")
 def test_a_delayed_invoice_paid_does_not_reactivate_a_cancelled_customer(db_path, hook):
     """A10 #13 / MOD-BIL-1 — Stripe does not guarantee order; an invoice
     created before the cancellation arrives after it."""
@@ -180,7 +179,6 @@ def test_a_delayed_invoice_paid_does_not_reactivate_a_cancelled_customer(db_path
     assert _status(db_path, rid) == "churned"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-1: a stale subscription.updated(active) re-activates a cancelled customer and restores all modules")
 def test_a_stale_subscription_update_does_not_reactivate_a_cancelled_customer(db_path, hook):
     """A10 #14 / MOD-BIL-1."""
     rid = _restaurant(db_path, billing_status="active", stripe_customer_id="cus_1", module_reviews=1)
@@ -191,7 +189,6 @@ def test_a_stale_subscription_update_does_not_reactivate_a_cancelled_customer(db
     assert _status(db_path, rid) == "churned"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-2: any refund, even a $5 partial credit, pauses every location billed to the customer")
 def test_a_small_partial_refund_does_not_lock_a_paying_customer_out(db_path, hook):
     """A10 #15 / MOD-BIL-2 — a $5 goodwill credit on a $750 charge."""
     a = _restaurant(db_path, name="Group A", billing_status="active", stripe_customer_id="cus_1",
@@ -209,7 +206,6 @@ def test_a_chargeback_pauses_the_account(db_path, hook):
     assert _status(db_path, rid) == "paused"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-2: a later invoice.payment_failed silently lifts a chargeback pause to past_due")
 def test_a_failed_payment_does_not_lift_a_chargeback_pause(db_path, hook):
     """A10 #16 / MOD-BIL-2 — past_due is an allowed state; a disputing
     customer must not regain access because their card then failed."""
@@ -291,7 +287,6 @@ def _count(db_path, sql, *args):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-9: a failed user insert during provisioning leaves an orphan restaurant")
 def test_provisioning_that_fails_to_create_the_login_leaves_no_restaurant_behind(db_path, monkeypatch):
     """A10 #26 / MOD-BIL-9."""
     monkeypatch.setattr(emails, "send_welcome_email", lambda **k: None)
@@ -305,7 +300,6 @@ def test_provisioning_that_fails_to_create_the_login_leaves_no_restaurant_behind
     assert _count(db_path, "SELECT COUNT(*) FROM restaurants") == before
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-9: two concurrent deliveries of one checkout both pass the email check and orphan a restaurant")
 def test_a_checkout_replayed_concurrently_provisions_one_restaurant(db_path, monkeypatch):
     """A10 #26 / MOD-BIL-9 — the second delivery arrives between the first
     one's email check and its user insert."""
@@ -330,7 +324,6 @@ def test_a_checkout_replayed_concurrently_provisions_one_restaurant(db_path, mon
     assert _count(db_path, "SELECT COUNT(*) FROM restaurants WHERE owner_email='new@owner.test'") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-9: an owner who already has a login is never provisioned a second location from checkout")
 def test_an_existing_owner_buying_a_second_location_gets_it_provisioned(db_path, monkeypatch):
     """A10 #27 / MOD-BIL-9."""
     monkeypatch.setattr(emails, "send_welcome_email", lambda **k: None)

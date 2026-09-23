@@ -338,10 +338,57 @@ def stripe_webhook():
         return jsonify(error="processing failed; will retry"), 500
 
 
+_BILLING_STATE_EVENTS = {
+    "customer.subscription.updated", "customer.subscription.deleted", "invoice.paid",
+    "invoice.payment_failed", "charge.refunded", "charge.dispute.created",
+}
+
+
+def _event_restaurant(event):
+    obj = (event.get("data") or {}).get("object") or {}
+    rid = _restaurant_from_metadata(obj.get("metadata") or {})
+    if rid:
+        return rid
+    email = (obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
+             or (obj.get("billing_details") or {}).get("email") or obj.get("receipt_email") or "")
+    return _restaurant_for_stripe(obj.get("customer", "") or "", email)
+
+
+def _stale_billing_event(event) -> bool:
+    """True when a newer event has already been applied to this restaurant's
+    billing state; otherwise records this one as the newest. An event with
+    no timestamp or no restaurant is never called stale."""
+    created = event.get("created")
+    if event.get("type") not in _BILLING_STATE_EVENTS or not created:
+        return False
+    rid = _event_restaurant(event)
+    if not rid:
+        return False
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT last_event_created FROM stripe_billing_clock WHERE restaurant_id=?",
+                           (rid,)).fetchone()
+        if row and int(created) < int(row["last_event_created"]):
+            return True
+        conn.execute("INSERT INTO stripe_billing_clock (restaurant_id, last_event_created, last_event_id) "
+                     "VALUES (?,?,?) ON CONFLICT(restaurant_id) DO UPDATE SET "
+                     "last_event_created=excluded.last_event_created, last_event_id=excluded.last_event_id, "
+                     "updated_at=datetime('now')", (rid, int(created), event.get("id")))
+        conn.commit()
+        return False
+    finally:
+        conn.close()
+
+
 def _stripe_dispatch(event):
     """Everything a verified, first-time Stripe event does. Raises on any
     state write that fails, so stripe_webhook can release the claim and
     answer 5xx; email failures are the only ones swallowed."""
+    if _stale_billing_event(event):
+        # Older than what this restaurant's billing state already reflects:
+        # recorded, not applied (MOD-BIL-1).
+        print(f"Stripe {event.get('type')} {event.get('id')} is older than the last applied event — ignored")
+        return jsonify(ok=True, stale=True)
 
     def send_alert(subject, body):
         """Send alert email to Will."""
@@ -508,7 +555,12 @@ def _stripe_dispatch(event):
         disputed    = event["type"] == "charge.dispute.created"
         amount      = (obj.get("amount_refunded") or obj.get("amount") or 0) / 100
         rid = _restaurant_for_stripe(customer_id, email)
-        acted = _set_billing_status(rid, "paused", event["type"]) if rid else False
+        # A chargeback, or a charge refunded in full, pauses access. A partial
+        # refund — a $5 goodwill credit on a $750 charge — paused every
+        # location billed to the customer (MOD-BIL-2); it now only tells Will.
+        full_refund = bool(obj.get("refunded")) or (
+            (obj.get("amount_refunded") or 0) >= (obj.get("amount") or 0) > 0)
+        acted = _set_billing_status(rid, "paused", event["type"]) if rid and (disputed or full_refund) else False
         send_alert(
             ("⛔ Chargeback opened — " if disputed else "↩ Refund issued — ") + (email or customer_id),
             f"""{'A customer has disputed a charge.' if disputed else 'A charge was refunded.'}<br><br>
@@ -519,8 +571,9 @@ def _stripe_dispatch(event):
                 f"paused for restaurant {rid} and every location billed with it. "
                 "Reactivate in admin if this was expected."
                 if acted else
-                "NOT changed — no restaurant matched. Handle this by hand at "
-                "<a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>.")
+                ("left on — a partial refund does not pause the account." if rid else
+                 "NOT changed — no restaurant matched. Handle this by hand at "
+                 "<a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>."))
         )
 
     elif event["type"] == "invoice.payment_action_required":
@@ -555,7 +608,12 @@ def _stripe_dispatch(event):
         # churned with no step in between, invisible to you and to them.
         _failed_rid = _restaurant_for_stripe(inv.get("customer", "") or "", email)
         if _failed_rid:
-            _set_billing_status(_failed_rid, "past_due", "invoice.payment_failed")
+            # past_due is an allowed state; a restaurant paused for a
+            # chargeback must not get access back because its card then
+            # failed (MOD-BIL-2).
+            _cur_bs = (getattr(get_restaurant(_failed_rid), "billing_status", "") or "").lower()
+            if _cur_bs not in ("paused", "churned", "cancelled", "canceled"):
+                _set_billing_status(_failed_rid, "past_due", "invoice.payment_failed")
 
         send_alert(
             f"⚠ Payment failed — {email}",

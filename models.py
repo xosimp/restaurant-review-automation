@@ -1203,6 +1203,16 @@ def init_db(db_path: str = DB_PATH):
             event_type TEXT,
             seen_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        # The newest Stripe event applied to each restaurant's billing state.
+        # Stripe does not deliver in order; an older event arriving later
+        # (an invoice.paid created before the cancellation) must not undo a
+        # newer one (MOD-BIL-1).
+        """CREATE TABLE IF NOT EXISTS stripe_billing_clock (
+            restaurant_id      INTEGER PRIMARY KEY,
+            last_event_created INTEGER NOT NULL,
+            last_event_id      TEXT,
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         """CREATE TABLE IF NOT EXISTS docusign_events_seen (
             event_key   TEXT PRIMARY KEY,
             envelope_id TEXT,
