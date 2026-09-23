@@ -197,9 +197,16 @@ struct MarketingAttribution: Decodable {
         let reviewsMentioning: Int?
         let guestListDelta: Int?
         let engagementRate: Double?
+        /// "lifted" | "dropped" | "no_clear_change" — the lift judged against
+        /// how much the same weekday moves on its own (`noiseBandPct`, ±%).
+        /// The screen colours and words the result from this, never from
+        /// the sign of liftPct. Optional: older servers omit both.
+        let verdict: String?
+        let noiseBandPct: Double?
 
         enum CodingKeys: String, CodingKey {
-            case topic, platform, occasion
+            case topic, platform, occasion, verdict
+            case noiseBandPct = "noise_band_pct"
             case postedAt = "posted_at"
             case windowSales = "window_sales"
             case baselineSales = "baseline_sales"
@@ -214,6 +221,20 @@ struct MarketingAttribution: Decodable {
         }
 
         var id: String { (topic ?? "") + (postedAt ?? "") }
+
+        enum LiftVerdict: Equatable { case lifted, dropped, noClearChange }
+
+        /// The server's verdict; an older payload without one falls back to
+        /// the sign of the lift (the old behaviour), and an unknown word to
+        /// "no clear change" — never a colour the server didn't give.
+        var liftVerdict: LiftVerdict {
+            switch verdict {
+            case "lifted": return .lifted
+            case "dropped": return .dropped
+            case .some: return .noClearChange
+            case .none: return liftPct >= 0 ? .lifted : .dropped
+            }
+        }
 
         /// "Margherita · game day", or nil when nothing was inferred.
         var aboutLabel: String? {

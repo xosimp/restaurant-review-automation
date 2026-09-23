@@ -927,12 +927,8 @@ def _do_mobile_home(current_user):
             }
         elif key == "marketing":
             try:
-                conn = get_conn()
-                this_month = conn.execute(
-                    "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
-                    (rid,)
-                ).fetchone()[0] or 0
-                conn.close()
+                from marketing import pieces_this_month
+                this_month = pieces_this_month(rid)
             except Exception:
                 this_month = 0
             kpi = {"value": str(this_month), "sublabel": "pieces this month"}
@@ -1824,10 +1820,15 @@ def mobile_food_cost_cfo(current_user):
     rid = current_user["restaurant_id"]
     try:
         brief = _fci.executive_brief(rid)
+        # The diagnosis's recommended action is a recommendation like any
+        # other (audit #21): keyed, logged as shown, and answerable.
+        _dg = _fci.get_diagnosis(rid, include_stale=True)
+        _dg = (_capi.present_diagnoses(rid, [_dg], "diag_food", "food", "food",
+                                       user_id=current_user.get("id")) or [None])[0] if _dg else None
         return jsonify(
             ok=True,
             brief=brief,
-            diagnosis=_fci.get_diagnosis(rid, include_stale=True),
+            diagnosis=_dg,
             drivers=_fci.cost_drivers(rid),
             profitability=brief.get("profitability"),
             claim_kinds={
@@ -1850,10 +1851,44 @@ def mobile_set_menu_item_price(current_user):
         item_id = int(data.get("menu_item_id"))
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Which menu item?"), 400
-    if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
+    rid = current_user["restaurant_id"]
+    # The suggestion is read BEFORE the write: once the price moves, the
+    # suggestion it followed is recomputed against the new price.
+    import menu_intelligence as _mi
+    _sug = _mi.suggestion_for(rid, menu_item_id=item_id)
+    _old = _sug.get("sell_price") if _sug else None
+    if not _il.set_menu_item_price(rid, item_id, data.get("sell_price")):
         return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
-    _capi.track_reprice(current_user["restaurant_id"], current_user.get("id"))
+    # The outcome tracker starts only when this price follows a reprice
+    # suggestion (a rise on a dish that had one). It started on ANY price set
+    # — a dish's first price, a clear to nothing — and measured food cost
+    # "after a reprice" that never happened.
+    if _mi.record_price_change(rid, item_id, _old, data.get("sell_price"), user_id=current_user.get("id"),
+                               source="manual", suggestion=_sug):
+        _capi.track_reprice(rid, current_user.get("id"))
     return jsonify(ok=True)
+
+
+@mobile_bp.route("/food-cost/reprice/apply", methods=["POST"])
+@mobile_login_required
+def mobile_reprice_apply(current_user):
+    """One tap on a reprice suggestion: {dish, price?} — price defaults to
+    the suggested one. Records suggested vs chosen, answers the
+    recommendation ("reprice:<dish>") and starts the outcome tracker. The
+    web twin is client_api.reprice_apply; Home's cards call the same."""
+    # Gated like every /food-cost route by auth._MODULE_PREFIXES.
+    import menu_intelligence as _mi
+    data = request.get_json(silent=True) or {}
+    try:
+        mid = int(data["menu_item_id"]) if data.get("menu_item_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        mid = None
+    payload, status = _mi.apply_reprice(current_user["restaurant_id"], dish=data.get("dish"),
+                                        price=data.get("price"), menu_item_id=mid,
+                                        user_id=current_user.get("id"))
+    if status == 200:
+        _capi.track_reprice(current_user["restaurant_id"], current_user.get("id"))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/food-cost/order-draft")
@@ -1948,23 +1983,18 @@ def mobile_food_cost_analytics(current_user):
             price_watch = build_price_watch(compute_item_trends(rid, items))
         except Exception:
             price_watch = []
-        _fp = _capi._analysis_fingerprint(analysis)
-        cached = _capi._cache_get("mobile-inv-insight:%s:%s" % (rid, _fp))
-        if cached:
-            insight = cached
-        else:
-            insight = get_claude_insights(
-                analysis, owner_name=restaurant.owner_name if restaurant else None,
-                restaurant_name=restaurant.name if restaurant else None,
-                restaurant_id=rid, items=items, is_live=is_live,
-            )
-            _capi._cache_set("mobile-inv-insight:%s:%s" % (rid, _fp), insight)
+        # One read for web and phone (audit #22): the same cache key and
+        # stored read the web route uses.
+        insight = _capi.food_insight_text(rid, restaurant, items, is_live, analysis)
+        _recs = (_capi.insight_rec_items(rid, insight, "insight_food", "food", "food",
+                                         user_id=current_user.get("id"),
+                                         promote="UNVERIFIED:" not in insight) if is_live else [])
         return jsonify(
             ok=True,
             insight=insight,
             # Example data must never read as the owner's own numbers.
             is_live=bool(is_live),
-            **_insight_json(insight),
+            **_insight_json(insight, _recs),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
             # The lists above are truncated for display (waste_items[:6],
@@ -2387,12 +2417,28 @@ def mobile_labor_gap(current_user):
                        current_pct=0, target_pct=30), 500
 
 
-def _insight_json(insight_text):
+def _insight_json(insight_text, rec_items=None):
     """Structured {intro, recommendations, forecast} fields for a raw AI
     insight string — the same parsing client_api.format_insight_html() uses
     to build the web's HTML, just handed back as JSON so the iOS app can
-    render its own native equivalent instead of a plain text blob."""
+    render its own native equivalent instead of a plain text blob.
+
+    rec_items (client_api.insight_rec_items): a line the owner already
+    answered is left out, and `insight_rec_keys` runs alongside
+    `insight_recommendations` — the rec_ledger key for each line, or null
+    where it carries no controls — for Done / Not for us / Track."""
     intro, recs, forecast, unverified = _capi.parse_insight_sections(insight_text)
+    keys = [None] * len(recs)
+    if rec_items:
+        by_index = {it["index"]: it for it in rec_items}
+        kept, keys = [], []
+        for i, r in enumerate(recs):
+            it = by_index.get(i)
+            if it and it.get("answered"):
+                continue
+            kept.append(r)
+            keys.append(it["key"] if it and it.get("controls") else None)
+        recs = kept
     # What KIND of claim each part is. A measured fact, the model's read of
     # it, a guess about next week and a suggestion all rendered as the same
     # prose in the same weight, so a reader had no way to tell "your 30-day
@@ -2404,6 +2450,7 @@ def _insight_json(insight_text):
         "insight_recommendations": recs,
         "insight_forecast": forecast,
         "insight_unverified": unverified,
+        "insight_rec_keys": keys,
         "claim_kinds": {
             "insight_intro": "inferred",
             "insight_recommendations": "suggestion",
@@ -2640,11 +2687,9 @@ def _do_mobile_marketing_stats(restaurant_id):
             "SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
             (restaurant_id,)
         ).fetchone()[0] or 0
-        this_month = conn.execute(
-            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
-            (restaurant_id,)
-        ).fetchone()[0] or 0
         conn.close()
+        from marketing import pieces_this_month
+        this_month = pieces_this_month(restaurant_id)
         return {"generated": generated, "published": published, "this_month": this_month}
     except Exception:
         return {"generated": 0, "published": 0, "this_month": 0}
@@ -2882,6 +2927,47 @@ def mobile_guest_campaign_draft(current_user):
         import ops
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+
+
+@mobile_bp.route("/guest-winback")
+@mobile_login_required
+def mobile_guest_winback(current_user):
+    """The drafted win-back campaign waiting for the owner, if a lapsed
+    segment is big enough (audit #47). Never sends anything."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    import guest_marketing as _gm
+    r = get_restaurant(rid)
+    return jsonify(ok=True, **_gm.winback_suggestion(rid, restaurant_name=r.name if r else None,
+                                                     user_id=current_user.get("id")))
+
+
+@mobile_bp.route("/guest-winback/<int:draft_id>/send", methods=["POST"])
+@mobile_login_required
+def mobile_guest_winback_send(current_user, draft_id):
+    """The owner's send of the win-back draft {message?} — consent, quiet
+    hours, the frequency cap and the length limit all apply (start_campaign)."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
+        return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
+    import guest_marketing as _gm
+    data = request.get_json(silent=True) or {}
+    out = _gm.send_winback(rid, draft_id, message=data.get("message"), user_id=current_user.get("id"))
+    return jsonify(**out), (202 if out.get("queued") else (200 if out.get("ok") else 400))
+
+
+@mobile_bp.route("/guest-winback/<int:draft_id>/dismiss", methods=["POST"])
+@mobile_login_required
+def mobile_guest_winback_dismiss(current_user, draft_id):
+    rid = current_user["restaurant_id"]
+    import guest_marketing as _gm
+    data = request.get_json(silent=True) or {}
+    out = _gm.dismiss_winback(rid, draft_id, user_id=current_user.get("id"), kind=data.get("kind") or "not_for_us")
+    return jsonify(**out), (200 if out.get("ok") else 404)
 
 
 @mobile_bp.route("/guest-campaign/send", methods=["POST"])
@@ -3257,7 +3343,8 @@ def mobile_marketing_preview(current_user):
 @mobile_login_required
 def mobile_marketing_insight(current_user):
     payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
-    extra = _insight_json(payload.get("insight", "")) if payload.get("insight") and status == 200 else {}
+    _items = payload.pop("rec_items", None)
+    extra = _insight_json(payload.get("insight", ""), _items) if payload.get("insight") and status == 200 else {}
     # ok tracks the status: a paused or failed brief is not a successful one.
     return jsonify(ok=(status == 200), **payload, **extra), status
 
@@ -3356,6 +3443,19 @@ def _market_rating(competitors: list) -> dict:
             "market_rating_n": len(rated)}
 
 
+def _intel_recs_fields(restaurant_id):
+    try:
+        rp = _capi.intel_recs_payload(restaurant_id)
+    except Exception as e:
+        print(f"[intel recs] {e}")
+        return {"recommendations": [], "recommendation_items": []}
+    return {"recommendations": [r["text"] for r in rp["recs"]],
+            "recommendation_items": rp["recs"],
+            "recommendations_withheld": rp["withheld_recommendations"],
+            "recommendations_unverified": rp["unverified"],
+            "nothing_to_act_on": rp["nothing_to_act_on"]}
+
+
 def _do_mobile_intel(restaurant_id):
     """Read-only for the narrative + competitor list; refreshing is its own
     async job (see mobile_refresh_competitors below), the same job-id/poll
@@ -3421,7 +3521,10 @@ def _do_mobile_intel(restaurant_id):
             "restaurant_name": restaurant.name,
             "owner_name": restaurant.owner_name,
             "intro": parsed.get("intro"),
-            "recommendations": extract_recs(insight),
+            # The one parser's lines, less any the owner already answered;
+            # `recommendation_items` carries each line's rec_ledger key and
+            # the competitor reviews it cites (audit #21 / #31).
+            **_intel_recs_fields(restaurant_id),
             "sections": [{"name": name, "bullets": bullets} for name, bullets in parsed.get("sections", [])],
             "competitors": [
                 {

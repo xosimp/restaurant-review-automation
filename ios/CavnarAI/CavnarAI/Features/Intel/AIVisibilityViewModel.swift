@@ -130,7 +130,8 @@ struct AIVisibilityResult: Decodable {
         }
         return nil
     }
-    // Marketing pieces logged in the trailing 30 days — not a GBP field,
+    // Posts PUBLISHED in the trailing 30 days (drafts no longer count) —
+    // not a GBP field,
     // so it rides along outside gbp_score/checklist as its own count. Powers
     // the roadmap's "Post consistently on social" auto-done detection.
     let socialPosts30d: Int?

@@ -372,18 +372,46 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
         conn.close()
     if not row:
         return {"ok": False, "error": "That draft is gone or already answered."}
-    use = lines if isinstance(lines, list) and lines else json.loads(row["lines_json"] or "[]")
-    written = skipped = 0
+    drafted = json.loads(row["lines_json"] or "[]")
+    use = lines if isinstance(lines, list) and lines else drafted
+    # Suggested vs chosen (audit #41) and provenance (audit #35): a line the
+    # owner accepted exactly as drafted is 'draft_accepted' — the model's
+    # quantity, unreviewed; one they changed or added is 'draft_edited'.
+    by_ing = {}
+    for d in drafted:
+        try:
+            by_ing[int(d.get("ingredient_id"))] = float(d.get("qty"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    written = skipped = edited = 0
+    accepted_lines = []
     for ln in use:
         try:
-            rid_ = inventory_ledger.add_recipe_ingredient(restaurant_id, int(row["menu_item_id"]),
-                                                          int(ln["ingredient_id"]), float(ln["qty"]))
+            ing_id, qty = int(ln["ingredient_id"]), float(ln["qty"])
         except (KeyError, TypeError, ValueError):
-            rid_ = 0
+            skipped += 1
+            continue
+        same = ing_id in by_ing and abs(by_ing[ing_id] - qty) < 1e-9
+        rid_ = inventory_ledger.add_recipe_ingredient(restaurant_id, int(row["menu_item_id"]), ing_id, qty,
+                                                      source="draft_accepted" if same else "draft_edited")
         if rid_:
             written += 1
+            edited += 0 if same else 1
+            accepted_lines.append({"ingredient_id": ing_id, "qty": qty, "edited": not same})
         else:
             skipped += 1
+    # Lines the draft had that the owner removed are edits too.
+    kept = {a["ingredient_id"] for a in accepted_lines}
+    edited += sum(1 for i in by_ing if i not in kept)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE recipe_drafts SET accepted_lines_json=?, edited_lines=? WHERE id=? AND restaurant_id=?",
+                     (json.dumps(accepted_lines), edited, draft_id, restaurant_id))
+        conn.commit()
+    except Exception as e:
+        print(f"[recipes] accepted lines not recorded: {e}")
+    finally:
+        conn.close()
     if not written:
         # Nothing could be bound: the claim becomes the answer it really is.
         conn = get_conn(db_path)
@@ -393,7 +421,7 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
             conn.commit()
         finally:
             conn.close()
-    return {"ok": written > 0, "written": written, "skipped": skipped,
+    return {"ok": written > 0, "written": written, "skipped": skipped, "edited": edited,
             "error": None if written else "None of those lines could be written."}
 
 

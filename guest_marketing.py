@@ -93,6 +93,25 @@ CREATE TABLE IF NOT EXISTS guest_newsletter_recipients (
     UNIQUE(newsletter_id, contact_id)
 );
 CREATE INDEX IF NOT EXISTS idx_gnr_status ON guest_newsletter_recipients(newsletter_id, status);
+-- A campaign Cavnar drafted for the owner to approve (audit #47: win-back).
+-- Nothing in this table is ever sent without the owner's send; `message`
+-- is what was drafted, `sent_message` what the owner actually sent.
+CREATE TABLE IF NOT EXISTS guest_campaign_drafts (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL,
+    kind           TEXT    NOT NULL DEFAULT 'winback',
+    segment        TEXT    NOT NULL,
+    segment_size   INTEGER NOT NULL DEFAULT 0,
+    message        TEXT    NOT NULL,
+    rec_key        TEXT,
+    status         TEXT    NOT NULL DEFAULT 'pending',
+    sent_message   TEXT,
+    campaign_total INTEGER,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    answered_at    TEXT,
+    answered_by    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_guest_campaign_drafts_rid ON guest_campaign_drafts(restaurant_id, status);
 """
 
 
@@ -1022,15 +1041,17 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
                 "summary": f"{len(pool)} campaigns measured by {basis}; none stood apart.",
                 "alternative_cause": None, "what_would_confirm": None,
                 "operational_evidence": [{"module": "marketing", "metric": f"{basis} per 100 sent", "value": f"{rate(best):.1f}"}]}
+    # Owner-facing dates read M/D/YY (audit #16); these were created_at[:10].
+    from time_utils import mdy as _mdy
     evidence = [{"module": "marketing", "metric": f"best campaign — {basis} per 100 sent",
-                 "value": f"{rate(best):.1f} ({best.get('segment_label') or 'everyone'}, {str(best.get('created_at') or '')[:10]})"},
+                 "value": f"{rate(best):.1f} ({best.get('segment_label') or 'everyone'}, {_mdy(best.get('created_at'))})"},
                 {"module": "marketing", "metric": f"weakest campaign — {basis} per 100 sent",
-                 "value": f"{rate(worst):.1f} ({worst.get('segment_label') or 'everyone'}, {str(worst.get('created_at') or '')[:10]})"}]
+                 "value": f"{rate(worst):.1f} ({worst.get('segment_label') or 'everyone'}, {_mdy(worst.get('created_at'))})"}]
     seg_diff = (best.get("segment") or "all") != (worst.get("segment") or "all")
     cause = (f"The {best.get('segment_label') or 'everyone'} segment answered at {rate(best):.1f} {basis} per 100 texts "
              f"against {rate(worst):.1f} for {worst.get('segment_label') or 'everyone'}." if seg_diff else
-             f"The message sent {str(best.get('created_at') or '')[:10]} drew {rate(best):.1f} {basis} per 100 texts; "
-             f"the one on {str(worst.get('created_at') or '')[:10]} drew {rate(worst):.1f} to the same audience.")
+             f"The message sent {_mdy(best.get('created_at'))} drew {rate(best):.1f} {basis} per 100 texts; "
+             f"the one on {_mdy(worst.get('created_at'))} drew {rate(worst):.1f} to the same audience.")
     alt = ("The day and hour it went out, not the audience — a Thursday-afternoon text and a Monday-morning one reach "
            "the same people in different moods." if seg_diff else
            "The audience had simply been texted more recently the second time; the frequency cap holds three days, not three weeks.")
@@ -1041,6 +1062,198 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
             "operational_evidence": evidence, "confidence": conf,
             "summary": f"{len(pool)} campaigns measured by {basis}."
                        + ("" if basis == "came back" else " Toast check-ins have not been matched yet, so taps stand in.")}
+
+
+# ── Win-back (audit #47) ────────────────────────────────────────────────────
+#
+# lapsed_30 / lapsed_60 existed as audiences and nothing ever suggested using
+# them: the guests drifting away were countable and nobody was told. Now,
+# when a lapsed segment is big enough to be worth a text, Marketing carries
+# a DRAFTED win-back campaign — the segment, its size, the measured return
+# of past win-back texts if there is one — waiting for the owner. It is
+# never sent automatically: the owner's send goes through start_campaign,
+# which applies consent, quiet hours, the three-day cap and the length
+# limits like any other campaign.
+
+WINBACK_MIN_GUESTS = 5          # below this a text is a personal call, not a campaign
+WINBACK_SEGMENTS = ("lapsed_60", "lapsed_30")   # the more lapsed audience first
+
+
+def winback_key(segment):
+    import rec_ledger
+    return rec_ledger.rec_key("winback", segment)
+
+
+def _winback_message(restaurant_name):
+    """Deterministic copy — no model on a page load. The owner edits it, or
+    asks for an AI rewrite with the composer's own win-back draft. No offer,
+    no discount: nobody has agreed to one."""
+    name = (restaurant_name or "us").strip()
+    msg = (f"Hi from {name}! It's been a little while and we'd love to have you back. "
+           f"Come see us this week — your table's waiting.")
+    return msg[:CAMPAIGN_MAX_CHARS]
+
+
+def winback_return(restaurant_id, db_path=DB_PATH) -> dict:
+    """What past win-back texts did, measured — or that nothing has been.
+    A campaign to a lapsed segment with attribution run counts; its return
+    is guests who came back within ATTRIBUTION_WINDOW_DAYS per 100 texted."""
+    from time_utils import mdy as _mdy
+    past = [c for c in campaign_history(restaurant_id, limit=50, db_path=db_path)
+            if (c.get("segment") or "") in WINBACK_SEGMENTS and (c.get("sent_count") or 0) > 0]
+    measured = [c for c in past if c.get("visits_matched") is not None]
+    if not measured:
+        return {"measured": False, "campaigns": len(past),
+                "text": ("No past win-back text has a measured return yet."
+                         if not past else f"{len(past)} past win-back text{'s' if len(past) != 1 else ''}, "
+                                          "none measured yet — returns are matched against Toast check-ins.")}
+    sent = sum(int(c["sent_count"]) for c in measured)
+    back = sum(int(c.get("visits_matched") or 0) for c in measured)
+    last = measured[0]
+    return {"measured": True, "campaigns": len(measured), "sent": sent, "came_back": back,
+            "per_100": round(back / sent * 100, 1) if sent else None,
+            "text": (f"Past win-back texts: {back} of {sent} guests came back within "
+                     f"{ATTRIBUTION_WINDOW_DAYS} days ({round(back / sent * 100, 1) if sent else 0} per 100); "
+                     f"the last went out {_mdy(last.get('created_at'))}.")}
+
+
+def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing", user_id=None,
+                       db_path=DB_PATH) -> dict:
+    """The pending win-back draft for Marketing, creating one when a lapsed
+    segment clears WINBACK_MIN_GUESTS and the owner has not answered that
+    segment's recommendation. {"available", "draft"?, "reason"?}."""
+    import insight_store
+    silenced = set()
+    try:
+        import rec_ledger
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    except Exception:
+        pass
+    conn = get_conn(db_path)
+    try:
+        pending = conn.execute("SELECT * FROM guest_campaign_drafts WHERE restaurant_id=? AND kind='winback' "
+                               "AND status='pending' ORDER BY id DESC", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    draft = None
+    for row in pending:
+        if row["rec_key"] in silenced:
+            _answer_winback(restaurant_id, row["id"], "dismissed", user_id, db_path=db_path)
+            continue
+        draft = dict(row)
+        break
+    if draft is None:
+        seg, size = None, 0
+        for s_ in WINBACK_SEGMENTS:
+            n = audience_size(restaurant_id, s_, db_path=db_path)
+            if n >= WINBACK_MIN_GUESTS and winback_key(s_) not in silenced:
+                seg, size = s_, n
+                break
+        if not seg:
+            return {"available": False,
+                    "reason": f"no lapsed segment has {WINBACK_MIN_GUESTS}+ opted-in guests who can be texted"}
+        if not restaurant_name:
+            try:
+                from models import get_restaurant
+                _r = get_restaurant(restaurant_id)
+                restaurant_name = _r.name if _r else None
+            except Exception:
+                restaurant_name = None
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, "
+                               "message, rec_key) VALUES (?,?,?,?,?,?)",
+                               (restaurant_id, "winback", seg, size, _winback_message(restaurant_name),
+                                winback_key(seg)))
+            conn.commit()
+            draft = dict(conn.execute("SELECT * FROM guest_campaign_drafts WHERE id=?", (cur.lastrowid,)).fetchone())
+        finally:
+            conn.close()
+    # The size moves as guests visit or join; show today's.
+    draft["segment_size"] = audience_size(restaurant_id, draft["segment"], db_path=db_path)
+    draft["segment_label"] = SEGMENTS.get(draft["segment"], {}).get("label")
+    draft["return"] = winback_return(restaurant_id, db_path=db_path)
+    draft["max_chars"] = CAMPAIGN_MAX_CHARS
+    draft["sms_window"] = guest_sms_window_label()
+    insight_store.present_recs(restaurant_id, "marketing", surface,
+                               [{"key": draft["rec_key"], "text": f"Win back {draft['segment_size']} guests "
+                                                                 f"({draft['segment_label']})",
+                                 "model_written": False, "evidence_sources": ["marketing", "guests"],
+                                 "expected_metric": None}], user_id=user_id, db_path=db_path)
+    return {"available": True, "draft": draft}
+
+
+def _answer_winback(restaurant_id, draft_id, status, user_id=None, sent_message=None, total=None, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE guest_campaign_drafts SET status=?, answered_at=datetime('now'), answered_by=?, "
+                         "sent_message=COALESCE(?, sent_message), campaign_total=COALESCE(?, campaign_total) "
+                         "WHERE id=? AND restaurant_id=? AND status='pending'",
+                         (status, user_id, sent_message, total, draft_id, restaurant_id)).rowcount
+        conn.commit()
+        return bool(n)
+    finally:
+        conn.close()
+
+
+def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB_PATH) -> dict:
+    """The owner's send of a win-back draft — through start_campaign, so
+    consent, quiet hours, the frequency cap and MAX_CAMPAIGN_CHARS all
+    apply. The draft is answered only once the campaign is accepted."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM guest_campaign_drafts WHERE id=? AND restaurant_id=?",
+                           (draft_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "That draft is gone."}
+    if row["status"] != "pending":
+        return {"ok": False, "error": "That draft was already answered."}
+    text = (message or row["message"] or "").strip()
+    if not text:
+        return {"ok": False, "error": "The message is empty."}
+    if len(text) > CAMPAIGN_MAX_CHARS:
+        return {"ok": False, "error": f"That message is {len(text)} characters. A guest text can carry "
+                                      f"{CAMPAIGN_MAX_CHARS} — shorten it and send again."}
+    from ai_guard import check_public_reply
+    refusal = check_public_reply(text)
+    if refusal:
+        return {"ok": False, "error": f"Not sent: {refusal}."}
+    result = start_campaign(restaurant_id, text, segment=row["segment"], db_path=db_path)
+    if not result.get("ok"):
+        return result
+    _answer_winback(restaurant_id, draft_id, "sent", user_id, sent_message=text, total=result.get("total"),
+                    db_path=db_path)
+    try:
+        import rec_ledger
+        rec_ledger.record(restaurant_id, row["rec_key"], "accepted", surface="marketing", user_id=user_id,
+                          meta={"module": "marketing", "segment": row["segment"],
+                                "edited": text != row["message"], "total": result.get("total")},
+                          db_path=db_path)
+    except Exception:
+        pass
+    return dict(result, draft_id=draft_id)
+
+
+def dismiss_winback(restaurant_id, draft_id, user_id=None, kind="not_for_us", db_path=DB_PATH) -> dict:
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT rec_key FROM guest_campaign_drafts WHERE id=? AND restaurant_id=?",
+                           (draft_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "That draft is gone."}
+    _answer_winback(restaurant_id, draft_id, "dismissed", user_id, db_path=db_path)
+    try:
+        import rec_ledger
+        rec_ledger.record(restaurant_id, row["rec_key"], "dismissed", surface="marketing", user_id=user_id,
+                          meta={"kind": kind if kind in ("hide", "not_for_us") else "not_for_us",
+                                "module": "marketing"}, db_path=db_path)
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 ATTRIBUTION_WINDOW_DAYS = 14

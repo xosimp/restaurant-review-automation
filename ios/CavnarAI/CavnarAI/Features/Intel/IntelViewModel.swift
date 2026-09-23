@@ -75,6 +75,16 @@ struct IntelSummary: Decodable {
     let ownerName: String?
     let intro: String?
     let recommendations: [String]
+    /// The same lines as `recommendations`, each with its rec_ledger key and
+    /// the competitor reviews it rests on. Answered lines are already gone
+    /// from both. Optional: an older server sends only the strings.
+    let recommendationItems: [IntelRecommendation]?
+    /// How many recommendations were held back because the read carried an
+    /// unverified figure or business, and what it was.
+    let recommendationsWithheld: Int?
+    let recommendationsUnverified: String?
+    /// True when the read said there is nothing worth acting on.
+    let nothingToActOn: Bool?
     let sections: [IntelSection]
     let competitors: [Competitor]
     let updatedAt: String?
@@ -124,6 +134,10 @@ struct IntelSummary: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case ok, intro, recommendations, sections, competitors
+        case recommendationItems = "recommendation_items"
+        case recommendationsWithheld = "recommendations_withheld"
+        case recommendationsUnverified = "recommendations_unverified"
+        case nothingToActOn = "nothing_to_act_on"
         case hasData = "has_data"
         case restaurantName = "restaurant_name"
         case ownerName = "owner_name"
@@ -138,6 +152,67 @@ struct IntelSummary: Decodable {
         case stale
         case ageDays = "age_days"
         case asOf = "as_of"
+    }
+
+    /// What the recommendations block renders: the keyed items when the
+    /// server sent them, otherwise the plain strings with no controls.
+    var displayRecommendations: [IntelRecommendation] {
+        if let items = recommendationItems { return items }
+        return recommendations.map { IntelRecommendation(key: nil, text: $0, cites: nil) }
+    }
+
+    /// The sentence for an empty recommendations list, or nil when the list
+    /// isn't empty or there's nothing to explain.
+    var emptyRecommendationsNote: String? {
+        guard displayRecommendations.isEmpty else { return nil }
+        if let n = recommendationsWithheld, n > 0 {
+            let why = (recommendationsUnverified?.isEmpty == false) ? recommendationsUnverified! : "couldn\u{2019}t be verified"
+            return "\(n) recommendation\(n == 1 ? "" : "s") held back: this read \(why)."
+        }
+        if nothingToActOn == true { return "Nothing worth acting on this week." }
+        return nil
+    }
+}
+
+/// One competitive recommendation and the competitor reviews it cites.
+struct IntelRecommendation: Decodable, Identifiable, Equatable {
+    /// Nil only for a line built from an older server's plain string.
+    let key: String?
+    let text: String
+    let cites: [Cite]?
+
+    var id: String { key ?? text }
+
+    /// A competitor review the recommendation rests on (its R-number ref,
+    /// whose it is, the stars, Google's relative time and the text).
+    struct Cite: Decodable, Identifiable, Equatable {
+        let ref: String?
+        let competitor: String?
+        let rating: Double?
+        let time: String?
+        let text: String?
+        var id: String { (ref ?? "") + (competitor ?? "") + (text ?? "") }
+
+        enum CodingKeys: String, CodingKey { case ref, competitor, rating, time, text }
+
+        /// Field by field and forgiving: a cite is supporting detail, and
+        /// one odd value must not fail the whole Intel payload.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ref = try? c.decodeIfPresent(String.self, forKey: .ref)
+            competitor = try? c.decodeIfPresent(String.self, forKey: .competitor)
+            rating = try? c.decodeIfPresent(Double.self, forKey: .rating)
+            time = try? c.decodeIfPresent(String.self, forKey: .time)
+            text = try? c.decodeIfPresent(String.self, forKey: .text)
+        }
+
+        init(ref: String?, competitor: String?, rating: Double?, time: String?, text: String?) {
+            self.ref = ref
+            self.competitor = competitor
+            self.rating = rating
+            self.time = time
+            self.text = text
+        }
     }
 }
 

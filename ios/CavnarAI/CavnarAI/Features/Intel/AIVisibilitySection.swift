@@ -523,10 +523,10 @@ struct AIVisibilitySection: View {
         let reviewsDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("google review") && $0.done }
         let responseDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("response rate") && $0.done }
         let gbpDone = (result.gbpScore ?? 0) >= 80
-        // marketing_content_log only proves content was drafted through
-        // this app, not confirmed-posted to a platform — an imperfect
-        // signal, but a real, live one. 8+ in the trailing 30 days roughly
-        // matches this card's own "2–3x per week" claim.
+        // social_posts_30d counts PUBLISHED posts only — it used to count
+        // pieces drafted through this app, which said "posting consistently"
+        // about posts that never went out. 8+ in the trailing 30 days
+        // roughly matches this card's own "2–3x per week" claim.
         let socialDone = (result.socialPosts30d ?? 0) >= 8
 
         let cards: [RoadmapCard] = [
@@ -668,14 +668,14 @@ struct AIVisibilitySection: View {
 
     private func socialDetail(_ result: AIVisibilityResult, done: Bool) -> String {
         let posts = result.socialPosts30d ?? 0
-        if done { return "\(posts) posts this month — great pace" }
-        if posts == 0 { return "No marketing pieces logged this month yet" }
-        return "\(posts) post\(posts == 1 ? "" : "s") this month — aim for 8+"
+        if done { return "\(posts) posts published this month — great pace" }
+        if posts == 0 { return "No posts published this month yet" }
+        return "\(posts) post\(posts == 1 ? "" : "s") published this month — aim for 8+"
     }
 
     private func socialWhy(_ result: AIVisibilityResult) -> String {
         let posts = result.socialPosts30d ?? 0
-        return "You've logged \(posts) marketing piece\(posts == 1 ? "" : "s") this month. Posts that name your restaurant, neighbourhood and cuisine give search engines more text about you to index."
+        return "You've published \(posts) post\(posts == 1 ? "" : "s") this month. Posts that name your restaurant, neighbourhood and cuisine give search engines more text about you to index."
     }
 
     /// Was a fully bordered/backgrounded box per card, each with its own

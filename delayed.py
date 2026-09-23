@@ -293,8 +293,11 @@ def _run_order_send(restaurant_id, payload, db_path):
         out = {"ok": False, "error": "Nothing left to order."}
         _tell_owner_order_not_sent(restaurant_id, payload, out["error"], db_path)
         return out
+    # An order the trusted-supplier rule queued is 'automatic'; one the
+    # owner sent through their own undo window is theirs (ordering.supplier_trust).
     sent, failed = _send_supplier_orders(restaurant_id, get_restaurant(restaurant_id), groups, AUTOMATION_ACTOR,
-                                         resend=bool(payload.get("resend")))
+                                         resend=bool(payload.get("resend")),
+                                         source="automatic" if payload.get("automatic") else "owner")
     if not sent:
         _tell_owner_order_not_sent(restaurant_id, payload,
                                    (failed[0].get("error") if failed else None) or "It could not be sent.", db_path)

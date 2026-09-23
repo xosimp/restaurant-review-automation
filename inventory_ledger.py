@@ -954,7 +954,7 @@ def priority_ingredients(restaurant_id: int) -> list:
 
 
 def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: int,
-                          qty_per_unit: float) -> int:
+                          qty_per_unit: float, source: str = None) -> int:
     """Bind an ingredient to a dish. Both sides must belong to
     `restaurant_id`.
 
@@ -983,10 +983,15 @@ def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: 
         # plate cost — is refused the same way an unowned pair is, rather
         # than surfacing as a 500.
         import sqlite3 as _sqlite3
+        # `source` is the line's provenance (audit #35): 'owner' when a
+        # person typed or imported it, 'draft_accepted' / 'draft_edited' when
+        # it came from a Cavnar recipe draft. A plate cost resting on an
+        # unedited draft is not a confirmed plate cost.
         try:
             cur = conn.execute(
-                "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
-                (menu_item_id, ingredient_id, qty_per_unit)
+                "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit, source) "
+                "VALUES (?,?,?,?)",
+                (menu_item_id, ingredient_id, qty_per_unit, source or "owner")
             )
         except _sqlite3.IntegrityError:
             return 0
@@ -1012,8 +1017,9 @@ def set_recipe_ingredient_qty(restaurant_id: int, menu_item_id: int, ingredient_
             return False
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             return False
+        # A person correcting the quantity has reviewed the line.
         cur = conn.execute(
-            "UPDATE recipe_ingredients SET qty_per_unit=? WHERE menu_item_id=? AND ingredient_id=?",
+            "UPDATE recipe_ingredients SET qty_per_unit=?, source='owner' WHERE menu_item_id=? AND ingredient_id=?",
             (qty_per_unit, menu_item_id, ingredient_id))
         conn.commit()
         return cur.rowcount > 0

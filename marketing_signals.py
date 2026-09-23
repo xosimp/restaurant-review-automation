@@ -34,6 +34,38 @@ BASELINE_WEEKS = 4
 # Fewer than this many comparable days and the number is noise wearing a
 # percentage sign, so nothing is reported at all.
 MIN_BASELINE_DAYS = 2
+# The narrowest a post's noise band can be. A lift inside the band is "no
+# clear change": the same weekday moves this much on its own. Any lift at
+# or above zero used to read as a good result (audit), so +1% on a weekday
+# that swings 15% week to week was a win.
+MIN_NOISE_BAND_PCT = 5.0
+
+
+def noise_band_pct(baseline_values) -> float:
+    """How much the same weekday moves on its own, as a percentage of its
+    mean: the spread (population standard deviation) of the baseline days,
+    floored at MIN_NOISE_BAND_PCT. With two baseline days the spread is
+    itself a rough figure, which is why the floor exists."""
+    vals = [float(v) for v in baseline_values or []]
+    if len(vals) < 2:
+        return MIN_NOISE_BAND_PCT
+    mean = sum(vals) / len(vals)
+    if mean <= 0:
+        return MIN_NOISE_BAND_PCT
+    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    return round(max(MIN_NOISE_BAND_PCT, (var ** 0.5) / mean * 100), 1)
+
+
+def lift_verdict(lift_pct, band_pct) -> str:
+    """'lifted' | 'dropped' | 'no_clear_change' — never 'good' for a lift
+    inside the weekday's own noise."""
+    if lift_pct is None:
+        return "no_clear_change"
+    if lift_pct > band_pct:
+        return "lifted"
+    if lift_pct < -band_pct:
+        return "dropped"
+    return "no_clear_change"
 
 
 # ── POS sales ──────────────────────────────────────────────────────────────
@@ -144,11 +176,15 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
         return {"ok": False, "reason": "not_enough_history"}
 
     lift = round((window_avg - baseline_avg) / baseline_avg * 100, 1)
+    band = noise_band_pct(baseline_values)
     result = {
         "ok": True, "id": row["id"], "topic": row["topic"], "platform": row["post_platform"],
         "posted_at": row["at"], "window_hours": ATTRIBUTION_WINDOW_HOURS,
         "window_sales": round(window_avg, 2), "baseline_sales": round(baseline_avg, 2),
         "lift_pct": lift, "baseline_days": len(baseline_values),
+        # Clients colour and word the result from `verdict`, not from the
+        # sign of lift_pct: inside the band is "no clear change".
+        "noise_band_pct": band, "verdict": lift_verdict(lift, band),
     }
     # Two posts whose windows share a day are measured against the same
     # sales: one busy Friday cannot be credited in full to both of them.
@@ -293,7 +329,7 @@ def attribution_summary(restaurant_id, limit=5, db_path: str = DB_PATH) -> dict:
         "ok": True,
         "posts": scored[:limit],
         # What did not land is as much of the picture as what did.
-        "weakest": [p for p in reversed(scored) if p["lift_pct"] < 0][:3],
+        "weakest": [p for p in reversed(scored) if p.get("verdict") == "dropped"][:3],
         "measured": len(scored),
         "median_lift_pct": round(sorted(lifts)[len(lifts) // 2], 1),
         "by_kind": _group_lift(scored, "post_kind"),

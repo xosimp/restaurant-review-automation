@@ -340,9 +340,22 @@ def test_a_supplier_earns_trust_from_the_owners_own_orders(db_path):
     assert t["trusted"] and t["orders"] == 3 and t["median_total"] == 420
 
 
+def _counted(db_path, rid, days_ago=0, name="Romaine"):
+    """An ingredient with a count `days_ago` days old — an automatic order
+    waits for a count from the last week (ordering.COUNT_FRESH_DAYS)."""
+    from datetime import date, timedelta
+    conn = get_conn(db_path)
+    cur = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost, is_active, last_recount_at) "
+                       "VALUES (?,?,?,?,1,?)", (rid, name, "case", 20.0,
+                                                (date.today() - timedelta(days=days_ago)).isoformat()))
+    conn.commit(); conn.close()
+    return cur.lastrowid
+
+
 def test_an_order_goes_only_inside_the_band_and_outside_the_cadence(db_path):
     import ordering
     rid = _rid(db_path, module_inventory=1)
+    _counted(db_path, rid)
     for t, d in ((400, 30), (450, 20), (420, 12)):
         _po(db_path, rid, "s@x.com", t, days_ago=d)
     ok, why = ordering.order_can_go(rid, {"supplier_email": "s@x.com", "total_cost": 430}, db_path=db_path)
@@ -359,13 +372,16 @@ def test_an_order_goes_only_inside_the_band_and_outside_the_cadence(db_path):
 def test_trusted_orders_are_queued_with_the_undo_window_not_sent(db_path, monkeypatch):
     import ordering, delayed, inventory
     rid = _rid(db_path, module_inventory=1)
+    _counted(db_path, rid)
     for t, d in ((400, 30), (450, 20), (420, 12)):
         _po(db_path, rid, "s@x.com", t, days_ago=d)
     monkeypatch.setattr(inventory, "build_supplier_orders", lambda r: {"draft_hash": "h1", "groups": [
         {"supplier_email": "s@x.com", "supplier_name": "Fresh Co", "total_cost": 430, "items": [1, 2, 3]},
         {"supplier_email": "new@x.com", "supplier_name": "Newco", "total_cost": 100, "items": [1]}]})
     rows = ordering.queue_trusted_orders(rid, db_path=db_path)
-    assert len(rows) == 1 and rows[0]["payload"] == {"supplier_email": "s@x.com", "draft_hash": "h1"}
+    # `automatic` marks the PO it becomes, so it never counts toward trust.
+    assert len(rows) == 1 and rows[0]["payload"] == {"supplier_email": "s@x.com", "draft_hash": "h1",
+                                                     "automatic": True}
     assert rows[0]["label"] == "Sending the Fresh Co order ($430, 3 items)"
     assert ordering.queue_trusted_orders(rid, db_path=db_path) == []          # one pending per supplier
     conn = get_conn(db_path); n = conn.execute("SELECT COUNT(*) FROM purchase_orders").fetchone()[0]; conn.close()
@@ -664,7 +680,7 @@ def test_recipe_drafts_use_only_the_restaurants_own_ingredients(db_path, monkeyp
     assert drafts[0]["menu_item_name"] == "Margherita" and [l["name"] for l in drafts[0]["lines"]] == ["Mozzarella", "Dough"]
     assert recipes.missing_recipes(rid, db_path=db_path) == []                       # pending draft, not re-drafted
     written = []
-    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q: written.append((m, i, q)) or 1)
+    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q, **k: written.append((m, i, q)) or 1)
     res = recipes.accept(rid, drafts[0]["id"], db_path=db_path)
     assert res["ok"] and written == [(10, 1, 0.25), (10, 3, 1.0)]
     assert recipes.list_drafts(rid, db_path=db_path) == [] and recipes.list_drafts(rid, status="accepted", db_path=db_path)
@@ -677,7 +693,7 @@ def test_recipe_csv_import_names_unknown_ingredients_instead_of_inventing_them(d
     monkeypatch.setattr(inventory_ledger, "list_menu_items_with_recipes", lambda r: [])
     created, written = [], []
     monkeypatch.setattr(inventory_ledger, "create_menu_item", lambda r, name: created.append(name) or 77)
-    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q: written.append((m, i, q)) or 1)
+    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q, **k: written.append((m, i, q)) or 1)
     out = recipes.import_csv(rid, "menu_item,ingredient,qty\nMargherita,mozzarella,0.25\nMargherita,Basil,0.01\n", db_path=db_path)
     assert out["ok"] and out["written"] == 1 and out["skipped"] == 1 and out["unknown_ingredients"] == ["Basil"]
     assert created == ["Margherita"] and written == [(77, 1, 0.25)]

@@ -123,41 +123,118 @@ def redact_secrets(text: str) -> str:
 # ── commitments a reply must not make on the restaurant's behalf ───────────
 #
 # A public reply is published under the owner's name. The 1-star prompt in
-# drafter.py asks the model to "explain what will be done differently",
-# which is an instruction to state an action — and nothing this system
-# holds can confirm any action was taken. A reply claiming staff were
-# retrained, a supplier was changed or a policy was updated is a statement
-# of fact the restaurant never made, posted publicly and permanently.
+# drafter.py used to ask the model to "explain what will be done
+# differently", which is an instruction to state an action — and nothing
+# this system holds can confirm any action was taken. A reply claiming staff
+# were retrained, a supplier was changed, a comp is on the house or a server
+# was spoken to is a statement of fact the restaurant never made, posted
+# publicly and permanently.
 #
-# These are phrased as completed or in-flight actions specifically. An
-# apology, an invitation back, or an offer to talk are all fine and are
-# deliberately not listed.
+# The audit (#14) found only "We have retrained" was caught: "I have spoken
+# with our kitchen team", "We will be retraining the line", "Going forward,
+# every order will be double-checked", "a complimentary dinner on us" and
+# "Our manager has spoken to the server" all passed. These now cover actions
+# taken, under way and promised, process promises, comps/credits/refunds and
+# named-staff discipline. An apology, an invitation back, or an offer to talk
+# are all fine and are deliberately not matched.
+# Who a claim is made by: the owner writing ("I", "we") or a named part of
+# the restaurant ("our kitchen team", "the manager", "our server").
+_WHO = (r"(?:i|we|our\s+(?:\w+\s+)?(?:team|staff|kitchen|management|manager|chef|owner|gm|"
+        r"server|waiter|waitress|bartender|host|hostess|cook|line|crew)|the\s+(?:manager|chef|owner|"
+        r"gm|kitchen|team|staff|management))")
+# The verb joins the subject with a space ("we have") or an apostrophe
+# ("we've", "I’ll") — the old pattern needed a space, so every contraction
+# walked past it.
+_HAVE = r"(?:\s+(?:have|has|had)|['’]ve)"
+_BE = r"(?:\s+(?:are|is|am)|['’](?:re|m|s))"
+_WILL = r"(?:\s+(?:will|are\s+going\s+to|am\s+going\s+to|is\s+going\s+to|plan\s+to|intend\s+to)|['’]ll|['’](?:re|m)\s+going\s+to)"
+_STAFF = (r"(?:server|waiter|waitress|bartender|host|hostess|cook|chef|manager|busser|runner|"
+          r"employee|staff member|team member|delivery driver|driver|cashier)")
+# A remedial verb — the things a reply claims were, are being, or will be done.
+_REMEDY_PAST = (r"(?:since\s+)?(?:already\s+)?(?:personally\s+)?(?:retrained|re-trained|replaced|fired|let\s+go|"
+                r"terminated|changed|updated|revised|corrected|fixed|addressed|resolved|implemented|introduced|"
+                r"installed|hired|disciplined|coached|written\s+up|spoken\s+(?:to|with)|talked\s+(?:to|with)|"
+                r"met\s+with|sat\s+down\s+with|made\s+(?:some\s+)?changes|taken\s+(?:steps|action|measures)|"
+                r"put\s+(?:new\s+)?\w*\s*(?:in\s+place)|adjusted|reworked|switched|reviewed\s+(?:our|the)\s+"
+                r"(?:process|procedure|policy|policies|recipe|training))")
+_REMEDY_ING = (r"(?:now\s+)?(?:retraining|re-training|replacing|changing|updating|revising|implementing|"
+               r"introducing|installing|hiring|reviewing\s+our|reworking|adjusting|addressing\s+this\s+with|"
+               r"speaking\s+(?:to|with)|talking\s+(?:to|with)|meeting\s+with|putting\s+\w*\s*in\s+place|"
+               r"working\s+with\s+(?:our|the)\s+(?:team|staff|kitchen))")
+_REMEDY_FUT = (r"(?:(?:be\s+)?(?:retrain|re-train|retraining|re-training|replac(?:e|ing)|chang(?:e|ing)|"
+               r"updat(?:e|ing)|revis(?:e|ing)|implement(?:ing)?|introduc(?:e|ing)|install(?:ing)?|hir(?:e|ing)|"
+               r"fix(?:ing)?|address(?:ing)?\s+(?:this|it)\s+with|review(?:ing)?\s+our|rework(?:ing)?|"
+               r"adjust(?:ing)?|double-check(?:ing)?|speak(?:ing)?\s+(?:to|with)|talk(?:ing)?\s+(?:to|with)|"
+               r"meet(?:ing)?\s+with|put(?:ting)?\s+\w*\s*in\s+place|coach(?:ing)?|train(?:ing)?)"
+               r"|(?:make\s+sure|ensure)\s+(?:this|that|it)\s+(?:never|doesn't|does\s+not|won't|will\s+not))")
+
 _COMMITMENT_RE = re.compile(
     r"\b("
-    r"(?:we|our (?:team|staff|kitchen|management))\s+(?:have|has|'ve|ve)\s+(?:since\s+)?"
-    r"(?:retrained|re-trained|replaced|fired|let go|terminated|changed|updated|revised|"
-    r"corrected|fixed|addressed|resolved|implemented|introduced|installed|hired|"
-    r"disciplined|spoken to|speaking to)"
-    r"|"
-    r"(?:we|our (?:team|staff|kitchen|management))\s+(?:are|'re|re)\s+(?:now\s+)?"
-    r"(?:retraining|re-training|replacing|changing|updating|revising|implementing|"
-    r"introducing|installing|hiring)"
-    r"|"
-    r"(?:new|different)\s+(?:supplier|vendor|chef|manager|policy|procedure|system)\s+"
-    r"(?:is|has been|was)\s+(?:now\s+)?(?:in place|introduced|hired|appointed)"
+    # An action taken: "we have retrained", "I have spoken with our kitchen
+    # team", "our manager has spoken to the server".
+    + _WHO + _HAVE + r"\s+" + _REMEDY_PAST
+    + r"|"
+    # An action under way: "we are retraining", "our chef is reworking".
+    + _WHO + _BE + r"\s+" + _REMEDY_ING
+    + r"|"
+    # A future action or process promise: "we will be retraining the line",
+    # "we'll make sure this never happens again".
+    + _WHO + _WILL + r"\s+(?:be\s+)?(?:personally\s+)?" + _REMEDY_FUT
+    + r"|"
+    # A process promise without a subject: "Going forward, every order will
+    # be double-checked", "From now on all plates will be".
+    r"(?:going|moving)\s+forward,?\s+[^.!?\n]{0,80}?\bwill\b"
+    r"|from\s+now\s+on,?\s+[^.!?\n]{0,80}?\bwill\b"
+    r"|(?:this|that|it)\s+will\s+(?:never|not)\s+happen\s+again"
+    r"|(?:every|each|all)\s+(?:order|plate|dish|meal|ticket|table|delivery)s?\s+will\s+(?:now\s+)?be\s+\w+"
+    + r"|"
+    # Named staff disciplined or spoken to: "the server has been spoken to",
+    # "your waiter was let go".
+    r"(?:the|our|your|that)\s+" + _STAFF + r"\s+(?:in\s+question\s+)?(?:has\s+been|have\s+been|was|were|is\s+being|"
+    r"will\s+be)\s+(?:spoken\s+to|talked\s+to|disciplined|let\s+go|fired|terminated|written\s+up|retrained|"
+    r"re-trained|coached|reprimanded|suspended|dealt\s+with)"
+    + r"|"
+    r"(?:new|different)\s+(?:supplier|vendor|chef|manager|policy|procedure|system|process)\s+"
+    r"(?:is|has been|was|will be)\s+(?:now\s+)?(?:in place|introduced|hired|appointed|put in place)"
     r"|this (?:has been|was) (?:reported|escalated) to"
+    # A comp, credit or refund: an offer of money or free food is a
+    # commitment the restaurant has to honour, and nobody offered it.
+    r"|complimentary\s+\w+"
+    r"|(?:dinner|lunch|brunch|meal|dessert|drinks?|round|appetizer|entr[eé]e|coffee|next\s+visit)\s+"
+    r"(?:is\s+|are\s+|will\s+be\s+)?on\s+(?:us|the\s+house)"
+    r"|on\s+the\s+house"
+    r"|free\s+(?:meal|dinner|lunch|brunch|dessert|drinks?|appetizer|entr[eé]e|round|visit)"
+    r"|(?:full\s+|partial\s+)?refund(?:ed)?"
+    r"|gift\s+(?:card|certificate)"
+    r"|(?:store\s+)?credit\s+(?:to|on|for)\s+your"
+    r"|voucher"
+    r"|\d{1,3}\s?%\s+off"
     r")\b",
     re.IGNORECASE,
 )
 
 
 def unsupported_commitments(draft: str) -> list:
-    """Phrases in a reply that assert an action the restaurant took.
+    """Phrases in a reply that commit the restaurant to something nobody
+    told Cavnar was true.
+
+    Four shapes (audit #14): an action taken ("I have spoken with our
+    kitchen team"), a future process promise ("we will be retraining the
+    line", "going forward, every order will be double-checked"), a comp or
+    credit ("a complimentary dinner on us"), and named-staff discipline
+    ("our manager has spoken to the server"). An apology, an invitation back
+    and an offer to talk are all fine and are deliberately not matched.
 
     Returns the matched phrases, empty when the reply makes no such claim.
-    Advisory: the owner can still post it, having been shown what it says.
+    Advisory: the owner can still post it, having been shown what it says;
+    the auto-approve rule never publishes a draft this flags.
     """
-    return [m.group(0).strip() for m in _COMMITMENT_RE.finditer(draft or "")]
+    out = []
+    for m in _COMMITMENT_RE.finditer(draft or ""):
+        phrase = m.group(0).strip()
+        if phrase and phrase not in out:
+            out.append(phrase)
+    return out
 
 
 # ── numbers the model states must exist in what the model was given ────────

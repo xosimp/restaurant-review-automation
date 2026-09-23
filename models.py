@@ -886,6 +886,30 @@ def ensure_columns(db_path: str = DB_PATH):
         # A draft that generated cleanly but states something unverifiable.
         ("reviews", "draft_needs_review", "INTEGER DEFAULT 0"),
         ("reviews", "draft_review_reason", "TEXT"),
+        # Suggested vs chosen (audit #41): the model's draft as it stood when
+        # the owner first edited it — kept, never overwritten by the edit.
+        ("reviews", "original_draft", "TEXT"),
+        # When a drafted reply was skipped: a skip is the owner declining the
+        # draft, so it counts against auto-approve trust (audit #15).
+        ("reviews", "skipped_at", "TEXT"),
+        # Recipe provenance (audit #35): 'owner' (typed or imported by a
+        # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
+        # 'draft_edited' (a draft line the owner changed before accepting).
+        # NULL on rows written before this existed = entered by a person.
+        ("recipe_ingredients", "source", "TEXT"),
+        # What the owner actually accepted from a recipe draft, beside the
+        # draft's own lines_json (audit #41: suggested vs chosen).
+        ("recipe_drafts", "accepted_lines_json", "TEXT"),
+        ("recipe_drafts", "edited_lines", "INTEGER"),
+        # Supplier orders (audit #41): who sent it ('owner' or 'automatic'),
+        # the draft it was built from, and whether the sent lines differ.
+        # Order trust counts only owner-sent, unedited orders.
+        ("purchase_orders", "source", "TEXT"),
+        ("purchase_orders", "draft_items_json", "TEXT"),
+        ("purchase_orders", "edited", "INTEGER DEFAULT 0"),
+        # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
+        # a person made or published, not calendar markers and job drafts.
+        ("marketing_content_log", "origin", "TEXT"),
         # When the official Google rating was last refreshed. Without it a
         # failed refresh left the previous value in place indefinitely,
         # shown as current and driving the rating-threshold alert.
@@ -2538,6 +2562,13 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # One stored AI read per restaurant and data fingerprint, shared by web
+    # and iOS (insight_store), and the reprice decisions record
+    # (menu_intelligence) — audit #22 / #26 / #41.
+    from insight_store import init_insight_store
+    init_insight_store(db_path)
+    from menu_intelligence import init_menu_intelligence
+    init_menu_intelligence(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
     # boot, not on each claim (DATA-6).
     import ops as _ops
@@ -5534,12 +5565,17 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
 
 def get_approved_examples(restaurant_id: int, limit: int = 5,
                            db_path: str = DB_PATH) -> list:
-    """Return recent approved review responses as style examples for the AI."""
+    """Return recent approved review responses as style examples for the AI.
+
+    A reply the auto-approve rule published is the model's own text, not
+    the owner's style: learning from it would feed the drafter its own
+    output (audit #15), so only replies a person approved are examples."""
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
           AND response_status IN ('approved','posted')
+          AND COALESCE(response_action, '') != 'auto_approved'
           AND draft_response IS NOT NULL
           AND draft_response != ''
         ORDER BY id DESC
@@ -8063,22 +8099,44 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
     an edit rate at or under AUTO_APPROVE_TRUST_EDIT_RATE. Every approval and
     every edit is already recorded (response_status, draft_edited); this
     reads them back so the product stops asking for a signature it has been
-    given thirty times unchanged. Negative bands are never in the answer."""
+    given thirty times unchanged. Negative bands are never in the answer.
+
+    Only a PERSON's answer is evidence (audit #15). A reply the rule
+    auto-approved was stored exactly like an owner's unedited approval, so
+    once a band was trusted its own output kept it trusted — the rule was
+    grading itself. Those rows (response_action='auto_approved') are left
+    out. A drafted reply the owner skipped is a "no" to the draft and counts
+    against the band like an edit: it is in the denominator and the
+    rejected count, so a band the owner keeps skipping cannot earn trust."""
     conn = get_conn(db_path)
+    since = f"-{int(days)} days"
     try:
         rows = conn.execute(
             "SELECT rating, COUNT(*) AS n, SUM(COALESCE(draft_edited, 0)) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
+            "AND COALESCE(response_action, '') != 'auto_approved' "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
-            (restaurant_id, f"-{int(days)} days")).fetchall()
+            (restaurant_id, since)).fetchall()
+        try:
+            skipped = conn.execute(
+                "SELECT rating, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                "AND response_status='skipped' AND draft_response IS NOT NULL AND TRIM(draft_response) != '' "
+                "AND skipped_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
+                (restaurant_id, since)).fetchall()
+        except Exception:
+            skipped = []       # a database from before skipped_at existed
     finally:
         conn.close()
     by = {int(r["rating"]): (int(r["n"] or 0), int(r["edited"] or 0)) for r in rows}
+    sk = {int(r["rating"]): int(r["n"] or 0) for r in skipped}
     out = {}
     for star in AUTO_APPROVE_EARNABLE:
         n, e = by.get(star, (0, 0))
-        rate = (e / n) if n else None
-        out[star] = {"approved": n, "edited": e, "edit_rate": rate,
+        s_n = sk.get(star, 0)
+        answered = n + s_n
+        rejected = e + s_n
+        rate = (rejected / answered) if answered else None
+        out[star] = {"approved": n, "edited": e, "skipped": s_n, "edit_rate": rate,
                      "trusted": bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None
                                      and rate <= AUTO_APPROVE_TRUST_EDIT_RATE),
                      "needed": max(0, AUTO_APPROVE_TRUST_MIN - n)}

@@ -152,6 +152,10 @@ struct FoodCostAnalytics: Decodable {
     let ok: Bool
     let insightIntro: String?
     let insightRecommendations: [String]
+    /// rec_ledger keys aligned index for index with `insightRecommendations`
+    /// (null = no answer controls for that line). Optional: older servers
+    /// don't send it.
+    let insightRecKeys: [String?]?
     let insightForecast: String?
     let wasteItems: [WasteItem]
     let overstock: [OverstockItem]
@@ -266,6 +270,7 @@ struct FoodCostAnalytics: Decodable {
         case totalPurchased = "total_purchased"
         case insightIntro = "insight_intro"
         case insightRecommendations = "insight_recommendations"
+        case insightRecKeys = "insight_rec_keys"
         case insightForecast = "insight_forecast"
         case wasteItems = "waste_items"
         case criticalLow = "critical_low"
@@ -296,7 +301,8 @@ struct FoodCostAnalytics: Decodable {
 
     var insight: AIInsight? {
         guard let insightIntro else { return nil }
-        return AIInsight(intro: insightIntro, recommendations: insightRecommendations, forecast: insightForecast)
+        return AIInsight(intro: insightIntro, recommendations: insightRecommendations, forecast: insightForecast,
+                         recKeys: insightRecKeys)
     }
 
     /// True when the server flagged figures in the narrative that it could not
@@ -385,6 +391,14 @@ struct FoodCostCFO: Decodable {
         let operationalEvidence: [OperationalEvidence]?
         let ageHours: Double?
         let stale: Bool?
+        /// The recommended action's rec_ledger key, whether the owner already
+        /// answered it (the action and its controls then drop), when the
+        /// read was written (M/D/YY) and the server's note for a read that
+        /// hasn't been refreshed. All optional: older servers omit them.
+        let recKey: String?
+        let answered: Bool?
+        let asOf: String?
+        let staleNote: String?
 
         struct OperationalEvidence: Decodable, Hashable {
             let module: String
@@ -392,7 +406,10 @@ struct FoodCostCFO: Decodable {
             let value: String
         }
         enum CodingKeys: String, CodingKey {
-            case headline, cause, confidence, stale
+            case headline, cause, confidence, stale, answered
+            case recKey = "rec_key"
+            case asOf = "as_of"
+            case staleNote = "stale_note"
             case alternativeCause = "alternative_cause"
             case whatWouldConfirm = "what_would_confirm"
             case recommendedAction = "recommended_action"
@@ -444,5 +461,110 @@ struct FoodCostCFO: Decodable {
                 case inferredWastePct = "inferred_waste_pct"
             }
         }
+    }
+}
+
+// MARK: - Prices to revisit
+
+/// GET /mobile/api/food-cost/reprice — for every dish an ingredient price
+/// rise hit, the price that restores its food cost % (menu_intelligence
+/// .reprice_suggestions). A suggestion the owner already answered (applied,
+/// or said no to) never arrives.
+struct RepriceSuggestions: Decodable {
+    let ok: Bool
+    let available: Bool?
+    let suggestions: [Suggestion]?
+    /// Stated with every result: the costs already carry the new price, and
+    /// the suggestion is a starting point.
+    let assumption: String?
+    /// Why there is nothing to show, when there isn't.
+    let reason: String?
+
+    struct Suggestion: Decodable, Identifiable, Equatable {
+        let dish: String
+        let menuItemId: Int?
+        let sellPrice: Double?
+        /// Nil when no price could be computed — then there is nothing to
+        /// set in one tap.
+        let suggestedPrice: Double?
+        let priceChange: Double?
+        /// Dollars a month, or nil when there is no sales mix yet (the
+        /// per-plate figure is then the only one) — never read as $0.
+        let monthlyMarginLost: Double?
+        let monthlyBasis: String?
+        let increasePerPlate: Double?
+        let foodCostPctBefore: Double?
+        let foodCostPctNow: Double?
+        let drivers: [Driver]?
+        let recKey: String?
+
+        var id: String { dish }
+
+        struct Driver: Decodable, Equatable, Hashable {
+            let ingredient: String
+            let oldPrice: Double?
+            let newPrice: Double?
+            let changePct: Double?
+            let perPlate: Double?
+            enum CodingKeys: String, CodingKey {
+                case ingredient
+                case oldPrice = "old_price"
+                case newPrice = "new_price"
+                case changePct = "change_pct"
+                case perPlate = "per_plate"
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case dish, drivers
+            case menuItemId = "menu_item_id"
+            case sellPrice = "sell_price"
+            case suggestedPrice = "suggested_price"
+            case priceChange = "price_change"
+            case monthlyMarginLost = "monthly_margin_lost"
+            case monthlyBasis = "monthly_basis"
+            case increasePerPlate = "increase_per_plate"
+            case foodCostPctBefore = "food_cost_pct_before"
+            case foodCostPctNow = "food_cost_pct_now"
+            case recKey = "rec_key"
+        }
+
+        /// "Parmesan +18%" — the ingredient that moved most, or nil.
+        var whyLine: String? {
+            let ranked = (drivers ?? []).sorted { ($0.perPlate ?? 0) > ($1.perPlate ?? 0) }
+            guard let top = ranked.first else { return nil }
+            var s = top.ingredient
+            if let pct = top.changePct {
+                s += " \(pct >= 0 ? "+" : "")\(Int(pct.rounded()))%"
+            }
+            if ranked.count > 1 { s += " and \(ranked.count - 1) more" }
+            return s
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case ok, available, suggestions, assumption, reason
+    }
+}
+
+/// POST /mobile/api/food-cost/reprice/apply → the price actually set.
+struct RepriceApplyResult: Decodable {
+    let ok: Bool
+    let dish: String?
+    let menuItemId: Int?
+    let oldPrice: Double?
+    let suggestedPrice: Double?
+    let price: Double?
+    let recKey: String?
+    /// True when an outcome tracker started for this change.
+    let tracked: Bool?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, dish, price, tracked, error
+        case menuItemId = "menu_item_id"
+        case oldPrice = "old_price"
+        case suggestedPrice = "suggested_price"
+        case recKey = "rec_key"
     }
 }

@@ -1226,7 +1226,7 @@ Write a food cost analysis. Rules that apply to everything:
 - If the data does not support a genuine, specific opportunity, say so plainly in one sentence and write no recommendations at all. An honest "nothing worth changing this week" is a correct answer.
 - No markdown, no bullet points, no bold text, no asterisks whatsoever
 - Do NOT label sections or write "Part 1", "Part 2", "Recommendations", or any headers
-- Plain flowing prose throughout — no line that starts with a dash or number
+- The opening paragraph is plain flowing prose — no line in it starts with a dash or a number. The numbered recommendations described below are the ONLY numbered lines.
 - Friendly and direct — like a trusted advisor, not a formal report
 - Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400)
 
@@ -1251,6 +1251,23 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Do not use the owner name anywhere in the recommendations
 - On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}"""
 
+
+    # One stored read per restaurant and prompt (audit #22). The prompt IS
+    # the data — every figure, driver, diagnosis and the date — so the same
+    # figures give the same words on the web and the phone, and a new read
+    # is written only when something in it changed. The web and iOS kept
+    # separate five-minute caches and got two different answers.
+    _fp = None
+    if restaurant_id:
+        try:
+            import insight_store as _ist
+            _fp = _ist.fingerprint(prompt)
+            _stored = _ist.get(restaurant_id, "food", _fp)
+            if isinstance(_stored, str) and _stored.strip():
+                return _stored
+        except Exception as _se:
+            print(f"[inventory insight store] {_se}")
+            _fp = None
 
     msg = create_with_retry(
         get_client(timeout=45.0),
@@ -1281,6 +1298,12 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     result = _re_inv.sub(r'#{1,6}\s', '', result)
     if unsupported:
         result = result.rstrip() + "\n\nUNVERIFIED: " + ", ".join(str(u) for u in unsupported[:5])
+    if _fp and result.strip():
+        try:
+            import insight_store as _ist2
+            _ist2.put(restaurant_id, "food", _fp, result)
+        except Exception as _pe:
+            print(f"[inventory insight store] {_pe}")
     return result
 
 
@@ -1405,6 +1428,23 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         counted_to=counted_to,
     )
     analysis["is_live"] = bool(is_live)
+    # How old the newest count is. critical_low and every suggested order
+    # are computed from stock on hand; with no count in the last week that
+    # stock is a projection, and an item "running out" may simply be one
+    # nobody counted (audit). Carried on the analysis and on each
+    # critical_low line, so an alert or an automatic order can hold or say so.
+    try:
+        from datetime import date as _d2
+        from ordering import COUNT_FRESH_DAYS as _CFD
+        age = (_d2.today() - _d2.fromisoformat(str(counted_to)[:10])).days if counted_to else None
+        analysis["count_freshness"] = {"last_count_at": counted_to, "age_days": age,
+                                       "stale": bool(is_live) and (age is None or age > _CFD),
+                                       "fresh_days": _CFD}
+        if analysis["count_freshness"]["stale"]:
+            for x in analysis.get("critical_low") or []:
+                x["count_stale"] = True
+    except Exception:
+        pass
     return items, bool(is_live), analysis
 
 

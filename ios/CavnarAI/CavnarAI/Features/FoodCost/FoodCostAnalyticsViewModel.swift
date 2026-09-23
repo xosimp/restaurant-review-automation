@@ -11,6 +11,16 @@ final class FoodCostAnalyticsViewModel {
     /// month-end prime-cost projection. Best-effort like the trend: a failure
     /// here removes one card, it does not empty the tab.
     var cfo: FoodCostCFO?
+    /// Dishes whose price an ingredient rise has eaten into, and the price
+    /// that restores their food cost %. Best-effort like the CFO read.
+    var reprice: RepriceSuggestions?
+    /// Dish → the price the server confirmed it set. Replaces the card's
+    /// buttons with "Set to $X.XX"; the next load leaves the dish out.
+    var repriceApplied: [String: Double] = [:]
+    /// Dishes the owner said "Not for us" to (the row confirms in place).
+    var repriceDismissed: Set<String> = []
+    var repriceBusy: Set<String> = []
+    var repriceErrors: [String: String] = [:]
     var isLoading = false
     /// Why the last load failed, when it did. `try?` used to swallow the
     /// error and assign nil over previously good data, so a server failure
@@ -66,6 +76,8 @@ final class FoodCostAnalyticsViewModel {
         // and reports why rather than assigning nil over it.
         async let trendResult: FoodCostTrend? = try? client.send("/mobile/api/food-cost/trend")
         async let cfoResult: FoodCostCFO? = try? client.send("/mobile/api/food-cost/cfo")
+        async let repriceResult: RepriceSuggestions? = try? client.send(
+            "/mobile/api/food-cost/reprice", hapticOnError: false)
         do {
             let fresh: FoodCostAnalytics = try await client.send("/mobile/api/food-cost/analytics")
             analytics = fresh
@@ -83,6 +95,62 @@ final class FoodCostAnalyticsViewModel {
         trendTarget = trendPayload?.target
         let cfoPayload = await cfoResult
         cfo = (cfoPayload?.ok == true) ? cfoPayload : nil
+        let repricePayload = await repriceResult
+        reprice = (repricePayload?.ok == true) ? repricePayload : nil
+        // A fresh list no longer carries what was answered; drop the local
+        // marks for dishes that are gone so a later suggestion for the same
+        // dish starts clean.
+        let live = Set(repriceSuggestions.map(\.dish))
+        repriceApplied = repriceApplied.filter { live.contains($0.key) }
+        repriceDismissed = repriceDismissed.intersection(live)
+        repriceErrors = [:]
+    }
+
+    /// The suggestions to show — empty when unavailable or none.
+    var repriceSuggestions: [RepriceSuggestions.Suggestion] {
+        guard let reprice, reprice.available != false else { return [] }
+        return reprice.suggestions ?? []
+    }
+
+    private struct RepriceApplyBody: Encodable {
+        let dish: String
+        let price: Double
+        let menuItemId: Int?
+        enum CodingKeys: String, CodingKey {
+            case dish, price
+            case menuItemId = "menu_item_id"
+        }
+    }
+
+    /// One tap: set the dish to its suggested price. Never retried on a
+    /// guess — it changes a menu price.
+    func applyReprice(_ s: RepriceSuggestions.Suggestion) async {
+        guard let price = s.suggestedPrice, !repriceBusy.contains(s.dish) else { return }
+        repriceBusy.insert(s.dish)
+        repriceErrors[s.dish] = nil
+        defer { repriceBusy.remove(s.dish) }
+        do {
+            let r: RepriceApplyResult = try await client.send(
+                "/mobile/api/food-cost/reprice/apply", method: .post,
+                body: RepriceApplyBody(dish: s.dish, price: price, menuItemId: s.menuItemId),
+                retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                repriceApplied[s.dish] = r.price ?? price
+            } else {
+                repriceErrors[s.dish] = r.error ?? "Couldn\u{2019}t set that price."
+            }
+        } catch is CancellationError {
+            // The screen went away mid-send.
+        } catch let error as APIClient.APIError {
+            // A price change whose answer was lost may have landed; say so
+            // rather than inviting a second tap (DESIGN_SYSTEM §10).
+            repriceErrors[s.dish] = (error.status == nil && error.mayHaveReachedServer)
+                ? "Couldn\u{2019}t confirm the price changed \u{2014} check Menu margins before trying again."
+                : error.message
+        } catch {
+            repriceErrors[s.dish] = "Couldn\u{2019}t set that price."
+        }
     }
 
     /// The drivers, in the order the server ranked them. Never re-sorted

@@ -1238,5 +1238,19 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
             "generated_at": r["generated_at"],
             "age_hours": round(age_h, 1) if age_h is not None else None,
             "stale": stale,
+            # Owner-facing date of the read, and the sentence a surface shows
+            # when it is past its TTL — Home dropped `stale` and showed an old
+            # cause as current.
+            "as_of": _mdy_safe(r["generated_at"]),
+            "stale_note": (f"From a read on {_mdy_safe(r['generated_at'])} — it has not been refreshed since."
+                           if stale else None),
         })
     return out
+
+
+def _mdy_safe(stamp):
+    try:
+        from time_utils import mdy
+        return mdy(stamp)
+    except Exception:
+        return None

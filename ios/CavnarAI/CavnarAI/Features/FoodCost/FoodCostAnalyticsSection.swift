@@ -49,7 +49,8 @@ struct FoodCostAnalyticsSection: View {
                             title: "Cavnar AI Food Cost Analysis",
                             insight: analytics.insight,
                             isLoading: viewModel.isLoading,
-                            showForecastInSheet: false
+                            showForecastInSheet: false,
+                            recSurface: "food"
                         )
                     }
                     // The module's namesake number, the coverage that says how
@@ -68,6 +69,13 @@ struct FoodCostAnalyticsSection: View {
                     // this is the step after it.
                     if viewModel.hasCFORead {
                         cfoCard(viewModel.cfo)
+                    }
+                    // Dishes an ingredient rise has eaten into, each with the
+                    // price that restores its food cost % and one tap to set
+                    // it. Nothing renders when there is nothing to revisit.
+                    if !viewModel.repriceSuggestions.isEmpty {
+                        repriceSection(viewModel.repriceSuggestions,
+                                       assumption: viewModel.reprice?.assumption)
                     }
                     if (analytics.recoverableMonthly ?? 0) > 0 {
                         RecoverableGaugeChart(
@@ -310,10 +318,17 @@ struct FoodCostAnalyticsSection: View {
 
                 if let total = cfo.drivers?.totalMonthly, total > 0 {
                     Text("$\(total.commaFormatted)/month across \(viewModel.drivers.count) driver\(viewModel.drivers.count == 1 ? "" : "s")"
-                         + ((dg?.stale ?? false) ? " · older read" : ""))
+                         + (dg?.asOf.map { " · read \($0)" } ?? "")
+                         + ((dg?.stale ?? false) && dg?.staleNote == nil ? " · older read" : ""))
                         .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.horizontal, 16).padding(.top, 4)
+                }
+                // The server's own sentence for a read that hasn't been
+                // refreshed — the same caveat the Reviews diagnosis carries.
+                if let note = dg?.staleNote, !note.isEmpty {
+                    CavnarCaveat(title: "Older read", detail: note)
+                        .padding(.horizontal, 16).padding(.top, 10)
                 }
 
                 VStack(alignment: .leading, spacing: 14) {
@@ -332,7 +347,16 @@ struct FoodCostAnalyticsSection: View {
                     }
                     if let alt = dg?.alternativeCause { cfoRow("It could also be", alt, quiet: true) }
                     if let confirm = dg?.whatWouldConfirm { cfoRow("What would tell them apart", confirm) }
-                    if let action = dg?.recommendedAction { cfoRow("Do this first", action) }
+                    // An answered action drops with its controls; the
+                    // evidence stays.
+                    if let action = dg?.recommendedAction, dg?.answered != true {
+                        VStack(alignment: .leading, spacing: 6) {
+                            cfoRow("Do this first", action)
+                            if let key = dg?.recKey {
+                                RecAnswerRow(key: key, surface: "food")
+                            }
+                        }
+                    }
                     if let outcome = dg?.expectedOutcome { cfoRow("What should change", outcome, quiet: true) }
                     if let oe = dg?.operationalEvidence, !oe.isEmpty {
                         cfoRow("Cross-checked against",
@@ -503,7 +527,8 @@ struct FoodCostAnalyticsSection: View {
                     title: "Cavnar AI Food Cost Analysis",
                     insight: a.insight,
                     isLoading: isLoading,
-                    showForecastInSheet: false
+                    showForecastInSheet: false,
+                    recSurface: "food"
                 )
                 // The server computes this flag and every other module renders
                 // it; Food Cost declared no such key, so figures it could not
@@ -851,6 +876,124 @@ struct FoodCostAnalyticsSection: View {
             return "\(daysStr)d left · last order (\(lastQty)\(unitSuffix))"
         }
         return "last order: (\(lastQty)\(unitSuffix))"
+    }
+
+    // MARK: - Prices to revisit
+    //
+    // Same anatomy as Price Watch below (bare kicker, accent-bar rows,
+    // hairline dividers): the dish, why (the ingredient that moved), now →
+    // suggested price, and what the rise costs a month. One primary tap sets
+    // the price; "Not for us" answers the recommendation so it stays gone.
+
+    private static func price(_ v: Double) -> String { String(format: "$%.2f", v) }
+
+    private func repriceSection(_ items: [RepriceSuggestions.Suggestion], assumption: String?) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("PRICES TO REVISIT")
+                .font(.cavnarBody(14, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    repriceRow(item)
+                    if index < items.count - 1 {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    }
+                }
+            }
+            if let assumption, !assumption.isEmpty {
+                Text(assumption)
+                    .font(.cavnarBody(11.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func repriceRow(_ s: RepriceSuggestions.Suggestion) -> some View {
+        let applied = viewModel.repriceApplied[s.dish]
+        let dismissed = viewModel.repriceDismissed.contains(s.dish)
+        let busy = viewModel.repriceBusy.contains(s.dish)
+        return HStack(alignment: .top, spacing: 14) {
+            Rectangle().fill(Color.cavnarAmber).frame(width: 2.5)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(s.dish)
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    // Dollars a month when there is a sales mix; the
+                    // per-plate figure when there isn't — never a $0.
+                    if let monthly = s.monthlyMarginLost {
+                        Text("$\(monthly.commaFormatted)/mo")
+                            .font(.cavnarNumber(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarRed)
+                    } else if let perPlate = s.increasePerPlate {
+                        Text("+\(Self.price(perPlate))/plate")
+                            .font(.cavnarNumber(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarRed)
+                    }
+                }
+                if let why = s.whyLine {
+                    HomeMixedText.make("Why: \(why)", size: 13.5, color: .cavnarInk3)
+                }
+                if let now = s.sellPrice, let suggested = s.suggestedPrice {
+                    (Text(Self.price(now)) + Text("  \u{2192}  ") + Text(Self.price(suggested)).foregroundStyle(Color.cavnarInk))
+                        .font(.cavnarNumber(14, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .accessibilityLabel("Now \(Self.price(now)), suggested \(Self.price(suggested))")
+                }
+                if s.monthlyMarginLost != nil, let basis = s.monthlyBasis {
+                    Text("Margin lost a month, from \(basis).")
+                        .font(.cavnarBody(11.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let applied {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .accessibilityHidden(true)
+                        (Text("Set to ") + Text(Self.price(applied)).font(.cavnarNumber(12.5, weight: 600)))
+                            .font(.cavnarBody(12.5, weight: 500))
+                    }
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 4)
+                } else {
+                    HStack(alignment: .center, spacing: 16) {
+                        if let suggested = s.suggestedPrice, !dismissed {
+                            Button {
+                                Task { await viewModel.applyReprice(s) }
+                            } label: {
+                                if busy {
+                                    CavnarShimmerText(text: "Setting\u{2026}")
+                                } else {
+                                    (Text("Set ") + Text(Self.price(suggested)).font(.cavnarNumber(16, weight: 600)))
+                                }
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
+                            .disabled(busy)
+                            .accessibilityHint("Changes \(s.dish)'s menu price")
+                        }
+                        if let key = s.recKey {
+                            RecAnswerRow(key: key, surface: "food", answers: [.notForUs],
+                                         onAnswered: { _ in viewModel.repriceDismissed.insert(s.dish) })
+                                .disabled(busy)
+                        }
+                    }
+                    .padding(.top, 6)
+                    if let error = viewModel.repriceErrors[s.dish] {
+                        Text(error)
+                            .font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 14)
     }
 
     // MARK: - Price Watch (bare kicker heading, matching "TOP WASTE

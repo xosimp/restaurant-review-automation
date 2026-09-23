@@ -63,11 +63,18 @@ struct MarketingAnalyticsSection: View {
                         Text("\(index + 1)")
                             .font(.cavnarNumber(14.5, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
-                        Text(rec)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(rec)
+                                .font(.cavnarBody(14.5))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            // Done / Not for us / Track — for a line the
+                            // server keyed (insight_rec_keys, index-aligned).
+                            if let key = insight.recKey(at: index) {
+                                RecAnswerRow(key: key, surface: "marketing")
+                            }
+                        }
                     }
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -286,9 +293,7 @@ struct MarketingAnalyticsSection: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
-                    .font(.cavnarNumber(15, weight: 700))
-                    .foregroundStyle(post.liftPct >= 0 ? Color.cavnarGreen : Color.cavnarRed)
+                liftLabel(post)
             }
             if let detail = post.detailLine {
                 HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
@@ -297,6 +302,27 @@ struct MarketingAnalyticsSection: View {
         .padding(.vertical, 9)
         .overlay(alignment: .top) {
             if divider { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+        }
+    }
+
+    /// The result, worded and coloured by the server's verdict — not by the
+    /// sign of lift_pct. A +3% inside a ±8% weekday noise band is not a lift,
+    /// and painting it green said it was. An older payload without a verdict
+    /// falls back to the sign, as before.
+    @ViewBuilder
+    private func liftLabel(_ post: MarketingAttribution.Post) -> some View {
+        switch post.liftVerdict {
+        case .noClearChange:
+            (Text("No clear change")
+                + Text(post.noiseBandPct.map { " (\u{00B1}\(Int($0.rounded()))%)" } ?? "")
+                    .font(.cavnarNumber(13, weight: 600)))
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+                .multilineTextAlignment(.trailing)
+        case .lifted, .dropped:
+            Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
+                .font(.cavnarNumber(15, weight: 700))
+                .foregroundStyle(post.liftVerdict == .lifted ? Color.cavnarGreen : Color.cavnarRed)
         }
     }
 

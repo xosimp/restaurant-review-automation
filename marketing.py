@@ -312,9 +312,49 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
     return row_id
 
 
+def _content_origin(content_type):
+    """Who a content-log row stands for: 'marker' (a calendar idea marked
+    used — not a piece of content), 'job' (drafted by a scheduled job, no
+    person asked), or 'owner'."""
+    if str(content_type or "").startswith("calendar_"):
+        return "marker"
+    try:
+        from flask import has_request_context
+        return "owner" if has_request_context() else "job"
+    except Exception:
+        return "owner"
+
+
+def pieces_this_month(restaurant_id, db_path=None) -> int:
+    """Real marketing pieces this calendar month: content a person generated,
+    plus anything published. "Pieces this month" counted every log row, so
+    a calendar idea marked used and the weekly job's own draft each added
+    one — two rows for one post the owner never saw (audit)."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        try:
+            return conn.execute(
+                "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? "
+                "AND created_at >= date('now','start of month') "
+                "AND ((post_id IS NOT NULL AND TRIM(post_id) != '') "
+                "     OR (COALESCE(origin, 'owner')='owner' AND content_type NOT LIKE 'calendar\\_%' ESCAPE '\\'))",
+                (restaurant_id,)).fetchone()[0] or 0
+        except Exception:
+            return conn.execute(
+                "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? "
+                "AND created_at >= date('now','start of month') AND content_type NOT LIKE 'calendar\\_%' ESCAPE '\\'",
+                (restaurant_id,)).fetchone()[0] or 0
+    finally:
+        conn.close()
+
+
 def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform):
-    """The row write, returning the row's id (the updated or inserted one)."""
+    """The row write, returning the row's id (the updated or inserted one).
+    Each new row records its origin (_content_origin) so a count of pieces
+    can leave out calendar markers and job drafts."""
     row_id = None
+    origin = _content_origin(content_type)
     try:
         from models import get_conn
         conn = get_conn()
@@ -329,14 +369,16 @@ def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform)
                 row_id = target["id"]
             else:
                 cur = conn.execute(
-                    "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
-                    (restaurant_id, content_type, topic, post_id, post_platform)
+                    "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, origin) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (restaurant_id, content_type, topic, post_id, post_platform, origin)
                 )
                 row_id = cur.lastrowid
         else:
             cur = conn.execute(
-                "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
-                (restaurant_id, content_type, topic, post_id, post_platform)
+                "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, origin) "
+                "VALUES (?,?,?,?,?,?)",
+                (restaurant_id, content_type, topic, post_id, post_platform, origin)
             )
             row_id = cur.lastrowid
         conn.commit()

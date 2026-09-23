@@ -706,6 +706,15 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         _PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)",
                         3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
         comp_summary = ""
+        # Every review handed to the model gets an id ("R1", "R2", ...) that a
+        # recommendation must cite, and the id is kept on the review so the
+        # screen can show which reviews a recommendation rests on — the same
+        # rule review diagnoses follow with review ids (audit #31).
+        _ref_n = 0
+        for c in competitors:
+            for r in (c.get("reviews") or [])[:5]:
+                _ref_n += 1
+                r["ref"] = f"R{_ref_n}"
         for c in competitors:
             # Use up to 5 reviews, 250 chars each for richer insight
             rev_list = c.get("reviews", [])
@@ -720,7 +729,7 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
                 # competitor is doing wrong now — and that is what the
                 # "DOING POORLY" section was built from.
                 reviews_text = "\n  ".join([
-                    f'[{r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
+                    f'[{r.get("ref")} · {r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
                     for r in rev_list[:5]
                 ])
             else:
@@ -803,6 +812,7 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         except Exception as _we:
             print(f"[Competitor] weather context unavailable: {_we}")
 
+        from competitor_intel_format import NOTHING_TO_ACT_ON
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
 
@@ -843,9 +853,11 @@ PRICE POSITIONING:
 One sentence, 15 words or fewer, based on the Google price levels listed above — a real field, not an impression. State where these competitors sit as a group. You may add whether review language agrees, but never state a positioning that the price levels alone do not support. Skip this section entirely if fewer than two competitors have a price level listed.
 
 Recommendations:
-1. [One operational or service fix using only what {restaurant_name} already has — a specific script, timing, or staffing change, 15 words or fewer]
-2. [One specific EXISTING dish, deal, or strength to push harder in marketing/signage this week — never a new item, 15 words or fewer]
-3. [One specific tactic to win a named competitor's dissatisfied customers, tied to an actual complaint quoted above, 15 words or fewer]
+Write between ZERO and THREE, numbered "1.", "2.", "3.". Write one only where these reviews give a genuine, specific reason to act this week — never pad to three. Each is 15 words or fewer and ends with the ids of the competitor reviews it rests on, in square brackets, exactly as they appear above, e.g. [R2, R5]. A recommendation with no review behind it must not be written. Kinds that fit:
+- an operational or service fix using only what {restaurant_name} already has — a specific script, timing, or staffing change
+- a specific EXISTING dish, deal, or strength to push harder in marketing/signage this week — never a new item
+- a specific tactic to win a named competitor's dissatisfied customers, tied to an actual complaint quoted above
+If nothing in these reviews is worth acting on, write exactly this one line under Recommendations and nothing else: {NOTHING_TO_ACT_ON}
 
 Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
 
@@ -874,6 +886,11 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         # can produce.
         invented = _invented_competitors(text, competitors)
 
+        # A recommendation stands only on reviews it cites that exist. One
+        # citing nothing, or an id that was never handed over, is dropped,
+        # and if none survive the section says so honestly (audit #31).
+        text = _validate_recommendation_citations(text, competitors)
+
         if unsupported or invented:
             notes = []
             if invented:
@@ -892,6 +909,53 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         except Exception:
             pass
         return ""
+
+
+def _validate_recommendation_citations(text, competitors):
+    """Rewrite the Recommendations section keeping only lines whose
+    citations all resolve to a review the model was given. Nothing else in
+    the text changes."""
+    import re as _re
+    from competitor_intel_format import split_citations, NOTHING_TO_ACT_ON
+    known = {str(r.get("ref")).upper() for c in competitors for r in (c.get("reviews") or []) if r.get("ref")}
+    m = _re.search(r"(?im)^\s*\**\s*Recommendations?\s*:?\s*\**\s*$", text or "")
+    if not m:
+        return text
+    head, body = text[:m.end()], text[m.end():]
+    # The section runs to a blank-line-separated paragraph that is not a
+    # numbered line (the closing Tone line is never output, but be safe).
+    kept, dropped, rest = [], 0, []
+    in_list = True
+    for line in body.splitlines():
+        st = line.strip()
+        if not st:
+            if kept or dropped:
+                in_list = False
+            continue
+        if in_list and _re.match(r"^\d+[.)]\s+", st):
+            content = _re.sub(r"^\d+[.)]\s+", "", st)
+            _body, cites = split_citations(content)
+            if cites and all(c in known for c in cites):
+                kept.append(f"{_body} [{', '.join(cites)}]")
+            else:
+                dropped += 1
+            continue
+        if in_list and _re.match(r"^nothing (?:worth acting on|to act on)", st, _re.I):
+            continue
+        in_list = False
+        rest.append(line)
+    if dropped:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"competitor insight: {dropped} recommendation(s) without a valid review citation dropped"),
+                        job="competitor_insight", context="citations")
+        except Exception:
+            pass
+    lines = [f"{i}. {k}" for i, k in enumerate(kept[:3], 1)] or [NOTHING_TO_ACT_ON]
+    out = head.rstrip() + "\n" + "\n".join(lines)
+    if rest:
+        out += "\n\n" + "\n".join(rest)
+    return out
 
 
 def _previous_competitor(restaurant, place_id):

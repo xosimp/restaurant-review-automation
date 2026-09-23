@@ -26,14 +26,52 @@ def normalize_intel_text(text):
     return text
 
 
+# A recommendation cites the competitor reviews it rests on as "[R2, R5]"
+# at the end of the line (competitor.generate_competitor_insight numbers
+# every review it hands the model and drops any recommendation whose
+# citations do not resolve).
+_CITE_RE = re.compile(r"\s*\[((?:R\d+\s*,?\s*)+)\]\s*\.?\s*$", re.I)
+# The model's honest "nothing to do" answer under Recommendations.
+NOTHING_TO_ACT_ON = "Nothing worth acting on this week."
+_NOTHING_RE = re.compile(r"^nothing (?:worth acting on|to act on)", re.I)
+_UNVERIFIED_RE = re.compile(r"(?is)\n*\s*UNVERIFIED:\s*(.+)$")
+
+
+def split_citations(line):
+    """("line without its citation", ["R2", "R5"])."""
+    m = _CITE_RE.search(line or "")
+    if not m:
+        return (line or "").strip(), []
+    cites = [c.strip().upper() for c in re.split(r"[,\s]+", m.group(1)) if c.strip()]
+    return (line[:m.start()].rstrip(" .") + ("." if line[:m.start()].rstrip().endswith(".") else "")).strip(), cites
+
+
 def parse_competitor_intel(text):
-    """Shared parser behind format_intel/format_intel_body — these two used
-    to each independently re-implement the same normalize/split/classify
-    pass. Returns {"intro": str, "sections": [(name, [bullet,...])],
-    "recommendations": [str, ...], "normalized_text": str} — callers' no-
-    structure-found fallback renders normalized_text (not the raw input),
-    matching the original functions' in-place `text = re.sub(...)` behavior."""
-    normalized_text = normalize_intel_text(text)
+    """THE parser for competitor intel — every surface reads this.
+
+    Returns {"intro", "sections": [(name, [bullet,...])], "recommendations":
+    [str, ...], "recommendation_items": [{"text", "cites"}], "unverified":
+    str|None, "withheld_recommendations": int, "nothing_to_act_on": bool,
+    "normalized_text"}.
+
+    Recommendations are anchored strictly to the "Recommendations:" header.
+    There used to be two parsers that disagreed — this one took any numbered
+    line anywhere, extract_recs only lines under the header — so the Intel
+    screen, the Home tile and Ask could show different recommendation counts
+    for one insight (audit #31). extract_recs now reads this.
+
+    An insight carrying an UNVERIFIED flag (a figure or a business the model
+    stated that its input did not contain) promotes NO recommendations:
+    `recommendations` is empty and `withheld_recommendations` says how many
+    were held back, so no surface turns an unverified line into an action.
+    """
+    raw = text or ""
+    unverified = None
+    um = _UNVERIFIED_RE.search(raw)
+    if um:
+        unverified = um.group(1).strip().rstrip(".") or None
+        raw = raw[:um.start()]
+    normalized_text = normalize_intel_text(raw)
     text = normalized_text
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
 
@@ -74,15 +112,32 @@ def parse_competitor_intel(text):
             b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
             if b:
                 bullets.append(b)
-        elif re.match(r"^[0-9]+[.)]\s+", line):
-            rec_lines.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
-        elif current_section == "recommendations" and line and not re.search(r"Recommendations?", line, re.I):
-            cleaned = re.sub(r'\*+', '', line).strip()
-            if cleaned:
-                rec_lines.append(cleaned)
+        elif current_section == "recommendations" and line and not re.match(r"^Recommendations?:?\s*$", line, re.I):
+            # Inline numbered items on one line are split, as before.
+            for part in re.split(r'(?<=\S)\s+(?=\d+\.\s+[A-Z])', line):
+                part = re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", part.strip())).strip()
+                if part and not re.match(r'^(WHAT COMPETITORS|Recommendations?)', part, re.I):
+                    rec_lines.append(part)
     flush()
 
-    return {"intro": " ".join(intro_lines), "sections": sections, "recommendations": rec_lines,
+    nothing = any(_NOTHING_RE.match(r) for r in rec_lines)
+    items = []
+    for r in rec_lines:
+        if _NOTHING_RE.match(r):
+            continue
+        body, cites = split_citations(r)
+        if body:
+            items.append({"text": body, "cites": cites})
+    items = items[:3]
+    withheld = 0
+    if unverified and items:
+        withheld, items = len(items), []
+    return {"intro": " ".join(intro_lines), "sections": sections,
+            "recommendations": [it["text"] for it in items],
+            "recommendation_items": items,
+            "unverified": unverified,
+            "withheld_recommendations": withheld,
+            "nothing_to_act_on": bool(nothing and not items),
             "normalized_text": normalized_text}
 
 
@@ -108,6 +163,19 @@ def render_section(name, bullets, esc):
     return out
 
 
+def render_unverified(note, withheld, esc):
+    """The caveat under an insight the checks could not confirm — never
+    styled like a recommendation, and saying that any were held back."""
+    if not note:
+        return ""
+    held = (f" {withheld} recommendation{'' if withheld == 1 else 's'} held back until it is." if withheld else "")
+    return ('<div style="margin-top:10px;padding:10px 12px;border-left:2px solid var(--amber);'
+            'border-radius:0 6px 6px 0"><div style="font-size:10px;font-weight:700;text-transform:uppercase;'
+            'letter-spacing:.08em;color:var(--amber);margin-bottom:4px">Unverified</div>'
+            '<div style="line-height:1.6;color:var(--ink2);font-size:13px">This read '
+            + str(esc(note)) + "." + held + "</div></div>")
+
+
 def render_recommendations(rec_lines, esc):
     if not rec_lines:
         return ""
@@ -130,6 +198,7 @@ def format_intel(text):
     html_parts = [render_intro(parsed["intro"], esc)]
     html_parts += [render_section(name, bullets, esc) for name, bullets in parsed["sections"]]
     html_parts.append(render_recommendations(parsed["recommendations"], esc))
+    html_parts.append(render_unverified(parsed["unverified"], parsed["withheld_recommendations"], esc))
     html_parts = [p for p in html_parts if p]
     if not html_parts:
         return '<p style="font-size:13px;color:#374151;line-height:1.7">' + str(esc(parsed["normalized_text"])) + "</p>"
@@ -144,6 +213,7 @@ def format_intel_body(text):
     parsed = parse_competitor_intel(text)
     html_parts = [render_intro(parsed["intro"], esc)]
     html_parts += [render_section(name, bullets, esc) for name, bullets in parsed["sections"]]
+    html_parts.append(render_unverified(parsed["unverified"], parsed["withheld_recommendations"], esc))
     html_parts = [p for p in html_parts if p]
     if not html_parts:
         return Markup('<p style="font-size:13px;color:var(--ink);line-height:1.7">' + str(esc(parsed["normalized_text"])) + "</p>")
@@ -151,35 +221,11 @@ def format_intel_body(text):
 
 
 def extract_recs(text):
-    """Parse recommendation lines from competitor insight. Returns list of strings.
-
-    Deliberately NOT routed through parse_competitor_intel(): that parser's
-    recommendation-collection (shared by format_intel/format_intel_body)
-    treats *any* numbered line anywhere as a recommendation, even one that
-    shows up inside WELL/POORLY before a "Recommendations:" header is ever
-    seen. This function anchors strictly to the labeled header instead, and
-    the two behaviors provably disagree on that edge case — unifying them
-    would be a real (if narrow) behavior change, not a pure de-dup."""
+    """The recommendation lines of a competitor insight, as plain strings
+    (at most three, citations removed). A thin reader over
+    parse_competitor_intel — it used to be a second parser that disagreed
+    with the first (audit #31); now every surface counts the same lines, and
+    an insight carrying an UNVERIFIED flag yields none."""
     if not text:
         return []
-    text = normalize_intel_text(text)
-    recs = []
-    in_recs = False
-    for line in text.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        if re.match(r"^Recommendations?:\s*$", line, re.I):
-            in_recs = True
-            continue
-        if in_recs:
-            # Split any inline numbered items on this line before processing
-            parts = re.split(r'(?<=\S)\s+(?=\d+\.\s+[A-Z])', line)
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
-                part = re.sub(r'^[0-9]+[.)]\s+', '', part).strip()
-                if part and not re.match(r'^(WHAT COMPETITORS|Recommendations?)', part, re.I):
-                    recs.append(part)
-    return recs[:3]
+    return parse_competitor_intel(text)["recommendations"][:3]

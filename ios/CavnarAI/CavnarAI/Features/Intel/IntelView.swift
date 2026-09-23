@@ -18,6 +18,8 @@ struct IntelView: View {
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
     @State private var expandedCompetitors: Set<String> = []
+    /// Recommendations whose cited competitor reviews are open.
+    @State private var expandedCites: Set<String> = []
     @State private var showAddCompetitor = false
     // Removal is fast now (a cached-blob filter, not the full refresh job
     // add uses — see removeCompetitor's own doc comment), but even a ~1s
@@ -145,7 +147,8 @@ struct IntelView: View {
             ratingComparisonSection(summary, ownRating: ownRating)
         }
 
-        if !summary.sections.isEmpty || !summary.recommendations.isEmpty {
+        if !summary.sections.isEmpty || !summary.displayRecommendations.isEmpty
+            || summary.emptyRecommendationsNote != nil {
             marketAnalysisGroup(summary)
                 // Continues the same fade/rise sequence statRow (0s) and
                 // heroInsight (.15s delay) already use — this and
@@ -220,8 +223,16 @@ struct IntelView: View {
                 marketSection(section)
             }
 
-            if !summary.recommendations.isEmpty {
-                recommendationsSection(summary.recommendations)
+            if !summary.displayRecommendations.isEmpty {
+                recommendationsSection(summary.displayRecommendations)
+            } else if let note = summary.emptyRecommendationsNote {
+                // An empty list is explained, never left blank: held back
+                // because the read carried something unverified, or
+                // genuinely nothing worth doing this week.
+                Text(note)
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 18)
@@ -471,7 +482,7 @@ struct IntelView: View {
     /// solid (not outlined) glowing number badge and a stronger row tint
     /// than well/poorly's bullets, so these read as the actionable next
     /// steps rather than more descriptive analysis in the same voice.
-    private func recommendationsSection(_ recommendations: [String]) -> some View {
+    private func recommendationsSection(_ recommendations: [IntelRecommendation]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
@@ -482,7 +493,7 @@ struct IntelView: View {
             }
             .foregroundStyle(Color.cavnarEmber)
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
+                ForEach(Array(recommendations.enumerated()), id: \.element.id) { index, rec in
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(index + 1)")
                             .font(.cavnarNumber(14, weight: 700))
@@ -491,10 +502,20 @@ struct IntelView: View {
                             .background(Color.cavnarEmber)
                             .clipShape(Circle())
                             .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
-                        Text(rec)
-                            .font(.cavnarBody(14.5, weight: 500))
-                            .foregroundStyle(Color.cavnarInk)
-                            .lineSpacing(3)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(rec.text)
+                                .font(.cavnarBody(14.5, weight: 500))
+                                .foregroundStyle(Color.cavnarInk)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let cites = rec.cites, !cites.isEmpty {
+                                citesDisclosure(rec.id, cites)
+                            }
+                            if let key = rec.key {
+                                RecAnswerRow(key: key, surface: "intel")
+                            }
+                        }
+                        Spacer(minLength: 0)
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 10)
@@ -503,6 +524,71 @@ struct IntelView: View {
                 }
             }
         }
+    }
+
+    /// "Reviews this rests on (n)" — tap to open the competitor reviews the
+    /// recommendation cites, so the owner can judge the evidence rather than
+    /// take the line on trust. The same kicker the Reviews diagnosis uses.
+    private func citesDisclosure(_ id: String, _ cites: [IntelRecommendation.Cite]) -> some View {
+        let open = expandedCites.contains(id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                Haptic.selection()
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if open { expandedCites.remove(id) } else { expandedCites.insert(id) }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    (Text("Reviews this rests on (") + Text("\(cites.count)").font(.cavnarNumber(11, weight: 700)) + Text(")"))
+                        .font(.cavnarBody(11, weight: 700))
+                        .tracking(0.6)
+                    Image(systemName: open ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(Color.cavnarInk3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reviews this rests on, \(cites.count)")
+            .accessibilityHint(open ? "Hides them" : "Shows them")
+
+            if open {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(cites) { cite in
+                        citeRow(cite)
+                    }
+                }
+                .padding(.leading, 8)
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(Color.cavnarInk3.opacity(0.3)).frame(width: 1)
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    /// competitor · 4★ · 2 weeks ago — "text"
+    private func citeRow(_ cite: IntelRecommendation.Cite) -> some View {
+        var head = Text(cite.competitor ?? "A competitor").font(.cavnarBody(12.5, weight: 600))
+        if let rating = cite.rating {
+            let stars = rating.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(rating)) : String(format: "%.1f", rating)
+            head = head + Text(" \u{00B7} ") + Text("\(stars)\u{2605}").font(.cavnarNumber(12.5, weight: 600))
+        }
+        if let time = cite.time, !time.isEmpty {
+            head = head + Text(" \u{00B7} ") + HomeMixedText.make(time, size: 12.5, color: .cavnarInk2)
+        }
+        return VStack(alignment: .leading, spacing: 2) {
+            head
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk2)
+            if let text = cite.text, !text.isEmpty {
+                HomeMixedText.make("\u{201C}\(text)\u{201D}", size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Competitor list (hairline dividers + colored accent bar, no cards)

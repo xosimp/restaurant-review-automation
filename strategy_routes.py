@@ -305,8 +305,11 @@ def _do_dish_scorecard(u):
 
 
 def _do_reprice(u):
+    # Each suggestion carries its rec_ledger key ("reprice:<dish>"), is
+    # logged as shown, and one already answered is left out (audit #26).
     import menu_intelligence
-    return {"ok": True, **menu_intelligence.reprice_suggestions(_rid(u))}, 200
+    return {"ok": True, **menu_intelligence.presented_suggestions(_rid(u), surface="food",
+                                                                   user_id=u.get("id"))}, 200
 
 
 def _do_invoice_scan(u):
@@ -508,8 +511,15 @@ def _do_auto_order_get(u):
                               "needed": max(0, ordering.ORDER_TRUST_MIN - t["orders"])})
     except Exception:
         pass
+    # An automatic order waits for a count from the last week
+    # (ordering.COUNT_FRESH_DAYS); the switch says when that is holding it.
+    try:
+        fresh = ordering.count_freshness(_rid(u))
+    except Exception:
+        fresh = None
     return {"ok": True, "enabled": bool(getattr(r, "auto_order_trusted", 0)), "suppliers": suppliers,
-            "undo_minutes": ordering.ORDER_UNDO_MINUTES}, 200
+            "undo_minutes": ordering.ORDER_UNDO_MINUTES, "count_freshness": fresh,
+            "count_fresh_days": ordering.COUNT_FRESH_DAYS}, 200
 
 
 def _do_auto_order_set(u):

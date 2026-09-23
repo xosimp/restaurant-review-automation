@@ -4,6 +4,13 @@ struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
     @State private var selectedTopic: TopicWeekRow?
+    /// A review a diagnosis cites, tapped open.
+    @State private var evidenceTarget: EvidenceTarget?
+
+    struct EvidenceTarget: Hashable {
+        let reviewID: Int
+        let category: String
+    }
 
     // Each section shows its own skeleton while it's individually still in
     // flight rather than gating the whole page behind one spinner — the 5
@@ -100,6 +107,9 @@ struct ReviewsAnalyticsSection: View {
         .navigationDestination(item: $selectedTopic) { topic in
             FilteredReviewsView(title: topic.label, category: topic.category)
         }
+        .navigationDestination(item: $evidenceTarget) { target in
+            ReviewByIdView(reviewID: target.reviewID, category: target.category)
+        }
     }
 
     // MARK: - The AI read
@@ -143,24 +153,67 @@ struct ReviewsAnalyticsSection: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Forecast. \(parsed.text)")
                 } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: parsed.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(parsed.tint)
+                                .accessibilityHidden(true)
+                            Text(parsed.text)
+                                .font(.cavnarBody(14.5))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(parsed.text)
+                        // The answer row sits under the line it answers —
+                        // the "Do today" line, matched by the text the
+                        // server keyed.
+                        if let rec = Self.rec(for: line, in: viewModel.insightRecs) {
+                            RecAnswerRow(key: rec.key, surface: "reviews")
+                                .padding(.leading, 22)
+                        }
+                    }
+                }
+            }
+            // A keyed line the passage no longer carries verbatim (the
+            // model's line was reworded on the way through) keeps its
+            // controls rather than losing them.
+            ForEach(Self.unplacedRecs(viewModel.insightRecs, lines: lines)) { rec in
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: parsed.symbol)
+                        Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(parsed.tint)
+                            .foregroundStyle(Color.cavnarGreen)
                             .accessibilityHidden(true)
-                        Text(parsed.text)
+                        Text(rec.text)
                             .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk2)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(parsed.text)
+                    RecAnswerRow(key: rec.key, surface: "reviews")
+                        .padding(.leading, 22)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard(.ai)
+    }
+
+    /// The keyed recommendation this passage line carries, if any.
+    static func rec(for line: String, in recs: [ReviewInsightRec]) -> ReviewInsightRec? {
+        let trimmed = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return recs.first { rec in
+            let text = trimmed(rec.text)
+            return !text.isEmpty && line.contains(text)
+        }
+    }
+
+    /// Keyed recommendations no passage line carries.
+    static func unplacedRecs(_ recs: [ReviewInsightRec], lines: [String]) -> [ReviewInsightRec] {
+        recs.filter { r in !lines.contains { line in Self.rec(for: line, in: [r]) != nil } }
     }
 
     // MARK: - Severity
@@ -233,12 +286,21 @@ struct ReviewsAnalyticsSection: View {
             .padding(.top, 14)
 
             Text("\(d.category.replacingOccurrences(of: "_", with: " ")) · \(d.mentionCount) negative reviews over \(d.windowDays) days"
-                 + ((d.stale ?? false) ? " · older read" : ""))
+                 + (d.asOf.map { " · read \($0)" } ?? "")
+                 + ((d.stale ?? false) && d.staleNote == nil ? " · older read" : ""))
                 .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
                 .padding(.bottom, 12)
+
+            // The server's own sentence for a read that hasn't been
+            // refreshed — the same caveat the insight above uses.
+            if let note = d.staleNote, !note.isEmpty {
+                CavnarCaveat(title: "Older read", detail: note)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
 
             Divider().overlay(Color.cavnarInk3.opacity(0.18))
 
@@ -250,8 +312,15 @@ struct ReviewsAnalyticsSection: View {
                 if let confirm = d.whatWouldConfirm {
                     diagnosisRow("What would tell them apart", confirm)
                 }
-                if let action = d.recommendedAction {
-                    diagnosisRow("Do this", action)
+                // An action the owner already answered stays answered: the
+                // card keeps its evidence and drops the action.
+                if let action = d.recommendedAction, d.answered != true {
+                    VStack(alignment: .leading, spacing: 6) {
+                        diagnosisRow("Do this", action)
+                        if let key = d.recKey {
+                            RecAnswerRow(key: key, surface: "reviews")
+                        }
+                    }
                 }
                 if let outcome = d.expectedOutcome {
                     diagnosisRow("What should change", outcome, quiet: true)
@@ -265,18 +334,20 @@ struct ReviewsAnalyticsSection: View {
                         quiet: true)
                 }
                 if !d.evidenceReviewIds.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 7) {
                         Text("Reviews this rests on")
                             .font(.cavnarBody(10, weight: 700))
                             .tracking(0.9)
                             .textCase(.uppercase)
                             .foregroundStyle(Color.cavnarInk3)
-                        Text(d.evidenceReviewIds.map { "#\($0)" }.joined(separator: ", "))
-                            .font(.cavnarNumber(13))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .accessibilityLabel("Based on \(d.evidenceReviewIds.count) reviews")
+                        // Each cited review opens — the web's jumpToReview.
+                        AccountFlowLayout(spacing: 6, lineSpacing: 6) {
+                            ForEach(d.evidenceReviewIds, id: \.self) { id in
+                                evidenceChip(id, category: d.category)
+                            }
+                        }
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Based on \(d.evidenceReviewIds.count) reviews")
                 }
                 if let m = money, m.available,
                    let low = m.monthlyLow, let high = m.monthlyHigh {
@@ -292,6 +363,27 @@ struct ReviewsAnalyticsSection: View {
             RoundedRectangle(cornerRadius: CavnarRadius.control)
                 .stroke(Color.cavnarInk3.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    /// "Review #412" as a tappable chip — AccountChip's muted look, with the
+    /// id in the number face. Opens that review (ReviewByIdView).
+    private func evidenceChip(_ id: Int, category: String) -> some View {
+        Button {
+            Haptic.light()
+            evidenceTarget = EvidenceTarget(reviewID: id, category: category)
+        } label: {
+            (Text("Review ") + Text("#\(id)").font(.cavnarNumber(13, weight: 600)))
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk2)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.04))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                .clipShape(Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open review \(id)")
     }
 
     private func diagnosisRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {

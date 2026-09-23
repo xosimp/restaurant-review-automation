@@ -84,6 +84,10 @@ struct AIConsultantEmbeddedStrip: View {
     // only sees after tapping in — set false there so it isn't shown
     // twice. Every other caller keeps the default, unchanged behavior.
     var showForecastInSheet: Bool = true
+    /// The rec_ledger surface ("food", "marketing", …) the sheet's
+    /// recommendations answer for. Nil — every caller that hasn't opted in —
+    /// shows no answer controls, even when the insight carries keys.
+    var recSurface: String? = nil
 
     @State private var isPresented = false
 
@@ -95,7 +99,8 @@ struct AIConsultantEmbeddedStrip: View {
         }
         .sheet(isPresented: $isPresented) {
             if let insight {
-                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet)
+                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet,
+                                  recSurface: recSurface)
             }
         }
     }
@@ -108,6 +113,8 @@ struct AIConsultantView: View {
     let insight: AIInsight?
     let isLoading: Bool
     var showForecastInSheet: Bool = true
+    /// See AIConsultantEmbeddedStrip.recSurface.
+    var recSurface: String? = nil
 
     @State private var isPresented = false
 
@@ -128,7 +135,8 @@ struct AIConsultantView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
         .sheet(isPresented: $isPresented) {
             if let insight {
-                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet)
+                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet,
+                                  recSurface: recSurface)
             }
         }
     }
@@ -149,6 +157,7 @@ private struct AIConsultantSheet: View {
     let title: String
     let insight: AIInsight
     var showForecast: Bool = true
+    var recSurface: String? = nil
 
     // Staggered reveal: 1 opening line, 2 recommendations, 3 forecast,
     // 4 footer. (No header row — the sheet's title already names the
@@ -251,11 +260,18 @@ private struct AIConsultantSheet: View {
                             .font(.cavnarNumber(14, weight: 700))
                             .foregroundStyle(.white)
                     }
-                    Self.mixedText(rec, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk)
-                        .font(.cavnarBody(16))
-                        .lineSpacing(5)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Self.mixedText(rec, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk)
+                            .font(.cavnarBody(16))
+                            .lineSpacing(5)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // Done / Not for us / Track — only for a line the
+                        // server keyed, on a surface that opted in.
+                        if let recSurface, let key = insight.recKey(at: index) {
+                            RecAnswerRow(key: key, surface: recSurface)
+                        }
+                    }
+                    .padding(.top, 4)
                 }
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)

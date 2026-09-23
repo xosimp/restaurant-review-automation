@@ -262,3 +262,170 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
                        "the increase, rounded up to the nearest 25¢ — a starting point, not a "
                        "rule: re-costing the plate or changing a supplier are alternatives."),
     }
+
+
+# ── one-tap reprice, and what the owner chose (audit #26 / #41) ─────────────
+#
+# A reprice suggestion used to end at a number on a card: the owner then
+# found the dish in Menu Margins and typed a price, and nothing recorded that
+# the price they typed came from the suggestion — or what the suggestion had
+# been. The outcome tracker started on ANY price set, including a dish's
+# first price and a price cleared to nothing. Now:
+#   * apply_reprice sets the suggested (or owner-adjusted) price in one tap;
+#   * every price that FOLLOWS a live suggestion — tapped or typed — records
+#     the suggested price beside the chosen one in reprice_decisions and
+#     answers the recommendation ("reprice:<dish>") in rec_ledger;
+#   * a price that follows no suggestion records nothing and starts no
+#     tracker.
+
+def _conn(db_path=DB_PATH):
+    """get_conn resolved at call time (the module-level import is bound)."""
+    import models as _m
+    return _m.get_conn() if db_path in (None, _m.DB_PATH) else _m.get_conn(db_path)
+
+
+def init_menu_intelligence(db_path: str = DB_PATH):
+    """Boot DDL (models.init_db)."""
+    conn = _conn(db_path)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS reprice_decisions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL,
+            menu_item_id     INTEGER,
+            dish             TEXT,
+            old_price        REAL,
+            suggested_price  REAL,
+            chosen_price     REAL,
+            source           TEXT,          -- 'one_tap' | 'manual'
+            user_id          INTEGER,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reprice_decisions_rid "
+                     "ON reprice_decisions(restaurant_id, created_at)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reprice_key(dish) -> str:
+    import rec_ledger
+    return rec_ledger.rec_key("reprice", (dish or "").strip())
+
+
+def suggestion_for(restaurant_id, menu_item_id=None, dish=None, db_path=DB_PATH):
+    """The live reprice suggestion for one dish, or None."""
+    try:
+        data = reprice_suggestions(restaurant_id, db_path=db_path)
+    except Exception:
+        return None
+    want = (dish or "").strip().lower()
+    for s in (data.get("suggestions") or []) if data.get("available") else []:
+        if menu_item_id is not None and s.get("menu_item_id") == menu_item_id:
+            return s
+        if want and (s.get("dish") or "").strip().lower() == want:
+            return s
+    return None
+
+
+def presented_suggestions(restaurant_id, surface="food", user_id=None, db_path=DB_PATH):
+    """reprice_suggestions for a screen: each suggestion carries its
+    rec_ledger key, is logged as shown, and one the owner has already
+    answered (applied, or said no to) is left out."""
+    data = reprice_suggestions(restaurant_id, db_path=db_path)
+    sug = data.get("suggestions") or []
+    if not sug:
+        return data
+    import insight_store
+    items = [{"key": reprice_key(s["dish"]),
+              "text": (f"Reprice {s['dish']} to ${s['suggested_price']:.2f}" if s.get("suggested_price")
+                       else f"Reprice {s['dish']}"),
+              "dollar_value": s.get("monthly_margin_lost"), "model_written": False,
+              "cavnar_completes": True, "expected_metric": "food_cost_pct", "_s": s} for s in sug]
+    kept = insight_store.present_recs(restaurant_id, "food", surface, items, user_id=user_id, db_path=db_path)
+    out = []
+    for it in kept:
+        s = dict(it["_s"])
+        s["rec_key"] = it["key"]
+        s["rec_id"] = it.get("rec_id")
+        out.append(s)
+    return dict(data, suggestions=out)
+
+
+def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_id=None,
+                        source="manual", suggestion=None, db_path=DB_PATH):
+    """A dish's price changed. When the new price FOLLOWS a live suggestion —
+    there is one for this dish, the dish already had a price, and the new
+    one is higher — record suggested vs chosen and answer the
+    recommendation. Returns the suggestion followed, or None (a first price,
+    a clear-to-nothing, a cut, or no suggestion: nothing is recorded)."""
+    try:
+        old = float(old_price) if old_price not in (None, "") else None
+        new = float(new_price) if new_price not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if not old or old <= 0 or not new or new <= old:
+        return None
+    s = suggestion or suggestion_for(restaurant_id, menu_item_id=menu_item_id, db_path=db_path)
+    if not s:
+        return None
+    try:
+        conn = _conn(db_path)
+        try:
+            conn.execute("INSERT INTO reprice_decisions (restaurant_id, menu_item_id, dish, old_price, "
+                         "suggested_price, chosen_price, source, user_id) VALUES (?,?,?,?,?,?,?,?)",
+                         (restaurant_id, menu_item_id, s.get("dish"), old, s.get("suggested_price"),
+                          round(new, 2), source, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[menu_intelligence] reprice decision not recorded: {e}")
+    try:
+        import rec_ledger
+        key = reprice_key(s.get("dish"))
+        meta = {"suggested_price": s.get("suggested_price"), "chosen_price": round(new, 2),
+                "old_price": old, "source": source, "module": "food"}
+        rec_ledger.record(restaurant_id, key, "accepted", surface="food", user_id=user_id, meta=meta,
+                          db_path=db_path)
+        rec_ledger.record(restaurant_id, key, "completed", surface="food", user_id=user_id, meta=meta,
+                          db_path=db_path)
+    except Exception as e:
+        print(f"[menu_intelligence] reprice answer not recorded: {e}")
+    return s
+
+
+def reprice_decisions(restaurant_id, limit=50, db_path=DB_PATH) -> list:
+    conn = _conn(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM reprice_decisions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
+            (restaurant_id, int(limit))).fetchall()]
+    finally:
+        conn.close()
+
+
+def apply_reprice(restaurant_id, dish=None, price=None, menu_item_id=None, user_id=None, db_path=DB_PATH):
+    """One tap: set a dish to its suggested price (or the price the owner
+    adjusted it to). Returns (payload, status). This is the contract Home and
+    both clients call: POST /food-cost/reprice/apply {dish, price}."""
+    import inventory_ledger
+    if not (dish or menu_item_id):
+        return {"ok": False, "error": "Which dish?"}, 400
+    s = suggestion_for(restaurant_id, menu_item_id=menu_item_id, dish=dish, db_path=db_path)
+    if not s:
+        return {"ok": False, "error": "There's no price suggestion for that dish right now — "
+                                      "set its price from Menu Margins instead."}, 409
+    try:
+        chosen = float(price) if price not in (None, "") else float(s.get("suggested_price") or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "That price isn't a number."}, 400
+    if not math.isfinite(chosen) or chosen <= 0:
+        return {"ok": False, "error": "Pick a price above $0."}, 400
+    old = s.get("sell_price")
+    if not inventory_ledger.set_menu_item_price(restaurant_id, int(s["menu_item_id"]), chosen):
+        return {"ok": False, "error": "Couldn't set that price — check the dish."}, 400
+    followed = record_price_change(restaurant_id, s["menu_item_id"], old, chosen, user_id=user_id,
+                                   source="one_tap", suggestion=s, db_path=db_path)
+    return {"ok": True, "dish": s["dish"], "menu_item_id": s["menu_item_id"], "old_price": old,
+            "suggested_price": s.get("suggested_price"), "price": round(chosen, 2),
+            "rec_key": reprice_key(s["dish"]), "tracked": bool(followed)}, 200

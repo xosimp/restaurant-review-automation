@@ -35,6 +35,10 @@ final class ReviewsAnalyticsViewModel {
     /// one, with `insightAsOf` saying when it was written.
     var insightIsStale = false
     var insightAsOf: String?
+    /// The read's own recommendation lines, each with its rec_ledger key so
+    /// the owner can answer it (the "Do today" line today). A line already
+    /// answered never arrives — the server drops it from `insight` too.
+    var insightRecs: [ReviewInsightRec] = []
     var isLoading = false
     var errorMessage: String?
     /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
@@ -86,9 +90,12 @@ final class ReviewsAnalyticsViewModel {
         let confidence: String?
         let stale: Bool?
         let asOf: String?
+        /// Optional: an older server sends no recs, and absent means "no
+        /// answer controls", never an error.
+        let recs: [ReviewInsightRec]?
 
         enum CodingKeys: String, CodingKey {
-            case ok, insight, diagnosis, confidence, stale, severity
+            case ok, insight, diagnosis, confidence, stale, severity, recs
             case figuresVerified = "figures_verified"
             case unsupportedFigures = "unsupported_figures"
             case namesVerified = "names_verified"
@@ -135,6 +142,7 @@ final class ReviewsAnalyticsViewModel {
         trendConfidence = insightPayload?.confidence
         insightIsStale = insightPayload?.stale ?? false
         insightAsOf = insightPayload?.asOf
+        insightRecs = insightPayload?.recs ?? []
         topicWeeks = await topicWeeksResult?.data
     }
 }
@@ -160,6 +168,17 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     let confidence: String?
     let ageHours: Double?
     let stale: Bool?
+    /// The recommended action's rec_ledger key — present only when there is
+    /// an action to answer. This and the three below are optional so an
+    /// older server or a cached payload still decodes.
+    let recKey: String?
+    /// True when the owner already answered the action: the card keeps its
+    /// evidence but drops the action and its controls.
+    let answered: Bool?
+    /// When the read was written, already M/D/YY.
+    let asOf: String?
+    /// The server's own sentence for a read that hasn't been refreshed.
+    let staleNote: String?
 
     struct OperationalEvidence: Decodable, Sendable, Equatable {
         let module: String
@@ -168,7 +187,10 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case category, cause, confidence, stale
+        case category, cause, confidence, stale, answered
+        case recKey = "rec_key"
+        case asOf = "as_of"
+        case staleNote = "stale_note"
         case mentionCount = "mention_count"
         case windowDays = "window_days"
         case alternativeCause = "alternative_cause"
@@ -182,6 +204,15 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
 
     /// How serious to treat this read. Mirrors the web's three-band chip.
     var confidenceBand: String { (confidence ?? "low").lowercased() }
+}
+
+/// One answerable line from the reviews read. `kind` is "do_today" for the
+/// read's "Do today" line — the only kind the server promotes today.
+struct ReviewInsightRec: Decodable, Sendable, Equatable, Identifiable {
+    let key: String
+    let text: String
+    let kind: String?
+    var id: String { key }
 }
 
 /// The monthly revenue range implied by a rating movement. `available` is

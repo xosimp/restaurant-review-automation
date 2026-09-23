@@ -161,7 +161,13 @@ def draft_response(review_id: int, rating: int, text: str,
     elif rating == 3:
         length_note = "40-60 words — acknowledge both positives and address any concerns."
     else:
-        length_note = "60-80 words — acknowledge SPECIFIC complaints mentioned by name, apologize sincerely, explain what will be done differently."
+        # It used to end "explain what will be done differently" — an
+        # instruction to state an action nobody told us about (audit #14).
+        # The reply may say only what the owner has told Cavnar (voice notes).
+        length_note = ("60-80 words — acknowledge SPECIFIC complaints mentioned by name and apologize sincerely. "
+                       "Do NOT state or promise any action, fix, retraining, staff conversation, process change, "
+                       "refund, comp or discount unless the Voice notes above say the restaurant does it; "
+                       "otherwise invite the guest to contact the restaurant directly so it can make it right.")
 
     # Reviewer address
     # The display name is chosen by the reviewer, so it is guest text like
@@ -209,6 +215,7 @@ Sign off as: {sign_off_name}
 Length: {length_note}{never_note}{style_block}{theme_note}{health_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
+FACTS: State only what the restaurant has told you above (Voice). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"), never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
 
 Review ({rating}/5 stars, {sentiment}):
 {wrap_untrusted(text)}
@@ -248,11 +255,11 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
     draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
 
-    # A reply is published on a public listing under the owner's name, and
-    # the 1-star prompt above literally asks the model to "explain what will
-    # be done differently". Nothing checked what it wrote there, so an
-    # invented remediation — staff retrained, supplier changed, policy
-    # updated — went out as a statement of fact the restaurant never made.
+    # A reply is published on a public listing under the owner's name. The
+    # 1-star prompt once asked the model to "explain what will be done
+    # differently"; the prompt no longer asks, and this still checks what it
+    # wrote, so an invented remediation — staff retrained, a comp, a process
+    # promise — never goes out unread as a statement the restaurant made.
     from ai_guard import unsupported_commitments
     claims = unsupported_commitments(draft)
     if claims:

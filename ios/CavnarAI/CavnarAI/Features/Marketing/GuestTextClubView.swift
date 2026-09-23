@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum CampaignField: Hashable, CaseIterable {
-    case topic, link, draftMessage, newsletter
+    case winback, topic, link, draftMessage, newsletter
 }
 
 struct GuestTextClubView: View {
@@ -9,6 +9,7 @@ struct GuestTextClubView: View {
     @State private var showingAddContact = false
     @State private var copied = false
     @State private var confirmingSend = false
+    @State private var confirmingWinback = false
     /// The guest whose trash button was tapped, awaiting confirmation.
     @State private var contactToDelete: GuestContact?
     @FocusState private var focusedField: CampaignField?
@@ -18,6 +19,9 @@ struct GuestTextClubView: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let joinURL = viewModel.joinURL {
                     joinLinkCard(joinURL)
+                }
+                if let draft = viewModel.winback {
+                    winbackCard(draft)
                 }
                 campaignCard
                 newsletterCard
@@ -37,6 +41,7 @@ struct GuestTextClubView: View {
             await viewModel.loadSegments()
             await viewModel.loadHistory()
             await viewModel.loadNewsletter()
+            await viewModel.loadWinback()
         }
         .onChange(of: viewModel.campaignType) { _, _ in viewModel.campaignTypeChanged() }
         .sheet(isPresented: $showingAddContact) {
@@ -128,6 +133,130 @@ struct GuestTextClubView: View {
             }
         }
         .cavnarCard()
+    }
+
+    // MARK: - Suggested win-back
+
+    /// A drafted win-back text for a lapsed segment. Written by the server
+    /// deterministically, edited here, and sent only on the owner's tap —
+    /// confirmed first, like every text blast on this screen (CLIENT-9).
+    private func winbackCard(_ draft: GuestWinback.Draft) -> some View {
+        let size = draft.segmentSize ?? 0
+        let who = (draft.segmentLabel ?? "who haven\u{2019}t been back").lowercased()
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text("SUGGESTED \u{00B7} WIN-BACK TEXT")
+                    .font(.cavnarBody(12, weight: 700))
+                    .tracking(1.1)
+            }
+            .foregroundStyle(Color.cavnarEmber)
+
+            (Text("\(size)").font(.cavnarNumber(16, weight: 700))
+                + Text(" opted-in guest\(size == 1 ? "" : "s") \(who) can be texted."))
+                .font(.cavnarBody(16, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let text = draft.pastReturn?.text, !text.isEmpty {
+                HomeMixedText.make(text, size: 13, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let total = viewModel.winbackSentTotal {
+                // Stays put (not the fading posted check): the owner should
+                // still see what happened when they scroll back up.
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .accessibilityHidden(true)
+                    (Text("Sending to ") + Text("\(total)").font(.cavnarNumber(12.5, weight: 600))
+                        + Text(" guest\(total == 1 ? "" : "s") \u{2014} it\u{2019}s in the campaign history below"))
+                        .font(.cavnarBody(12.5, weight: 500))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.cavnarInk3)
+            } else if viewModel.winbackDismissed {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .accessibilityHidden(true)
+                    Text(RecAnswer.notForUs.confirmation)
+                        .font(.cavnarBody(12.5, weight: 500))
+                }
+                .foregroundStyle(Color.cavnarInk3)
+            } else {
+                TextEditor(text: $viewModel.winbackMessage)
+                    .font(.cavnarBody(16))
+                    .frame(minHeight: 80)
+                    .padding(8)
+                    .background(Color.cavnarPaper2)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .focused($focusedField, equals: .winback)
+                    .onChange(of: viewModel.winbackMessage) { _, text in
+                        // Held to the server's own length limit as it's typed.
+                        if let max = draft.maxChars, text.count > max {
+                            viewModel.winbackMessage = String(text.prefix(max))
+                        }
+                    }
+                if let left = viewModel.winbackCharsLeft {
+                    (Text("\(left)").font(.cavnarNumber(12.5, weight: 600))
+                        + Text(" character\(left == 1 ? "" : "s") left"))
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(left <= 10 ? Color.cavnarAmber : Color.cavnarInk3)
+                }
+
+                HStack(alignment: .center, spacing: 16) {
+                    Button {
+                        confirmingWinback = true
+                    } label: {
+                        if viewModel.isSendingWinback {
+                            CavnarShimmerText(text: "Sending\u{2026}")
+                        } else {
+                            Text("Send to these guests")
+                        }
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSendWinback))
+                    .disabled(!viewModel.canSendWinback)
+                    .confirmationDialog(
+                        "Text \(size) guest\(size == 1 ? "" : "s") \(who)?",
+                        isPresented: $confirmingWinback, titleVisibility: .visible
+                    ) {
+                        Button("Send to \(size) guest\(size == 1 ? "" : "s")") {
+                            Task { await viewModel.sendWinback() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Texts go out between \(draft.smsWindow ?? "8:00 AM and 9:00 PM"). A sent text can't be recalled.")
+                    }
+
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.dismissWinback() }
+                    } label: {
+                        Text(RecAnswer.notForUs.label)
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isSendingWinback)
+                    .accessibilityHint(RecAnswer.notForUs.accessibilityHint)
+                }
+            }
+
+            if let error = viewModel.winbackError {
+                Text(error)
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.ai)
     }
 
     private var campaignCard: some View {

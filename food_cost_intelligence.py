@@ -47,7 +47,15 @@ forecast functions, which say so in their names.
 import json
 from datetime import date, datetime, timedelta
 
-from models import DB_PATH, get_conn
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports):
+    a copy bound at import kept pointing wherever models.get_conn pointed
+    the first time this module was imported."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # A driver has to carry real money before it is worth an owner's attention or
 # a line in a paragraph. Mirrors inventory_ledger.MIN_VARIANCE_DOLLARS.
@@ -359,6 +367,127 @@ def _driver_block_failed(restaurant_id, which, exc):
     return which
 
 
+def _waste_weeks(restaurant_id, db_path=DB_PATH) -> dict:
+    """{item_lower: weeks} — in how many distinct ISO weeks of the last eight
+    each item was among the recorded waste offenders, plus "_all": how many
+    weeks of waste history exist at all. inventory_history is written per
+    render day, so weeks are counted, not rows."""
+    out = {"_all": 0}
+    conn = get_conn(db_path)
+    try:
+        rows = _rows_raw(conn, "SELECT week_end, waste_json FROM inventory_history WHERE restaurant_id=? "
+                               "AND waste_json IS NOT NULL AND week_end >= date('now', '-56 days')",
+                         (restaurant_id,))
+    finally:
+        conn.close()
+    weeks_all, per = set(), {}
+    for r in rows:
+        try:
+            d = datetime.strptime(str(r["week_end"])[:10], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        wk = d.isocalendar()[:2]
+        weeks_all.add(wk)
+        try:
+            top = json.loads(r["waste_json"] or "{}").get("top_items") or []
+        except Exception:
+            top = []
+        for it in top:
+            per.setdefault(str(it).strip().lower(), set()).add(wk)
+    out["_all"] = len(weeks_all)
+    for k, v in per.items():
+        out[k] = len(v)
+    return out
+
+
+def _waste_confidence(weeks: int) -> str:
+    """A month projected from ONE week of waste (x52/12) is a projection of a
+    single observation, not a measured monthly figure (audit #35). Three or
+    more weeks of the item in the offender list is a pattern."""
+    if weeks >= 3:
+        return "high"
+    if weeks == 2:
+        return "medium"
+    return "low"
+
+
+def _recipe_provenance(restaurant_id, dish_ids, db_path=DB_PATH) -> dict:
+    """{menu_item_id: {"lines", "unreviewed", "ingredients"}} — how many of
+    each dish's recipe lines came from a Cavnar draft accepted unedited
+    (recipe_ingredients.source='draft_accepted'), and the ingredient names."""
+    out = {}
+    if not dish_ids:
+        return out
+    marks = ",".join("?" * len(dish_ids))
+    conn = get_conn(db_path)
+    try:
+        try:
+            rows = conn.execute(
+                f"SELECT ri.menu_item_id AS mid, i.name AS ing, ri.source AS source FROM recipe_ingredients ri "
+                f"JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.menu_item_id IN ({marks}) "
+                f"AND i.restaurant_id=?", (*dish_ids, restaurant_id)).fetchall()
+        except Exception:
+            # A database from before recipe_ingredients.source existed.
+            rows = conn.execute(
+                f"SELECT ri.menu_item_id AS mid, i.name AS ing, NULL AS source FROM recipe_ingredients ri "
+                f"JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.menu_item_id IN ({marks}) "
+                f"AND i.restaurant_id=?", (*dish_ids, restaurant_id)).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        d = out.setdefault(r["mid"], {"lines": 0, "unreviewed": 0, "ingredients": []})
+        d["lines"] += 1
+        if r["source"] == "draft_accepted":
+            d["unreviewed"] += 1
+        d["ingredients"].append(r["ing"])
+    return out
+
+
+def _food_cost_target(restaurant_id) -> float:
+    """restaurants.food_cost_target — the same target Home and cogs use.
+    The menu driver used a fixed 35% while Home judged against this."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        t = _f(getattr(r, "food_cost_target", None), 0.0) if r else 0.0
+        return t if 5.0 <= t <= 80.0 else 30.0
+    except Exception:
+        return 30.0
+
+
+def deduplicated_total(drivers: list) -> dict:
+    """The monthly dollars across drivers with no ingredient counted twice
+    (audit #36).
+
+    One ingredient can surface as waste, a price rise, a portion gap and
+    inside a dish's plate cost at once, and total_monthly summed all four —
+    the same dollars counted up to four times. Drivers that share an
+    ingredient (a menu driver shares every ingredient in its recipe) are
+    grouped, and each group contributes only its LARGEST driver.
+    Returns {"total", "groups", "overlapping"}."""
+    parent = list(range(len(drivers)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    owner = {}
+    for i, d in enumerate(drivers):
+        names = set(str(n).strip().lower() for n in (d.get("ingredients") or [d.get("item") or ""]) if n)
+        for n in names:
+            if n in owner:
+                parent[find(i)] = find(owner[n])
+            else:
+                owner[n] = i
+    groups = {}
+    for i, d in enumerate(drivers):
+        groups.setdefault(find(i), []).append(d)
+    total = round(sum(max(x["dollars_monthly"] for x in g) for g in groups.values()), 2)
+    return {"total": total, "groups": len(groups),
+            "overlapping": sum(1 for g in groups.values() if len(g) > 1)}
+
+
 def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Every driver of food cost movement, each with the dollars it carries,
     ranked here rather than by the model.
@@ -387,11 +516,19 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         # is how `fix_first` ended up meaning two different things depending
         # on which branch produced it; every caller reads one contract.
         return {"available": False, "reason": "sample data — no drivers to rank",
-                "drivers": [], "total_monthly": 0.0,
+                "drivers": [], "total_monthly": 0.0, "total_monthly_deduplicated": 0.0,
                 "min_driver_dollars": MIN_DRIVER_DOLLARS,
                 "degraded_sources": [], "complete": True, "basis": None}
 
     # 1. Recoverable waste, per item, above its own category tolerance band.
+    #    Last week's recoverable figure x52/12 is ONE week projected to a
+    #    month; it was labelled "high" confidence regardless (audit #35). The
+    #    confidence now comes from how many weeks the item has been a waste
+    #    offender, and one week says it is one week.
+    try:
+        _ww = _waste_weeks(restaurant_id, db_path=db_path)
+    except Exception:
+        _ww = {"_all": 0}
     for x in (analysis.get("waste_items") or [])[:6]:
         rec = _f(x.get("recoverable_cost"))
         if rec <= 0:
@@ -399,12 +536,16 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         monthly = round(rec * 52.0 / 12.0, 2)
         if monthly < MIN_DRIVER_DOLLARS:
             continue
+        weeks = max(1, int(_ww.get(str(x["item"]).strip().lower(), 0)))
         drivers.append({
             "kind": "waste", "label": f"{x['item']} waste above tolerance",
-            "dollars_monthly": monthly, "confidence": "high", "difficulty": "low",
+            "dollars_monthly": monthly, "confidence": _waste_confidence(weeks), "difficulty": "low",
+            "weeks_of_data": weeks,
             "evidence": (f"{x['item']} wasted {x.get('waste_pct')}% of what was ordered "
                          f"against a {x.get('waste_tolerance_pct')}% tolerance band, "
-                         f"${_f(x.get('waste_cost')):,.2f} last week"),
+                         f"${_f(x.get('waste_cost')):,.2f} last week"
+                         + (" — one week of data projected to a month" if weeks == 1 else
+                            f" — an offender in {weeks} of the last 8 weeks")),
             "if_ignored": "the same share keeps going in the bin every week",
             "item": x["item"],
         })
@@ -490,31 +631,46 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "sourcing", _e))
 
-    # 5. Menu items whose plate cost is out of band, weighted by what they sell.
+    # 5. Menu items whose plate cost is over the restaurant's OWN target,
+    #    weighted by what they sell. It used a fixed 35% while Home judged
+    #    the same restaurant against restaurants.food_cost_target, and it was
+    #    "high" confidence even when the plate cost rested on a recipe Cavnar
+    #    drafted and the owner accepted without changing a line (audit #35).
     try:
         mp = il.menu_profitability(restaurant_id)
-        for e in (mp.get("priced") or [])[:4]:
-            if e.get("unit_warning") or not e.get("units_sold"):
-                continue
+        target_pct = _food_cost_target(restaurant_id)
+        cands = [e for e in (mp.get("priced") or [])[:4]
+                 if not e.get("unit_warning") and e.get("units_sold")
+                 and _f(e.get("food_cost_pct")) > target_pct]
+        prov = _recipe_provenance(restaurant_id, [e["id"] for e in cands], db_path=db_path)
+        for e in cands:
             fc = _f(e.get("food_cost_pct"))
-            if fc <= 35:
-                continue
-            # Dollars to bring this dish to a 35% food cost at its current
+            # Dollars to bring this dish to the target at its current
             # volume. Never a suggestion to raise the price — just the size
             # of the gap.
-            target_cost = _f(e.get("sell_price")) * 0.35
+            target_cost = _f(e.get("sell_price")) * target_pct / 100.0
             monthly = round(max(0.0, _f(e["plate_cost"]) - target_cost)
                             * _f(e["units_sold"]) * (30.0 / il._POPULARITY_WINDOW_DAYS), 2)
             if monthly < MIN_DRIVER_DOLLARS:
                 continue
+            p = prov.get(e["id"]) or {"lines": 0, "unreviewed": 0, "ingredients": []}
+            unreviewed = p["unreviewed"]
+            confidence = "high" if not unreviewed else ("low" if unreviewed >= p["lines"] else "medium")
             drivers.append({
                 "kind": "menu", "label": f"{e['name']} runs at {fc:g}% food cost",
-                "dollars_monthly": monthly, "confidence": "high", "difficulty": "high",
+                "dollars_monthly": monthly, "confidence": confidence, "difficulty": "high",
+                "target_pct": target_pct,
+                "recipe_unreviewed_lines": unreviewed,
                 "evidence": (f"{e['name']} costs ${e['plate_cost']:.2f} on a "
-                             f"${_f(e['sell_price']):.2f} price, {e['units_sold']:g} sold in "
-                             f"{il._POPULARITY_WINDOW_DAYS} days"),
+                             f"${_f(e['sell_price']):.2f} price against your {target_pct:g}% target, "
+                             f"{e['units_sold']:g} sold in {il._POPULARITY_WINDOW_DAYS} days"
+                             + (f"; {unreviewed} of its {p['lines']} recipe lines are a Cavnar draft "
+                                f"accepted unedited, so the plate cost is unconfirmed" if unreviewed else "")),
                 "if_ignored": "the dish keeps selling at a thin margin",
                 "item": e["name"],
+                # The ingredients this plate cost is made of, so the
+                # de-duplicated total never counts one of them twice.
+                "ingredients": p["ingredients"] or [e["name"]],
             })
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "menu", _e))
@@ -527,10 +683,18 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     _DIFF = {"low": 0, "medium": 1, "high": 2}
     drivers.sort(key=lambda d: (-d["dollars_monthly"], _CONF.get(d["confidence"], 3),
                                 _DIFF.get(d["difficulty"], 3)))
+    dedup = deduplicated_total(drivers)
     return {
         "available": bool(drivers),
         "drivers": drivers,
+        # The plain sum, kept for existing readers. It counts an ingredient
+        # once per driver it appears in; use `total_monthly_deduplicated`
+        # wherever one "money at stake" figure is shown (audit #36).
         "total_monthly": round(sum(d["dollars_monthly"] for d in drivers), 2),
+        "total_monthly_deduplicated": dedup["total"],
+        "total_basis": ("the largest driver per ingredient — an ingredient that shows up as waste, a "
+                        "price rise and inside a dish's plate cost is counted once"
+                        if dedup["overlapping"] else "no ingredient appears in more than one driver"),
         "min_driver_dollars": MIN_DRIVER_DOLLARS,
         # Sources that failed. A ranking missing a source is not a ranking,
         # and the caller has to be able to say so rather than presenting a
@@ -1314,6 +1478,14 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
         conn.close()
 
 
+def _mdy_safe(stamp):
+    try:
+        from time_utils import mdy
+        return mdy(stamp)
+    except Exception:
+        return None
+
+
 def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
                   include_stale: bool = False):
     """The stored CFO read, with its own age. `stale` is computed rather than
@@ -1354,6 +1526,12 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "dollars_at_stake": row["dollars_at_stake"],
         "window_days": row["window_days"], "generated_at": row["generated_at"],
         "age_hours": round(age_h, 1) if age_h is not None else None, "stale": stale,
+        # Owner-facing date of the read (M/D/YY) and, when it is past its
+        # TTL, the sentence that says so — a stale cause read as current
+        # wherever a surface dropped the `stale` flag.
+        "as_of": _mdy_safe(row["generated_at"]),
+        "stale_note": (f"From a read on {_mdy_safe(row['generated_at'])} — it has not been refreshed since."
+                       if stale else None),
     }
 
 
@@ -1437,11 +1615,13 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     return {
         "what_changed": changed or None,
         "why": ({"cause": diag["cause"], "confidence": diag["confidence"],
-                 "alternative": diag["alternative_cause"], "stale": diag["stale"]}
+                 "alternative": diag["alternative_cause"], "stale": diag["stale"],
+                 "as_of": diag.get("as_of"), "stale_note": diag.get("stale_note")}
                 if diag else {"cause": None,
                               "reason": "no root-cause read has been produced yet"}),
         "fix_first": fix_first,
-        "money_involved": ({"monthly_at_stake": drv["total_monthly"],
+        "money_involved": ({"monthly_at_stake": drv.get("total_monthly_deduplicated", drv["total_monthly"]),
+                            "monthly_at_stake_basis": drv.get("total_basis"),
                             "projected_month_delta": pp.get("dollars_vs_last_month"),
                             "claim_kind": "forecast"}
                            if drv.get("available") else

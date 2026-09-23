@@ -443,4 +443,154 @@ final class GuestTextClubViewModel {
             await loadHistory()
         }
     }
+
+    // MARK: - Suggested win-back
+
+    /// The drafted win-back text waiting for the owner, when a lapsed
+    /// segment is big enough (guest_marketing.winback_suggestion). Nothing is
+    /// ever sent without the owner's tap on Send.
+    var winback: GuestWinback.Draft?
+    /// The owner's edit of the drafted message.
+    var winbackMessage = ""
+    var isSendingWinback = false
+    var winbackError: String?
+    /// Set once the server accepted the send — the card then says so in
+    /// place of its buttons.
+    var winbackSentTotal: Int?
+    var winbackDismissed = false
+    /// A send whose answer was lost. The button stays off: the server may
+    /// already be texting, and a blind second send is a second blast.
+    private(set) var winbackOutcomeUnknown = false
+
+    /// Characters left against the server's own limit, or nil when it sent none.
+    var winbackCharsLeft: Int? {
+        guard let max = winback?.maxChars else { return nil }
+        return max - winbackMessage.count
+    }
+
+    var canSendWinback: Bool {
+        !isSendingWinback && !winbackOutcomeUnknown && winbackSentTotal == nil
+            && !winbackMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (winbackCharsLeft ?? 0) >= 0
+    }
+
+    func loadWinback() async {
+        do {
+            let r: GuestWinback = try await client.send("/mobile/api/guest-winback", hapticOnError: false)
+            if r.ok, r.available == true, let draft = r.draft {
+                if winback?.id != draft.id { winbackMessage = draft.message }
+                winback = draft
+            } else {
+                winback = nil
+            }
+        } catch {
+            // Best-effort: a suggestion that failed to load is simply not
+            // shown; the rest of the text club works without it.
+        }
+    }
+
+    private struct WinbackSendBody: Encodable { let message: String }
+    private struct WinbackSendResponse: Decodable {
+        let ok: Bool
+        let queued: Bool?
+        let total: Int?
+        let error: String?
+    }
+
+    func sendWinback() async {
+        guard let draft = winback, canSendWinback else { return }
+        isSendingWinback = true
+        winbackError = nil
+        defer { isSendingWinback = false }
+        do {
+            let r: WinbackSendResponse = try await client.send(
+                "/mobile/api/guest-winback/\(draft.id)/send", method: .post,
+                body: WinbackSendBody(message: winbackMessage),
+                retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                winbackSentTotal = r.total ?? draft.segmentSize ?? 0
+                await loadHistory()
+            } else {
+                winbackError = r.error ?? "Couldn\u{2019}t send the win-back text."
+            }
+        } catch is CancellationError {
+            return
+        } catch let error as APIClient.APIError where error.status == nil && error.mayHaveReachedServer {
+            winbackOutcomeUnknown = true
+            winbackError = "Lost the connection mid-send. Check the campaign history before sending again \u{2014} anyone already texted is skipped."
+            await loadHistory()
+        } catch let error as APIClient.APIError {
+            // The server's own sentence — quiet hours, the frequency cap,
+            // the length limit.
+            winbackError = error.message
+        } catch {
+            winbackError = "Couldn\u{2019}t send the win-back text."
+        }
+    }
+
+    private struct WinbackDismissBody: Encodable { let kind: String }
+
+    func dismissWinback() async {
+        guard let draft = winback else { return }
+        winbackError = nil
+        do {
+            let r: OKErrorResponse = try await client.send(
+                "/mobile/api/guest-winback/\(draft.id)/dismiss", method: .post,
+                body: WinbackDismissBody(kind: "not_for_us"),
+                retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                winbackDismissed = true
+            } else {
+                winbackError = r.error ?? "Couldn\u{2019}t save that."
+            }
+        } catch is CancellationError {
+            return
+        } catch let error as APIClient.APIError {
+            winbackError = error.message
+        } catch {
+            winbackError = "Couldn\u{2019}t save that."
+        }
+    }
+}
+
+/// GET /mobile/api/guest-winback. Every field past `ok` is optional: an
+/// older server doesn't have the route's newer fields, and absent means "no
+/// suggestion", never an error.
+struct GuestWinback: Decodable {
+    let ok: Bool
+    let available: Bool?
+    let reason: String?
+    let draft: Draft?
+
+    struct Draft: Decodable, Equatable {
+        let id: Int
+        let segment: String?
+        let segmentLabel: String?
+        let segmentSize: Int?
+        let message: String
+        let recKey: String?
+        /// The payload's `return` block (a Swift keyword, hence the name).
+        let pastReturn: Return?
+        let maxChars: Int?
+        let smsWindow: String?
+
+        /// What past win-back texts did — measured, or a plain statement
+        /// that nothing has been.
+        struct Return: Decodable, Equatable {
+            let measured: Bool?
+            let text: String?
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id, segment, message
+            case pastReturn = "return"
+            case segmentLabel = "segment_label"
+            case segmentSize = "segment_size"
+            case recKey = "rec_key"
+            case maxChars = "max_chars"
+            case smsWindow = "sms_window"
+        }
+    }
 }

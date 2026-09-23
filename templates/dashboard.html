@@ -1641,6 +1641,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
 .hb-rec-ans{margin-left:auto;display:inline-flex;align-items:center;gap:0;opacity:.55;transition:opacity .18s ease}.hb-rec:hover .hb-rec-ans{opacity:1}
 .hb-rec-ans .cbtn+.cbtn{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line)}
+/* Done / Not for us / Track on a module recommendation (rec_ledger) — Home's answer row, inline */
+.rec-ans{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0;margin-top:4px}
+.rec-ans .cbtn+.cbtn{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line)}
+.rec-ans-done{font-size:12.5px;color:var(--ink3);font-weight:500}
+.rec-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:8px;border-top:1px solid var(--hb-line2)}
+.rec-line .k{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
+.rec-cites{margin-top:6px;display:flex;flex-direction:column;gap:4px}
+.rec-cites .c{font-size:12.5px;color:var(--ink3);line-height:1.5}
+.rec-cites .c b{color:var(--ink2);font-weight:600}
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -5603,6 +5612,7 @@ svg:hover .hb-xh{opacity:1}
       <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openGuestContactsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
 
+    <div id="guest-winback" hidden style="margin-bottom:16px;padding:14px 16px;border-radius:12px;background:var(--hb-tint);border:1px solid var(--hb-line2)"></div>
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px" onchange="guestTypeChanged()">
@@ -6023,7 +6033,7 @@ svg:hover .hb-xh{opacity:1}
       {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
       <div class="sec"><div class="st {{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ '✓' if 'WELL' in name|upper else '✗' }}</i><span>{{ b }}</span></div>{% endfor %}</div>
       {% endif %}{% endfor %}{% endif %}
-      {% if recs %}<div class="sec"><div class="st ember">How to improve</div>{% for rec in recs %}<div class="rec"><b>{{ loop.index }}</b><span>{{ rec }}</span></div>{% endfor %}</div>{% endif %}
+      <div id="in2-recs">{% if recs %}<div class="sec"><div class="st ember">How to improve</div>{% for rec in recs %}<div class="rec"><b>{{ loop.index }}</b><span>{{ rec }}</span></div>{% endfor %}</div>{% endif %}</div>
       {% if not _parts or (not _parts.sections and not recs) %}<div style="font-size:13.5px;color:var(--ink2)">{{ _cd.insight }}</div>{% endif %}
     </div>
   </div>
@@ -6108,7 +6118,33 @@ svg:hover .hb-xh{opacity:1}
     {% endif %}
     <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
   </div>
-  <script>function in2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}</script>
+  <script>function in2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+  /* The competitor recommendations with their answer row and the competitor
+     reviews each one cites (audit #21 / #31). An insight the checks could
+     not verify promotes none, and "nothing worth acting on" is said plainly. */
+  function in2LoadRecs(){
+    var box=document.getElementById('in2-recs');if(!box)return;
+    fetch('/api/intel/recs',{credentials:'same-origin'}).then(apiJson).then(function(d){
+      if(!d||!d.ok)return;
+      var h='';
+      if((d.recs||[]).length){
+        h='<div class="sec"><div class="st ember">How to improve</div>';
+        for(var i=0;i<d.recs.length;i++){var r=d.recs[i],c='';
+          for(var j=0;j<(r.cites||[]).length;j++){var q=r.cites[j];
+            c+='<div class="c"><b>'+recEsc(q.competitor||'')+'</b> \u00b7 '+recEsc(q.rating)+'\u2605'+(q.time?' \u00b7 '+recEsc(q.time):'')+' \u2014 \u201c'+recEsc(q.text)+'\u201d</div>';}
+          h+='<div class="rec"><b>'+(i+1)+'</b><span>'+recEsc(r.text)
+            +(c?'<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink3)">Reviews this rests on ('+r.cites.length+')</summary><div class="rec-cites">'+c+'</div></details>':'')
+            +'<br>'+recControlsHtml(r.key,'intel','intel')+'</span></div>';}
+        h+='</div>';
+      }else if(d.withheld_recommendations){
+        h='<div class="sec"><div class="st ember">How to improve</div><div style="font-size:13.5px;color:var(--ink2)">'
+          +d.withheld_recommendations+' recommendation'+(d.withheld_recommendations===1?'':'s')+' held back: this read '+recEsc(d.unverified||'could not be verified')+'.</div></div>';
+      }else if(d.nothing_to_act_on){
+        h='<div class="sec"><div class="st ember">How to improve</div><div style="font-size:13.5px;color:var(--ink2)">Nothing worth acting on this week.</div></div>';
+      }
+      box.innerHTML=h;
+    }).catch(function(){});
+  }</script>
 </div><!-- /hb-wrap -->
 </div><!-- /panel-competitor -->
 
@@ -8136,6 +8172,7 @@ function loadReviewInsight(){
       applyInsightCaveats(el,cd);
       renderSeverityStrip(cd);
       renderReviewDiagnosis(cd);
+      renderInsightRecs(el,cd.recs,'reviews');
       return;
     }
   }catch(e){}
@@ -8152,6 +8189,7 @@ function loadReviewInsight(){
     applyInsightCaveats(el,d);
     renderSeverityStrip(d);
     renderReviewDiagnosis(d);
+    renderInsightRecs(el,d.recs,'reviews');
   }).catch(function(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
@@ -8164,6 +8202,53 @@ function loadReviewInsight(){
 
    This script block sits outside the Home IIFE that owns its own esc(), so
    the renderers below carry their own. Same escaping, local scope. */
+/* Done / Not for us / Track on any module recommendation (audit #21). One
+   delegated listener posts /api/recs/event with the rec_ledger key the
+   server gave the line, so an answer given here holds on every surface —
+   the brief, Home and the phone included. */
+function recEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function recControlsHtml(key,surface,module){
+  var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" ';
+  return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
+    +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
+    +b+'data-rec-event="accepted">Track</button></span>';
+}
+function _recAnsweredText(ev){
+  if(ev==='completed')return 'Done \u2014 Cavnar won\u2019t suggest it again';
+  if(ev==='accepted')return 'Tracking \u2014 Cavnar will watch what changes';
+  return 'Noted \u2014 it won\u2019t come back';
+}
+function recAnswer(btn){
+  var key=btn.getAttribute('data-rec-key'),ev=btn.getAttribute('data-rec-event');
+  var body={key:key,event:ev,surface:btn.getAttribute('data-rec-surface')||'web',module:btn.getAttribute('data-rec-module')||''};
+  var kind=btn.getAttribute('data-rec-kind');if(kind)body.kind=kind;
+  var box=btn.parentNode,all=box?box.querySelectorAll('button'):[];
+  for(var i=0;i<all.length;i++)all[i].disabled=true;
+  fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+    if(!d||!d.ok){for(var j=0;j<all.length;j++)all[j].disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t save that','error');return;}
+    if(box)box.innerHTML='<span class="rec-ans-done">'+_recAnsweredText(ev)+'</span>';
+    /* The panels keep a five-minute session copy; an answered line must not
+       come back from it. */
+    try{sessionStorage.removeItem('review_insight');sessionStorage.removeItem('mkt_brief');}catch(x){}
+  }).catch(function(){for(var j=0;j<all.length;j++)all[j].disabled=false;if(typeof toast==='function')toast('Network error','error');});
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-rec-key]'):null;if(!t||t.disabled)return;
+  e.preventDefault();recAnswer(t);
+});
+/* The keyed recommendation lines of a read (the Reviews "Do today"), each
+   with its answer row, under the passage. */
+function renderInsightRecs(el,recs,surface){
+  if(!el||!recs||!recs.length)return;
+  var old=el.parentNode?el.parentNode.querySelector('.rec-lines[data-for="'+el.id+'"]'):null;
+  if(old)old.parentNode.removeChild(old);
+  var box=document.createElement('div');box.className='rec-lines';box.setAttribute('data-for',el.id);
+  var h='';
+  for(var i=0;i<recs.length;i++){var r=recs[i];
+    h+='<div class="rec-line"><span class="k">'+(r.kind==='do_today'?'Do today':'Suggestion')+'</span>'+recControlsHtml(r.key,surface,surface)+'</div>';}
+  box.innerHTML=h;
+  if(el.parentNode)el.parentNode.insertBefore(box,el.nextSibling);
+}
 function _rvEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function applyInsightCaveats(el,d){
   if(!el||!d)return;
@@ -8230,8 +8315,12 @@ function renderReviewDiagnosis(d){
   if(dg.what_would_confirm){
     h+='<div class="rv-diag-row"><div class="k">What would tell them apart</div><div class="v">'+_rvEsc(dg.what_would_confirm)+'</div></div>';
   }
-  if(dg.recommended_action){
-    h+='<div class="rv-diag-row"><div class="k">Do this</div><div class="v">'+_rvEsc(dg.recommended_action)+'</div></div>';
+  if(dg.stale_note){
+    h+='<div class="rv-diag-row alt"><div class="k">As of</div><div class="v">'+_rvEsc(dg.stale_note)+'</div></div>';
+  }
+  if(dg.recommended_action&&!dg.answered){
+    h+='<div class="rv-diag-row"><div class="k">Do this</div><div class="v">'+_rvEsc(dg.recommended_action)
+      +(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'reviews','reviews'):'')+'</div></div>';
   }
   if(dg.expected_outcome){
     h+='<div class="rv-diag-row alt"><div class="k">What should change</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
@@ -8376,7 +8465,7 @@ function switchTab(n,btn){
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
-  if(n==='competitor'){switchIntelTab('competitors');}
+  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'&&window.acctOnOpen){acctOnOpen();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
@@ -9642,6 +9731,15 @@ function loadMktAttribution(){
       return;
     }
     var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish\u2019s own units the same way, and reviews in the next two weeks that mentioned it. Correlations, not proof \u2014 a busy Friday is still a busy Friday.</div>';
+    // The verdict is the server's: a lift inside the weekday's own noise
+    // band is "no clear change", never green (marketing_signals.lift_verdict).
+    function _liftBadge(p){
+      var v=p.verdict||(p.lift_pct>0?'lifted':(p.lift_pct<0?'dropped':'no_clear_change'));
+      var col=v==='lifted'?'var(--hb-good)':(v==='dropped'?'var(--red)':'var(--ink3)');
+      var txt=(p.lift_pct>0?'+':'')+Math.round(p.lift_pct)+'%';
+      if(v==='no_clear_change')txt='No clear change <span style="font-weight:500">('+txt+', within \u00b1'+Math.round(p.noise_band_pct||5)+'%)</span>';
+      return '<span class="hb-num" style="font-weight:700;color:'+col+'">'+txt+'</span>';
+    }
     function _postRow(p){
       var about=[];if(p.menu_item_name)about.push(p.menu_item_name);if(p.occasion)about.push(String(p.occasion).replace('_',' '));
       var extra=[];
@@ -9652,7 +9750,7 @@ function loadMktAttribution(){
       if(p.overlapping)extra.push('shares its two days with another post');
       return '<div style="padding:7px 0;border-bottom:1px solid var(--paper3)"><div style="display:flex;justify-content:space-between;gap:10px">'
         + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + (about.length?' <span class="hb-chip" style="margin-left:6px">'+_escHtml(about.join(' \u00b7 '))+'</span>':'') + '</span>'
-        + '<span class="hb-num" style="font-weight:700;color:' + (p.lift_pct >= 0 ? 'var(--hb-good)' : 'var(--red)') + '">' + (p.lift_pct > 0 ? '+' : '') + Math.round(p.lift_pct) + '%</span>'
+        + _liftBadge(p)
         + '</div>'+(extra.length?'<div style="font-size:12px;color:var(--ink3);margin-top:2px">'+extra.join(' \u00b7 ')+'</div>':'')+'</div>';
     }
     for(var i=0;i<d.posts.length;i++)html+=_postRow(d.posts[i]);
@@ -12897,7 +12995,8 @@ function fc2LoadCfo(){
         h+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
         if(dg.alternative_cause){h+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
         if(dg.what_would_confirm){h+='<div class="fc2-row"><div class="k">What would tell them apart</div><div class="v">'+wtEsc(dg.what_would_confirm)+'</div></div>';}
-        if(dg.recommended_action){h+='<div class="fc2-row"><div class="k">Do this first</div><div class="v">'+wtEsc(dg.recommended_action)+'</div></div>';}
+        if(dg.stale_note){h+='<div class="fc2-row alt"><div class="k">As of</div><div class="v">'+wtEsc(dg.stale_note)+'</div></div>';}
+        if(dg.recommended_action&&!dg.answered){h+='<div class="fc2-row"><div class="k">Do this first</div><div class="v">'+wtEsc(dg.recommended_action)+(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'food','food'):'')+'</div></div>';}
         if(dg.expected_outcome){h+='<div class="fc2-row alt"><div class="k">What should change</div><div class="v">'+wtEsc(dg.expected_outcome)+'</div></div>';}
         var oe=dg.operational_evidence||[];
         if(oe.length){
@@ -15609,15 +15708,33 @@ function revokeOtherSessions(btn){
     fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(apiJson).then(function(d){
       var el=document.getElementById('fc2-reprice-body');if(!el||!d||!d.ok)return;
       var sg=d.suggestions||[];if(!sg.length)return;
-      var h='<h3 class="hb-kicker" style="margin:26px 0 8px">Prices to revisit · ingredient costs moved</h3><div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th>Because</th><th class="r">Now</th><th class="r">To restore margin</th><th class="r">Lost / mo</th></tr></thead><tbody>';
+      var h='<h3 class="hb-kicker" style="margin:26px 0 8px">Prices to revisit · ingredient costs moved</h3><div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th>Because</th><th class="r">Now</th><th class="r">To restore margin</th><th class="r">Lost / mo</th><th></th></tr></thead><tbody>';
       for(var i=0;i<sg.length;i++){var x=sg[i];
         var why=[];for(var j=0;j<(x.drivers||[]).length;j++){var dr=x.drivers[j];why.push(_fcEsc(dr.ingredient)+(dr.change_pct!=null?' +'+Number(dr.change_pct).toFixed(0)+'%':''));}
+        // One tap sets the suggested price (POST /food-cost/reprice/apply);
+        // "Not for us" answers the same rec_ledger key everywhere.
+        var act=x.suggested_price?('<button type="button" class="cbtn cbtn-primary cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.suggested_price+'">Set '+_fcMoney(x.suggested_price)+'</button>'):'';
+        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>';
         h+='<tr><td><b>'+_fcEsc(x.dish)+'</b></td><td>'+why.join(', ')+'</td>'
-          +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td><td class="r hb-num">'+_fcMoney(x.suggested_price)+'</td><td class="r hb-num">'+_fcMoney(x.monthly_margin_lost,0)+'</td></tr>';}
+          +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td><td class="r hb-num">'+_fcMoney(x.suggested_price)+'</td><td class="r hb-num">'+_fcMoney(x.monthly_margin_lost,0)+'</td><td class="r"><span class="rec-ans">'+act+'</span></td></tr>';}
       h+='</tbody></table></div>'+(d.assumption?'<div class="hb-empty" style="font-size:12px">'+_fcEsc(d.assumption)+'</div>':'');
       el.innerHTML=h;
     }).catch(function(){});
   }
+  // One-tap reprice. The server records the suggested price beside the one
+  // set, answers the recommendation and starts the outcome tracker.
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-reprice-dish]'):null;if(!t||t.disabled)return;
+    e.preventDefault();
+    var box=t.parentNode,all=box?box.querySelectorAll('button'):[];
+    for(var i=0;i<all.length;i++)all[i].disabled=true;
+    fetch('/api/food-cost/reprice/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dish:t.getAttribute('data-reprice-dish'),price:parseFloat(t.getAttribute('data-reprice-price'))})}).then(apiJson).then(function(d){
+      if(!d||!d.ok){for(var j=0;j<all.length;j++)all[j].disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t set that price','error');return;}
+      if(box)box.innerHTML='<span class="rec-ans-done">Set to '+_fcMoney(d.price)+'</span>';
+      if(typeof toast==='function')toast(d.dish+' is now '+_fcMoney(d.price)+(d.tracked?' \u2014 measuring food cost from today':''),'success');
+    }).catch(function(){for(var j=0;j<all.length;j++)all[j].disabled=false;if(typeof toast==='function')toast('Network error','error');});
+  });
   var _fcInv=null;
   window.fc2InvoiceScan=function(inp){
     var f=inp&&inp.files&&inp.files[0];if(!f)return;
@@ -15634,9 +15751,9 @@ function revokeOtherSessions(btn){
     var body=document.getElementById('fc2-inv-body'),v=_fcInv;if(!body||!v)return;
     var opts='<option value="">— pick —</option>';
     for(var k=0;k<(v.ingredients||[]).length;k++){var ing=v.ingredients[k];opts+='<option value="'+ing.id+'">'+_fcEsc(ing.name)+(ing.unit?' ('+_fcEsc(ing.unit)+')':'')+'</option>';}
-    var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
+    var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(window.mdy?window.mdy(v.invoice_date):v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
     if(v.total_check&&!v.total_check.plausible)h+='<div class="fc2-inv-note">Lines add up to '+_fcMoney(v.total_check.lines_sum)+' against an invoice total of '+_fcMoney(v.total_check.invoice_total)+' — some lines may be misread. Check them against the paper.</div>';
-    if(v.applied_at){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
+    if(v.applied_at){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
     h+='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th></th><th>Invoice line</th><th>Ingredient</th><th class="r">Now</th><th class="r">New cost</th></tr></thead><tbody>';
     for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
       h+='<tr><td><input type="checkbox" data-inv-line="'+i+'"'+(l.selected?' checked':'')+'></td>'
@@ -15739,8 +15856,43 @@ function renderSegmentHelp(){
   }
   help.textContent = '';
 }
+/* A drafted win-back text for guests who have drifted away (audit #47).
+   Nothing is sent until the owner presses Send — and then consent, quiet
+   hours and the three-day cap apply like any campaign. */
+function loadWinback(){
+  var box=document.getElementById('guest-winback');if(!box)return;
+  fetch('/api/guest-winback',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok||!d.available||!d.draft){box.hidden=true;box.innerHTML='';return;}
+    var w=d.draft,ret=(w['return']||{}).text||'';
+    box.innerHTML='<div class="hb-kicker" style="margin-bottom:6px">Suggested \u00b7 win-back text</div>'
+      +'<div style="font-size:14px;color:var(--ink);margin-bottom:6px"><b class="hb-num">'+w.segment_size+'</b> opted-in guest'+(w.segment_size===1?'':'s')+' '+recEsc((w.segment_label||'').toLowerCase())+' can be texted.</div>'
+      +(ret?'<div style="font-size:12.5px;color:var(--ink3);margin-bottom:8px">'+recEsc(ret)+'</div>':'')
+      +'<textarea id="guest-winback-msg" rows="3" maxlength="'+(w.max_chars||300)+'" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:8px">'+recEsc(w.message)+'</textarea>'
+      +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="guest-winback-send" data-winback-id="'+w.id+'">Send to these guests</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="'+w.id+'">Not for us</button>'
+      +'<span style="font-size:12px;color:var(--ink3)">Texts go out '+recEsc(w.sms_window||'during the day')+'; nobody gets two inside three days.</span></div>';
+    box.hidden=false;
+  }).catch(function(){});
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-winback-id],[data-winback-dismiss]'):null;if(!t||t.disabled)return;
+  e.preventDefault();t.disabled=true;
+  var box=document.getElementById('guest-winback');
+  if(t.hasAttribute('data-winback-dismiss')){
+    fetch('/api/guest-winback/'+t.getAttribute('data-winback-dismiss')+'/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'not_for_us'})}).then(apiJson).then(function(){
+      if(box){box.innerHTML='<span class="rec-ans-done">Noted \u2014 no win-back suggestion for this group.</span>';}
+    }).catch(function(){t.disabled=false;});
+    return;
+  }
+  var m=document.getElementById('guest-winback-msg');
+  fetch('/api/guest-winback/'+t.getAttribute('data-winback-id')+'/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m?m.value:''})}).then(apiJson).then(function(d){
+    if(!d||!d.ok){t.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t send that','error');return;}
+    if(box)box.innerHTML='<span class="rec-ans-done">Sending to '+(d.total||0)+' guest'+(d.total===1?'':'s')+' \u2014 it will show in your campaign history.</span>';
+  }).catch(function(){t.disabled=false;if(typeof toast==='function')toast('Network error','error');});
+});
 function loadGuestHistory(){
   loadMarketingDiagnosis();
+  loadWinback();
   fetch('/api/guest-campaigns').then(apiJson).then(function(d){
     if(!d.ok) return;
     var wrap = document.getElementById('guest-history-wrap');
