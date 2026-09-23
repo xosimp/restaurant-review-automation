@@ -21,9 +21,12 @@ struct RosterSettings: Codable, Equatable {
     // the hours they want. Read-only here.
     var preferredDayparts: [String]?
     var desiredHours: Double?
+    // The owner's word that this person knows the job — counted by
+    // Experience balance without waiting for twenty shifts on file.
+    var experienced: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case active, certifications
+        case active, certifications, experienced
         case employmentType = "employment_type"
         case minHours = "min_hours"
         case maxHours = "max_hours"
@@ -317,6 +320,89 @@ struct IntelRevenue: Codable, Equatable {
     let weeks: Int?
 }
 
+/// One published week: how much of the generated draft went out as it was.
+struct AcceptanceWeek: Codable, Identifiable, Equatable {
+    let historyId: Int?
+    let weekStart: String?
+    let changes: Int?
+    let unchangedShare: Double?
+
+    var id: String { "\(historyId ?? 0)-\(weekStart ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case changes
+        case historyId = "history_id"
+        case weekStart = "week_start"
+        case unchangedShare = "unchanged_share"
+    }
+}
+
+struct AcceptanceTrend: Codable, Equatable {
+    let direction: String?
+    let older: Double?
+    let newer: Double?
+}
+
+/// How much of each draft survives to the published week. Weeks arrive
+/// newest first.
+struct DraftAcceptance: Codable, Equatable {
+    let available: Bool?
+    let weeks: [AcceptanceWeek]?
+    let trend: AcceptanceTrend?
+    let meanUnchangedShare: Double?
+    let meanChanges: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case available, weeks, trend
+        case meanUnchangedShare = "mean_unchanged_share"
+        case meanChanges = "mean_changes"
+    }
+
+    /// Oldest first, only weeks with a measured share — the chart's order.
+    var chartWeeks: [AcceptanceWeek] { (weeks ?? []).reversed().filter { $0.unchangedShare != nil } }
+
+    /// One sentence on the direction, from the payload's own figures.
+    var trendLine: String? {
+        guard let t = trend, let older = t.older, let newer = t.newer else { return nil }
+        let o = Int((older * 100).rounded()), n = Int((newer * 100).rounded())
+        switch t.direction {
+        case "rising": return "You're keeping more of each draft: \(o)% then, \(n)% lately."
+        case "falling": return "You're changing more of each draft lately: \(o)% kept then, \(n)% now."
+        default: return "About the same from week to week."
+        }
+    }
+}
+
+/// One quality dimension checked against real outcomes.
+struct CalibrationDimension: Codable, Equatable {
+    let `default`: Double?
+    let suggested: Double?
+    let nudgePct: Int?
+    let reading: String?
+
+    enum CodingKeys: String, CodingKey {
+        case `default`, suggested, reading
+        case nudgePct = "nudge_pct"
+    }
+}
+
+/// Whether the quality weights track this restaurant's outcomes yet.
+/// Suggestions only — never applied on their own.
+struct WeightCalibration: Codable, Equatable {
+    let ready: Bool?
+    let reason: String?
+    let dimensions: [String: CalibrationDimension]?
+    let note: String?
+}
+
+/// The offer to auto-publish, when the drafts have been going out
+/// untouched and the latest scored well.
+struct AutoPublishOffer: Codable, Equatable {
+    let eligible: Bool
+    let reason: String?
+    let score: Double?
+}
+
 /// `GET labor/intel` — the record behind the draft. Every figure here is
 /// measured from published weeks; nothing is written by a model.
 struct ScheduleIntel: Codable, Equatable {
@@ -331,9 +417,16 @@ struct ScheduleIntel: Codable, Equatable {
     let splh: [String: [String: IntelSplh]]?
     let revenue: IntelRevenue?
     let suppressedRecommendationKinds: [String]?
+    // What the engine is learning. Absent on an older server.
+    let draftAcceptance: DraftAcceptance?
+    let weightCalibration: WeightCalibration?
+    var autoPublishOffer: AutoPublishOffer?
 
     enum CodingKeys: String, CodingKey {
         case ok, error, outcomes, ledger, behaviour, mentored, splh, revenue
+        case draftAcceptance = "draft_acceptance"
+        case weightCalibration = "weight_calibration"
+        case autoPublishOffer = "auto_publish_offer"
         case couldHold = "could_hold"
         case suggestedPairs = "suggested_pairs"
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
@@ -342,6 +435,7 @@ struct ScheduleIntel: Codable, Equatable {
     var isEmpty: Bool {
         (outcomes ?? [:]).isEmpty && (ledger ?? [:]).isEmpty && (behaviour ?? [:]).isEmpty
             && (couldHold ?? [:]).isEmpty && (suggestedPairs ?? []).isEmpty && (splh ?? [:]).isEmpty
+            && draftAcceptance?.available != true && autoPublishOffer?.eligible != true
     }
 }
 
@@ -449,10 +543,11 @@ final class ScheduleSetupViewModel {
         var isMinor: Bool? = nil
         var timeWindows: [String: TimeWindow]? = nil
         var certifications: [String]? = nil
+        var experienced: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
             case employeeName = "employee_name"
-            case active, certifications
+            case active, certifications, experienced
             case employmentType = "employment_type"
             case minHours = "min_hours"
             case maxHours = "max_hours"
@@ -472,6 +567,7 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(isMinor, forKey: .isMinor)
             try c.encodeIfPresent(timeWindows, forKey: .timeWindows)
             try c.encodeIfPresent(certifications, forKey: .certifications)
+            try c.encodeIfPresent(experienced, forKey: .experienced)
         }
     }
 
@@ -498,6 +594,7 @@ final class ScheduleSetupViewModel {
         if let v = patch.isMinor { settings.isMinor = v }
         if let v = patch.timeWindows { settings.timeWindows = v }
         if let v = patch.certifications { settings.certifications = v }
+        if let v = patch.experienced { settings.experienced = v }
         next.settings = settings
         roster[index] = next
         savingFor = patch.employeeName
@@ -874,6 +971,30 @@ final class ScheduleSetupViewModel {
             if intel == nil { intelError = error.message }
         } catch {
             if intel == nil { intelError = "Couldn't read the record." }
+        }
+    }
+
+    var isAcceptingAutoPublish = false
+    var autoPublishError: String?
+
+    private struct EnabledBody: Encodable { let enabled: Bool }
+
+    /// Turn on auto-publish from the intel card's offer — the same call
+    /// Account → Automation makes. The undo window still applies.
+    func acceptAutoPublishOffer() async {
+        isAcceptingAutoPublish = true
+        autoPublishError = nil
+        defer { isAcceptingAutoPublish = false }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/labor/auto-publish", method: .post, body: EnabledBody(enabled: true), hapticOnError: false)
+            guard r.ok else { autoPublishError = r.error ?? "Couldn't turn on auto-publish."; return }
+            intel?.autoPublishOffer = AutoPublishOffer(eligible: false, reason: "Auto-publish is on.", score: nil)
+            Haptic.success()
+        } catch let error as APIClient.APIError {
+            autoPublishError = error.message
+        } catch {
+            autoPublishError = "Couldn't turn on auto-publish."
         }
     }
 

@@ -22,7 +22,13 @@ struct TeamStrengthSection: View {
             badge: viewModel.team.filter { $0.score == nil }.count,
             tone: .neutral,
             isExpanded: $viewModel.teamExpanded,
-            onExpand: { onExpand?(); Task { await viewModel.loadTeam() } }
+            onExpand: {
+                onExpand?()
+                Task {
+                    await viewModel.loadTeam()
+                    await viewModel.loadUnmatchedRatings()
+                }
+            }
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Rate each person 1 to 5. The scheduler uses this to avoid putting your weakest people together on your busiest shifts.")
@@ -42,6 +48,9 @@ struct TeamStrengthSection: View {
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                 } else {
+                    if !viewModel.unmatchedRatings.isEmpty {
+                        unmatchedBlock
+                    }
                     if let cov = viewModel.teamCoverage, cov.rated < cov.total {
                         coverageNote(cov)
                     }
@@ -87,6 +96,82 @@ struct TeamStrengthSection: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.bottom, 2)
+    }
+
+    // MARK: Ratings that match nobody
+
+    /// A rating stored under "Kim Tran" judges nobody while the roster says
+    /// "Kim T." Each one with a one-tap confirm when a roster name clearly
+    /// fits, and a picker — the candidates first, then the team — when not.
+    private var unmatchedBlock: some View {
+        let count = viewModel.unmatchedRatings.count
+        return VStack(alignment: .leading, spacing: 10) {
+            HomeMixedText.make("\(count) \(count == 1 ? "rating doesn't" : "ratings don't") match anyone on your roster — they judge nobody until they do.",
+                               size: 14, weight: 600, color: .cavnarAmber)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(viewModel.unmatchedRatings) { item in
+                unmatchedRow(item)
+            }
+            if let error = viewModel.matchError {
+                Text(error)
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarAmber.opacity(0.08)))
+    }
+
+    private func unmatchedRow(_ item: UnmatchedRating) -> some View {
+        let busy = viewModel.matchingRating == item.rated
+        let rated = Set(viewModel.unmatchedRatings.map { $0.rated.lowercased() })
+        var seen = Set<String>()
+        let choices = ((item.candidates ?? []) + viewModel.team.map(\.name)).filter {
+            !rated.contains($0.lowercased()) && seen.insert($0.lowercased()).inserted
+        }
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text(item.rated)
+                    .font(.cavnarBody(15, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                if let score = item.score {
+                    HomeMixedText.make("rated \(Int(score.rounded()))", size: 13, color: .cavnarInk3)
+                }
+                Spacer(minLength: 4)
+                if busy { CavnarShimmerText(text: "Matching", color: .cavnarInk3).font(.cavnarBody(12)) }
+            }
+            HStack(spacing: 8) {
+                if let suggestion = item.suggestion {
+                    Button {
+                        Haptic.medium()
+                        Task { await viewModel.matchRating(item.rated, to: suggestion) }
+                    } label: {
+                        Text("It's \(suggestion)").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .disabled(busy)
+                }
+                Menu {
+                    ForEach(choices, id: \.self) { name in
+                        Button(name) { Task { await viewModel.matchRating(item.rated, to: name) } }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(item.suggestion == nil ? "Pick who this is" : "Someone else")
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                }
+                .disabled(busy || choices.isEmpty)
+            }
+        }
     }
 
     private func memberRow(_ member: RatedEmployee) -> some View {

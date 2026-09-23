@@ -811,7 +811,8 @@ struct LaborView: View {
                                       },
                                       suppressedKinds: viewModel.suppressedRecommendationKinds.isEmpty
                                           ? (quality.suppressedRecommendationKinds ?? [])
-                                          : viewModel.suppressedRecommendationKinds)
+                                          : viewModel.suppressedRecommendationKinds,
+                                      viewModel: viewModel)
                 }
 
                 if let rows = result.previewRows, !rows.isEmpty {
