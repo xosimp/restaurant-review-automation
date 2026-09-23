@@ -1177,8 +1177,12 @@ def _do_schedule_optimize(u):
         c.active = {n.lower() for n in inputs["roster"]}
         c.roster_names = list(inputs["roster"])
     signals, weights = _quality_signals(_rid(u), inputs)
+    from models import get_restaurant as _gr_opt
+    _r_opt = _gr_opt(_rid(u))
     res = _opt.optimize(rows, inputs, signals=signals, weights=weights, constraints=c,
-                        max_seconds=12.0, max_evaluations=600)
+                        max_seconds=12.0, max_evaluations=600,
+                        max_server_overlap=getattr(_r_opt, "section_count", None),
+                        hours_budget=(body.get("hours_budget") if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
     return {"ok": True, "rows": res["rows"], "optimizer": _opt.summary(res, signals),
             "quality": quality, "what_if": what_if}, 200

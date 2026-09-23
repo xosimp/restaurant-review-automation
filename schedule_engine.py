@@ -2375,10 +2375,19 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                             _rainy.add(_w.get("date"))
                     except (TypeError, ValueError):
                         pass
+                _score_fn = None
+                try:
+                    import shift_quality as _sqt
+                    import schedule_optimizer as _optt
+                    _tsig, _tw = _quality_signals(restaurant_id, result)
+                    _tprof = result.get("shift_profiles") or None
+                    _score_fn = lambda _rs: _optt.objective(_sqt.score_rows(_rs, profiles=_tprof, weights=_tw, **_tsig))
+                except Exception as _tx:
+                    print(f"[schedule] score-aware trim unavailable: {_tx}")
                 preview_rows, _trimmed, _hours_trimmed = _econ.trim_to_budget(
                     preview_rows, result.get("hours_budget", 0), result.get("daily_target_hours") or {},
                     constraints=_constraints, floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
-                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles)
+                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_score_fn)
                 result["trimmed"] = _trimmed
                 result["hours_trimmed"] = _hours_trimmed
                 if _trimmed:
@@ -2439,9 +2448,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     restaurant_id, before=(result.get("week_dates") or [None])[0])
                 result["staff_constraints"] = staff_constraints
                 _osig, _ow = _quality_signals(restaurant_id, result)
+                result["pending_time_off"] = result.get("pending_time_off") or {
+                    n: sorted(d) for n, d in (getattr(_constraints, "pending_off", None) or {}).items()}
                 _ores = _opt.optimize(preview_rows, result, signals=_osig, weights=_ow, constraints=_constraints,
                                       hours_budget=(result.get("hours_budget") or 0)
-                                      if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) else None)
+                                      if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) else None,
+                                      max_server_overlap=getattr(_restaurant_for_sched, "section_count", None))
                 result["optimizer"] = _opt.summary(_ores, _osig)
                 if _ores.get("changes"):
                     preview_rows = _ores["rows"]

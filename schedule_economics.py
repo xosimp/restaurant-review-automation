@@ -27,6 +27,7 @@ from models import get_conn, DB_PATH
 
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
+TRIM_SCORE_CANDIDATES = 5       # how many equally-discretionary rows the score chooses between
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
 
@@ -433,7 +434,7 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3) ->
 
 def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constraints=None, floors: dict = None,
                    splh: dict = None, rainy_dates: set = None, patio_roles: set = None,
-                   tolerance: float = TRIM_TOLERANCE) -> tuple:
+                   tolerance: float = TRIM_TOLERANCE, score_fn=None) -> tuple:
     """Remove the most discretionary hours until the week is within the
     budget. Order: rows the top-up added, then the later leg of a double,
     then the latest starter of a role on the day furthest over its own
@@ -441,6 +442,11 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     and, on a rainy day, a patio role. Never below a role floor for that
     daypart, never the last person in a role on a daypart, never a row
     already marked for review. Every removal is reported.
+
+    score_fn(rows) -> float, when given, chooses among the few most
+    discretionary candidates the one whose removal costs the week the least
+    Shift Quality: the order above says which hours are optional, the score
+    says which of them the floor can best spare.
 
     Returns (rows, trimmed:[{...}], hours_removed).
     """
@@ -547,7 +553,21 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             splh_rank = s if s is not None else 10 ** 9
             start = _minutes(r.get("shift_start", "")) or 0
             return (tier, rain, -over, splh_rank, -start)
-        victim = min(cands, key=priority)
+        ranked = sorted(cands, key=priority)
+        victim = ranked[0]
+        if score_fn is not None:
+            tier = priority(victim)[0]
+            pool = [r for r in ranked if priority(r)[0] == tier][:TRIM_SCORE_CANDIDATES]
+            best = None
+            for cand in pool:
+                try:
+                    val = score_fn([x for x in rows if x is not cand])
+                except Exception:
+                    continue
+                if best is None or val > best[0] + 1e-9:
+                    best = (val, cand)
+            if best is not None:
+                victim = best[1]
         h = _hours(victim)
         rows.remove(victim)
         total -= h

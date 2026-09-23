@@ -1362,6 +1362,10 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
     return out
 
 
+# How many of the latest occurrences of a weekday typical headcount reads.
+TYPICAL_WEEKS = 8
+
+
 def historical_patterns(shifts: list) -> dict:
     """What this restaurant's own history says about how it staffs.
 
@@ -1406,7 +1410,12 @@ def historical_patterns(shifts: list) -> dict:
 
     typical = {}
     for day, parts in by_role_date.items():
-        dates = dates_by_day[day]
+        # The most recent TYPICAL_WEEKS of this weekday, the newest counting
+        # most: a year of history averaged flat staffed next week like last
+        # winter, and a roster that grew in the spring read as short.
+        dates = sorted(dates_by_day[day])[-TYPICAL_WEEKS:]
+        weight = {d: i + 1 for i, d in enumerate(dates)}
+        total_w = float(sum(weight.values())) or 1.0
         for part in ("morning", "night"):
             counts = {}
             for role, per_date in parts.get(part, {}).items():
@@ -1414,7 +1423,7 @@ def historical_patterns(shifts: list) -> dict:
                 # dates this role appeared — otherwise an occasional role
                 # reads as a permanent one.
                 n = int(math.floor(
-                    sum(len(per_date.get(d, ())) for d in dates) / max(len(dates), 1) + 0.5))
+                    sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
                 if n:
                     counts[role] = n
             if counts:

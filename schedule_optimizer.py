@@ -151,6 +151,8 @@ class _State:
             for role in roles or []:
                 pool.setdefault(str(role).strip().lower(), set()).add(n)
         self.pool = pool
+        self.pending = {str(k).strip().lower(): set(v or ()) for k, v in
+                        ((inputs or {}).get("pending_time_off") or {}).items()}
         self.close_times = (signals.get("close_times") or {})
         self.open_times = (signals.get("open_times") or {})
 
@@ -185,6 +187,10 @@ class _State:
     def can_add(self, name, row) -> bool:
         low = (name or "").strip().lower()
         if not low or (low, row.get("date")) in self.index.working:
+            return False
+        # Somebody who has asked for the day off (not yet decided) is not
+        # the person to add: the owner would be approving their own gap.
+        if row.get("date") in self.pending.get(low, ()):
             return False
         if not self.index.person_fits(name, row):
             return False
@@ -236,6 +242,8 @@ def _moves_for(problem, state: _State) -> list:
         cur = (row.get("employee") or "").strip()
         for name in sorted(state.pool.get(role, ()), key=lambda n: state.index.total_hours(n.lower())):
             if name == cur or not predicate(name):
+                continue
+            if row.get("date") in state.pending.get(name.lower(), ()):
                 continue
             if not state.index.replacement_legal(idx, name):
                 continue
@@ -461,7 +469,8 @@ def _hard_count(rows, constraints) -> int:
 
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
-             max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None) -> dict:
+             max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
+             max_server_overlap: int = None) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
 
     Returns {rows, changes: [{kind, reason, gain}], before_score, after_score,
@@ -492,6 +501,29 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
 
     def _week_hours(rs):
         return sum(sq._row_hours(r) for r in rs)
+
+    # One server per section (restaurants.section_count): the backstop that
+    # enforces it runs before this search, so no move may undo it.
+    try:
+        cap = int(max_server_overlap if max_server_overlap is not None else (inputs.get("section_count") or 0))
+    except (TypeError, ValueError):
+        cap = 0
+
+    def _server_peaks(rs):
+        from schedule_engine import _peak_server_overlap
+        by = {}
+        for r in rs:
+            if (r.get("role") or "").strip().lower() == "server":
+                by.setdefault(r.get("date"), []).append(r)
+        return {d: _peak_server_overlap(v)[0] for d, v in by.items()}
+    peaks_before = _server_peaks(current_rows) if cap > 0 else {}
+
+    def _servers_ok(rs):
+        """No date's peak goes past the section cap — or, where the draft is
+        already past it, any higher than it already is."""
+        if cap <= 0:
+            return True
+        return all(p <= max(cap, peaks_before.get(d, 0)) for d, p in _server_peaks(rs).items())
     evaluations, tabu = 1, set()
     stopped = "no improving move"
     while True:
@@ -524,6 +556,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 tabu.add(sig)
                 continue
             if ceiling is not None and _week_hours(trial_rows) > max(ceiling, _week_hours(current_rows)) + 0.01:
+                tabu.add(sig)
+                continue
+            if not _servers_ok(trial_rows):
                 tabu.add(sig)
                 continue
             try:

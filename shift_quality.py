@@ -1448,9 +1448,18 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     # the lighter one on top and pushed the coverage gap off the end of the
     # summary entirely.
     strengths = [s for d in sorted(applied, key=lambda x: -x.weight) for s in d.strengths]
+    # The dimension holding the shift at its score speaks first: it is the
+    # reason for the number, whatever the others cost.
     weaknesses = [w for d in sorted(applied,
-                                    key=lambda x: -((SCORE_MAX - x.score) * x.weight))
+                                    key=lambda x: (0 if x.key == capped_by else 1,
+                                                   -((SCORE_MAX - x.score) * x.weight)))
                   for w in d.weaknesses]
+    held_by = None
+    if capped_by:
+        _cap = next(d for d in applied if d.key == capped_by)
+        held_by = {"key": _cap.key, "label": _cap.label, "score": _cap.score, "floor": _cap.floor,
+                   "text": f"{_cap.label} is holding this shift at {score}"
+                           + (f": {_cap.weaknesses[0]}" if _cap.weaknesses else ".")}
     blind = [b for d in applied for b in d.blind_spots] + list(ctx.notes)
     for f in failed:
         blind.append(f"{f['key'].replace('_', ' ').capitalize()} could not be worked out "
@@ -1464,6 +1473,7 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
         "profile": _profile_facts(ctx.profile),
         "meets_profile": score >= int(ctx.profile.min_quality or 0),
         "capped_by": capped_by,
+        "held_by": held_by,
         "people": ctx.people,
         "headline": _headline(ctx, score),
         "dimensions": [
