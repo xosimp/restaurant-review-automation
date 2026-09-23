@@ -2038,7 +2038,10 @@ def confidence(shifts: list, signals: dict) -> dict:
 # ── Recommendations ────────────────────────────────────────────────────────
 
 _REC_KINDS = (("Fill the gap", "coverage"), ("Move somebody", "leadership"), ("Pair ", "strength"),
-              ("Trim about", "hours"), ("Give ", "fatigue"), ("Rate the", "ratings"))
+              ("Trim about", "hours"), ("Give ", "fatigue"), ("Spread the busy", "fatigue"), ("Rate the", "ratings"))
+# Kinds about whether the shift is safe to run: never switched off by being
+# ignored — a coverage gap the owner has stopped reading is still a gap.
+PROTECTED_REC_KINDS = frozenset({"coverage", "leadership", "fatigue"})
 
 
 def recommendation_kind(text: str) -> str:

@@ -74,6 +74,17 @@ def _reset_ai_rate_limiter():
 
 
 @pytest.fixture(autouse=True)
+def _reset_labor_note_cache():
+    """labor._NOTE_CACHE is keyed by restaurant id and data fingerprint; a
+    fresh database per test reuses ids, so one test's stubbed note would be
+    another's answer."""
+    import labor
+    labor._NOTE_CACHE.clear()
+    yield
+    labor._NOTE_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_supplier_order_cooldown():
     """Same shape of problem as _reset_ai_rate_limiter above: the
     supplier-order send cooldown is a process-global keyed by restaurant_id,

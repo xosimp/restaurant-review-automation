@@ -28,6 +28,8 @@ struct ScheduleReviewPanel: View {
                 if let fixes = review.fixes, !fixes.isEmpty { fixesBlock(fixes) }
                 if let unfixed = review.unfixed, !unfixed.isEmpty { unfixedBlock(unfixed) }
             }
+            if !viewModel.overtimeMoves.isEmpty { overtimeBlock }
+            if !standbyDays.isEmpty { standbyBlock }
             if !pending.isEmpty { pendingBlock }
             actions
             provenance
@@ -195,6 +197,71 @@ struct ScheduleReviewPanel: View {
                 }
             }
         }
+    }
+
+    /// Overtime the week creates, each with a same-role person who has
+    /// room. One tap moves the shift and saves the week.
+    private var overtimeBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OVERTIME YOU CAN MOVE")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarEmber)
+            ForEach(viewModel.overtimeMoves) { move in
+                VStack(alignment: .leading, spacing: 6) {
+                    HomeMixedText.make(moveLine(move), size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Move to \(move.candidate.employee)") {
+                        Task { await viewModel.applyOvertimeMove(move) }
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .disabled(viewModel.isRescoringQuality)
+                }
+            }
+        }
+    }
+
+    private var standbyDays: [StandbyDay] { (result.standbyDays ?? []).filter { $0.standby != nil } }
+
+    /// The days likely to lose somebody, each naming who could be on call.
+    private var standbyBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("STANDBY")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarInk3)
+            ForEach(standbyDays) { day in
+                if let person = day.standby {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HomeMixedText.make(
+                            "\(day.day ?? "") \(CavnarDate.mdy(day.date)): about "
+                                + "\(Int(((day.chanceOfANoShow ?? 0) * 100).rounded()))% chance somebody doesn't show. "
+                                + "\(person.employee) is off and could be on call.",
+                            size: 13.5, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let said = viewModel.standbyAsked[day.date] {
+                            Text(said)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk3)
+                        } else {
+                            Button("Ask \(person.employee)") {
+                                Task { await viewModel.askStandby(day) }
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func moveLine(_ move: OvertimeMove) -> String {
+        let c = move.candidate
+        let over = move.over.map { String(format: "%g", $0) } ?? "?"
+        let when = [c.date.map { CavnarDate.mdy($0) }, c.shiftStart].compactMap { $0 }.joined(separator: " ")
+        var line = "\(move.employee) is \(over)h over. \(c.employee) has room for the \(when) shift"
+        if let saves = c.saves, saves > 0 { line += ", saving about $\(Int(saves.rounded())) in overtime pay" }
+        return line + "."
     }
 
     private func unfixedBlock(_ unfixed: [ReviewUnfixed]) -> some View {

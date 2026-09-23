@@ -200,6 +200,16 @@ struct ScheduleIntelSection: View {
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { await viewModel.applySuggestedWeights() }
+                } label: {
+                    Text(viewModel.isApplyingWeights ? "Applying…" : "Apply suggested weights")
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isApplyingWeights)
+                if let note = viewModel.calibrationNotice {
+                    Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                }
             }
         }
     }
@@ -484,7 +494,7 @@ struct ScheduleIntelSection: View {
                 SuggestedPairRow(pair: pair, busy: viewModel.isSavingPair) {
                     onAddPair?(pair)
                 } onIgnore: {
-                    viewModel.ignoredSuggestions.insert(pair.id)
+                    viewModel.ignoreSuggestion(pair)
                 }
             }
         }
@@ -492,7 +502,7 @@ struct ScheduleIntelSection: View {
 
     private func hiddenKindsLine(_ hidden: [String]) -> some View {
         HomeMixedText.make(
-            "\(hidden.count) recommendation \(hidden.count == 1 ? "kind" : "kinds") hidden because they were never acted on: \(hidden.joined(separator: ", ")). Accept one of that kind and it comes back.",
+            "\(hidden.count) recommendation \(hidden.count == 1 ? "kind" : "kinds") hidden because they were set aside or never acted on: \(hidden.joined(separator: ", ")). Use Show again on the schedule review to bring one back.",
             size: 12.5, color: .cavnarInk3)
             .fixedSize(horizontal: false, vertical: true)
     }

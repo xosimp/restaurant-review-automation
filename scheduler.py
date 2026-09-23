@@ -2071,7 +2071,8 @@ def run_daily_alert_checks():
     failure in one must not take the rest down with it, which is why each is
     wrapped separately rather than the whole block sharing one except."""
     import notify as _notify
-    from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
+    from notify import (check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts,
+                        check_competitor_alerts)
     out = {}
     # Collect across all three, then send once per restaurant. These eight
     # alert types describe the same week of trading, and arriving separately
@@ -2080,7 +2081,10 @@ def run_daily_alert_checks():
     _notify.begin_daily_batch()
     for name, fn in (("no_response", check_no_response_alerts),
                      ("daily", check_daily_alerts),
-                     ("extra_daily", check_extra_daily_alerts)):
+                     ("extra_daily", check_extra_daily_alerts),
+                     # Monday only (per restaurant, its own timezone): a
+                     # competitor's rating moving, or a new one nearby (#48).
+                     ("competitor", check_competitor_alerts)):
         try:
             fn(local_hour=10)
             out[name] = "ok"
@@ -2819,6 +2823,13 @@ def scheduler_loop():
                     return {"synced": _rl.sync_existing(), "expired": _rl.expire_stale()}
                 _ops.run_job("rec_ledger", _rec_ledger_pass)
 
+            # 9am local, per restaurant — what is waiting on each manager
+            # before the next shifts: requests close to their date, a drafted
+            # week not sent (strategy_jobs.run_labor_reminders).
+            if _ops.claim_period("labor_reminders", f"{today}-{now.hour}"):
+                from strategy_jobs import run_labor_reminders
+                _ops.run_job("labor_reminders", run_labor_reminders)
+
             # Sunday 5am — let each restaurant's own clean and troubled weeks
             # nudge its quality weights (strategy_jobs.run_quality_calibration).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):
@@ -2975,6 +2986,13 @@ def scheduler_loop():
             if _ops.claim_period("issue_scan", f"{today}-{now.hour}"):
                 from strategy_jobs import run_issue_scan
                 _ops.run_job("issue_scan", run_issue_scan, local_hour=10)
+
+            # Hourly attempt, Monday morning in each restaurant's own zone —
+            # a review-request nudge with its measured conversion, at most
+            # weekly (strategy_jobs.run_review_request_nudge, resumable).
+            if _ops.claim_period("review_request_nudge", f"{today}-{now.hour}"):
+                from strategy_jobs import run_review_request_nudge
+                _ops.run_job("review_request_nudge", run_review_request_nudge)
 
             # During service — the only part of the product that can see a
             # day while it is happening (Toast reads; RPOWER is month-at-a-

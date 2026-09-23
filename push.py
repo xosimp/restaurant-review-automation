@@ -207,6 +207,7 @@ PRIORITY = {
     "morning_brief": P4_SUMMARY, "closing_summary": P4_SUMMARY,
     "weekly_review": P4_SUMMARY, "monthly_review": P4_SUMMARY,
     "any_review": P5_LOW, "ai_visibility_drop": P5_LOW, "demand_opportunity": P5_LOW,
+    "competitor_move": P3_INFO, "review_request_nudge": P5_LOW,
 }
 # An unmapped type is informational, not urgent. The old code had no priority
 # at all and deliver_alert's unknown-type fallback was the HEALTH channel

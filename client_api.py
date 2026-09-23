@@ -1791,14 +1791,16 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             restaurant, question, history=history, user=user, **({'brief': True} if brief else {}))
 
         try:
+            # Logged FIRST, so each card carries its own proposal_id — in the
+            # response and in the stored transcript — and a confirm answers
+            # that one proposal, not every proposal with the same name (#23).
+            import ask_cavnar as _ac_props
+            _ac_props.record_proposals(restaurant_id, proposals, user_id=user_id)
             conversation_id = save_ask_message(restaurant_id, "user", question, user_id=user_id,
                                                conversation_id=conversation_id)
             save_ask_message(restaurant_id, "assistant", answer,
                              proposals=proposals or None, user_id=user_id,
                              conversation_id=conversation_id)
-            for p in (proposals or []):
-                log_ask_action(restaurant_id, p["action"], summary=p.get("summary"),
-                               body=p.get("body"), outcome="proposed", user_id=user_id)
         except Exception as e:
             # Never fail a good answer because the transcript couldn't be written.
             import ops
@@ -1891,14 +1893,13 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                     {"type": "progress", "label": label, "state": state}),
                 **({"brief": True} if brief else {}))
             try:
+                import ask_cavnar as _ac_props
+                _ac_props.record_proposals(rid, proposals, user_id=uid)
                 cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
                                  user_id=uid, conversation_id=cid)
-                for p in (proposals or []):
-                    log_ask_action(rid, p["action"], summary=p.get("summary"),
-                                   body=p.get("body"), outcome="proposed", user_id=uid)
-            except Exception:
-                pass
+            except Exception as _pe:
+                print(f"[ask] transcript/proposal persist failed rid={rid}: {_pe}")
             events.put({"type": "answer", "answer": answer,
                         "truncated": truncated, "proposals": proposals or [],
                         "conversation_id": cid, **_ask_meta(meta)})
@@ -2054,13 +2055,37 @@ def _do_record_ask_action(restaurant_id, user_id, data):
     route its button already uses — this only writes the audit line, so
     there is still exactly one code path that can send a supplier order.
     """
-    from models import log_ask_action, save_ask_message
+    from models import log_ask_action, save_ask_message, get_ask_proposal
     action = (data.get("action") or "").strip()
     outcome = (data.get("outcome") or "").strip()
     if not action or outcome not in ("confirmed", "dismissed"):
         return {"ok": False, "error": "action and outcome (confirmed|dismissed) are required"}, 400
+    # The ONE proposal this answers (#23). Checked against this restaurant —
+    # the id comes from a client — and against the action it claims to be.
+    # An older client sends no id; its answer is still recorded, by action.
+    proposal_id = data.get("proposal_id")
+    try:
+        proposal_id = int(proposal_id) if proposal_id not in (None, "") else None
+    except (TypeError, ValueError):
+        proposal_id = None
+    if proposal_id is not None:
+        prop = get_ask_proposal(restaurant_id, proposal_id)
+        if not prop or prop["action"] != action:
+            return {"ok": False, "error": "That proposal wasn't found."}, 404
+    reason = (str(data.get("reason") or "").strip()[:300] or None) if outcome == "dismissed" else None
     log_ask_action(restaurant_id, action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=user_id)
+                   body=data.get("body"), outcome=outcome, user_id=user_id,
+                   proposal_id=proposal_id, reason=reason)
+    if proposal_id is not None:
+        try:
+            import rec_ledger, ask_cavnar as _ac_rec
+            rec_ledger.record(restaurant_id, _ac_rec.proposal_key(proposal_id),
+                              "accepted" if outcome == "confirmed" else "dismissed", surface="ask",
+                              user_id=user_id, meta={"reason": reason, "action": action} if reason
+                              else {"action": action},
+                              source_ref=f"ask:{proposal_id}:{outcome}")
+        except Exception as e:
+            print(f"[ask] rec_ledger record failed rid={restaurant_id}: {e}")
     # The snapshot is cached for a minute and now carries what has already
     # been proposed — so confirming an order and immediately asking "did that
     # go out?" would otherwise be answered from a context assembled before
@@ -2081,7 +2106,8 @@ def _do_record_ask_action(restaurant_id, user_id, data):
     try:
         label = data.get("summary") or action.replace("_", " ")
         verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
-        save_ask_message(restaurant_id, "user", f"[{verb}: {label}]", user_id=user_id,
+        why = f" — {reason}" if reason else ""
+        save_ask_message(restaurant_id, "user", f"[{verb}: {label}{why}]", user_id=user_id,
                          conversation_id=_parse_conversation_id(data.get("conversation_id")))
     except Exception:
         pass
@@ -2331,9 +2357,9 @@ def labor_insight_api(current_user):
         analysis = analyse_shifts_for_restaurant(rid)
         from models import get_staff_notes as _gsn_labor
         _staff_notes_labor = _gsn_labor(rid)
-        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner,
-                                      restaurant_id=rid,
-                                      staff_notes=_staff_notes_labor if _staff_notes_labor else None)
+        from labor import labor_note
+        insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
+                             staff_notes=_staff_notes_labor if _staff_notes_labor else None)
         formatted = format_insight_html(insight)
         _cache_set("labor-insight:" + str(rid), formatted)
         return jsonify(insight=formatted, diagnosis=_labor_diagnosis_safe(rid, analysis))
@@ -3103,6 +3129,7 @@ def get_alert_settings(current_user):
         "alert_rating_threshold": r.alert_rating_threshold,
         "alert_rating_floor":    r.alert_rating_floor,
         "alert_labor_over":      r.alert_labor_over,
+        "alert_competitor_move": getattr(r, "alert_competitor_move", 1),
         "alert_any_review":      getattr(r, "alert_any_review", 0),
         "alert_resp_approved":   getattr(r, "alert_resp_approved", 0),
         "urgent_via_sms":        getattr(r, "urgent_via_sms", 0),
@@ -3188,6 +3215,10 @@ def save_alert_settings(current_user):
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
     }
+    # Only when the page sends it: an older page without the toggle must not
+    # switch competitor alerts off.
+    if "alert_competitor_move" in data:
+        _fields["alert_competitor_move"] = int(bool(data.get("alert_competitor_move")))
     try:
         update_restaurant(rid, _fields, expected_version=expected)
     except StaleWrite as e:
@@ -5492,6 +5523,8 @@ _NOTIFICATION_LABELS = {
     "critical_low":     "Running out before delivery",
     "price_spike":      "Ingredient price climbing",
     "ai_visibility_drop": "AI visibility dropped",
+    "competitor_move":  "A competitor moved",
+    "review_request_nudge": "Review requests",
     "login":            "New sign-in",
     "staff_signin":     "Staff portal sign-in",
     "issue":            "An issue was opened",
@@ -5524,7 +5557,8 @@ _NOTIFICATION_MODULE = {
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "order_send_pending": "inventory", "order_send_voided": "inventory",
-    "ai_visibility_drop": "competitor",
+    "ai_visibility_drop": "competitor", "competitor_move": "competitor",
+    "review_request_nudge": "reviews",
     "demand_opportunity": "marketing",
     # Cross-module reads that arrive with their own question, so they open
     # the assistant rather than guessing a module (iOS does the same).

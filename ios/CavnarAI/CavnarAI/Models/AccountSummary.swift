@@ -146,6 +146,8 @@ struct AlertSettings: Codable {
     var alertHealthBypassQuiet: Bool
     var alertFoodWaste: Bool
     var alertAiVisibilityDrop: Bool
+    // Weekly: a tracked competitor's rating moved, or a new one appeared.
+    var alertCompetitorMove: Bool
     var alertExtraEmails: String
     var pushSound: Bool
 
@@ -153,6 +155,7 @@ struct AlertSettings: Codable {
         case alertHealthBypassQuiet = "alert_health_bypass_quiet"
         case alertFoodWaste = "alert_food_waste"
         case alertAiVisibilityDrop = "alert_ai_visibility_drop"
+        case alertCompetitorMove = "alert_competitor_move"
         case alertExtraEmails = "alert_extra_emails"
         case pushSound = "push_sound"
         case alert1star = "alert_1star"

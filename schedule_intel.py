@@ -18,6 +18,7 @@ a model; nothing crosses a tenant.
   learned-pattern dismissals — the owner's say over what the draft learns
 """
 import json
+import re
 from datetime import date, datetime, timedelta
 
 import models as _models_mod
@@ -471,14 +472,34 @@ def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
             out.append({"a": a.title(), "b": b.title(), "kind": "prefer", "shared": n, "clean_rate": round(rate, 2),
                         "evidence": f"{clean[k]} of {n} shared dayparts ran without a coverage or no-show issue"})
     out.sort(key=lambda x: (-x["shared"], -x["clean_rate"]))
+    for x in out:
+        x["rec_key"] = pair_rec_key(x["a"], x["b"])
     return out[:8]
+
+
+def pair_rec_key(a, b) -> str:
+    import rec_ledger as _rl
+    return _rl.rec_key("suggested_pair", "|".join(sorted((str(a).strip().lower(), str(b).strip().lower()))))
+
+
+def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db_path=DB_PATH) -> list:
+    """chemistry_suggestions as an owner sees them: without the pairs they
+    said "Ignore" to (rec_ledger, on any device), and logged as shown."""
+    import rec_ledger as _rl
+    quiet = _rl.silenced_keys(restaurant_id, db_path=db_path)
+    out = [x for x in chemistry_suggestions(restaurant_id, db_path=db_path) if x["rec_key"] not in quiet]
+    _rl.present_many(restaurant_id, [dict(key=x["rec_key"], module="schedule", kind="suggested_pair",
+                                          title=f"Pair {x['a']} with {x['b']}", evidence_sources=["schedule"])
+                                     for x in out], surface, user_id=user_id, db_path=db_path)
+    return out
 
 
 # ── recommendation ledger ──────────────────────────────────────────────────
 
 def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH) -> None:
-    """action: shown | accepted | dismissed."""
-    if action not in ("shown", "accepted", "dismissed") or not kind:
+    """action: shown | accepted | dismissed | restored (the owner asked for a
+    suppressed kind back)."""
+    if action not in ("shown", "accepted", "dismissed", "restored") or not kind:
         return
     conn = get_conn(db_path)
     try:
@@ -498,19 +519,87 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
         conn.close()
 
 
-def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
-    """Recommendation kinds shown at least SUPPRESS_AFTER_SHOWN times here
-    that were never once accepted."""
+_REC_WHEN = re.compile(r"\bon (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (morning|night|lunch|dinner)\b")
+
+
+def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None) -> int:
+    """For accepted schedule recommendations about one night ("Fill the gap
+    on Friday night…", "Move somebody … onto Saturday night"), read what that
+    night recorded once its published week is over (schedule_outcomes): no
+    coverage or no-show issue is "improved", any is "worsened". Recorded as
+    the recommendation's outcome in rec_ledger. Idempotent."""
+    import rec_ledger as _rl
+    today = today or date.today()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT kind, COUNT(DISTINCT CASE WHEN action='shown' THEN key || '|' || date(created_at) END) AS shown, "
-                            "SUM(action='accepted') AS acc FROM schedule_recommendation_events "
-                            "WHERE restaurant_id=? GROUP BY kind", (restaurant_id,)).fetchall()
-    except Exception:
+        acc = conn.execute("SELECT kind, key, created_at FROM schedule_recommendation_events WHERE restaurant_id=? "
+                           "AND action='accepted' AND created_at >= datetime('now', '-60 days')", (restaurant_id,)).fetchall()
+        out = conn.execute("SELECT o.date, o.daypart, o.issues, h.week_start, h.week_end FROM schedule_outcomes o "
+                           "JOIN schedule_history h ON h.id=o.history_id WHERE o.restaurant_id=? AND h.week_end < ?",
+                           (restaurant_id, today.isoformat())).fetchall()
+    except Exception as e:
+        print(f"[schedule_intel] measure_accepted_recommendations unavailable: {e}")
+        return 0
+    finally:
+        conn.close()
+    n = 0
+    for a in acc:
+        m = _REC_WHEN.search(a["key"] or "")
+        if not m:
+            continue
+        day, part = m.group(1), {"lunch": "morning", "dinner": "night"}.get(m.group(2), m.group(2))
+        accepted_on = str(a["created_at"])[:10]
+        match = [o for o in out if o["daypart"] == part and o["date"] >= accepted_on
+                 and datetime.strptime(o["date"], "%Y-%m-%d").strftime("%A") == day]
+        if not match:
+            continue
+        o = sorted(match, key=lambda x: x["date"])[0]
+        verdict = "improved" if not (o["issues"] or 0) else "worsened"
+        if _rl.record(restaurant_id, schedule_rec_key(a["kind"], a["key"]), "outcome",
+                      meta={"verdict": verdict, "date": o["date"], "issues": o["issues"] or 0},
+                      source_ref=f"night:{o['date']}:{part}", db_path=db_path):
+            n += 1
+    return n
+
+
+def schedule_rec_key(kind, text) -> str:
+    """The rec_ledger key of one Shift Quality recommendation."""
+    import rec_ledger as _rl
+    return _rl.rec_key("schedule_" + (kind or "other"), (text or "")[:120])
+
+
+def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
+    """Recommendation kinds this owner has plainly declined: shown at least
+    SUPPRESS_AFTER_SHOWN times and never accepted, or dismissed "not for us"
+    at least twice and never accepted — counted since the owner last asked
+    for the kind back. Kinds about whether a shift is safe to run
+    (shift_quality.PROTECTED_REC_KINDS) are never suppressed.
+
+    "Not for us" used to change nothing (only shown and accepted counted),
+    and a suppressed kind could never come back: its recommendations were
+    neither shown nor stored, so neither a button nor an edit could accept
+    one."""
+    from shift_quality import PROTECTED_REC_KINDS
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT e.kind, COUNT(DISTINCT CASE WHEN e.action='shown' THEN e.key || '|' || date(e.created_at) END) AS shown, "
+            "SUM(e.action='accepted') AS acc, SUM(e.action='dismissed') AS dis FROM schedule_recommendation_events e "
+            "WHERE e.restaurant_id=? AND e.created_at > COALESCE((SELECT MAX(r.created_at) FROM schedule_recommendation_events r "
+            "  WHERE r.restaurant_id=e.restaurant_id AND r.kind=e.kind AND r.action='restored'), '') "
+            "GROUP BY e.kind", (restaurant_id,)).fetchall()
+    except Exception as e:
+        print(f"[schedule_intel] suppressed_kinds failed: {e}")
         return set()
     finally:
         conn.close()
-    return {r["kind"] for r in rows if (r["shown"] or 0) >= SUPPRESS_AFTER_SHOWN and not (r["acc"] or 0)}
+    out = set()
+    for r in rows:
+        if r["kind"] in PROTECTED_REC_KINDS or (r["acc"] or 0):
+            continue
+        if (r["shown"] or 0) >= SUPPRESS_AFTER_SHOWN or (r["dis"] or 0) >= 2:
+            out.add(r["kind"])
+    return out
 
 
 # ── learned-pattern dismissals ────────────────────────────────────────────

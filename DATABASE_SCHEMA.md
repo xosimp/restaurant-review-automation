@@ -112,7 +112,7 @@ Computed on read from `labor_daily_history` + shift data, not a table — see `l
 One conversation thread per owner session; messages carry role (user/assistant), content, tool-call records.
 
 ### `ask_cavnar_actions`
-Logged write-tool proposals and whether they were confirmed — the audit trail for anything Ask Cavnar was asked to *do* rather than just answer.
+Logged write-tool proposals and whether they were confirmed — the audit trail for anything Ask Cavnar was asked to *do* rather than just answer. A proposal row's own `id` is its proposal id (sent to clients as `proposal_id`, rec_ledger key `ask:<id>`); a confirm/dismiss row carries the proposal it answers in `proposal_id` (NULL from clients older than that — those settle by action + summary), and a dismissal's optional `reason`.
 
 ### `ask_memory`
 Durable facts an owner has told the assistant across conversations. `(restaurant_id, fact)` unique (idempotent — saying the same thing twice doesn't duplicate it), `kind` (goal/context/preference/followup), `source`, capped at `ASK_MEMORY_LIMIT` per restaurant (oldest falls off) so it can't grow the prompt unboundedly.
@@ -125,10 +125,10 @@ Every notification that has fired: `restaurant_id`, `alert_type`, optional `revi
 It is two things at once: the HISTORY both clients read, and the tally the daily cap and the 50/day ceiling are counted from. The advisory types in `models.NON_ALERT_TYPES` (brief, pulse, closing summary, drafted schedule, issues, coverage, outcome wins, the `daily_briefing` wrapper) write history rows but are excluded from `count_alerts_today` — they are not alerts, and an issue text goes to a manager rather than to the owner whose cap it would spend.
 
 ### `alert_holds`
-Alerts raised mid-service, waiting for the rush to end: `alert_type`, `subject`, `html`, `sms_text`, `review_id`, `value`, `release_at`, `sent_at`. `release_due_alerts` sends at most `MAX_RELEASE_PER_RESTAURANT` per pass and drops anything `HOLD_MAX_LATE_HOURS` past its release.
+Alerts raised mid-service, waiting for the rush to end: `alert_type`, `subject`, `html`, `sms_text`, `review_id`, `value`, `release_at`, `sent_at`, and `meta_json` (the recommendation keys, push audience and brief-covered types the release must honour). `release_due_alerts` sends at most `MAX_RELEASE_PER_RESTAURANT` per pass and drops anything `HOLD_MAX_LATE_HOURS` past its release.
 
 ### `notification_reads` / `notification_opens`
-Per-LOGIN read state (PK `user_id, restaurant_id`) and per-type open events. `seen_at` is written in SQLite's own `"%Y-%m-%d %H:%M:%S"` **deliberately** — the old stamp on `restaurants.notifications_seen_at` used isoformat's `T`, and since the unread query is a TEXT comparison and `' ' < 'T'`, every alert fired on the same date as the last read counted as already seen. The badge could only ever show yesterday.
+Per-LOGIN read state (PK `user_id, restaurant_id`) and per-type open events. An open carries `alert_log_id` (from the push payload, accepted only when that row is this restaurant's — so time-to-open is `opened_at - alert_log.fired_at`) and `rec_key`. `seen_at` is written in SQLite's own `"%Y-%m-%d %H:%M:%S"` **deliberately** — the old stamp on `restaurants.notifications_seen_at` used isoformat's `T`, and since the unread query is a TEXT comparison and `' ' < 'T'`, every alert fired on the same date as the last read counted as already seen. The badge could only ever show yesterday.
 
 ### `alert_contacts`
 Who gets alerted and on which channels (email/SMS/push), per restaurant — separate from the login `users` table since an alert recipient need not have dashboard access.
@@ -159,7 +159,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 - `recommendation_outcomes` — one tracked change: metric, baseline window/value/detail, `evaluate_on`, verdict. Partial unique index on (restaurant_id, source_key) while `status='tracking'`.
 - `owner_goals` — target per metric, one `active` per metric (older rows become `replaced`).
-- `ops_issues` — issue, assignee contact, status open→acknowledged→resolved, `escalation_contact_id`, `escalated_at`, `resolution_note`. Timestamps UTC `YYYY-MM-DD HH:MM:SS`.
+- `ops_issues` — issue, assignee contact, status open→acknowledged→resolved, `escalation_contact_id`, `escalated_at`, `resolution_note`, `notify_suppressed` (filed with notify=False — `issues.tick` never texts it; reassigning by name lifts it), `meta_json` (e.g. a coverage issue's suggested covers and who was asked). Timestamps UTC `YYYY-MM-DD HH:MM:SS`.
 - `issue_links` — `token_hash` → (issue, contact, purpose). One link per person; tokens are never stored.
 - `issue_routing` — PK (restaurant_id, role ∈ manager|escalation) → consented contact, `escalate_after_minutes`.
 - `pos_loss_daily` — PK (restaurant_id, business_date, kind); zero rows are written for every day×kind asked about, so absence means "never asked".

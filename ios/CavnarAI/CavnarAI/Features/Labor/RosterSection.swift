@@ -294,9 +294,9 @@ extension RosterSection {
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.openSuggestions) { pair in
                 SuggestedPairRow(pair: pair, busy: viewModel.isSavingPair) {
-                    Task { await viewModel.addPair(a: pair.a, b: pair.b, kind: pair.kind ?? "prefer", note: pair.evidence) }
+                    Task { await viewModel.addSuggestedPair(pair) }
                 } onIgnore: {
-                    viewModel.ignoredSuggestions.insert(pair.id)
+                    viewModel.ignoreSuggestion(pair)
                 }
             }
         }
