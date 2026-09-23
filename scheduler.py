@@ -2816,11 +2816,15 @@ def scheduler_loop():
             # 8am — the recommendation trail (rec_ledger): answers held by
             # the older ledgers carried in (after 6am's outcome verdicts), and
             # recommendations nobody answered in two weeks closed as ignored.
+            # repair_sync_replays first: it undoes what the replaying sync
+            # wrote before it attached answers by time (a no-op after that),
+            # and the sync then re-carries those answers where they belong.
             if _due(now, 8) and _ops.claim_period("rec_ledger", str(today)):
                 import rec_ledger as _rl
 
                 def _rec_ledger_pass():
-                    return {"synced": _rl.sync_existing(), "expired": _rl.expire_stale()}
+                    return {"repaired": _rl.repair_sync_replays(), "synced": _rl.sync_existing(),
+                            "expired": _rl.expire_stale()}
                 _ops.run_job("rec_ledger", _rec_ledger_pass)
 
             # 9am local, per restaurant — what is waiting on each manager

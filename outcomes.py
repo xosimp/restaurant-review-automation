@@ -313,11 +313,17 @@ def abandon(restaurant_id, outcome_id, db_path=DB_PATH):
 
 def recent_results(restaurant_id, days=7, db_path=DB_PATH, today=None):
     """Verdicts that landed in the last `days` — what the morning brief and
-    the weekly review lead with."""
+    the weekly review lead with.
+
+    The window is (today - days, today]: `days` whole days ending today, so
+    consecutive sends never overlap. It used to include both ends — with
+    days=1 a verdict due today, evaluated at 6am before the 7am brief, was
+    in today's brief and again in tomorrow's."""
     today = today or date.today()
     since = (today - timedelta(days=days)).isoformat()
+    until = today.isoformat()
     return [r for r in list_outcomes(restaurant_id, status="evaluated", db_path=db_path)
-            if (r.get("evaluate_on") or "") >= since]
+            if since < str(r.get("evaluate_on") or "")[:10] <= until]
 
 
 # A module key for every metric, so a realised result can be attributed back

@@ -14,7 +14,15 @@ was said to whom.
 """
 from datetime import date
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 ACTIONS = ("presented", "done", "not_for_us", "hidden", "tracking", "measured", "confirmed", "dismissed", "auto")
 OUTCOMES = ("improved", "worsened", "no_clear_change", "unknown")
@@ -76,8 +84,12 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
         written += record(r["restaurant_id"], kind_of(r["key"]), r["key"], action, event_at=r["dismissed_at"],
                           cohort=cohorts.get(r["restaurant_id"]), synced_from="home_dismissals", db_path=db_path)
     for r in outs:
-        kind = ("observed:" + r["source_key"].split(":")[1]) if r["source"] == "observed" and ":" in r["source_key"] \
-            else kind_of(r["source_key"])
+        # The kind comes from the key, not the tracker's source: Home's
+        # "Done" starts an `observed` tracker under the recommendation's own
+        # key ("trim_day:Monday"), whose result belongs to trim_day — not to
+        # a meaningless "observed:Monday". kind_of already gives a genuine
+        # observed:<action>:<month> key its observed: kind.
+        kind = kind_of(r["source_key"])
         written += record(r["restaurant_id"], kind, r["source_key"], "tracking", event_at=r["created_at"],
                           cohort=cohorts.get(r["restaurant_id"]), synced_from="recommendation_outcomes", db_path=db_path)
         if r["status"] == "evaluated":

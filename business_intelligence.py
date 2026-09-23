@@ -879,11 +879,18 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         if dow:
             day = max(dow.items(), key=lambda kv: kv[1])[0]
             target = labor.get("labor_target", 30)
-            add(f"trim_day:{day}", f"Build the next schedule to your {target:g}% target, starting with {day}",
+            # Its own key: this is the WHOLE schedule's gap to target, not
+            # Home's trim_day:<day> (that one day's excess, a different
+            # figure) — under one key, one answer silenced both. It is the
+            # same news as the money ranking's "Scheduling against target"
+            # (money:labor), which a brief says once (morning_brief).
+            import rec_ledger as _rl_bi
+            add(_rl_bi.rec_key("schedule_to_target", f"{target:g}%"),
+                f"Build the next schedule to your {target:g}% target, starting with {day}",
                 f"{day} runs the heaviest labor % of the week", ["labor"], urgency="important",
                 dollars=labor.get("potential_savings_monthly"),
                 evidence=[f"gap above the {target:g}% target over {labor.get('period_days', 0)} days synced"],
-                claim_kind="computed")
+                claim_kind="computed", same_as="money:labor")
 
     for c in out:
         c["score"] = URGENCY_WEIGHT.get(c["urgency"], 1.0) * max(c["dollars_monthly"] or 0.0, UNPRICED_FLOOR)
@@ -908,6 +915,8 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH):
     for c in candidates:
         if c["key"] in silenced or c["key"].split(":", 1)[0] in quiet:
             continue
+        if c.get("same_as") and c["same_as"] in silenced:
+            continue            # answered under the other name for the same news
         return dict(c)
     return None
 
