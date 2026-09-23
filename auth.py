@@ -324,6 +324,13 @@ def init_auth(db_path: str = DB_PATH):
         # restaurant unlinked it, the session fell back to users.role 'client'
         # there and opened that owner console (SEC-1).
         "ALTER TABLE sessions ADD COLUMN staff_restaurant_id INTEGER",
+        # SEC-19: a lockout's length escalates with the lockouts before it
+        # that day, so slow online guessing against one PIN stops paying off.
+        "ALTER TABLE membership_pin_attempts ADD COLUMN lockout_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE membership_pin_attempts ADD COLUMN last_locked_at TEXT",
+        # SEC-18: a portal hit that turned out fine (a sign-in that worked, a
+        # roster read with a real code) no longer spends the failure budget.
+        "ALTER TABLE portal_attempts ADD COLUMN ok INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             import sqlite3 as _sql
@@ -672,6 +679,13 @@ PIN_MIN_LENGTH = 4
 PIN_MAX_LENGTH = 8
 PIN_MAX_ATTEMPTS = 5
 PIN_LOCKOUT_MINUTES = 15
+# Each further lockout inside a day doubles the last, up to a day. Every
+# lockout used to be a flat 15 minutes with the counter reset, i.e. five
+# guesses every quarter hour forever — the whole 4-digit space in about three
+# weeks of patient guessing at one tablet (SEC-19). An owner can still lift a
+# lock at once (Account → Staff → Unlock), which is the answer to a coworker
+# locking someone out on purpose.
+PIN_LOCKOUT_MAX_MINUTES = 24 * 60
 # A staff session is a shift, not a month. These are frequently shared
 # devices sitting on a pass or a host stand.
 STAFF_SESSION_HOURS = 14
@@ -895,9 +909,23 @@ def _record_pin_failure(membership_id: int, db_path: str = DB_PATH) -> dict:
                            "WHERE membership_id=?", (membership_id,)).fetchone()
         count = row["failed_count"] if row else 1
         if count >= PIN_MAX_ATTEMPTS:
-            until = (datetime.utcnow() + _td(minutes=PIN_LOCKOUT_MINUTES)).isoformat()
-            conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
-                         "WHERE membership_id=?", (until, membership_id))
+            prior = 0
+            try:
+                prev = conn.execute(
+                    "SELECT lockout_count FROM membership_pin_attempts WHERE membership_id=? "
+                    "AND last_locked_at >= datetime('now', '-1 day')", (membership_id,)).fetchone()
+                prior = (prev["lockout_count"] or 0) if prev else 0
+            except Exception:
+                prior = 0      # a database without the SEC-19 columns: flat lockouts, as before
+            minutes = min(PIN_LOCKOUT_MINUTES * (2 ** prior), PIN_LOCKOUT_MAX_MINUTES)
+            until = (datetime.utcnow() + _td(minutes=minutes)).isoformat()
+            try:
+                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0, "
+                             "lockout_count=?, last_locked_at=datetime('now') WHERE membership_id=?",
+                             (until, prior + 1, membership_id))
+            except Exception:
+                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
+                             "WHERE membership_id=?", (until, membership_id))
             conn.commit()
     finally:
         conn.close()
@@ -1252,27 +1280,37 @@ def restaurant_for_portal_token(token: str, db_path: str = DB_PATH) -> Optional[
 
 # ── Staff portal throttle + replay protection ──────────────────────────────
 
+# Per address, per 5 minutes: 30 hits that did not end well (a wrong PIN, a
+# stale nonce, an unknown code, a signup step), and 300 of anything. Every
+# hit used to count against the 30, successes included, so at shift change
+# the 16th employee signing in on the restaurant's Wi-Fi (one NAT address, a
+# roster read and a sign-in each) was refused (SEC-18).
 PORTAL_MAX_ATTEMPTS = 30
+PORTAL_MAX_REQUESTS = 300
 PORTAL_WINDOW_SECONDS = 300
 PORTAL_NONCE_MINUTES = 30
 
 
-def record_portal_attempt(ip: str, db_path: str = DB_PATH) -> None:
+def record_portal_attempt(ip: str, db_path: str = DB_PATH):
     """Count one hit on the portal's public surface, and evict the expired.
+    Returns the row's id, for mark_portal_attempt_ok once the hit turns out
+    fine. Recorded BEFORE the work, so concurrent guesses all count.
 
     The delete is done here rather than in a scheduled sweep so the table can
     never grow past one window's worth of traffic, with no process that has to
     remember to run.
     """
     if not ip:
-        return
+        return None
     try:
         conn = get_conn(db_path)
         try:
-            conn.execute("INSERT INTO portal_attempts (ip) VALUES (?)", (ip,))
+            cur = conn.execute("INSERT INTO portal_attempts (ip) VALUES (?)", (ip,))
+            attempt_id = cur.lastrowid
             conn.execute("DELETE FROM portal_attempts WHERE created_at < datetime('now', ?)",
                          (f"-{PORTAL_WINDOW_SECONDS} seconds",))
             conn.commit()
+            return attempt_id
         finally:
             conn.close()
     except Exception as exc:
@@ -1282,6 +1320,23 @@ def record_portal_attempt(ip: str, db_path: str = DB_PATH) -> None:
         # INVISIBLE — a counter that has silently stopped counting looks
         # exactly like an estate nobody is attacking.
         _report_throttle_failure(exc, "record_portal_attempt", ip)
+        return None
+
+
+def mark_portal_attempt_ok(attempt_id, db_path: str = DB_PATH) -> None:
+    """The hit recorded as attempt_id ended well: it still counts toward the
+    address's overall ceiling, not toward its failure budget (SEC-18)."""
+    if not attempt_id:
+        return
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE portal_attempts SET ok=1 WHERE id=?", (attempt_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        _report_throttle_failure(exc, "mark_portal_attempt_ok", str(attempt_id))
 
 
 def _report_throttle_failure(exc, where, ip):
@@ -1300,12 +1355,14 @@ def portal_attempts_exceeded(ip: str, db_path: str = DB_PATH) -> bool:
         conn = get_conn(db_path)
         try:
             row = conn.execute(
-                "SELECT COUNT(*) AS n FROM portal_attempts "
-                "WHERE ip=? AND created_at >= datetime('now', ?)",
+                "SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ok=1 THEN 0 ELSE 1 END), 0) AS failed "
+                "FROM portal_attempts WHERE ip=? AND created_at >= datetime('now', ?)",
                 (ip, f"-{PORTAL_WINDOW_SECONDS} seconds")).fetchone()
         finally:
             conn.close()
-        return (row["n"] if row else 0) >= PORTAL_MAX_ATTEMPTS
+        if not row:
+            return False
+        return row["failed"] >= PORTAL_MAX_ATTEMPTS or row["n"] >= PORTAL_MAX_REQUESTS
     except Exception as exc:
         # Fails open, for the same reason as above — and reported, for the
         # same reason as above.
