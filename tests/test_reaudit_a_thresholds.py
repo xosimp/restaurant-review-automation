@@ -224,3 +224,23 @@ def test_a_short_hand_upload_is_read_whole():
     import labor
     rows = [{"date": "2026-06-01"}, {"date": "2026-06-10"}, {"date": ""}]
     assert labor.current_window(rows) == rows
+
+
+# ── A-25: the other owner-facing dates ─────────────────────────────────────
+
+def test_overtime_week_labels_are_mdy():
+    import labor
+    shifts = [{"date": f"2026-09-{d:02d}", "employee": "Ana", "role": "Server", "shift_start": "9:00am",
+               "shift_end": "9:00pm", "actual_hours": "12", "scheduled_hours": "12", "sales": "3000"}
+              for d in range(14, 19)]
+    out = labor.analyse_shifts(shifts, hourly_rate=20.0, labor_target=30.0)
+    weeks = [f["week"] for f in out["overtime_risk"]]
+    assert weeks and all(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2}", w) for w in weeks), weeks
+
+
+def test_the_time_off_account_event_and_the_labor_note_trend_are_mdy():
+    src = open(os.path.join(ROOT, "strategy_routes.py"), encoding="utf-8").read()
+    assert "{row['start_date']}–{row['end_date']}" not in src
+    note = open(os.path.join(ROOT, "labor.py"), encoding="utf-8").read()
+    assert "f\"{h['period_start']} to {h['period_end']}" not in note
+    assert '_local_now.strftime("%B %d, %Y")' not in note

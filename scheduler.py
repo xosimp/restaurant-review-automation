@@ -2428,8 +2428,8 @@ AUTO_PUBLISH_UNDO_MINUTES = 120
 
 
 def run_auto_publish_schedules():
-    """Friday, 9am local: queue the Thursday draft to go to staff at 11am,
-    with the two hours as the undo window — for owners who turned it on AND
+    """Friday, 9am local: queue the Thursday draft to go to staff
+    AUTO_PUBLISH_UNDO_MINUTES later, with those two hours as the undo window — for owners who turned it on AND
     whose last SCHEDULE_PUBLISH_TRUST_MIN published schedules went out
     unedited. The draft must be this coming week's, untouched, and not yet
     shared. Nothing is sent here; delayed.run_due sends it, and the owner
