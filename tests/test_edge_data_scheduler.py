@@ -437,8 +437,6 @@ def _alias_scan():
     return hits
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-16: the timeout lint only knows the names requests/_requests/httpx/"
-                                       "_httpx; 12 calls through `import requests as _req` have no timeout")
 def test_every_outbound_http_call_names_a_timeout_whatever_the_import_alias():
     hits = _alias_scan()
     assert not hits, "outbound calls with no timeout:\n" + "\n".join(hits)
@@ -457,8 +455,6 @@ def test_the_timeout_lint_flags_a_plain_requests_call(tmp_path, monkeypatch):
     assert len(_lint_on(tmp_path, monkeypatch, "import requests\nrequests.get('https://x.test')\n")) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-16: an aliased import (`import requests as _req`) is invisible to the "
-                                       "timeout lint, which prints OK")
 def test_the_timeout_lint_flags_an_aliased_requests_call(tmp_path, monkeypatch):
     assert len(_lint_on(tmp_path, monkeypatch, "import requests as _req\n_req.get('https://x.test')\n")) == 1
 
@@ -494,8 +490,6 @@ def test_token_refresh_continues_after_one_restaurant_fails(db_path, monkeypatch
     assert models.get_restaurant(bad, db_path=db_path).ig_token == "tok-bad"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-49/DATA-16: the token refresh calls the Graph API with no timeout, "
-                                       "so one unanswered connection hangs the scheduler thread")
 def test_every_token_refresh_call_names_a_timeout(db_path, monkeypatch):
     import requests, scheduler
     monkeypatch.setenv("META_APP_ID", "app")

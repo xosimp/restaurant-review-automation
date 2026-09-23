@@ -144,7 +144,6 @@ def test_a_wrong_method_on_a_web_api_path_answers_in_json(app_run):
     assert _is_json_error(app_run["web_405"]), app_run["web_405"]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: an /api/* body over MAX_CONTENT_LENGTH gets Flask's HTML 413 page (no 413 handler)")
 def test_an_oversized_web_api_body_answers_in_json(app_run):
     assert app_run["web_413"]["status"] == 413
     assert _is_json_error(app_run["web_413"]), app_run["web_413"]
