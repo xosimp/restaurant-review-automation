@@ -55,6 +55,9 @@ input::placeholder,textarea::placeholder{color:var(--ink4)}
 .top .topbtn.ghost{background:transparent;color:var(--ember2);border-color:rgba(232,149,106,.45)}
 .top .topbtn.ghost:hover{background:var(--ember-bg)}
 .top .who b{color:var(--ink)}
+.top .who .signout{display:inline;margin:0}
+.top .who .signout-btn{background:none;border:0;padding:0;font:inherit;color:var(--ember2);cursor:pointer}
+.top .who .signout-btn:hover{text-decoration:underline}
 .content{padding:20px 22px 60px;max-width:1600px}
 /* type */
 h1{font-family:var(--disp);font-weight:600;font-size:22px;letter-spacing:-.01em;margin:0}
@@ -191,7 +194,7 @@ td.r,th.r{text-align:right}
       <span class="pill" id="gen-at"></span>
       <a class="topbtn" href="/admin/audits/latest" title="Open the current restaurant audit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>Open audit</a>
       <a class="topbtn ghost" href="/admin/audits/latest/cheatsheet" title="Meeting cheat sheet for the current audit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z"/><path d="M3 12l9 4.5 9-4.5M3 16.5L12 21l9-4.5"/></svg>Cheat sheet</a>
-      <span class="who">Signed in as <b>{{ current_user.username }}</b> · <a href="/logout">Sign out</a></span>
+      <span class="who">Signed in as <b>{{ current_user.username }}</b> · <form method="post" action="/logout" class="signout"><button type="submit" class="cbtn signout-btn">Sign out</button></form></span>
     </div>
     <div class="content" id="view"><div class="sk"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:40%"></div></div>
   </div>
@@ -254,6 +257,11 @@ const fmtN = (n) => (n == null ? '—' : Number(n).toLocaleString());
 const fmtUSD = (n, d) => (n == null ? '—' : '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits: d == null ? 0 : d, maximumFractionDigits: d == null ? 0 : d}));
 // sqlite's datetime('now') stamps are UTC with a space; Python isoformat stamps are local with a T. Same rule as admin_ops._parse.
 function parseTs(s){ if(!s) return null; s=String(s).trim(); const utc = /Z$/.test(s) || (s.indexOf('T')<0 && s.indexOf(' ')>0); const t = Date.parse(s.replace(' ','T').replace(/Z$/,'') + (utc?'Z':'')); return isNaN(t) ? null : new Date(t); }
+// No optional chaining or nullish coalescing on this page: both are a
+// SyntaxError, so a blank console, on Safari before 13.1/14 — an older iPad
+// at an on-site audit (CLIENT-44). These two helpers stand in for them.
+function tsMs(v){ const d = parseTs(v); return d ? (d.getTime() || 0) : 0; }
+function orDefault(v, d){ return v == null ? d : v; }
 function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
 function fmtD(s){ const d = parseTs(s); return d ? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + (d.getFullYear()!==new Date().getFullYear()?' '+d.getFullYear():'') : '—'; }
 function fmtDT(s){ const d = parseTs(s); return d ? d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—'; }
@@ -306,6 +314,7 @@ async function route(){
 window.addEventListener('hashchange', route);
 // nav badges from the overview, refreshed in the background
 async function badges(){
+  if (document.hidden) return;   // a background tab skips the poll; it refreshes when looked at again (CLIENT-37)
   const d = await api('/admin/api/overview'); if(!d.ok) return; const k = d.kpis;
   const set = (id, n, cls) => { const el = $(id); el.textContent = n; el.hidden = !n; el.className = 'cnt' + (cls ? ' ' + cls : ''); };
   set('n-attn', k.attention, k.critical ? 'bad' : (k.attention ? 'warn' : '')); set('n-clients', k.clients);
@@ -398,7 +407,7 @@ const CF = [
   ['onboarding','Onboarding', r=>!r.onboarding.complete && !r.onboarding.dismissed], ['integration','Integration issue', r=>r.integration_health==='error'],
   ['ai','AI issue', r=>r.issues.some(i=>/ai_/.test(i.key))], ['email','Email issue', r=>r.email.failed_7d>0], ['push','Notification issue', r=>r.push.failed_7d>0||r.push.disabled>0],
   ['stale','Data stale', r=>r.modules.some(m=>m.state==='stale'||m.state==='no_data')], ['usage','High usage', r=>r.ai.cost_30d>10||r.ai.calls_30d>150],
-  ['churn','Churn risk: high', r=>(r.churn_risk||{}).level==='high'], ['thin','Data < 50% complete', r=>((r.data_completeness||{}).score??100)<50],
+  ['churn','Churn risk: high', r=>(r.churn_risk||{}).level==='high'], ['thin','Data < 50% complete', r=>orDefault((r.data_completeness||{}).score,100)<50],
   ['inactive','Inactive 14d+', r=>{const d=parseTs(r.last_active); return !d || (Date.now()-d)>14*864e5;}], ['new','Joined 30d', r=>{const d=parseTs(r.created_at); return d && (Date.now()-d)<30*864e5;}]
 ];
 async function clientsView(){
@@ -416,16 +425,16 @@ async function clientsView(){
       {h:'Locs', key:'locs', r:true, val:r=>_clients.filter(x=>x.brand===r.brand).length, cell:r=>`<span class="num">${_clients.filter(x=>x.brand===r.brand).length}</span>`},
       {h:'Billing', key:'billing', val:r=>r.billing.status, cell:r=>`${bill(r.billing.status)}${r.billing.monthly?'<div class="dim num">'+fmtUSD(r.billing.monthly)+'/mo</div>':''}`},
       {h:'Onboarding', key:'onb', val:r=>r.onboarding.done/(r.onboarding.total||1), cell:r=>r.onboarding.complete?'<span class="b ok nodot">done</span>':`<span class="num">${r.onboarding.done}/${r.onboarding.total}</span>${r.onboarding.dismissed?' <span class="dim">hidden</span>':''}`},
-      {h:'Complete', key:'complete', r:true, val:r=>(r.data_completeness||{}).score??-1, cell:r=>{const sc=(r.data_completeness||{}).score; return sc==null?'<span class="dim">—</span>':`<span class="chip ${sc>=75?'ok':sc>=50?'':'warn'}"><span class="num">${sc}%</span></span>`;}},
+      {h:'Complete', key:'complete', r:true, val:r=>orDefault((r.data_completeness||{}).score,-1), cell:r=>{const sc=(r.data_completeness||{}).score; return sc==null?'<span class="dim">—</span>':`<span class="chip ${sc>=75?'ok':sc>=50?'':'warn'}"><span class="num">${sc}%</span></span>`;}},
       {h:'Churn risk', key:'churn', val:r=>({high:3,medium:2,low:1}[(r.churn_risk||{}).level]||0), cell:r=>{const c=r.churn_risk||{}; return c.level==='n/a'||!c.level?'<span class="dim">—</span>':`<span class="chip ${c.level==='high'?'warn':c.level==='medium'?'':'ok'}" title="${esc((c.reasons||[]).join(' · '))}">${esc(c.level)}</span>`;}},
       {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
       {h:'Modules', cell:r=>r.modules.filter(m=>m.enabled).map(modchip).join('')||'<span class="dim">none</span>'},
-      {h:'Data', key:'fresh', val:r=>parseTs(r.freshness.reviews||r.freshness.pos)?.getTime()||0, cell:r=>{const t=r.freshness.reviews||r.freshness.pos; const a=parseTs(t); const stale=!a||(Date.now()-a)>3*864e5; return `<span class="${stale?'chip warn':'chip ok'}">${a?ago(t):'never'}</span>`;}},
+      {h:'Data', key:'fresh', val:r=>tsMs(r.freshness.reviews||r.freshness.pos), cell:r=>{const t=r.freshness.reviews||r.freshness.pos; const a=parseTs(t); const stale=!a||(Date.now()-a)>3*864e5; return `<span class="${stale?'chip warn':'chip ok'}">${a?ago(t):'never'}</span>`;}},
       {h:'AI 30d', key:'aicost', r:true, val:r=>r.ai.cost_30d, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span> <span class="dim num">${fmtUSD(r.ai.cost_30d,2)}</span>`},
       {h:'Email', key:'em', val:r=>r.email.failed_7d, cell:r=>r.email.failed_7d?`<span class="b bad nodot">${r.email.failed_7d} failed</span>`:`<span class="dim num">${r.email.sent_7d} sent</span>`},
       {h:'Push', key:'pu', val:r=>r.push.failed_7d+r.push.disabled, cell:r=>(r.push.failed_7d||r.push.disabled)?`<span class="b bad nodot">${r.push.failed_7d} failed${r.push.disabled?' · '+r.push.disabled+' dead':''}</span>`:`<span class="dim num">${r.push.devices} device${r.push.devices===1?'':'s'}</span>`},
-      {h:'Last active', key:'last', val:r=>parseTs(r.last_active)?.getTime()||0, cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
-      {h:'Joined', key:'joined', val:r=>parseTs(r.created_at)?.getTime()||0, cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
+      {h:'Last active', key:'last', val:r=>tsMs(r.last_active), cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
+      {h:'Joined', key:'joined', val:r=>tsMs(r.created_at), cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
       {h:'Attn', key:'attn', r:true, val:r=>r.issues.length, cell:r=>r.issues.length?`<span class="b ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'} nodot">${r.issues.length}</span>`:''},
       {h:'', w:'76px', cell:r=>`<a class="btn s" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a>`}
     ], rows, {id:'clients-t', sort:'attn', link:r=>'client/'+r.id, empty:'No clients match.'})}`;
@@ -821,6 +830,7 @@ async function importSubmit(){ const f=$('i-file').files[0]; if(!f){ $('i-status
 
 // go
 route(); badges(); setInterval(badges, 120000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) badges(); });
 </script>
 </body>
 </html>
