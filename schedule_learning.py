@@ -659,10 +659,74 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
                     "expected_no_shows": round(expected, 2), "chance_of_a_no_show": round(chance, 2),
                     "people": [{"employee": n, "no_show_rate": round(p, 2), "basis": b} for n, p, b in top]})
     out.sort(key=lambda x: (-x["chance_of_a_no_show"], x["date"]))
-    return out[:limit]
+    out = out[:limit]
+    for day in out:
+        day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path)
+    return out
+
+
+def _standby_person(restaurant_id, day, rows, tally, db_path):
+    """Who to put on call: somebody off that day in the role of the person
+    most likely to miss, free and not on time off (labor_replacements'
+    own checks), the most reliable first — a known low no-show rate before
+    no record, then the operational score. None when nobody fits."""
+    d = day["date"]
+    working = {(r.get("employee") or "").strip() for r in rows if (r.get("date") or "")[:10] == d}
+    risky = (day.get("people") or [{}])[0].get("employee")
+    shift = next((r for r in rows if (r.get("date") or "")[:10] == d
+                  and (r.get("employee") or "").strip() == risky), None) if risky else None
+    role = (shift or {}).get("role") or ""
+    try:
+        import labor_replacements
+        fits = labor_replacements.for_gap(restaurant_id, role, day["day"], exclude=working, db_path=db_path,
+                                          limit=6, on_date=d)
+    except Exception as e:
+        print(f"[schedule_learning] standby candidates unavailable: {e}")
+        return None
+    if not fits:
+        return None
+
+    def _rate(name):
+        t = tally.get(name.strip().lower()) or {}
+        all_e = t.get("all")
+        return all_e[1] / all_e[0] if all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS else None
+
+    ranked = sorted(fits, key=lambda f: (_rate(f["name"]) is None, _rate(f["name"]) or 0, -(f.get("score") or 0),
+                                         f["name"]))
+    pick = ranked[0]
+    rate = _rate(pick["name"])
+    return {"employee": pick["name"], "role": role, "no_show_rate": round(rate, 2) if rate is not None else None,
+            "shift_start": (shift or {}).get("shift_start"), "shift_end": (shift or {}).get("shift_end")}
 
 
 # ── overtime forecast ─────────────────────────────────────────────────────
+
+OVERTIME_PREMIUM = 0.5      # time-and-a-half: the half is what moving the hours saves
+
+
+def price_overtime_moves(forecast: list, role_rates=None, default_rate=None) -> list:
+    """Each forecast entry with a candidate gains `saves`: the overtime
+    premium the move avoids — the hours it takes off the overage, at half
+    the shift role's rate (the straight-time half is paid either way, to
+    whoever works it). No rate known, no dollar figure. Pure; returns the
+    same list."""
+    rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items()
+             if k and k != "_default" and v}
+    # The rate every other labor dollar in the product uses: the role's, else
+    # the restaurant's hourly rate.
+    base = default_rate if default_rate is not None else (role_rates or {}).get("_default")
+    for f in forecast or []:
+        c = f.get("candidate")
+        if not c:
+            continue
+        rate = rates.get(str(c.get("role") or "").strip().lower()) or (float(base) if base else None)
+        hours_off = round(min(float(f.get("over") or 0), float(c.get("hours") or 0)), 1)
+        c["overtime_hours_avoided"] = hours_off
+        c["saves"] = round(hours_off * rate * OVERTIME_PREMIUM) if rate else None
+        if c["saves"]:
+            f["text"] = f["text"] + f" That saves about ${c['saves']:,} in overtime pay."
+    return forecast
+
 
 def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None, ceiling=None,
                       max_hours=None, roster_roles=None) -> list:
@@ -764,7 +828,7 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
             if best:
                 pick = {"employee": best[0], "role": r.get("role") or "", "headroom": round(best[1], 1),
                         "date": r.get("date"), "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"),
-                        "hours": round(_hours(r), 1)}
+                        "hours": round(_hours(r), 1), "index": i}
                 break
         from time_utils import mdy
         published = round(_base(low, b), 1)

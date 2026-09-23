@@ -150,7 +150,27 @@ def test_twelve_rescores_of_one_week_suppress_no_recommendation_kind(db, monkeyp
 def test_a_kind_shown_across_ten_weeks_and_never_taken_is_suppressed(db):
     rid = create_restaurant(Restaurant(name="Advice Co", owner_email="a@x.com"), db_path=db)
     for week in range(10):
+        si.record_recommendation(rid, "hours", f"week {week}", "shown")
+    assert si.suppressed_kinds(rid) == {"hours"}
+    si.record_recommendation(rid, "hours", "week 10", "accepted")
+    assert si.suppressed_kinds(rid) == set()
+
+
+def test_a_coverage_gap_is_never_switched_off_by_being_ignored(db):
+    rid = create_restaurant(Restaurant(name="Advice Co", owner_email="a@x.com"), db_path=db)
+    for week in range(12):
         si.record_recommendation(rid, "coverage", f"week {week}", "shown")
-    assert si.suppressed_kinds(rid) == {"coverage"}
-    si.record_recommendation(rid, "coverage", "week 10", "accepted")
+    si.record_recommendation(rid, "coverage", "w", "dismissed")
+    si.record_recommendation(rid, "coverage", "x", "dismissed")
+    assert si.suppressed_kinds(rid) == set()
+
+
+def test_not_for_us_twice_suppresses_and_asking_back_restores(db):
+    rid = create_restaurant(Restaurant(name="Advice Co", owner_email="a@x.com"), db_path=db)
+    si.record_recommendation(rid, "hours", "a", "dismissed")
+    assert si.suppressed_kinds(rid) == set()
+    si.record_recommendation(rid, "hours", "b", "dismissed")
+    assert si.suppressed_kinds(rid) == {"hours"}
+    import time; time.sleep(1.1)       # created_at is second-resolution
+    si.record_recommendation(rid, "hours", "", "restored")
     assert si.suppressed_kinds(rid) == set()

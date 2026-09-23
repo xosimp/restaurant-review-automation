@@ -2177,19 +2177,30 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
     # once acted on stop being shown; every kind shown is recorded.
     try:
         import schedule_intel as _si
+        import rec_ledger as _rl
+        schedule_rec_key = _si.schedule_rec_key
         hidden = _si.suppressed_kinds(restaurant_id)
-        kept = []
+        silenced = _rl.silenced_keys(restaurant_id)
+        kept, items = [], []
         for rec in quality.get("recommendations") or []:
             kind = _sq.recommendation_kind(rec)
-            if kind in hidden:
+            key = schedule_rec_key(kind, rec)
+            if kind in hidden or key in silenced:
                 continue
             kept.append(rec)
+            # The kind travels with the text, so web and iOS never classify
+            # a sentence themselves (their copies of the prefix list drifted).
+            items.append({"text": rec, "kind": kind, "key": key})
             _si.record_recommendation(restaurant_id, kind, rec[:200], "shown")
         quality["recommendations"] = kept
+        quality["recommendation_items"] = items
+        if items:
+            _rl.present_many(restaurant_id, [{"key": it["key"], "module": "schedule", "title": it["text"][:200],
+                                              "kind": "schedule_" + it["kind"]} for it in items], "schedule_review")
         if hidden:
             quality["suppressed_recommendation_kinds"] = sorted(hidden)
-    except Exception:
-        pass
+    except Exception as _rx:
+        print(f"[schedule] recommendation filter failed: {_rx}")
     return quality, what_if
 
 
@@ -2726,16 +2737,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 from time_utils import mdy as _mdy
                 _ot = _sl.overtime_forecast(preview_rows, constraints=_constraints,
                                             roster_roles=result.get("roster_roles") or None)
+                try:
+                    from models import get_role_rates as _grr_ot, get_restaurant as _gr_ot
+                    _sl.price_overtime_moves(_ot, _grr_ot(restaurant_id),
+                                             getattr(_gr_ot(restaurant_id), "hourly_rate", None) or None)
+                except Exception as _px:
+                    print(f"[schedule] overtime moves unpriced: {_px}")
                 result["overtime_forecast"] = _ot
                 for _o in _ot[:3]:
                     result["review"]["lines"].append(_o["text"])
                 _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows)
                 result["standby_days"] = _sb
                 for _d in _sb:
+                    _who = (_d.get("standby") or {})
                     result["review"]["lines"].append(
                         f"Worth a standby on {_d['day']} {_mdy(_d['date'])}: about a "
                         f"{int(round(_d['chance_of_a_no_show'] * 100))}% chance somebody scheduled doesn't show, "
-                        f"from their own attendance.")
+                        f"from their own attendance."
+                        + (f" {_who['employee']} ({_who['role'] or 'same role'}) is off and could be on call."
+                           if _who.get("employee") else ""))
             except Exception as _slx:
                 print(f"[schedule] overtime/standby read failed: {_slx}")
             # Rows the manager has repeatedly edited away and the draft put

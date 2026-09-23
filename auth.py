@@ -3175,6 +3175,8 @@ _UNGATED_PREFIXES = (
     "/api/milestones", "/mobile/api/milestones", "/api/monthly-review", "/mobile/api/monthly-review",
     "/api/morning-brief", "/mobile/api/morning-brief", "/api/closeout", "/mobile/api/closeout",
     "/api/tasks", "/mobile/api/tasks",
+    # An owner's answer to any recommendation, from any surface (rec_ledger).
+    "/api/recs/", "/mobile/api/recs/",
     # Comps and voids: LOSS_VIEW, checked in the handler.
     "/api/loss-signals", "/mobile/api/loss-signals",
     # Polled from every screen (the new-reviews count) or reached from the

@@ -310,7 +310,10 @@ def test_covers_are_saved_and_read_by_the_analysis(db_path):
     assert out["written"] == 2 and out["skipped"] == 1
     assert covers.by_date(rid, "2026-09-14", "2026-09-15", db_path=db_path) == {"2026-09-14": 180, "2026-09-15": 60}
     shifts = []
-    for day, sales in (("2026-09-14", 9000), ("2026-09-15", 3000), ("2026-09-16", 9000)):
+    # A strong day is 1.15x the median day (thresholds), so the week needs
+    # its ordinary days for 9/14 to stand out.
+    for day, sales in (("2026-09-14", 9000), ("2026-09-15", 3000), ("2026-09-16", 9000),
+                       ("2026-09-17", 3000), ("2026-09-18", 3000)):
         shifts.append({"employee": "A", "role": "Server", "date": day, "day": "Mon", "scheduled_hours": 8,
                        "actual_hours": 8, "sales": sales, "shift_start": "10:00", "shift_end": "18:00"})
     plain = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30)

@@ -2214,6 +2214,7 @@ def _do_mobile_labor(restaurant_id):
             "week": o.get("week"), "status": o.get("status"),
             "total_hours": employee_hours.get(o.get("employee"), o.get("hours", 0)),
             "ot_allowed": _has_ot_allowance(o.get("employee"), constraints_index),
+            "premium": o.get("premium"),
         }
         for o in analysis.get("overtime_risk", [])
     ]
@@ -2431,10 +2432,9 @@ def mobile_labor_insight(current_user):
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
         analysis = analyse_shifts_for_restaurant(rid)
         staff_notes = get_staff_notes(rid)
-        insight = get_claude_insights(
-            analysis, restaurant_name=name, owner_name=owner, restaurant_id=rid,
-            staff_notes=staff_notes if staff_notes else None,
-        )
+        from labor import labor_note
+        insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
+                             staff_notes=staff_notes if staff_notes else None)
         _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis),
                        **_insight_json(insight))

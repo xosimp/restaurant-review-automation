@@ -377,8 +377,8 @@ def run_quality_calibration(db_path=DB_PATH):
     clean weeks than in troubled ones, over at least CALIBRATION_MIN_WEEKS
     weeks with both kinds present, gains CALIBRATION_STEP weight (capped);
     nothing is ever lowered, and nothing moves before the sample exists.
-    The change is recorded like a rating change, so it can be seen and
-    undone."""
+    The result is recorded as a SUGGESTION (quality_weights_suggested);
+    nothing is written to the weights until the owner applies it."""
     import json as _j
     from models import get_restaurant, update_restaurant, get_quality_weights, record_capability_change
     import shift_quality as _sq
@@ -437,13 +437,16 @@ def run_quality_calibration(db_path=DB_PATH):
         import ops as _ops_cal
         if newest and not _ops_cal.claim_period("quality_calibration", f"{r.id}:{newest}"):
             continue
-        update_restaurant(r.id, {"quality_weights_json": _j.dumps(merged)}, db_path=db_path)
+        # Suggested, never applied: the owner is told the engine keeps its
+        # weights until someone changes them, and a silent weekly write made
+        # that untrue. The suggestion is recorded for the Labor intel card,
+        # where "Apply" is one tap (strategy_routes calibration apply).
         try:
-            record_capability_change(r.id, "quality_weights_calibrated", subject="weights",
+            record_capability_change(r.id, "quality_weights_suggested", subject="weights",
                                      before=_j.dumps(current), after=_j.dumps(merged),
                                      changed_by="Cavnar AI (calibration)")
-        except Exception:
-            pass
+        except Exception as _cx:
+            print(f"[calibration] could not record the suggestion: {_cx}")
         changed += 1
     return {"restaurants_changed": changed}
 
@@ -566,6 +569,87 @@ def _write_cursor(key, value, db_path) -> None:
         conn.close()
 
 
+LABOR_REMINDERS_CURSOR_KEY = "labor_reminders_cursor"
+LABOR_REMINDERS_MAX_SECONDS = 10 * 60
+REQUEST_REMIND_DAYS = 1          # a drop or swap for today or tomorrow still unanswered
+TIME_OFF_REMIND_DAYS = 2         # time off starting within two days still unanswered
+UNPUBLISHED_REMIND_DAYS = 3      # next week starts within three days and staff don't have it
+
+
+def labor_waiting(restaurant_id, db_path=DB_PATH, today=None, draft=True) -> dict:
+    """What a manager owes before the next shifts: requests close to their
+    date nobody has answered, and (with `draft`; auto-publish restaurants
+    hear about their draft from that job) a drafted week that has not gone
+    out. {"lines": [...], "history_id": id or None}. Read-only."""
+    from datetime import timedelta
+    import shift_requests as _sreq
+    from models import get_conn as _gc
+    from time_utils import mdy
+    today = _sreq._today(restaurant_id, today)
+    lines, hid = [], None
+    conn = _gc(db_path)
+    try:
+        for r in conn.execute("SELECT employee_name, date, shift_start, kind FROM shift_change_requests "
+                              "WHERE restaurant_id=? AND status='pending' AND date BETWEEN ? AND ? ORDER BY date, shift_start",
+                              (restaurant_id, today.isoformat(),
+                               (today + timedelta(days=REQUEST_REMIND_DAYS)).isoformat())).fetchall():
+            what = "swap" if (r["kind"] or "") == "swap" else "drop"
+            lines.append(f"{r['employee_name']} asked to {what} {mdy(r['date'])} {r['shift_start'] or ''}".rstrip()
+                         + " — still unanswered.")
+        for r in conn.execute("SELECT employee_name, start_date FROM staff_time_off WHERE restaurant_id=? AND status='pending' "
+                              "AND start_date BETWEEN ? AND ? ORDER BY start_date",
+                              (restaurant_id, today.isoformat(),
+                               (today + timedelta(days=TIME_OFF_REMIND_DAYS)).isoformat())).fetchall():
+            lines.append(f"{r['employee_name']}'s time off from {mdy(r['start_date'])} — still unanswered.")
+        soon = (today + timedelta(days=UNPUBLISHED_REMIND_DAYS)).isoformat()
+        draft = draft and conn.execute(
+            "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start > ? "
+            "AND h.week_start <= ? AND h.published_at IS NULL AND h.superseded_by IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
+            "AND p.week_start=h.week_start AND p.published_at IS NOT NULL) ORDER BY h.id DESC LIMIT 1",
+            (restaurant_id, today.isoformat(), soon)).fetchone()
+        if draft:
+            hid = draft["id"]
+            lines.append(f"The week of {mdy(draft['week_start'])} is drafted but staff don't have it yet — send it from Labor.")
+    finally:
+        conn.close()
+    return {"lines": lines, "history_id": hid}
+
+
+def run_labor_reminders(db_path=DB_PATH):
+    """9am local: one notice per Labor restaurant naming what is waiting on
+    the manager before the next shifts (labor_waiting). Nothing waiting, no
+    notice. Runs every hour; each restaurant is claimed once a day at its
+    own 9am. Bounded and resumable."""
+    import ops
+    import scheduler as _sched
+    order = sorted((r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)), key=lambda r: r.id)
+    cursor = _read_cursor(LABOR_REMINDERS_CURSOR_KEY, db_path)
+    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    sent = {"n": 0}
+
+    def _one(r):
+        if not _sched.local_due(r, 9, claim_key="labor_reminders"):
+            return
+        w = labor_waiting(r.id, db_path=db_path, draft=not getattr(r, "auto_publish_schedule", 0))
+        if not w["lines"]:
+            return
+        body = w["lines"][0] if len(w["lines"]) == 1 else f"{len(w['lines'])} things before the next shifts."
+        data = {"tab": "labor"}
+        if w["history_id"]:
+            data["history_id"] = w["history_id"]
+        if _reach(r.id, "coverage", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
+            sent["n"] += 1
+
+    def _failed(r, e):
+        ops.capture(e, job="labor_reminders", context=f"restaurant_id={r.id}")
+
+    done, _ran_out = _sched.bounded_map(order, _one, 1, LABOR_REMINDERS_MAX_SECONDS, on_error=_failed)
+    if order:
+        _write_cursor(LABOR_REMINDERS_CURSOR_KEY, order[min(done, len(order)) - 1].id if done else cursor, db_path)
+    return {"reminded": sent["n"]}
+
+
 def run_schedule_outcomes(db_path=DB_PATH):
     """Monday: record what each published week actually did, by daypart
     (schedule_intel.record_outcomes), for every Labor restaurant."""
@@ -582,6 +666,9 @@ def run_schedule_outcomes(db_path=DB_PATH):
 
     def _one(r):
         written["n"] += schedule_intel.record_outcomes(r.id, db_path=db_path).get("written", 0)
+        # Then read each accepted recommendation against the night it was
+        # about (rec_ledger outcome), now that the night is recorded.
+        schedule_intel.measure_accepted_recommendations(r.id, db_path=db_path)
 
     def _failed(r, e):
         ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={r.id}")

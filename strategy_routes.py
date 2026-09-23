@@ -895,7 +895,7 @@ def _do_roster_get(u):
     suggested = []
     try:
         import schedule_intel as _si
-        suggested = _si.chemistry_suggestions(rid)
+        suggested = _si.chemistry_suggestions_shown(rid, user_id=u.get("id"))
     except Exception:
         suggested = []
     roster_low = {e["name"].strip().lower() for e in out}
@@ -1149,6 +1149,23 @@ def _do_schedule_violations(u):
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
+    # Who the rows on screen push into overtime, with a same-role person who
+    # has room and what moving the shift saves — the one-tap move (#27).
+    try:
+        import schedule_learning as _sl
+        from models import get_role_rates as _grr, get_restaurant as _gr
+        out["overtime_moves"] = [f for f in _sl.price_overtime_moves(
+            _sl.overtime_forecast(rows, constraints=c), _grr(_rid(u)),
+            getattr(_gr(_rid(u)), "hourly_rate", None) or None) if f.get("candidate")]
+        import rec_ledger as _rl
+        for f in out["overtime_moves"]:
+            f["rec_key"] = _rl.rec_key("overtime_move", f"{f['employee']}:{f['candidate'].get('date')}")
+        _rl.present_many(_rid(u), [dict(key=f["rec_key"], module="schedule", kind="overtime_move", title=f["text"][:160],
+                                        dollar_value=f["candidate"].get("saves"), cavnar_completes=True)
+                                   for f in out["overtime_moves"]], "schedule_review", user_id=u.get("id"))
+    except Exception as e:
+        print(f"[schedule] overtime moves unavailable: {e}")
+        out["overtime_moves"] = []
     # What the edit moves in hours and overtime-priced dollars, when the
     # page sends the rows it started from.
     base = _rows_from_body({"rows": b.get("baseline_rows")}) if isinstance(b.get("baseline_rows"), list) else None
@@ -1254,8 +1271,42 @@ def _do_schedule_optimize(u):
                         max_server_overlap=getattr(_r_opt, "section_count", None),
                         hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
-    return {"ok": True, "rows": res["rows"], "optimizer": _opt.summary(res, signals),
+    summary = _opt.summary(res, signals)
+    # A proposal with changes is a recommendation: kept on Save, set aside
+    # on Discard (the page reports which to /recs/event).
+    rec_key = None
+    if summary.get("changes"):
+        import rec_ledger as _rl
+        from datetime import datetime as _dt
+        rec_key = _rl.rec_key("optimizer", f"{hid or 'draft'}:{_dt.utcnow().strftime('%Y%m%d%H%M%S')}")
+        _rl.present(_rid(u), rec_key, "schedule", "schedule_review", kind="optimizer",
+                    title=f"{len(summary['changes'])} changes from Improve with Cavnar", user_id=u.get("id"),
+                    cavnar_completes=True)
+    return {"ok": True, "rows": res["rows"], "optimizer": summary, "rec_key": rec_key,
             "quality": quality, "what_if": what_if}, 200
+
+
+def _do_calibration_apply(u):
+    """Apply the suggested Shift Quality weights (schedule_learning.
+    calibrate_weights) — the owner's decision, one tap, recorded and
+    reversible (the previous weights are kept in the change record)."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can change how schedules are scored.")
+    import json as _j
+    import schedule_learning as _sl
+    from models import update_restaurant, get_quality_weights, record_capability_change
+    cal = _sl.calibrate_weights(_rid(u))
+    if not cal.get("ready") or not cal.get("suggested_weights"):
+        return {"ok": False, "error": cal.get("reason") or "There is no suggestion to apply yet."}, 400
+    before = get_quality_weights(_rid(u)) or {}
+    after = dict(before)
+    after.update({k: float(v) for k, v in cal["suggested_weights"].items()})
+    update_restaurant(_rid(u), {"quality_weights_json": _j.dumps(after)})
+    record_capability_change(_rid(u), "quality_weights_applied", subject="weights", before=_j.dumps(before),
+                             after=_j.dumps(after), changed_by=_who(u))
+    import rec_ledger as _rl
+    _rl.record(_rid(u), "calibration:weights", "accepted", surface="labor", user_id=u.get("id"), role=u.get("role"))
+    return {"ok": True, "weights": after}, 200
 
 
 def _do_rec_event(u):
@@ -1290,6 +1341,48 @@ def _do_rec_event(u):
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
                     meta=meta or None, silence_days=silence, snooze_until=until)
     return {"ok": True, "recorded": ok}, 200
+
+
+def _do_standby_ask(u):
+    """One tap from the draft's standby line: ask the named person, by
+    email, whether they can be on call that day. Asked once per person and
+    day — a second tap says so instead of sending again."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import re as _re
+    import rec_ledger as _rl
+    import shift_requests as _sreq
+    from time_utils import mdy as _mdy
+    b = _body()
+    day = b.get("date") if isinstance(b.get("date"), str) else ""
+    who = (b.get("employee") or "").strip() if isinstance(b.get("employee"), str) else ""
+    if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or not who:
+        return {"ok": False, "error": "date and employee are required"}, 400
+    import models as _m
+    book = _sreq._contacts(_rid(u), _m.DB_PATH)
+    contact = book.get(who.lower())
+    if contact is None:
+        return {"ok": False, "error": f"{who} isn't on the roster."}, 404
+    if not contact.get("email"):
+        return {"ok": False, "error": f"There's no email on file for {who} — ask them directly."}, 409
+    key = _rl.rec_key("standby", f"{day}:{who.lower()}")
+    if not _rl.record(_rid(u), key, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
+                      meta={"module": "schedule"}, source_ref=f"ask:{day}:{who.lower()}"):
+        return {"ok": True, "sent": 0, "already": True, "message": f"{who} was already asked about {_mdy(day)}."}, 200
+    from datetime import date as _date
+    wd = _date.fromisoformat(day).strftime("%A")
+    when = f"{wd} {_mdy(day)}"
+    shift = "–".join(x for x in (b.get("shift_start"), b.get("shift_end")) if isinstance(x, str) and x)
+    shift = f" ({shift})" if shift else ""
+    lines = [f"Could you be on call {when}{shift}?",
+             "You're not on the schedule that day. If somebody can't make it, your manager may call you in.",
+             "Reply to your manager to say yes or no."]
+    sent = _sreq._email_staff(_rid(u), [contact.get("employee_name") or who], "Could you be on call?", lines,
+                              _m.DB_PATH)
+    if not sent:
+        _rl.unsilence(_rid(u), key)
+        return {"ok": False, "error": f"The email to {who} didn't go out — try again or ask them directly."}, 502
+    return {"ok": True, "sent": sent, "message": f"Asked {who} to be on call {when}."}, 200
 
 
 def _do_shift_requests_list(u):
@@ -1367,12 +1460,34 @@ def _do_recommendation_event(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can do this.")
     import schedule_intel as _si
+    import rec_ledger as _rl
     b = _body()
     action = (b.get("action") or "").strip().lower()
-    if action not in ("accepted", "dismissed"):
-        return {"ok": False, "error": "action is accepted or dismissed"}, 400
-    _si.record_recommendation(_rid(u), (b.get("kind") or "other")[:60], b.get("key") or "", action, actor=_who(u))
+    if action not in ("accepted", "dismissed", "restored"):
+        return {"ok": False, "error": "action is accepted, dismissed or restored"}, 400
+    kind = (b.get("kind") or "other")[:60] if isinstance(b.get("kind"), str) else "other"
+    text = b.get("key") if isinstance(b.get("key"), str) else ""
+    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u))
+    # The same answer in the one trail every surface reads: "Not for us"
+    # keeps this recommendation off the draft from now on, on any device.
+    rkey = _si.schedule_rec_key(kind, text)
+    if action == "accepted":
+        _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"))
+        # An accepted "Trim about Nh…" is measured like Home's trim_day: the
+        # labor % after against before (outcomes). The other kinds are read
+        # against what the night itself recorded (schedule_intel.
+        # measure_accepted_recommendations, Mondays).
+        if kind == "hours":
+            try:
+                import outcomes as _oc
+                _oc.record(_rid(u), "schedule", rkey, text[:160] or "Trim the schedule", "labor_pct", user_id=u.get("id"))
+            except Exception as _ox:
+                print(f"[schedule] could not start the outcome tracker: {_ox}")
+    elif action == "dismissed":
+        _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
+                   meta={"kind": "not_for_us"})
     return {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}, 200
+
 
 
 # When the drafts have been going out nearly untouched, auto-publish is
@@ -1386,18 +1501,22 @@ AUTO_PUBLISH_MIN_SCORE = 85
 
 
 def _auto_publish_offer(rid) -> dict:
+    """Offer auto-publish only when it would actually run: the offer and the
+    Friday job read ONE rule (models.schedule_publish_trust — consecutive
+    recent drafts sent unedited with no coverage or no-show issue) plus the
+    latest draft's quality. The offer used to accept light edits while the
+    job stopped at any edit, so an owner who accepted it got "armed: false"
+    and nothing ever published."""
     import json as _json
-    import schedule_versions as _sv
-    from models import get_restaurant, get_conn
+    from models import get_restaurant, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN
     r = get_restaurant(rid)
     if r is not None and int(getattr(r, "auto_publish_schedule", 0) or 0):
         return {"eligible": False, "reason": "Auto-publish is already on."}
-    acc = _sv.acceptance(rid, weeks=AUTO_PUBLISH_WEEKS)
-    weeks = acc.get("weeks") or []
-    if len(weeks) < AUTO_PUBLISH_WEEKS:
-        return {"eligible": False, "reason": f"Needs {AUTO_PUBLISH_WEEKS} published weeks of drafts to judge."}
-    clean = [w for w in weeks if w["changes"] <= AUTO_PUBLISH_MAX_CHANGES
-             and (w.get("unchanged_share") or 0) >= AUTO_PUBLISH_MIN_UNCHANGED]
+    trust = schedule_publish_trust(rid)
+    if trust < SCHEDULE_PUBLISH_TRUST_MIN:
+        return {"eligible": False, "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,
+                "reason": (f"{trust} of the {SCHEDULE_PUBLISH_TRUST_MIN} drafts in a row it needs went out unedited "
+                           "with no coverage or no-show issue.")}
     conn = get_conn()
     try:
         latest = conn.execute("SELECT quality_json FROM schedule_history WHERE restaurant_id=? AND quality_json IS NOT NULL "
@@ -1408,14 +1527,11 @@ def _auto_publish_offer(rid) -> dict:
         score = (_json.loads(latest["quality_json"]) or {}).get("score") if latest else None
     except Exception:
         score = None
-    if len(clean) < AUTO_PUBLISH_WEEKS:
-        return {"eligible": False, "reason": "Recent drafts still needed edits before they went out."}
     if score is None or score < AUTO_PUBLISH_MIN_SCORE:
         return {"eligible": False, "reason": f"The latest draft scored {score}, under {AUTO_PUBLISH_MIN_SCORE}."}
-    return {"eligible": True, "score": score,
-            "reason": (f"Your last {AUTO_PUBLISH_WEEKS} drafts went out with {max(w['changes'] for w in weeks)} "
-                       f"or fewer changes each, and the latest scored {score}. Auto-publish can send next week's "
-                       "on Friday, with time to undo.")}
+    return {"eligible": True, "score": score, "trust": trust,
+            "reason": (f"Your last {trust} drafts went out unedited with no coverage or no-show issue, and the latest "
+                       f"scored {score}. Auto-publish can send next week's on Friday, with time to undo.")}
 
 
 def _do_ratings_unmatched(u):
@@ -1505,7 +1621,7 @@ def _do_schedule_intel(u):
             "ledger": _safe(lambda: _si.fairness_ledger(rid), {}),
             "behaviour": _safe(lambda: _si.behaviour_preferences(rid), {}),
             "could_hold": _si.could_hold(mentored), "mentored": mentored,
-            "suggested_pairs": _safe(lambda: _si.chemistry_suggestions(rid), []),
+            "suggested_pairs": _safe(lambda: _si.chemistry_suggestions_shown(rid, user_id=u.get("id")), []),
             "splh": _safe(lambda: _econ.splh_by_daypart(rid), {}),
             "revenue": _safe(lambda: _econ.projected_weekly_revenue(rid), {}),
             # What the engine is learning: how much of each draft survives to
@@ -2117,11 +2233,13 @@ _ROUTES = [
     ("/labor/ratings/unmatched", ["GET"], _do_ratings_unmatched, "ratings_unmatched"),
     ("/labor/ratings/match", ["POST"], _do_ratings_match, "ratings_match"),
     ("/recs/event", ["POST"], _do_rec_event, "rec_event"),
+    ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
+    ("/labor/standby/ask", ["POST"], _do_standby_ask, "labor_standby_ask"),
     ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),
     ("/labor/reservations/sync", ["POST"], _do_reservation_sync, "reservation_sync"),
     ("/food-cost/recipes/scan", ["POST"], _idempotent(_do_recipe_scan, "recipe_scan"), "recipe_scan"),

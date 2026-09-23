@@ -65,6 +65,15 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
         raise
     finally:
         conn.close()
+    # The manager hears about it now, not when they next open Labor.
+    try:
+        import shift_requests as _sr
+        from time_utils import mdy
+        span = mdy(s.isoformat()) + ("" if e == s else f"–{mdy(e.isoformat())}")
+        _sr._tell_managers(restaurant_id, "Time off request",
+                           f"{name} asked for {span} off. Approve or decline it in Labor.", db_path)
+    except Exception as ex:
+        print(f"[time_off] manager notice failed rid={restaurant_id}: {ex!r}")
     return dict(row), None
 
 

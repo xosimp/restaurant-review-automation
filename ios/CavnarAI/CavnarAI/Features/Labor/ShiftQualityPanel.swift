@@ -421,15 +421,29 @@ struct ShiftQualityPanel: View {
     /// Kinds the engine left out because the owner never acts on them.
     /// The intel card lists them and says how to bring one back.
     private var hiddenKindsNote: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "eye.slash")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color.cavnarInk3)
-                .padding(.top, 2)
-            HomeMixedText.make(
-                "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — see What the record says.",
-                size: 12.5, color: .cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 2)
+                HomeMixedText.make(
+                    "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — you set them aside. Coverage, leadership and fatigue are never hidden.",
+                    size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let vm = viewModel {
+                ForEach(suppressedKinds, id: \.self) { kind in
+                    Button {
+                        Task { await vm.restoreRecommendationKind(kind) }
+                    } label: {
+                        Text("Show \(kind) again")
+                            .font(.cavnarBody(13, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 

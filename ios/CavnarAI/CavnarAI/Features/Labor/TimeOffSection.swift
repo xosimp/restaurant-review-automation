@@ -35,6 +35,10 @@ struct TimeOffSection: View {
                         }
                     }
                 }
+                if let warning = viewModel.timeOffWarning {
+                    HomeMixedText.make(warning, size: 14, color: .cavnarEmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let error = viewModel.timeOffError {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                 }

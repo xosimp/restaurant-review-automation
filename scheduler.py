@@ -2819,6 +2819,13 @@ def scheduler_loop():
                     return {"synced": _rl.sync_existing(), "expired": _rl.expire_stale()}
                 _ops.run_job("rec_ledger", _rec_ledger_pass)
 
+            # 9am local, per restaurant — what is waiting on each manager
+            # before the next shifts: requests close to their date, a drafted
+            # week not sent (strategy_jobs.run_labor_reminders).
+            if _ops.claim_period("labor_reminders", f"{today}-{now.hour}"):
+                from strategy_jobs import run_labor_reminders
+                _ops.run_job("labor_reminders", run_labor_reminders)
+
             # Sunday 5am — let each restaurant's own clean and troubled weeks
             # nudge its quality weights (strategy_jobs.run_quality_calibration).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):

@@ -3600,6 +3600,7 @@ svg:hover .hb-xh{opacity:1}
 .sr-line.warn{color:var(--hb-warn)}
 .sr-line.bad{color:var(--hb-bad)}
 .sr-line b{color:var(--ink);font-weight:600}
+.sr-line .cbtn{margin-left:auto;flex-shrink:0;align-self:center}
 .sr-line .d{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0;margin-top:7px;box-shadow:0 0 8px currentColor;color:transparent}
 .sr-line.warn .d{background:var(--hb-warn);color:var(--hb-warn)}
 .sr-line.bad .d{background:var(--hb-bad);color:var(--hb-bad)}
@@ -4581,7 +4582,7 @@ svg:hover .hb-xh{opacity:1}
           </div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;justify-content:space-between;gap:8px;font-size:13.5px;color:rgba(255,255,255,.55);margin-bottom:4px">
-              <span><span style="font-family:'Space Grotesk',sans-serif">${{d.sales|int|format_num}}</span> sales · <span style="font-family:'Space Grotesk',sans-serif">${{d.labor_cost|format_num}}</span> labor</span>
+              <span><span style="font-family:'Space Grotesk',sans-serif">${{d.sales|int|format_num}}</span> sales · <span style="font-family:'Space Grotesk',sans-serif">${{d.labor_cost|format_num}}</span> labor{% if d.over_target_dollars %} · <span style="font-family:'Space Grotesk',sans-serif">${{d.over_target_dollars|int|format_num}}</span> above target{% endif %}</span>
               <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;white-space:nowrap;color:{% if diff > 0 %}#ff8a65{% else %}#6fcf97{% endif %}">{% if diff > 0 %}+{{diff}}% over{% else %}{{diff}}% under ✓{% endif %}</span>
             </div>
             <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
@@ -4609,7 +4610,7 @@ svg:hover .hb-xh{opacity:1}
         {% for d in labor.understaffed_days %}
         <div data-row style="display:flex;align-items:center;gap:12px;padding:12px 18px;{% if loop.index > 10 %}display:none;{% endif %}{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}">
           <div style="min-width:60px">
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:rgba(255,255,255,.4)">{{d.date}}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:rgba(255,255,255,.4)">{{d.date|format_date}}</div>
             <div style="font-size:15.5px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}</div>
           </div>
           <div style="flex:1;min-width:0">
@@ -4617,7 +4618,7 @@ svg:hover .hb-xh{opacity:1}
               <span style="font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;color:#ffc266">${{d.sales|int|format_num}}</span>
               <span style="font-size:12.5px;font-weight:700;background:rgba(239,159,39,.2);color:#ffc266;padding:2px 8px;border-radius:10px;white-space:nowrap">{{d.labor_pct}}% ⚠</span>
             </div>
-            <div style="font-size:12.5px;color:rgba(255,255,255,.45)">Strong sales day — lean staffing may have left revenue on the table</div>
+            <div style="font-size:12.5px;color:rgba(255,255,255,.45)">Strong sales on a lean crew — usually a good day. Nothing here measures waits or covers, so this alone is no reason to add staff.</div>
           </div>
         </div>
         {% else %}
@@ -4626,7 +4627,7 @@ svg:hover .hb-xh{opacity:1}
         </div>
         {% if labor.understaffed_days %}
         <div style="padding:10px 18px;font-size:13.5px;color:#ffc266;background:rgba(239,159,39,.08);border-top:1px solid rgba(239,159,39,.15)">
-          💡 Consider adding 1–2 staff on: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 10 %} +{{labor.understaffed_days|length - 5}} more{% endif %}.
+          Worth checking with the manager on: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date|format_date}}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} +{{labor.understaffed_days|length - 5}} more{% endif %} — was service slow, or did a lean crew handle it? Add staff only if it was slow.
         </div>
         {% endif %}
       </div>
@@ -4656,7 +4657,7 @@ svg:hover .hb-xh{opacity:1}
             {% if has_ot_allowance %}
               <span style="font-size:13.5px;font-weight:700;color:#6fcf97;white-space:nowrap">✓ OT allowed</span>
             {% elif emp.status == "overtime" %}
-              <span style="font-size:13.5px;font-weight:700;color:#ff5a5a;white-space:nowrap">Overtime — review pay</span>
+              <span style="font-size:13.5px;font-weight:700;color:#ff5a5a;white-space:nowrap">Overtime{% if emp.premium %} — about <span style="font-family:'Space Grotesk',sans-serif">${{emp.premium|round|int|format_num}}</span> over straight time{% else %} — review pay{% endif %}</span>
             {% else %}
               <span style="font-size:13.5px;font-weight:700;color:#ef9f27;white-space:nowrap">⚠ Approaching 40h</span>
             {% endif %}
@@ -10300,7 +10301,10 @@ function _schedHandleResult(data) {
   // human, and time off nobody has answered yet.
   if (window.renderScheduleReview) {
     var rv = data.review || null;
+    var otMoves = [], oi, otf = data.overtime_forecast || [];
+    for (oi = 0; oi < otf.length; oi++) if (otf[oi] && otf[oi].candidate) otMoves.push(otf[oi]);
     renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations,
+                          overtime_moves: otMoves, standby_days: data.standby_days || [],
                           fixes: rv ? (rv.fixes || []) : [], unfixed: rv ? (rv.unfixed || []) : [],
                           generation_seconds: data.generation_seconds, chunked: data.chunked, initial: true});
   }
@@ -10883,8 +10887,11 @@ function renderQualityWarnings(quality) {
       + '</div>';
   }
   if (hidden.length) {
-    html += '<div class="sq-hidden">' + hidden.length + ' recommendation kind' + (hidden.length === 1 ? '' : 's') + ' hidden (' + _escHtml(hidden.join(', ')) + ') — you never act on them. '
-          + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openIntelPanel()">See them in What the record says</button></div>';
+    html += '<div class="sq-hidden">' + hidden.length + ' recommendation kind' + (hidden.length === 1 ? '' : 's') + ' hidden (' + _escHtml(hidden.join(', ')) + ') — you set them aside. Coverage, leadership and fatigue are never hidden. ';
+    for (i = 0; i < hidden.length; i++) {
+      html += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-restore-kind="' + _escAttr(hidden[i]) + '" onclick="restoreRecKind(this.getAttribute(\'data-restore-kind\'), this)">Show ' + _escHtml(hidden[i]) + ' again</button> ';
+    }
+    html += '</div>';
   }
   el.innerHTML = html + '</div>';
 }
@@ -10893,14 +10900,40 @@ function renderQualityWarnings(quality) {
 // the same rule the ledger keys on.
 var _recState = {};
 function _recKind(text) {
+  /* The server sends each recommendation's kind (quality.recommendation_items);
+     this prefix rule is only for an older payload without it. */
+  var items = (_quality && _quality.recommendation_items) || [], j;
+  for (j = 0; j < items.length; j++) if (items[j] && items[j].text === text) return items[j].kind || 'other';
   var t = String(text || '');
   if (t.indexOf('Fill the gap') === 0) return 'coverage';
   if (t.indexOf('Move somebody') === 0) return 'leadership';
   if (t.indexOf('Pair ') === 0) return 'strength';
   if (t.indexOf('Trim about') === 0) return 'hours';
   if (t.indexOf('Give ') === 0) return 'fatigue';
+  if (t.indexOf('Spread the busy') === 0) return 'fatigue';
   if (t.indexOf('Rate the') === 0) return 'ratings';
   return 'other';
+}
+/* The owner applies the suggested quality weights; the engine never does. */
+function applySuggestedWeights(btn) {
+  var done = cbtnBusy(btn, 'Applying…');
+  fetch('/api/labor/quality/calibration/apply', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(apiJson).then(function (d) {
+      done();
+      toast(d && d.ok ? 'Applied — the next score uses these weights' : ((d && d.error) || 'Could not apply them'), d && d.ok ? 'success' : 'error');
+    }).catch(function () { done(); toast('Could not apply them', 'error'); });
+}
+/* Ask for a hidden kind back ("Show again"). */
+function restoreRecKind(kind, btn) {
+  var done = cbtnBusy(btn, '');
+  fetch('/api/labor/schedule/recommendation', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind: kind, key: '', action: 'restored'})})
+    .then(apiJson).then(function (d) {
+      done();
+      if (!d || !d.ok) { toast((d && d.error) || 'Could not bring that back', 'error'); return; }
+      if (_quality) { _quality.suppressed_recommendation_kinds = d.suppressed_kinds || []; renderQualityWarnings(_quality); }
+      toast('It will show again on the next check', 'success');
+    }).catch(function () { done(); toast('Could not bring that back', 'error'); });
 }
 document.addEventListener('click', function (ev) {
   var el = ev.target;
@@ -11250,6 +11283,10 @@ function rescoreSchedule(btn) {
   }).then(function (r) { status = r.status; return r.json(); }).then(function (d) {
     done();
     if (d && d.ok) {
+      if (d.saved && _sqOptimizerProposed && window._sqOptimizerKey) {
+        _recEvent(window._sqOptimizerKey, 'accepted');
+        window._sqOptimizerKey = null;
+      }
       if (d.saved) _sqOptimizerProposed = false;
       renderShiftQuality(d.quality, d.what_if, prevScore);
       _schedCsvCache = '';
@@ -11870,6 +11907,15 @@ function _schedWhy(row) {
   return fallback;
 }
 
+// A response to a schedule recommendation, for rec_ledger. Fire and forget.
+function _recEvent(key, event, kind) {
+  if (!key) return;
+  var body = {key: key, event: event, surface: 'schedule_review', module: 'schedule'};
+  if (kind) body.kind = kind;
+  fetch('/api/recs/event', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .catch(function () {});
+}
+
 function _schedSnapshot() {
   window._sqBeforeStaged = null;  /* a saved or freshly loaded week has nothing staged to go back to */ try { _schedSaved = JSON.stringify(_schedRows || []); } catch (e) { _schedSaved = '[]'; } }
 
@@ -11896,7 +11942,7 @@ function _schedRecheck() {
     body: JSON.stringify({rows: _schedRows, baseline_rows: base})
   }).then(apiJson).then(function (d) {
     if (d && d.ok && window.renderScheduleReview) {
-      renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, fixes: [], unfixed: []});
+      renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, overtime_moves: d.overtime_moves || [], fixes: [], unfixed: []});
     }
     _schedRenderCost(d && d.ok ? d.cost : null);
   }).catch(function () { _schedRenderCost(null); });
@@ -12058,6 +12104,10 @@ function discardScheduleEdits() {
      puts back the verdict from before either, not only after Improve. */
   if (window._sqBeforeStaged) {
     var b = window._sqBeforeStaged;
+    if (_sqOptimizerProposed && window._sqOptimizerKey) {
+      _recEvent(window._sqOptimizerKey, 'dismissed', 'hide');
+      window._sqOptimizerKey = null;
+    }
     _sqOptimizerProposed = false; _sqOptimizer = b.optimizer; window._sqBeforeStaged = null;
     renderShiftQuality(b.quality, b.whatIf);
   }
@@ -17375,7 +17425,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // generator: roster & settings, scheduling rules, events & reservations,
   // shift requests. Every figure here is the server's; nothing is invented
   // on the client. ES5 only.
-  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],gen:null,chunked:false};
+  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],gen:null,chunked:false};
   var _RV_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   function _rvRow(i){return (window._schedRows||[])[i]||{};}
   function _rvWhen(r){var d=r.day||(r.date?mdy(r.date):'');return d+(r.shift_start?' '+r.shift_start:'');}
@@ -17385,6 +17435,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(d.violations!==undefined)_rv.violations=d.violations||[];
     if(d.fixes!==undefined)_rv.fixes=d.fixes||[];
     if(d.unfixed!==undefined)_rv.unfixed=d.unfixed||[];
+    if(d.overtime_moves!==undefined)_rv.moves=d.overtime_moves||[];
+    if(d.standby_days!==undefined)_rv.standby=d.standby_days||[];
     if(d.generation_seconds!==undefined)_rv.gen=d.generation_seconds;
     if(d.chunked!==undefined)_rv.chunked=!!d.chunked;
   }
@@ -17430,6 +17482,25 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{};h+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(_rvWhen(_rvRow(f.index)))+' &mdash; '+esc(f.reason||f.kind||'')+'</span></div>';}
       h+='</div>';
     }
+    if(_rv.moves.length){
+      /* Overtime the rows on screen create, with a same-role person who has
+         room. One tap stages the move like any edit; Save keeps it. */
+      h+='<div class="sr-grp"><div class="sr-k">Overtime you can move</div>';
+      for(i=0;i<_rv.moves.length;i++){var mv=_rv.moves[i]||{},cd=mv.candidate||{};
+        h+='<div class="sr-line warn"><span class="d"></span><span><b>'+esc(mv.employee)+'</b> <span class="hb-num">'+_schedHrs(+mv.hours||0)+'h</span>, <span class="hb-num">'+_schedHrs(+mv.over||0)+'h</span> over &mdash; '
+          +esc(cd.employee)+' has room for the '+esc(mdy(cd.date))+' '+esc(cd.shift_start||'')+' shift'
+          +(cd.saves?', saves about <span class="hb-num">$'+Math.round(+cd.saves).toLocaleString()+'</span> in overtime pay':'')+'.</span>'
+          +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedMoveOvertime('+i+',this)">Move to '+esc(cd.employee)+'</button></div>';}
+      h+='</div>';
+    }
+    var sbAsk=[];for(i=0;i<_rv.standby.length;i++)if(_rv.standby[i]&&_rv.standby[i].standby&&_rv.standby[i].standby.employee)sbAsk.push(i);
+    if(sbAsk.length){
+      h+='<div class="sr-grp"><div class="sr-k">Standby</div>';
+      for(i=0;i<sbAsk.length;i++){var sd=_rv.standby[sbAsk[i]],sp=sd.standby;
+        h+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
+          +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedAskStandby('+sbAsk[i]+',this)">Ask '+esc(sp.employee)+'</button></div>';}
+      h+='</div>';
+    }
     if(_rv.unfixed.length){
       h+='<div class="sr-grp"><div class="sr-k">Needs a human</div>';
       for(i=0;i<_rv.unfixed.length;i++){var u=_rv.unfixed[i]||{};h+='<div class="sr-line bad"><span class="d"></span><span><b>'+esc(u.employee)+'</b>, '+esc(_rvWhen(_rvRow(u.index)))+' &mdash; '+esc(u.reason||'nobody legal could take it')+'</span></div>';}
@@ -17449,6 +17520,33 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     box.innerHTML=h;box.style.display='block';
     if(typeof _schedRenderTable==='function')_schedRenderTable();
+  };
+  // One-tap overtime move: the shift goes to the same-role person with
+  // room, staged like any edit (Save keeps it), and the answer is logged.
+  window.schedMoveOvertime=function(i,btn){
+    var mv=_rv.moves[i],cd=(mv&&mv.candidate)||{},rows=window._schedRows||[],j,hit=-1;
+    if(!mv)return;
+    for(j=0;j<rows.length;j++){var r=rows[j]||{};
+      if(r.date===cd.date&&String(r.employee||'').toLowerCase()===String(mv.employee||'').toLowerCase()&&(r.shift_start||'')===(cd.shift_start||'')){hit=j;break;}}
+    if(hit<0){toast('That shift has changed \u2014 recheck the week','error');return;}
+    rows[hit].employee=cd.employee;
+    rows[hit].notes='Moved to '+cd.employee+' to avoid overtime';
+    window._schedOverrides=window._schedOverrides||{};window._schedOverrides[hit]=true;
+    if(btn)btn.disabled=true;
+    if(mv.rec_key)jsend('/api/recs/event',{key:mv.rec_key,event:'accepted',surface:'schedule_review',module:'schedule'},function(){});
+    if(typeof schedAfterEdit==='function')schedAfterEdit();
+    toast('Moved to '+cd.employee+(cd.saves?' \u2014 about $'+Math.round(+cd.saves).toLocaleString()+' of overtime avoided':'')+'. Save to keep it.','success');
+  };
+  // Email the named standby asking whether they can be on call that day.
+  window.schedAskStandby=function(i,btn){
+    var sd=_rv.standby[i],sp=(sd&&sd.standby)||{};if(!sp.employee)return;
+    var done=busy(btn,'Asking…');
+    jsend('/api/labor/standby/ask',{date:sd.date,employee:sp.employee,shift_start:sp.shift_start||'',shift_end:sp.shift_end||''},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not ask','error');return;}
+      if(btn){btn.disabled=true;btn.textContent='Asked';}
+      toast(d.message||'Asked','success');
+    });
   };
   window.applyScheduleFixes=function(btn){
     var rows=window._schedRows||[];if(!rows.length)return;
@@ -17495,7 +17593,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var i,ov={};
       for(i=0;i<window._schedRows.length;i++)if(String(window._schedRows[i].notes||'').indexOf('Cavnar:')===0)ov[i]=true;
       window._schedOverrides=ov;
-      window._sqOptimizer=o;window._sqOptimizerProposed=true;
+      window._sqOptimizer=o;window._sqOptimizerProposed=true;window._sqOptimizerKey=d.rec_key||null;
       if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if,prevScore);
       if(typeof _schedSetDirty==='function'){_schedSetDirty(true);_setQualityState('proposed');}
       if(typeof _schedRecheck==='function')_schedRecheck();
@@ -17575,8 +17673,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var row=t;while(row&&!(row.getAttribute&&row.getAttribute('data-sug')))row=row.parentNode;if(!row)return;
     var key=row.getAttribute('data-sug'),list=((_roster&&_roster.suggested_pairs)||[]).concat(((window._laborIntel||{}).suggested_pairs)||[]),p=null,i;
     for(i=0;i<list.length;i++)if(_pairKey(list[i])===key){p=list[i];break;}
-    if(t.getAttribute('data-sug-ignore')){_ignoredPairs[key]=1;_rstPairs();renderIntel();return;}
+    if(t.getAttribute('data-sug-ignore')){_ignoredPairs[key]=1;_rstPairs();renderIntel();
+      /* Kept: the pair stays off the list on every device. */
+      if(p&&p.rec_key)jsend('/api/recs/event',{key:p.rec_key,event:'dismissed',kind:'not_for_us',surface:'labor',module:'schedule'},function(){});
+      return;}
     if(!p)return;
+    if(p.rec_key)jsend('/api/recs/event',{key:p.rec_key,event:'accepted',surface:'labor',module:'schedule'},function(){});
     var done=busy(t,'Adding…');
     jsend('/api/labor/staff-pairs',{a:p.a,b:p.b,kind:p.kind||'prefer',note:(p.evidence||'').slice(0,120)},function(d){
       done();if(!d.ok){toast(d.error||'Could not save that pairing','error');return;}
@@ -18108,7 +18210,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var dims=cal.dimensions||{},k,rows='';
       for(k in dims)if(dims.hasOwnProperty(k)){var dm=dims[k];
         rows+='<div class="w"><b>'+esc(k.replace(/_/g,' '))+'</b><span><span class="hb-num">'+esc(dm.default)+'</span> → <span class="hb-num">'+esc(dm.suggested)+'</span>'+(dm.nudge_pct?' (<span class="hb-num">'+(dm.nudge_pct>0?'+':'')+esc(dm.nudge_pct)+'%</span>)':'')+' <span class="rd">· '+esc(dm.reading||'')+'</span></span></div>';}
-      h+='<div class="int-cal">'+rows+'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div></div>';
+      h+='<div class="int-cal">'+rows+'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div>'
+        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" onclick="applySuggestedWeights(this)">Apply suggested weights</button></div>';
     }
     return h;
   }
@@ -18195,7 +18298,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var ro=!(_roster&&_roster.can_edit)&&!!_roster;
     var ph=_pairSuggestHtml(sug,ro);
     h+='<div class="lb2-sub">Suggested pairs<small>shared dayparts that ran clean</small></div>'+(ph?'<div class="lb2-pairs">'+ph+'</div>':'<div class="hb-empty">No pair the record can vouch for yet — it takes a few clean weeks together.</div>');
-    if(supp.length)h+='<div class="int-supp"><b>'+supp.length+' recommendation kind'+(supp.length===1?'':'s')+' hidden on the schedule:</b> '+esc(supp.join(', '))+'. They stopped showing because they were never acted on; accepting one of that kind brings it back.</div>';
+    if(supp.length)h+='<div class="int-supp"><b>'+supp.length+' recommendation kind'+(supp.length===1?'':'s')+' hidden on the schedule:</b> '+esc(supp.join(', '))+'. They stopped showing because they were set aside or never acted on; use "Show again" on the schedule review to bring one back.</div>';
     el.innerHTML=h;
   };
 

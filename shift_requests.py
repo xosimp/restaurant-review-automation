@@ -124,6 +124,7 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
         row = conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (cur.lastrowid,)).fetchone()
     finally:
         conn.close()
+    _notify(restaurant_id, "drop_asked", dict(row), db_path=db_path)
     return dict(row)
 
 
@@ -633,7 +634,11 @@ def _notify(restaurant_id, event, req, db_path=DB_PATH):
         return
     try:
         who, when, role = req.get("employee_name") or "", _when(req), req.get("role") or ""
-        if event == "opened":
+        if event == "drop_asked":
+            _tell_managers(restaurant_id, "Shift drop request",
+                           f"{who} asked to drop {when}" + (f" ({role})" if role else "") + ". Approve or decline it in Labor.",
+                           db_path)
+        elif event == "opened":
             _email_staff(restaurant_id, [who], "Your shift is off your schedule",
                          [f"Your manager approved your request to drop {when}. It is now an open shift for the team."], db_path)
             takers = _who_could_take(restaurant_id, req, db_path)
@@ -658,6 +663,9 @@ def _notify(restaurant_id, event, req, db_path=DB_PATH):
             _email_staff(restaurant_id, [req.get("target_name")], f"{who} asked to swap shifts",
                          [f"{who} would like to trade their {when} for your {_when(req, 'target_')}.",
                           "Nothing moves unless you say yes — answer in the staff portal."], db_path)
+            _tell_managers(restaurant_id, "Shift swap request",
+                           f"{who} asked to trade their {when} for {req.get('target_name')}'s {_when(req, 'target_')}. "
+                           "Approve or decline it in Labor.", db_path)
         elif event == "swap_approved":
             _email_staff(restaurant_id, [req.get("target_name")], "A swap is waiting on your yes",
                          [f"Your manager approved {who}'s request to trade their {when} for your {_when(req, 'target_')}.",

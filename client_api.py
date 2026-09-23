@@ -2105,9 +2105,9 @@ def labor_insight_api(current_user):
         analysis = analyse_shifts_for_restaurant(rid)
         from models import get_staff_notes as _gsn_labor
         _staff_notes_labor = _gsn_labor(rid)
-        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner,
-                                      restaurant_id=rid,
-                                      staff_notes=_staff_notes_labor if _staff_notes_labor else None)
+        from labor import labor_note
+        insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
+                             staff_notes=_staff_notes_labor if _staff_notes_labor else None)
         formatted = format_insight_html(insight)
         _cache_set("labor-insight:" + str(rid), formatted)
         return jsonify(insight=formatted, diagnosis=_labor_diagnosis_safe(rid, analysis))

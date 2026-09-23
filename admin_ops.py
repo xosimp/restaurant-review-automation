@@ -1241,3 +1241,168 @@ def search(q):
         res.append({"type": "brand", "id": None, "title": g["g"], "sub": f"{g['n']} locations"})
     conn.close()
     return {"ok": True, "results": res[:40]}
+
+
+# ── recommendation acceptance (internal only) ────────────────────────────────
+#
+# Read from rec_ledger (rec_instances + rec_events): one row per episode of a
+# recommendation. Admin-only — no owner ever sees these rates. An episode
+# nobody answered counts in every denominator as ignored: dropping the
+# ignored ones would report what people did with the recommendations they
+# chose to touch, and every rate would read high.
+
+RAS_WEIGHTS = {"opened": 0.15, "accepted": 0.40, "completed": 0.25, "outcome": 0.20}
+RAS_MIN_N = 20            # below this, a score is noise: rates only, no RAS
+_Z90 = 1.645
+
+
+def _wilson(k, n, z=_Z90):
+    """90% Wilson interval for k of n, as (low, high) shares; None when n=0."""
+    if not n:
+        return None
+    p = k / n
+    d = 1 + z * z / n
+    c = p + z * z / (2 * n)
+    m = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return (round(max(0.0, (c - m) / d), 3), round(min(1.0, (c + m) / d), 3))
+
+
+def _ras_block(eps):
+    """Rates and the Recommendation Acceptance Score for a set of episodes."""
+    n = len(eps)
+    if not n:
+        return {"n": 0, "ras": None}
+    k = {x: sum(1 for e in eps if e[x]) for x in ("opened", "evidence", "accepted", "completed", "dismissed",
+                                                   "snoozed", "ignored", "outcome", "improved")}
+    took = sum(1 for e in eps if e["accepted"] or e["completed"])
+    rates = {"opened": k["opened"] / n, "accepted": took / n, "completed": k["completed"] / n,
+             # Of what was taken, how much a measured outcome later confirmed.
+             "outcome": (k["improved"] / took) if took else 0.0}
+    acts = sorted(e["hours_to_act"] for e in eps if e["hours_to_act"] is not None)
+    out = {"n": n, "shown": sum(1 for e in eps if e["shown"]), "opened": k["opened"], "evidence": k["evidence"],
+           "accepted": took, "completed": k["completed"], "dismissed": k["dismissed"], "snoozed": k["snoozed"],
+           "ignored": k["ignored"], "outcomes": k["outcome"], "improved": k["improved"],
+           "open_rate": round(rates["opened"], 3), "accept_rate": round(rates["accepted"], 3),
+           "complete_rate": round(rates["completed"], 3), "outcome_rate": round(rates["outcome"], 3),
+           "dismiss_rate": round(k["dismissed"] / n, 3), "ignore_rate": round(k["ignored"] / n, 3),
+           "accept_ci90": _wilson(took, n),
+           "median_hours_to_act": acts[len(acts) // 2] if acts else None,
+           "ras": None}
+    if n >= RAS_MIN_N:
+        out["ras"] = round(100 * sum(RAS_WEIGHTS[x] * rates[x] for x in RAS_WEIGHTS), 1)
+    return out
+
+
+def _episodes(conn, since, restaurant_id=None):
+    where, args = "i.created_at >= ?", [since]
+    if restaurant_id:
+        where += " AND i.restaurant_id=?"
+        args.append(restaurant_id)
+    inst = _rows_dict(conn, "SELECT i.*, r.name AS restaurant FROM rec_instances i LEFT JOIN restaurants r ON r.id=i.restaurant_id "
+                            f"WHERE {where}", tuple(args))
+    if not inst:
+        return []
+    evs = {}
+    for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role FROM rec_events e JOIN rec_instances i "
+                              f"ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
+        evs.setdefault(e["rec_id"], []).append(e)
+    stale = _stamp(datetime.utcnow() - timedelta(days=14))
+    out = []
+    for i in inst:
+        es = evs.get(i["rec_id"], [])
+        names = {e["event"] for e in es}
+        verdicts = []
+        for e in es:
+            if e["event"] == "outcome":
+                try:
+                    verdicts.append((json.loads(e["meta"] or "{}") or {}).get("verdict"))
+                except (TypeError, ValueError):
+                    pass
+        answered = names & {"accepted", "completed", "dismissed"}
+        first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed")), None)
+        hours = None
+        if first_act:
+            a, c = _parse(first_act), _parse(i["created_at"])
+            if a and c:
+                hours = round(max(0.0, (a - c).total_seconds() / 3600), 1)
+        ignored = (not answered) and (i["status"] == "expired" or (i["status"] == "open" and i["last_event_at"] < stale))
+        shown_surfaces = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
+        try:
+            sources = json.loads(i["evidence_sources"]) if i["evidence_sources"] else []
+        except (TypeError, ValueError):
+            sources = []
+        out.append({"rec_id": i["rec_id"], "restaurant_id": i["restaurant_id"], "restaurant": i["restaurant"],
+                    "key": i["key"], "kind": i["kind"] or (i["key"] or "").split(":", 1)[0], "module": i["module"] or "—",
+                    "title": i["title"], "status": i["status"],
+                    "surface": i["first_surface"] or (shown_surfaces[0] if shown_surfaces else "unknown"),
+                    "has_dollars": bool(i["dollar_value"]), "dollar_value": i["dollar_value"],
+                    "confidence_band": i["confidence_band"] or "none", "cross_module": bool(i["cross_module"]),
+                    "model_written": bool(i["model_written"]), "cavnar_completes": bool(i["cavnar_completes"]),
+                    "sources": sources, "position": i["first_position"],
+                    "shown": "shown" in names, "opened": bool(names & {"opened", "evidence_viewed"}) or bool(answered),
+                    "evidence": "evidence_viewed" in names, "accepted": "accepted" in names,
+                    "completed": "completed" in names, "dismissed": "dismissed" in names, "snoozed": "snoozed" in names,
+                    "ignored": ignored, "outcome": bool(verdicts), "improved": "improved" in verdicts,
+                    "hours_to_act": hours, "responder_role": next((e["role"] for e in es if e["event"] in (
+                        "accepted", "completed", "dismissed") and e["role"]), None)})
+    return out
+
+
+def _group(eps, key_fn, label_fn=None, min_n=1):
+    groups = {}
+    for e in eps:
+        groups.setdefault(key_fn(e), []).append(e)
+    rows = []
+    for g, members in groups.items():
+        b = _ras_block(members)
+        if b["n"] < min_n:
+            continue
+        b["group"] = label_fn(g) if label_fn else g
+        rows.append(b)
+    rows.sort(key=lambda r: -r["n"])
+    return rows
+
+
+def recommendation_acceptance(days=30, restaurant_id=None):
+    """The internal Recommendation Acceptance dashboard: the funnel, the
+    score, and what moves it — dollars or none, cross-module, model-written,
+    Cavnar-prepared, confidence band, surface — plus the most ignored kinds
+    and restaurants showing fatigue."""
+    import models
+    days = max(1, min(int(days or 30), 365))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    conn = models.get_conn()
+    try:
+        try:
+            eps = _episodes(conn, since, restaurant_id)
+        except Exception as e:           # the ledger table predates this database
+            log.warning("recommendation_acceptance unavailable: %s", e)
+            eps = []
+    finally:
+        conn.close()
+    total = _ras_block(eps)
+    funnel = [{"step": s, "n": total.get(k) or 0} for s, k in (
+        ("Shown", "shown"), ("Opened", "opened"), ("Evidence viewed", "evidence"), ("Accepted", "accepted"),
+        ("Completed", "completed"), ("Outcome measured", "outcomes"), ("Improved", "improved"))]
+    by_kind = _group(eps, lambda e: e["kind"] or "unknown")
+    most_ignored = sorted((r for r in by_kind if r["n"] >= 5), key=lambda r: (-r["ignore_rate"], -r["n"]))[:10]
+    by_rest = _group(eps, lambda e: (e["restaurant_id"], e["restaurant"] or f"#{e['restaurant_id']}"))
+    for r in by_rest:
+        r["restaurant_id"], r["group"] = r["group"]
+    # Fatigue: plenty shown, little taken — the pattern that ends in an owner
+    # tuning the product out.
+    fatigue = [r for r in by_rest if r["n"] >= RAS_MIN_N and (r["dismiss_rate"] + r["ignore_rate"]) >= 0.75]
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": RAS_MIN_N, "weights": RAS_WEIGHTS,
+            "total": total, "funnel": funnel,
+            "by_module": _group(eps, lambda e: e["module"]),
+            "by_kind": by_kind,
+            "by_surface": _group(eps, lambda e: e["surface"]),
+            "by_dollars": _group(eps, lambda e: "has a $ figure" if e["has_dollars"] else "no $ figure"),
+            "by_cross_module": _group(eps, lambda e: "cross-module" if e["cross_module"] else "one module"),
+            "by_model_written": _group(eps, lambda e: "model-written" if e["model_written"] else "rule-written"),
+            "by_cavnar_completes": _group(eps, lambda e: "Cavnar prepares it" if e["cavnar_completes"] else "owner does it"),
+            "by_confidence": _group(eps, lambda e: e["confidence_band"]),
+            "by_role": _group([e for e in eps if e["responder_role"]], lambda e: e["responder_role"]),
+            "by_restaurant": by_rest,
+            "most_ignored": most_ignored,
+            "fatigue": fatigue}

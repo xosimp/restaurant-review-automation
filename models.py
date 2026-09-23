@@ -5552,14 +5552,24 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
 def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
                          labor_pct: float, total_labor: float, total_sales: float,
                          db_path: str = DB_PATH):
-    """Save a labor analysis snapshot for trend tracking."""
+    """Save a labor analysis snapshot for trend tracking — once per period.
+    It was written on every insight view, so the second view found "the
+    previous upload" to be the same period and compared it with itself: the
+    trend and forecast lines vanished."""
     conn = get_conn(db_path)
-    conn.execute("""
-        INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
-    conn.commit()
-    conn.close()
+    try:
+        same = conn.execute("SELECT 1 FROM labor_history WHERE restaurant_id=? AND period_start IS ? AND period_end IS ? "
+                            "AND ABS(COALESCE(labor_pct, 0) - COALESCE(?, 0)) < 0.05 LIMIT 1",
+                            (restaurant_id, period_start, period_end, labor_pct)).fetchone()
+        if same:
+            return
+        conn.execute("""
+            INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_labor_history(restaurant_id: int, limit: int = 4,

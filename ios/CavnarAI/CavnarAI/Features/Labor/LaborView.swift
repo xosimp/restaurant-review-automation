@@ -96,7 +96,7 @@ struct LaborView: View {
                                 ScheduleIntelSection(viewModel: setupViewModel, onExpand: {
                                     scrollToReveal(Self.intelID, proxy: proxy)
                                 }, onAddPair: { pair in
-                                    Task { await setupViewModel.addPair(a: pair.a, b: pair.b, kind: pair.kind ?? "prefer", note: pair.evidence) }
+                                    Task { await setupViewModel.addSuggestedPair(pair) }
                                 })
                                 .id(Self.intelID)
                                 // Rating the team, then the targets those
@@ -628,7 +628,7 @@ struct LaborView: View {
                 Text("\(entry.hours.map { String(format: "%.1f", $0) } ?? "—")h")
                     .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(rowTone)
-                Text(allowed ? "OT allowed" : (isOvertime ? "Review pay" : "Approaching 40h"))
+                Text(allowed ? "OT allowed" : (isOvertime ? (entry.premium.map { "≈ $\(Int($0.rounded())) over straight time" } ?? "Review pay") : "Approaching 40h"))
                     .font(.cavnarBody(13.5, weight: 700))
                     .foregroundStyle(rowTone)
             }
@@ -671,6 +671,9 @@ struct LaborView: View {
                         VStack(alignment: .trailing, spacing: 1) {
                             Text("$\(Int(day.sales))").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
                             Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarRed)
+                            if let over = day.overTargetDollars, over > 0 {
+                                Text("$\(Int(over)) above target").font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                            }
                         }
                     }
                     .padding(10)
