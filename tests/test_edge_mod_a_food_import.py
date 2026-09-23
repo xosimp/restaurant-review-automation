@@ -119,7 +119,6 @@ def test_an_inventory_csv_is_refused_or_readable(world, text):
     _refused_or_readable(world, text)
 
 
-@pytest.mark.xfail(strict=True, reason="A5 CSV #12 (MOD audit probe): 'Tomato' and 'tomato ' import as two separate ingredients")
 def test_names_differing_only_by_case_and_whitespace_import_as_one_ingredient(world):
     world["upload"](FULL_HEADER + "Tomato,Produce,10,5,1.8,2,10,1\ntomato ,Produce,10,5,1.8,2,10,1\n")
     assert len(_ingredient_names(world["db_path"], world["rid"])) == 1

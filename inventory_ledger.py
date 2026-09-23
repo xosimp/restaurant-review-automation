@@ -737,7 +737,7 @@ def import_csv_to_ingredients(restaurant_id: int) -> dict:
     with db_conn() as conn:
         for item in items:
             existing = conn.execute(
-                "SELECT id FROM ingredients WHERE restaurant_id=? AND name=? AND is_active=1",
+                "SELECT id FROM ingredients WHERE restaurant_id=? AND LOWER(TRIM(name))=LOWER(TRIM(?)) AND is_active=1",
                 (restaurant_id, item["item"])
             ).fetchone()
             if existing:

@@ -239,8 +239,6 @@ def test_a_held_draft_is_never_published(db_path, posts):
 
 # ── R3 #9: a first-connect backlog does not spend the cap on old reviews ───
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R3 #9: auto_approve_candidates orders by fetched_at ASC, so a "
-                                        "first-import backlog of years-old 5-stars is published before new ones")
 def test_the_daily_cap_goes_to_this_weeks_review_not_a_2019_backlog(db_path, posts):
     rid = _restaurant(db_path, auto_approve_daily_cap=1)
     old = _drafted(db_path, rid, "backlog2019", written="'2019-05-01T12:00:00'",

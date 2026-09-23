@@ -569,7 +569,8 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
 
     access_token = get_valid_token(restaurant_id)
     if not access_token:
-        return {"ok": False, "error": "Google Business not connected"}
+        return {"ok": False, "no_token": True,
+                "error": "Couldn't sign in to Google just now. Nothing was lost — use Retry posting in a few minutes."}
 
     try:
         url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"
@@ -628,7 +629,8 @@ def delete_reply(restaurant_id: int, review_name: str) -> dict:
 
     access_token = get_valid_token(restaurant_id)
     if not access_token:
-        return {"ok": False, "error": "Google Business not connected"}
+        return {"ok": False, "no_token": True,
+                "error": "Couldn't sign in to Google just now. Nothing was lost — use Retry posting in a few minutes."}
 
     try:
         url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"

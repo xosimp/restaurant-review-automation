@@ -354,19 +354,38 @@ def _admin_issue_keys(rid):
     return {i["key"] for i in admin_ops.issues()["issues"] if i["restaurant_id"] == rid}
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-7: nothing reports a restaurant whose last review fetch is older than "
-                                       "the 4-hour cadence; the admin view keys staleness on 3 days of review data")
-def test_fetch_coverage_age_is_reported_per_restaurant(db_path):
+def test_fetch_coverage_age_is_reported_per_restaurant(db_path, monkeypatch):
+    """DATA-7. The clock is pinned mid-afternoon Central, where two fetch
+    slots (8am, noon) have passed since 5am: the overnight 8pm-to-8am gap
+    must not read as missed runs."""
+    import admin_ops
+    from zoneinfo import ZoneInfo
     from models import Review, save_reviews
+    now = datetime(2026, 9, 22, 15, 0, tzinfo=ZoneInfo("America/Chicago"))
+    monkeypatch.setattr(admin_ops, "_now_ct", lambda: now)
     rid = _live(db_path, contract_status="signed", billing_status="active", module_reviews=1)
     save_reviews([Review(restaurant_id=rid, platform="google", external_id="cov-1", author="a", rating=5,
                          text="Great")], db_path=db_path)
     _sql(db_path, "UPDATE reviews SET review_date=date('now') WHERE restaurant_id=?", (rid,))
-    _sql(db_path, "UPDATE restaurants SET last_fetched_at=datetime('now','-1 hours') WHERE id=?", (rid,))
+    _sql(db_path, "UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+         ((now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S"), rid))
     fresh = _admin_issue_keys(rid)
-    _sql(db_path, "UPDATE restaurants SET last_fetched_at=datetime('now','-10 hours') WHERE id=?", (rid,))
+    _sql(db_path, "UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+         ((now - timedelta(hours=10)).strftime("%Y-%m-%dT%H:%M:%S"), rid))
     behind = _admin_issue_keys(rid)
     assert behind - fresh, "a restaurant two fetch slots behind raises nothing in the operator view"
+
+
+def test_the_overnight_gap_is_not_a_missed_fetch():
+    """7:30am Central, last fetched at the 8pm run: nothing was missed."""
+    import admin_ops
+    from zoneinfo import ZoneInfo
+    ct = ZoneInfo("America/Chicago")
+    assert admin_ops.fetch_slots_missed("2026-09-21T20:05:00", now=datetime(2026, 9, 22, 7, 30, tzinfo=ct)) == 0
+    assert admin_ops.fetch_slots_missed("2026-09-21T20:05:00", now=datetime(2026, 9, 22, 9, 30, tzinfo=ct)) == 1
+    # SQLite's datetime('now') is UTC: 01:05 UTC is 8:05pm Central the day before.
+    assert admin_ops.fetch_slots_missed("2026-09-22 01:05:00", now=datetime(2026, 9, 22, 7, 30, tzinfo=ct)) == 0
+    assert admin_ops.fetch_slots_missed(None) is None
 
 
 # ── scheduled posts across time zones (DATA-31) ────────────────────────────

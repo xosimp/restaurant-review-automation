@@ -505,6 +505,59 @@ def location_record(r, d):
     }
 
 
+# The review fetch runs at these Chicago hours (scheduler.py, _latest_slot).
+REVIEW_FETCH_SLOTS = (8, 12, 16, 20)
+# How long after a slot starts its pass may still be working through the
+# list (run_daily_fetch is bounded and resumes from a cursor).
+FETCH_SLOT_GRACE = timedelta(hours=1)
+
+
+def _now_ct():
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/Chicago"))
+
+
+def _fetched_at_ct(raw):
+    """restaurants.last_fetched_at as an aware Chicago time. models writes
+    Chicago local with a 'T'; SQLite's datetime('now') (older rows, tests,
+    hand fixes) is UTC with a space."""
+    from zoneinfo import ZoneInfo
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    ct = ZoneInfo("America/Chicago")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=ct) if "T" in s else d.replace(tzinfo=ZoneInfo("UTC"))
+    return d.astimezone(ct)
+
+
+def fetch_slots_missed(last_fetched_at, now=None) -> int:
+    """How many review-fetch slots have come and gone (each given
+    FETCH_SLOT_GRACE to finish) since this restaurant was last fetched.
+    0 when it is current; None when it has never been fetched."""
+    last = _fetched_at_ct(last_fetched_at)
+    if last is None:
+        return None
+    now = now or _now_ct()
+    cutoff = now - FETCH_SLOT_GRACE
+    missed, day = 0, cutoff.date()
+    # Walk back over slot starts until one is at or before the last fetch.
+    for back in range(0, 8):
+        d = day - timedelta(days=back)
+        for h in sorted(REVIEW_FETCH_SLOTS, reverse=True):
+            start = datetime(d.year, d.month, d.day, h, tzinfo=cutoff.tzinfo)
+            if start > cutoff:
+                continue
+            if start <= last:
+                return missed
+            missed += 1
+    return missed
+
+
 def _issues_for(r, d, owner, integrations, modules, onboarding, last_active):
     """Actionable problems for one location, each with severity and age."""
     rid = r["id"]
@@ -542,6 +595,17 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active):
             add(f"nodata:{m['key']}", f"{m['label']} is on but has never received data", "warning", r.get("created_at"), "Check setup")
         elif m["state"] == "unconfigured":
             add(f"unconf:{m['key']}", f"{m['label']} is on but not configured", "warning", r.get("created_at"), "Open settings", f"/admin/client-settings/{rid}")
+    # Fetch coverage on the schedule's own clock (DATA-7). "Stale" above is
+    # keyed on 3 days of review DATA, which a quiet restaurant produces with
+    # every fetch working; this says the fetch itself stopped reaching it.
+    # One missed slot can be the bounded pass's tail; two is not.
+    if (r.get("module_reviews") and not r.get("is_demo") and bs in ("active", "trial")
+            and r.get("last_fetched_at")):
+        missed = fetch_slots_missed(r.get("last_fetched_at"))
+        if missed and missed >= 2:
+            add("fetch_behind", f"Review fetch has missed {missed} scheduled runs", "warning",
+                r.get("last_fetched_at"), "Sync now", f"/admin/fetch-reviews/{rid}",
+                "Fetches run at 8am, noon, 4pm and 8pm Central.")
     rv = d["reviews"].get(rid, {})
     if (rv.get("urgent_stale") or 0) > 0:
         add("urgent", f"{rv['urgent_stale']} urgent review{'s' if rv['urgent_stale'] > 1 else ''} unanswered 48h+", "critical", None, "View as client", f"/admin/view-as/{rid}")

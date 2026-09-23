@@ -103,13 +103,28 @@ def _restaurant_tz(restaurant_id: int):
 
 
 def ingest_csv(path: str, restaurant_id: int) -> list[Review]:
+    """Reviews from a CSV (main.py's dev path). A row that can't be a review
+    is skipped and named, never allowed to take the rest of the file with it
+    (MOD A1 R1 #32): utf-8-sig so an Excel byte-order mark doesn't turn the
+    'id' header into '\\ufeffid', no blank ids, and a rating must be a whole
+    1-5 — the reviews table's CHECK refuses anything else, and a 4.5 is not
+    rounded into a rating the guest didn't give."""
     reviews = []
-    with open(path, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        for line_no, row in enumerate(csv.DictReader(f), start=2):
+            ext_id = (row.get("id") or "").strip()
+            raw = (row.get("rating") or "").strip()
+            try:
+                rating = float(raw)
+            except ValueError:
+                rating = None
+            if not ext_id or rating is None or rating != int(rating) or not 1 <= rating <= 5:
+                print(f"[ingest_csv] line {line_no} skipped: id={ext_id!r} rating={raw!r}")
+                continue
             reviews.append(Review(
                 restaurant_id=restaurant_id, platform=row.get("platform", "csv"),
-                external_id=row["id"], author=row.get("author", "Guest"),
-                rating=int(row["rating"]), text=row["text"],
+                external_id=ext_id, author=row.get("author", "Guest"),
+                rating=int(rating), text=row.get("text") or "",
                 review_date=row.get("date"),
             ))
     return reviews

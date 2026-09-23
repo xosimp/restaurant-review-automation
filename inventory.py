@@ -253,16 +253,23 @@ def parse_inventory_rows(rows):
     is blank, not a finite number, negative or absurd is an error naming the
     row, and that row is not in `items`."""
     items, errors = [], []
+    seen = set()
     for n, raw in enumerate(rows or [], start=2):          # row 1 is the header
         r = {_inventory_header(k): (v.strip() if isinstance(v, str) else v)
              for k, v in (raw or {}).items() if k is not None}
         if not any(v not in (None, "") for v in r.values()):
             continue                                         # a blank line
-        name = (r.get("item") or "").strip()
+        name = " ".join((r.get("item") or "").split())
         label = f"Row {n}" + (f" ({name})" if name else "")
         if not name:
             errors.append(f"{label}: the item name is blank.")
             continue
+        # 'Tomato' and 'tomato ' are one ingredient: they imported as two,
+        # splitting the stock and the par between them (A5 CSV #12). The
+        # first row wins, the way a re-import keeps an existing name.
+        if name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
         item, bad = dict(r), None
         for col in ("par_level", "current_stock", "unit_cost", "waste_last_week",
                     "avg_daily_usage", "last_order_qty", "case_size"):

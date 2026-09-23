@@ -124,7 +124,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # status) and mobile_api.py's mobile views can call the exact same logic
 # without duplicating it.
 
-def _do_approve(rid, restaurant_id):
+def _do_approve(rid, restaurant_id, google=None):
     # The approve itself first, as a compare-and-set: only this restaurant's
     # live, drafted reply, and only once however many approves arrive
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
@@ -172,7 +172,7 @@ def _do_approve(rid, restaurant_id):
         _fw(restaurant_id, "response.approved", {"review_id": rid})
     except Exception:
         pass
-    auto_posted, post_error = _attempt_google_post(rid, restaurant_id)
+    auto_posted, post_error = _attempt_google_post(rid, restaurant_id, google)
     try:
         from notify import fire_response_approved_alert
         fire_response_approved_alert(restaurant_id, rid, posted=auto_posted)
@@ -184,7 +184,7 @@ def _do_approve(rid, restaurant_id):
     return payload, 200
 
 
-def _attempt_google_post(rid, restaurant_id):
+def _attempt_google_post(rid, restaurant_id, google=None):
     """Synchronously tries to post a review's approved draft to Google.
 
     Used right after approving, and again from the "Retry posting" button
@@ -202,7 +202,15 @@ def _attempt_google_post(rid, restaurant_id):
     when an attempt was made and failed; it's None both on success and
     when nothing was attempted (not a Google review, no draft, or GBP
     isn't connected yet — none of those are failures).
+
+    `google` is a batch's shared state (approve-all): once one review finds
+    no usable token or can't reach Google, the rest of the batch doesn't try
+    again. Each attempt could wait out a 10-second token refresh, and 25 in
+    a row held a request thread for minutes (MOD A1 R2 #17). Those replies
+    stay approved for Retry posting.
     """
+    if google is not None and google.get("unreachable"):
+        return False, google["unreachable"]
     try:
         from gmb import is_connected, post_reply
         conn = get_conn()
@@ -211,10 +219,16 @@ def _attempt_google_post(rid, restaurant_id):
             (rid, restaurant_id)
         ).fetchone()
         conn.close()
-        if not (row and row["platform"] == "google" and row["review_name"] and row["draft_response"]):
+        if not (row and row["platform"] == "google" and row["draft_response"]):
             return False, None
         if not is_connected(restaurant_id):
             return False, None
+        if not row["review_name"]:
+            # Read from Google's public listing, not the Business Profile
+            # connection, so there is no review to attach a reply to. GBP is
+            # connected, so saying nothing read as "posted" (MOD A1 R2 #16).
+            return False, ("This review came from Google's public listing, so Cavnar can't post the "
+                           "reply for you. Copy it and reply on Google directly.")
         result = post_reply(restaurant_id, row["review_name"], row["draft_response"])
         if result["ok"]:
             from models import mark_posted
@@ -231,6 +245,8 @@ def _attempt_google_post(rid, restaurant_id):
                 pass
             return True, None
         print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+        if result.get("no_token") and google is not None:
+            google["unreachable"] = result["error"]
         if result.get("removed"):
             # Google answered 404: the review is gone, so it leaves the queue
             # and the stats rather than sitting 'approved' forever (MOD-REV-14).
@@ -252,8 +268,11 @@ def _attempt_google_post(rid, restaurant_id):
             ops.capture(e, job="review_post", context=f"restaurant_id={restaurant_id} review_id={rid}")
         except Exception:
             pass
-        return False, ("Couldn't reach Google to post this reply. Nothing was lost — "
-                       "use Retry posting in a few minutes.")
+        msg = ("Couldn't reach Google to post this reply. Nothing was lost — "
+               "use Retry posting in a few minutes.")
+        if google is not None:
+            google["unreachable"] = msg
+        return False, msg
 
 
 def _do_retry_post(rid, restaurant_id):
@@ -301,9 +320,10 @@ def _do_approve_all(restaurant_id, limit=25):
     conn.close()
 
     approved = posted = failed = 0
+    google = {}
     for row in rows:
         try:
-            payload, status = _do_approve(row["id"], restaurant_id)
+            payload, status = _do_approve(row["id"], restaurant_id, google)
             if status == 200 and payload.get("ok"):
                 approved += 1
                 if payload.get("auto_posted"):

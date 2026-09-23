@@ -251,9 +251,6 @@ def test_publishing_to_a_review_google_removed_says_it_was_removed(real_post, mo
 
 # ── R2 #16: a Places copy (no review_name) cannot post; the owner is told ──
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R2 #16 (with MOD-REV-3): a Google review with no review_name "
-                                        "is approved with auto_posted False and no reason, although GBP is "
-                                        "connected and the reply will never reach Google")
 def test_approving_a_review_that_cannot_be_posted_tells_the_owner_why(world):
     rid = _review(world["db"], 1, "google_1757000000_https://maps.google.com/u/1", review_name=None)
     payload, status = client_api._do_approve(rid, 1)
@@ -263,8 +260,6 @@ def test_approving_a_review_that_cannot_be_posted_tells_the_owner_why(world):
 
 # ── R2 #17: approve-all against an expired token holds the thread ─────────
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R2 #17: every review in an approve-all batch re-attempts the "
-                                        "token refresh (10s timeout each) after the first one has failed")
 def test_approve_all_with_a_dead_token_tries_the_refresh_once_not_per_review(world, monkeypatch):
     """Up to 25 sequential 10-second refresh timeouts on one request thread,
     with --workers 1 --threads 4, is a quarter of the platform for minutes.

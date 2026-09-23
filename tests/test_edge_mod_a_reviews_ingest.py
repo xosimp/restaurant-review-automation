@@ -411,8 +411,6 @@ def _csv(tmp_path, text, name="reviews.csv"):
     return str(p)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R1 #32: ingest_csv opens with utf-8, not utf-8-sig, so an "
-                                        "Excel BOM turns the 'id' header into '\\ufeffid' and every row raises")
 def test_csv_ingest_reads_a_file_saved_with_a_byte_order_mark(tmp_path):
     path = _csv(tmp_path, "﻿id,author,rating,text,date\nc1,Ann,4,Nice,2026-09-01\n")
     out = fetcher.ingest_csv(path, 1)
@@ -426,24 +424,18 @@ def test_csv_ingest_reads_a_plain_file(tmp_path):
     assert [(r.external_id, r.rating) for r in out] == [("c1", 4)]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R1 #32: a row with a blank id is accepted with "
-                                        "external_id '' instead of being refused")
 def test_csv_ingest_skips_a_row_with_no_id_and_keeps_the_rest(tmp_path):
     path = _csv(tmp_path, "id,author,rating,text\n,Ann,4,Nice\nc2,Bob,5,Great\n")
     out = fetcher.ingest_csv(path, 1)
     assert [r.external_id for r in out] == ["c2"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R1 #32: a '4.5' rating raises ValueError and discards the "
-                                        "whole file instead of refusing or rounding that one row")
 def test_csv_ingest_does_not_lose_the_file_to_one_fractional_rating(tmp_path):
     path = _csv(tmp_path, "id,author,rating,text\nc1,Ann,4.5,Nice\nc2,Bob,5,Great\n")
     out = fetcher.ingest_csv(path, 1)
     assert "c2" in [r.external_id for r in out]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD A1 R1 #32: a rating of 0 is accepted into a Review the table's "
-                                        "CHECK(rating BETWEEN 1 AND 5) will refuse")
 def test_csv_ingest_refuses_a_zero_rating(tmp_path):
     path = _csv(tmp_path, "id,author,rating,text\nc1,Ann,0,Nice\nc2,Bob,5,Great\n")
     out = fetcher.ingest_csv(path, 1)

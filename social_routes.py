@@ -178,7 +178,8 @@ def post_to_instagram(current_user):
     return jsonify(**payload), status
 
 
-# How long the same photo and caption are refused after a publish started.
+# How long the same post (Instagram photo and caption, or Facebook text)
+# is refused after a publish started.
 IG_PUBLISH_DEDUP_MINUTES = 10
 
 
@@ -300,7 +301,8 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     _claim = "ig_publish:%s:%s" % (restaurant_id, _hl_ig.sha256(
         (image_url + "\x1f" + caption).encode("utf-8")).hexdigest()[:24])
     if not _ops_ig.claim_cooldown(_claim, IG_PUBLISH_DEDUP_MINUTES):
-        return {"ok": False, "duplicate": True,
+        # maybe_live: the queue treats it as possibly out already, not a retry.
+        return {"ok": False, "duplicate": True, "maybe_live": True,
                 "error": "This post is already being published. Check Instagram before posting it again."}, 409
 
     created = _graph("post", graph_url(f"{ig_user_id}/media"), data={
@@ -611,6 +613,16 @@ def _do_post_to_facebook(restaurant_id, caption, topic):
     restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
         return {"ok": False, "error": "Facebook not connected — click Connect Instagram & Facebook first"}, 200
+    # The same claim as Instagram's (DATA-25): a double press, or the client
+    # retrying after its own timeout, reached /feed twice and put the same
+    # copy on the Page twice (MOD-A6-direct-5). Given back only when Meta
+    # definitely refused; an ambiguous answer may be live, so it stands.
+    import hashlib as _hl_fb
+    import ops as _ops_fb
+    _claim = "fb_publish:%s:%s" % (restaurant_id, _hl_fb.sha256(caption.encode("utf-8")).hexdigest()[:24])
+    if not _ops_fb.claim_cooldown(_claim, IG_PUBLISH_DEDUP_MINUTES):
+        return {"ok": False, "duplicate": True, "maybe_live": True,
+                "error": "This post is already being published. Check Facebook before posting it again."}, 409
     answer = _graph("post", graph_url(f"{restaurant.fb_page_id}/feed"), data={
         "message":      caption,
         "access_token": restaurant.fb_page_token,
@@ -620,6 +632,7 @@ def _do_post_to_facebook(restaurant_id, caption, topic):
         print(f"FB post failed: {answer.status} {answer.text[:300]}")
         if answer.ambiguous:
             return {"ok": False, "maybe_live": True, "error": _maybe_live("facebook")}, 200
+        _ops_fb.release_period("cooldown", _claim)      # Meta refused it; nothing is live
         return {"ok": False, "error": _owner_error(
             "facebook", answer, "Facebook didn't accept the post. Nothing went out — try again.")}, 200
     try:

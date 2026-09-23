@@ -846,7 +846,7 @@ def test_google_post_attempt_is_synchronous_not_a_background_thread():
 
     approve_src = inspect.getsource(client_api._do_approve)
     assert "threading" not in approve_src and "Thread(" not in approve_src
-    assert "auto_posted, post_error = _attempt_google_post(rid, restaurant_id)" in approve_src
+    assert "auto_posted, post_error = _attempt_google_post(rid, restaurant_id, google)" in approve_src
     assert '"post_error"' in approve_src
 
 

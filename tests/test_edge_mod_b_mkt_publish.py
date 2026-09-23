@@ -324,7 +324,6 @@ def test_an_instagram_container_that_never_finishes_is_polled_a_bounded_number_o
 
 # ── #5 double press ───────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-direct-5: /api/post-to-facebook has no idempotency; a double press or a client retry posts the same copy twice")
 def test_a_double_press_on_post_to_facebook_publishes_once(app, db_path, monkeypatch):
     """A6 direct #5: the second identical request seconds later (a double
     tap, or the client retrying after its own timeout) must not reach /feed."""

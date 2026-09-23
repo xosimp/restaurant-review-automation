@@ -289,14 +289,12 @@ def test_a_max_tokens_stop_is_reported_as_truncated(db_path, monkeypatch):
 
 # ── history and question edge cases (appendix) ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="Ask appendix #20: _sanitize_history calls .strip() on non-string content and raises")
 @pytest.mark.parametrize("bad", [["a", "list"], 5, {"text": "an object"}])
 def test_non_string_history_content_is_dropped_not_raised(bad):
     history = [{"role": "user", "content": bad}, {"role": "user", "content": "a real turn"}]
     assert ask_cavnar._sanitize_history(history) == [{"role": "user", "content": "a real turn"}]
 
 
-@pytest.mark.xfail(strict=True, reason="Ask appendix #20: one malformed history entry fails the whole question")
 def test_a_malformed_history_entry_does_not_fail_the_question(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)

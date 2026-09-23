@@ -865,7 +865,10 @@ def _sanitize_history(history):
         if not isinstance(turn, dict):
             continue
         role = turn.get("role")
-        content = (turn.get("content") or "").strip()[:_MAX_HISTORY_TURN_LENGTH]
+        content = turn.get("content")
+        if not isinstance(content, str):
+            continue            # a list or object from a stale client: dropped, not raised (Ask appendix #20)
+        content = content.strip()[:_MAX_HISTORY_TURN_LENGTH]
         if role not in ("user", "assistant") or not content:
             continue
         if cleaned and cleaned[-1]["role"] == role:

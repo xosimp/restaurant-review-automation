@@ -8100,7 +8100,9 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
           -- A draft flagged for stating an action the restaurant may not
           -- have taken is exactly what must not be published unread.
           AND COALESCE(draft_needs_review, 0) = 0
-        ORDER BY fetched_at ASC
+        -- Newest guest first: a first-connect backlog of years-old 5-stars
+        -- used to spend the daily cap before this week's (MOD A1 R3 #9).
+        ORDER BY COALESCE(review_date, fetched_at) DESC, id DESC
     """.replace("{placeholders}", ",".join("?" * len(ratings))), (restaurant_id, *ratings)).fetchall()
     conn.close()
     return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows]
