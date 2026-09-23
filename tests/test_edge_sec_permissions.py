@@ -243,7 +243,6 @@ def test_the_owner_can_register_an_outbound_webhook(db_path, no_ssrf_lookup):
     assert r.get_json()["ok"] is True and r.get_json()["secret"]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role registers an outbound webhook and receives its HMAC secret")
 @pytest.mark.parametrize("role", ["manager", "member"])
 def test_a_teammate_cannot_register_an_outbound_webhook(db_path, no_ssrf_lookup, role):
     rid, owner, mate = _setup(db_path, second_role=role)
@@ -252,7 +251,6 @@ def test_a_teammate_cannot_register_an_outbound_webhook(db_path, no_ssrf_lookup,
     assert not (r.get_json() or {}).get("secret")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role overwrites the Toast credentials from the app")
 def test_a_manager_cannot_overwrite_toast_credentials_from_the_app(db_path, monkeypatch):
     import toast
     monkeypatch.setattr(toast, "get_toast_token", lambda rid, *a, **k: "tok")
@@ -264,7 +262,6 @@ def test_a_manager_cannot_overwrite_toast_credentials_from_the_app(db_path, monk
     assert get_restaurant(rid, db_path=db_path).toast_client_id == "good-id"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role overwrites the Toast credentials on the web")
 def test_a_manager_cannot_overwrite_toast_credentials_on_the_web(db_path, monkeypatch):
     import toast
     monkeypatch.setattr(toast, "test_credentials", lambda *a, **k: {"ok": True})
@@ -276,7 +273,6 @@ def test_a_manager_cannot_overwrite_toast_credentials_on_the_web(db_path, monkey
     assert get_restaurant(rid, db_path=db_path).toast_client_id == "good-id"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role overwrites the Square credentials from the app")
 def test_a_manager_cannot_overwrite_square_credentials_from_the_app(db_path, monkeypatch):
     import square
     monkeypatch.setattr(square, "test_credentials", lambda *a, **k: {"ok": True, "location_name": "X"})
@@ -295,7 +291,6 @@ def test_the_owner_can_set_review_retention(db_path):
     assert get_restaurant(rid, db_path=db_path).data_retention_months == 12
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role can set review retention to 6 months (soft-delete)")
 @pytest.mark.parametrize("surface", ["web", "mobile"])
 def test_a_manager_cannot_shorten_review_retention(db_path, surface):
     rid, owner, mgr = _setup(db_path)
@@ -308,7 +303,6 @@ def test_a_manager_cannot_shorten_review_retention(db_path, surface):
     assert int(get_restaurant(rid, db_path=db_path).data_retention_months or 0) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: any console role can switch on auto-approve (public replies under the brand)")
 @pytest.mark.parametrize("surface", ["web", "mobile"])
 def test_a_manager_cannot_switch_on_auto_approve(db_path, surface):
     rid, owner, mgr = _setup(db_path)
@@ -331,7 +325,7 @@ def _support_via_view_as(db_path):
     c = _app().test_client()
     c.set_cookie("session_token", create_session(sup, db_path=db_path))
     c.set_cookie("csrf_js", CSRF["X-CSRF"])
-    r = c.get(f"/admin/view-as/{rid}")
+    r = c.post(f"/admin/view-as/{rid}", headers=CSRF)      # a POST since SEC-34
     assert r.status_code == 302
     viewing = get_session_user(c.get_cookie("session_token").value, db_path=db_path)
     assert viewing["id"] == owner and viewing["device_type"] == "admin-view-as"
@@ -343,7 +337,6 @@ def test_support_can_open_view_as_and_read_as_the_client(db_path):
     assert c.get("/api/account/team").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-12: a view-as session opened by read-only support can perform client writes")
 def test_a_view_as_session_opened_by_support_is_refused_every_write(db_path):
     rid, c = _support_via_view_as(db_path)
     update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
@@ -355,7 +348,6 @@ def test_a_view_as_session_opened_by_support_is_refused_every_write(db_path):
 
 # ── routes no module gate covers ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: /api/inv-trend is not in _MODULE_PREFIXES, so a manager reads food-cost trends")
 def test_the_inventory_trend_route_belongs_to_the_food_cost_module():
     assert auth._required_module("/api/inv-trend") == "inventory"
 
@@ -373,7 +365,6 @@ def _all_rules():
                    if r.rule.startswith("/api/") or r.rule.startswith("/mobile/api/")})
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: no explicit allow-list of deliberately ungated /api and /mobile/api routes exists (180+ unmapped)")
 def test_every_api_rule_is_module_mapped_or_listed_as_deliberately_ungated():
     # The audit's mitigation: a route is either under a module prefix or on
     # an explicit, reviewed list. The list's name here is this test's

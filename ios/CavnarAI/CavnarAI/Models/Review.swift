@@ -186,6 +186,22 @@ struct Review: Codable, Identifiable, Hashable {
     /// auto-post, which is precisely the thing that gives it a review_name
     /// — so it becomes retractable here rather than waiting for a refresh
     /// to learn that from the server.
+    /// The same review with a draft reply now on file. A review that had no
+    /// draft becomes "drafted", the status the server gives it.
+    func withDraft(_ draft: String) -> Review {
+        let status = responseStatus == "pending" ? "drafted" : responseStatus
+        return Review(
+            id: id, platform: platform, author: author, rating: rating, text: text,
+            reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
+            draftResponse: draft, responseStatus: status, categories: categories,
+            draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
+            editedAt: editedAt, originalRating: originalRating,
+            canRetractFlag: canRetractFlag, processed: processed,
+            summary: summary, specificComplaint: specificComplaint,
+            severity: severity, severityLabel: severityLabel, entities: entities
+        )
+    }
+
     func withStatus(_ newStatus: String) -> Review {
         let retractable = (newStatus == "posted" && platform == "google") ? true : canRetractFlag
         return Review(

@@ -23,6 +23,9 @@ from meta_api import graph_url, oauth_dialog_url
 from ai_guard import safe_error as _safe_err
 
 social_bp = Blueprint('social', __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(social_bp)
 
 @social_bp.route("/instagram/connect")
 @login_required

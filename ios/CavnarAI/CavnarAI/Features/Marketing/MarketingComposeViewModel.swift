@@ -154,10 +154,31 @@ final class MarketingComposeViewModel {
     /// The slot is sent as the restaurant's own wall clock, not UTC — the
     /// owner picking 11am means 11am in their dining room, and the backend
     /// stores and compares it that way.
+    ///
+    /// Read on RestaurantClock, not the phone's zone (a travelling owner's
+    /// post went out at their hotel's hour), and pinned to en_US_POSIX and
+    /// the Gregorian calendar so a phone on the Buddhist or Japanese calendar
+    /// can't write a different year into it (CLIENT-33).
     static func localStamp(_ date: Date) -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = RestaurantClock.timeZone
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         return f.string(from: date)
+    }
+
+    private struct AccountClock: Decodable {
+        struct Profile: Decodable { let timezone: String? }
+        let profile: Profile
+    }
+
+    /// Reads the restaurant's time zone before a slot is picked, when this
+    /// session hasn't seen it yet (Account's load also teaches it).
+    func learnRestaurantClock() async {
+        guard !RestaurantClock.isKnown else { return }
+        let account: AccountClock? = try? await client.send("/mobile/api/account", hapticOnError: false)
+        RestaurantClock.learn(account?.profile.timezone)
     }
 
     func schedule(platform: String, body: String, topic: String, contentType: String?,

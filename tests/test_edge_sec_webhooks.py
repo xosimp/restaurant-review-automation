@@ -498,7 +498,6 @@ def test_a_successful_web_toast_connect_drops_the_token_cached_for_the_old_crede
     assert r.toast_access_token != "OLD-TOKEN"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-25: mobile Toast connect writes the new credentials before testing them, so a typo overwrites working ones")
 def test_a_failed_mobile_toast_connect_leaves_the_previous_credentials_in_place(
         mobile_client, db_path, monkeypatch):
     # No cached token, so the mobile route's check really goes to Toast.
@@ -509,7 +508,6 @@ def test_a_failed_mobile_toast_connect_leaves_the_previous_credentials_in_place(
     assert _creds(db_path, rid) == OLD
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-25: mobile Toast connect keeps toast_access_token/toast_token_expires, so the old credentials' token 'verifies' the new ones")
 def test_a_mobile_toast_connect_drops_the_token_cached_for_the_old_credentials(
         mobile_client, db_path, monkeypatch):
     rid, uid = _toast_restaurant(db_path, cached_token=True)
@@ -520,7 +518,6 @@ def test_a_mobile_toast_connect_drops_the_token_cached_for_the_old_credentials(
     assert get_restaurant(rid, db_path=db_path).toast_access_token != "OLD-TOKEN"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-25: with a valid cached token the mobile route never checks the new credentials against Toast at all")
 def test_a_mobile_toast_connect_checks_the_new_credentials_even_with_a_cached_token(
         mobile_client, db_path, monkeypatch):
     rid, uid = _toast_restaurant(db_path, cached_token=True)

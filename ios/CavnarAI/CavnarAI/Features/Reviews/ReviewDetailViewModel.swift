@@ -108,13 +108,31 @@ final class ReviewDetailViewModel {
     /// Non-nil when the last approve/retry approved the reply but could not
     /// publish it — the view shows the reason and a Retry posting button.
     var postFailure: String?
+    /// True while retryPost() is running.
+    var isRetryingPost = false
 
     func approve() async {
         // Flush any pending debounced edit first so what gets posted matches
         // what's on screen, rather than racing the 800ms save timer.
+        //
+        // The server posts the draft it has STORED. So the approve waits on
+        // the save: a save that failed means the stored draft is still the
+        // old one, and approving then published the pre-edit reply under
+        // the restaurant's name (CLIENT-6).
         saveDraftTask?.cancel()
         if editedDraft != (review.draftResponse ?? "") {
-            await saveDraft()
+            switch await saveDraft() {
+            case .saved:
+                break
+            case .failed:
+                return      // saveDraft already said why; nothing was posted
+            case .queued:
+                // The edit is waiting in the offline queue. The approve
+                // goes in behind it — the queue drains in order and stops at
+                // the first failure — never out live ahead of it.
+                await queueApprove()
+                return
+            }
         }
         isSubmitting = true
         isApproving = true
@@ -135,23 +153,35 @@ final class ReviewDetailViewModel {
             // A failed post keeps the owner on this screen, where the retry
             // is, instead of popping back to the list as a plain success.
             didComplete = (response.postError == nil)
+        } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
+            // Never left the phone, so replaying it later is safe.
+            await queueApprove()
         } catch let error as APIClient.APIError where error.isRetryable {
-            await PendingWriteQueue.shared.enqueue(
-                path: "/mobile/api/reviews/\(review.id)/approve",
-                method: "POST",
-                bodyJSON: nil,
-                label: "Approve response for \(review.author ?? "review")"
-            )
-            hasQueuedWrite = true
-            // Locally optimistic but honestly labelled — the row shows a
-            // "waiting to sync" state, not a claim that it posted.
-            currentStatus = "pending-sync"
-            didComplete = true
+            // Timed out or dropped mid-request. The Google post runs inside
+            // this request, so it may well have gone out; queueing it would
+            // replay a second post and a second response.approved webhook
+            // (CLIENT-6). The owner stays here and checks first.
+            errorMessage = "We lost the connection before Google answered, so this reply may already be posted. "
+                         + "Go back and reopen the review to see its status before approving again."
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn't approve — try again."
         }
+    }
+
+    private func queueApprove() async {
+        await PendingWriteQueue.shared.enqueue(
+            path: "/mobile/api/reviews/\(review.id)/approve",
+            method: "POST",
+            bodyJSON: nil,
+            label: "Approve response for \(review.author ?? "review")"
+        )
+        hasQueuedWrite = true
+        // Locally optimistic but honestly labelled — the row shows a
+        // "waiting to sync" state, not a claim that it posted.
+        currentStatus = "pending-sync"
+        didComplete = true
     }
 
     func skip() async {
@@ -198,6 +228,9 @@ final class ReviewDetailViewModel {
     /// signals failure only via the `ok`/`error` fields in the body — mirrors
     /// client_api.py's regenerate_draft(), which never sets an error status.
     func regenerateDraft() async {
+        // Each draft is a paid model call. The button was only dimmed while
+        // one ran, so a double tap paid for two (CLIENT-55).
+        guard !isGeneratingDraft else { return }
         isSubmitting = true
         isGeneratingDraft = true
         errorMessage = nil
@@ -211,6 +244,7 @@ final class ReviewDetailViewModel {
             )
             if response.ok, let draft = response.draft {
                 editedDraft = draft
+                announceDraft(draft)
             } else {
                 errorMessage = response.error ?? "Couldn't regenerate the draft."
             }
@@ -225,18 +259,34 @@ final class ReviewDetailViewModel {
         let draft: String
     }
 
-    func saveDraft() async {
+    enum SaveOutcome { case saved, queued, failed }
+
+    /// Posted when this screen writes or saves a draft, so the inbox's copy
+    /// of the review carries it too (see ReviewsListViewModel).
+    static let draftDidChange = Notification.Name("ai.cavnar.reviewDraftDidChange")
+
+    private func announceDraft(_ draft: String) {
+        NotificationCenter.default.post(name: Self.draftDidChange, object: nil,
+                                        userInfo: ["id": review.id, "draft": draft])
+    }
+
+    @discardableResult
+    func saveDraft() async -> SaveOutcome {
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
+        let draft = editedDraft
         do {
             let response: DraftResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/save-draft", method: .post,
-                body: SaveDraftBody(draft: editedDraft)
+                body: SaveDraftBody(draft: draft)
             )
             if !response.ok {
                 errorMessage = response.error ?? "Couldn't save your edit."
+                return .failed
             }
+            announceDraft(draft)
+            return .saved
         } catch let error as APIClient.APIError where error.isRetryable {
             // Offline or a dropped connection: queue the edit instead of
             // discarding it. This is the exact loss the audit found — a
@@ -251,10 +301,13 @@ final class ReviewDetailViewModel {
             )
             hasQueuedWrite = true
             errorMessage = nil
+            return .queued
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+            return .failed
         } catch {
             errorMessage = "Couldn't save — try again."
+            return .failed
         }
     }
 
@@ -354,6 +407,11 @@ final class ReviewDetailViewModel {
     /// published. Same endpoint the web's "Retry posting" button uses.
     @discardableResult
     func retryPost() async -> Bool {
+        // A second tap while the first is still posting would post twice
+        // (CLIENT-55).
+        guard !isRetryingPost else { return false }
+        isRetryingPost = true
+        defer { isRetryingPost = false }
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }

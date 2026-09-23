@@ -7,30 +7,17 @@ import SwiftUI
 struct ScheduleHistoryView: View {
     @State private var viewModel = ScheduleHistoryViewModel()
 
-    private static let isoDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-    private static let displayDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
-        return f
-    }()
-    // Parses generated_at as UTC (SQLite's datetime('now') is UTC) — the
-    // display formatter below deliberately has no .timeZone set, so it
-    // renders in the device's own local time.
+    // Parses generated_at as UTC (SQLite's datetime('now') is UTC); it is
+    // shown on the restaurant's clock, M/D/YY (CLIENT-45).
     private static let generatedAtParser: DateFormatter = {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         f.timeZone = TimeZone(identifier: "UTC")
         return f
     }()
-    private static let generatedAtDisplayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, h:mm a"
-        return f
-    }()
+    /// The history row whose Delete was swiped, awaiting confirmation.
+    @State private var pendingDelete: ScheduleHistoryEntry?
 
     @State private var clock = CavnarEntranceClock()
     @State private var selectedEntry: ScheduleHistoryEntry?
@@ -95,10 +82,13 @@ struct ScheduleHistoryView: View {
                         // Schedules never disappear on their own — this is
                         // the only removal path, deliberately requiring an
                         // explicit swipe, not a tap.
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        // A full swipe used to delete the week outright — a
+                        // stray swipe while scrolling lost a draft for good
+                        // (CLIENT-62). The swipe now only asks.
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 Haptic.light()
-                                Task { await viewModel.delete(id: entry.id) }
+                                pendingDelete = entry
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -118,6 +108,19 @@ struct ScheduleHistoryView: View {
         }
         .task { await viewModel.load() }
         .cavnarEmberRefreshable { await viewModel.load() }
+        .confirmationDialog(
+            "Delete this schedule?",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { entry in
+            Button("Delete \(weekLabel(entry))", role: .destructive) {
+                Task { await viewModel.delete(id: entry.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("It's removed from Schedule History for good.")
+        }
         // A standard modal alert for a failed delete — surfaces the real
         // error without replacing the list underneath it (see
         // deleteErrorMessage's own comment on the view model).
@@ -133,12 +136,10 @@ struct ScheduleHistoryView: View {
     }
 
     private func weekLabel(_ entry: ScheduleHistoryEntry) -> String {
-        guard let start = entry.weekStart, let end = entry.weekEnd,
-              let startDate = Self.isoDayFormatter.date(from: start),
-              let endDate = Self.isoDayFormatter.date(from: end) else {
+        guard let start = entry.weekStart, let end = entry.weekEnd, !start.isEmpty, !end.isEmpty else {
             return "Generated schedule"
         }
-        return "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
+        return CavnarDate.mdyRange(start, end)
     }
 
     @ViewBuilder
@@ -148,7 +149,7 @@ struct ScheduleHistoryView: View {
                 Text(weekLabel(entry))
                     .font(.cavnarBody(14, weight: 700))
                 if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
-                    Text("Generated \(Self.generatedAtDisplayFormatter.string(from: generated))")
+                    Text("Generated \(CavnarDate.mdyTime(generated, in: RestaurantClock.timeZone))")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                 }

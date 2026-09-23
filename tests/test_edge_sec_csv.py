@@ -368,7 +368,6 @@ def test_a_manager_is_refused_the_food_cost_cogs_route(world):
     assert world["client"].get("/api/food-cost/cogs").status_code == 403
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: /client/upload-data is not in the module gate, so a manager without FOOD_COST_VIEW can replace the inventory dataset")
 def test_a_manager_without_food_cost_access_cannot_upload_an_inventory_csv(world):
     _login(world, world["owner"])
     assert _upload(world, "inventory", INVENTORY_FULL).get_json()["ok"] is True
@@ -378,7 +377,6 @@ def test_a_manager_without_food_cost_access_cannot_upload_an_inventory_csv(world
     assert _stored(world, "inventory") == INVENTORY_FULL
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: /api/inv-trend is not in the module gate, so a manager without FOOD_COST_VIEW reads the waste series")
 def test_a_manager_without_food_cost_access_cannot_read_the_inventory_trend(world):
     _login(world, world["mgr"])
     assert world["client"].get("/api/inv-trend").status_code == 403

@@ -226,6 +226,37 @@ CREATE TABLE IF NOT EXISTS login_prefs (
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, restaurant_id)
 );
+
+-- One emailed/texted 2FA code per sign-in attempt (purpose 'login') or per
+-- login setting 2FA up (purpose 'setup'). This used to be one slot of
+-- plaintext columns on the restaurants row (two_fa_code / two_fa_pending),
+-- so a manager signing in, or anyone pressing "Send test code", replaced the
+-- code the owner was typing at that moment (SEC-20), and anyone who could
+-- read the database could read a live code (SEC-39). Neither the pending
+-- secret nor the code is stored: both are keyed hashes.
+CREATE TABLE IF NOT EXISTS two_fa_challenges (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    purpose         TEXT    NOT NULL DEFAULT 'login',
+    pending_hash    TEXT    NOT NULL UNIQUE,
+    code_hash       TEXT    NOT NULL,
+    expires_at      TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_two_fa_challenges_user
+    ON two_fa_challenges(restaurant_id, user_id, purpose);
+
+-- Who opened each admin view-as session, and whether it may write. A view-as
+-- opened by a read-only support login used to be a full client session that
+-- could turn 2FA off or shorten review retention (SEC-12). Keyed by the
+-- session's token hash, as sessions itself is.
+CREATE TABLE IF NOT EXISTS view_as_sessions (
+    token_hash      TEXT    PRIMARY KEY,
+    opened_by       INTEGER,
+    read_only       INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -324,6 +355,13 @@ def init_auth(db_path: str = DB_PATH):
         # restaurant unlinked it, the session fell back to users.role 'client'
         # there and opened that owner console (SEC-1).
         "ALTER TABLE sessions ADD COLUMN staff_restaurant_id INTEGER",
+        # SEC-19: a lockout's length escalates with the lockouts before it
+        # that day, so slow online guessing against one PIN stops paying off.
+        "ALTER TABLE membership_pin_attempts ADD COLUMN lockout_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE membership_pin_attempts ADD COLUMN last_locked_at TEXT",
+        # SEC-18: a portal hit that turned out fine (a sign-in that worked, a
+        # roster read with a real code) no longer spends the failure budget.
+        "ALTER TABLE portal_attempts ADD COLUMN ok INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             import sqlite3 as _sql
@@ -373,6 +411,19 @@ def init_auth(db_path: str = DB_PATH):
         # silently missing index is exactly the kind of thing that is only
         # discovered under load, so it must be visible at boot.
         print(f"[auth] index creation failed: {exc}")
+
+    # The 2FA code and pending secret used to live in plaintext on the
+    # restaurants row (SEC-20/SEC-39). Nothing reads those columns any more
+    # (two_fa_challenges replaced them); blank any value left from before so
+    # no live code sits in the file or in a backup of it.
+    try:
+        conn_2fa = sqlite3.connect(db_path)
+        conn_2fa.execute("UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
+                         "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
+        conn_2fa.commit()
+        conn_2fa.close()
+    except Exception:
+        pass  # restaurants not created yet (init_db runs first at boot)
 
     backfill_memberships(db_path=db_path)
     prune_login_history(db_path=db_path)
@@ -672,6 +723,13 @@ PIN_MIN_LENGTH = 4
 PIN_MAX_LENGTH = 8
 PIN_MAX_ATTEMPTS = 5
 PIN_LOCKOUT_MINUTES = 15
+# Each further lockout inside a day doubles the last, up to a day. Every
+# lockout used to be a flat 15 minutes with the counter reset, i.e. five
+# guesses every quarter hour forever — the whole 4-digit space in about three
+# weeks of patient guessing at one tablet (SEC-19). An owner can still lift a
+# lock at once (Account → Staff → Unlock), which is the answer to a coworker
+# locking someone out on purpose.
+PIN_LOCKOUT_MAX_MINUTES = 24 * 60
 # A staff session is a shift, not a month. These are frequently shared
 # devices sitting on a pass or a host stand.
 STAFF_SESSION_HOURS = 14
@@ -895,9 +953,23 @@ def _record_pin_failure(membership_id: int, db_path: str = DB_PATH) -> dict:
                            "WHERE membership_id=?", (membership_id,)).fetchone()
         count = row["failed_count"] if row else 1
         if count >= PIN_MAX_ATTEMPTS:
-            until = (datetime.utcnow() + _td(minutes=PIN_LOCKOUT_MINUTES)).isoformat()
-            conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
-                         "WHERE membership_id=?", (until, membership_id))
+            prior = 0
+            try:
+                prev = conn.execute(
+                    "SELECT lockout_count FROM membership_pin_attempts WHERE membership_id=? "
+                    "AND last_locked_at >= datetime('now', '-1 day')", (membership_id,)).fetchone()
+                prior = (prev["lockout_count"] or 0) if prev else 0
+            except Exception:
+                prior = 0      # a database without the SEC-19 columns: flat lockouts, as before
+            minutes = min(PIN_LOCKOUT_MINUTES * (2 ** prior), PIN_LOCKOUT_MAX_MINUTES)
+            until = (datetime.utcnow() + _td(minutes=minutes)).isoformat()
+            try:
+                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0, "
+                             "lockout_count=?, last_locked_at=datetime('now') WHERE membership_id=?",
+                             (until, prior + 1, membership_id))
+            except Exception:
+                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
+                             "WHERE membership_id=?", (until, membership_id))
             conn.commit()
     finally:
         conn.close()
@@ -1113,6 +1185,167 @@ def read_pending_token(token: str):
         return None
 
 
+# ── admin view-as (SEC-12) ────────────────────────────────────────────────────
+
+def record_view_as_session(token: str, opened_by, read_only: bool, db_path: str = DB_PATH) -> None:
+    """Note who opened a view-as session and whether it is read-only (it is
+    when a support login opened it). get_session_user reads it back."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM view_as_sessions WHERE created_at < datetime('now', '-2 days')")
+        conn.execute("INSERT OR REPLACE INTO view_as_sessions (token_hash, opened_by, read_only) VALUES (?,?,?)",
+                     (hash_session_token(token), opened_by, 1 if read_only else 0))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _view_as_read_only(conn, token: str) -> bool:
+    try:
+        row = conn.execute("SELECT read_only FROM view_as_sessions WHERE token_hash=?",
+                           (hash_session_token(token),)).fetchone()
+    except Exception:
+        # No table means no support-opened session can exist in this file.
+        return False
+    return bool(row and row[0])
+
+
+def view_as_write_denied(user) -> bool:
+    """True when this request is a write through a read-only view-as."""
+    return bool(user and user.get("view_as_read_only")) and request.method not in ("GET", "HEAD", "OPTIONS")
+
+
+_VIEW_AS_READ_ONLY_MSG = "This is a read-only support view. Nothing was changed."
+
+
+# ── 2FA challenges (SEC-20) ─────────────────────────────────────────────────
+
+TWO_FA_CODE_MINUTES = 10
+
+
+def _two_fa_hash(kind: str, value: str) -> str:
+    import hmac as _h, hashlib as _hl
+    return _h.new(_pending_key(), f"2fa-{kind}:{value}".encode(), _hl.sha256).hexdigest()
+
+
+def _new_two_fa_code() -> str:
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def issue_two_fa_challenge(restaurant_id: int, user_id: int, purpose: str = "login",
+                           db_path: str = DB_PATH):
+    """Start a 2FA challenge for one login. Returns (pending_secret, code):
+    the code goes to the owner by email or text, the pending secret rides in
+    the signed pending token (make_pending_token). Each sign-in attempt gets
+    its own row, so two people signing in at one restaurant no longer
+    overwrite each other's code. A 'setup' challenge ("Send test code") is one
+    per login: a new one replaces that login's previous one and nobody
+    else's."""
+    pending = secrets.token_hex(24)
+    pending_hash = _two_fa_hash("pending", pending)
+    code = _new_two_fa_code()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM two_fa_challenges WHERE expires_at < datetime('now', '-1 day')")
+        if purpose != "login":
+            conn.execute("DELETE FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose=?",
+                         (restaurant_id, user_id, purpose))
+        conn.execute(
+            "INSERT INTO two_fa_challenges (restaurant_id, user_id, purpose, pending_hash, code_hash, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now', ?))",
+            (restaurant_id, user_id, purpose, pending_hash,
+             _two_fa_hash("code", pending_hash + ":" + code), f"+{TWO_FA_CODE_MINUTES} minutes"))
+        conn.commit()
+    finally:
+        conn.close()
+    return pending, code
+
+
+def _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose):
+    if pending is None:
+        return conn.execute(
+            "SELECT * FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose=? "
+            "ORDER BY id DESC LIMIT 1", (restaurant_id, user_id, purpose)).fetchone()
+    return conn.execute(
+        "SELECT * FROM two_fa_challenges WHERE pending_hash=? AND restaurant_id=? AND user_id=? AND purpose=?",
+        (_two_fa_hash("pending", pending), restaurant_id, user_id, purpose)).fetchone()
+
+
+def two_fa_challenge_exists(restaurant_id: int, user_id: int, pending: str,
+                            purpose: str = "login", db_path: str = DB_PATH) -> bool:
+    """True when this pending secret was issued by a sign-in for exactly this
+    login at this restaurant and has not been used yet."""
+    if not pending:
+        return False
+    conn = get_conn(db_path)
+    try:
+        return _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose) is not None
+    finally:
+        conn.close()
+
+
+def reissue_two_fa_code(restaurant_id: int, user_id: int, pending: str,
+                        db_path: str = DB_PATH):
+    """Resend: a fresh code (and a fresh 10 minutes) for the same sign-in.
+    Returns the new code, or None when the challenge is gone."""
+    if not pending:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = _find_two_fa_challenge(conn, restaurant_id, user_id, pending, "login")
+        if not row:
+            return None
+        code = _new_two_fa_code()
+        conn.execute("UPDATE two_fa_challenges SET code_hash=?, expires_at=datetime('now', ?) WHERE id=?",
+                     (_two_fa_hash("code", row["pending_hash"] + ":" + code), f"+{TWO_FA_CODE_MINUTES} minutes",
+                      row["id"]))
+        conn.commit()
+        return code
+    finally:
+        conn.close()
+
+
+def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str = None,
+                      purpose: str = "login", consume: bool = True, db_path: str = DB_PATH) -> str:
+    """'ok', 'wrong', 'expired' or 'missing' for a code typed against one
+    login's challenge. 'setup' challenges are looked up by login (pending
+    None); 'login' ones by the pending secret. A correct, unexpired code
+    deletes the challenge when consume is set, so it works exactly once."""
+    import hmac as _h
+    conn = get_conn(db_path)
+    try:
+        row = _find_two_fa_challenge(conn, restaurant_id, user_id, pending, purpose)
+        if not row:
+            return "missing"
+        expected = _two_fa_hash("code", row["pending_hash"] + ":" + (code or "").strip())
+        if not _h.compare_digest(row["code_hash"], expected):
+            return "wrong"
+        expired = conn.execute("SELECT datetime('now') > ?", (row["expires_at"],)).fetchone()[0]
+        if expired:
+            return "expired"
+        if consume:
+            conn.execute("DELETE FROM two_fa_challenges WHERE id=?", (row["id"],))
+            conn.commit()
+        return "ok"
+    finally:
+        conn.close()
+
+
+def end_two_fa_challenge(restaurant_id: int, user_id: int, pending: str,
+                         db_path: str = DB_PATH) -> None:
+    """Delete one sign-in's challenge once it has been passed (single use),
+    whether it was passed with the code or with a backup code."""
+    if not pending:
+        return
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM two_fa_challenges WHERE pending_hash=? AND restaurant_id=? AND user_id=?",
+                     (_two_fa_hash("pending", pending), restaurant_id, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def create_staff_session(user_id: int, restaurant_id: int, ip_address: str = None,
                          user_agent: str = None, device_id: str = None,
                          db_path: str = DB_PATH) -> str:
@@ -1252,27 +1485,37 @@ def restaurant_for_portal_token(token: str, db_path: str = DB_PATH) -> Optional[
 
 # ── Staff portal throttle + replay protection ──────────────────────────────
 
+# Per address, per 5 minutes: 30 hits that did not end well (a wrong PIN, a
+# stale nonce, an unknown code, a signup step), and 300 of anything. Every
+# hit used to count against the 30, successes included, so at shift change
+# the 16th employee signing in on the restaurant's Wi-Fi (one NAT address, a
+# roster read and a sign-in each) was refused (SEC-18).
 PORTAL_MAX_ATTEMPTS = 30
+PORTAL_MAX_REQUESTS = 300
 PORTAL_WINDOW_SECONDS = 300
 PORTAL_NONCE_MINUTES = 30
 
 
-def record_portal_attempt(ip: str, db_path: str = DB_PATH) -> None:
+def record_portal_attempt(ip: str, db_path: str = DB_PATH):
     """Count one hit on the portal's public surface, and evict the expired.
+    Returns the row's id, for mark_portal_attempt_ok once the hit turns out
+    fine. Recorded BEFORE the work, so concurrent guesses all count.
 
     The delete is done here rather than in a scheduled sweep so the table can
     never grow past one window's worth of traffic, with no process that has to
     remember to run.
     """
     if not ip:
-        return
+        return None
     try:
         conn = get_conn(db_path)
         try:
-            conn.execute("INSERT INTO portal_attempts (ip) VALUES (?)", (ip,))
+            cur = conn.execute("INSERT INTO portal_attempts (ip) VALUES (?)", (ip,))
+            attempt_id = cur.lastrowid
             conn.execute("DELETE FROM portal_attempts WHERE created_at < datetime('now', ?)",
                          (f"-{PORTAL_WINDOW_SECONDS} seconds",))
             conn.commit()
+            return attempt_id
         finally:
             conn.close()
     except Exception as exc:
@@ -1282,6 +1525,23 @@ def record_portal_attempt(ip: str, db_path: str = DB_PATH) -> None:
         # INVISIBLE — a counter that has silently stopped counting looks
         # exactly like an estate nobody is attacking.
         _report_throttle_failure(exc, "record_portal_attempt", ip)
+        return None
+
+
+def mark_portal_attempt_ok(attempt_id, db_path: str = DB_PATH) -> None:
+    """The hit recorded as attempt_id ended well: it still counts toward the
+    address's overall ceiling, not toward its failure budget (SEC-18)."""
+    if not attempt_id:
+        return
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE portal_attempts SET ok=1 WHERE id=?", (attempt_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        _report_throttle_failure(exc, "mark_portal_attempt_ok", str(attempt_id))
 
 
 def _report_throttle_failure(exc, where, ip):
@@ -1300,12 +1560,14 @@ def portal_attempts_exceeded(ip: str, db_path: str = DB_PATH) -> bool:
         conn = get_conn(db_path)
         try:
             row = conn.execute(
-                "SELECT COUNT(*) AS n FROM portal_attempts "
-                "WHERE ip=? AND created_at >= datetime('now', ?)",
+                "SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ok=1 THEN 0 ELSE 1 END), 0) AS failed "
+                "FROM portal_attempts WHERE ip=? AND created_at >= datetime('now', ?)",
                 (ip, f"-{PORTAL_WINDOW_SECONDS} seconds")).fetchone()
         finally:
             conn.close()
-        return (row["n"] if row else 0) >= PORTAL_MAX_ATTEMPTS
+        if not row:
+            return False
+        return row["failed"] >= PORTAL_MAX_ATTEMPTS or row["n"] >= PORTAL_MAX_REQUESTS
     except Exception as exc:
         # Fails open, for the same reason as above — and reported, for the
         # same reason as above.
@@ -1808,10 +2070,27 @@ def get_user_by_id(user_id: int, db_path: str = DB_PATH) -> Optional[dict]:
     conn.close()
     return dict(row) if row else None
 
+_DUMMY_HASH = None
+
+
+def _dummy_password_hash() -> str:
+    """A hash made with the same method and cost as a real one, of a random
+    secret nobody knows — what verify_password checks an unknown username's
+    password against so both branches cost the same."""
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = generate_password_hash(secrets.token_hex(16))
+    return _DUMMY_HASH
+
+
 def verify_password(username: str, password: str,
                     db_path: str = DB_PATH) -> Optional[dict]:
     user = get_user_by_username(username, db_path)
     if not user:
+        # Pay for one hash anyway (SEC-35). Returning here before any hashing
+        # made an unknown username answer in microseconds and a known one in
+        # ~100ms, so the login form enumerated usernames by timing.
+        check_password_hash(_dummy_password_hash(), password or "")
         return None
     if not check_password_hash(user["password_hash"], password):
         return None
@@ -2544,6 +2823,8 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     acting_rid = (user.get("active_restaurant_id") if owner_switched
                   else (staff_rid or user.get("restaurant_id")))
     user["grants"] = _grants_for(conn, user["id"], acting_rid)
+    if (user.get("device_type") or "") == "admin-view-as":
+        user["view_as_read_only"] = _view_as_read_only(conn, token)
 
     # SEC-1: fail closed. An identity that HAS memberships but none active
     # where this session acts is not authorised there — it used to fall back
@@ -2734,6 +3015,9 @@ _MODULE_PREFIXES = (
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
+    # The weekly waste series the Food Cost tab charts. Unmapped, a manager
+    # without FOOD_COST_VIEW read it (SEC-24).
+    ("/api/inv-trend",              "inventory"),
     ("/mobile/api/food-cost",       "inventory"),
     # Marketing
     ("/api/marketing/",             "marketing"),
@@ -2750,6 +3034,63 @@ _MODULE_PREFIXES = (
     ("/api/intel/",                 "intel"),
     ("/api/ai-visibility",          "intel"),
     ("/mobile/api/intel",           "intel"),
+)
+
+
+# Every /api and /mobile/api route is either under a module prefix above or
+# on this list, which says why it is deliberately NOT gated by a module
+# (SEC-24; tests/test_edge_sec_permissions.py enforces it). A new route that
+# is on neither fails that test, so "which module owns this?" gets asked
+# when the route is written rather than discovered in an audit. Being on
+# this list is not "open to everyone": the account-holder switches check
+# permissions.is_principal / principal_only inside, team and loss routes
+# their own permissions, and the admin paths admin_required.
+_UNGATED_PREFIXES = (
+    # Signing in and out, the session, and the account's own security. Not a
+    # module; owner-only pieces check is_principal in the handler.
+    "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
+    "/mobile/api/forgot-password", "/mobile/api/reset-password", "/mobile/api/logout", "/mobile/api/me",
+    "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions",
+    "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
+    "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
+    "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",
+    # Account, settings, billing and team administration: restaurant-wide.
+    # ("/api/account" also covers /api/account-settings/...)
+    "/api/account", "/mobile/api/account", "/api/alert-settings", "/api/update-digest-day",
+    "/api/send-test-digest", "/api/billing-info", "/api/theme", "/api/dismiss-onboarding",
+    "/api/dismiss-welcome", "/api/email-history", "/api/send-referral", "/api/changelog",
+    "/mobile/api/changelog", "/api/log-activity", "/api/activity", "/mobile/api/activity",
+    "/api/team/", "/mobile/api/team/",
+    # Integrations. Credential writes are principal_only in the handler.
+    "/api/webhook", "/api/toast/", "/api/square/", "/api/clover/", "/api/rpower/",
+    "/mobile/api/connections/", "/api/instagram-",
+    # Cross-module surfaces: they read several modules and belong to none
+    # (Home, Ask Cavnar, the action/issue/goal/outcome loop, notifications,
+    # the morning brief), so a single module gate would be wrong for them.
+    "/api/home", "/mobile/api/home", "/api/ask-cavnar", "/mobile/api/ask-cavnar",
+    "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
+    "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
+    "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",
+    "/api/metrics", "/mobile/api/metrics", "/api/value", "/mobile/api/value",
+    "/api/cross-module", "/mobile/api/cross-module", "/api/good-news", "/mobile/api/good-news",
+    "/api/milestones", "/mobile/api/milestones", "/api/monthly-review", "/mobile/api/monthly-review",
+    "/api/morning-brief", "/mobile/api/morning-brief", "/api/closeout", "/mobile/api/closeout",
+    "/api/tasks", "/mobile/api/tasks",
+    # Comps and voids: LOSS_VIEW, checked in the handler.
+    "/api/loss-signals", "/mobile/api/loss-signals",
+    # Polled from every screen (the new-reviews count) or reached from the
+    # review card on Home; the Reviews tab itself is gated above.
+    "/api/review-count", "/api/mark-posted/", "/api/export-reviews",
+    # Competitor intel decides its own availability (full system + listing).
+    "/api/competitor-intel", "/api/refresh-competitor-intel",
+    # Social posting and Meta's app-review endpoints (social_routes).
+    "/api/post-to-facebook", "/api/post-to-instagram", "/api/post-insights", "/api/meta-review-test",
+    # Public pages whose token is the credential.
+    "/api/public/",
+    # One-off admin tools (admin_required), and two login_required debug
+    # endpoints (debug-insights, gbp-debug) that are candidates for removal
+    # after verification — listed so they stay visible, not endorsed.
+    "/api/debug-insights", "/api/gbp-debug", "/api/admin/",
 )
 
 
@@ -2932,6 +3273,9 @@ def login_required(f):
             from flask import jsonify as _jsonify_mp
             return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
                                module_forbidden=True, module=unauthorised), 403
+        if view_as_write_denied(user):
+            from flask import jsonify as _jsonify_vr
+            return _jsonify_vr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -3019,6 +3363,9 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mmp
             return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorised),
                                 module_forbidden=True, module=unauthorised), 403
+        if view_as_write_denied(user):
+            from flask import jsonify as _jsonify_mvr
+            return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 

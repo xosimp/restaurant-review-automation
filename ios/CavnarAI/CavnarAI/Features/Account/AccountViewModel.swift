@@ -76,8 +76,11 @@ final class AccountViewModel {
         defer { isLoading = false }
         do {
             summary = try await client.send("/mobile/api/account")
+            RestaurantClock.learn(summary?.profile.timezone)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load account settings."
         }

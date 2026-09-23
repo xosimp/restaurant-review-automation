@@ -124,8 +124,8 @@ def test_html_document_does_not_wrap_a_document_twice():
 
 
 def test_weekly_digest_renders_light_even_for_a_dark_dashboard(monkeypatch):
-    """The dashboard POSTs its own dark-mode switch to /api/theme on every page
-    load. That column used to decide this email's colors, so preferring a dark
+    """The dashboard used to POST its own dark-mode switch to /api/theme on
+    every page load (removed, CLIENT-38). That column used to decide this email's colors, so preferring a dark
     dashboard silently turned the weekly digest dark."""
     import reporter
     from models import WeeklyReport

@@ -23,16 +23,12 @@ final class EdgeAccessibilityThemingTests: XCTestCase {
 
     func testThePairsListDoesNotClipRowsAtLargeTextSizes() throws {
         let source = try EdgeSource.read("Features/Labor/RosterSection.swift")
-        XCTExpectFailure("CLIENT-35: RosterSection's pairs list is .scrollDisabled with height = count * 56", strict: true) {
-            XCTAssertFalse(fixedHeightNonScrollingList(in: source))
-        }
+        XCTAssertFalse(fixedHeightNonScrollingList(in: source))
     }
 
     func testTheDemandSignalsListDoesNotClipRowsAtLargeTextSizes() throws {
         let source = try EdgeSource.read("Features/Labor/DemandSignalsSection.swift")
-        XCTExpectFailure("CLIENT-35: DemandSignalsSection's list is .scrollDisabled with height = count * 58", strict: true) {
-            XCTAssertFalse(fixedHeightNonScrollingList(in: source))
-        }
+        XCTAssertFalse(fixedHeightNonScrollingList(in: source))
     }
 
     func testTheClippingCheckItselfRecognisesAMeasuredList() {
@@ -57,9 +53,7 @@ final class EdgeAccessibilityThemingTests: XCTestCase {
     private func assertMDY(_ file: String, line: UInt = #line) throws {
         let source = try EdgeSource.read(file)
         let found = spelledOutDateFormats(in: source)
-        XCTExpectFailure("CLIENT-45: \(file) formats owner-facing dates as \(found), not M/D/YY", strict: true) {
-            XCTAssertEqual(found, [], file, line: line)
-        }
+        XCTAssertEqual(found, [], file, line: line)
     }
 
     func testScheduleHistoryDatesAreMDY() throws { try assertMDY("Features/ScheduleHistory/ScheduleHistoryView.swift") }
@@ -71,16 +65,12 @@ final class EdgeAccessibilityThemingTests: XCTestCase {
     func testTheInvoiceDateIsShownMDY() throws {
         let source = try EdgeSource.read("Features/FoodCost/InvoiceScanSheet.swift")
         XCTAssertTrue(source.contains("inv.invoiceDate"))
-        XCTExpectFailure("CLIENT-45: the invoice card prints invoice_date as sent (2026-09-18)", strict: true) {
-            XCTAssertTrue(source.contains("CavnarDate.mdy"))
-        }
+        XCTAssertTrue(source.contains("CavnarDate.mdy"))
     }
 
     func testTheContentCalendarRangeIsMDY() throws {
         let source = try EdgeSource.read("Features/Marketing/MarketingView.swift")
-        XCTExpectFailure("CLIENT-45: the content calendar's range is spelled with abbreviated month names", strict: true) {
-            XCTAssertFalse(source.contains(".month(.abbreviated)"))
-        }
+        XCTAssertFalse(source.contains(".month(.abbreviated)"))
     }
 
     func testTheDateCheckItselfAcceptsMachineFormats() {

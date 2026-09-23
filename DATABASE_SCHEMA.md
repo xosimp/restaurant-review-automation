@@ -29,7 +29,9 @@ The tenant row (191 columns). Everything else hangs off `restaurants.id`. The li
 
 ### Staff portal (auth.py `AUTH_SCHEMA`)
 - `memberships`: an employee's identity at a restaurant (name, job role, PIN hash, `pos_id`), the row the staff portal signs in against.
-- `membership_pin_attempts`, `portal_attempts`, `portal_nonces`: PIN lockout, portal throttling, one-time nonces.
+- `membership_pin_attempts`, `portal_attempts`, `portal_nonces`: PIN lockout, portal throttling, one-time nonces. A lockout lasts 15 min × 2^(lockouts in the last day), capped at 24 h (`lockout_count`, `last_locked_at`); `portal_attempts.ok=1` marks a hit that ended well, which counts toward the 300-per-5-min ceiling but not the 30 failures (SEC-18/19).
+- `two_fa_challenges`: one row per 2FA sign-in attempt (`purpose='login'`) or per login's "Send test code" (`'setup'`); the code and the pending secret are keyed hashes only, single-use, 10 minutes. `restaurants.two_fa_code/two_fa_pending/two_fa_expires` are no longer read and are blanked at boot (SEC-20/39).
+- `view_as_sessions`: who opened each admin view-as session (by session-token hash) and whether it is read-only (opened by support; SEC-12).
 - `staff_portal_tokens`: the per-restaurant portal links; `staff_signups`: the claim-your-name flow.
 - `permission_grants`, `login_prefs`: see *Strategic foundations* below.
 

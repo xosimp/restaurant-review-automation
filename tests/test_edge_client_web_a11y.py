@@ -126,7 +126,6 @@ def test_the_dashboard_has_focus_visible_rules():
     assert list(_focus_visible_rules(_css(_read("templates/dashboard.html"))))
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-59: 'input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}' removes the keyboard focus ring with nothing in its place")
 def test_a_focus_visible_rule_never_removes_the_ring_without_a_replacement():
     bad = []
     for sel, decl in _focus_visible_rules(_css(_read("templates/dashboard.html"))):
@@ -149,7 +148,6 @@ MOUSE_ONLY_TARGETS = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-59: the reply-template rows and #new-reviews-banner are <div onclick> with no role or tabindex (mouse-only)")
 @pytest.mark.parametrize("target", sorted(MOUSE_ONLY_TARGETS))
 def test_a_clickable_div_is_reachable_by_keyboard(target):
     page = _read("templates/dashboard.html")

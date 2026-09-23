@@ -9,6 +9,20 @@ enum ReviewInboxFilter: String, CaseIterable, Identifiable {
     case negative = "Negative"
     case positive = "Positive"
     var id: String { rawValue }
+
+    /// The same filter, as models.get_reviews_data names it. The inbox is
+    /// paged, so a chip has to be answered by the server over every review
+    /// — filtering the first page client-side said "No urgent reviews"
+    /// while review 51 was urgent (CLIENT-30).
+    var serverKey: String {
+        switch self {
+        case .all: return "all"
+        case .urgent: return "urgent"
+        case .toApprove: return "pending"
+        case .negative: return "negative"
+        case .positive: return "positive"
+        }
+    }
 }
 
 @Observable
@@ -31,9 +45,9 @@ final class ReviewsListViewModel {
     private(set) var hasMore = false
     private var nextOffset = 0
 
-    /// Filtering is client-side over the full inbox (load() fetches
-    /// everything with filter=all), so a chip tap is instant and the pull-to-
-    /// refresh still refreshes one list.
+    /// The chip is applied by the server (load() sends filter=serverKey), and
+    /// again here so a row whose status changed on the detail screen leaves
+    /// "To approve" at once. Search is over the rows loaded so far.
     var filteredReviews: [Review] {
         var out = reviews
         // These must mean the same thing here, in models.get_reviews_data
@@ -59,7 +73,17 @@ final class ReviewsListViewModel {
         return out
     }
 
-    func count(for filter: ReviewInboxFilter) -> Int {
+    /// A chip's count, or nil when it isn't known. Rows on the phone can be
+    /// counted only once every row of the loaded set is here; until then the
+    /// active chip shows the server's own total and the others show nothing
+    /// — counting a first page read as "0 urgent" (CLIENT-30).
+    func count(for filter: ReviewInboxFilter) -> Int? {
+        if filter == self.filter { return hasMore ? total : localCount(filter) }
+        guard self.filter == .all, !hasMore else { return nil }
+        return localCount(filter)
+    }
+
+    private func localCount(_ filter: ReviewInboxFilter) -> Int {
         switch filter {
         case .all: return reviews.count
         case .urgent: return reviews.filter(\.isUrgent).count
@@ -74,9 +98,32 @@ final class ReviewsListViewModel {
     }
 
     private let client: APIClient
+    /// Bumped by every load(). A page requested under an older generation
+    /// (loadMore in flight when a pull-to-refresh or a chip replaced the
+    /// list) belongs to the old paging and is dropped, not appended
+    /// (CLIENT-30).
+    private var generation = 0
+    private var draftObserver: NotificationToken?
 
     init(client: APIClient = .shared) {
         self.client = client
+        // A draft written or edited on the detail screen updates this list's
+        // copy of the review. The detail screen is built from that copy, so
+        // without this, reopening the same review offered "Write a reply"
+        // again — a second paid draft for one the owner already had
+        // (CLIENT-56).
+        draftObserver = NotificationToken(NotificationCenter.default.addObserver(
+            forName: ReviewDetailViewModel.draftDidChange, object: nil, queue: nil
+        ) { [weak self] note in
+            guard let id = note.userInfo?["id"] as? Int, let draft = note.userInfo?["draft"] as? String else { return }
+            // Posted only from ReviewDetailViewModel, on the main actor.
+            MainActor.assumeIsolated { self?.applyDraft(draft, toReview: id) }
+        })
+    }
+
+    private func applyDraft(_ draft: String, toReview id: Int) {
+        guard let index = reviews.firstIndex(where: { $0.id == id }) else { return }
+        reviews[index] = reviews[index].withDraft(draft)
     }
 
     private struct ReviewsResponse: Decodable {
@@ -100,14 +147,18 @@ final class ReviewsListViewModel {
     /// platform (e.g. "google"/"yelp"). Both nil/omitted keeps the normal
     /// unfiltered inbox behavior.
     func load(category: String? = nil, platform: String? = nil) async {
+        generation += 1
+        let mine = generation
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer { if mine == generation { isLoading = false } }
         do {
-            var query = ["filter": "all", "limit": "\(Self.pageSize)", "offset": "0"]
+            var query = ["filter": filter.serverKey, "limit": "\(Self.pageSize)", "offset": "0"]
             if let category { query["category"] = category }
             if let platform { query["platform"] = platform }
             let response: ReviewsResponse = try await client.send("/mobile/api/reviews", query: query)
+            // A newer load (another chip, a refresh) owns the list now.
+            guard mine == generation else { return }
             reviews = response.reviews
             total = response.total ?? response.reviews.count
             nextOffset = response.offset ?? response.reviews.count
@@ -115,13 +166,21 @@ final class ReviewsListViewModel {
             loadCategory = category
             loadPlatform = platform
             await loadStats()
+        } catch is CancellationError {
+            // The screen went away mid-load (CLIENT-49) — not a failure.
         } catch let error as APIClient.APIError {
-            errorMessage = error.message
+            if mine == generation { errorMessage = error.message }
         } catch is APIClient.SessionExpiredError {
             // Handled globally by SessionStore.
         } catch {
-            errorMessage = "Couldn't load reviews."
+            if mine == generation { errorMessage = "Couldn't load reviews." }
         }
+    }
+
+    /// load() again with whatever category/platform the list was opened
+    /// with — a chip change or a Retry.
+    func reload() async {
+        await load(category: loadCategory, platform: loadPlatform)
     }
 
     private var loadCategory: String?
@@ -130,15 +189,17 @@ final class ReviewsListViewModel {
     /// The next page, appended. Called when the last row appears.
     func loadMore() async {
         guard hasMore, !isLoadingMore, !isLoading else { return }
+        let mine = generation
         isLoadingMore = true
         defer { isLoadingMore = false }
-        var query = ["filter": "all", "limit": "\(Self.pageSize)", "offset": "\(nextOffset)"]
+        var query = ["filter": filter.serverKey, "limit": "\(Self.pageSize)", "offset": "\(nextOffset)"]
         if let loadCategory { query["category"] = loadCategory }
         if let loadPlatform { query["platform"] = loadPlatform }
         do {
             let response: ReviewsResponse = try await client.send(
                 "/mobile/api/reviews", query: query, hapticOnError: false
             )
+            guard mine == generation else { return }
             let known = Set(reviews.map(\.id))
             reviews.append(contentsOf: response.reviews.filter { !known.contains($0.id) })
             total = response.total ?? total
@@ -147,7 +208,7 @@ final class ReviewsListViewModel {
         } catch {
             // A failed page is not a failed screen — the rows already on
             // screen stay, and the next scroll retries.
-            hasMore = true
+            if mine == generation { hasMore = true }
         }
     }
 
@@ -166,4 +227,11 @@ final class ReviewsListViewModel {
         guard let index = reviews.firstIndex(where: { $0.id == reviewID }) else { return }
         reviews[index] = reviews[index].withStatus(status)
     }
+}
+
+/// Removes a block-based NotificationCenter observer when its owner goes away.
+final class NotificationToken {
+    private let token: NSObjectProtocol
+    init(_ token: NSObjectProtocol) { self.token = token }
+    deinit { NotificationCenter.default.removeObserver(token) }
 }

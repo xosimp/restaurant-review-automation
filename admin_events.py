@@ -106,3 +106,27 @@ def recent(limit=100, restaurant_id=None, db_path=None):
     for o in out:
         o.pop("payload", None)
     return out
+
+
+def audit_admin_write():
+    """before_request for every blueprint that carries /admin writes: a row in
+    admin_events with the actor, before the write runs, so a denied or failed
+    write is on the record too (security audit Z2). Reads are not logged;
+    view-as logs itself. admin_bp and status_bp both register it — the
+    status page's admin writes used to live outside the record (SEC-23)."""
+    from flask import request
+    if request.method in ("GET", "HEAD", "OPTIONS") or not (request.path or "").startswith("/admin"):
+        return None
+    try:
+        from auth import get_current_user
+        u = get_current_user() or {}
+        rid = (request.view_args or {}).get("restaurant_id")
+        # The restaurant rides in the payload, not the column: the per-client
+        # events view filters on restaurant_id and must keep showing the
+        # route's own event first (e.g. alert_cap.set), not the audit row.
+        record("audit", f"admin_write:{request.endpoint or request.path}",
+               summary=f"{u.get('username') or 'anonymous'} {request.method} {request.path}",
+               payload={"restaurant_id": rid, "actor": u.get("username"), "role": u.get("role")})
+    except Exception:
+        pass
+    return None

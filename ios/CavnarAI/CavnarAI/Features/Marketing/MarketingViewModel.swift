@@ -205,6 +205,16 @@ final class MarketingViewModel {
     var isPosting = false
     var postError: String?
     var postedPlatform: String?
+    /// "Facebook|<caption>" for each caption that went up this session. The
+    /// Post button stayed live after a success, so a second tap published
+    /// the same caption again (CLIENT-10); editing the caption makes it a
+    /// new post.
+    private var postedCaptions: Set<String> = []
+
+    /// Whether this exact caption already went to `platform`.
+    func alreadyPosted(to platform: String) -> Bool {
+        postedCaptions.contains("\(platform)|\(draft)")
+    }
 
     // Calendar
     var isGeneratingCalendar = false
@@ -299,6 +309,8 @@ final class MarketingViewModel {
             }
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load marketing data."
         }
@@ -473,6 +485,9 @@ final class MarketingViewModel {
     }
 
     private func publish(_ path: String, body: any Encodable, platform: String) async {
+        // One post at a time, and never the same caption twice (CLIENT-10).
+        guard !isPosting, !alreadyPosted(to: platform) else { return }
+        let caption = draft
         isPosting = true
         postError = nil
         defer { isPosting = false }
@@ -480,10 +495,16 @@ final class MarketingViewModel {
             let response: PostResponse = try await client.send(path, method: .post, body: body)
             if response.ok {
                 postedPlatform = platform
+                postedCaptions.insert("\(platform)|\(caption)")
                 Haptic.success()
             } else {
                 postError = response.error ?? "Couldn't post to \(platform)."
             }
+        } catch let error as APIClient.APIError where error.status == nil && error.mayHaveReachedServer {
+            // No answer, but the post may be live: "Tap to retry" invited a
+            // duplicate on the restaurant's page.
+            postError = "We lost the connection before \(platform) answered, so this may already be up. "
+                      + "Check the page before posting it again."
         } catch let error as APIClient.APIError {
             postError = error.message
         } catch {

@@ -28,6 +28,8 @@ final class ModulesGridViewModel {
             modules = summary.modules
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load your modules."
         }

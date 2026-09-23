@@ -132,25 +132,21 @@ def test_a_mobile_api_handler_that_raises_answers_in_json(app_run):
     assert _is_json_error(app_run["mobile_500"])
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: /api/* 404 is an HTML page, so the dashboard's r.json() throws and reads it as a network failure")
 def test_an_unknown_web_api_path_answers_in_json(app_run):
     assert app_run["web_404"]["status"] == 404
     assert _is_json_error(app_run["web_404"]), app_run["web_404"]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: /api/* 405 is Flask's default HTML page")
 def test_a_wrong_method_on_a_web_api_path_answers_in_json(app_run):
     assert app_run["web_405"]["status"] == 405
     assert _is_json_error(app_run["web_405"]), app_run["web_405"]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: an /api/* body over MAX_CONTENT_LENGTH gets Flask's HTML 413 page (no 413 handler)")
 def test_an_oversized_web_api_body_answers_in_json(app_run):
     assert app_run["web_413"]["status"] == 413
     assert _is_json_error(app_run["web_413"]), app_run["web_413"]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-12: an /api/* handler that raises returns the HTML 500 page")
 def test_a_web_api_handler_that_raises_answers_in_json(app_run):
     assert app_run["web_500"]["status"] == 500
     assert _is_json_error(app_run["web_500"]), app_run["web_500"]
@@ -171,7 +167,6 @@ def test_a_two_location_owner_gets_the_location_switcher(app_run):
     assert len(handlers) == 2, handlers
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-17: an apostrophe in a location name is decoded back into the inline onclick's JS string, a SyntaxError")
 def test_the_location_switcher_survives_an_apostrophe_in_the_name(app_run):
     handlers = _switcher_handlers(app_run["dashboard"]["html"])
     assert handlers
@@ -182,7 +177,6 @@ def test_the_location_switcher_survives_an_apostrophe_in_the_name(app_run):
         assert bare_quotes % 2 == 0 and "Rye's" not in js and "Tia's" not in js, js
 
 
-@pytest.mark.xfail(strict=True, reason="Dates rule (CLIENT audit web edge 24): the Home kicker is server-rendered as 'September 22, 2026' on first paint, not M/D/YY")
 def test_the_home_kicker_first_paint_is_an_mdy_date(app_run):
     m = re.search(r'id="hb-kicker">([^<]*)<', app_run["dashboard"]["html"])
     assert m

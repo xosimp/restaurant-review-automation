@@ -33,6 +33,27 @@ enum CavnarDate {
         return s == e ? s : "\(s) – \(e)"
     }
 
+    /// The same form for a Date, read on `timeZone`'s calendar day — the
+    /// phone's by default, `RestaurantClock.timeZone` for anything that
+    /// happened at the restaurant.
+    static func mdy(_ date: Date, in timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let y = c.year, let m = c.month, let d = c.day else { return "" }
+        return "\(m)/\(d)/\(String(format: "%02d", y % 100))"
+    }
+
+    /// `9/21/26 · 6:45pm` for a Date, read on `timeZone`.
+    static func mdyTime(_ date: Date, in timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.hour, .minute], from: date)
+        guard let h = c.hour, let m = c.minute else { return mdy(date, in: timeZone) }
+        let hour12 = h % 12 == 0 ? 12 : h % 12
+        return "\(mdy(date, in: timeZone)) · \(hour12):\(String(format: "%02d", m))\(h < 12 ? "am" : "pm")"
+    }
+
     /// `9/21/26 · 6:45pm` from `2026-09-21 18:45:00` (or `T18:45`); the
     /// date alone when there is no time to show.
     static func mdyTime(_ iso: String) -> String {

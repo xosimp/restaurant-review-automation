@@ -19,7 +19,7 @@ import value_delivered
 from auth import create_user, init_auth
 from auth_routes import _login_attempts
 from mobile_api import mobile_bp
-from models import create_restaurant, Restaurant, get_restaurant
+from models import create_restaurant, Restaurant, get_restaurant, update_restaurant
 
 
 def _redirect_db(monkeypatch, db_path):
@@ -127,7 +127,7 @@ def test_update_profile_strips_html_tags(client, db_path):
 def test_connect_toast_saves_credentials(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("toast.get_toast_token", lambda rid: "fake-token")
+    monkeypatch.setattr("toast.test_credentials", lambda cid, sec, guid: {"ok": True})
 
     resp = client.post("/mobile/api/connections/toast", headers=_auth_headers(token), json={
         "toast_client_id": "cid", "toast_client_secret": "csecret", "toast_restaurant_guid": "guid-1",
@@ -150,13 +150,16 @@ def test_connect_toast_requires_all_three_fields(client, db_path):
     assert resp.get_json()["ok"] is False
 
 
-def test_connect_toast_saves_but_reports_error_when_token_fetch_fails(client, db_path, monkeypatch):
-    """Credentials are saved even if the verification call fails, so the
-    owner can see what they typed and fix a typo instead of starting over
-    on a blank form."""
+def test_connect_toast_refuses_and_saves_nothing_when_toast_rejects_the_credentials(client, db_path, monkeypatch):
+    """Checked against Toast before anything is stored, as the web route
+    does (SEC-25). This used to save first, so a typo overwrote working
+    credentials; the owner still sees Toast's reason."""
     rid = _restaurant(db_path)
+    update_restaurant(rid, {"toast_client_id": "good-id", "toast_client_secret": "good-secret",
+                            "toast_restaurant_guid": "good-guid"}, db_path=db_path)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("toast.get_toast_token", lambda rid: (_ for _ in ()).throw(RuntimeError("bad credentials")))
+    monkeypatch.setattr("toast.test_credentials",
+                        lambda cid, sec, guid: {"ok": False, "error": "Auth failed (401) — bad credentials"})
 
     resp = client.post("/mobile/api/connections/toast", headers=_auth_headers(token), json={
         "toast_client_id": "cid", "toast_client_secret": "csecret", "toast_restaurant_guid": "guid-1",
@@ -166,7 +169,7 @@ def test_connect_toast_saves_but_reports_error_when_token_fetch_fails(client, db
     assert "bad credentials" in body["error"]
 
     r = get_restaurant(rid, db_path=db_path)
-    assert r.toast_client_id == "cid"
+    assert r.toast_client_id == "good-id"
 
 
 def test_disconnect_toast_clears_credentials(client, db_path):

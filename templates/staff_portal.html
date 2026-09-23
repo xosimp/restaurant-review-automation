@@ -108,6 +108,11 @@
   .pref-hrs{display:flex;gap:10px;align-items:center;margin:8px 0 10px}
   .pref-hrs input{width:90px;background:#0f0f0f;border:1px solid var(--line);border-radius:8px;padding:9px 12px;color:var(--ink);font-family:inherit;font-size:16px;text-align:center}
   .pref-note{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.5}
+  /* The 14-hour shift session ended: say so once, with the way back in. */
+  .ended{display:none;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember);
+         border-radius:12px;padding:14px 16px;margin-bottom:18px;font-size:14.5px;line-height:1.5}
+  .ended.on{display:block}
+  .ended .cbtn{margin-top:10px}
 </style>
 </head>
 <body>
@@ -115,6 +120,11 @@
   <div class="kicker">{{ restaurant.name }}</div>
   <h1>{{ employee_name }}</h1>
   <p class="sub" id="today-line">&nbsp;</p>
+
+  <div class="ended" id="session-ended" role="alert">
+    Your shift session ended, so nothing here is up to date. Sign in again to carry on.
+    <div><a class="cbtn cbtn-primary cbtn-sm" href="{{ signin_url }}">Sign in again</a></div>
+  </div>
 
   <div class="tabs">
     <button type="button" class="on" data-tab="schedule">Schedule</button>
@@ -163,9 +173,42 @@
     return String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+  /* The checklist day is the restaurant's, never this phone's: the server
+     picks it (its own time zone) when it sends the list, and a check-off
+     is recorded against the day of the list the employee is looking at. */
+  var taskDate = '';
   function today(){
-    var d = new Date(), m = ('0'+(d.getMonth()+1)).slice(-2), day = ('0'+d.getDate()).slice(-2);
-    return d.getFullYear()+'-'+m+'-'+day;
+    return taskDate;
+  }
+
+  /* Every call here needs the shift session. When it ends (14 hours, or a
+     PIN change on another device) the API answers 401 session_expired;
+     show one way back to the sign-in pad instead of a page of
+     "Could not load" lines that no retry can fix. */
+  var _fetch = window.fetch;
+  function sessionEnded(){
+    var box = $('session-ended');
+    if (box && box.className.indexOf(' on') < 0) { box.className += ' on'; window.scrollTo(0, 0); }
+  }
+  window.fetch = function(){
+    return _fetch.apply(window, arguments).then(function(r){
+      if (r.status !== 401) return r;
+      return r.clone().json().then(function(d){
+        if (d && d.session_expired) sessionEnded();
+        return r;
+      }, function(){ return r; });
+    });
+  };
+
+  /* A short line under the control that failed, in place of a dialog. */
+  function inlineMsg(el, text){
+    var host = el && el.parentNode; if (!host) return;
+    var m = null;
+    for (var i = 0; i < host.childNodes.length; i++) {
+      if (host.childNodes[i].className === 'sr-msg') { m = host.childNodes[i]; break; }
+    }
+    if (!m) { m = document.createElement('div'); m.className = 'sr-msg'; host.appendChild(m); }
+    m.textContent = text || '';
   }
 
   var tabs = document.querySelectorAll('.tabs button');
@@ -404,12 +447,12 @@
       if (reason === null) return;
       el.disabled = true;
       post('/staff/api/shift-requests', {date: drop, shift_start: el.getAttribute('data-drop-start'), reason: reason})
-        .then(function (d) { el.disabled = false; if (!d.ok) { window.alert(d.error || 'Could not send that.'); return; } el.textContent = 'Asked \u2713'; loadRequests(); })
-        .catch(function () { el.disabled = false; window.alert('Could not send that \u2014 check your connection.'); });
+        .then(function (d) { el.disabled = false; if (!d.ok) { inlineMsg(el, d.error || 'Could not send that.'); return; } inlineMsg(el, ''); el.textContent = 'Asked \u2713'; loadRequests(); })
+        .catch(function () { el.disabled = false; inlineMsg(el, 'Could not send that \u2014 check your connection.'); });
     } else if (wd) {
       el.disabled = true;
-      post('/staff/api/shift-requests/' + wd + '/withdraw').then(function (d) { if (!d.ok) { el.disabled = false; window.alert(d.error || 'Could not withdraw that.'); return; } loadRequests(); })
-        .catch(function () { el.disabled = false; });
+      post('/staff/api/shift-requests/' + wd + '/withdraw').then(function (d) { if (!d.ok) { el.disabled = false; inlineMsg(el, d.error || 'Could not withdraw that.'); return; } loadRequests(); })
+        .catch(function () { el.disabled = false; inlineMsg(el, 'Could not withdraw that \u2014 check your connection.'); });
     } else if (cl) {
       var msg = $('open-msg-' + cl); if (msg) msg.textContent = '';
       el.disabled = true;
@@ -435,7 +478,7 @@
       html += '<button type="button" class="cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm av-day' + (on ? ' on' : '') + '" data-day="' + AV_DAYS[i] + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + AV_DAYS[i].slice(0, 3) + '</button>';
     }
     html += '</div><input type="text" id="avail-notes" maxlength="300" placeholder="Anything else \u2014 \u201cnot before 10am\u201d, \u201caway Oct 3\u20136\u201d" value="' + esc(d.notes || '') + '">'
-          + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="avail-save">Save</button><span class="meta" id="avail-status">' + (d.updated_at ? 'Last saved ' + esc(String(d.updated_at).slice(0, 10)) : '') + '</span></div>';
+          + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="avail-save">Save</button><span class="meta" id="avail-status">' + (d.updated_at ? 'Last saved ' + mdyShort(String(d.updated_at).slice(0, 10)) : '') + '</span></div>';
     el.innerHTML = html;
     var btns = el.querySelectorAll('.av-day');
     for (var j = 0; j < btns.length; j++) btns[j].onclick = function () {
@@ -537,10 +580,11 @@
 
   // ── Tasks ───────────────────────────────────────────────────────────────
   function loadTasks(){
-    fetch('/staff/api/tasks?date=' + today()).then(function(r){ return r.json(); }).then(function(d){
+    fetch('/staff/api/tasks').then(function(r){ return r.json(); }).then(function(d){
       var el = $('tasks-body');
-      if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your tasks.'; return; }
+      if (!d.ok) { el.className = 'err'; el.textContent = d.error || 'Could not load your tasks.'; return; }
       el.className = '';
+      taskDate = d.task_date || '';
       if (!d.role) {
         el.innerHTML = '<div class="empty">Your job role isn’t set yet, so there’s no checklist to show. '
                      + 'A manager can set it from the dashboard.</div>';
@@ -553,7 +597,8 @@
       var done = 0;
       for (var i = 0; i < d.tasks.length; i++) if (d.tasks[i].done) done++;
       var html = '<h2>' + esc(d.role) + ' · today</h2>'
-               + '<div class="progress">' + done + ' of ' + d.tasks.length + ' done</div>';
+               + '<div class="progress">' + done + ' of ' + d.tasks.length + ' done</div>'
+               + '<div class="sr-msg" id="task-msg" role="status"></div>';
       for (var j = 0; j < d.tasks.length; j++) {
         var t = d.tasks[j];
         html += '<label class="task' + (t.done ? ' done' : '') + '">'
@@ -573,12 +618,20 @@
     if (!el || !el.getAttribute) return;
     var id = el.getAttribute('data-task');
     if (id === null) return;
+    var want = el.checked;
+    function refused(text){
+      /* Put the box back the way the server has it, and say why. */
+      el.checked = !want;
+      var m = $('task-msg'); if (m) m.textContent = text;
+    }
     fetch('/staff/api/tasks/complete', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({template_id: parseInt(id, 10), task_date: today(), done: el.checked})
-    }).then(function(r){ return r.json(); }).then(function(){ loadTasks(); })
-      .catch(function(){ loadTasks(); });
+      body: JSON.stringify({template_id: parseInt(id, 10), task_date: today(), done: want})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok) { refused(d.error || 'That didn\u2019t save \u2014 try again.'); return; }
+      loadTasks();
+    }).catch(function(){ refused('That didn\u2019t save \u2014 check your connection.'); });
   });
 
   // ── Profile ─────────────────────────────────────────────────────────────

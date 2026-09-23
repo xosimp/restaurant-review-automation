@@ -96,11 +96,38 @@ def _auth_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+_ISSUED_2FA_CODES = []
+
+
+@pytest.fixture(autouse=True)
+def _capture_issued_2fa_codes(monkeypatch):
+    """The code a 2FA challenge was issued with, as the owner would read it
+    in the email or text. It is only stored as a keyed hash (SEC-20/SEC-39),
+    so the database can no longer hand it back; the routes import these two
+    functions from auth at call time, so wrapping them here sees every code."""
+    _ISSUED_2FA_CODES.clear()
+    real_issue, real_reissue = auth.issue_two_fa_challenge, auth.reissue_two_fa_code
+
+    def issue(restaurant_id, user_id, purpose="login", **kw):
+        pending, code = real_issue(restaurant_id, user_id, purpose, **kw)
+        _ISSUED_2FA_CODES.append((restaurant_id, code))
+        return pending, code
+
+    def reissue(restaurant_id, user_id, pending, **kw):
+        code = real_reissue(restaurant_id, user_id, pending, **kw)
+        if code:
+            _ISSUED_2FA_CODES.append((restaurant_id, code))
+        return code
+    monkeypatch.setattr(auth, "issue_two_fa_challenge", issue)
+    monkeypatch.setattr(auth, "reissue_two_fa_code", reissue)
+    yield
+    _ISSUED_2FA_CODES.clear()
+
+
 def _stored_2fa_code(db_path, rid):
-    conn = get_conn(db_path)
-    row = conn.execute("SELECT two_fa_code FROM restaurants WHERE id=?", (rid,)).fetchone()
-    conn.close()
-    return row["two_fa_code"]
+    """The most recent 2FA code issued for this restaurant."""
+    codes = [code for r, code in _ISSUED_2FA_CODES if r == rid]
+    return codes[-1] if codes else None
 
 
 # ── /login ────────────────────────────────────────────────────────────────
@@ -146,7 +173,9 @@ def test_apple_signin_matches_by_email_and_backfills_apple_user_id(client, db_pa
     create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
     monkeypatch.setattr(
         "mobile_api._verify_apple_identity_token",
-        lambda token, bundle_id: {"sub": "apple-stable-id-1", "email": "alice@x.com"},
+        # A real Apple identity token carries email_verified; an email match
+        # only links the Apple ID when it is true (SEC-38).
+        lambda token, bundle_id: {"sub": "apple-stable-id-1", "email": "alice@x.com", "email_verified": "true"},
     )
     resp = client.post("/mobile/api/apple-signin", json={"identity_token": "fake"})
     data = resp.get_json()
@@ -1872,10 +1901,13 @@ def test_2fa_send_test_and_verify_enables_2fa(client, db_path, monkeypatch):
     assert row["two_fa_enabled"] == 1
 
 
-def test_2fa_verify_rejects_wrong_code(client, db_path):
+def test_2fa_verify_rejects_wrong_code(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
-    update_restaurant(rid, {"two_fa_code": "111111", "two_fa_expires": "2099-01-01 00:00:00"}, db_path=db_path)
+    update_restaurant(rid, {"owner_email": "owner@x.com"}, db_path=db_path)
     token = _login(client, db_path, rid)
+    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: True)
+    client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
+    assert _stored_2fa_code(db_path, rid) not in (None, "999999")
 
     resp = client.post(
         "/mobile/api/account/2fa/verify", json={"code": "999999"}, headers=_auth_headers(token)

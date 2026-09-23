@@ -73,18 +73,9 @@ struct ScheduledPost: Decodable, Identifiable {
 
     var isPending: Bool { status == "scheduled" }
 
-    /// "Tue 6 Sep, 11:00 AM" — the restaurant's own wall clock, which is what
+    /// "9/6/26 · 11:00am" — the restaurant's own wall clock, which is what
     /// the owner picked, so it is read as one rather than converted.
-    var whenLabel: String {
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        parser.timeZone = TimeZone(identifier: "UTC")
-        guard let date = parser.date(from: String(scheduledFor.prefix(19))) else { return scheduledFor }
-        let out = DateFormatter()
-        out.dateFormat = "EEE d MMM, h:mm a"
-        out.timeZone = TimeZone(identifier: "UTC")
-        return out.string(from: date)
-    }
+    var whenLabel: String { CavnarDate.mdyTime(scheduledFor) }
 
     var statusLabel: String {
         switch status {
@@ -317,16 +308,16 @@ struct GuestCampaign: Decodable, Identifiable {
         case createdAt = "created_at"
     }
 
+    /// created_at is UTC; the day it went out is the restaurant's day.
     var whenLabel: String {
         let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
         parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
         parser.timeZone = TimeZone(identifier: "UTC")
         guard let raw = createdAt, let date = parser.date(from: String(raw.prefix(19))) else {
             return createdAt ?? ""
         }
-        let out = DateFormatter()
-        out.dateFormat = "d MMM"
-        return out.string(from: date)
+        return CavnarDate.mdy(date, in: RestaurantClock.timeZone)
     }
 }
 

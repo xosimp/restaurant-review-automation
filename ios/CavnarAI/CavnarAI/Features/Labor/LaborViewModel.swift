@@ -1198,9 +1198,56 @@ final class LaborViewModel {
             cacheStats(fetched)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load labor stats."
         }
+        await reattachToRunningGeneration()
+    }
+
+    // MARK: - A generation that outlives the screen
+
+    /// The job this restaurant's schedule generation is running under,
+    /// kept outside the view model. LaborView builds a fresh view model per
+    /// visit, and one that left mid-generation took the job id with it: the
+    /// job finished server-side and the next visit showed a Generate button
+    /// as if nothing had happened (CLIENT-27).
+    private struct RunningGeneration: Codable {
+        let jobId: String
+        let startedAt: Date
+        let dates: [String]
+    }
+
+    private static var runningGenerationKey: String { SessionScope.key("labor.runningGeneration") }
+    /// Past the poll's own 15-minute budget, a remembered job is stale.
+    private static let runningGenerationMaxAge: TimeInterval = 20 * 60
+
+    private func rememberRunningGeneration(_ jobId: String, dates: [String]) {
+        let entry = RunningGeneration(jobId: jobId, startedAt: Date(), dates: dates)
+        if let data = try? JSONEncoder().encode(entry) {
+            SecureCache.write(data, key: Self.runningGenerationKey)
+        }
+    }
+
+    private func forgetRunningGeneration() {
+        SecureCache.delete(key: Self.runningGenerationKey)
+    }
+
+    /// Picks a generation started on an earlier visit back up: one status
+    /// check now (so a job that finished while the manager was away lands
+    /// straight away), then the usual polling if it is still running.
+    private func reattachToRunningGeneration() async {
+        guard !isGeneratingSchedule,
+              let data = SecureCache.read(key: Self.runningGenerationKey),
+              let entry = try? JSONDecoder().decode(RunningGeneration.self, from: data) else { return }
+        guard Date().timeIntervalSince(entry.startedAt) < Self.runningGenerationMaxAge else {
+            forgetRunningGeneration()
+            return
+        }
+        isGeneratingSchedule = true
+        regeneratingDates = entry.dates
+        await pollSchedule(jobId: entry.jobId, firstCheckWithoutWaiting: true)
     }
 
     private struct AvailabilityListResponse: Decodable {
@@ -1598,8 +1645,15 @@ final class LaborViewModel {
     /// What happened to the manager's last edit. A failed save used to be
     /// silent, which left the old score on screen beside a CHANGED badge
     /// implying it was current — on a flaky connection, the default outcome.
-    enum OverrideState: Equatable { case idle, saving, saved, failed(String) }
+    enum OverrideState: Equatable { case idle, saving, failed(String) }
     var overrideState: OverrideState = .idle
+    /// Bumped on every successful save. The quality panel shows its "Change
+    /// saved" line for a few seconds off this; the view model used to hold
+    /// a `.saved` state by sleeping four seconds inside the save, which kept
+    /// Save disabled for all of them (CLIENT-62).
+    var savedTick = 0
+    /// The save in flight, so the next waits for it (see rescoreQuality).
+    private var saveChain: Task<Void, Never>?
 
     private struct ReplacementsBody: Encodable {
         let rows: [ScheduleRow]
@@ -1655,7 +1709,23 @@ final class LaborViewModel {
     /// in this view model, the score moved, and publishing read the CSV
     /// saved at generation time — so staff received the week the manager
     /// had just fixed, unfixed, with nothing on screen to say so.
+    ///
+    /// Saves run one at a time. Each names the version it builds on, and two
+    /// quick edits used to read `latestVersion` before either had answered —
+    /// both named version 3, and the server refused the second as somebody
+    /// else's save (CLIENT-29). Waiting for the one before means the second
+    /// names the version the first just wrote.
     func rescoreQuality(save: Bool = true) async {
+        let previous = saveChain
+        let mine = Task { @MainActor [weak self] in
+            await previous?.value
+            await self?.performRescore(save: save)
+        }
+        saveChain = mine
+        await mine.value
+    }
+
+    private func performRescore(save: Bool) async {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isRescoringQuality = true
         overrideState = .saving
@@ -1686,8 +1756,8 @@ final class LaborViewModel {
             scheduleResult = result
             cacheSchedule(result)
             if save { hasUnsavedFixes = false }
-            overrideState = (response.saved ?? false) ? .saved : .idle
-            if overrideState == .saved {
+            overrideState = .idle
+            if response.saved ?? false {
                 // The version just written is now the latest; the next
                 // save must name it or it would read as a conflict.
                 if let v = latestVersion { latestVersion = v + 1 } else { await loadLatestVersion() }
@@ -1697,8 +1767,7 @@ final class LaborViewModel {
                         : "Updated schedule sent to \(changed.joined(separator: ", "))."
                 }
                 Haptic.success()
-                try? await Task.sleep(for: .seconds(4))
-                if overrideState == .saved { overrideState = .idle }
+                savedTick += 1
             }
         } catch let error as APIClient.APIError {
             // 409: somebody saved this week after it was opened. Show their
@@ -2017,7 +2086,11 @@ final class LaborViewModel {
                 return
             }
             joinedRunningGeneration = response.joined ?? false
+            rememberRunningGeneration(jobId, dates: redo ?? [])
             await pollSchedule(jobId: jobId)
+        } catch is CancellationError {
+            isGeneratingSchedule = false
+            regeneratingDates = []
         } catch let error as APIClient.APIError {
             scheduleError = error.message
             isGeneratingSchedule = false
@@ -2029,7 +2102,11 @@ final class LaborViewModel {
         }
     }
 
-    private func pollSchedule(jobId: String) async {
+    /// Consecutive transient failures tolerated — at the 2s interval, about
+    /// a minute, which covers a deploy's restart window.
+    private static let maxTransientPollFailures = 30
+
+    private func pollSchedule(jobId: String, firstCheckWithoutWaiting: Bool = true) async {
         // ~150s max at 2s intervals. Was 30 iterations (~60s) — server logs
         // showed the real Claude call for a generation this size (full
         // shift history + YoY + weather + the longer PAR-reconciliation
@@ -2039,22 +2116,37 @@ final class LaborViewModel {
         // margin over the observed worst case rather than the bare minimum.
         // A 70-person week is two or three model calls and about five
         // minutes. The job runs on regardless; poll for up to 15 minutes.
-        for _ in 0..<450 {
+        //
+        // One failed check used to end the whole thing with "Lost
+        // connection" while the job kept running (CLIENT-41); a transient
+        // failure is now waited out. And leaving the screen is not a lost
+        // connection: the sleep's cancellation ends polling quietly, with
+        // the job remembered for the next visit (CLIENT-27).
+        var transientFailures = 0
+        func finish(error: String?) {
+            scheduleError = error
+            isGeneratingSchedule = false
+            joinedRunningGeneration = false
+            regeneratingDates = []
+            forgetRunningGeneration()
+        }
+        for attempt in 0..<450 {
+            if attempt > 0 || !firstCheckWithoutWaiting {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return      // the screen went away; the job runs on
+                }
+            }
             do {
                 let result: GeneratedSchedule = try await client.send(
                     "/mobile/api/labor/schedule-status/\(jobId)"
                 )
-                if result.status == "pending" {
-                    try? await Task.sleep(for: .seconds(2))
-                    continue
-                }
+                transientFailures = 0
+                if result.status == "pending" { continue }
                 scheduleResult = result
-                isGeneratingSchedule = false
-                joinedRunningGeneration = false
-                regeneratingDates = []
-                if !result.ok {
-                    scheduleError = result.error ?? "Schedule generation failed."
-                } else {
+                finish(error: result.ok ? nil : (result.error ?? "Schedule generation failed."))
+                if result.ok {
                     Haptic.success()
                     scheduleResultExpanded = true
                     cacheSchedule(result)
@@ -2065,17 +2157,27 @@ final class LaborViewModel {
                     await loadLatestVersion()
                 }
                 return
+            } catch is CancellationError {
+                return
+            } catch let error as APIClient.APIError where error.isTransientForPolling {
+                transientFailures += 1
+                if transientFailures >= Self.maxTransientPollFailures {
+                    // Keep the job remembered: it may still finish, and the
+                    // next visit picks it up.
+                    scheduleError = "Lost the connection while your schedule was being built. It keeps going — come back to Labor in a minute to pick it up."
+                    isGeneratingSchedule = false
+                    joinedRunningGeneration = false
+                    regeneratingDates = []
+                    return
+                }
             } catch let error as APIClient.APIError {
-                scheduleError = error.message
-                isGeneratingSchedule = false
+                finish(error: error.message)
                 return
             } catch {
-                scheduleError = "Lost connection while generating your schedule."
-                isGeneratingSchedule = false
+                finish(error: "Couldn't check on your schedule.")
                 return
             }
         }
-        scheduleError = "Schedule generation is taking longer than expected — check back in a bit."
-        isGeneratingSchedule = false
+        finish(error: "Schedule generation is taking longer than expected — check back in a bit.")
     }
 }

@@ -576,24 +576,34 @@ def test_writing_a_group_name_keeps_the_organization_in_step(db_path):
 
 def test_the_roster_endpoint_is_throttled(client, db_path):
     """F-10. Neither roster path called the throttle at all, so token
-    guessing and roster enumeration had no ceiling."""
-    from auth import PORTAL_MAX_ATTEMPTS
+    guessing and roster enumeration had no ceiling. Guesses (unknown codes)
+    spend the failure budget; reads with the real code only the overall
+    ceiling, so a kitchen on one Wi-Fi can open the roster at shift change
+    (SEC-18)."""
+    from auth import PORTAL_MAX_ATTEMPTS, PORTAL_MAX_REQUESTS
     rid = _restaurant(db_path)
     _employee(db_path, rid)
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-    codes = [client.get(f"/staff/api/roster/{token}").status_code
-             for _ in range(PORTAL_MAX_ATTEMPTS + 2)]
-    assert 429 in codes, codes[-3:]
+    guesses = [client.get(f"/staff/api/roster/not-{i}", environ_base={"REMOTE_ADDR": "198.51.100.1"}).status_code
+               for i in range(PORTAL_MAX_ATTEMPTS + 2)]
+    assert 429 in guesses, guesses[-3:]
+    reads = [client.get(f"/staff/api/roster/{token}", environ_base={"REMOTE_ADDR": "198.51.100.2"}).status_code
+             for _ in range(PORTAL_MAX_REQUESTS + 2)]
+    assert reads[:PORTAL_MAX_ATTEMPTS + 2] == [200] * (PORTAL_MAX_ATTEMPTS + 2)
+    assert 429 in reads, reads[-3:]
 
 
 def test_the_html_sign_in_screen_is_throttled(client, db_path):
-    from auth import PORTAL_MAX_ATTEMPTS
+    from auth import PORTAL_MAX_ATTEMPTS, PORTAL_MAX_REQUESTS
     rid = _restaurant(db_path)
     _employee(db_path, rid)
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-    codes = [client.get(f"/staff/r/{token}").status_code
-             for _ in range(PORTAL_MAX_ATTEMPTS + 2)]
-    assert 429 in codes
+    guesses = [client.get(f"/staff/r/not-{i}", environ_base={"REMOTE_ADDR": "198.51.100.3"}).status_code
+               for i in range(PORTAL_MAX_ATTEMPTS + 2)]
+    assert 429 in guesses
+    reads = [client.get(f"/staff/r/{token}", environ_base={"REMOTE_ADDR": "198.51.100.4"}).status_code
+             for _ in range(PORTAL_MAX_REQUESTS + 2)]
+    assert 429 in reads
 
 
 def test_the_throttle_survives_a_restart(db_path):

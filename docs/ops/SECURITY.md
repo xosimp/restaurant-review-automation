@@ -25,13 +25,17 @@ variables it depends on. Written after the enterprise security audit
 - **Login throttling is durable** (`security.py`, table `login_attempts`): keyed by account (5 failures / 15 min → 5 min lock, escalating to 30 min and 24 h across a day) and by IP (25 attempts naming accounts; 5 naming none). Survives deploys and workers. A lock writes `login_locked` to the owner's activity log.
 - Password reset: 32-byte token, 1-hour expiry, **hashed at rest** (`models._hash_reset_token`).
 - Temporary passwords are **never stored**: emailed once at creation; a fresh one is minted at contract signing.
-- 2FA: email/SMS OTP hashed at rest, backup codes, 30-day trusted devices, revocable. **Admins must have it on once `ADMIN_REQUIRE_2FA=1`** (`auth._admin_two_factor_missing`) — enrol first, then set the variable.
+- 2FA: one challenge per sign-in attempt (and one per login for "Send test code") in `two_fa_challenges`; the emailed/texted code and the pending secret are **HMAC-hashed at rest** (keyed by `SECRET_KEY`) and single-use (`auth.issue_two_fa_challenge` / `check_two_fa_code`). The old plaintext `restaurants.two_fa_code` / `two_fa_pending` columns are blanked at boot and no longer read. Backup codes, 30-day trusted devices, revocable. Codes are still delivered to the restaurant's owner email/phone, whoever signs in. **Admins must have it on once `ADMIN_REQUIRE_2FA=1`** (`auth._admin_two_factor_missing`) — enrol first, then set the variable.
 
 ## Authorization
 
-- Roles in `permissions.py`: owner, client, manager, member, employee, **support**. Support reads the admin console and may open view-as; every admin write returns 403 (`auth.admin_required`).
+- Roles in `permissions.py`: owner, client, manager, member, employee, **support**. Support reads the admin console and may open view-as; every admin write returns 403 (`auth.admin_required`), and a view-as **support** opened is read-only too: every non-GET through it returns 403 (`view_as_sessions.read_only`, checked in `login_required` / `mobile_login_required`). View-as is a POST (a GET only asks) and targets the restaurant's owner login, never a staff or manager row.
+- Account-holder switches are `permissions.principal_only`: outbound webhooks (and their signing secret), POS credentials, review retention and auto-approve, alongside 2FA, backup codes and sign-in alerts (`is_principal`).
+- Every `/api` and `/mobile/api` route is either module-mapped (`auth._MODULE_PREFIXES`) or listed with a reason in `auth._UNGATED_PREFIXES`; a test fails on a route that is neither.
 - Module-view gates fail closed; billing/entitlement gates fail open by design.
-- Every admin write is recorded in `admin_events` **before it runs** (`admin_routes._audit_admin_write`).
+- Every admin write is recorded in `admin_events` **before it runs** (`admin_events.audit_admin_write`, registered on `admin_bp` and on `status_bp`, whose `/admin/status/*` writes post the public banner). `status_bp` is CSRF-protected and its admin writes take the admin 2FA gate and JSON bodies only.
+- A JSON body that is not an object (`"x"`, `[1]`) is a 400 on every JSON blueprint (`security.json_object_guard`), never a 500.
+- Side-effecting GETs are gone: `/logout`, `/admin/view-as/<id>` and `/auth/not-me/<token>` ask on GET and act on POST.
 
 ## Tenant isolation
 

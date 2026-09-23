@@ -455,11 +455,12 @@ struct HomeView: View {
         return line + Text(verbatim: " for you.").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
     }
 
+    /// "MONDAY · 9/21/26" — the weekday for orientation, the date in the
+    /// one owner-facing form, M/D/YY (CLIENT-45).
     private var todayDateString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMM d"
-        formatter.locale = Locale(identifier: "en_US")
-        return formatter.string(from: Date()).uppercased()
+        let now = Date()
+        let weekday = now.formatted(Date.FormatStyle(locale: Locale(identifier: "en_US")).weekday(.wide))
+        return "\(weekday) · \(CavnarDate.mdy(now))".uppercased()
     }
 
     // MARK: - Sections

@@ -80,9 +80,12 @@ def _verified(client, phone="5550142233"):
 def _signup(client, db_path, rid, phone="5550142233", name="Jordan P.", pin="5063"):
     token = _verified(client, phone)
     code = get_join_code(rid, db_path=db_path)
+    # As the iOS app claims: with its device identity, which is what earns
+    # the bearer token in the body (a browser gets only the HttpOnly cookie,
+    # SEC-36).
     return client.post("/staff/api/signup/claim",
                        json={"signup_token": token, "join_code": code,
-                             "employee_name": name, "pin": pin})
+                             "employee_name": name, "pin": pin, "device_id": "test-device"})
 
 
 # ── the happy path ─────────────────────────────────────────────────────────

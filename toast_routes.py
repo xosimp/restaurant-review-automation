@@ -20,6 +20,9 @@ from auth import admin_required, login_required
 from models import update_restaurant
 
 toast_bp = Blueprint("toast", __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(toast_bp)
 
 
 @toast_bp.route("/admin/toast/save/<int:restaurant_id>", methods=["POST"])
@@ -112,6 +115,11 @@ def client_toast_status(current_user):
 @toast_bp.route("/api/toast/save", methods=["POST"])
 @login_required
 def client_save_toast(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     data          = request.get_json(force=True) or {}
     client_id     = (data.get("client_id") or "").strip()
     client_secret = (data.get("client_secret") or "").strip()
@@ -161,6 +169,11 @@ def client_sync_toast(current_user):
 @toast_bp.route("/api/toast/disconnect", methods=["POST"])
 @login_required
 def client_disconnect_toast(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "toast_client_id":       None,
         "toast_client_secret":   None,

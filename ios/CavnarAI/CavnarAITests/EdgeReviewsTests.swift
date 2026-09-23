@@ -58,10 +58,8 @@ final class EdgeReviewsTests: XCTestCase {
         await vm.approve()
 
         XCTAssertTrue(sent.value.contains("POST /mobile/api/reviews/1/save-draft"))
-        XCTExpectFailure("CLIENT-6: approve goes out after a failed save, so Google gets the pre-edit draft", strict: true) {
-            XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"),
-                           "the server posts its stored (old) draft; approve must not run until the edit is saved")
-        }
+        XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"),
+                       "the server posts its stored (old) draft; approve must not run until the edit is saved")
     }
 
     func testApproveDoesNotPublishWhenTheSaveReturned500() async {
@@ -76,9 +74,7 @@ final class EdgeReviewsTests: XCTestCase {
         let vm = ReviewDetailViewModel(review: review(draft: "Old AI draft"), client: client)
         vm.editedDraft = "Edited"
         await vm.approve()
-        XCTExpectFailure("CLIENT-6: a 500 on the flush save does not stop the live approve", strict: true) {
-            XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"))
-        }
+        XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"))
     }
 
     func testApproveDoesNotOvertakeASaveThatWasQueuedOffline() async {
@@ -93,10 +89,8 @@ final class EdgeReviewsTests: XCTestCase {
         await vm.approve()
         let queued = await PendingWriteQueue.shared.pendingLabels
         XCTAssertEqual(queued.first, "Save draft response", "the edit itself was queued")
-        XCTExpectFailure("CLIENT-6: the approve is sent live while the edit it depends on sits in the queue", strict: true) {
-            XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"),
-                           "approve must wait behind the queued save, not publish the stored draft now")
-        }
+        XCTAssertFalse(sent.value.contains("POST /mobile/api/reviews/1/approve"),
+                       "approve must wait behind the queued save, not publish the stored draft now")
     }
 
     func testAnUnchangedDraftApprovesWithoutASave() async {
@@ -119,10 +113,8 @@ final class EdgeReviewsTests: XCTestCase {
         let vm = ReviewDetailViewModel(review: review(draft: "Same"), client: client)
         await vm.approve()
         let queued = await PendingWriteQueue.shared.pendingLabels
-        XCTExpectFailure("CLIENT-6: a timed-out approve is queued and replayed as a full second approve", strict: true) {
-            XCTAssertFalse(queued.contains { $0.hasPrefix("Approve") })
-            XCTAssertFalse(vm.didComplete, "the outcome is unknown; the owner stays on the review")
-        }
+        XCTAssertFalse(queued.contains { $0.hasPrefix("Approve") })
+        XCTAssertFalse(vm.didComplete, "the outcome is unknown; the owner stays on the review")
     }
 
     func testAnOfflineApproveIsStillQueued() async {
@@ -152,9 +144,7 @@ final class EdgeReviewsTests: XCTestCase {
         async let first = vm.retryPost()
         async let second = vm.retryPost()
         _ = await (first, second)
-        XCTExpectFailure("CLIENT-55: retryPost has no in-flight guard and the button is only dimmed, so a double tap posts twice", strict: true) {
-            XCTAssertEqual(posts.value, 1)
-        }
+        XCTAssertEqual(posts.value, 1)
     }
 
     func testASecondWriteAReplyWhileDraftingIsIgnored() async {
@@ -168,9 +158,7 @@ final class EdgeReviewsTests: XCTestCase {
         async let a: Void = vm.regenerateDraft()
         async let b: Void = vm.regenerateDraft()
         _ = await (a, b)
-        XCTExpectFailure("CLIENT-55: \"Write a reply\" is only dimmed, so a double tap pays for two drafts", strict: true) {
-            XCTAssertEqual(calls.value, 1)
-        }
+        XCTAssertEqual(calls.value, 1)
     }
 
     // MARK: CLIENT-56 — reopening after drafting
@@ -187,9 +175,7 @@ final class EdgeReviewsTests: XCTestCase {
         // Back to the list, tap the same row: the detail is built from the
         // list's copy of the review.
         let reopened = ReviewDetailViewModel(review: list.reviews[0], client: client)
-        XCTExpectFailure("CLIENT-56: the list's copy never learns about the draft, so reopening offers a second paid draft", strict: true) {
-            XCTAssertFalse(reopened.needsDraft)
-        }
+        XCTAssertFalse(reopened.needsDraft)
     }
 
     // MARK: CLIENT-30 — filters over the first page only
@@ -219,9 +205,7 @@ final class EdgeReviewsTests: XCTestCase {
         vm.filter = .urgent
         await vm.load()
         XCTAssertNil(vm.errorMessage)
-        XCTExpectFailure("CLIENT-30: filtering runs over the first 50 rows only; review 51 is urgent and \"No urgent reviews\" shows", strict: true) {
-            XCTAssertEqual(vm.filteredReviews.map(\.id), [51])
-        }
+        XCTAssertEqual(vm.filteredReviews.map(\.id), [51])
     }
 
     func testAFailedInboxLoadIsReportedNotShownAsAnEmptyInbox() async throws {
@@ -236,9 +220,7 @@ final class EdgeReviewsTests: XCTestCase {
         // errorMessage == nil and nothing else shows the message.
         let view = try EdgeSource.read("Features/Reviews/ReviewsListView.swift")
         let renders = view.components(separatedBy: "errorMessage").count - 1
-        XCTExpectFailure("CLIENT-30: ReviewsListView checks errorMessage but never renders it, so a failed load reads as an empty inbox", strict: true) {
-            XCTAssertGreaterThan(renders, 1, "errorMessage must be shown (with Retry), not only used to hide the empty state")
-        }
+        XCTAssertGreaterThan(renders, 1, "errorMessage must be shown (with Retry), not only used to hide the empty state")
     }
 
     func testAStalePageAfterARefreshIsNotAppended() async {
@@ -280,9 +262,7 @@ final class EdgeReviewsTests: XCTestCase {
         XCTAssertEqual(vm.reviews.map(\.id), [1, 2, 3], "the refresh itself landed")
         EdgeHeldURLProtocol.release.signal()
         await more.value
-        XCTExpectFailure("CLIENT-30: loadMore appends a page requested before the refresh", strict: true) {
-            XCTAssertEqual(vm.reviews.map(\.id), [1, 2, 3])
-        }
+        XCTAssertEqual(vm.reviews.map(\.id), [1, 2, 3])
     }
 
     // MARK: CLIENT-49 — a cancelled load is not an error
@@ -291,10 +271,8 @@ final class EdgeReviewsTests: XCTestCase {
         // What URLSession raises when the view's .task is torn down.
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = ReviewsListViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: ReviewsListViewModel has no CancellationError branch; \"Couldn't load reviews.\" flashes after navigating away", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     // MARK: CLIENT-54 — the sentiment river's rating line
@@ -307,10 +285,8 @@ final class EdgeReviewsTests: XCTestCase {
         let source = try EdgeSource.read("Features/Reviews/SentimentRiverChart.swift")
         let draw = try XCTUnwrap(EdgeSource.slice(source, from: "private func draw(", length: 4200))
         let ratingLine = try XCTUnwrap(EdgeSource.slice(draw, from: "// Rating line", length: 1400))
-        XCTExpectFailure("CLIENT-54: the rating line maps every week's avgRating, zero-review weeks included", strict: true) {
-            XCTAssertTrue(ratingLine.contains("total > 0") || ratingLine.contains("total == 0")
-                          || ratingLine.contains("avgRating > 0"),
-                          "weeks with no reviews must be left out of the rating line")
-        }
+        XCTAssertTrue(ratingLine.contains("total > 0") || ratingLine.contains("total == 0")
+                      || ratingLine.contains("avgRating > 0"),
+                      "weeks with no reviews must be left out of the rating line")
     }
 }

@@ -47,6 +47,9 @@ import client_api as _capi
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(mobile_bp)
 
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.
@@ -152,7 +155,11 @@ def mobile_apple_signin():
     row = conn.execute(
         "SELECT * FROM users WHERE apple_user_id=? AND is_active=1 LIMIT 1", (apple_user_id,)
     ).fetchone()
-    if not row and email:
+    # An email match links this Apple ID to an existing login for good, so it
+    # only counts when Apple says it verified that address (SEC-38). Apple
+    # sends email_verified as a bool or as the string "true".
+    email_verified = str(payload.get("email_verified", "")).strip().lower() == "true"
+    if not row and email and email_verified:
         row = conn.execute(
             "SELECT * FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1", (email,)
         ).fetchone()
@@ -241,11 +248,10 @@ def mobile_login():
     device_ok = bool(device_token) and trusted_device_ok(rid, device_token)
 
     if two_fa_on and not device_ok:
-        code = str(__import__("secrets").randbelow(900000) + 100000)
-        expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-        import secrets as _secrets
-        pending = _secrets.token_hex(24)
-        update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
+        # This sign-in's own challenge — a second login at the restaurant no
+        # longer overwrites it (SEC-20). See auth.issue_two_fa_challenge.
+        from auth import issue_two_fa_challenge
+        pending, code = issue_two_fa_challenge(rid, user["id"], "login")
         masked = "your registered email"
         try:
             if rest.two_fa_method == "sms" and rest.owner_phone:
@@ -546,13 +552,13 @@ def mobile_verify_2fa():
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    stored_pending = rest.two_fa_pending or ""
-    if not stored_pending or not hmac.compare_digest(stored_pending, pending_secret):
+    from auth import two_fa_challenge_exists, check_two_fa_code, end_two_fa_challenge
+    if not two_fa_challenge_exists(rid, pending_user_id, pending_secret):
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    otp_matches = rest.two_fa_code and hmac.compare_digest(rest.two_fa_code, code_entered)
-    if not otp_matches:
+    otp_result = check_two_fa_code(rid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+    if otp_result == "wrong":
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
@@ -561,16 +567,11 @@ def mobile_verify_2fa():
         if not verify_and_consume_backup_code(rid, code_entered):
             _record_failed_attempt("2fa:" + ip)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
-    else:
-        try:
-            expires = datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            expires = datetime.now()
-        if datetime.now() > expires:
-            return jsonify(ok=False, error="Code expired. Request a new one."), 401
+    elif otp_result != "ok":
+        return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
-    update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
+    end_two_fa_challenge(rid, pending_user_id, pending_secret)
     # The login that passed the password step, not an arbitrary active user of
     # this restaurant. Re-checked against rid so a tampered token can't name
     # somebody from another restaurant.
@@ -3878,20 +3879,14 @@ def mobile_refresh_competitors(current_user):
     second job system. (admin_routes.py despite its filename: this specific
     route is @login_required, not @admin_required — any logged-in owner can
     trigger it, matching the web dashboard's own "Refresh" button.)"""
-    import threading
-    import uuid
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
     if not (restaurant and restaurant.module_reviews and restaurant.module_labor
             and restaurant.module_inventory and restaurant.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    # One running refresh per restaurant: a second press joins it (SEC-31).
     import admin_routes as _admin
-    job_id = str(uuid.uuid4())
-    import ops as _ops
-    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
-    t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    return jsonify(ok=True, job_id=_admin.start_competitor_job(rid))
 
 
 @mobile_bp.route("/intel/refresh-status/<job_id>")
@@ -4342,9 +4337,14 @@ def mobile_update_profile(current_user):
 @mobile_bp.route("/connections/toast", methods=["POST"])
 @mobile_login_required
 def mobile_connect_toast(current_user):
-    """Saves Toast API credentials and immediately tries a token fetch so
-    a typo shows up now instead of at the next sync — same 3 fields the
-    admin panel sets, just self-service."""
+    """Saves Toast API credentials once Toast accepts them, so a typo shows
+    up now instead of at the next sync — same 3 fields the admin panel and
+    the web route (toast_routes.client_save_toast) set, just self-service."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     import toast as _toast
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
@@ -4354,23 +4354,36 @@ def mobile_connect_toast(current_user):
     if not client_id or not client_secret or not restaurant_guid:
         return jsonify(ok=False, error="All three fields are required"), 400
 
+    # Checked against Toast BEFORE anything is stored, exactly as the web
+    # route does (SEC-25). This used to save first and then call
+    # get_toast_token, so a typo overwrote working credentials — and with a
+    # cached token for the OLD credentials still on the row, get_toast_token
+    # returned that token and never asked Toast about the new ones at all.
+    result = _toast.test_credentials(client_id, client_secret, restaurant_guid)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Toast rejected those credentials")
+
     update_restaurant(rid, {
         "toast_client_id": client_id,
         "toast_client_secret": client_secret,
         "toast_restaurant_guid": restaurant_guid,
+        "toast_access_token": None,
+        "toast_token_expires": None,
         "toast_sync_error": None,
+        "pos_system": "Toast",
     })
-    try:
-        _toast.get_toast_token(rid)
-    except Exception as e:
-        update_restaurant(rid, {"toast_sync_error": str(e)})
-        return jsonify(ok=False, error=f"Saved, but couldn't connect: {e}")
+    _log_account_event(rid, "pos_connected", current_user, detail="Toast")
     return jsonify(ok=True)
 
 
 @mobile_bp.route("/connections/toast", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_toast(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "toast_client_id": None, "toast_client_secret": None,
         "toast_restaurant_guid": None, "toast_access_token": None,
@@ -4389,6 +4402,11 @@ def mobile_connect_square(current_user):
     nightly sync. The web routes in square_routes.py are session-auth only
     (@login_required), which is why the app couldn't reach them and the
     Connections row was a status-only stub."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     import square as _square
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
@@ -4414,6 +4432,11 @@ def mobile_connect_square(current_user):
 @mobile_bp.route("/connections/square", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_square(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "square_access_token": None, "square_location_id": None,
         "square_last_synced": None, "square_sync_error": None,
@@ -4428,6 +4451,11 @@ def mobile_connect_clover(current_user):
     """Self-service Clover connect — merchant ID + API token, verified
     against Clover before storing. See mobile_connect_square for why these
     mobile routes exist alongside clover_routes.py's session-auth ones."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     import clover as _clover
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
@@ -4453,6 +4481,11 @@ def mobile_connect_clover(current_user):
 @mobile_bp.route("/connections/clover", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_clover(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "clover_merchant_id": None, "clover_api_token": None,
         "clover_last_synced": None, "clover_sync_error": None,
@@ -4503,9 +4536,9 @@ def mobile_send_2fa_test(current_user):
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
-    code = str(__import__("secrets").randbelow(900000) + 100000)
-    expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-    update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
+    # This login's own setup challenge, never a sign-in in progress (SEC-20).
+    from auth import issue_two_fa_challenge
+    _pending, code = issue_two_fa_challenge(rid, current_user["id"], "setup")
     if method == "sms":
         phone = restaurant.owner_phone
         try:
@@ -4544,21 +4577,14 @@ def mobile_verify_2fa_setup(current_user):
     restaurant = get_restaurant(rid)
     if not restaurant:
         return jsonify(ok=False, error="Not found"), 404
-    if restaurant.two_fa_code != code:
+    from auth import check_two_fa_code
+    result = check_two_fa_code(rid, current_user["id"], code, purpose="setup")
+    if result in ("wrong", "missing"):
         return jsonify(ok=False, error="Incorrect code. Try again."), 400
-    expired = True
-    exp_str = (restaurant.two_fa_expires or "").strip()
-    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]:
-        try:
-            expires = datetime.strptime(exp_str, fmt)
-            expired = datetime.now() > expires
-            break
-        except Exception:
-            continue
-    if expired:
+    if result == "expired":
         return jsonify(ok=False, error="Code expired. Try again."), 400
     method = data.get("method") if data.get("method") in ("email", "sms") else "email"
-    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method})
+    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_method": method})
     from models import generate_backup_codes
     codes = generate_backup_codes(rid)
     _log_account_event(rid, "two_fa_enabled", current_user, detail=method)

@@ -331,6 +331,21 @@ never substitute zero for a number that isn't known.
 **Confirmed success** is `.cavnarPostedOverlay(label)` on iOS and a `toast(…,
 'success')` on web. Errors are one plain sentence in `--red`, no apology.
 
+**Failures on web** (dashboard.html): every fetch parses with
+`.then(apiJson)`, never `r.json()` — a non-JSON error page becomes
+`{ok:false, error, http_status}` rather than a thrown "check your
+connection". A panel whose load fails calls `loadFailed(el, d)`: the
+server's sentence in `.load-err` (`--red`) where "Loading…" was, never an
+empty box and never a placeholder left up. Errors are a `toast(…, 'error')`
+or an inline line, never `alert()` (a browser can suppress repeated
+dialogs); a failure that must outlive a toast sits inline under the control
+that started it (`#sched-notice`). When a side-effecting request loses its
+answer, say the outcome is unknown and leave the button off — never
+re-enable it for a blind second send. An ended session is the one sticky
+toast (`.toast.toast-sticky`, `#session-ended`, top of the page) with a Sign
+in again button; the page stops polling behind it. Pollers skip ticks while
+`document.hidden` and catch up on `visibilitychange`.
+
 **Unverified or partial data** carries `CavnarCaveat` (iOS) or the caveat
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.

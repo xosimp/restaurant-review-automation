@@ -195,11 +195,12 @@ from mobile_api import mobile_bp
 from csrf import csrf_protect, ensure_csrf_cookie
 
 # Every browser-facing blueprint gets double-submit CSRF enforcement.
-# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens),
-# status_bp (public GETs), and mobile_bp (bearer-token auth, no cookie jar
-# to carry a CSRF cookie — see mobile_api.py's module docstring) are
-# intentionally exempt.
-for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp):
+# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens) and
+# mobile_bp (bearer-token auth, no cookie jar to carry a CSRF cookie — see
+# mobile_api.py's module docstring) are intentionally exempt. status_bp is
+# protected: its public pages are GETs, which the check never touches, and
+# its /admin/status writes post the public outage banner (SEC-23).
+for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp, status_bp):
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
@@ -646,6 +647,8 @@ def index(current_user):
         except Exception:
             pass
 
+    import time_utils as _tu
+    _today_mdy = _tu.mdy(_tu.restaurant_now(restaurant))
     return render_template('dashboard.html',
         show_welcome=show_welcome,
         onboarding_steps=onboarding_steps,
@@ -669,8 +672,11 @@ def index(current_user):
         # web layer exercises the same function the mobile API now relies on,
         # rather than that function only ever running for mobile requests.
         active_modules=get_active_modules(restaurant),
-        now=datetime.now().strftime("%B %-d, %Y"),
-        now_mdy=datetime.now().strftime("%-m/%-d/%y"),
+        # The Home kicker's first paint: M/D/YY, on the restaurant's own date
+        # (the server's clock is UTC on Railway, so after 7pm in Chicago it
+        # already read tomorrow) — CLAUDE.md's dates rule.
+        now=_today_mdy,
+        now_mdy=_today_mdy,
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
         labor_overtime_cost=labor_overtime_cost,
@@ -681,6 +687,29 @@ def index(current_user):
         labor_upcoming=_labor_upcoming,
         food_cost_data=_food_cost_data)
 
+def _json_api_path():
+    """/api/* and /mobile/api/* callers are fetch() and the iOS app: they
+    parse JSON and have no use for an HTML error page. The web dashboard's
+    r.json() threw on one, so a 404, 405, 413 or 500 read as "network
+    failure" instead of the server's reason (CLIENT-12)."""
+    path = request.path or ""
+    return path.startswith("/api/") or path.startswith("/mobile/api/")
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    if _json_api_path():
+        return jsonify(ok=False, error="That request isn't supported here — refresh the page and try again."), 405
+    return e
+
+
+@app.errorhandler(413)
+def payload_too_large(e):
+    if _json_api_path():
+        return jsonify(ok=False, error="That's too large to upload — the limit is 5 MB."), 413
+    return e
+
+
 @app.errorhandler(403)
 def forbidden(e):
     """A bare abort(403) anywhere in the app (e.g. status_routes._require_admin)
@@ -689,7 +718,7 @@ def forbidden(e):
     just shows a generic "Something went wrong (403)" with no real reason.
     Mobile routes always get real JSON; other routes keep an HTML page."""
     from flask import Response
-    if request.path.startswith("/mobile/api/"):
+    if _json_api_path():
         return jsonify(ok=False, error="You don't have permission to do that."), 403
     html = """<!DOCTYPE html>
 <html lang="en">
@@ -724,6 +753,8 @@ def page_not_found(e):
     from flask import Response
     if request.path.startswith("/mobile/api/"):
         return jsonify(ok=False, error="That endpoint doesn't exist. Please update the app."), 404
+    if _json_api_path():
+        return jsonify(ok=False, error="That endpoint doesn't exist — refresh the page to load the latest version."), 404
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -755,7 +786,7 @@ def page_not_found(e):
 @app.errorhandler(500)
 def server_error(e):
     from flask import Response
-    if request.path.startswith("/mobile/api/"):
+    if _json_api_path():
         return jsonify(ok=False, error="Something went wrong on our end. It's been logged — please try again."), 500
     html = """<!DOCTYPE html>
 <html lang="en">
@@ -807,6 +838,11 @@ try:
     _dbr.restore_if_requested()
     _init_db()
     _init_auth()
+    # The public status page's service rows. Seeded here, once, rather than
+    # by /status on every public GET (SEC-38); the scheduler's health check
+    # also re-seeds, so a service added to SERVICES appears without a deploy.
+    from status_manager import seed_default_services as _seed_status
+    _seed_status()
     _isn()
     _isa()
     _ec()

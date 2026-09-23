@@ -8,6 +8,9 @@ struct GuestTextClubView: View {
     @State private var viewModel = GuestTextClubViewModel()
     @State private var showingAddContact = false
     @State private var copied = false
+    @State private var confirmingSend = false
+    /// The guest whose trash button was tapped, awaiting confirmation.
+    @State private var contactToDelete: GuestContact?
     @FocusState private var focusedField: CampaignField?
 
     var body: some View {
@@ -38,6 +41,24 @@ struct GuestTextClubView: View {
         .onChange(of: viewModel.campaignType) { _, _ in viewModel.campaignTypeChanged() }
         .sheet(isPresented: $showingAddContact) {
             AddGuestContactSheet(viewModel: viewModel)
+        }
+        // One tap used to delete a guest outright — and with them the
+        // record of their consent or their STOP (CLIENT-34). It asks first,
+        // and says what goes with it.
+        .confirmationDialog(
+            "Delete this guest?",
+            isPresented: Binding(get: { contactToDelete != nil }, set: { if !$0 { contactToDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: contactToDelete
+        ) { contact in
+            Button("Delete \(contact.name?.isEmpty == false ? contact.name! : "guest")", role: .destructive) {
+                Task { await viewModel.deleteContact(contact) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { contact in
+            Text(contact.status == .unsubscribed
+                 ? "This also deletes the record that they texted STOP. If their number is added again, nothing will show they opted out."
+                 : "This also deletes the record of their consent to be texted.")
         }
     }
 
@@ -144,12 +165,23 @@ struct GuestTextClubView: View {
                 }
             }
 
-            (Text("Goes to ")
-                + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(15, weight: 700))
-                + Text(" guest\(viewModel.selectedSegmentCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days."))
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            if viewModel.audienceUnknown {
+                // Unknown is never shown as zero (CLIENT-9).
+                HStack(spacing: 10) {
+                    Text("Couldn't load who this goes to.")
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarRed)
+                    Button("Retry") { Task { await viewModel.loadSegments() } }
+                        .font(.cavnarBody(15, weight: 600))
+                }
+            } else {
+                (Text("Goes to ")
+                    + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(15, weight: 700))
+                    + Text(" guest\(viewModel.selectedSegmentCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days."))
+                    .font(.cavnarBody(15))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
                 .cavnarTextFieldStyle()
@@ -186,8 +218,11 @@ struct GuestTextClubView: View {
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     .focused($focusedField, equals: .draftMessage)
 
+                // A text blast can't be taken back, so it is confirmed with
+                // the audience and the count first, like the web's
+                // "Send this text to …?" (CLIENT-9).
                 Button {
-                    Task { await viewModel.sendCampaign() }
+                    confirmingSend = true
                 } label: {
                     if viewModel.isSending {
                         CavnarShimmerText(text: "Sending…")
@@ -196,7 +231,15 @@ struct GuestTextClubView: View {
                     }
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isSending)
+                .disabled(viewModel.isSending || viewModel.audienceUnknown)
+                .confirmationDialog(sendConfirmationTitle, isPresented: $confirmingSend, titleVisibility: .visible) {
+                    Button("Send to \(viewModel.selectedSegmentCount) guest\(viewModel.selectedSegmentCount == 1 ? "" : "s")") {
+                        Task { await viewModel.sendCampaign() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Texts go out between 8:00 AM and 9:00 PM. A sent text can't be recalled.")
+                }
 
                 if viewModel.didSend {
                     // "Posted" — plays once on the real send, then clears
@@ -218,18 +261,35 @@ struct GuestTextClubView: View {
 
     /// `weekly_email` has generated newsletters since this product existed
     /// with no list to send them to and no way to send one.
+    private var sendConfirmationTitle: String {
+        let count = viewModel.selectedSegmentCount
+        let label = viewModel.segments.first { $0.key == viewModel.selectedSegment }?.label ?? "your guests"
+        return "Text \(label) — \(count) guest\(count == 1 ? "" : "s")?"
+    }
+
     private var newsletterCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Email newsletter").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                 Spacer()
-                (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(15, weight: 700))
-                    + Text(" subscribed"))
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                if !viewModel.newsletterLoadFailed {
+                    (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(15, weight: 700))
+                        + Text(" subscribed"))
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
             }
 
-            if viewModel.subscriberCount == 0 {
+            if viewModel.newsletterLoadFailed {
+                // A failed load is not an empty list (CLIENT-58).
+                HStack(spacing: 10) {
+                    Text(viewModel.newsletterError ?? "Couldn't load your email list.")
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarRed)
+                    Button("Retry") { Task { await viewModel.loadNewsletter() } }
+                        .font(.cavnarBody(15, weight: 600))
+                }
+            } else if viewModel.subscriberCount == 0 {
                 Text("Nobody has opted in to email yet. The join page asks for an address, separately from the text club — a guest can say yes to one and not the other.")
                     .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
@@ -372,10 +432,15 @@ struct GuestTextClubView: View {
                     Image(systemName: "plus.circle")
                 }
             }
+            // A failed action (a delete the server refused) is said above the
+            // list rather than replacing it.
+            if let error = viewModel.errorMessage {
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+            }
             if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 8)
-            } else if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+            } else if viewModel.contacts.isEmpty && viewModel.errorMessage != nil {
+                EmptyView()
             } else if viewModel.contacts.isEmpty {
                 Text("Nobody has joined yet. Share the QR code above where guests can scan it.")
                     .font(.cavnarBody(15))
@@ -429,10 +494,11 @@ struct GuestTextClubView: View {
                 }
                 Button {
                     Haptic.selection()
-                    Task { await viewModel.deleteContact(contact) }
+                    contactToDelete = contact
                 } label: {
                     Image(systemName: "trash").foregroundStyle(Color.cavnarEmber)
                 }
+                .accessibilityLabel("Delete \(contact.name?.isEmpty == false ? contact.name! : "guest")")
             }
         }
         .padding(.vertical, 6)
@@ -447,17 +513,10 @@ struct GuestTextClubView: View {
     }
 
     /// last_visit is stored in the restaurant's own local time, not UTC (see
-    /// guest_marketing.py), so it is read as a wall clock rather than being
-    /// reinterpreted against the phone's timezone and shifted.
+    /// guest_marketing.py), so its date is read as written rather than being
+    /// reinterpreted against the phone's timezone and shifted. M/D/YY.
     private func shortDate(_ iso: String) -> String {
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        parser.timeZone = TimeZone(identifier: "UTC")
-        guard let date = parser.date(from: String(iso.prefix(19))) else { return iso }
-        let out = DateFormatter()
-        out.dateFormat = "MMM d"
-        out.timeZone = TimeZone(identifier: "UTC")
-        return out.string(from: date)
+        CavnarDate.mdy(iso)
     }
 }
 

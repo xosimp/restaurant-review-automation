@@ -55,7 +55,6 @@ def test_the_badge_poll_is_still_on_an_interval(admin):
     assert "async function badges()" in admin
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-37: the admin badge poll runs every 120s in a hidden tab")
 def test_the_badge_poll_pauses_while_the_tab_is_hidden(admin):
     i = admin.index("async function badges()")
     body = admin[i:admin.index("\n}\n", i)]
@@ -69,7 +68,6 @@ ES2020 = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-44: admin.html uses ?. and ??, a SyntaxError (blank page) on Safari before 13.1/14")
 @pytest.mark.parametrize("pattern,label", ES2020, ids=[lbl for _p, lbl in ES2020])
 def test_the_admin_console_avoids_syntax_older_safari_cannot_parse(admin, pattern, label):
     hits = [ln.strip()[:100] for ln in _scripts(admin).split("\n") if re.search(pattern, ln)]

@@ -139,14 +139,12 @@ def test_view_as_acts_as_the_owner_when_the_owner_is_the_only_login(app, db_path
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    r = c.get("/admin/view-as/%d" % rid)
+    r = _post(c, "/admin/view-as/%d" % rid)
     assert r.status_code == 302
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-28: view-as picks users LIMIT 1 unordered, "
-                                       "so an older staff PIN identity is impersonated instead of the owner")
 def test_view_as_targets_the_owner_even_when_a_staff_identity_was_created_first(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
@@ -154,13 +152,11 @@ def test_view_as_targets_the_owner_even_when_a_staff_identity_was_created_first(
     owner = _owner(db_path, rid)
     assert staff < owner
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    c.get("/admin/view-as/%d" % rid)
+    _post(c, "/admin/view-as/%d" % rid)
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-28: view-as picks users LIMIT 1 unordered, "
-                                       "so an older manager login is impersonated instead of the owner")
 def test_view_as_targets_the_owner_even_when_a_manager_login_was_created_first(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
@@ -171,13 +167,11 @@ def test_view_as_targets_the_owner_even_when_a_manager_login_was_created_first(a
     upsert_membership(mgr, rid, "manager", db_path=db_path)
     owner = _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    c.get("/admin/view-as/%d" % rid)
+    _post(c, "/admin/view-as/%d" % rid)
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-28: reset-by-restaurant picks users LIMIT 1 unordered, "
-                                       "so it targets an older staff PIN identity instead of the owner")
 def test_reset_by_restaurant_targets_the_owner_and_not_a_staff_identity(app, db_path, monkeypatch):
     """Which login the route chooses, isolated from what the reset then does:
     reset_password_by_restaurant hands the chosen id to the module-level
@@ -198,9 +192,6 @@ def test_reset_by_restaurant_targets_the_owner_and_not_a_staff_identity(app, db_
     assert chosen == [owner]
 
 
-@pytest.mark.xfail(strict=True, reason="NEW (not in SEC.md): reset_password_by_restaurant calls the "
-                                       "admin_required-wrapped reset_password with current_user=, so every call "
-                                       "raises TypeError (multiple values for 'current_user') and 500s")
 def test_reset_by_restaurant_resets_the_owners_password(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
@@ -244,8 +235,6 @@ def test_a_full_settings_payload_still_saves_every_field_it_carries(app, db_path
     assert rest.billing_status == "active" and rest.hourly_rate == 21.0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-30: save_client_settings writes every key from data.get(key, default), "
-                                       "so a one-field payload resets billing, modules, alerts and owner_email")
 def test_saving_client_settings_with_one_field_changes_only_that_field(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _configured_restaurant(db_path)
@@ -298,8 +287,6 @@ def test_an_admin_blueprint_write_is_recorded_in_admin_events(app, db_path):
     assert any("save_client_settings" in r["event_type"] for r in rows)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-23: status_routes._require_admin only checks is_admin; "
-                                       "ADMIN_REQUIRE_2FA is never consulted")
 def test_status_admin_write_is_refused_for_an_admin_without_two_factor_when_required(app, db_path, monkeypatch):
     home, admin_uid = _admin(db_path)
     monkeypatch.setenv("ADMIN_REQUIRE_2FA", "1")
@@ -314,8 +301,6 @@ def test_status_admin_write_is_refused_for_an_admin_without_two_factor_when_requ
     assert _incident_count(db_path) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-23: status admin endpoints use request.get_json(force=True), "
-                                       "so a text/plain (cross-site form) body is parsed as JSON")
 def test_status_admin_write_does_not_parse_a_text_plain_body_as_json(app, db_path):
     _, admin_uid = _admin(db_path)
     c = _client(app, create_session(admin_uid, db_path=db_path))
@@ -325,8 +310,6 @@ def test_status_admin_write_does_not_parse_a_text_plain_body_as_json(app, db_pat
     assert _incident_count(db_path) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-23: status admin writes live on status_bp, "
-                                       "so admin_bp's _audit_admin_write never records them")
 def test_status_admin_write_is_recorded_in_admin_events(app, db_path):
     _, admin_uid = _admin(db_path)
     c = _client(app, create_session(admin_uid, db_path=db_path))
@@ -337,8 +320,6 @@ def test_status_admin_write_is_recorded_in_admin_events(app, db_path):
                for r in rows)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-23: status_bp is exempt from csrf_protect in hosted_dashboard.py "
-                                       "although it carries admin POST routes")
 def test_the_status_blueprint_is_csrf_protected_where_the_app_wires_csrf():
     """Source-level: hosted_dashboard.py is unsafe to import here (real DB
     init, background threads), so the wiring is read from its source — every
@@ -362,8 +343,6 @@ def test_the_status_blueprint_is_csrf_protected_where_the_app_wires_csrf():
 
 # ── SEC-34 / item 11: view-as over GET ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-34: /admin/view-as/<rid> is a GET that mints an impersonation "
-                                       "session and replaces the admin's cookie (cross-site top-level GET)")
 def test_a_get_to_view_as_does_not_switch_the_admins_session(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
@@ -436,8 +415,6 @@ def test_a_referral_sends_the_invite_and_notifies_will(app, db_path, captured_ma
     assert len(captured_mail) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-15: send-referral has no rate limit (the '10 per hour' comment "
-                                       "is unimplemented) — an open relay from will@")
 def test_the_eleventh_referral_in_an_hour_from_one_restaurant_is_refused(app, db_path, captured_mail):
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -451,7 +428,6 @@ def test_the_eleventh_referral_in_an_hour_from_one_restaurant_is_refused(app, db
     assert len(captured_mail) == sent_before
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-15: the referral note is interpolated raw into the email HTML")
 def test_the_referral_note_is_html_escaped_in_every_email(app, db_path, captured_mail):
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -502,8 +478,6 @@ def test_a_competitor_refresh_starts_one_job_and_returns_its_id(app, db_path, co
     assert _row(db_path, "SELECT status FROM async_jobs WHERE job_id=?", (body["job_id"],))["status"] == "pending"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-31: refresh_competitor_intel has no pending-job check, "
-                                       "so every POST starts another Places+Claude thread")
 def test_a_second_competitor_refresh_while_one_is_pending_joins_it(app, db_path, counted_threads):
     rid, owner = _full_system_owner(db_path)
     c = _client(app, create_session(owner, db_path=db_path))

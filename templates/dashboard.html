@@ -331,15 +331,26 @@ html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 [data-theme="dark"] [style*="background:#e8f5ee"]{background:#0c2318!important;color:#4ead7a!important}
 body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
-.hdr-left{display:flex;align-items:center;gap:16px}
+.hdr-left{display:flex;align-items:center;gap:16px;min-width:0;flex:1 1 auto}
+#loc-switcher-wrap,#loc-switcher-btn{min-width:0;max-width:100%}
 .hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
 .hdr-logo em{color:var(--ember2);font-style:italic}
 .hdr,.hdr button,.hdr a,.hdr span,.hdr div{font-family:'Apfel Grotezk',sans-serif}
 /* Restaurant + location in the headline face (Clash Display), like the Home
    headlines; owner and Sign out in the chrome face at a readable weight. */
-.hdr-restaurant{font-family:'Clash Display',sans-serif!important;font-size:15px;font-weight:500;letter-spacing:-.01em;color:#f0ebe0;background:var(--hdr-bg);padding-left:16px;border-left:1px solid #2a2520}
+.hdr-restaurant{font-family:'Clash Display',sans-serif!important;font-size:15px;font-weight:500;letter-spacing:-.01em;color:#f0ebe0;background:var(--hdr-bg);padding-left:16px;border-left:1px solid #2a2520;display:block;min-width:0;max-width:40vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #loc-switcher-btn{font-family:'Clash Display',sans-serif!important}
-.hdr-right{display:flex;align-items:center;gap:16px}
+.hdr-right{display:flex;align-items:center;gap:16px;flex-shrink:0}
+.logout-form{margin:0;display:inline-flex}
+/* A phone: the right-hand controls tighten instead of pushing Sign out off
+   the screen, and the name takes whatever width is left (CLIENT-15). */
+@media (max-width:480px){
+  .hdr{padding:8px 12px;gap:8px}
+  .hdr-left{gap:8px}
+  .hdr-restaurant{padding-left:8px;font-size:14px;max-width:none}
+  .hdr-right{gap:2px}
+  .hdr-right .logout-btn{height:30px;padding:0 8px;font-size:11px;margin-left:4px}
+}
 .hdr-user{font-family:'Apfel Grotezk',sans-serif!important;font-size:13px;font-weight:700;color:#f0ebe0;background:var(--hdr-bg);opacity:.85}
 .logout-btn{font-family:'Apfel Grotezk',sans-serif!important;font-size:12px;font-weight:700;color:#f0ebe0;background:var(--hdr-bg);opacity:.85;text-decoration:none;padding:6px 12px;border:1px solid #2a2520;border-radius:6px;transition:all .15s}
 .logout-btn:hover{color:var(--paper);border-color:var(--paper)}
@@ -531,7 +542,9 @@ svg.cm-hearth{width:56px;height:56px;overflow:visible}
 .empty-state-sm svg.cm-hearth{width:30px;height:30px;stroke:none;opacity:1;margin-bottom:8px}
 @media (prefers-reduced-motion:reduce){[class*="cm-"],[class*="cm-"] *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
-input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
+/* Fields trade the outline for an ember ring hugging their own border; a
+   field with its own :focus ring (a class rule) keeps that one (CLIENT-59). */
+input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box-shadow:0 0 0 2px var(--ember)}
 .data-card{transition:box-shadow .15s,transform .15s}
 .data-card:hover{box-shadow:0 4px 14px rgba(14,12,10,.09);transform:translateY(-1px)}
 .card{transition:transform .15s ease,box-shadow .15s ease;}
@@ -855,6 +868,10 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
 .toast.toast-warning{background:var(--amber-bg);color:#92400e;border-left-color:var(--amber)}
 .toast.show{animation:toastBounce .52s ease forwards}
+.load-err{color:var(--red)}
+/* The one toast that stays: an ended session (CLIENT-13). Top of the page, clickable, no timer. */
+.toast.toast-sticky{top:24px;bottom:auto;pointer-events:auto;opacity:1;animation:none;display:flex;align-items:center;gap:14px;max-width:calc(100vw - 32px)}
+@media(max-width:520px){.toast.toast-sticky{left:16px;right:16px;top:16px}}
 
 .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
@@ -970,7 +987,7 @@ function removeFcCustomItem(btn, name){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if(d.ok)row.remove();
   }).catch(function(){row.remove();});
 }
@@ -987,7 +1004,7 @@ function saveFcCustomItem(inp){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name,unit:unit})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if(badge){
       if(d.ok){badge.textContent='SAVED';badge.className='fc-save-badge saved';}
       else{badge.textContent='ERROR';badge.className='fc-save-badge err';}
@@ -1028,7 +1045,7 @@ function submitFoodCostCount() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({items: items})
   })
-    .then(function(r) { return r.json(); })
+    .then(apiJson)
     .then(function(data) {
       var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
       if (!data.ok) {
@@ -1103,7 +1120,7 @@ function clientUpload(dataType, input) {
   form.append('csv_file', input.files[0]);
 
   fetch('/client/upload-data', {method:'POST', body: form})
-    .then(function(res) { return res.json(); })
+    .then(apiJson)
     .then(function(data) {
       if (overlay) overlay.style.display = 'none';
       if (data.ok) {
@@ -1144,6 +1161,81 @@ document.documentElement.classList.add('pjs-loading');
 </head>
 <body>
 {% include "_csrf_fetch.html" %}
+<script>
+/* Every dashboard request goes through here (CLIENT-12, CLIENT-13). ES5 only.
+
+   apiJson(r) reads a response body as JSON whatever the status. A JSON
+   error ({ok:false, error}) comes back as itself; a body that is not JSON
+   (an HTML error page, a 502 from the edge) becomes {ok:false,
+   http_status, error} instead of a thrown SyntaxError that every .catch used to read as
+   "check your connection". A non-2xx JSON object without ok is ok:false.
+   Every fetch in this page parses with .then(apiJson), never r.json().
+
+   window.fetch: a 401 that says session_expired ends the session once for
+   the whole page. A sticky notice offers Sign in again, and every later
+   same-origin call answers session_expired at once instead of reaching the
+   server, so no poller keeps firing into 401s. */
+function apiJson(r){
+  return r.text().then(function(t){
+    var d, parsed = true;
+    try { d = JSON.parse(t); } catch (e) { parsed = false; }
+    if (!parsed) {
+      return {ok: false, http_status: r.status, error: r.ok
+        ? 'The server sent an answer this page could not read. Try again.'
+        : 'The server hit an error (HTTP ' + r.status + '). Try again in a moment.'};
+    }
+    if (!r.ok && d && typeof d === 'object' && !(d instanceof Array)) {
+      if (d.ok === undefined) d.ok = false;
+      if (!d.error) d.error = 'The server hit an error (HTTP ' + r.status + '). Try again in a moment.';
+      if (d.http_status === undefined) d.http_status = r.status;
+    }
+    return d;
+  });
+}
+/* A panel whose load failed says so in place of its "Loading…" (CLIENT-12,
+   CLIENT-58): the server's own sentence when it sent one, never an empty box
+   that reads as "nothing here" and never a placeholder left up forever. */
+function loadFailed(el, d){
+  if (!el) return;
+  var msg = (d && d.error) || 'Couldn\u2019t load this. Refresh the page to try again.';
+  el.innerHTML = '<span class="load-err">' + String(msg).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>';
+}
+(function(){
+  var _fetch = window.fetch;
+  if (!_fetch) return;
+  var ended = false;
+  var ENDED = 'Your session ended — sign in again.';
+  function sameOrigin(input){
+    var url = (typeof input === 'string') ? input : ((input && input.url) || '');
+    return !/^https?:\/\//i.test(url) || url.indexOf(window.location.origin) === 0;
+  }
+  function showEnded(){
+    if (document.getElementById('session-ended')) return;
+    var box = document.createElement('div');
+    box.id = 'session-ended';
+    box.className = 'toast toast-error show toast-sticky';
+    box.setAttribute('role', 'alert');
+    box.innerHTML = '<span>Your session ended, so nothing on this page is updating.</span>'
+      + '<a class="cbtn cbtn-primary cbtn-sm" href="/login?next=' + encodeURIComponent(window.location.pathname) + '">Sign in again</a>';
+    document.body.appendChild(box);
+  }
+  window.cavSessionEnded = function(){ return ended; };
+  window.fetch = function(input, init){
+    var mine = sameOrigin(input);
+    if (ended && mine) {
+      return Promise.resolve(new Response(JSON.stringify({ok: false, session_expired: true, error: ENDED}),
+        {status: 401, headers: {'Content-Type': 'application/json'}}));
+    }
+    return _fetch.apply(window, arguments).then(function(r){
+      if (r.status !== 401 || !mine) return r;
+      return r.clone().json().then(function(d){
+        if (d && d.session_expired) { ended = true; showEnded(); }
+        return r;
+      }, function(){ return r; });
+    });
+  };
+})();
+</script>
 <script src="/static/cavnar-orb.js"></script>
 
 <!-- Branded upload loading overlay -->
@@ -1186,7 +1278,7 @@ document.documentElement.classList.add('pjs-loading');
       </button>
       <div id="loc-switcher-panel" style="display:none;position:absolute;left:0;top:calc(100% + 8px);min-width:180px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         {% for loc in group_locations %}
-        <button onclick="switchLocation({{ loc.id }}, '{{ loc.name | e }}')"
+        <button onclick="switchLocation({{ loc.id|int }})"
           style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:{% if loc.active %}var(--paper2){% else %}white{% endif %};cursor:pointer;font-size:13px;font-family:'Apfel Grotezk',sans-serif;color:{% if loc.active %}var(--ember){% else %}var(--ink){% endif %};font-weight:{% if loc.active %}600{% else %}400{% endif %}">
           {{ loc.name }}{% if loc.active %} ✓{% endif %}
         </button>
@@ -1266,7 +1358,7 @@ document.documentElement.classList.add('pjs-loading');
         </div>
       </div>
     </div>
-    <a href="/logout" class="logout-btn">Sign out</a>
+    <form method="post" action="/logout" class="logout-form"><button type="submit" class="cbtn cbtn-secondary cbtn-sm logout-btn">Sign out</button></form>
   </div>
 </header>
 <div class="tabs" role="tablist" aria-label="Dashboard sections">
@@ -1965,7 +2057,7 @@ svg:hover .hb-xh{opacity:1}
       if(d&&d.ok){_hbAskHistory.push({role:'user',content:q});_hbAskHistory.push({role:'assistant',content:answer});}
     }
     function viaJson(){
-      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar AI — check your connection.'});});
+      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(apiJson).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar AI — check your connection.'});});
     }
     try{
       fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null,surface:'home'})}).then(function(resp){
@@ -2014,13 +2106,14 @@ svg:hover .hb-xh{opacity:1}
   });
   document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
   window.hbAct=function(kind,module,btn){if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
-  window.hbSwitchLoc=function(rid,name){if(typeof switchLocation==='function')switchLocation(rid,name);};
+  // Only the id travels through the inline handlers (CLIENT-17).
+  window.hbSwitchLoc=function(rid){if(typeof switchLocation==='function')switchLocation(rid);};
   window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
   window.hbRange=function(r){_hbRange=r;if(_hbData)renderHero(_hbData);};
   window.hbDismiss=function(key,undo,kind,title,metric){
     var body={key:key,undo:!!undo};
     if(kind){body.kind=kind;if(kind==='done'&&metric){body.title=title;body.metric=metric;}}
-    fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
       if(!d.ok){if(typeof toast==='function')toast(d.error||'Couldn\'t update that','error');return;}
       var msg=undo?'Recommendation restored':(kind==='done'?(d.outcome?'Marked done - measuring from today, result on '+d.outcome.evaluate_on:'Marked done'):(kind==='not_for_us'?'Noted - it won\'t come back':'Hidden for two weeks'));
       if(typeof toast==='function')toast(msg,'success');
@@ -2038,7 +2131,7 @@ svg:hover .hb-xh{opacity:1}
     // X-CSRF; nothing reads an 'X-CSRFToken' header, so none is sent).
     fetch('/api/outcomes',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({source:'recommendation',source_key:key,title:title,metric:metric})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
       if(btn){btn.textContent='Tracking';}
       if(d.warning){if(typeof toast==='function')toast(d.warning,'error');return;}
@@ -2230,7 +2323,7 @@ svg:hover .hb-xh{opacity:1}
   function renderLocations(d){
     var c=d.context||{};if(!c.locations||c.locations.length<2)return '';
     var h='<div class="hb-locs" role="list" aria-label="Your locations"><button role="listitem" class="hb-loc'+(_hbScope==='group'?' active':'')+'" onclick="hbScope(\'group\')">All locations</button>';
-    for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active&&_hbScope!=='group'?' active':'')+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
+    for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active&&_hbScope!=='group'?' active':'')+'" onclick="hbSwitchLoc('+(+l.id)+')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
     return h+'</div>';
   }
   // The first session. Everything else on Home needs data this account does
@@ -2693,7 +2786,7 @@ svg:hover .hb-xh{opacity:1}
     var body={went_well:v('co-well'),went_wrong:v('co-wrong'),eighty_sixed:v('co-86'),callouts:v('co-call')};
     var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Saving…'):function(){};
     fetch('/api/closeout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-      .then(function(r){return r.json();}).then(function(d){done();
+      .then(apiJson).then(function(d){done();
         if(d&&d.ok){toast('Handed off — it leads tomorrow\'s brief','success');hbFollow();}
         else toast((d&&d.error)||'Could not save that','error');})
       .catch(function(){done();toast('Could not save that','error');});
@@ -2701,19 +2794,19 @@ svg:hover .hb-xh{opacity:1}
   window.hbSnooze=function(key,btn){
     if(btn)btn.disabled=true;
     fetch('/api/actions/snooze',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key})})
-      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else if(btn)btn.disabled=false;})
+      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else if(btn)btn.disabled=false;})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   window.hbActionDo=function(route,btn){
     if(btn)btn.disabled=true;
     fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
-      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
+      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   window.hbResolveIssue=function(id,btn){
     if(btn)btn.disabled=true;
     fetch('/api/issues/'+id+'/resolve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
-      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t resolve that','error');}})
+      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t resolve that','error');}})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   // ── consolidated (all locations) ──────────────────────────────────────────
@@ -2724,11 +2817,11 @@ svg:hover .hb-xh{opacity:1}
     var sub=document.getElementById('hb-sub');if(sub)sub.innerHTML='<span>'+num(p.healthy+' of '+p.total+' locations healthy')+'</span>'+(p.urgent_reviews?'<span class="sep">·</span><span>'+num(p.urgent_reviews+' urgent reviews')+'</span>':'')+(p.awaiting?'<span class="sep">·</span><span>'+num(p.awaiting+' replies waiting')+'</span>':'');
     var pu=document.getElementById('hb-pulse');if(pu){var pl=[];if(p.strongest)pl.push('<span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.strongest.rating+'★</span><span class="l">'+esc(p.strongest.location)+'</span></span>');if(p.weakest)pl.push('<span class="hb-chip bad"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.weakest.rating+'★</span><span class="l">'+esc(p.weakest.location)+'</span></span>');if(p.heaviest_labor)pl.push('<span class="hb-chip warn"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.heaviest_labor.pct.toFixed(1)+'%</span><span class="l">labor · '+esc(p.heaviest_labor.location)+'</span></span>');pu.innerHTML=pl.join('');}
     var h='<div class="hb-locs" role="list"><button class="hb-loc active" onclick="hbScope(\'group\')">All locations</button>';
-    for(var i=0;i<g.locations.length;i++){var l=g.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')"><span class="d"></span>'+esc(l.name)+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
+    for(var i=0;i<g.locations.length;i++){var l=g.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+'" onclick="hbSwitchLoc('+(+l.id)+')"><span class="d"></span>'+esc(l.name)+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
     h+='</div>';
     h+='<div style="overflow-x:auto"><table class="hb-tbl"><thead><tr><th>Location</th><th class="r">Rating · 30d</th><th class="r">Answered</th><th class="r">Urgent</th><th class="r">Awaiting</th><th class="r hide-m">Labor</th><th class="r hide-m">Food cost</th><th class="r hide-m">Last active</th><th></th></tr></thead><tbody>';
     for(var j=0;j<g.locations.length;j++){var r=g.locations[j];var rv=r.reviews||{};
-      h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+r.id+',\''+esc(r.name)+'\')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+r.id+',\''+esc(r.name)+'\')">';
+      h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+(+r.id)+')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+(+r.id)+')">';
       h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
       h+='<td class="r hb-num">'+(rv.rating_30d?rv.rating_30d+'★'+(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)<=-0.3?' <span class="up">↓</span>':(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)>=0.2?' <span class="ok">↑</span>':'')):'<span class="dim">—</span>')+'</td>';
       h+='<td class="r hb-num">'+(rv.response_rate!=null?rv.response_rate+'%':'<span class="dim">—</span>')+'</td>';
@@ -2741,7 +2834,7 @@ svg:hover .hb-xh{opacity:1}
     var at=g.attention||[];
     h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Needs attention · all locations</span></h3>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
-    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn '+(x.severity==='critical'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbSwitchLoc('+x.restaurant_id+',\''+esc(x.location)+'\')">Open</button></div>';}
+    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn '+(x.severity==='critical'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbSwitchLoc('+(+x.restaurant_id)+')">Open</button></div>';}
     h+='</div></div>';
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
@@ -2755,7 +2848,7 @@ svg:hover .hb-xh{opacity:1}
   window.hbLoad=function(fresh){
     if(_hbLoading)return;_hbLoading=true;
     var url=(_hbScope==='group'?'/api/home/brief/group':'/api/home/brief')+(fresh?'?fresh=1':'');
-    fetch(url,{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    fetch(url,{credentials:'same-origin'}).then(apiJson).then(function(d){
       _hbLoading=false;
       if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
       _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
@@ -2814,6 +2907,10 @@ svg:hover .hb-xh{opacity:1}
 
 
 /* banner */
+.tmpl-row{padding:8px 10px;border-bottom:1px solid var(--paper3);cursor:pointer;border-radius:4px}
+.tmpl-row:hover{background:var(--paper2)}
+.tmpl-row:focus-visible{background:var(--paper2);outline:2px solid var(--ember);outline-offset:-2px}
+#new-reviews-banner:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 #new-reviews-banner{margin-top:18px;padding:10px 0;border-top:1px solid var(--ember);border-bottom:1px solid var(--ember);font-size:13px;color:var(--ink);cursor:pointer;align-items:center;justify-content:space-between}
 /* hero */
 .rv2-hero{margin-top:30px}
@@ -3071,7 +3168,7 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
-  <div id="new-reviews-banner" style="display:none" onclick="window.location.reload()"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
+  <div id="new-reviews-banner" style="display:none" role="button" tabindex="0" onclick="window.location.reload()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.location.reload();}"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
 
   <div id="rv-inbox-header"></div>
   <div id="rv-panel-analytics">
@@ -5183,7 +5280,7 @@ svg:hover .hb-xh{opacity:1}
   function loadMenuMargins(){
     var el = document.getElementById('mm-body');
     el.innerHTML = cavnarLoading('Working out plate costs…',22,'working');
-    fetch('/api/food-cost/menu-profitability').then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/menu-profitability').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
       // Nothing to table is a state, not a sentence: say what is missing
       // and where it gets fixed, or the tool reads as if Load did nothing.
@@ -5212,7 +5309,7 @@ svg:hover .hb-xh{opacity:1}
     var price = parseFloat(input.value);
     fetch('/api/food-cost/menu-item-price', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({menu_item_id: id, sell_price: price})
-    }).then(function(r){return r.json();}).then(function(d){
+    }).then(apiJson).then(function(d){
       if(d.ok){ toast('Price saved','success'); loadMenuMargins(); }
       else { toast(d.error||'Couldn\'t save price','error'); }
     });
@@ -5220,7 +5317,7 @@ svg:hover .hb-xh{opacity:1}
   function loadOrderDraft(){
     var el = document.getElementById('so-body');
     el.innerHTML = cavnarLoading('Building this week\'s order…',22,'working');
-    fetch('/api/food-cost/order-draft').then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/order-draft').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
       var groups = d.groups || [];
       if(!groups.length){
@@ -5256,7 +5353,7 @@ svg:hover .hb-xh{opacity:1}
     // reloaded rather than sent (MOD-FC-8).
     fetch('/api/food-cost/send-order', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({supplier_email: email, draft_hash: _soDraftHash, resend: !!resend})
-    }).then(function(r){return r.json();}).then(function(d){
+    }).then(apiJson).then(function(d){
       if(d.ok){ toast(d.queued&&d.queued.length?('Order goes out in '+d.undo_minutes+' min — undo from the Cavnar AI strip'):'Order sent','success'); btn.textContent=d.queued&&d.queued.length?'Queued ✓':'Sent ✓'; loadPurchaseOrders(); return; }
       btn.disabled=false; btn.textContent='Send';
       if(d.already_sent && !resend){
@@ -5269,7 +5366,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function loadPurchaseOrders(){
     var el = document.getElementById('po-history');
-    fetch('/api/food-cost/purchase-orders?status=sent').then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/purchase-orders?status=sent').then(apiJson).then(function(d){
       if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
       var html = '<div class="hb-kicker">Recent purchase orders</div>';
       d.orders.slice(0,8).forEach(function(po){
@@ -5281,7 +5378,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function receivePO(id, btn){
     btn.disabled = true;
-    fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST'}).then(apiJson).then(function(d){
       if(d.ok){ toast('Marked received','success'); loadPurchaseOrders(); }
       else { toast(d.error||'Couldn\'t update','error'); btn.disabled=false; }
     });
@@ -6123,7 +6220,7 @@ svg:hover .hb-xh{opacity:1}
 .ac-consult .ph img{width:100%;height:112%;object-fit:cover;object-position:center 20%}
 .ac-consult b{display:block;font-family:'Clash Display',sans-serif;font-size:19px;font-weight:600;color:var(--ink)}
 .ac-consult span{display:block;font-size:15px;color:var(--ink3);margin-top:2px}
-.ac-statusdot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;box-shadow:0 0 0 3px var(--green-bg)}
+.ac-statusdot{width:8px;height:8px;border-radius:50%;background:var(--ink3);flex:none;box-shadow:0 0 0 3px var(--green-bg)}
 
 /* FAQ (kept: .faq-q is a listed exception in the button-system test) */
 .faq-group-title{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:16px 0 4px}
@@ -6884,7 +6981,7 @@ var ASK_OPENING_TTL_MS = 5 * 60 * 1000;
 // opening must never be why Ask won't open.
 window._askLoadOpening = function(then) {
   if (_askOpening && (Date.now() - _askOpeningAt) < ASK_OPENING_TTL_MS) { if (then) then(); return; }
-  fetch('/api/ask-cavnar/opening').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/ask-cavnar/opening').then(apiJson).then(function(d){
     if (d && d.ok) { _askOpening = d; _askOpeningAt = Date.now(); }
   }).catch(function(){}).then(function(){ if (then) then(); });
 };
@@ -7083,7 +7180,7 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     if (!b) return;
     b.disabled = true; b.textContent = 'Undoing\u2026';
     fetch('/api/actions/' + encodeURIComponent(b.getAttribute('data-cancel-action')) + '/cancel', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
-      .then(function (r) { return r.json(); }).then(function (d) { if (typeof toast === 'function') toast(d && d.ok ? 'Undone \u2014 nothing went out.' : ((d && d.error) || 'Could not undo'), d && d.ok ? 'success' : 'error'); load(); })
+      .then(apiJson).then(function (d) { if (typeof toast === 'function') toast(d && d.ok ? 'Undone \u2014 nothing went out.' : ((d && d.error) || 'Could not undo'), d && d.ok ? 'success' : 'error'); load(); })
       .catch(function () { b.disabled = false; b.textContent = 'Undo'; });
   });
   function seenAt() { try { return localStorage.getItem('ai-feed-seen') || ''; } catch (e) { return ''; } }
@@ -7127,7 +7224,10 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     badge.className = 'new' + (n ? ' on' : '');
   }
   function load() {
-    fetch('/api/activity', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (d) {
+    // A hidden tab waits: the visibilitychange listener below reloads the
+    // moment it is looked at again (CLIENT-37).
+    if (document.hidden) return;
+    fetch('/api/activity', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
       if (!d || !d.ok) return;
       var first = !data; data = d; render();
       try { var ev = document.createEvent('CustomEvent'); ev.initCustomEvent('cavnar:activity', false, false, d); document.dispatchEvent(ev); } catch (e2) {}
@@ -7236,7 +7336,7 @@ function _runAskCavnarProposal(p, card, btn) {
   if (method !== 'GET') opts.body = JSON.stringify(p.body || {});
   // The proposal fires the very same authenticated endpoint the button in
   // the UI uses, so it can never reach anything the user couldn't do.
-  fetch(route, opts).then(function(r) { return r.json(); }).then(function(d) {
+  fetch(route, opts).then(apiJson).then(function(d) {
     if (d.ok) {
       _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
@@ -7248,7 +7348,14 @@ function _runAskCavnarProposal(p, card, btn) {
       card.appendChild(err);
     }
   }).catch(function() {
-    btn.disabled = false; btn.textContent = 'Confirm';
+    // The answer was lost, not necessarily the action: it may already have
+    // run. Say so and leave Confirm off, rather than inviting a blind second
+    // send of something with side effects (CLIENT-19).
+    btn.textContent = 'May have gone through';
+    var err = document.createElement('div');
+    err.className = 'err';
+    err.textContent = 'Lost the connection before this was confirmed, so it may already have gone through. Check before asking again.';
+    card.appendChild(err);
   });
 }
 
@@ -7337,7 +7444,7 @@ window.sendAskCavnar = function() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({question: question, history: historyToSend})
-    }).then(function(r) { return r.json(); }).then(_finish).catch(function() {
+    }).then(apiJson).then(_finish).catch(function() {
       _finish({ok: false, error: 'Network error — try again.'});
     });
   });
@@ -7359,7 +7466,7 @@ function regenDraft(id) {
   var boxEl = document.getElementById('draft-box-'+id);
   if (txtEl) txtEl.innerHTML = window.cavnarLoading ? cavnarLoading('Writing a reply in your voice…', 22, 'composing') : 'Generating new response…';
   else if (boxEl) boxEl.innerHTML = window.cavnarLoading ? cavnarLoading('Writing a reply in your voice…', 22, 'composing') : '<div class="draft-lbl" style="color:var(--ink3)">Generating response…</div>';
-  fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(data){
+  fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(apiJson).then(function(data){
     if (data.ok) {
       var actionsEl = document.getElementById('draft-actions-'+id);
       if (actionsEl) {
@@ -7404,12 +7511,17 @@ function saveDraft(id) {
   var editorEl = document.getElementById('editor-text-'+id);
   var draft = editorEl ? editorEl.value.trim() : '';
   if (!draft) { toast('Response cannot be empty','warning'); return; }
+  if (_revInflight['save'+id]) return;
+  _revInflight['save'+id] = 1;
+  var done = cbtnBusy(_revBtn('saveDraft', id), 'Saving\u2026');
+  function settle(){ delete _revInflight['save'+id]; done(); }
   fetch('/api/save-draft/'+id, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({draft:draft})
-  }).then(function(r){return r.json();}).then(function(sd){
-    if (!sd.ok) { toast('Save failed','error'); return; }
-    fetch('/approve/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(ad){
+  }).then(apiJson).then(function(sd){
+    if (!sd.ok) { settle(); toast(sd.error||'Save failed','error'); return; }
+    fetch('/approve/'+id, {method:'POST'}).then(apiJson).then(function(ad){
+      settle();
       if (ad.ok) {
         var txtEl = document.getElementById('draft-txt-'+id);
         if (txtEl) txtEl.textContent = draft;
@@ -7417,9 +7529,9 @@ function saveDraft(id) {
         document.getElementById('draft-actions-'+id).innerHTML =
           '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>';
         document.getElementById('draft-actions-'+id).style.display='flex';
-      } else { toast('Approve failed — try again','error'); }
-    }).catch(function(){ toast('Network error — try again','error'); });
-  }).catch(function(){ toast('Network error — try again','error'); });
+      } else { toast(ad.error||'Approve failed — try again','error'); }
+    }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
+  }).catch(function(){ settle(); toast('Network error — try again','error'); });
 }
 var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
@@ -7510,7 +7622,7 @@ function _cmChartReveal(root){
 document.addEventListener('DOMContentLoaded',function(){cavnarMotionInit(document);if(window.MutationObserver){new MutationObserver(function(muts){for(var m=0;m<muts.length;m++){var added=muts[m].addedNodes;for(var a=0;a<added.length;a++){if(added[a].nodeType===1)cavnarMotionInit(added[a]);}}}).observe(document.body,{childList:true,subtree:true});}});
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
-  fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/instagram-disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if(d.ok){ toast('Instagram & Facebook disconnected','success'); setTimeout(function(){location.reload();},800); }
     else {
       if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
@@ -7557,7 +7669,7 @@ function toastSaveCredentials(btn){
   // credentials are verified; solid ember on success, stopped red on failure.
   _setToastFormBanner(cavnarHandshakeHtml('connecting',CM_GLYPH_TOAST,'Verifying · Toast POS'),'hs');
   fetch('/api/toast/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid.trim(),client_secret:csec.trim(),restaurant_guid:guid.trim()})})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       btn.disabled = false;
       if (d.ok){
@@ -7578,7 +7690,7 @@ function toastSaveCredentials(btn){
 function toastSyncNow(btn){
   btn.disabled = true;
   btn.textContent = 'Syncing…';
-  fetch('/api/toast/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/toast/sync',{method:'POST'}).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.textContent = '↻ Sync';
     if (d.ok) toast('Toast sync started — labor data updates in ~30s','success');
@@ -7588,7 +7700,7 @@ function toastSyncNow(btn){
 function toastDisconnect(btn){
   if (!confirm('Disconnect Toast POS? Existing synced labor data will remain.')) return;
   btn.disabled = true;
-  fetch('/api/toast/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/toast/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if (d.ok){ toast('Toast disconnected','success'); setTimeout(function(){ window.location.reload(); },600); }
     else { btn.disabled=false; toast(d.error||'Failed','error'); }
   }).catch(function(){ btn.disabled=false; toast('Request failed','error'); });
@@ -7620,7 +7732,7 @@ function squareSaveCredentials(btn){
   if(!token.trim()||!loc.trim()){_setSquareBanner('Both fields are required.','err');return;}
   btn.disabled=true; btn.textContent='Testing connection…'; _setSquareBanner('','');
   fetch('/api/square/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_token:token.trim(),location_id:loc.trim()})})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       btn.disabled=false;
       if(d.ok){
@@ -7639,7 +7751,7 @@ function squareSaveCredentials(btn){
 }
 function squareSyncNow(btn){
   btn.disabled=true; btn.textContent='Syncing…';
-  fetch('/api/square/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/square/sync',{method:'POST'}).then(apiJson).then(function(d){
     btn.disabled=false; btn.textContent='&#x21BB; Sync';
     if(d.ok) toast('Square sync started — labor data updates in ~30s','success');
     else toast(d.error||'Sync failed','error');
@@ -7648,7 +7760,7 @@ function squareSyncNow(btn){
 function squareDisconnect(btn){
   if(!confirm('Disconnect Square POS? Existing synced labor data will remain.')) return;
   btn.disabled=true;
-  fetch('/api/square/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/square/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if(d.ok){toast('Square disconnected','success');setTimeout(function(){window.location.reload();},600);}
     else{btn.disabled=false;toast(d.error||'Failed','error');}
   }).catch(function(){btn.disabled=false;toast('Request failed','error');});
@@ -7681,7 +7793,7 @@ function cloverSaveCredentials(btn){
   if(!mid.trim()||!token.trim()){_setCloverBanner('Both fields are required.','err');return;}
   btn.disabled=true; btn.textContent='Testing connection…'; _setCloverBanner('','');
   fetch('/api/clover/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({merchant_id:mid.trim(),api_token:token.trim()})})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       btn.disabled=false;
       if(d.ok){
@@ -7700,7 +7812,7 @@ function cloverSaveCredentials(btn){
 }
 function cloverSyncNow(btn){
   btn.disabled=true; btn.textContent='Syncing…';
-  fetch('/api/clover/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/clover/sync',{method:'POST'}).then(apiJson).then(function(d){
     btn.disabled=false; btn.textContent='&#x21BB; Sync';
     if(d.ok) toast('Clover sync started — labor data updates in ~30s','success');
     else toast(d.error||'Sync failed','error');
@@ -7709,7 +7821,7 @@ function cloverSyncNow(btn){
 function cloverDisconnect(btn){
   if(!confirm('Disconnect Clover POS? Existing synced labor data will remain.')) return;
   btn.disabled=true;
-  fetch('/api/clover/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/clover/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if(d.ok){toast('Clover disconnected','success');setTimeout(function(){window.location.reload();},600);}
     else{btn.disabled=false;toast(d.error||'Failed','error');}
   }).catch(function(){btn.disabled=false;toast('Request failed','error');});
@@ -7751,7 +7863,7 @@ function gmbConnect(){
 
 function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
-  fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/auth/google/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();},800); }
     else{ toast('Error disconnecting — try again','error'); }
   }).catch(function(){ toast('Network error — try again','error'); });
@@ -7769,7 +7881,7 @@ function loadTopicHeatmap(days){
   if(!grid)return;
   var C=window.CavnarCharts;var esc=C?C.esc:function(v){return String(v==null?'':v);};
   grid.innerHTML=window.cavnarLoading?cavnarLoading('',28,'searching',110):'';
-  fetch('/api/topic-heatmap?days='+_hmDays).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/topic-heatmap?days='+_hmDays).then(apiJson).then(function(d){
     if(!d.ok||!d.data){grid.innerHTML='<div class="hb-empty">Topics appear as reviews get analysed.</div>';return;}
     var items=d.data.filter(function(x){return (x.count||0)>0;}).sort(function(a,b){return (b.count||0)-(a.count||0);}).slice(0,6);
     if(!items.length){grid.innerHTML='<div class="hb-empty" style="height:110px;display:flex;align-items:center">No topics in this window.</div>';return;}
@@ -7788,7 +7900,7 @@ function loadResponsePerf(days){
   var body=document.getElementById('perf-body');
   if(!body)return;
   body.innerHTML=window.cavnarLoading?cavnarLoading('',28,'working',86):'';
-  fetch('/api/response-performance?days='+days).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/response-performance?days='+days).then(apiJson).then(function(d){
     if(!d.ok){body.innerHTML='<div class="hb-empty">Unavailable.</div>';return;}
     var data=d.data||{},total=data.total||0;
     var n=document.getElementById('rv-perf-n');if(n)n.textContent=total;
@@ -7879,7 +7991,7 @@ function loadSentimentTrend(){
   var C=window.CavnarCharts;
   var hero=document.getElementById('rv-hero-chart'),bars=document.getElementById('sentiment-trend-bars');
   if(!hero&&!bars)return;
-  fetch('/api/sentiment-trend').then(function(r){return r.json();}).then(function(data){
+  fetch('/api/sentiment-trend').then(apiJson).then(function(data){
     var weeks=(data.weeks||[]).filter(function(w){return (w.total||0)>0;});
     if(!weeks.length){
       if(hero)hero.innerHTML='<div class="hb-empty" style="height:170px;display:flex;align-items:center">The trend appears after a few weeks of reviews.</div>';
@@ -7967,7 +8079,7 @@ function loadReviewInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/review-insight').then(apiJson).then(function(d){
     var html=d.insight||'Analysis unavailable.';
     /* The WHOLE payload is cached, not just the sentence. Caching the string
        meant the caveats that qualify it — unverified figures, unverified
@@ -8210,7 +8322,7 @@ function switchTab(n,btn){
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
-  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
+  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
 }
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
@@ -8374,7 +8486,7 @@ function openChangelog() {
   if (!isOpen && !_changelogLoaded) { _loadChangelog(); }
 }
 function _loadChangelog() {
-  fetch('/api/changelog').then(function(r){ return r.json(); }).then(function(d) {
+  fetch('/api/changelog').then(apiJson).then(function(d) {
     _changelogLoaded = true;
     document.getElementById('changelog-badge').style.display = 'none';
     var list = document.getElementById('changelog-list');
@@ -8409,17 +8521,15 @@ function _escHtml(s) {
 }
 // Check for unread on load
 (function(){
-  fetch('/api/changelog/unread-count').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/changelog/unread-count').then(apiJson).then(function(d){
     if (d.ok && d.count > 0) {
       document.getElementById('changelog-badge').style.display = 'block';
     }
   }).catch(function(){});
 })();
-// Sync current theme to server every load — catches state set before server-side sync existed
-(function(){
-  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: isDark ? 'dark' : 'light'})}).catch(function(){});
-})();
+// The theme is forced dark before paint (top of <head>), so there is no
+// choice to sync: the per-load POST that used to live here was a database
+// write on every page view that could only ever write "dark" (CLIENT-38).
 // Close changelog panel on outside click
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('changelog-wrap');
@@ -8522,7 +8632,7 @@ function setUrgentClass(el, count){
   statGlow(document.getElementById('stat-urgent-n'), count===0 ? '' : 'stat-glow-red');
 }
 function updateReviewStats(){
-  fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/review-stats').then(apiJson).then(function(d){
     if(typeof d.response_rate==='undefined') return;
 
     // ── Response rate bar ──────────────────────────────────
@@ -8723,6 +8833,7 @@ function updateReviewStats(){
 
 // ── Auto-poll every 15 seconds when on reviews tab ────────
 setInterval(function(){
+  if(document.hidden) return;   // nobody is looking; the next tick after they are catches up (CLIENT-37)
   var reviewPanel = document.getElementById('panel-reviews');
   if(reviewPanel && reviewPanel.classList.contains('active')){
     updateReviewStats();
@@ -8772,7 +8883,7 @@ function sendReviewRequest(btn){
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent})
-  }).then(function(r){ return r.json(); }).then(function(d){
+  }).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.innerHTML = orig;
     if(d.ok){
@@ -8796,7 +8907,7 @@ function sendReviewRequest(btn){
 }
 
 function loadReviewRequestStats(){
-  fetch('/api/review-request-stats').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/review-request-stats').then(apiJson).then(function(d){
     var els = ['rr-sent-mo-inline','rr-sent-mo','rr-sent-total-inline','rr-sent-total'];
     var vals = [d.sent_this_month||0, d.sent_this_month||0, d.total_sent||0, d.total_sent||0];
     for(var _i=0;_i<els.length;_i++){var _e=document.getElementById(els[_i]);if(_e)_e.textContent=vals[_i];}
@@ -8812,7 +8923,7 @@ function loadGbpListing(){
   var descEl  = document.getElementById('gbp-description');
   var titleEl = document.getElementById('gbp-title-display');
   if(!phoneEl) return;
-  fetch('/api/gbp-listing').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/gbp-listing').then(apiJson).then(function(d){
     if(!d.ok){
       if(titleEl) titleEl.textContent = 'Could not load — try disconnecting and reconnecting Google';
       if(phoneEl) phoneEl.placeholder = '';
@@ -8856,12 +8967,20 @@ function _reloadResponsePerfCurrent(){
   var on=document.querySelector('#perf-days-btns .hm-days-btn.on');
   loadResponsePerf(on?parseInt(on.getAttribute('data-days'),10):90);
 }
+// One review action in flight per review (CLIENT-16). Approve posts to
+// Google and fires the webhook, so a double click used to do both twice; the
+// button goes busy (cbtnBusy) and a second call for the same review is a
+// no-op until the first answers.
+var _revInflight = {};
+function _revBtn(fn, id){ return document.querySelector('[onclick="' + fn + '(' + id + ')"]') || document.querySelector('[onclick="' + fn + '(' + id + ',this)"]'); }
 function approveR(id){
-  var _appBtn=document.querySelector('#rc-'+id+' .cbtn-primary');
-  if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
-  fetch('/approve/'+id,{method:'POST'}).then(function(r){
-    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
-  }).then(function(d){
+  if(_revInflight['approve'+id])return;
+  _revInflight['approve'+id]=1;
+  var _appBtn=_revBtn('approveR',id)||document.querySelector('#rc-'+id+' .cbtn-primary');
+  var done=cbtnBusy(_appBtn,'Approving\u2026');
+  function settle(){delete _revInflight['approve'+id];done();}
+  fetch('/approve/'+id,{method:'POST'}).then(apiJson).then(function(d){
+  settle();
   if(d.ok){
     var card = document.getElementById('rc-'+id);
     card.classList.remove('urgent','skipped');
@@ -8914,8 +9033,8 @@ function approveR(id){
       updateReviewStats();
       _reloadResponsePerfCurrent();
     }
-  }
-})}
+  } else { toast(d.error||'Approve failed \u2014 try again','error'); }
+}).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); })}
 
 // One page at a time. The server renders the SAME _review_card.html
 // partial the first page came from, so there is no second copy of the card
@@ -8978,6 +9097,10 @@ function retryPostR(id, btn){
 }
 
 function markPosted(id, btn){
+  if(_revInflight['posted'+id])return;
+  _revInflight['posted'+id]=1;
+  var done=cbtnBusy(btn||_revBtn('markPosted',id),'Saving\u2026');
+  function settle(){delete _revInflight['posted'+id];done();}
   var card = document.getElementById('rc-'+id);
   var platform = card ? card.dataset.platform : '';
   var draftEl = document.getElementById('draft-txt-'+id);
@@ -8990,23 +9113,25 @@ function markPosted(id, btn){
     }
     window.open('https://business.yelp.com', '_blank');
   }
-  fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){
-    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
-  }).then(function(d){
+  fetch('/api/mark-posted/'+id,{method:'POST'}).then(apiJson).then(function(d){
+    settle();
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
       if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');card.dataset.status='posted';}
       cmPostedThen(actions,'Marked as posted','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>');
       if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
-    }
-  });
+    } else { toast(d.error||'Could not mark it as posted \u2014 try again','error'); }
+  }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
 }
 
 function skipR(id){
-  fetch('/skip/'+id,{method:'POST'}).then(function(r){
-    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
-  }).then(function(d){
+  if(_revInflight['skip'+id])return;
+  _revInflight['skip'+id]=1;
+  var done=cbtnBusy(_revBtn('skipR',id),'Working\u2026');
+  function settle(){delete _revInflight['skip'+id];done();}
+  fetch('/skip/'+id,{method:'POST'}).then(apiJson).then(function(d){
+    settle();
     if(d.ok){
       var card = document.getElementById('rc-'+id);
       // Skipping is a real decision, not a no-op — the review leaves the
@@ -9030,8 +9155,8 @@ function skipR(id){
       }
       updateReviewStats();
       toast('Skipped — edit or regenerate below');
-    } else { toast('Skip failed — try again','error'); }
-  }).catch(function(e){ toast((e&&e.message)||'Network error — check your connection','error'); });
+    } else { toast(d.error||'Skip failed — try again','error'); }
+  }).catch(function(){ settle(); toast('Network error — check your connection','error'); });
 }
 var dowData={{labor.dow_summary|tojson}};
 var laborByDay={{labor.by_day|tojson if labor.by_day else '{}'}};
@@ -9121,7 +9246,7 @@ function postToInstagram(){
     if(btn){btn.style.opacity='1';btn.disabled=false;}
     return;}
   fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic,image_url:igImgUrl})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');_cmMktPosted('Posted to Instagram');loadMktPerformance();}
@@ -9144,7 +9269,7 @@ function postToFacebook(){
   if(btn){btn.style.opacity='0.6';btn.disabled=true;}
   var _fbTopic=window._lastPostedTopic||'';
   fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_fbTopic})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');_cmMktPosted('Posted to Facebook');loadMktPerformance();}
@@ -9169,7 +9294,7 @@ function uploadMktPhoto(input){
   var form = new FormData();
   form.append('file', file);
   fetch('/api/marketing/media', {method:'POST', body: form})
-    .then(function(r){ return r.json(); })
+    .then(apiJson)
     .then(function(d){
       input.value = '';
       if(!d.ok){ if(status) status.textContent = d.error || 'Upload failed'; return; }
@@ -9215,7 +9340,7 @@ function openMktPreview(){
   fetch('/api/marketing/preview', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({platform: _mktPlatform(), body: body, media_id: window._mktPhotoId,
                           cta_type: (document.getElementById('gg-cta-type')||{}).value || ''})})
-    .then(function(r){ return r.json(); })
+    .then(apiJson)
     .then(function(d){
       var html = '';
       if(d.ready){
@@ -9251,7 +9376,7 @@ function saveMktDraft(){
   fetch('/api/marketing/drafts', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({body: body, topic: document.getElementById('mktopic').value.trim(),
                           content_type: selCt, media_id: window._mktPhotoId})})
-    .then(function(r){ return r.json(); }).then(function(d){
+    .then(apiJson).then(function(d){
       if(btn){ btn.disabled = false; btn.style.opacity = ''; }
       if(d.ok){ toast('Draft saved','success'); loadMktDrafts(); }
       else toast(d.error || 'Could not save','error');
@@ -9260,7 +9385,7 @@ function saveMktDraft(){
 function loadMktDrafts(){
   var list = document.getElementById('mkt-drafts-list');
   if(!list) return;
-  fetch('/api/marketing/drafts').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/marketing/drafts').then(apiJson).then(function(d){
     if(!d.ok || !d.drafts.length){
       list.innerHTML = '<div class="no-data" style="padding:14px 0;font-size:12px;color:var(--ink3);font-style:italic">Nothing saved yet.</div>';
       return;
@@ -9299,7 +9424,7 @@ function useMktDraft(id){
 }
 function approveMktDraft(id){
   fetch('/api/marketing/drafts/' + id + '/approve', {method:'POST'})
-    .then(function(r){ return r.json(); }).then(function(d){
+    .then(apiJson).then(function(d){
       if(d.ok){ toast('Approved','success'); loadMktDrafts(); }
       else toast(d.error || 'Could not approve','error');
     }).catch(function(){});
@@ -9347,7 +9472,7 @@ function confirmMktSchedule(){
                           content_type: selCt, media_id: window._mktPhotoId,
                           cta_type: (document.getElementById('gg-cta-type')||{}).value || '',
                           cta_url: ((document.getElementById('gg-cta-url')||{}).value || '').trim()})})
-    .then(function(r){ return r.json(); }).then(function(d){
+    .then(apiJson).then(function(d){
       if(d.ok){ toast('Scheduled','success'); closeMktSchedule(); loadMktQueue(); }
       else { status.style.display='block'; status.textContent = d.error || 'Could not schedule.'; }
     }).catch(function(){ status.style.display='block'; status.textContent='Could not schedule.'; });
@@ -9355,7 +9480,7 @@ function confirmMktSchedule(){
 function loadMktQueue(){
   var list = document.getElementById('mkt-queue-list');
   if(!list) return;
-  fetch('/api/marketing/schedule').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/marketing/schedule').then(apiJson).then(function(d){
     if(!d.ok || !d.posts.length){
       list.innerHTML = '<div class="no-data" style="padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Nothing queued. Write a post on the Content tab, then choose Schedule.</div>';
       return;
@@ -9381,7 +9506,7 @@ function loadMktQueue(){
 }
 function cancelMktScheduled(id){
   fetch('/api/marketing/schedule/' + id, {method:'DELETE'})
-    .then(function(r){ return r.json(); }).then(function(d){
+    .then(apiJson).then(function(d){
       if(d.ok){ toast('Cancelled','success'); loadMktQueue(); }
       else toast(d.error || 'Could not cancel','error');
     }).catch(function(){});
@@ -9390,7 +9515,7 @@ function cancelMktScheduled(id){
 // ── Windowed analytics + attribution ────────────────────────────────────────
 function loadMktWindow(){
   var days = (document.getElementById('mkt-window-days')||{}).value || 30;
-  fetch('/api/marketing/performance-window?days=' + days).then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/marketing/performance-window?days=' + days).then(apiJson).then(function(d){
     if(!d.ok) return;
     document.getElementById('mkt-window-body').style.display = 'block';
     document.getElementById('mkt-win-reach').textContent = (d.reach||0).toLocaleString();
@@ -9418,7 +9543,7 @@ function loadMktWindow(){
   }).catch(function(){});
 }
 function loadMktAttribution(){
-  fetch('/api/marketing/attribution').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/marketing/attribution').then(apiJson).then(function(d){
     var card = document.getElementById('mkt-attr-card');
     var body = document.getElementById('mkt-attr-body');
     if(!card || !body) return;
@@ -9456,7 +9581,7 @@ function openBrandVoice(){
   if(!m)return;
   m.style.display='flex';
   var st=document.getElementById('bv-status');if(st)st.style.display='none';
-  fetch('/api/brand-voice').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/brand-voice').then(apiJson).then(function(d){
     if(!d.ok)return;
     document.getElementById('bv-voice').value=d.voice_notes||'';
     document.getElementById('bv-never').value=d.never_say||'';
@@ -9477,7 +9602,7 @@ function saveBrandVoice(){
     never_say:document.getElementById('bv-never').value,
     menu_notes:document.getElementById('bv-menu').value,
     sign_off_name:document.getElementById('bv-signoff').value
-  })}).then(function(r){return r.json();}).then(function(d){
+  })}).then(apiJson).then(function(d){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     if(d.ok){toast('Brand voice saved','success');closeBrandVoice();}
     else{if(st){st.textContent=d.error||'Could not save';st.style.display='inline';}}
@@ -9502,7 +9627,7 @@ function postToGoogle(){
   if(overlay)overlay.style.display='flex';
   if(btn){btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/post-to-google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:content,cta_type:ctaType,cta_url:ctaUrl,topic:window._lastPostedTopic||''})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       if(d.ok){toast('Posted to Google ✓','success');markTopicPosted('Google');_cmMktPosted('Posted to Google');loadMktPerformance();}
@@ -9564,7 +9689,7 @@ function updateCharCount(){
   }
 }
 function loadRecentTopics(){
-  fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/recent-topics').then(apiJson).then(function(d){
     var row=document.getElementById('recent-topics-row');
     var list=document.getElementById('recent-topics-list');
     if(row&&list){
@@ -9623,7 +9748,8 @@ function loadRecentTopics(){
 }
 var _metricsPoller=null;
 function refreshMetrics(){
-  fetch('/api/post-insights').then(function(r){return r.json();}).then(function(d){
+  if(document.hidden)return;   // a background tab skips the tick (CLIENT-37)
+  fetch('/api/post-insights').then(apiJson).then(function(d){
     if(d.ok)loadRecentTopics();
   }).catch(function(){});
 }
@@ -9640,7 +9766,7 @@ function loadMktPerformance(){
   var bodyEl=document.getElementById('mkt-perf-body');
   var emptyEl=document.getElementById('mkt-perf-empty');
   if(!loadingEl)return;
-  fetch('/api/mkt-performance').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/mkt-performance').then(apiJson).then(function(d){
     loadingEl.style.display='none';
     if(!d.ok||!d.has_data){
       bodyEl.style.display='none';
@@ -9694,7 +9820,7 @@ function loadMktInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/mkt-insight').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/mkt-insight').then(apiJson).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
     try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));}catch(e){}
     el.classList.remove('insight-loading');
@@ -9724,11 +9850,11 @@ function renderDiagnosis(id,dg){
   el.hidden=false;
 }
 function loadMarketingDiagnosis(){
-  fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
+  fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(apiJson).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
 }
 function in2LoadQueries(){
   var el=document.getElementById('in2-queries');if(!el)return;
-  fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
     var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt">'+runs.length+' check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
     for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
@@ -9740,8 +9866,8 @@ function in2LoadQueries(){
 function lb2LoadTimeOff(){
   var el=document.getElementById('lb2-timeoff-body');if(!el)return;
   var nEl=document.getElementById('lb2-timeoff-n'),vEl=document.getElementById('lb2-timeoff-v'),flag=document.getElementById('lb2-timeoff-flag');
-  fetch('/api/labor/time-off',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
-    if(!d||!d.ok){el.textContent='';if(flag)flag.textContent='';return;}
+  fetch('/api/labor/time-off',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok){loadFailed(el,d);if(flag)flag.textContent='';return;}
     var rows=d.requests||[],pend=d.pending||0;
     // The headline is what needs the owner: requests waiting. With none
     // waiting it is the count answered, so the tile never reads as empty.
@@ -9756,12 +9882,12 @@ function lb2LoadTimeOff(){
       else h+='<span class="ac-chip sm'+(q.status==='approved'?' good':'')+'">'+esc(q.status)+'</span>';
       h+='</div></div>';}
     el.innerHTML=h;
-  }).catch(function(){});
+  }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});
 }
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-timeoff]'):null;if(!t)return;
   var done=cbtnBusy(t,'\u2026');
-  fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(apiJson).then(function(d){
     // An approval over a week staff already have names the shifts to cover.
     done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();
   }).catch(function(){done();});
@@ -9769,8 +9895,8 @@ document.addEventListener('click',function(e){
 function lb2LoadCovers(){
   var el=document.getElementById('lb2-covers-body');if(!el)return;
   var nEl=document.getElementById('lb2-covers-n'),vEl=document.getElementById('lb2-covers-v'),flag=document.getElementById('lb2-covers-flag');
-  fetch('/api/labor/covers',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
-    if(!d||!d.ok){el.textContent='';if(flag)flag.textContent='';return;}
+  fetch('/api/labor/covers',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok){loadFailed(el,d);if(flag)flag.textContent='';return;}
     var days=d.days||[],tot=0,i;
     for(i=0;i<days.length;i++)tot+=(+days[i].covers||0);
     if(nEl)nEl.textContent=String(days.length);
@@ -9780,13 +9906,13 @@ function lb2LoadCovers(){
     var h='<div class="lb2-cov">';
     for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';
     el.innerHTML=h+'</div>';
-  }).catch(function(){});
+  }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});
 }
 function lb2SaveCover(btn){
   var dt=(document.getElementById('lb2-cov-date')||{}).value,n=(document.getElementById('lb2-cov-n')||{}).value;
   if(!dt||n===''){if(typeof toast==='function')toast('Pick a date and a count','error');return;}
   var done=cbtnBusy(btn,'Saving\u2026');
-  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:[{date:dt,covers:n}]})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:[{date:dt,covers:n}]})}).then(apiJson).then(function(d){
     done();if(typeof toast==='function')toast(d&&d.ok&&d.written?'Saved':((d&&(d.error||(d.errors||[])[0]))||'Could not save'),d&&d.ok&&d.written?'success':'error');lb2LoadCovers();
   }).catch(function(){done();});
 }
@@ -9794,7 +9920,7 @@ function lb2ImportCovers(btn){
   var csv=(document.getElementById('lb2-cov-csv')||{}).value||'',st=document.getElementById('lb2-cov-status');
   if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
   var done=cbtnBusy(btn,'Importing\u2026');
-  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(apiJson).then(function(d){
     done();if(st)st.textContent=d&&d.ok?('Saved '+d.written+' day'+(d.written===1?'':'s')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+'.'):((d&&d.error)||'Could not import.');
     if(d&&d.ok)lb2LoadCovers();
   }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
@@ -9816,7 +9942,7 @@ function loadLaborInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor-insight').then(apiJson).then(function(d){
     var elLaborInsight=document.getElementById('labor-insight');
     if(elLaborInsight){
       var html=d.insight||'Analysis unavailable.';
@@ -9830,7 +9956,7 @@ function loadLaborInsight(){
     var elLaborErr=document.getElementById('labor-insight');
     if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
-  fetch('/api/labor-gap').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor-gap').then(apiJson).then(function(d){
     var gapEl=document.getElementById('gap-amount');
     var msgEl=document.getElementById('gap-dollar');
     var pctEl=document.getElementById('gap-current-pct');
@@ -9922,6 +10048,22 @@ function renderScheduleSteps(startedAt) {
   el.innerHTML = html;
 }
 
+// Why a generation stopped, in place under the button row: it stays until the
+// next Generate, where a dialog (CLIENT-48) could be suppressed by the browser
+// or dismissed before it was read.
+function _schedNotice(btnEl, msg) {
+  var old = document.getElementById('sched-notice'); if (old) old.remove();
+  if (typeof toast === 'function') toast(msg, 'error');
+  if (!btnEl) return;
+  var n = document.createElement('div');
+  n.id = 'sched-notice';
+  n.className = 'load-err';
+  n.setAttribute('role', 'alert');
+  n.style.cssText = 'margin-top:10px;font-size:13.5px';
+  n.textContent = msg;
+  (btnEl.closest('.lb2-actions') || btnEl).insertAdjacentElement('afterend', n);
+}
+
 function _schedReset(btnEl) {
   stopScheduleSteps();
   if (btnEl) btnEl.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -9934,7 +10076,7 @@ function _schedHandleResult(data) {
   if (!data.ok) {
     _schedReset(_schedBtn);
     // The server's sentence only, never the stack (CLIENT-14 / DATA-46).
-    alert((data.error || 'Schedule generation failed') + '\n\nTry again');
+    _schedNotice(_schedBtn, (data.error || 'Schedule generation failed.') + ' Try again.');
     return;
   }
   if (_schedBtn) {
@@ -10097,7 +10239,7 @@ var _profileEditing = null;
 var _DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
 function loadShiftProfiles() {
-  fetch('/api/labor/profiles').then(function (r) { return r.json(); }).then(function (d) {
+  fetch('/api/labor/profiles').then(apiJson).then(function (d) {
     if (!d || !d.ok) return;
     _profiles = d.profiles || [];
     _profileWeights = d.weights || {};
@@ -10270,11 +10412,11 @@ function saveShiftProfile(key) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({profile: profile})
-  }).then(function (r) { return r.json(); }).then(function (d) {
-    if (!d.ok) { alert(d.error || 'Could not save that profile.'); return; }
+  }).then(apiJson).then(function (d) {
+    if (!d.ok) { toast(d.error || 'Could not save that profile.', 'error'); return; }
     _profileEditing = null;
     loadShiftProfiles();
-  }).catch(function () { alert('Could not save that profile.'); });
+  }).catch(function () { toast('Could not save that profile \u2014 check your connection.', 'error'); });
 }
 
 function deleteShiftProfile(key) {
@@ -10282,7 +10424,7 @@ function deleteShiftProfile(key) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: key})
-  }).then(function (r) { return r.json(); }).then(function () { loadShiftProfiles(); })
+  }).then(apiJson).then(function () { loadShiftProfiles(); })
     .catch(function () { });
 }
 
@@ -10328,7 +10470,7 @@ function saveQualityWeights(btn) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({weights: weights})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     if (btn) btn.disabled = false;
     if (note) note.textContent = d.ok ? 'Saved.' : (d.error || 'Could not save that.');
     if (d.ok) { _profileWeights = d.weights || {}; setTimeout(function () { if (note) note.textContent = ''; }, 2500); }
@@ -10526,7 +10668,7 @@ document.addEventListener('click', function (ev) {
   var done = cbtnBusy(el, '');
   fetch('/api/labor/schedule/recommendation', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({kind: _recKind(text), key: text.slice(0, 200), action: action})})
-    .then(function (r) { return r.json(); }).then(function (d) {
+    .then(apiJson).then(function (d) {
       done();
       if (!d || !d.ok) { toast((d && d.error) || 'Could not record that', 'error'); return; }
       _recState[text] = action;
@@ -10663,7 +10805,7 @@ var _teamForSwap = [];
 
 function loadTeamForSwap() {
   if (_teamForSwap.length) return;
-  fetch('/api/labor/team').then(function (r) { return r.json(); }).then(function (d) {
+  fetch('/api/labor/team').then(apiJson).then(function (d) {
     if (d && d.ok && d.team) _teamForSwap = d.team;
   }).catch(function () { });
 }
@@ -10679,7 +10821,7 @@ function _fetchReplacements(index, done) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, index: index})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     done(d && d.ok ? (d.replacements || []) : null);
   }).catch(function () { done(null); });
 }
@@ -10961,6 +11103,7 @@ function generateSchedule(btn, opts) {
   }
   _schedBtn = btn;
   btn.disabled = true;
+  var _oldNotice = document.getElementById('sched-notice'); if (_oldNotice) _oldNotice.remove();
   var body = {};
   if (opts.dates && opts.dates.length) { body.dates = opts.dates; body.history_id = opts.history_id; }
   else { var ws = _schedWeekStart(); if (ws) body.week_start = ws; }
@@ -10993,12 +11136,12 @@ function generateSchedule(btn, opts) {
   }, 5000);
 
   fetch('/api/generate-schedule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
-    .then(function(r) { return r.json(); })
+    .then(apiJson)
     .then(function(startData) {
       if (!startData.ok || !startData.job_id) {
         clearInterval(_elapsedTimer);
         _schedReset(btn);
-        alert(startData.error || 'Failed to start schedule generation');
+        _schedNotice(btn, startData.error || 'Could not start schedule generation. Try again.');
         return;
       }
       var jobId = startData.job_id;
@@ -11016,7 +11159,7 @@ function generateSchedule(btn, opts) {
         clearInterval(_schedPollInterval);
         _schedPollInterval = null;
         _schedReset(btn);
-        alert('Schedule generation is still running after 15 minutes. It will appear in Schedule History when it finishes.');
+        _schedNotice(btn, 'Schedule generation is still running after 15 minutes. It will appear in Schedule History when it finishes.');
       }, 900000);
 
       // One failed poll (a deploy's 502, a dropped connection) is not a
@@ -11025,8 +11168,12 @@ function generateSchedule(btn, opts) {
       var _pollFails = 0;
       _schedPollInterval = setInterval(function() {
         fetch('/api/schedule-status/' + jobId)
-          .then(function(r) { return r.json(); })
+          .then(apiJson)
           .then(function(pollData) {
+            // Every answer about the job carries its status; one that does
+            // not (a deploy's 502, a JSON 500 from the edge) is a failed
+            // poll, not a failed job (SCHED-41).
+            if (!pollData || typeof pollData.status !== 'string') throw new Error('poll');
             _pollFails = 0;
             if (pollData.status === 'pending') return;
             clearTimeout(_hardTimeout);
@@ -11043,14 +11190,14 @@ function generateSchedule(btn, opts) {
             clearInterval(_schedPollInterval);
             _schedPollInterval = null;
             _schedReset(btn);
-            alert('We lost touch with the schedule generation. It may still finish \u2014 check Schedule History in a few minutes.');
+            _schedNotice(btn, 'We lost touch with the schedule generation. It may still finish \u2014 check Schedule History in a few minutes.');
           });
       }, 2000);
     })
     .catch(function() {
       clearInterval(_elapsedTimer);
       _schedReset(btn);
-      alert('Network error — try again');
+      _schedNotice(btn, 'Could not reach the server to start the schedule. Check your connection and try again.');
     });
 }
 
@@ -11071,7 +11218,7 @@ function openPublishSchedule(){
   panel.style.display = 'block';
   var body = document.getElementById('ps-contacts');
   body.innerHTML = 'Loading staff…';
-  fetch('/api/labor/staff-contacts').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor/staff-contacts').then(apiJson).then(function(d){
     if(!d.ok || !d.contacts || !d.contacts.length){
       body.innerHTML = '<span style="color:rgba(255,255,255,.35)">No staff found in this schedule.</span>';
       return;
@@ -11100,7 +11247,7 @@ function savePsContact(input){
   if (pid) body.pos_id = pid.value.trim();
   fetch('/api/labor/staff-contacts', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if(!d.ok) toast(d.error||'Couldn\'t save that contact','error');
   });
 }
@@ -11264,7 +11411,7 @@ function _schedLoadVersion() {
   _schedVersion = null;
   if (!_schedHistoryId) return;
   var hid = _schedHistoryId;
-  fetch('/api/labor/schedule-history/' + hid + '/versions').then(function (r) { return r.json(); }).then(function (d) {
+  fetch('/api/labor/schedule-history/' + hid + '/versions').then(apiJson).then(function (d) {
     if (_schedHistoryId !== hid || !d || !d.ok) return;
     var vs = d.versions || [];
     _schedVersion = vs.length ? vs[vs.length - 1].version : null;
@@ -11288,7 +11435,7 @@ function _schedShowConflict(d) {
 function reloadScheduleFromHistory(btn) {
   if (!_schedHistoryId) return;
   var done = btn ? cbtnBusy(btn, 'Reloading…') : function () {};
-  fetch('/api/labor/schedule-history/' + _schedHistoryId).then(function (r) { return r.json(); }).then(function (d) {
+  fetch('/api/labor/schedule-history/' + _schedHistoryId).then(apiJson).then(function (d) {
     done();
     if (!d || !d.ok) { toast((d && d.error) || 'Could not reload', 'error'); return; }
     _schedRows = d.preview_rows || [];
@@ -11372,7 +11519,7 @@ function _schedRecheck() {
   fetch('/api/labor/schedule/violations', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, baseline_rows: base})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     if (d && d.ok && window.renderScheduleReview) {
       renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, fixes: [], unfixed: []});
     }
@@ -11589,7 +11736,7 @@ var _restaurantId = '{{current_user.restaurant_id if current_user else ""}}';
 function loadAvailability() {
   var list = document.getElementById('avail-list');
   if (!list) return;
-  fetch('/admin/staff-availability/' + _restaurantId).then(function(r){return r.json();}).then(function(d){
+  fetch('/admin/staff-availability/' + _restaurantId).then(apiJson).then(function(d){
     if (!d.ok || !d.availability || !d.availability.length) {
       list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No availability set yet — add employees above.</div>';
       return;
@@ -11615,7 +11762,7 @@ function loadAvailability() {
 }
 function saveAvailability() {
   var name = (document.getElementById('av-name').value || '').trim();
-  if (!name) { alert('Enter an employee name.'); return; }
+  if (!name) { toast('Enter an employee name.', 'warning'); return; }
   var avDays = [], unDays = [];
   var checks = document.querySelectorAll('#av-days-available input[type=checkbox]');
   for (var i = 0; i < checks.length; i++) {
@@ -11628,7 +11775,7 @@ function saveAvailability() {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if (d.ok) {
       document.getElementById('av-name').value = '';
       document.getElementById('av-notes').value = '';
@@ -11642,7 +11789,7 @@ function deleteAvailability(name) {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name})
-  }).then(function(r){return r.json();}).then(function(d){if(d.ok) loadAvailability();});
+  }).then(apiJson).then(function(d){if(d.ok) loadAvailability();});
 }
 
 // ── Operational Score ───────────────────────────────────────────────────────
@@ -11670,7 +11817,7 @@ function toggleTeamPanel() {
 function loadTeamPanel() {
   var list = document.getElementById('team-list');
   if (!list) return;
-  fetch('/api/labor/team').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/labor/team').then(apiJson).then(function(d){
     if (!d.ok) {
       list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load your team.</div>';
       return;
@@ -11761,7 +11908,7 @@ function loadTasksForRole(role) {
   if (!list || !role) return;
   list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading…</div>';
   var today = _tasksToday();
-  fetch('/api/tasks?role=' + encodeURIComponent(role) + '&date=' + today).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/tasks?role=' + encodeURIComponent(role) + '&date=' + today).then(apiJson).then(function(d) {
     if (!d.ok) { list.innerHTML = '<div style="font-size:13.5px;color:var(--red)">Could not load tasks.</div>'; return; }
     _tasksItems = d.tasks || [];
     renderTasksList();
@@ -11818,7 +11965,7 @@ function setTaskDone(templateId, done) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({template_id: templateId, task_date: _tasksToday(), done: done})
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     if (d.ok) loadTasksForRole(_tasksRole);
     else { item.done = previous; renderTasksList(); }
   }).catch(function() { item.done = previous; renderTasksList(); });
@@ -11838,7 +11985,7 @@ function removeTaskTemplate(templateId) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({template_id: templateId})
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     if (d.ok) loadTasksForRole(_tasksRole);
   });
 }
@@ -11855,7 +12002,7 @@ function addTaskTemplate() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({role: role, label: label})
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that task.'; return; }
     if (labelEl) labelEl.value = '';
     _tasksRole = role;
@@ -11962,7 +12109,7 @@ function setTeamScore(idx, score) {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: m.name, score: next})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if (!d.ok) { m.score = previous; renderTeamList(); }
     var rated = 0;
     for (var i = 0; i < _teamRows.length; i++) if (_teamRows[i].score) rated++;
@@ -11988,7 +12135,7 @@ function setTeamCloser(idx, on) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: m.name, attribute: 'can_close', flag: on ? 1 : null})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     if (!d.ok) { m.can_close = previous; renderTeamList(); }
   }).catch(function () { m.can_close = previous; renderTeamList(); });
 }
@@ -12013,7 +12160,7 @@ function removeTeamMember(idx) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: m.name})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     if (d.ok) loadTeamPanel();
   });
 }
@@ -12029,7 +12176,7 @@ function addTeamMember() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: name, role: roleEl ? roleEl.value : ''})
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(apiJson).then(function (d) {
     if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that person.'; return; }
     if (nameEl) nameEl.value = '';
     if (roleEl) roleEl.value = '';
@@ -12122,7 +12269,7 @@ function _ruleSentence(rule) {
 
 function addLeaderRule() {
   var role = (document.getElementById('lr-role').value || '').replace(/^\s+|\s+$/g, '');
-  if (!role) { alert('Pick a role first.'); return; }
+  if (!role) { toast('Pick a role first.', 'warning'); return; }
   var days = [];
   var checks = document.querySelectorAll('#lr-days input[type=checkbox]');
   for (var i = 0; i < checks.length; i++) {
@@ -12158,7 +12305,7 @@ function saveTeamTargets(btn) {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({thresholds: thresholds, leader_rules: _teamRules})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(apiJson).then(function(d){
     if (btn) { btn.disabled = false; btn.textContent = 'Save targets'; }
     if (!d.ok) { if (note) note.textContent = d.error || 'Could not save those targets.'; return; }
     _teamThresholds = d.thresholds || thresholds;
@@ -12229,7 +12376,7 @@ function loadInvInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/inv-insight').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/inv-insight').then(apiJson).then(function(d){
     var elInvInsight=document.getElementById('inv-insight');
     if(elInvInsight){
       var html=d.insight||'Analysis unavailable.';
@@ -12275,7 +12422,7 @@ function fc2Money(v){return '$'+Math.round(Number(v)||0).toLocaleString();}
 function fc2LoadCfo(){
   var host=document.getElementById('fc2-cfo');if(!host)return;
   fetch('/api/food-cost/cfo',{headers:{'Accept':'application/json'}})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       if(!d||!d.ok){host.hidden=true;return;}
       var b=d.brief||{},dg=d.diagnosis,drv=(d.drivers&&d.drivers.drivers)||[];
@@ -12346,7 +12493,7 @@ function fc2LoadCfo(){
 function fc2LoadFoodCostPct(){
   var host=document.getElementById('fc2-fcp');if(!host)return;
   fetch('/api/food-cost/cogs',{headers:{'Accept':'application/json'}})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       if(!d)return;
       if(d.ok&&d.pct!=null){
@@ -12392,7 +12539,7 @@ function fc2LoadRecipeDrafts(note){
   // The note survives the re-render: the status line lives inside this
   // block, so a result written before the reload was wiped by it.
   var el=document.getElementById('fc2-recipes');if(!el)return;
-  fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok)return;
     var ds=d.drafts||[];
     var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'What each dish is made of is what every plate cost and margin rests on. Drafts wait here until you accept them.');
@@ -12418,7 +12565,7 @@ function fc2DraftRecipes(btn,missingOnly){
   var menu=missingOnly?'':((ta&&ta.value)||'');
   if(!missingOnly&&!menu.trim()){if(st)st.textContent='Paste your menu first \u2014 one dish a line.';return;}
   var done=cbtnBusy(btn,'Drafting\u2026');
-  fetch('/api/food-cost/recipes/draft',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:menu})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/recipes/draft',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:menu})}).then(apiJson).then(function(d){
     done();
     if(!d||!d.ok){if(st)st.textContent=(d&&d.error)||'Could not draft just now.';return;}
     var msg=d.drafted?('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s')+' \u2014 confirm them above.'):(d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1)+'.':(d.already_covered?'Those dishes already have a recipe or a draft.':'Nothing to draft.'));
@@ -12432,7 +12579,7 @@ function fc2ImportRecipes(btn){
   var csv=(document.getElementById('fc2-import-csv')||{}).value||'';var st=document.getElementById('fc2-import-status');
   if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
   var done=cbtnBusy(btn,'Importing\u2026');
-  fetch('/api/food-cost/recipes/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/recipes/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(apiJson).then(function(d){
     done();if(st)st.textContent=d&&d.ok?('Imported '+d.written+' line'+(d.written===1?'':'s')+(d.updated?' \u00b7 '+d.updated+' corrected':'')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+((d.unknown_ingredients||[]).length?' \u00b7 unknown: '+d.unknown_ingredients.join(', '):'')+(d.truncated_rows?' \u00b7 '+d.truncated_rows+' rows past the limit not read':'')+'.'+((d.unlinked_dishes||[]).length?' Not linked to a POS item, so they won\'t deplete stock: '+d.unlinked_dishes.join(', ')+'.':'')):((d&&d.error)||'Could not import.');
     if(d&&d.ok)fc2LoadRecipeDrafts();
   }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
@@ -12441,7 +12588,7 @@ document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept],[data-recipe-reject]'):null;if(!t)return;
   var id=t.getAttribute('data-recipe-accept')||t.getAttribute('data-recipe-reject'),accept=t.hasAttribute('data-recipe-accept');
   var done=cbtnBusy(t,accept?'Writing\u2026':'\u2026');
-  fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/'+(accept?'accept':'reject'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/'+(accept?'accept':'reject'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(apiJson).then(function(d){
     done();if(typeof toast==='function')toast(d&&d.ok?(accept?'Recipe written':'Draft removed'):((d&&d.error)||'Could not do that'),d&&d.ok?'success':'error');fc2LoadRecipeDrafts();
   }).catch(function(){done();});
 });
@@ -12461,7 +12608,7 @@ function fc2BlockHead(icon,kicker,title,cnt,sub){
 var _fc2SupNewFor=null;
 function fc2LoadSuppliers(){
   var el=document.getElementById('fc2-suppliers');if(!el)return;
-  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
     var items=d.items,sups={},keys=[],un=0,i;
     for(i=0;i<items.length;i++){var e=String(items[i].supplier_email||'').toLowerCase();
@@ -12483,7 +12630,7 @@ function fc2LoadSuppliers(){
   }).catch(function(){});
 }
 function fc2SupplierPost(ing,sname,semail,cb){
-  fetch('/api/food-cost/ingredient-supplier',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ing,supplier_name:sname,supplier_email:semail})}).then(function(r){return r.json();}).then(function(d){cb(d&&d.ok,d&&d.error);}).catch(function(){cb(false,'Could not save \u2014 check your connection.');});
+  fetch('/api/food-cost/ingredient-supplier',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ing,supplier_name:sname,supplier_email:semail})}).then(apiJson).then(function(d){cb(d&&d.ok,d&&d.error);}).catch(function(){cb(false,'Could not save \u2014 check your connection.');});
 }
 function fc2SupplierPick(sel){
   var ing=sel.getAttribute('data-sup-ing'),v=sel.value,el=document.getElementById('fc2-suppliers');
@@ -12520,7 +12667,7 @@ function fc2AssignAllUnassigned(btn){
 }
 function fc2LoadCountSheet(){
   var el=document.getElementById('fc2-count');if(!el)return;
-  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
     var h=fc2BlockHead(FC2_ICON.count,'Inventory','Count sheet',d.items.length,'Filled with what the ledger expects on hand. Change only what differs, then save \u2014 each change is a recount.')+'<div class="fc2-count-grid">';
     for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
@@ -12535,7 +12682,7 @@ function fc2SaveCount(btn){
   var st=document.getElementById('fc2-count-status');
   if(!items.length){if(st)st.textContent='Nothing changed \u2014 the ledger already matches your count.';return;}
   var done=cbtnBusy(btn,'Saving\u2026');
-  fetch('/api/food-cost/count-sheet',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/food-cost/count-sheet',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(apiJson).then(function(d){
     done();if(st)st.textContent=d&&d.ok?('Saved \u2014 '+d.written+' recount'+(d.written===1?'':'s')+'.'):((d&&d.error)||'Could not save.');
     if(d&&d.ok)fc2LoadCountSheet();
   }).catch(function(){done();if(st)st.textContent='Could not save \u2014 check your connection.';});
@@ -12543,7 +12690,7 @@ function fc2SaveCount(btn){
 function fc2LoadWasteSources(){
   var host=document.getElementById('fc2-wsrc');if(!host)return;
   fetch('/api/food-cost/waste-sources',{headers:{'Accept':'application/json'}})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       // Only worth saying when a meaningful slice is unexplained.
       if(!d||!d.ok||!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
@@ -12558,7 +12705,7 @@ function fc2LoadWasteSources(){
 function fc2LoadRecipeCoverage(){
   var host=document.getElementById('fc2-cov');if(!host)return;
   fetch('/api/food-cost/recipe-coverage',{headers:{'Accept':'application/json'}})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       if(!d||!d.ok||!d.has_data||d.coverage_pct==null){host.hidden=true;return;}
       var pct=d.coverage_pct;
@@ -12581,7 +12728,7 @@ function loadWasteTrend(force){
   var key=_wt.range;
   if(force)_wt.cache={};
   if(!force&&_wt.cache[key]){_wt.data=_wt.cache[key];renderWasteTrend();return;}
-  var req=fetch('/api/food-cost/waste-trend?range='+encodeURIComponent(key),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+  var req=fetch('/api/food-cost/waste-trend?range='+encodeURIComponent(key),{cache:'no-store'}).then(apiJson).then(function(d){
     if(_wt.inflight!==req)return;  // a newer range request superseded this one
     _wt.inflight=null;
     if(!d||!d.ok){_wt.data={ok:false,weeks:[]};renderWasteTrend();return;}
@@ -12953,7 +13100,7 @@ function genContent(fromCalendar){
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(d){
       _genInFlight=false;
       if(btn){btn.disabled=false;btn.style.opacity='';}
@@ -13055,14 +13202,14 @@ function downloadCal(){
 // Split so the tab can show THIS WEEK'S already-generated calendar on open
 // (a plain read, no AI call) while "Generate week" still forces a new draw.
 function loadCalCached(){
-  fetch('/api/content-calendar').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/content-calendar').then(apiJson).then(function(d){
     if(d.ideas&&d.ideas.length)renderCal(d.ideas);
   }).catch(function(){});
 }
 function loadCal(){
   var g=document.getElementById('cal-grid');
   g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';
-  fetch('/api/content-calendar?force=1').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/content-calendar?force=1').then(apiJson).then(function(d){
     if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+(d.error||'Could not generate.')+'</div>';return;}
     renderCal(d.ideas);
   }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});
@@ -13123,7 +13270,7 @@ function loadAlertEngagement() {
   if (!box) return;
   box.style.display = 'none';
   box.innerHTML = '';
-  fetch('/api/notifications/engagement').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/notifications/engagement').then(apiJson).then(function(d){
     if (!d || !d.ok || !d.suggestions || !d.suggestions.length) return;
     var s = d.suggestions[0];
     box.innerHTML = '<div class="al-nudge">'
@@ -13153,7 +13300,7 @@ function openAlertsModal() {
   var msg = document.getElementById('alerts-save-msg');
   msg.style.display = 'none';
   msg.textContent = '';
-  fetch('/api/alert-settings').then(function(r){ return r.json(); }).then(function(d) {
+  fetch('/api/alert-settings').then(apiJson).then(function(d) {
     if (!d.ok) return;
     var c = d.contacts || [];
     document.getElementById('alert-c1-name').value  = (c[0] && c[0].name)  || '';
@@ -13251,7 +13398,7 @@ function loadEmailHistory(){
   var el = document.getElementById('eh-body');
   if(!el) return;
   el.innerHTML = 'Loading…';
-  fetch('/api/email-history').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/email-history').then(apiJson).then(function(d){
     if(!d.ok){ el.innerHTML = '<span style="color:#ef4444">Couldn\'t load email history</span>'; return; }
     if(!d.emails || !d.emails.length){
       el.innerHTML = '<span style="color:var(--ink3)">No email sent yet.</span>';
@@ -13277,7 +13424,7 @@ function loadEmailHistory(){
 function sendTestDigest(btn){
   var original = btn.textContent;
   btn.disabled = true; btn.textContent = 'Sending…';
-  fetch('/api/send-test-digest', {method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/send-test-digest', {method:'POST'}).then(apiJson).then(function(d){
     btn.disabled = false; btn.textContent = original;
     if(d.ok){ toast('Preview sent to ' + d.email, 'success'); loadEmailHistory(); }
     else { toast(d.error || 'Couldn\'t send preview', 'error'); }
@@ -13286,7 +13433,7 @@ function sendTestDigest(btn){
 
 function loadAccountSettings() {
   if (!document.getElementById('account-settings-card')) return;
-  fetch('/api/account-settings').then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/account-settings').then(apiJson).then(function(d) {
     if (!d.ok) return;
     var a = d.auto_approve || {};
     document.getElementById('as-auto-enabled').checked = !!a.enabled;
@@ -13323,7 +13470,7 @@ function loadAccountSettings() {
 // routing are owner-only; the server answers 403 and the card never shows).
 function loadOpsSettings() {
   loadPause();
-  fetch('/api/morning-brief', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/morning-brief', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok || !d.can_edit) return;
     var card = document.getElementById('as-ops-card');
     if (card) card.hidden = false;
@@ -13344,7 +13491,7 @@ function loadOpsSettings() {
     var bl = document.getElementById('as-briefing-level');
     if (bl) bl.value = d.settings.briefing_level || 'normal';
   }).catch(function() {});
-  fetch('/api/issues/routing', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/issues/routing', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var roles = ['manager', 'escalation'];
     for (var j = 0; j < roles.length; j++) {
@@ -13358,7 +13505,7 @@ function loadOpsSettings() {
       document.getElementById('as-route-' + role).innerHTML = h;
     }
   }).catch(function() {});
-  fetch('/api/labor/auto-draft', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/labor/auto-draft', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autodraft-row');
     if (row && !d.external_tool) row.hidden = false;
@@ -13377,7 +13524,7 @@ function sendTestPush(btn) {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   fetch('/api/account/send-test-push', {method: 'POST', credentials: 'same-origin'})
-    .then(function(r){ return r.json(); })
+    .then(apiJson)
     .then(function(d){
       btn.disabled = false;
       btn.textContent = label;
@@ -13422,10 +13569,10 @@ function saveSendDelay() {
   asPost('/api/account/send-delay', {minutes: parseInt(document.getElementById('as-senddelay').value, 10) || 0}, 'as-ops-status', 'Saved');
 }
 function loadWeeklyPlanAndDelay() {
-  fetch('/api/labor/weekly-plan', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/labor/weekly-plan', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (d && d.ok) document.getElementById('as-weeklyplan').checked = !!d.enabled;
   }).catch(function() {});
-  fetch('/api/account/send-delay', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/account/send-delay', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (d && d.ok) document.getElementById('as-senddelay').value = String(d.minutes || 0);
   }).catch(function() {});
 }
@@ -13434,7 +13581,7 @@ function saveAutoOrder() {
          'as-ops-status', 'Saved').then(function() { loadAutoOrder(); });
 }
 function loadAutoOrder() {
-  fetch('/api/food-cost/auto-order', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/food-cost/auto-order', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autoorder-row'); if (row) row.hidden = false;
     document.getElementById('as-autoorder').checked = !!d.enabled;
@@ -13444,7 +13591,7 @@ function loadAutoOrder() {
   }).catch(function() {});
 }
 function loadAutoPublish() {
-  fetch('/api/labor/auto-publish', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/labor/auto-publish', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autopublish-row'); if (row) row.hidden = false;
     document.getElementById('as-autopublish').checked = !!d.enabled;
@@ -13458,7 +13605,7 @@ function asPost(url, body, statusId, okMsg) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     asFlash(statusId, d.ok ? okMsg : (d.error || 'Could not save.'));
     return d;
   }).catch(function() { asFlash(statusId, 'Could not save.'); });
@@ -13469,7 +13616,7 @@ function asPost(url, body, statusId, okMsg) {
 // pause is the smaller decision an owner can make for themselves.
 function loadMemory() {
   var el = document.getElementById('acct-memory-list'); if (!el) return;
-  fetch('/api/account/memory', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/account/memory', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var facts = d.facts || [];
     if (!facts.length) { el.textContent = 'Nothing remembered yet. Tell Ask Cavnar AI \u201cremember that\u2026\u201d and it appears here.'; return; }
@@ -13484,7 +13631,7 @@ document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-forget-fact]') : null; if (!b) return;
   var done = cbtnBusy(b, 'Forgetting\u2026');
   fetch('/api/account/memory/forget', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fact: b.getAttribute('data-forget-fact')})})
-    .then(function (r) { return r.json(); }).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Forgotten' : ((d && d.error) || 'Could not forget'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .then(apiJson).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Forgotten' : ((d && d.error) || 'Could not forget'), d && d.ok ? 'success' : 'error'); loadMemory(); })
     .catch(function () { done(); });
 });
 function acctRemember(btn) {
@@ -13492,12 +13639,12 @@ function acctRemember(btn) {
   if (!fact) { if (typeof toast === 'function') toast('Write the fact first', 'error'); return; }
   var done = cbtnBusy(btn, 'Saving\u2026');
   fetch('/api/account/memory/add', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fact: fact, kind: 'context'})})
-    .then(function (r) { return r.json(); }).then(function (d) { done(); if (d && d.ok) { inp.value = ''; } if (typeof toast === 'function') toast(d && d.ok ? 'Remembered' : ((d && d.error) || 'Could not save'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .then(apiJson).then(function (d) { done(); if (d && d.ok) { inp.value = ''; } if (typeof toast === 'function') toast(d && d.ok ? 'Remembered' : ((d && d.error) || 'Could not save'), d && d.ok ? 'success' : 'error'); loadMemory(); })
     .catch(function () { done(); });
 }
 function loadDecisions() {
   var el = document.getElementById('acct-decisions-list'); if (!el) return;
-  fetch('/api/decisions', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/decisions', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var rows = d.decisions || [];
     if (!rows.length) { el.innerHTML = '<div class="pe"><b>Nothing decided yet.</b><span>When you answer a recommendation on Home, resolve an issue or confirm a proposal in Ask, it is kept here with what it measured.</span></div>'; return; }
@@ -13516,7 +13663,7 @@ function loadDecisions() {
 }
 function loadTrust() {
   var el = document.getElementById('acct-trust-list'); if (!el) return;
-  fetch('/api/account/trust', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/account/trust', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var h = '', i, b, keys = ['5', '4', '3', '2', '1'];
     var earned = [];
@@ -13536,7 +13683,7 @@ function loadTrust() {
 }
 function loadPause() {
   loadMemory(); loadDecisions(); loadTrust();
-  fetch('/api/account/pause', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/account/pause', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok || !d.can_pause) return;
     var card = document.getElementById('acct-pause-card'); if (card) card.hidden = false;
     document.getElementById('acct-pause-body').hidden = !!d.paused;
@@ -13611,7 +13758,7 @@ function saveAlertSettings() {
   var smsOn = document.getElementById('al-via-sms').checked;
   var c1phone = (document.getElementById('alert-c1-phone').value || '').trim();
   if (smsOn && c1phone && !document.getElementById('al-sms-consent').checked) {
-    alert('Please check the SMS consent box before enabling SMS alerts.');
+    toast('Check the SMS consent box before turning on text alerts.', 'warning');
     return;
   }
   var contacts = [];
@@ -13663,7 +13810,7 @@ function saveAlertSettings() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     if (d.ok) {
       msg.style.color = '#3ecf6e';
       msg.textContent = 'Saved!';
@@ -13680,10 +13827,11 @@ function saveAlertSettings() {
 }
 
 function loadAlertsSummary() {
-  fetch('/api/alert-settings').then(function(r){ return r.json(); }).then(function(d) {
+  fetch('/api/alert-settings').then(apiJson).then(function(d) {
     var cEl = document.getElementById('alerts-contacts-summary');
     var tEl = document.getElementById('alerts-types-summary');
-    if (!d.ok || !cEl) return;
+    if (!cEl) return;
+    if (!d.ok) { loadFailed(cEl, d); if (tEl) tEl.textContent = ''; return; }
     var c = d.contacts || [];
     window._acctData=window._acctData||{};window._acctData.alertContacts=c.length;if(window.acctHealthRefresh)acctHealthRefresh();
     if (c.length === 0) {
@@ -13691,7 +13839,7 @@ function loadAlertsSummary() {
       tEl.textContent = '';
     } else {
       cEl.innerHTML = c.map(function(ct) {
-        return '<span style="font-weight:600;color:var(--ink)">' + (ct.name || 'Contact') + '</span> &middot; ' + ct.phone;
+        return '<span style="font-weight:600;color:var(--ink)">' + _escH(ct.name || 'Contact') + '</span> &middot; ' + _escH(ct.phone || '');
       }).join('<br>');
       var s = d.settings || {};
       var on = [];
@@ -13709,12 +13857,15 @@ function loadAlertsSummary() {
       if (s.urgent_via_email) via.push('Email');
       tEl.textContent = (on.length ? on.join(', ') : 'No alerts enabled') + (via.length ? ' via ' + via.join(' & ') : '');
     }
+  }).catch(function() {
+    loadFailed(document.getElementById('alerts-contacts-summary'), null);
+    var tEl = document.getElementById('alerts-types-summary'); if (tEl) tEl.textContent = '';
   });
 }
 // ── End Alert Settings ─────────────────────────────────────────
 
 function loadBillingInfo() {
-  fetch('/api/billing-info').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/billing-info').then(apiJson).then(function(d){
     document.getElementById('billing-loading').style.display='none';
     if(window.acctApplyBilling)acctApplyBilling(d);
     if(!d.ok || d.status==='inactive') {
@@ -13745,7 +13896,7 @@ var _laborTrendLoaded=false;
 function loadLaborTrend(force){
   if(_laborTrendLoaded&&!force){renderLaborHero();return;}
   _laborTrendLoaded=true;
-  fetch('/api/labor-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
+  fetch('/api/labor-trend',{cache:'no-store'}).then(apiJson).then(function(data){
     _perfTrendData=(data.weeks||[]).map(function(w){return {pct:+w.pct||0,label:w.label};});
     var pEl=document.getElementById('perf-period-label');if(pEl&&_perfTrendData.length)pEl.textContent=_perfTrendData[0].label+' – '+_perfTrendData[_perfTrendData.length-1].label;
     renderLaborHero();
@@ -13856,7 +14007,7 @@ function toggle2FA(enable){
   if(enable){document.getElementById('twofa-modal').style.display='flex';return;}
   if(!confirm('Disable two-factor authentication? Your account will only require your password to sign in.'))return;
   fetch('/api/account/2fa/disable',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(d.ok){toast('2FA disabled','success');setTimeout(function(){location.reload();},800);}
       else toast(d.error||'Failed to disable 2FA','error');
     });
@@ -13865,7 +14016,7 @@ function twoFAStep2(btn){
   var method=_twoFAMethod();
   if(btn){btn.textContent='Sending\u2026';btn.disabled=true;}
   fetch('/api/account/2fa/send-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method:method})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(!d.ok){if(btn){btn.textContent='Send me a code';btn.disabled=false;}toast(d.error||'Could not send the code','error');return;}
       document.getElementById('twofa-step1').style.display='none';
       document.getElementById('twofa-step2').style.display='block';
@@ -13887,7 +14038,7 @@ function twoFAVerify(){
   var btn=document.querySelector('#twofa-step2 .cbtn-primary');
   if(btn){btn.textContent='Verifying\u2026';btn.disabled=true;}
   fetch('/api/account/2fa/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,method:_twoFAMethod()})})
-    .then(function(r){return r.json();}).then(function(d){
+    .then(apiJson).then(function(d){
       if(d.ok){
         document.getElementById('twofa-step2').style.display='none';
         document.getElementById('twofa-step3').style.display='block';
@@ -13917,7 +14068,7 @@ function sendReferral(){
   var status = document.getElementById('referral-status');
   if(!name || !email){status.style.display='inline';status.style.color='var(--red)';status.textContent='Enter restaurant name and email';return;}
   status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Sending…';
-  fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})}).then(function(res){return res.json();}).then(function(data){
+  fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})}).then(apiJson).then(function(data){
     if(data.ok){
       status.style.color='var(--green)';status.textContent='Referral sent!';
       document.getElementById('referral-name').value='';
@@ -13934,12 +14085,12 @@ function loadCompetitorIntel(){
   var empty=document.getElementById('comp-empty');
   if(!loading)return;
   loading.style.display='block';comp.style.display='none';empty.style.display='none';
-  fetch('/api/competitor-intel').then(function(r){return r.json();}).then(function(d){
+  fetch('/api/competitor-intel').then(apiJson).then(function(d){
     loading.style.display='none';
     if(!d.ok||!d.data){
       // No data yet - auto-trigger refresh
       loading.textContent='Fetching competitor data for the first time...';
-      fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d2){
+      fetch('/api/refresh-competitor-intel',{method:'POST'}).then(apiJson).then(function(d2){
         if(d2.ok){setTimeout(function(){loadCompetitorIntel();},500);}
         else{loading.style.display='none';empty.style.display='block';}
       }).catch(function(){loading.style.display='none';empty.style.display='block';});
@@ -14020,14 +14171,14 @@ function refreshCompetitorIntel(btn){
     if(_inEmpty&&_origHtml!==null){_inEmpty.innerHTML=_origHtml;}
     else{btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
   }
-  fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/refresh-competitor-intel',{method:'POST'}).then(apiJson).then(function(d){
     if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
     var jobId = d.job_id;
     var attempts = 0;
     var poll = function(){
       attempts++;
       if(attempts > 30){_resetBtn();toast('Still working — check back in a minute','error');return;}
-      fetch('/api/competitor-intel-status/'+jobId).then(function(r){return r.json();}).then(function(s){
+      fetch('/api/competitor-intel-status/'+jobId).then(apiJson).then(function(s){
         if(s.status === 'pending'){setTimeout(poll, 2000);return;}
         _resetBtn();
         if(s.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
@@ -14126,7 +14277,7 @@ function runAIVisibility(btn) {
     var el = document.getElementById('aiv-loading-text');
     if (el) el.textContent = msgs[mi];
   }, 2500);
-  fetch('/api/ai-visibility').then(function(r) { return r.json(); }).then(function(d) {
+  fetch('/api/ai-visibility').then(apiJson).then(function(d) {
     clearInterval(ticker);
     document.getElementById('aiv-loading').style.display = 'none';
     if (!d.ok) {
@@ -14689,7 +14840,7 @@ function updateEmail(){
   if(newEmail.indexOf('@')<1||newEmail.indexOf('.')<0){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a valid email address';return;}
   if(!pw){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter your current password';return;}
   st.style.display='block';st.style.color='var(--ink3)';st.textContent='Updating...';
-  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(function(r){return r.json()}).then(function(d){
+  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(apiJson).then(function(d){
     if(d.ok){
       closeEmailModal();
       var disp=document.getElementById('acct-email-display');
@@ -14719,7 +14870,7 @@ function changePassword(){
   var st=document.getElementById('pw-status');
   if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
-  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){
+  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(apiJson).then(function(d){
     if(d.ok){
       closePwModal();
       toast('Password updated successfully','success');
@@ -14732,7 +14883,7 @@ function changePassword(){
 function loadSessions(){
   var el=document.getElementById('sessions-list');
   if(!el)return;
-  fetch('/api/sessions').then(function(r){return r.json()}).then(function(d){
+  fetch('/api/sessions').then(apiJson).then(function(d){
     if(!d.sessions||!d.sessions.length){el.textContent='No active sessions found.';return;}
     var revokeBtn=document.getElementById('revoke-sessions-btn');
     var otherCount=0;
@@ -14756,7 +14907,7 @@ function loadSessions(){
 
 function revokeOtherSessions(btn){
   var done=cbtnBusy(btn,'Signing out…');
-  fetch('/api/sessions/revoke-others',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+  fetch('/api/sessions/revoke-others',{method:'POST'}).then(apiJson).then(function(d){
     done();
     if(d.ok){toast('Signed out everywhere else','success');loadSessions();}
     else toast(d.error||'Could not sign out other devices','error');
@@ -14768,7 +14919,9 @@ function revokeOtherSessions(btn){
   var DOT_COLORS = {operational:'#22c55e', degraded:'#f59e0b', outage:'#ef4444', maintenance:'#3b82f6'};
 
   function updateStatusDots(overall) {
-    var color = DOT_COLORS[overall] || '#22c55e';
+    // Only a status the server actually reported is painted; an unknown or
+    // unreadable one is grey, never "operational" green (CLIENT-43).
+    var color = DOT_COLORS[overall] || 'var(--ink3)';
     var hdrDot  = document.getElementById('status-dot');
     var acctDot = document.getElementById('acct-status-dot');
     if (hdrDot)  hdrDot.style.background  = color;
@@ -14776,14 +14929,16 @@ function revokeOtherSessions(btn){
   }
 
   function checkStatus() {
+    if (document.hidden) return;   // a background tab skips the tick (CLIENT-37)
     fetch('/api/status')
-      .then(function(r){ return r.json(); })
-      .then(function(d){ updateStatusDots(d.overall); })
-      .catch(function(){});
+      .then(apiJson)
+      .then(function(d){ updateStatusDots(d && d.ok !== false ? d.overall : null); })
+      .catch(function(){ updateStatusDots(null); });
   }
 
   checkStatus();
   setInterval(checkStatus, 120000);
+  document.addEventListener('visibilitychange', function(){ if (!document.hidden) checkStatus(); });
 })();
 
 // ── Webhooks ──────────────────────────────────────────────────────────────
@@ -14796,7 +14951,7 @@ function revokeOtherSessions(btn){
   }
 
   function loadWebhook() {
-    fetch('/api/webhook').then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/webhook').then(apiJson).then(function(d){
       if (!d.ok || !d.webhook) return;
       var wh = d.webhook;
       document.getElementById('webhook-url').value = wh.url || '';
@@ -14851,7 +15006,7 @@ function revokeOtherSessions(btn){
     if (panel.style.display === 'none') {
       panel.style.display = 'block';
       arrow.textContent = '▴';
-      fetch('/api/webhook/deliveries').then(function(r){ return r.json(); }).then(function(d){
+      fetch('/api/webhook/deliveries').then(apiJson).then(function(d){
         var body = document.getElementById('wh-history-body');
         if (!d.ok || !d.deliveries.length) {
           body.innerHTML = '<tr><td colspan="4" style="padding:10px 8px;color:var(--ink3)">No deliveries yet.</td></tr>';
@@ -14877,7 +15032,7 @@ function revokeOtherSessions(btn){
   };
 
   window.reactivateWebhook = function() {
-    fetch('/api/webhook/reactivate', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/webhook/reactivate', {method: 'POST'}).then(apiJson).then(function(d){
       if (d.ok) {
         showWhStatus('Webhook reactivated', '#2d6a4f');
         loadWebhook();
@@ -14935,7 +15090,7 @@ function revokeOtherSessions(btn){
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: url, events: events})
-    }).then(function(r){ return r.json(); }).then(function(d){
+    }).then(apiJson).then(function(d){
       btn.textContent = 'Save webhook';
       btn.disabled = false;
       if (d.ok) {
@@ -14955,7 +15110,7 @@ function revokeOtherSessions(btn){
     btn.textContent = 'Sending…';
     btn.disabled = true;
     fetch('/api/webhook/test', {method: 'POST', headers: {'Content-Type': 'application/json'}})
-      .then(function(r){ return r.json(); }).then(function(d){
+      .then(apiJson).then(function(d){
         btn.textContent = 'Send test';
         btn.disabled = false;
         showWhStatus(d.ok ? 'Test sent — check your endpoint.' : (d.error || 'Error'), d.ok ? '#2d6a4f' : '#c0392b');
@@ -14974,7 +15129,7 @@ function revokeOtherSessions(btn){
 
   window.deleteWebhook = function() {
     if (!confirm('Remove this webhook?')) return;
-    fetch('/api/webhook', {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/webhook', {method: 'DELETE'}).then(apiJson).then(function(d){
       if (d.ok) {
         document.getElementById('webhook-config').style.display = 'none';
         document.getElementById('webhook-url').value = '';
@@ -14991,7 +15146,7 @@ function revokeOtherSessions(btn){
   function _fcMoney(v,dp){return v==null?'—':'$'+Number(v).toFixed(dp==null?2:dp);}
   function loadFcMenu(){
     var sb=document.getElementById('fc2-score-body');if(!sb)return;
-    fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(apiJson).then(function(d){
       if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
       var rows=d.dishes||[];
       if(!rows.length){sb.innerHTML='<div class="hb-empty">'+_fcEsc(d.reason||'Map recipes to your menu items to score them.')+'</div>';return;}
@@ -15006,7 +15161,7 @@ function revokeOtherSessions(btn){
           +'<td>'+(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':'')+'</td></tr>';}
       sb.innerHTML=h+'</tbody></table></div>';
     }).catch(function(){sb.innerHTML='<div class="hb-empty">Couldn\'t load the scorecard.</div>';});
-    fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(apiJson).then(function(d){
       var el=document.getElementById('fc2-reprice-body');if(!el||!d||!d.ok)return;
       var sg=d.suggestions||[];if(!sg.length)return;
       var h='<h3 class="hb-kicker" style="margin:26px 0 8px">Prices to revisit · ingredient costs moved</h3><div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th>Because</th><th class="r">Now</th><th class="r">To restore margin</th><th class="r">Lost / mo</th></tr></thead><tbody>';
@@ -15024,7 +15179,7 @@ function revokeOtherSessions(btn){
     var body=document.getElementById('fc2-inv-body');
     body.innerHTML='<div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas><span style="margin-left:10px;color:var(--ink3)">Reading the invoice…</span></div>';
     var fd=new FormData();fd.append('file',f);
-    fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(apiJson).then(function(d){
       inp.value='';
       if(!d||!d.ok){body.innerHTML='<div class="hb-empty" style="color:var(--red)">'+_fcEsc((d&&d.error)||'Couldn\'t read that invoice.')+'</div>';return;}
       _fcInv=d.invoice;renderInvoice();
@@ -15056,7 +15211,7 @@ function revokeOtherSessions(btn){
       sel.push({index:parseInt(idx,10),ingredient_id:parseInt(ing.value,10),unit_cost:parseFloat(cost.value)});}
     if(!sel.length){if(msg){msg.style.color='var(--red)';msg.textContent='Check at least one line.';}return;}
     fetch('/api/food-cost/invoices/'+v.id+'/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:sel})})
-      .then(function(r){return r.json();}).then(function(d){
+      .then(apiJson).then(function(d){
         if(!d||!d.ok){if(msg){msg.style.color='var(--red)';msg.textContent=(d&&d.error)||'Couldn\'t update.';}return;}
         v.applied_at='just now';renderInvoice();
         if(typeof toast==='function')toast(d.updated.length+' ingredient cost'+(d.updated.length===1?'':'s')+' updated','success');
@@ -15084,20 +15239,21 @@ function revokeOtherSessions(btn){
 // ── Guest SMS lifecycle marketing ───────────────────────────────────────────
 var _gcLoaded = false;
 function loadGuestContactsSummary() {
-  fetch('/api/guest-contacts').then(function(r){ return r.json(); }).then(function(d){
-    if (!d.ok) return;
+  var el = document.getElementById('guest-contacts-summary');
+  if (!el) return;
+  fetch('/api/guest-contacts').then(apiJson).then(function(d){
+    if (!d.ok) { loadFailed(el, d); return; }
     var total = d.contacts.length;
     var consented = d.contacts.filter(function(c){ return c.consent && !c.unsubscribed; }).length;
-    document.getElementById('guest-contacts-summary').textContent =
-      consented + ' text-eligible · ' + total + ' total contact' + (total === 1 ? '' : 's');
-  }).catch(function(){});
+    el.textContent = consented + ' text-eligible · ' + total + ' total contact' + (total === 1 ? '' : 's');
+  }).catch(function(){ loadFailed(el, null); });
 }
 
 // ── Audience, history, compliance and the newsletter ────────────────────────
 window._guestSegments = [];
 window._guestDefaults = {};
 function loadGuestSegments(){
-  fetch('/api/guest-segments').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-segments').then(apiJson).then(function(d){
     if(!d.ok) return;
     window._guestSegments = d.segments;
     window._guestDefaults = d.defaults || {};
@@ -15140,7 +15296,7 @@ function renderSegmentHelp(){
 }
 function loadGuestHistory(){
   loadMarketingDiagnosis();
-  fetch('/api/guest-campaigns').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-campaigns').then(apiJson).then(function(d){
     if(!d.ok) return;
     var wrap = document.getElementById('guest-history-wrap');
     var list = document.getElementById('guest-history-list');
@@ -15176,7 +15332,7 @@ function loadGuestHistory(){
   }).catch(function(){});
 }
 function loadGuestNewsletter(){
-  fetch('/api/guest-newsletter').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-newsletter').then(apiJson).then(function(d){
     if(!d.ok) return;
     var el = document.getElementById('guest-newsletter-count');
     if(el) el.textContent = d.subscribers + ' subscribed';
@@ -15191,7 +15347,7 @@ function sendGuestNewsletter(){
   btn.disabled = true; btn.textContent = 'Sending…';
   fetch('/api/guest-newsletter', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()})})
-    .then(function(r){ return r.json(); }).then(function(d){
+    .then(apiJson).then(function(d){
       btn.disabled = false; btn.textContent = 'Send to subscribers';
       status.style.display = 'inline';
       if(d.ok){
@@ -15243,7 +15399,7 @@ function _fmtVisitDate(iso) {
 function _loadGuestContactsList() {
   var list = document.getElementById('guest-contacts-list');
   list.textContent = 'Loading…';
-  fetch('/api/guest-contacts').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-contacts').then(apiJson).then(function(d){
     if (!d.ok || !d.contacts.length) {
       list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--ink3)">No contacts yet.</div>';
       return;
@@ -15279,7 +15435,7 @@ window.addGuestContact = function() {
   fetch('/api/guest-contacts', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: name, phone: phone})
-  }).then(function(r){ return r.json(); }).then(function(d){
+  }).then(apiJson).then(function(d){
     if (d.ok) {
       document.getElementById('guest-add-name').value = '';
       document.getElementById('guest-add-phone').value = '';
@@ -15290,7 +15446,7 @@ window.addGuestContact = function() {
 };
 
 window.deleteGuestContactRow = function(id) {
-  fetch('/api/guest-contacts/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-contacts/' + id, {method: 'DELETE'}).then(apiJson).then(function(d){
     if (d.ok) { _loadGuestContactsList(); loadGuestContactsSummary(); }
   }).catch(function(){});
 };
@@ -15298,7 +15454,7 @@ window.deleteGuestContactRow = function(id) {
 window.markGuestVisit = function(id, btn) {
   var orig = btn.textContent;
   btn.textContent = '…';
-  fetch('/api/guest-contacts/' + id + '/mark-visit', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/guest-contacts/' + id + '/mark-visit', {method: 'POST'}).then(apiJson).then(function(d){
     if (d.ok) {
       toast('Visit marked ✓', 'success');
       _loadGuestContactsList();
@@ -15318,7 +15474,7 @@ window.generateGuestCampaign = function() {
   fetch('/api/guest-campaign/draft', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({type: type, topic: topic})
-  }).then(function(r){ return r.json(); }).then(function(d){
+  }).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.textContent = 'Generate';
     if (d.ok) {
@@ -15355,7 +15511,7 @@ window.sendGuestCampaign = function() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({message: message, segment: segment, type: document.getElementById('guest-campaign-type').value,
                           link_url: (document.getElementById('guest-campaign-link')||{}).value || ''})
-  }).then(function(r){ return r.json(); }).then(function(d){
+  }).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.textContent = 'Send to this audience';
     if (d.ok && d.queued) {
@@ -15395,15 +15551,17 @@ window.toggleLocSwitcher = function() {
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 };
 
-window.switchLocation = function(rid, name) {
+// Takes the location's id only: a name inside an inline onclick breaks on
+// an apostrophe ("Simple EJ's") however it is escaped (CLIENT-17).
+window.switchLocation = function(rid) {
   fetch('/api/switch-location', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({restaurant_id: rid})
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(apiJson).then(function(d) {
     if (d.ok) { window.location.reload(); }
-    else { toast('Could not switch location', 'error'); }
-  });
+    else { toast(d.error || 'Could not switch location', 'error'); }
+  }).catch(function() { toast('Could not switch location \u2014 check your connection.', 'error'); });
 };
 
 document.addEventListener('click', function(e) {
@@ -15539,7 +15697,7 @@ document.addEventListener('click', function(e) {
   }
 
   function refreshBadge() {
-    fetch('/api/notifications/unread-count').then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/notifications/unread-count').then(apiJson).then(function(d){
       setBadge((d && d.count) || 0);
     }).catch(function(){});
   }
@@ -15551,7 +15709,7 @@ document.addEventListener('click', function(e) {
   function loadNotifications() {
     if (_busy) return;
     _busy = true;
-    fetch('/api/notifications').then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/notifications').then(apiJson).then(function(d){
       _busy = false;
       _items = (d && d.notifications) || [];
       renderList();
@@ -15651,7 +15809,7 @@ document.addEventListener('click', function(e) {
   }
 
   function tmLoadInbox() {
-    fetch('/api/team/inbox').then(function(r) { return r.json(); }).then(function(d) {
+    fetch('/api/team/inbox').then(apiJson).then(function(d) {
       _tmLoaded = true;
       if (!d.ok) {
         document.getElementById('tm-inbox-list').innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load messages.</div>';
@@ -15698,7 +15856,7 @@ document.addEventListener('click', function(e) {
     document.getElementById('tm-thread-view').style.display = 'block';
     document.getElementById('tm-thread-name').textContent = username;
     document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3);text-align:center;padding:20px 0">Loading…</div>';
-    fetch('/api/team/messages/' + userId).then(function(r) { return r.json(); }).then(function(d) {
+    fetch('/api/team/messages/' + userId).then(apiJson).then(function(d) {
       if (!d.ok) { document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3)">Could not load this conversation.</div>'; return; }
       tmRenderThread(d.messages || [], d.my_id);
       tmSetBadge(0);   // opening a thread marks it read server-side too
@@ -15723,7 +15881,7 @@ document.addEventListener('click', function(e) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({recipient_id: _tmOpenWith.id, body: body})
-    }).then(function(r) { return r.json(); }).then(function(d) {
+    }).then(apiJson).then(function(d) {
       if (d.ok) tmOpenThread(_tmOpenWith.id, _tmOpenWith.username);
       else { toast(d.error || 'Could not send that message', 'error'); input.value = body; }
     }).catch(function() { toast('Could not send that message', 'error'); input.value = body; });
@@ -15766,10 +15924,11 @@ function toggleTmplPicker(reviewId, anchorEl) {
   picker.style.display = 'block';
   if (_tmplCache) { _renderTmplPicker(); return; }
   document.getElementById('tmpl-list').innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px">Loading…</div>';
-  fetch('/api/templates').then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/templates').then(apiJson).then(function(d){
+    if (!d || !d.ok) { loadFailed(document.getElementById('tmpl-list'), d); return; }
     _tmplCache = d.templates || [];
     _renderTmplPicker();
-  });
+  }).catch(function(){ loadFailed(document.getElementById('tmpl-list'), null); });
 }
 
 function _renderTmplPicker() {
@@ -15778,16 +15937,26 @@ function _renderTmplPicker() {
     list.innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px 0">No templates saved yet.<br>Edit a draft and click "Save as template."</div>';
     return;
   }
+  // A row carries only its index into _tmplCache: the body and title are the
+  // owner's own text and never go inside an attribute or a handler
+  // (CLIENT-18). Rows are keyboard-reachable buttons (CLIENT-59).
   var html = '';
-  _tmplCache.forEach(function(t) {
-    html += '<div onclick="insertTemplate(' + t.id + ',\'' + t.body.replace(/'/g,"\\'").replace(/\n/g,'\\n') + '\')" '
-          + 'style="padding:8px 10px;border-bottom:1px solid var(--paper3);cursor:pointer;border-radius:4px" '
-          + 'onmouseover="this.style.background=\'var(--paper2)\'" onmouseout="this.style.background=\'\'">'
+  _tmplCache.forEach(function(t, i) {
+    html += '<div class="tmpl-row" role="button" tabindex="0" data-tmpl-idx="' + i + '">'
           + '<div style="font-size:12px;font-weight:600;color:var(--ink)">' + _escH(t.title) + '</div>'
           + '<div style="font-size:11px;color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">' + _escH(t.body.slice(0,80)) + (t.body.length>80?'…':'') + '</div>'
           + '</div>';
   });
   list.innerHTML = html;
+  function pick(e) {
+    var row = e.target && e.target.closest ? e.target.closest('.tmpl-row') : null;
+    var t = row ? (_tmplCache || [])[+row.getAttribute('data-tmpl-idx')] : null;
+    if (!t) return;
+    if (e.preventDefault) e.preventDefault();
+    insertTemplate(t.id, t.body);
+  }
+  list.onclick = pick;
+  list.onkeydown = function(e) { if (e.key === 'Enter' || e.key === ' ') pick(e); };
 }
 
 function _escH(s) {
@@ -15797,11 +15966,12 @@ function _escH(s) {
 function insertTemplate(tid, body) {
   var ta = document.getElementById('editor-text-' + _tmplTargetId);
   if (ta) {
-    ta.value = body.replace(/\\n/g, '\n');
+    ta.value = body;
     ta.focus();
   }
   document.getElementById('tmpl-picker').style.display = 'none';
-  fetch('/api/templates/' + tid + '/use', {method:'POST'});
+  // A usage counter only; a failed count changes nothing the owner sees.
+  fetch('/api/templates/' + tid + '/use', {method:'POST'}).catch(function(){});
 }
 
 function saveAsTemplate(reviewId) {
@@ -15813,7 +15983,7 @@ function saveAsTemplate(reviewId) {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({title: title.trim(), body: ta.value.trim()})
-  }).then(function(r){ return r.json(); }).then(function(d){
+  }).then(apiJson).then(function(d){
     if (d.ok) {
       _tmplCache = null; // invalidate cache
       toast('Template saved ✓','success');
@@ -16136,8 +16306,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 // visibility history, schedule history and who's-seen-it. ES5 only.
 (function(){
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  function jget(url,cb){fetch(url).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false});});}
-  function jsend(url,body,cb,method){fetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
+  function jget(url,cb){fetch(url).then(apiJson).then(cb).catch(function(){cb({ok:false});});}
+  function jsend(url,body,cb,method){fetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(apiJson).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
   function busy(btn,label){return cbtnBusy(btn,label||'Working…');}
   function ago(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));if(isNaN(t))return iso;var m=Math.round((Date.now()-t)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<24)return h+'h ago';var d=Math.round(h/24);if(d<30)return d+'d ago';return new Date(t).toLocaleDateString();}
   function fmtDate(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));return isNaN(t)?iso:new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'});}
@@ -16176,7 +16346,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   }
   window.loadSecurityExtras=function(){
     if(!has('sec-items'))return;
-    jget('/api/account/security-summary',function(d){if(d.ok)renderCheckup(d);});
+    jget('/api/account/security-summary',function(d){if(d.ok){renderCheckup(d);}else{loadFailed(document.getElementById('rec-status'),d);loadFailed(document.getElementById('sec-items'),d);}});
     if(has('bc-remaining'))jget('/api/account/2fa/backup-codes',function(d){var el=document.getElementById('bc-remaining');if(el)el.textContent=d.ok?d.remaining:'?';});
     if(has('trusted-list'))jget('/api/account/2fa/trusted-devices',function(d){
       var el=document.getElementById('trusted-list');if(!el)return;
@@ -16506,10 +16676,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     },350);
   };
   function intelRefreshThenReload(){
-    fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    fetch('/api/refresh-competitor-intel',{method:'POST'}).then(apiJson).then(function(d){
       if(!d.ok){toast(d.error||'Saved — refresh failed','error');return;}
       var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
-        fetch('/api/competitor-intel-status/'+d.job_id).then(function(r){return r.json();}).then(function(s){
+        fetch('/api/competitor-intel-status/'+d.job_id).then(apiJson).then(function(s){
           if(s.status==='pending'){setTimeout(poll,2000);return;}
           if(s.ok){toast('Competitors updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
           else toast(s.error||'Refresh failed','error');

@@ -52,10 +52,8 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         let vm = LaborViewModel(client: client)
         await vm.generateSchedule()
         XCTAssertGreaterThanOrEqual(polls.value, 1)
-        XCTExpectFailure("CLIENT-41: one poll error ends polling with \"Lost connection\" while the job keeps running", strict: true) {
-            XCTAssertNil(vm.scheduleError)
-            XCTAssertNotNil(vm.scheduleResult, "the second poll had the finished week")
-        }
+        XCTAssertNil(vm.scheduleError)
+        XCTAssertNotNil(vm.scheduleResult, "the second poll had the finished week")
     }
 
     func testAFailedPartialRedoClearsItsRegeneratingDays() async {
@@ -70,9 +68,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         await vm.generateSchedule(dates: ["2026-09-29"], historyId: 91)
         XCTAssertFalse(vm.isGeneratingSchedule)
         XCTAssertNotNil(vm.scheduleError)
-        XCTExpectFailure("CLIENT-41: the poll's error path never resets regeneratingDates, so the redo progress copy sticks", strict: true) {
-            XCTAssertEqual(vm.regeneratingDates, [])
-        }
+        XCTAssertEqual(vm.regeneratingDates, [])
     }
 
     // MARK: CLIENT-27 — leaving during generation
@@ -104,9 +100,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
 
         let second = LaborViewModel(client: client)
         await second.load()
-        XCTExpectFailure("CLIENT-27: the new screen has no idea a generation is running; load() fetches only stats", strict: true) {
-            XCTAssertTrue(second.isGeneratingSchedule || second.scheduleResult != nil)
-        }
+        XCTAssertTrue(second.isGeneratingSchedule || second.scheduleResult != nil)
     }
 
     func testLeavingMidGenerationIsNotReportedAsALostConnection() async {
@@ -124,18 +118,14 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         await EdgeHTTP.waitUntil { polls.value >= 1 }
         running.cancel()
         await running.value
-        XCTExpectFailure("CLIENT-41: `try? Task.sleep` swallows the cancel and the next poll's CancellationError reads as \"Lost connection\"", strict: true) {
-            XCTAssertNil(vm.scheduleError)
-        }
+        XCTAssertNil(vm.scheduleError)
     }
 
     func testACancelledStatsLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = LaborViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: LaborViewModel.load has no CancellationError branch", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     // MARK: CLIENT-29 / CLIENT-62 — overrides
@@ -166,9 +156,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         async let b: Void = vm.overrideEmployee(rowId: rows[1].id, to: "Dev")
         _ = await (a, b)
         XCTAssertEqual(versions.value.count, 2)
-        XCTExpectFailure("CLIENT-29: both saves name version 3, so the server 409s the second as \"somebody else saved\"", strict: true) {
-            XCTAssertEqual(versions.value, [3, 4], "the second save must name the version the first one wrote")
-        }
+        XCTAssertEqual(versions.value, [3, 4], "the second save must name the version the first one wrote")
     }
 
     func testASavedOverrideDoesNotHoldTheScreenForSeconds() async throws {
@@ -179,9 +167,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         await vm.rescoreQuality()
         let took = Date().timeIntervalSince(started)
         XCTAssertEqual(vm.overrideState, .idle)
-        XCTExpectFailure("CLIENT-62: rescoreQuality sleeps 4s after a save, keeping Save disabled", strict: true) {
-            XCTAssertLessThan(took, 1.0)
-        }
+        XCTAssertLessThan(took, 1.0)
     }
 
     // MARK: CLIENT-32 — roster rollback
@@ -219,9 +205,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         vm.roster = [try member("Aaron"), try member("Ana"), try member("Bob")]
         gate.signal()
         _ = await save.value
-        XCTExpectFailure("CLIENT-32: the rollback writes to the index captured before the await, overwriting Aaron with Ana", strict: true) {
-            XCTAssertEqual(vm.roster.map(\.name), ["Aaron", "Ana", "Bob"])
-        }
+        XCTAssertEqual(vm.roster.map(\.name), ["Aaron", "Ana", "Bob"])
     }
 
     // MARK: CLIENT-36 — send to staff twice
@@ -251,9 +235,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         await vm.publish()
         XCTAssertEqual(vm.lastResult?.ok, true)
         await vm.publish()      // the button still reads "Send to N staff"
-        XCTExpectFailure("CLIENT-36: after a successful send the button stays live and re-emails the whole roster", strict: true) {
-            XCTAssertEqual(posts.value, 1, "a re-send needs its own confirmation")
-        }
+        XCTAssertEqual(posts.value, 1, "a re-send needs its own confirmation")
     }
 
     func testAConcurrentSecondSendIsIgnored() async {
@@ -272,9 +254,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         let vm = PublishScheduleViewModel(client: publishClient(posts: Box(0)))
         await vm.load()
         XCTAssertNotNil(vm.weekLabel)
-        XCTExpectFailure("CLIENT-45: the publish sheet shows the ISO week (2026-09-28 – 2026-10-04)", strict: true) {
-            XCTAssertEqual(vm.weekLabel, "9/28/26 – 10/4/26")
-        }
+        XCTAssertEqual(vm.weekLabel, "9/28/26 – 10/4/26")
     }
 
     func testTheSharedDateHelperWritesMDY() {
@@ -289,18 +269,14 @@ final class EdgeLaborSchedulingTests: XCTestCase {
     func testSwipingAHistoryDraftAwayAsksFirst() throws {
         let source = try EdgeSource.read("Features/ScheduleHistory/ScheduleHistoryView.swift")
         XCTAssertTrue(source.contains(".swipeActions"))
-        XCTExpectFailure("CLIENT-62: a full swipe deletes a Schedule History draft with no confirmation", strict: true) {
-            XCTAssertTrue(!source.contains("allowsFullSwipe: true") || source.contains(".confirmationDialog"))
-        }
+        XCTAssertTrue(!source.contains("allowsFullSwipe: true") || source.contains(".confirmationDialog"))
     }
 
     func testAReloadDoesNotOverwriteARuleBeingEdited() throws {
         // sync() lives in the view; there is no view-model seam for it.
         let source = try EdgeSource.read("Features/Labor/ScheduleRulesSheet.swift")
         XCTAssertTrue(source.contains("onChange(of: viewModel.rules)"))
-        XCTExpectFailure("CLIENT-60: onChange(of: rules) { sync() } overwrites an edit in progress when a reload lands", strict: true) {
-            XCTAssertFalse(source.contains("{ _, _ in sync() }"),
-                           "a reload must not replace fields the manager is editing")
-        }
+        XCTAssertFalse(source.contains("{ _, _ in sync() }"),
+                       "a reload must not replace fields the manager is editing")
     }
 }

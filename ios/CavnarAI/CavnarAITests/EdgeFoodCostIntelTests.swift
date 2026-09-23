@@ -35,9 +35,7 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         await vm.submit()
         let price = try XCTUnwrap(sentItems.value.first?["price"])
         let asServerReadsIt = (price as? Double) ?? Double("\(price)")
-        XCTExpectFailure("CLIENT-31: quick count sends priceText raw; the server's float(\"1,234.50\") fails and drops the row", strict: true) {
-            XCTAssertEqual(asServerReadsIt, understood, "the server must receive the value the phone validated")
-        }
+        XCTAssertEqual(asServerReadsIt, understood, "the server must receive the value the phone validated")
     }
 
     func testAPlainPriceGoesThroughUnchanged() async throws {
@@ -66,9 +64,7 @@ final class EdgeFoodCostIntelTests: XCTestCase {
                     FoodCostItem(name: "Cream", unit: "qt", priceText: "3.10")]
         await vm.submit()
         XCTAssertTrue(vm.didSubmit)
-        XCTExpectFailure("CLIENT-31: the `rejected` rows are never decoded, so they vanish with no message", strict: true) {
-            XCTAssertTrue((vm.errorMessage ?? "").contains("Butter"))
-        }
+        XCTAssertTrue((vm.errorMessage ?? "").contains("Butter"))
     }
 
     // MARK: CLIENT-39 — invoice photos
@@ -102,10 +98,8 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         // downsampling API is checked at the source.
         let source = try EdgeSource.read("Features/FoodCost/InvoiceScanSheet.swift")
         let prep = try XCTUnwrap(EdgeSource.slice(source, from: "static func downscaledJPEG", length: 700))
-        XCTExpectFailure("CLIENT-39: invoice photos are fully decoded with UIImage(data:) on the main actor", strict: true) {
-            XCTAssertTrue(prep.contains("CGImageSourceCreateThumbnailAtIndex"))
-            XCTAssertTrue(prep.contains("nonisolated"))
-        }
+        XCTAssertTrue(prep.contains("CGImageSourceCreateThumbnailAtIndex"))
+        XCTAssertTrue(prep.contains("nonisolated"))
     }
 
     // MARK: CLIENT-60 / CLIENT-50 — applying an invoice
@@ -136,10 +130,8 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         await vm.apply()
         XCTAssertEqual(vm.appliedCount, 1)
         await vm.apply()        // the button is still there after success
-        XCTExpectFailure("CLIENT-60: \"Update ticked costs\" stays after success; a second tap shows a red \"already applied\" under the success", strict: true) {
-            XCTAssertEqual(applies.value, 1)
-            XCTAssertNil(vm.errorMessage)
-        }
+        XCTAssertEqual(applies.value, 1)
+        XCTAssertNil(vm.errorMessage)
     }
 
     func testAnExpiredSessionDuringApplyIsNotShownAsRawSystemText() async throws {
@@ -150,10 +142,8 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         try scanned(vm)
         await vm.apply()
         let shown = vm.errorMessage ?? ""
-        XCTExpectFailure("CLIENT-50: error.localizedDescription on SessionExpiredError shows \"The operation couldn't be completed. (CavnarAI…)\"", strict: true) {
-            XCTAssertFalse(shown.contains("CavnarAI."), shown)
-            XCTAssertFalse(shown.lowercased().contains("operation couldn"), shown)
-        }
+        XCTAssertFalse(shown.contains("CavnarAI."), shown)
+        XCTAssertFalse(shown.lowercased().contains("operation couldn"), shown)
     }
 
     // MARK: CLIENT-41 / 49 — Intel
@@ -176,27 +166,21 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         let vm = IntelViewModel(client: client)
         await vm.refreshCompetitors()
         XCTAssertFalse(vm.isRefreshing)
-        XCTExpectFailure("CLIENT-41: one poll error ends the competitor refresh with an error while the job keeps running", strict: true) {
-            XCTAssertNil(vm.refreshError)
-            XCTAssertEqual(polls.value, 2)
-        }
+        XCTAssertNil(vm.refreshError)
+        XCTAssertEqual(polls.value, 2)
     }
 
     func testACancelledIntelLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = IntelViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: IntelViewModel.load reports a cancelled load as \"Couldn't load competitor intel.\"", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 
     func testACancelledScheduleHistoryLoadSetsNoError() async {
         let client = EdgeHTTP.client { _ in throw URLError(.cancelled) }
         let vm = ScheduleHistoryViewModel(client: client)
-        await vm.load()
-        XCTExpectFailure("CLIENT-49: ScheduleHistoryViewModel.load reports a cancelled load as an error", strict: true) {
-            XCTAssertNil(vm.errorMessage)
-        }
+        await EdgeHTTP.tornDown { await vm.load() }
+        XCTAssertNil(vm.errorMessage)
     }
 }

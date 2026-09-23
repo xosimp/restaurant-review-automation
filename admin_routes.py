@@ -17,6 +17,9 @@ import emails as _emails
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 admin_bp = Blueprint('admin', __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(admin_bp)
 
 def sanitize(value, max_len=1000):
     """Strip HTML tags and limit length to prevent XSS."""
@@ -643,8 +646,20 @@ def client_settings_page(restaurant_id, current_user):
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def save_client_settings(restaurant_id, current_user):
-    from models import update_restaurant
-    data = request.get_json()
+    from models import update_restaurant, get_restaurant as _gr_cs
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Send the settings as a JSON object."), 400
+    current = _gr_cs(restaurant_id)
+    if not current:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    def _given_or_current(key):
+        """The value this save will leave in place: the payload's, or the
+        stored one when the payload does not mention the field."""
+        if key in data:
+            return (data.get(key) or "").strip()
+        return (getattr(current, key, "") or "").strip()
 
     def _valid_tz(name):
         """Only store real IANA zone names — a typo here would silently skew
@@ -677,7 +692,7 @@ def save_client_settings(restaurant_id, current_user):
         # Same tenancy guard as create-client: a group name in use by another
         # owner would silently merge two clients into one tenant.
         place_clash = place_id_conflict((data.get("google_place_id") or "").strip(),
-                                        exclude_id=restaurant_id)
+                                        exclude_id=restaurant_id) if "google_place_id" in data else None
         if place_clash and not int(data.get("is_demo") or 0):
             return jsonify(ok=False, error=(
                 f"That Google listing is already connected to {place_clash}. Two live "
@@ -686,17 +701,23 @@ def save_client_settings(restaurant_id, current_user):
             ))
 
         conflict = location_group_conflict(
-            data.get("location_group", "").strip(),
-            data.get("owner_email", "").strip(),
+            _given_or_current("location_group"),
+            _given_or_current("owner_email"),
             exclude_id=restaurant_id,
-        )
+        ) if ("location_group" in data or "owner_email" in data) else None
         if conflict:
             return jsonify(ok=False, error=(
-                f"Location group \u201c{data.get('location_group','').strip()}\u201d already belongs to "
+                f"Location group \u201c{_given_or_current('location_group')}\u201d already belongs to "
                 f"{conflict}. Pick a different group name — locations in a group share data and billing."
             ))
-        # Set modules directly from checkboxes
-        update_restaurant(restaurant_id, {
+        # Every field the form can carry, parsed and validated as before —
+        # then only the ones this payload actually sent are written. This used
+        # to write every key as data.get(key, default), so any save that left
+        # a field out reset it: the settings page never sends the alert_* or
+        # urgent_* switches, so every save silently turned all of a client's
+        # alerts off, and a one-field payload also reset billing_status to
+        # 'trial', the modules and owner_email (SEC-30).
+        fields = {
             "name":            data.get("name","").strip(),
             "owner_email":     data.get("owner_email","").strip(),
             "google_place_id": data.get("google_place_id","").strip() or None,
@@ -755,7 +776,8 @@ def save_client_settings(restaurant_id, current_user):
             "alert_rating_threshold":  int(bool(data.get("alert_rating_threshold"))),
             "alert_rating_floor":      float(data.get("alert_rating_floor") or 4.0),
             "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
-        })
+        }
+        update_restaurant(restaurant_id, {k: v for k, v in fields.items() if k in data})
         from models import log_event
         log_event(restaurant_id, "admin_settings_update", {"by": current_user.get("username", "admin")})
         return jsonify(ok=True)
@@ -765,24 +787,10 @@ def save_client_settings(restaurant_id, current_user):
 @admin_bp.before_request
 def _audit_admin_write():
     """Every admin write is a row in admin_events with the actor, before it
-    runs — so a denied or failed write is on the record too (security
-    audit Z2). Reads are not logged; view-as logs itself."""
-    if request.method in ("GET", "HEAD", "OPTIONS") or not (request.path or "").startswith("/admin"):
-        return None
-    try:
-        from auth import get_current_user
-        import admin_events
-        u = get_current_user() or {}
-        rid = (request.view_args or {}).get("restaurant_id")
-        # The restaurant rides in the payload, not the column: the per-client
-        # events view filters on restaurant_id and must keep showing the
-        # route's own event first (e.g. alert_cap.set), not the audit row.
-        admin_events.record("audit", f"admin_write:{request.endpoint or request.path}",
-                            summary=f"{u.get('username') or 'anonymous'} {request.method} {request.path}",
-                            payload={"restaurant_id": rid, "actor": u.get("username"), "role": u.get("role")})
-    except Exception:
-        pass
-    return None
+    runs (security audit Z2). The body is admin_events.audit_admin_write,
+    shared with status_bp's admin writes."""
+    import admin_events
+    return admin_events.audit_admin_write()
 
 
 @admin_bp.route("/admin/freeze/<int:restaurant_id>", methods=["POST"])
@@ -882,18 +890,45 @@ def reset_password(user_id, current_user):
             print(f"Reset email failed: {e}")
     return jsonify(ok=True, password=new_pw)
 
+def _principal_login_id(restaurant_id, fallback_to_any=False):
+    """The restaurant's own account-holder login: an active, non-admin
+    'client' or 'owner' login whose home is this restaurant, oldest first.
+
+    Both callers used to take `... WHERE restaurant_id=? AND is_admin=0
+    LIMIT 1` with no ORDER BY, i.e. whichever row SQLite returned first —
+    often a staff PIN identity (an @staff.invalid users row) or a manager
+    created before the owner's login, so support impersonated, or reset the
+    password of, the wrong person (SEC-28). fallback_to_any lets view-as
+    still open a restaurant that has no principal login, on its oldest
+    non-staff console login."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM users WHERE restaurant_id=? AND is_admin=0 AND is_active=1 "
+            "AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') "
+            "AND email NOT LIKE '%@staff.invalid' ORDER BY id LIMIT 1",
+            (restaurant_id,)).fetchone()
+        if not row and fallback_to_any:
+            row = conn.execute(
+                "SELECT id FROM users WHERE restaurant_id=? AND is_admin=0 AND is_active=1 "
+                "AND COALESCE(role,'') NOT IN ('employee','support') "
+                "AND email NOT LIKE '%@staff.invalid' ORDER BY id LIMIT 1",
+                (restaurant_id,)).fetchone()
+        return row["id"] if row else None
+    finally:
+        conn.close()
+
+
 @admin_bp.route("/admin/reset-password-by-restaurant/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def reset_password_by_restaurant(restaurant_id, current_user):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT id FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
-        (restaurant_id,)
-    ).fetchone()
-    conn.close()
-    if not row:
-        return jsonify(ok=False, error="No client user found for this restaurant")
-    return reset_password(row["id"], current_user=current_user)
+    user_id = _principal_login_id(restaurant_id)
+    if not user_id:
+        return jsonify(ok=False, error="This restaurant has no owner login to reset.")
+    # reset_password is itself admin_required, which resolves and passes
+    # current_user; passing it here as well raised TypeError ("multiple
+    # values for 'current_user'") on every call, so this route always 500'd.
+    return reset_password(user_id)
 
 @admin_bp.route("/api/review-count")
 @login_required
@@ -1275,19 +1310,20 @@ def redraft_all(restaurant_id, current_user):
     threading.Thread(target=_redraft, daemon=True).start()
     return jsonify(ok=True)
 
-@admin_bp.route("/admin/view-as/<int:restaurant_id>")
+@admin_bp.route("/admin/view-as/<int:restaurant_id>", methods=["GET", "POST"])
 @admin_required
 def view_as_client(restaurant_id, current_user):
-    """Log in as a client to see exactly what they see."""
-    from models import get_conn
-    conn = get_conn()
-    user_row = conn.execute(
-        "SELECT * FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
-        (restaurant_id,)
-    ).fetchone()
-    conn.close()
-    if not user_row:
+    """Log in as a client to see exactly what they see.
+
+    A GET only asks. It used to mint the impersonation session and swap the
+    admin's cookie for it, so any page could send an admin's browser into a
+    client's account with a link (SEC-34). The button on the page POSTs,
+    with the same double-submit CSRF token every admin write carries."""
+    user_id = _principal_login_id(restaurant_id, fallback_to_any=True)
+    if not user_id:
         return "No client user found for this restaurant", 404
+    if request.method != "POST":
+        return _view_as_confirm_page(restaurant_id)
     # Create a short-lived session for that user
     # Short-lived session for view-as — 30 minutes only
     from datetime import datetime, timezone, timedelta
@@ -1305,10 +1341,15 @@ def view_as_client(restaurant_id, current_user):
     # while viewing-as from what the client did themselves.
     _conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, last_active, device_type) VALUES (?,?,?,?,?)",
-        (_hst(token), dict(user_row)["id"], expires,
+        (_hst(token), user_id, expires,
          datetime.now(timezone.utc).isoformat(), "admin-view-as")
     )
     _conn.commit(); _conn.close()
+    # Who opened it, and whether it may write. A support login is read-only
+    # in the admin console, and a view-as it opens must be read-only too — it
+    # used to be a full client session (SEC-12). See auth.get_session_user.
+    from auth import record_view_as_session
+    record_view_as_session(token, current_user.get("id"), read_only=not current_user.get("is_admin"))
     try:
         import admin_events
         admin_events.record("admin", "view_as_started", restaurant_id=restaurant_id,
@@ -1319,6 +1360,32 @@ def view_as_client(restaurant_id, current_user):
     resp.set_cookie("session_token", token, max_age=1800,
                     httponly=True, secure=config.on_railway(), samesite="Strict")
     return resp
+
+def _view_as_confirm_page(restaurant_id):
+    """The GET half of view-as: a button that POSTs, carrying the csrf_js
+    double-submit token (minted here when this browser has none yet —
+    ensure_csrf_cookie leaves a response that already sets one alone)."""
+    import secrets as _sec_va
+    from markupsafe import escape as _esc_va
+    from models import get_restaurant as _gr_va
+    from csrf import CSRF_COOKIE
+    rest = _gr_va(restaurant_id)
+    name = _esc_va(rest.name if rest else f"restaurant {restaurant_id}")
+    csrf_tok = request.cookies.get(CSRF_COOKIE) or _sec_va.token_urlsafe(32)
+    import auth_routes as _ar_va
+    body = _ar_va._SIMPLE_PAGE % (
+        f"<h1>View as {name}?</h1><p>This opens their dashboard in this browser for 30 minutes, "
+        f"signed in as their owner login. Everything you do is recorded.</p>"
+        f"<form method='post' action='/admin/view-as/{int(restaurant_id)}'>"
+        f"<input type='hidden' name='csrf_token' value='{_esc_va(csrf_tok)}'>"
+        f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
+        f"<p style='margin-top:16px'><a href='/admin'>Back to the admin console</a></p>")
+    resp = make_response(body)
+    if not request.cookies.get(CSRF_COOKIE):
+        resp.set_cookie(CSRF_COOKIE, csrf_tok, max_age=30 * 24 * 3600, httponly=False,
+                        secure=config.on_railway(), samesite="Lax")
+    return resp
+
 
 @admin_bp.route("/admin/stop-viewing")
 def stop_viewing():
@@ -1867,12 +1934,21 @@ def refresh_competitor_intel(current_user):
     _r = _gr(current_user["restaurant_id"])
     if not (_r and _r.module_reviews and _r.module_labor and _r.module_inventory and _r.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    return jsonify(ok=True, job_id=start_competitor_job(current_user["restaurant_id"]))
+
+
+def start_competitor_job(restaurant_id):
+    """This restaurant's one running competitor refresh: start it, or join
+    the one already pending. Every press used to start another background
+    thread of paid Google Places + Claude calls (SEC-31 / DATA-29); the claim
+    is checked and inserted in one write (ops.claim_async_job), the same way
+    schedule generation joins a running job. Shared with the app's
+    /mobile/api/intel/refresh-competitors."""
     import threading, uuid
-    job_id = str(uuid.uuid4())
-    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
-    t = threading.Thread(target=_run_competitor_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "competitor_intel", restaurant_id)
+    if not joined:
+        threading.Thread(target=_run_competitor_job, args=(job_id, restaurant_id), daemon=True).start()
+    return job_id
 
 @admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])
 @login_required
@@ -1890,23 +1966,65 @@ def competitor_intel_status(current_user, job_id):
     result["status"] = job["status"]
     return jsonify(result)
 
+REFERRALS_PER_HOUR = 10
+
+
+def _referrals_sent_last_hour(restaurant_id) -> int:
+    """Referrals this restaurant sent in the last hour, from email_log — the
+    database, so the limit survives a deploy and holds across processes.
+    log_email stamps sent_at in Chicago local time, so the cutoff is too."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        import zoneinfo
+        now_local = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo("America/Chicago"))
+    except Exception:
+        now_local = datetime.now(timezone.utc) - timedelta(hours=5)
+    cutoff = (now_local - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = get_conn()
+        try:
+            return conn.execute("SELECT COUNT(*) FROM email_log WHERE restaurant_id=? AND email_type='referral' "
+                                "AND sent_at >= ?", (restaurant_id, cutoff)).fetchone()[0]
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
 @admin_bp.route("/api/send-referral", methods=["POST"])
 @login_required
 def send_referral(current_user):
+    """Email a restaurant owner's referral from will@. Mail from Cavnar's own
+    domain carries the 2FA codes too, so this is held to: at most
+    REFERRALS_PER_HOUR per restaurant (the comment promising 10 an hour was
+    never implemented — any login could send unlimited mail as Will), every
+    caller-written field HTML-escaped (the note was pasted in raw, so a
+    "referral" could carry a phishing link in Cavnar's name), and nothing to
+    an address on the suppression list (SEC-15)."""
     import resend as _resend
-    # Simple per-session rate limit: max 10 referrals per hour
-    ip = request.remote_addr or ""   # ProxyFix-vouched (SEC-3)
-    data = request.get_json()
-    ref_name  = data.get("name","").strip()
-    ref_email = data.get("email","").strip()
-    note      = data.get("note","").strip()
+    from markupsafe import escape as _esc
+    data = request.get_json(silent=True) or {}
+    ref_name  = (data.get("name") or "").strip()
+    ref_email = (data.get("email") or "").strip()
+    note      = (data.get("note") or "").strip()
     if not ref_name or not ref_email:
         return jsonify(ok=False, error="Name and email required")
+    rid = current_user["restaurant_id"]
+    if _referrals_sent_last_hour(rid) >= REFERRALS_PER_HOUR:
+        return jsonify(ok=False, error="That's the most referrals we can send in an hour — try again later."), 429
     try:
-        restaurant = get_restaurant(current_user["restaurant_id"])
+        from models import is_email_suppressed
+        if is_email_suppressed(ref_email):
+            return jsonify(ok=False, error="That address has bounced or opted out of our email, so we can't send to it."), 400
+    except Exception:
+        pass
+    try:
+        restaurant = get_restaurant(rid)
         referrer   = restaurant.name if restaurant else "A Cavnar AI client"
-        owner_name = restaurant.owner_name or "Your colleague"
-        note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{note}\"</p>" if note else ""
+        owner_name = (restaurant.owner_name if restaurant else None) or "Your colleague"
+        subject_owner = owner_name
+        referrer, owner_name = _esc(referrer), _esc(owner_name)
+        note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{_esc(note)}\"</p>" if note else ""
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
   <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin-bottom:6px">
@@ -1922,18 +2040,19 @@ def send_referral(current_user):
         _resend.Emails.send({
             "from": _emails.sender("will"),
             "to": [ref_email],
-            "subject": f"{owner_name} thinks you should check out Cavnar AI",
+            "subject": f"{subject_owner} thinks you should check out Cavnar AI",
             "html": _html_doc(html),
         })
         # Notify Will
         _resend.Emails.send({
             "from": _emails.sender("client"),
             "to": [_from_email()],
-            "subject": f"New referral from {referrer} — {ref_name}",
-            "html": _html_doc(f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>"),
+            "subject": f"New referral from {restaurant.name if restaurant else 'a client'} — {ref_name}",
+            "html": _html_doc(f"<p>{referrer} referred {_esc(ref_name)} ({_esc(ref_email)}).</p>"
+                              f"<p>Note: {_esc(note) if note else 'none'}</p>"),
         })
         try:
-            log_email(current_user["restaurant_id"], "referral", ref_email, f"Referral to {ref_name}")
+            log_email(rid, "referral", ref_email, f"Referral to {ref_name}")
         except Exception: pass
         return jsonify(ok=True)
     except Exception as e:

@@ -170,6 +170,8 @@ final class IntelViewModel {
             summary = try await client.send("/mobile/api/intel")
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load competitor intel."
         }
@@ -216,16 +218,25 @@ final class IntelViewModel {
 
     // ~60s max at 2s intervals — the web route's own docstring puts the
     // real analysis (Google Places calls + Claude generation) at 20-40s.
+    //
+    // A transient failure (a deploy's 502, a dropped connection) is waited
+    // out rather than ending the refresh while the job runs on (CLIENT-41);
+    // leaving the screen ends polling quietly.
     private func pollRefresh(jobId: String) async {
-        for _ in 0..<30 {
+        for attempt in 0..<30 {
+            if attempt > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    isRefreshing = false
+                    return
+                }
+            }
             do {
                 let result: RefreshStatusResponse = try await client.send(
                     "/mobile/api/intel/refresh-status/\(jobId)"
                 )
-                if result.status == "pending" {
-                    try? await Task.sleep(for: .seconds(2))
-                    continue
-                }
+                if result.status == "pending" { continue }
                 isRefreshing = false
                 if !result.ok {
                     refreshError = result.error ?? "Competitor refresh failed."
@@ -241,12 +252,17 @@ final class IntelViewModel {
                     await load()
                 }
                 return
+            } catch is CancellationError {
+                isRefreshing = false
+                return
+            } catch let error as APIClient.APIError where error.isTransientForPolling {
+                continue
             } catch let error as APIClient.APIError {
                 refreshError = error.message
                 isRefreshing = false
                 return
             } catch {
-                refreshError = "Lost connection while refreshing competitor data."
+                refreshError = "Couldn't check on the competitor refresh."
                 isRefreshing = false
                 return
             }

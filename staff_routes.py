@@ -15,7 +15,7 @@ time-off and messaging can be added without touching authentication again.
 from flask import (Blueprint, jsonify, make_response, redirect, render_template,
                    request, url_for)
 
-from auth import STAFF_SESSION_HOURS, SignupError, claim_staff_name, claimable_names, consume_portal_nonce, cookies_require_secure, create_staff_session, delete_session, get_join_code, get_membership, get_memberships_for_restaurant, issue_portal_nonce, phone_for_signup_token, portal_attempts_exceeded, record_portal_attempt, restaurant_for_join_code, restaurant_for_staff_code, set_membership_pin, staff_login_required, start_staff_signup, validate_pin, verify_membership_pin, verify_staff_signup, PinError
+from auth import STAFF_SESSION_HOURS, SignupError, claim_staff_name, claimable_names, consume_portal_nonce, cookies_require_secure, create_staff_session, delete_session, get_join_code, get_membership, get_memberships_for_restaurant, issue_portal_nonce, mark_portal_attempt_ok, phone_for_signup_token, portal_attempts_exceeded, record_portal_attempt, restaurant_for_join_code, restaurant_for_staff_code, set_membership_pin, staff_login_required, start_staff_signup, validate_pin, verify_membership_pin, verify_staff_signup, PinError
 from models import get_restaurant
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/staff")
@@ -45,6 +45,19 @@ def _throttled(ip):
         return jsonify(ok=False,
                        error="Too many attempts from this device. Wait a few minutes."), 429
     return None
+
+
+def _token_for_native_app(data, session_token):
+    """{"token": ...} for the iOS app, {} for a browser. The browser's session
+    is the HttpOnly staff_session cookie set on the same response, and HttpOnly
+    exists so page JavaScript can never read it — handing the same token back
+    in the JSON body undid that for any script on the page (SEC-36). The app
+    has no cookie jar it uses for this and stores the token in the Keychain;
+    it is recognised by the device identity it sends with every sign-in
+    (Keychain.deviceIdentity()), which the web pages never send."""
+    if (data.get("device_id") or "").strip():
+        return {"token": session_token}
+    return {}
 
 
 def _notify_owner_of_signin(rid, user_id, ip):
@@ -92,12 +105,13 @@ def portal_login(token):
         return render_template("staff_login.html", restaurant=None, roster=[],
                                portal_token="", login_nonce="", join_code="",
                                error="Too many attempts from this device. Wait a few minutes."), 429
-    record_portal_attempt(ip)
+    attempt = record_portal_attempt(ip)
     rid = restaurant_for_staff_code(token)
     if not rid:
         return render_template("staff_login.html", restaurant=None, roster=[],
                                portal_token="", login_nonce="", join_code="",
                                error="That staff link isn't valid any more. Ask a manager for the current one."), 404
+    mark_portal_attempt_ok(attempt)      # a real code: not a guess (SEC-18)
     restaurant = get_restaurant(rid)
     roster = [
         {"membership_id": m["id"],
@@ -121,10 +135,11 @@ def api_roster(token):
     throttled = _throttled(ip)
     if throttled:
         return throttled
-    record_portal_attempt(ip)
+    attempt = record_portal_attempt(ip)
     rid = restaurant_for_staff_code(token)
     if not rid:
         return jsonify(ok=False, error="That staff link isn't valid any more."), 404
+    mark_portal_attempt_ok(attempt)      # a real code: not a guess (SEC-18)
     restaurant = get_restaurant(rid)
     roster = [
         {"membership_id": m["id"], "name": m.get("employee_name") or m["username"]}
@@ -157,7 +172,7 @@ def portal_authenticate(token):
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Pick your name first."), 400
 
-    record_portal_attempt(ip)
+    attempt = record_portal_attempt(ip)
     # Spend the one-shot nonce BEFORE the PIN is checked, so a captured
     # request body cannot be replayed even if the PIN it carries is correct.
     # A stale one is a distinct, non-sensitive failure: the client refetches
@@ -188,10 +203,13 @@ def portal_authenticate(token):
         user_agent=request.headers.get("User-Agent", ""),
         device_id=(data.get("device_id") or "").strip() or None)
 
+    # A sign-in that worked spends nothing from the address's failure budget
+    # — a whole kitchen signs in on one Wi-Fi address at shift change (SEC-18).
+    mark_portal_attempt_ok(attempt)
     _notify_owner_of_signin(rid, row["user_id"], ip)
 
     resp = make_response(jsonify(ok=True, redirect=url_for("staff.portal_home"),
-                                 token=session_token))
+                                 **_token_for_native_app(data, session_token)))
     # httponly so the portal's own JS can't read it either; a staff device is
     # the least trusted place a session lives in this product.
     # `secure` comes from the deployment, not from a request header. It used
@@ -309,7 +327,7 @@ def signup_claim():
         user_agent=request.headers.get("User-Agent", ""),
         device_id=(data.get("device_id") or "").strip() or None)
     resp = make_response(jsonify(ok=True, redirect=url_for("staff.portal_home"),
-                                 token=session_token,
+                                 **_token_for_native_app(data, session_token),
                                  employee_name=claimed["employee_name"],
                                  job_role=claimed["job_role"]))
     resp.set_cookie("staff_session", session_token, httponly=True, samesite="Lax",
@@ -339,8 +357,16 @@ def portal_logout():
 def portal_home(current_user):
     rid, name = _staff_context(current_user)
     restaurant = get_restaurant(rid)
+    # Where "Sign in again" goes when the shift session ends (CLIENT-47):
+    # this restaurant's own PIN pad, by its join code — the same short code
+    # posted in the back of house, which /staff/r/<code> resolves.
+    try:
+        code = get_join_code(rid)
+    except Exception:
+        code = ""
+    signin_url = url_for("staff.portal_login", token=code) if code else url_for("staff.portal_entry")
     return render_template("staff_portal.html", restaurant=restaurant,
-                           employee_name=name)
+                           employee_name=name, signin_url=signin_url)
 
 
 @staff_bp.route("/api/me")
@@ -388,6 +414,25 @@ def api_shifts(current_user):
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
+def availability_from_submission(unavailable, notes):
+    """The one rule for an employee's own availability, whichever surface
+    they save it from — the portal here, or the /s/<token> link in the
+    weekly schedule email (client_api.staff_availability_submit). The two
+    used to disagree: the link stored "all 7 days blocked" and kept the old
+    available_days, so a newly blocked day was both (CLIENT-11).
+
+    Returns (available_days, unavailable_days, notes, error). The available
+    days are the complement of the blocked ones, so the row can never
+    contradict itself; the note is trimmed to 300 characters, None if blank.
+    """
+    wanted = {str(x).strip().capitalize() for x in (unavailable or [])}
+    blocked = [d for d in _DAYS if d in wanted]
+    if len(blocked) == len(_DAYS):
+        return None, None, None, "Every day blocked — leave at least one you can work."
+    clean = (str(notes or "").strip())[:300] or None
+    return [d for d in _DAYS if d not in blocked], blocked, clean, None
+
+
 @staff_bp.route("/api/availability")
 @staff_login_required
 def api_availability(current_user):
@@ -421,12 +466,11 @@ def api_availability_save(current_user):
     raw = body.get("unavailable_days")
     if not isinstance(raw, list):
         return jsonify(ok=False, error="unavailable_days must be a list of weekday names."), 400
-    blocked = [d for d in _DAYS if d in {str(x).strip().capitalize() for x in raw}]
-    if len(blocked) == 7:
-        return jsonify(ok=False, error="Every day blocked — leave at least one you can work."), 400
-    notes = (str(body.get("notes") or "").strip())[:300] or None
+    available, blocked, notes, err = availability_from_submission(raw, body.get("notes"))
+    if err:
+        return jsonify(ok=False, error=err), 400
     from models import save_staff_availability, init_staff_availability, log_event
-    save_staff_availability(rid, name, [d for d in _DAYS if d not in blocked], blocked, notes=notes)
+    save_staff_availability(rid, name, available, blocked, notes=notes)
     # The schedule generator reads staff_availability (get_unavailability_map)
     # on its next draft; the owner's activity log says who changed what.
     try:
@@ -687,7 +731,11 @@ def api_tasks(current_user):
     date = _valid_task_date(raw, rid)
     if raw and not date:
         return jsonify(ok=False, error="That date isn't one you can check off."), 400
-    return jsonify(ok=True, role=role, tasks=get_todays_tasks(rid, role, task_date=date or _task_today(rid).isoformat()))
+    # The day the list is for goes back with it, so a check-off is recorded
+    # against the restaurant's day, not the phone's (CLIENT-61).
+    task_date = date or _task_today(rid).isoformat()
+    return jsonify(ok=True, role=role, task_date=task_date,
+                   tasks=get_todays_tasks(rid, role, task_date=task_date))
 
 
 @staff_bp.route("/api/tasks/complete", methods=["POST"])

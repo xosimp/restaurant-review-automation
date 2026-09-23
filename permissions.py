@@ -280,6 +280,20 @@ def is_principal(user) -> bool:
     return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
 
 
+def principal_only(user, what="this"):
+    """None when `user` is an account holder, otherwise the 403 JSON response
+    a route returns as-is. For the restaurant-wide switches whose blast radius
+    is the owner's to accept: outbound webhooks (which receive every review
+    and the HMAC secret), POS credentials, review retention (a nightly
+    soft-delete) and auto-approve (public replies under the brand). Any
+    console role could flip them, including a legacy teammate (SEC-24)."""
+    if is_principal(user):
+        return None
+    from flask import jsonify
+    return jsonify(ok=False, owner_only=True,
+                   error=f"Only the account owner can change {what}."), 403
+
+
 def is_employee(user) -> bool:
     """True for a PIN identity. Used where the question really is "is this
     the staff tier" rather than a specific capability — notably the console

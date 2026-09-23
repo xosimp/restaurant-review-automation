@@ -10,7 +10,7 @@
   :root{
     --paper:#0c0c0c; --card:#151515; --line:#262626;
     --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
-    --ember:#d4583a; --ember2:#e8956a;
+    --ember:#d4583a; --ember2:#e8956a; --red:#e05555;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);
@@ -45,6 +45,7 @@
   .day input:focus-visible + span{outline:2px solid var(--ember2);outline-offset:2px}
   .avail-input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:9px;border:1px solid var(--line);
         background:#101010;color:var(--ink);font-size:14px;font-family:inherit;margin-bottom:12px}
+  .refused{margin:0 0 12px;font-size:13.5px;color:var(--red);font-weight:600}
   .saved{margin-top:10px;font-size:13.5px;color:#4ead7a;font-weight:600;text-align:center}
   footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
 </style>
@@ -58,7 +59,7 @@
   {% if shifts %}
     {% for s in shifts %}
       <div class="shift">
-        <div><span class="day">{{ s.day or s.date }}</span><span class="date">{{ s.date }}</span></div>
+        <div><span class="day">{{ s.day or s.date_label }}</span><span class="date">{{ s.date_label }}</span></div>
         <div class="time">{{ s.start }} – {{ s.end }}</div>
         <div class="meta">{{ s.role }}{% if s.hours %} · {{ s.hours }} hrs{% endif %}</div>
         {% if s.notes %}<div class="note">{{ s.notes }}</div>{% endif %}
@@ -81,7 +82,9 @@
         </label>
       {% endfor %}
     </div>
-    <input class="avail-input" type="text" name="note" maxlength="300" placeholder="Anything else? (optional)">
+    <input class="avail-input" type="text" name="note" maxlength="300" value="{{ note }}" placeholder="Anything else? (optional)">
+    <input type="hidden" name="note_prefilled" value="1">
+    {% if all_days_blocked %}<div class="refused" role="alert">Every day blocked — leave at least one you can work.</div>{% endif %}
     <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block">Save my availability</button>
     {% if saved %}<div class="saved">Saved — thanks, your manager has it.</div>{% endif %}
   </form>

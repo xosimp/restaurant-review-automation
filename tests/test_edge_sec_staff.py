@@ -247,8 +247,6 @@ def _roster_of(db_path, rid, n, pin="5063"):
     return mids
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-18: successful sign-ins count toward the 30-per-5-min "
-                   "per-IP ceiling, so the 16th employee on one Wi-Fi is refused")
 def test_forty_successful_sign_ins_from_one_address_in_five_minutes_are_all_accepted(client, db_path):
     rid = _restaurant(db_path, "Big Kitchen", "o@x.test")
     mids = _roster_of(db_path, rid, 40)
@@ -306,8 +304,6 @@ def test_a_lock_that_has_run_out_lets_the_right_pin_in(db_path):
     assert verify_membership_pin(mid, rid, "8317", db_path=db_path)["ok"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-19: every lockout is a flat 15 minutes with "
-                   "failed_count reset to 0 — no escalation across a day")
 def test_a_second_lockout_the_same_day_lasts_longer_than_the_first(db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     _uid, mid = _staff(db_path, rid, "dana", "Dana K.", pin="8317")
@@ -349,8 +345,6 @@ def test_a_staff_identity_is_not_counted_as_an_owner(client, db_path):
 
 # ── SEC-36: the session token stays out of page JavaScript ──────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-36: the PIN sign-in returns the HttpOnly session "
-                   "token in the JSON body to a browser")
 def test_a_browser_pin_sign_in_response_carries_no_token_field(client, db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     _uid, mid = _staff(db_path, rid, "dana", "Dana K.", pin="8317")
@@ -361,8 +355,6 @@ def test_a_browser_pin_sign_in_response_carries_no_token_field(client, db_path):
     assert "token" not in resp.get_json()
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-36: the self-signup claim returns the HttpOnly "
-                   "session token in the JSON body to a browser")
 def test_a_browser_signup_claim_response_carries_no_token_field(client, db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     models.add_manual_team_member(rid, "Dana K.", "Server", db_path=db_path)

@@ -7,17 +7,45 @@ import Security
 /// unencrypted plist storage, not appropriate for anything that grants
 /// access to a restaurant's data.
 enum Keychain {
-    static func set(_ value: String, for key: String) {
+    /// ThisDeviceOnly: the items never leave this phone — not in an
+    /// encrypted iTunes/Finder backup, not in an iCloud backup restored onto
+    /// a new device. A session token or a 2FA "remember this device" value
+    /// that followed a backup to another phone would sign that phone in as
+    /// this one (CLIENT-25). AfterFirstUnlock still lets a background refresh
+    /// read the token while the phone is locked.
+    private static var accessibility: CFString { kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly }
+
+    /// Returns whether the value was stored. The status used to be
+    /// discarded, so a failed write (a locked keychain, a full device) left
+    /// a session that worked until the next launch and then vanished with
+    /// nothing to say why.
+    @discardableResult
+    static func set(_ value: String, for key: String) -> Bool {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(query as CFDictionary)
-        var attributes = query
-        attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attributes as CFDictionary, nil)
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = accessibility
+        let status = SecItemAdd(item as CFDictionary, nil)
+        if status == errSecSuccess { return true }
+        // The delete above can lose a race with another writer of the same
+        // key; update in place rather than give up.
+        if status == errSecDuplicateItem {
+            let update: [String: Any] = [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: accessibility,
+            ]
+            let updated = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+            if updated == errSecSuccess { return true }
+            log("update", key: key, status: updated)
+            return false
+        }
+        log("add", key: key, status: status)
+        return false
     }
 
     static func get(_ key: String) -> String? {
@@ -25,12 +53,30 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
+            kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard status == errSecSuccess,
+              let item = result as? [String: Any],
+              let data = item[kSecValueData as String] as? Data,
+              let value = String(data: data, encoding: .utf8)
+        else { return nil }
+        // Items written before ThisDeviceOnly still carry the old,
+        // backup-portable class. Rewrite them the first time they are read,
+        // so an existing install is bound to this device too, not only the
+        // next sign-in.
+        if (item[kSecAttrAccessible as String] as? String) != (accessibility as String) {
+            set(value, for: key)
+        }
+        return value
+    }
+
+    private static func log(_ operation: String, key: String, status: OSStatus) {
+        #if DEBUG
+        print("[keychain] \(operation) failed for \(key): \(status)")
+        #endif
     }
 
     static func delete(_ key: String) {

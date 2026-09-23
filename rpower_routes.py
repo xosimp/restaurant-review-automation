@@ -23,6 +23,9 @@ from auth import admin_required, login_required
 from models import update_restaurant
 
 rpower_bp = Blueprint("rpower", __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(rpower_bp)
 
 
 @rpower_bp.route("/admin/rpower/save/<int:restaurant_id>", methods=["POST"])

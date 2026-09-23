@@ -30,6 +30,10 @@ from auth import login_required, mobile_login_required
 
 strategy_bp = Blueprint("strategy", __name__)
 strategy_mobile_bp = Blueprint("strategy_mobile", __name__, url_prefix="/mobile/api")
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(strategy_bp)
+_json_object_guard(strategy_mobile_bp)
 issue_link_bp = Blueprint("issue_link", __name__)
 
 # Metrics a login without FOOD_COST_VIEW may not see goals/outcomes for.

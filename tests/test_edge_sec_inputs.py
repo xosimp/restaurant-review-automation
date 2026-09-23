@@ -143,7 +143,6 @@ def test_the_public_status_page_renders(status_client):
     assert c.get("/status").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-38: the public /status page runs seed_default_services (a write) on every GET")
 def test_the_public_status_page_does_not_write_on_a_get(status_client, monkeypatch):
     c, status_routes = status_client
     writes = []
@@ -199,7 +198,6 @@ def fuzz_app(db_path, monkeypatch):
     return app
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-32: ~170 POST routes answer 500 to a JSON body that is a string or an array")
 def test_every_post_route_answers_4xx_never_500_to_a_json_body_that_is_not_an_object(fuzz_app, db_path):
     crashes = collections.OrderedDict()
 

@@ -97,6 +97,18 @@ enum EdgeHTTP {
         "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")"
     }
 
+    /// Runs a load the way SwiftUI runs a view's `.task` that is torn down
+    /// by navigating away: the task is cancelled, and URLSession answers the
+    /// in-flight request with URLError.cancelled (the handler's job). A
+    /// URLError.cancelled on a task nobody cancelled is a different thing —
+    /// a pin rejection — and must surface as an error (CLIENT-24).
+    @MainActor
+    static func tornDown(_ load: @escaping @MainActor () async -> Void) async {
+        let task = Task { @MainActor in await load() }
+        task.cancel()
+        await task.value
+    }
+
     /// Waits (bounded) until `condition` holds — for a request to reach a
     /// handler that is deliberately holding it open.
     static func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 3) async {
@@ -291,9 +303,7 @@ final class EdgeAppCoreTests: XCTestCase {
         await inFlight.value
 
         XCTAssertTrue(arrived.value)
-        XCTExpectFailure("CLIENT-23: a late 401 from a superseded token fires onSessionExpired and logs out the new user", strict: true) {
-            XCTAssertFalse(fired.value)
-        }
+        XCTAssertFalse(fired.value)
     }
 
     func testAnExpiryForTheCurrentTokenStillFiresTheHandler() async {
@@ -315,18 +325,14 @@ final class EdgeAppCoreTests: XCTestCase {
         var caught: Error?
         do { let _: OKResponse = try await client.send("/mobile/api/home") } catch { caught = error }
         XCTAssertNotNil(caught)
-        XCTExpectFailure("CLIENT-24: an un-requested URLError.cancelled (pin rejection) is rethrown as a silent CancellationError", strict: true) {
-            XCTAssertTrue(caught is APIClient.APIError,
-                          "a secure-connection failure must reach the screen as an error, not be swallowed as a cancel")
-        }
+        XCTAssertTrue(caught is APIClient.APIError,
+                      "a secure-connection failure must reach the screen as an error, not be swallowed as a cancel")
     }
 
     func testTheSessionExpiredErrorHasAFriendlyDescription() {
         let text = (APIClient.SessionExpiredError() as Error).localizedDescription
-        XCTExpectFailure("CLIENT-50: SessionExpiredError isn't LocalizedError, so screens show \"The operation couldn't be completed\"", strict: true) {
-            XCTAssertFalse(text.contains("SessionExpiredError"), text)
-            XCTAssertFalse(text.lowercased().contains("operation couldn"), text)
-        }
+        XCTAssertFalse(text.contains("SessionExpiredError"), text)
+        XCTAssertFalse(text.lowercased().contains("operation couldn"), text)
     }
 
     // MARK: Timeouts (CLIENT-20)
@@ -347,9 +353,7 @@ final class EdgeAppCoreTests: XCTestCase {
         let longEnough = sessions.filter {
             $0.0 != "uploadSession" && $0.1.configuration.timeoutIntervalForResource >= generation
         }
-        XCTExpectFailure("CLIENT-20: every non-upload call is capped at the 45s resource timeout, below the 90s generation timeout", strict: true) {
-            XCTAssertFalse(longEnough.isEmpty)
-        }
+        XCTAssertFalse(longEnough.isEmpty)
     }
 
     // MARK: Ask stream classification (CLIENT-53)
@@ -367,9 +371,7 @@ final class EdgeAppCoreTests: XCTestCase {
 
     func testAStream401WithoutTheSessionExpiredFlagDoesNotSignOut() async {
         let (_, fired) = await streamError(status: 401, body: #"{"ok": false, "error": "Not allowed."}"#)
-        XCTExpectFailure("CLIENT-53: the Ask stream treats any 401 as session expiry", strict: true) {
-            XCTAssertFalse(fired)
-        }
+        XCTAssertFalse(fired)
     }
 
     func testAStream401WithTheSessionExpiredFlagStillSignsOut() async {
@@ -382,17 +384,13 @@ final class EdgeAppCoreTests: XCTestCase {
     func testAStreamRefusalCarriesTheServersOwnMessage() async {
         let (error, _) = await streamError(status: 403,
                                            body: #"{"ok": false, "error": "Ask Cavnar isn't on your plan yet."}"#)
-        XCTExpectFailure("CLIENT-53: 402/403 on the stream become \"Couldn't reach Cavnar AI\", dropping the server's reason", strict: true) {
-            XCTAssertEqual((error as? APIClient.APIError)?.message, "Ask Cavnar isn't on your plan yet.")
-        }
+        XCTAssertEqual((error as? APIClient.APIError)?.message, "Ask Cavnar isn't on your plan yet.")
     }
 
     func testTheStreamAsksNetworkMonitorWhetherTheDeviceIsOffline() throws {
         let source = try EdgeSource.read("Core/APIClient.swift")
         let stream = try XCTUnwrap(EdgeSource.slice(source, from: "func stream<Body", length: 2400))
-        XCTExpectFailure("CLIENT-53: stream() hard-codes deviceIsOffline: false, so an offline device is never told so", strict: true) {
-            XCTAssertFalse(stream.contains("deviceIsOffline: false"))
-        }
+        XCTAssertFalse(stream.contains("deviceIsOffline: false"))
     }
 
     // MARK: Keychain (CLIENT-25)
@@ -403,17 +401,13 @@ final class EdgeAppCoreTests: XCTestCase {
         // (see SessionStoreTests). The attribute is the whole fix.
         let source = try EdgeSource.read("Core/Keychain.swift")
         XCTAssertTrue(source.contains("kSecAttrAccessible"))
-        XCTExpectFailure("CLIENT-25: Keychain uses AfterFirstUnlock, not ThisDeviceOnly, so backups carry sessions and 2FA tokens to a new phone", strict: true) {
-            XCTAssertTrue(source.contains("ThisDeviceOnly"))
-        }
+        XCTAssertTrue(source.contains("ThisDeviceOnly"))
     }
 
     func testKeychainWritesCheckTheirStatus() throws {
         let source = try EdgeSource.read("Core/Keychain.swift")
-        XCTExpectFailure("CLIENT-25: SecItemAdd's status is ignored, so a failed write is silent", strict: true) {
-            XCTAssertFalse(source.contains("SecItemAdd(attributes as CFDictionary, nil)\n"),
-                           "the status of SecItemAdd should be read, not discarded")
-        }
+        XCTAssertFalse(source.contains("SecItemAdd(attributes as CFDictionary, nil)\n"),
+                       "the status of SecItemAdd should be read, not discarded")
     }
 
     // MARK: Offline queue (CLIENT-5)
@@ -441,9 +435,7 @@ final class EdgeAppCoreTests: XCTestCase {
         let inMemory = await PendingWriteQueue.shared.pendingCount
         XCTAssertEqual(inMemory, 1, "a write for the location being switched to is kept in memory")
         let relaunched = await PendingWriteQueue().pendingCount
-        XCTExpectFailure("CLIENT-5: SecureCache.purgeAll() on a location switch deletes pending-writes.json", strict: true) {
-            XCTAssertEqual(relaunched, 1, "the kept write must also survive the next relaunch")
-        }
+        XCTAssertEqual(relaunched, 1, "the kept write must also survive the next relaunch")
     }
 
     func testThePendingQueueStateIsShownSomewhere() throws {
@@ -453,9 +445,7 @@ final class EdgeAppCoreTests: XCTestCase {
                 && (text.contains("PendingWriteQueue.shared.pendingCount")
                     || text.contains("PendingWriteQueue.shared.pendingLabels"))
         }
-        XCTExpectFailure("CLIENT-5: pendingCount / pendingLabels have no reader, so no screen shows unsent work", strict: true) {
-            XCTAssertFalse(readers.isEmpty)
-        }
+        XCTAssertFalse(readers.isEmpty)
     }
 
     // MARK: Push (CLIENT-7, 8, 51)
@@ -469,9 +459,7 @@ final class EdgeAppCoreTests: XCTestCase {
         center.delegate = nil
         _ = AppDelegate().application(UIApplication.shared, didFinishLaunchingWithOptions: nil)
         let assigned = center.delegate
-        XCTExpectFailure("CLIENT-7: the delegate is set only in requestAuthorizationAndRegister (after unlock), so a cold-launch tap is lost", strict: true) {
-            XCTAssertTrue(assigned === PushManager.shared)
-        }
+        XCTAssertTrue(assigned === PushManager.shared)
     }
 
     /// A tap on a notification, built the only way UNNotificationResponse
@@ -520,9 +508,7 @@ final class EdgeAppCoreTests: XCTestCase {
     func testAPushWithAStringReviewIdStillRoutesToThatReview() async throws {
         let router = try await route(["cavnar": ["alert_type": "", "review_id": "42"]])
         XCTAssertEqual(router.pendingTab, .modules)
-        XCTExpectFailure("CLIENT-51: review_id sent as a string is dropped by `as? Int`", strict: true) {
-            XCTAssertEqual(router.pendingReviewID, 42)
-        }
+        XCTAssertEqual(router.pendingReviewID, 42)
     }
 
     func testTheApnsTokenIsPersistedSoALockScreenSignOutCanUnregisterIt() throws {
@@ -530,26 +516,20 @@ final class EdgeAppCoreTests: XCTestCase {
         // PushManager talks only to APIClient.shared, and the test bundle's
         // Keychain does not read back. The fix is persisting the token.
         let source = try EdgeSource.read("Push/PushManager.swift")
-        XCTExpectFailure("CLIENT-8: registeredToken lives only in memory for this launch, so LockedView's sign-out sends apns_token: nil", strict: true) {
-            XCTAssertTrue(source.contains("Keychain"))
-        }
+        XCTAssertTrue(source.contains("Keychain"))
     }
 
     func testSwitchingLocationReRegistersThePushToken() throws {
         let source = try EdgeSource.read("Core/SessionStore.swift")
         let switchBody = try XCTUnwrap(EdgeSource.slice(source, from: "func didSwitchLocation", length: 900))
-        XCTExpectFailure("CLIENT-8: the device token stays registered to the launch-time location after a switch", strict: true) {
-            XCTAssertTrue(switchBody.contains("PushManager"))
-        }
+        XCTAssertTrue(switchBody.contains("PushManager"))
     }
 
     // MARK: Network monitor (CLIENT-52)
 
     func testTheAppHasOneNetworkMonitor() throws {
         let root = try EdgeSource.read("RootView.swift")
-        XCTExpectFailure("CLIENT-52: RootView builds its own NetworkMonitor(); APIClient reads .shared, which starts \"online\"", strict: true) {
-            XCTAssertFalse(root.contains("NetworkMonitor()"))
-        }
+        XCTAssertFalse(root.contains("NetworkMonitor()"))
     }
 
     // MARK: Staff sign-in (CLIENT-3, 57)
@@ -559,17 +539,13 @@ final class EdgeAppCoreTests: XCTestCase {
         // the pad auto-submits at four, so a longer PIN can never be sent.
         let source = try EdgeSource.read("Features/Staff/StaffLoginView.swift")
         XCTAssertTrue(source.contains("pin.count < 8"), "the pad still allows up to 8 digits")
-        XCTExpectFailure("CLIENT-3: the iOS PIN pad submits after 4 digits, so a 5-8 digit PIN can never sign in", strict: true) {
-            XCTAssertFalse(source.contains("pin.count == 4"))
-        }
+        XCTAssertFalse(source.contains("pin.count == 4"))
     }
 
     func testStaffSignupResendIsDisabledWhileLoading() throws {
         let source = try EdgeSource.read("Features/Staff/StaffSignupView.swift")
         let chain = try XCTUnwrap(EdgeSource.slice(source, from: "Button(\"Send it again\")", length: 260))
-        XCTExpectFailure("CLIENT-57: \"Send it again\" has no .disabled, so each tap sends another verification SMS", strict: true) {
-            XCTAssertTrue(chain.contains(".disabled("))
-        }
+        XCTAssertTrue(chain.contains(".disabled("))
     }
 
     // MARK: Background work (CLIENT-21)
@@ -577,9 +553,7 @@ final class EdgeAppCoreTests: XCTestCase {
     func testUploadsAskForBackgroundTime() throws {
         let files = try EdgeSource.allSwiftFiles()
         let users = files.filter { $0.1.contains("beginBackgroundTask") }
-        XCTExpectFailure("CLIENT-21: nothing keeps an invoice upload or AI generation alive when the app is backgrounded", strict: true) {
-            XCTAssertFalse(users.isEmpty)
-        }
+        XCTAssertFalse(users.isEmpty)
     }
 
     func testUploadsCarryAnIdempotencyKey() throws {
@@ -587,8 +561,6 @@ final class EdgeAppCoreTests: XCTestCase {
         // MockURLProtocol, so the header is checked at the source.
         let source = try EdgeSource.read("Core/APIClient.swift")
         let upload = try XCTUnwrap(EdgeSource.slice(source, from: "func upload<Response", length: 1800))
-        XCTExpectFailure("CLIENT-21: a retried invoice scan is a second paid model call with nothing to dedupe it", strict: true) {
-            XCTAssertTrue(upload.lowercased().contains("idempotency"))
-        }
+        XCTAssertTrue(upload.lowercased().contains("idempotency"))
     }
 }

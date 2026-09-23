@@ -479,7 +479,6 @@ def _session_client(web, db_path, rid, username="owner"):
     return c
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EML-1: /api/send-referral has no rate limit — any login can mail anyone, unlimited, as Will")
 def test_the_referral_route_refuses_the_eleventh_referral_in_an_hour(db_path, web, sdk):
     """A7 Direct SDK #1 / MOD-EML-1."""
     rid = _rid(db_path)
@@ -489,7 +488,6 @@ def test_the_referral_route_refuses_the_eleventh_referral_in_an_hour(db_path, we
     assert codes[-1] is False, codes
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EML-1: the referral note is injected into the email as raw HTML")
 def test_the_referral_note_arrives_escaped(db_path, web, sdk):
     """A7 Direct SDK #1 / MOD-EML-1."""
     rid = _rid(db_path)
@@ -500,7 +498,6 @@ def test_the_referral_note_arrives_escaped(db_path, web, sdk):
     assert to_referee and '<a href="https://evil.example">' not in to_referee[0]["html"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EML-1/MOD-EML-4: the referral email skips the suppression list")
 def test_a_referral_to_a_suppressed_address_is_not_sent(db_path, web, sdk):
     """A7 Direct SDK #1 / MOD-EML-1."""
     rid = _rid(db_path)

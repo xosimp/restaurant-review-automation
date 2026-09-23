@@ -76,12 +76,19 @@ final class GuestTextClubViewModel {
     var segments: [GuestSegment] = []
     var segmentDefaults: [String: String] = [:]
     var selectedSegment = "all"
+    /// True when the audience list failed to load. The screen then read
+    /// "Goes to 0 guests" while Send still went to "all" — every consented
+    /// guest (CLIENT-9). Sending is refused until the audience is known.
+    private(set) var audienceUnknown = false
     var campaigns: [GuestCampaign] = []
     var ledger: ConsentLedger?
     var linkURL = ""
 
     // Newsletter
     var subscriberCount = 0
+    /// The subscriber count failed to load — not the same as nobody having
+    /// opted in, which is what the screen used to say (CLIENT-58).
+    private(set) var newsletterLoadFailed = false
     var newsletterBody = ""
     var newsletterSubject = ""
     var isSendingNewsletter = false
@@ -111,7 +118,18 @@ final class GuestTextClubViewModel {
     }
 
     func loadSegments() async {
-        guard let response: SegmentsResponse = try? await client.send("/mobile/api/guest-segments") else { return }
+        let response: SegmentsResponse
+        do {
+            response = try await client.send("/mobile/api/guest-segments")
+        } catch is CancellationError {
+            return
+        } catch {
+            audienceUnknown = true
+            campaignError = "Couldn't load who this would go to, so sending is paused. Tap Retry above."
+            return
+        }
+        if audienceUnknown { campaignError = nil }
+        audienceUnknown = false
         segments = response.segments
         segmentDefaults = response.defaults
         // Picking a tone suggests the audience it was written for, instead of
@@ -130,7 +148,20 @@ final class GuestTextClubViewModel {
     }
 
     func loadHistory() async {
-        guard let response: HistoryResponse = try? await client.send("/mobile/api/guest-campaigns") else { return }
+        let response: HistoryResponse
+        do {
+            response = try await client.send("/mobile/api/guest-campaigns")
+        } catch is CancellationError {
+            return
+        } catch {
+            // Not "no campaigns yet" (CLIENT-58) — and never over a more
+            // important message already on screen (a send whose outcome is
+            // unknown says to check this very history).
+            if campaignError == nil {
+                campaignError = "Couldn't load past campaigns, so this can't show what already went out."
+            }
+            return
+        }
         campaigns = response.campaigns
         ledger = response.ledger
     }
@@ -141,8 +172,17 @@ final class GuestTextClubViewModel {
     }
 
     func loadNewsletter() async {
-        let response: NewsletterStatus? = try? await client.send("/mobile/api/guest-newsletter")
-        subscriberCount = response?.subscribers ?? 0
+        do {
+            let response: NewsletterStatus = try await client.send("/mobile/api/guest-newsletter")
+            subscriberCount = response.subscribers
+            newsletterLoadFailed = false
+            newsletterError = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            newsletterLoadFailed = true
+            newsletterError = (error as? APIClient.APIError)?.message ?? "Couldn't load your email list."
+        }
     }
 
     private struct NewsletterBody: Encodable {
@@ -201,6 +241,8 @@ final class GuestTextClubViewModel {
             }
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+        } catch is CancellationError {
+            // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load guest contacts."
         }
@@ -277,11 +319,27 @@ final class GuestTextClubViewModel {
         }
     }
 
+    /// Removed from the list only once the server has deleted it. A failed
+    /// DELETE used to be swallowed and the row removed anyway, so the guest
+    /// looked gone while still on file (CLIENT-34).
     func deleteContact(_ contact: GuestContact) async {
-        _ = try? await client.send(
-            "/mobile/api/guest-contacts/\(contact.id)", method: .delete
-        ) as APIClient.EmptyResponse
-        contacts.removeAll { $0.id == contact.id }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/guest-contacts/\(contact.id)", method: .delete
+            )
+            guard response.ok else {
+                errorMessage = response.error ?? "Couldn't delete that contact."
+                return
+            }
+            errorMessage = nil
+            contacts.removeAll { $0.id == contact.id }
+        } catch is CancellationError {
+            return
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn't delete that contact."
+        }
     }
 
     private struct DraftBody: Encodable {
@@ -339,6 +397,10 @@ final class GuestTextClubViewModel {
         // A second tap while the first send is in flight must not start a
         // second blast (CLIENT-1).
         guard !isSending else { return }
+        guard !audienceUnknown else {
+            campaignError = "Couldn't load who this would go to, so nothing was sent. Tap Retry above first."
+            return
+        }
         isSending = true
         campaignError = nil
         defer { isSending = false }
