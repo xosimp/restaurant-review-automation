@@ -203,7 +203,8 @@ struct HomeView: View {
 
                             // Goals, what the owner's changes did, what
                             // connects, worth, and (before 8pm) the handoff.
-                            HomeFollowThrough(viewModel: followThrough, showsCloseOut: !summary.localIsEvening) { module in
+                            HomeFollowThrough(viewModel: followThrough, showsCloseOut: !summary.localIsEvening,
+                                              homeLoadedAt: viewModel.lastLoadedAt) { module in
                                 navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
                             }
                             .padding(.horizontal, 20)
@@ -513,8 +514,12 @@ struct HomeView: View {
                 AllClearRow()
             }
         } else {
+            // The first four, as on the web (its focus card plus three rows):
+            // the server logs exactly those as shown (home_brief
+            // HOME_ATTENTION_SHOWN), so the deck never holds an item the
+            // ledger would later count as ignored without it being seen.
             HomeActionDeck(
-                items: summary.needsAttention,
+                items: Array(summary.needsAttention.prefix(4)),
                 busy: viewModel.isPublishingReplies,
                 onPrimary: { item in primaryAction(item, in: summary) },
                 onSecondary: { item in

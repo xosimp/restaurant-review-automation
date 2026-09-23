@@ -248,6 +248,20 @@ def _do_outcome_record(u):
                             window_days=wd)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
+    # "Track this" on a recommendation is the owner acting on it: the
+    # ledger records it as accepted (which also quiets the card while it is
+    # measured), so the tracker's verdict lands on a taken episode.
+    if (b.get("source") or "") == "recommendation" and b.get("source_key"):
+        try:
+            import rec_ledger as _rl
+            surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "home"
+            _rl.record(_rid(u), str(b["source_key"]), "accepted", surface=surface, user_id=u.get("id"),
+                       role=u.get("role"), meta={"tracking": o.get("id"), "metric": o.get("metric")},
+                       source_ref=f"track:{o.get('id')}")
+            import home_brief as _hb
+            _hb.invalidate(_rid(u))
+        except Exception as _tx:
+            print(f"[outcomes] tracked recommendation not recorded in the ledger: {_tx}")
     # A tracker whose BASELINE could not be measured will come back "unknown"
     # when its window closes, 28 days from now, having told the owner
     # nothing. Still allowed — it is their change to track, and the data may
@@ -1398,8 +1412,11 @@ def _do_standby_ask(u):
     if not contact.get("email"):
         return {"ok": False, "error": f"There's no email on file for {who} — ask them directly."}, 409
     key = _rl.rec_key("standby", f"{day}:{who.lower()}")
-    if not _rl.record(_rid(u), key, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
-                      meta={"module": "schedule"}, source_ref=f"ask:{day}:{who.lower()}"):
+    ref = f"ask:{day}:{who.lower()}"
+    # "Already asked" means an ask that went out. The acceptance is written
+    # only after the email is sent: written first, a failed send left it in
+    # place and every retry said "already asked" and sent nothing.
+    if _rl.recorded(_rid(u), key, "accepted", ref):
         return {"ok": True, "sent": 0, "already": True, "message": f"{who} was already asked about {_mdy(day)}."}, 200
     from datetime import date as _date
     wd = _date.fromisoformat(day).strftime("%A")
@@ -1412,8 +1429,9 @@ def _do_standby_ask(u):
     sent = _sreq._email_staff(_rid(u), [contact.get("employee_name") or who], "Could you be on call?", lines,
                               _m.DB_PATH)
     if not sent:
-        _rl.unsilence(_rid(u), key)
         return {"ok": False, "error": f"The email to {who} didn't go out — try again or ask them directly."}, 502
+    _rl.record(_rid(u), key, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
+               meta={"module": "schedule"}, source_ref=ref)
     return {"ok": True, "sent": sent, "message": f"Asked {who} to be on call {when}."}, 200
 
 
@@ -2024,6 +2042,16 @@ def _do_monthly_review(u):
     review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
+    review["goals"] = [g for g in (review.get("goals") or []) if _metric_visible(u, g.get("metric"))]
+    # The priorities, the one thing and prime cost carry food-cost dollars
+    # too; a login that cannot see food cost does not get them here either.
+    if not _sees_food(u):
+        review["priorities"] = [p for p in (review.get("priorities") or [])
+                                if (p.get("key") or "") != "money:food_cost"]
+        ff = review.get("fix_first") or {}
+        if "food_cost" in (ff.get("modules") or []):
+            review["fix_first"] = None
+        review["prime_cost"] = None
     for m in review["metrics"]:
         m["ask"] = f"What moved my {m['label'].lower()} in {review['month']}?"
     return {"ok": True, "review": review, "headline": monthly_review.headline(review),

@@ -62,8 +62,44 @@ def history(restaurant_id, limit=40, db_path=DB_PATH):
                                     "FROM home_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall():
                 r = rec(row["key"], title=_humanize(row["key"]), when=str(row["dismissed_at"] or "")[:10])
                 r["times_hidden"] = int(row["times"] or 1)
-                r["answer"] = {"done": "done", "not_for_us": "not for us"}.get(row["kind"], "hidden")
+                r["answer"] = {"done": "done", "not_for_us": "not for us",
+                               "snooze": "snoozed"}.get(row["kind"], "hidden")
                 r["answered_on"] = str(row["dismissed_at"] or "")[:10]
+        except Exception:
+            pass
+        # What the owner said everywhere else — the brief, Reviews, Food,
+        # Marketing, the schedule, the queue, the alerts — is in rec_ledger.
+        # Reading only home_dismissals, a "Not for us" given on any of them
+        # never reached Ask's "do not re-propose" list. Ask's own proposals
+        # are read from ask_cavnar_actions below.
+        try:
+            import json as _json
+            import rec_ledger as _rl
+            seen = set()
+            for row in conn.execute(
+                    "SELECT e.key, e.event, e.meta, e.at, i.title FROM rec_events e "
+                    "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? "
+                    "AND e.event IN ('accepted','completed','dismissed') ORDER BY e.at DESC, e.id DESC LIMIT 400",
+                    (restaurant_id,)).fetchall():
+                key = row["key"] or ""
+                if key in seen or key.startswith("ask:") or not _rl.counts_in_acceptance(key):
+                    continue
+                seen.add(key)
+                try:
+                    meta = _json.loads(row["meta"] or "{}") or {}
+                except (TypeError, ValueError):
+                    meta = {}
+                if row["event"] == "dismissed":
+                    answer = "not for us" if meta.get("kind") == "not_for_us" else "hidden"
+                else:
+                    answer = "done" if row["event"] == "completed" else "accepted"
+                day = str(row["at"] or "")[:10]
+                r = rec(key, title=row["title"] or _humanize(key), when=day)
+                if not r["answer"] or day > (r.get("answered_on") or ""):
+                    r["answer"] = answer
+                    r["answered_on"] = day
+                if meta.get("reason") and not r.get("reason"):
+                    r["reason"] = str(meta["reason"])[:200]
         except Exception:
             pass
         # What happened after they acted (or after the product saw them act).
@@ -113,8 +149,9 @@ def history(restaurant_id, limit=40, db_path=DB_PATH):
                         # (home_brief.dismiss), under the card's display title, which
                         # the dismissal row does not keep. Same day, same answer, no
                         # reason yet, and exactly one candidate: that is the one.
+                        # (The ledger may already have carried the same reason in.)
                         same_day = [r for r in recs.values() if r.get("answer") == "not for us"
-                                    and r.get("answered_on") == day and not r.get("reason")]
+                                    and r.get("answered_on") == day and r.get("reason") in (None, "", reason)]
                         if len(same_day) == 1:
                             target = same_day[0]
                     if target is not None:
@@ -152,7 +189,8 @@ def _fmt_outcome(o):
     if not o:
         return ""
     if o.get("status") != "evaluated":
-        return f" — measuring until {str(o.get('evaluate_on') or '')[:10]}"
+        from time_utils import mdy
+        return f" — measuring until {mdy(str(o.get('evaluate_on') or '')[:10])}"
     v = o.get("verdict") or "unknown"
     money = f", about ${abs(float(o['dollars_monthly'])):,.0f}/month" if o.get("dollars_monthly") else ""
     return f" — measured: {v}{money}"
@@ -179,7 +217,8 @@ def context(restaurant_id, db_path=DB_PATH):
         if r.get("issue") and r["issue"].get("note"):
             line += f" — resolved: {r['issue']['note'][:80]}"
         if when:
-            line += f" ({when})"
+            from time_utils import mdy
+            line += f" ({mdy(when)})"
         lines.append(line)
     return "\n".join(lines) + "\n"
 
@@ -196,6 +235,8 @@ def context(restaurant_id, db_path=DB_PATH):
 #     until the owner asks for it back (restore_kind).
 #   * has another surface already said this today? The same news on Home,
 #     in the brief and in the queue is one piece of news said three times.
+
+import datetime as _dt_mod
 
 import models as _models_mod
 
@@ -247,6 +288,12 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
             continue
         if (r["created_at"] or "") <= restored.get(kind, ""):
             continue
+        # Only settled episodes vote. Going quiet does not stop the kind
+        # being shown below the top three, and that showing opens a new
+        # episode — counted as 'not expired', it made the kind loud again
+        # on the very next build.
+        if r["status"] == "open":
+            continue
         by_kind.setdefault(kind, []).append(r["status"])
     for kind, statuses in by_kind.items():
         last = statuses[:QUIET_AFTER_EXPIRED]
@@ -273,20 +320,50 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
         try:
             keys = [r["key"] for r in conn.execute(
                 "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND kind=?", (restaurant_id, kind))]
+            # Home's own answers hide keys too (rec_ledger.silenced_keys reads
+            # home_dismissals): lifting only the ledger left Home hiding them.
+            prefix = kind + ":"
+            dropped = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND "
+                                   "(key=? OR substr(key, 1, ?)=?)",
+                                   (restaurant_id, kind, len(prefix), prefix)).rowcount
+            conn.commit()
         finally:
             conn.close()
         for k in keys:
             rec_ledger.unsilence(restaurant_id, k, db_path=db_path)
+        if dropped:
+            try:
+                import home_brief
+                home_brief.invalidate(restaurant_id)
+            except Exception as e:
+                print(f"[decisions] restore_kind home cache not cleared: {e}")
     except Exception as e:
         print(f"[decisions] restore_kind unsilence failed: {e}")
     return ok
 
 
+def _local_midnight_utc(conn, restaurant_id, now=None) -> str:
+    """The start of the restaurant's own today, as the UTC stamp rec_events
+    stores. The UTC day began at 7pm CDT, so a Home view that evening
+    counted as 'today' for the next morning's brief."""
+    from datetime import timezone as _tz
+    from time_utils import restaurant_tz
+    try:
+        row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        name = row["timezone"] if row else None
+    except Exception:
+        name = None
+    tz = restaurant_tz(name) if name else restaurant_tz(None)
+    local = (now or _dt_mod.datetime.now(_tz.utc)).astimezone(tz)
+    start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def shown_elsewhere_today(restaurant_id, keys, surfaces, db_path=DB_PATH) -> set:
     """The keys among `keys` that a surface OTHER than `surfaces` (one name
-    or several) showed today — the ledger's own UTC day. A brief or a queue
-    drops these unless the item is critical, so one piece of news is said
-    once a day. Never raises."""
+    or several) showed today — the restaurant's own local day. A brief or a
+    queue drops these unless the item is critical, so one piece of news is
+    said once a day. Never raises."""
     keys = [str(k)[:160] for k in (keys or []) if k]
     if not restaurant_id or not keys:
         return set()
@@ -299,7 +376,7 @@ def shown_elsewhere_today(restaurant_id, keys, surfaces, db_path=DB_PATH) -> set
         marks = ",".join("?" for _ in keys)
         rows = conn.execute(
             f"SELECT DISTINCT key, surface FROM rec_events WHERE restaurant_id=? AND event='shown' "
-            f"AND at >= date('now') AND key IN ({marks})", (restaurant_id, *keys)).fetchall()
+            f"AND at >= ? AND key IN ({marks})", (restaurant_id, _local_midnight_utc(conn, restaurant_id), *keys)).fetchall()
     except Exception:
         rows = []
     finally:

@@ -1273,8 +1273,12 @@ def _ras_block(eps):
     if not n:
         return {"n": 0, "ras": None}
     k = {x: sum(1 for e in eps if e[x]) for x in ("opened", "evidence", "accepted", "completed", "dismissed",
-                                                   "snoozed", "ignored", "outcome", "improved")}
+                                                   "snoozed", "ignored", "outcome")}
     took = sum(1 for e in eps if e["accepted"] or e["completed"])
+    # "Improved" only among what was taken: a verdict on an episode nobody
+    # took is not the recommendation working, and counting it let the
+    # outcome rate pass 100%.
+    k["improved"] = sum(1 for e in eps if e["improved"] and (e["accepted"] or e["completed"]))
     rates = {"opened": k["opened"] / n, "accepted": took / n, "completed": k["completed"] / n,
              # Of what was taken, how much a measured outcome later confirmed.
              "outcome": (k["improved"] / took) if took else 0.0}
@@ -1306,11 +1310,18 @@ def _episodes(conn, since, restaurant_id=None):
     for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role FROM rec_events e JOIN rec_instances i "
                               f"ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
         evs.setdefault(e["rec_id"], []).append(e)
-    stale = _stamp(datetime.utcnow() - timedelta(days=14))
+    import rec_ledger
     out = []
     for i in inst:
         es = evs.get(i["rec_id"], [])
         names = {e["event"] for e in es}
+        # Only what an owner was shown is a recommendation they could take
+        # or ignore. Bookkeeping keys (a kind restored, weights applied, an
+        # on-call ask) and episodes no surface ever showed — an answer or a
+        # verdict arriving with nothing shown behind it — stay out of every
+        # rate.
+        if "shown" not in names or not rec_ledger.counts_in_acceptance(i["key"]):
+            continue
         verdicts = []
         for e in es:
             if e["event"] == "outcome":
@@ -1325,7 +1336,9 @@ def _episodes(conn, since, restaurant_id=None):
             a, c = _parse(first_act), _parse(i["created_at"])
             if a and c:
                 hours = round(max(0.0, (a - c).total_seconds() / 3600), 1)
-        ignored = (not answered) and (i["status"] == "expired" or (i["status"] == "open" and i["last_event_at"] < stale))
+        # The ledger's own expiry rule (created 14+ days ago, no answer, not
+        # snoozed) — the same one expire_stale closes episodes by.
+        ignored = (not answered) and (i["status"] == "expired" or rec_ledger.is_stale(i))
         shown_surfaces = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         try:
             sources = json.loads(i["evidence_sources"]) if i["evidence_sources"] else []

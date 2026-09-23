@@ -2177,6 +2177,9 @@ svg:hover .hb-xh{opacity:1}
     .then(apiJson).then(function(d){
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
       if(btn){btn.textContent='Tracking';}
+      // Tracking is taking the recommendation (the server records it as
+      // accepted), so Home reloads without it - the same as iOS.
+      _hbLoadedAt=0;hbLoad(false);
       if(d.warning){if(typeof toast==='function')toast(d.warning,'error');return;}
       var when=(d.outcome&&d.outcome.evaluate_on)?(' - result on '+mdy(d.outcome.evaluate_on)):'';
       if(typeof toast==='function')toast('Measuring from today'+when,'success');

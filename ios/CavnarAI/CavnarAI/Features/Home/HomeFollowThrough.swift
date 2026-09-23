@@ -602,6 +602,12 @@ struct HomeFollowThrough: View {
     let viewModel: HomeFollowThroughViewModel
     /// False when HomeView renders the close-out in the day's slot (after 8pm).
     var showsCloseOut: Bool = true
+    /// When /mobile/api/home last answered (HomeViewModel.lastLoadedAt).
+    /// The queue drops what Home already showed today, which it learns from
+    /// Home's own fetch — so it is read only after that fetch, never
+    /// against a cached summary painted first (the queue then repeated a
+    /// needs-attention item on the same screen), and again after each one.
+    var homeLoadedAt: Date? = nil
     var onOpenModule: (String) -> Void
 
     private var hasAnything: Bool {
@@ -664,7 +670,10 @@ struct HomeFollowThrough: View {
                 HomeCloseOutCard(viewModel: viewModel)
             }
         }
-        .task { await viewModel.load() }
+        .task(id: homeLoadedAt) {
+            guard homeLoadedAt != nil else { return }
+            await viewModel.load()
+        }
     }
 
     /// What got better. Everything else on this screen looks for trouble —

@@ -142,7 +142,7 @@ def times_hidden(conn, rid):
 
 
 def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
-            surface="home", role=None):
+            surface="home", role=None, _card=True):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -187,6 +187,13 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
                               user_id=user_id, role=role, meta=meta, silence_days=days)
     except Exception as e:
         print(f"[home] dismissal not recorded in the ledger: {e}")
+    # The critically-low card lists every unanswered item under the first
+    # one's key; an answer to the card is an answer to each item on it.
+    if _card and key.startswith("stock_low:"):
+        quiet = _stock_quiet(rid)
+        for k in _current_stock_keys(rid):
+            if k != key and k not in quiet:
+                dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False)
     # The why, remembered: "not doing X: the patio closes in October" is a
     # preference the assistant reads back in every future answer.
     if reason:
@@ -199,9 +206,19 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
 
 
-def undismiss(rid, key):
+def undismiss(rid, key, _card=True):
     """"Use again": the Home row goes, and so does the ledger's silence, so
-    the key can be said on every surface again."""
+    the key can be said on every surface again. The critically-low card is
+    answered for every item on it (dismiss), so "Use again" on the card
+    restores every item it answered, not only the first."""
+    if _card and (key or "").startswith("stock_low:"):
+        try:
+            quiet = _stock_quiet(rid)
+            for k in _current_stock_keys(rid):
+                if k != key and k in quiet:
+                    undismiss(rid, k, _card=False)
+        except Exception as e:
+            print(f"[home] stock card restore incomplete: {e}")
     conn = get_conn()
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
@@ -298,7 +315,10 @@ def _location_signal(conn, r, now):
     look: urgent reviews, an integration error, stale review data. No labor
     or inventory analysis — those are heavy, and this runs once per location."""
     rid = r["id"]
-    urgent = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped')", (rid,)) or {}
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS as _OWED_DAYS
+    # Urgent means a reply still owed: the last REPLY_OWED_MAX_AGE_DAYS, as
+    # on the location's own Home.
+    urgent = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, f"-{int(_OWED_DAYS)} days")) or {}
     awaiting = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted'", (rid,)) or {}
     rating = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')", (rid,)) or {}
     issues = []
@@ -499,10 +519,53 @@ def _may_assign(user) -> bool:
 # everywhere. Items whose key carries a subject ("labor_over:<period>",
 # "stock_low:<item>") set it where they are built.
 LEDGER_KEY = {"awaiting_approval": "no_response"}
+# A card key -> the attention item's ledger key that says the same news.
+SAME_NEWS = {"publish_drafts": "no_response"}
+# What the clients render (web renderFocus/renderAttention/renderRecs, iOS
+# HomeActionDeck/HomeRecommendations): at most this many of each.
+HOME_ATTENTION_SHOWN = 4
+HOME_RECS_SHOWN = 3
 
 
 def ledger_key(key):
     return LEDGER_KEY.get(key, key)
+
+
+def other_days_mean(dow, day) -> float:
+    """The mean labor % of every weekday but `day` — what "N pts above your
+    other days" is measured against. A mean that included the day itself
+    understated the gap it names. 0 when there is nothing to compare."""
+    vals = [float(v) for k, v in (dow or {}).items() if v and k != day]
+    return sum(vals) / len(vals) if vals else 0
+
+
+def stock_key(item) -> str:
+    """One critically-low item's recommendation key — the alert's own
+    ("stock_low:Salmon", notify.alert_rec)."""
+    import rec_ledger
+    return rec_ledger.rec_key("stock_low", str(item or "?"))
+
+
+def _stock_quiet(rid) -> set:
+    try:
+        import rec_ledger
+        return rec_ledger.silenced_keys(rid)
+    except Exception:
+        return set()
+
+
+def _current_stock_keys(rid) -> list:
+    """The stock keys a critically-low card would show right now (live
+    inventory only) — what one answer on that card answers."""
+    try:
+        from inventory import analysis_for
+        items, is_live, analysis = analysis_for(rid)
+        if not (items and is_live):
+            return []
+        return [stock_key(x.get("item")) for x in ((analysis or {}).get("critical_low") or [])[:10]]
+    except Exception as e:
+        print(f"[home] critical-low items unavailable: {e}")
+        return []
 
 
 def assignees(rid):
@@ -595,7 +658,14 @@ def _build(current_user):
     google_connected = bool(r.get("gmb_refresh_token") or r.get("reviews_live"))
     reviews_since = _one_dict(conn, "SELECT COUNT(*) AS n, ROUND(AVG(rating),1) AS avg, SUM(rating<=2) AS low FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND (fetched_at >= ? OR fetched_at >= ?)", (rid, since_sql, since_iso_t)) or {}
     replies_since = _one_dict(conn, "SELECT SUM(response_status='posted' AND posted_at >= ?) AS posted, SUM(response_status IN ('approved','posted') AND approved_at >= ?) AS approved FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (since_iso_t, since_iso_t, rid)) or {}
-    stale_unanswered = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days')", (rid,)) or {}
+    # Urgent and stale-unanswered count only reviews from the last
+    # REPLY_OWED_MAX_AGE_DAYS — the window the brief, the queue and the
+    # alerts use. A first Google connect imports years of history, and two
+    # 2023 urgent reviews are not a reply anyone owes today.
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS as _OWED_DAYS
+    _owed_since = f"-{int(_OWED_DAYS)} days"
+    stale_unanswered = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, _owed_since)) or {}
+    urgent_owed = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, _owed_since)) or {}
     rating_prev = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
 
     # The client_data row carries the whole shifts CSV. Read once here and
@@ -780,7 +850,7 @@ def _build(current_user):
     # ── Reviews ────────────────────────────────────────────────────────────
     if "reviews" in active_keys:
         total = int(rstats.get("total") or 0)
-        urgent = int(rstats.get("urgent") or 0)
+        urgent = int(urgent_owed.get("n") or 0)
         # Drafted replies to reviews from the last 30 days; older drafts are
         # history and are named separately, never counted in (#6).
         awaiting = int(owed.get("drafted") or 0)
@@ -921,7 +991,7 @@ def _build(current_user):
                             + ((" · " + (dg.get("stale_note") or "diagnosis older than a week").rstrip("."))
                                if dg.get("stale") else ""),
                             "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate",
-                            "See the reviews", metric=f"complaints:{lbl.lower()}",
+                            "See the reviews", metric=f"complaints:{cat}",
                             conf=(band, f"a diagnosis read from {cnt} reviews"
                                   + ("; written over a week ago" if dg.get("stale") else "")),
                             if_ignored=f"{lbl.lower()} stays the most-mentioned complaint",
@@ -931,7 +1001,7 @@ def _build(current_user):
                             f"{lbl} is the most-mentioned complaint in the last 90 days.",
                             f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week",
                             "strong" if cnt >= 5 else "moderate", "See the reviews",
-                            metric=f"complaints:{lbl.lower()}",
+                            metric=f"complaints:{cat}",
                             conf=(ev_band, f"{cnt} reviews in 90 days"),
                             if_ignored=f"{lbl.lower()} stays the most-mentioned complaint", effort="medium")
         # changes
@@ -1002,9 +1072,8 @@ def _build(current_user):
                          "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n))
             # day-of-week recommendation
             if len(dow) >= 4:
-                vals = [v for v in dow.values() if v]
-                mean = sum(vals) / len(vals) if vals else 0
                 worst_day, worst_pct = max(dow.items(), key=lambda kv: kv[1] or 0)
+                mean = other_days_mean(dow, worst_day)
                 if mean and worst_pct - mean >= 4 and worst_pct > labor_target:
                     # What that day costs above the owner's own target, from
                     # the days in the upload — a measured figure, per month.
@@ -1021,7 +1090,7 @@ def _build(current_user):
                     trim_monthly = round(excess / n_days * 52.0 / 12.0, 2) if n_days else None
                     add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing on the next schedule",
                             f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
-                            f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% average · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
+                            f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% on your other days · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
                             "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule",
                             metric="labor_pct", dollars=trim_monthly,
                             conf=("high" if n_days >= 4 else ("medium" if n_days >= 2 else "low"),
@@ -1035,7 +1104,7 @@ def _build(current_user):
                 add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{pct:.1f}% this period vs {prev_pct:.1f}% before.", "labor")
             if last_schedule and _ts(last_schedule.get("generated_at")) and _ts(last_schedule["generated_at"]) >= since_dt:
                 hs = float(last_schedule.get("hours_scheduled") or 0); hb = float(last_schedule.get("hours_budget") or 0)
-                add_change(f"New schedule built for {last_schedule.get('week_start') or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
+                add_change(f"New schedule built for {_mdy(last_schedule.get('week_start')) or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
             snapshot.append({"key": "labor", "label": "Labor", "status": "available", "value": f"{pct:.1f}", "unit": "% of sales",
                              "delta": ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0}),
                              "secondary": [{"label": "Target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
@@ -1069,11 +1138,20 @@ def _build(current_user):
                               "note": "counts current" if (inv_age is not None and inv_age <= 8) else (f"last count {int(inv_age)}d ago" if inv_age is not None else "inventory on file")})
             if inv_age is not None and inv_age > 14:
                 add_attn("inventory_stale", "watch", f"Inventory last counted {int(inv_age)} days ago", "Waste and reorder flags drift the longer the count sits.", "inventory", "Quick count", since=f"{int(inv_age)}d")
+            # One recommendation per item ("stock_low:Salmon", the alert's own
+            # key): an item answered anywhere drops off the card, and the
+            # card goes only when every item on it is answered. Keyed to the
+            # first item alone, answering the salmon alert hid "Salmon,
+            # Chicken critically low" entirely.
+            if crit:
+                _sq = _stock_quiet(rid)
+                crit = [c for c in crit if stock_key(c.get("item")) not in _sq]
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon",
-                         rec_key=f"stock_low:{crit[0].get('item', '?')}")
+                         rec_key=stock_key(crit[0].get("item")))
+                attention[-1]["rec_keys"] = [stock_key(c.get("item")) for c in crit[:10]]
             # The CFO read. The module's morning headline was
             # "$X recoverable/month" — a waste-recovery estimate, when the
             # question an operator opens with is where their margin is. Food
@@ -1424,6 +1502,13 @@ def _build(current_user):
 
     dismissed_recs = [r for r in recs if r["key"] in answered]
     recs = [r for r in recs if r["key"] not in answered]
+    # One piece of news in one place: a card that says what an attention
+    # item already says ("Publish the 5 drafted replies" beside "5 replies
+    # drafted, waiting for you") is left out while that item is on the page,
+    # and stays out once the item is answered.
+    _att_keys = {a["rec_key"] for a in attention}
+    recs = [r for r in recs if not (SAME_NEWS.get(r["key"]) and
+                                    (SAME_NEWS[r["key"]] in _att_keys or SAME_NEWS[r["key"]] in answered))]
     # Ordered by urgency x dollars x ease (#24), and a kind the owner has let
     # expire unanswered four times running goes quieter (#45).
     try:
@@ -1437,19 +1522,32 @@ def _build(current_user):
         if _r.get("quiet") and _k not in [q["kind"] for q in quieter]:
             quieter.append({"kind": _k, "label": decisions.kind_label(_k)})
 
+    # Only what the clients render is logged as shown — and later counted as
+    # ignored. Web shows the focus card plus three attention rows ("+N
+    # more" beyond them) and three cards (two beside a focus card that leads
+    # with the first); iOS a deck of the first four attention items and
+    # three cards. The payload keeps every attention item (web's "+N more"
+    # counts them) and exactly the cards both clients show.
+    recs = recs[:HOME_RECS_SHOWN]
+    rendered_attention = attention[:HOME_ATTENTION_SHOWN]
+
     # Every card and attention item this Home shows is an impression in the
     # ledger (#37) — one episode per key, one `shown` per surface per day.
     # A key the ledger says is answered comes back None and is not shown.
     try:
         shown = rec_ledger.present_many(rid, [
             *({"key": a["rec_key"], "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"],
-               "position": i} for i, a in enumerate(attention)),
+               "position": i} for i, a in enumerate(rendered_attention)),
+            # A card that stands for several (critically low: one key per
+            # item) shows each of them.
+            *({"key": k, "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"], "position": i}
+              for i, a in enumerate(rendered_attention) for k in (a.get("rec_keys") or []) if k != a["rec_key"]),
             *({"key": r["key"], "module": _LEDGER_MODULE.get(r["module"], "home"), "title": r["title"],
                "position": 100 + i, "dollar_value": r.get("dollars_monthly"),
                "confidence_band": (r.get("confidence") or {}).get("band"),
                "evidence_sources": r.get("evidence_sources"), "model_written": r.get("model_written"),
                "cavnar_completes": bool(r.get("action")), "expected_metric": r.get("metric")}
-              for i, r in enumerate(recs[:5]))], "home", user_id=current_user.get("id"))
+              for i, r in enumerate(recs))], "home", user_id=current_user.get("id"))
     except Exception:
         shown = {}
     if shown:
@@ -1460,8 +1558,8 @@ def _build(current_user):
     quick = []
     if "reviews" in active_keys and int(rstats.get("awaiting_approval") or 0):
         quick.append({"key": "publish", "label": f"Publish {min(int(rstats['awaiting_approval']), 25)} replies", "kind": "publish_replies", "module": "reviews", "count": int(rstats["awaiting_approval"])})
-    if "reviews" in active_keys and int(rstats.get("urgent") or 0):
-        quick.append({"key": "urgent", "label": "Answer urgent reviews", "kind": "open_module", "module": "reviews", "count": int(rstats["urgent"])})
+    if "reviews" in active_keys and int(urgent_owed.get("n") or 0):
+        quick.append({"key": "urgent", "label": "Answer urgent reviews", "kind": "open_module", "module": "reviews", "count": int(urgent_owed["n"])})
     quick.append({"key": "ask", "label": "Ask Cavnar AI", "kind": "ask", "module": None, "count": None})
     if "labor" in active_keys and labor_live:
         quick.append({"key": "schedule", "label": "Build next week's schedule", "kind": "open_module", "module": "labor", "count": None})
@@ -1561,7 +1659,7 @@ def _location_record(conn, r, now):
     sig = _location_signal(conn, r, now)
     rs = _one_dict(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
                               SUM(response_status='drafted') AS awaiting,
-                              SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
+                              SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS urgent,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days') THEN rating END),1) AS avg30,
                               SUM(COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS n30,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days') THEN rating END),1) AS avg_prev,
