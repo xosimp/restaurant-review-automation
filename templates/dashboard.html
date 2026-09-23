@@ -6397,6 +6397,8 @@ svg:hover .hb-xh{opacity:1}
 .ac-conn .ic{position:relative;width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex:none;background:linear-gradient(180deg,#2c2c2e,#16161a);box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.08)}
 .ac-conn .ic::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.2px;background:linear-gradient(135deg,rgba(232,149,106,.9),rgba(200,75,47,.35) 45%,rgba(200,75,47,.1));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
 .ac-conn .ic img,.ac-conn .ic svg{width:58%;height:58%;object-fit:contain;position:relative}
+/* Wordmark logos (RPower, Stripe) are wide: fit the width, not a square. */
+.ac-conn .ic img.wide{width:84%;height:auto}
 .ac-conn .ic:not(.on){opacity:.5}
 .ac-conn .ic.on::after,.ac-conn .ic.err::after{content:'';position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--ac-card)}
 .ac-conn .ic.on::after{background:var(--green)}
@@ -6887,8 +6889,8 @@ svg:hover .hb-xh{opacity:1}
         {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
         {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
         {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
-        <div class="ac-conn"><div class="ic" aria-hidden="true"><span style="font-size:15px;font-weight:700;color:var(--ink2)">R</span></div><div class="t"><b>RPower POS</b><span>Not connected yet &mdash; talk to your Cavnar rep to enable</span></div><div class="a"><button class="cbtn cbtn-secondary cbtn-sm" onclick="location.href='mailto:will@cavnar.ai?subject=Connect%20RPower%20POS'">Contact us</button></div></div>
-        <div class="ac-conn"><div class="ic" aria-hidden="true"><span style="font-size:15px;font-weight:700;color:var(--ink2)">S</span></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
+        <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/rpower.png" alt=""></div><div class="t"><b>RPower POS</b><span>Not connected yet &mdash; talk to your Cavnar rep to enable</span></div><div class="a"><button class="cbtn cbtn-secondary cbtn-sm" onclick="location.href='mailto:will@cavnar.ai?subject=Connect%20RPower%20POS'">Contact us</button></div></div>
+        <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
       </div>
 
       <div class="ac-card" style="margin-top:14px">
