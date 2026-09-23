@@ -70,6 +70,7 @@ trigger ──► collect FACTS (deterministic, per block, with status + source)
 - **Ask context is the facts JSON plus the narrative**, not a third prose
   document. Questions like "every day labor exceeded 25%" are answered by
   SQL over `dsr_metrics`, not by a model reading old reports.
+- **Recipients (decided):** owners get the Owner DSR, managers get the Manager DSR — by the login's role, per location.
 - **Owner vs Manager is a permission view, not a second generation.** The
   manager version drops owner-only lines (loss signals, prime cost, budget
   if the owner hides it) and leads with operations and action items.
@@ -211,13 +212,13 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
    Beer? "Retail/Rental" = merch + room rental?).
 4. Budget: does he set it weekly per day? Where does it come from?
 5. Last year: can he send past DSR workbooks so Last Year fills from day one?
-6. Who gets which version, and by when (e.g. owners within 30 min of close)?
+6. ~~Who gets which version~~ **Answered (Will, 9/23/26):** every owner login gets the Owner DSR (Simple EJ's: Erik and Jim); every manager login gets the Manager DSR. Still open: how soon after close.
 7. Petty Cash, Check Requests, CC Register tabs — in scope now or later?
 8. What goes in "Influence/Result"?
 
 ## Not known yet — must not be assumed
 
-- RPower access is still pending (Justin's manager approval); no live call
+- RPower access is still pending — Justin is expected to hand over the token 9/24/26; no live call
   has been made against Erik's store, so department names, closeday timing
   and rate limits are unverified.
 - His official Cavnar account does not exist yet.
