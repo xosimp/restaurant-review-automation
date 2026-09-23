@@ -68,7 +68,8 @@ def evaluate(history_id: int, optimize: bool = False) -> dict:
         except ImportError:
             out["optimized"] = None
         else:
-            res = so.optimize(rows, inputs, signals=signals, weights=weights)
+            res = so.optimize(rows, inputs, signals=signals, weights=weights,
+                              constraints=inputs.get("constraints"))
             out["optimized"] = res.get("after_score")
             out["changes"] = [c.get("reason") for c in res.get("changes") or []]
             out["seconds"] = res.get("seconds")

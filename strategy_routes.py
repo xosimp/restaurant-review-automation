@@ -1155,6 +1155,34 @@ def _do_schedule_apply_fixes(u):
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
 
+def _do_schedule_optimize(u):
+    """Run the Shift Quality repair loop over the week on screen and hand
+    back the improved rows with every change and why. Nothing is saved: the
+    owner decides, exactly as with apply-fixes."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import schedule_optimizer as _opt
+    from schedule_engine import quality_inputs_from_db, _quality_signals, _score_schedule_quality
+    body = _body()
+    rows = _rows_from_body(body)
+    if not rows:
+        return {"ok": False, "error": "rows required"}, 400
+    targets = body.get("daily_target_hours") if isinstance(body.get("daily_target_hours"), dict) else None
+    inputs = quality_inputs_from_db(_rid(u), daily_target_hours=targets, week_rows=rows)
+    c = inputs.get("constraints")
+    if c is None:
+        return {"ok": False, "error": "The rules could not be loaded for this week."}, 500
+    if inputs.get("roster"):
+        c.active = {n.lower() for n in inputs["roster"]}
+        c.roster_names = list(inputs["roster"])
+    signals, weights = _quality_signals(_rid(u), inputs)
+    res = _opt.optimize(rows, inputs, signals=signals, weights=weights, constraints=c,
+                        max_seconds=12.0, max_evaluations=600)
+    quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
+    return {"ok": True, "rows": res["rows"], "optimizer": _opt.summary(res, signals),
+            "quality": quality, "what_if": what_if}, 200
+
+
 def _do_shift_requests_list(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see shift requests.")
@@ -1857,6 +1885,7 @@ _ROUTES = [
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),
     ("/labor/schedule/violations", ["POST"], _do_schedule_violations, "schedule_violations"),
     ("/labor/schedule/apply-fixes", ["POST"], _do_schedule_apply_fixes, "schedule_apply_fixes"),
+    ("/labor/schedule/optimize", ["POST"], _do_schedule_optimize, "schedule_optimize"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),

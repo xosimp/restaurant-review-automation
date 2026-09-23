@@ -2344,6 +2344,38 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _unfixed = _out.get("unfixed") or []
                 except Exception as _fx:
                     print(f"[schedule] fix pass failed: {_fx}")
+            # The score as the objective (schedule_optimizer): legal adds,
+            # stretches, replacements, swaps and trims aimed at the weakest
+            # dimensions, each re-checked against the rule sweep, applied
+            # before the owner sees the draft and listed with why. The draft
+            # was never shown, so this is Cavnar finishing it, not rewriting
+            # a week the owner has read.
+            result["optimizer"] = {"ran": False}
+            try:
+                import schedule_optimizer as _opt
+                result["flagged_rows"] = {
+                    ((_v.get("employee") or "").strip().lower(), _v.get("date") or "", _v.get("shift_start") or "")
+                    for _v in _viols if _v.get("no_show")}
+                result["prior_week_assignments"] = _prior_week_assignments(
+                    restaurant_id, before=(result.get("week_dates") or [None])[0])
+                result["staff_constraints"] = staff_constraints
+                _osig, _ow = _quality_signals(restaurant_id, result)
+                _ores = _opt.optimize(preview_rows, result, signals=_osig, weights=_ow, constraints=_constraints,
+                                      hours_budget=(result.get("hours_budget") or 0)
+                                      if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) else None)
+                result["optimizer"] = _opt.summary(_ores, _osig)
+                if _ores.get("changes"):
+                    preview_rows = _ores["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    _viols = _rules.violations(preview_rows, _constraints)
+                    print(f"[schedule] optimizer {_ores['before_score']} -> {_ores['after_score']} "
+                          f"({len(_ores['changes'])} changes, {_ores['seconds']}s)")
+            except Exception as _ox:
+                print(f"[schedule] optimizer failed: {_ox}")
+                try:
+                    _ops.capture(_ox, job="schedule_optimizer", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
             for _v in _viols:
                 if not _v["hard"]:
                     continue
@@ -2442,6 +2474,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     rows_needing_review=result.get("rows_needing_review", 0),
                     dropped_rows=len(_dropped_rows),
                 )
+                if isinstance(_quality, dict):
+                    _quality["optimizer"] = result.get("optimizer") or {"ran": False}
                 result["quality"] = _quality
                 result["what_if"] = _whatif
                 from models import capability_version as _capver
@@ -2599,6 +2633,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # won. Never a second generation — same headcount, same hours,
             # same roles, only who works which shift.
             what_if=result.get("what_if") or {"ran": False},
+            # What Cavnar changed to raise the score before the owner saw
+            # the draft, each change with why, and what it could not fix.
+            optimizer=result.get("optimizer") or {"ran": False},
             week_dates=result.get("week_dates", []),
             week_days=result.get("week_days", []),
             projected_revenue=result.get("projected_revenue", 0),

@@ -380,6 +380,7 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     on = ctx.by_role
     filled = missing = 0
     gaps = []
+    short = {}
     for role, need in required.items():
         need = int(need or 0)
         if need <= 0:
@@ -392,6 +393,7 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
         filled += min(have, need)
         if have < need:
             missing += need - have
+            short[role] = need - have
             gaps.append(f"{role} short {need - have} of {need}")
 
     total_required = sum(int(c or 0) for c in required.values() if int(c or 0) > 0)
@@ -403,7 +405,7 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
         key="coverage", label="Coverage", score=score,
         weight=DEFAULT_WEIGHTS["coverage"], floor=70,
         facts={"required": total_required, "filled": filled, "missing": missing,
-               "gaps": gaps, "requirement_source": source},
+               "gaps": gaps, "short": short, "requirement_source": source},
     )
     if missing:
         res.weaknesses.append(
@@ -556,7 +558,9 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
             satisfied.append(label)
         else:
             missed.append({"rule": label, "found": len(qualified),
-                           "scheduled": _names(pool, ctx.scores)})
+                           "scheduled": _names(pool, ctx.scores),
+                           "role": role, "count": need, "min_score": min_score,
+                           "attribute": attribute or None})
 
     # The profile's own softer requirement: anybody authorised to close, or
     # anybody clearing the leader score, in one of the leader roles.
@@ -584,7 +588,10 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     res = DimensionResult(
         key="leadership", label="Leadership", score=score,
         weight=DEFAULT_WEIGHTS["leadership"], floor=60 if rules else None,
-        facts={"rules_checked": total, "rules_met": met, "misses": missed},
+        facts={"rules_checked": total, "rules_met": met, "misses": missed,
+               "profile_leader_missing": bool(check_profile and not profile_ok),
+               "leader_roles": list(ctx.profile.leader_roles or []),
+               "leader_min_score": ctx.profile.leader_min_score},
     )
     for miss in missed:
         res.weaknesses.append(
@@ -1198,7 +1205,8 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         weight=DEFAULT_WEIGHTS["coverage_curve"], floor=60,
         facts={"required": required, "window": [_fmt_minutes(lo), _fmt_minutes(hi)],
                "slots": len(slots), "gaps": {r: {"minutes_short": g["short_slots"] * SLOT_MINUTES,
-                                                  "worst_at": _fmt_minutes(g["worst"]), "on_at_worst": g["worst_on"]}
+                                                  "worst_at": _fmt_minutes(g["worst"]), "on_at_worst": g["worst_on"],
+                                                  "worst_minute": g["worst"], "need": required[r]}
                                              for r, g in gaps.items()},
                "requirement_source": source},
     )
@@ -2462,10 +2470,14 @@ class _SwapIndex:
             if rated_a != rated_b:
                 return False
 
+        # The cap binds only the side whose hours go UP. Somebody already
+        # over it (a week written at 47.5h against 40) can still trade a
+        # shift for one no longer than it — refusing that left the only
+        # authorised closer unable to move to the night that needed him.
         delta = _row_hours(b) - _row_hours(a)
-        if self.total_hours(low_a) + delta > self.cap(low_a):
+        if delta > 0 and self.total_hours(low_a) + delta > self.cap(low_a):
             return False
-        if self.total_hours(low_b) - delta > self.cap(low_b):
+        if delta < 0 and self.total_hours(low_b) - delta > self.cap(low_b):
             return False
         return True
 

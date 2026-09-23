@@ -1329,6 +1329,11 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     return text
 
 
+def _present_dayparts(row: dict) -> list:
+    from shift_quality import present_dayparts
+    return present_dayparts({"shift_start": row.get("shift_start", ""), "shift_end": row.get("shift_end", "")})
+
+
 def historical_patterns(shifts: list) -> dict:
     """What this restaurant's own history says about how it staffs.
 
@@ -1362,7 +1367,14 @@ def historical_patterns(shifts: list) -> dict:
             continue
         dates_by_day[day].add(date)
         if name and role:
-            by_role_date[day][_daypart_of(s.get("shift_start", ""))][role][date].add(name)
+            # Every daypart the shift was on the floor for, by the same rule
+            # the Shift Quality Engine counts a draft with
+            # (shift_quality.present_dayparts). Counted by start time alone,
+            # a restaurant that runs 11:30am-7pm servers had its dinner
+            # requirement set too low here and its draft's dinner read short
+            # there — the requirement and the measurement must agree.
+            for part in _present_dayparts(s):
+                by_role_date[day][part][role][date].add(name)
 
     typical = {}
     for day, parts in by_role_date.items():
