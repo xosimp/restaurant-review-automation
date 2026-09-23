@@ -68,6 +68,7 @@ struct AccountAlertsDetailView: View {
                     AccountSwitchRow(label: "Labor over target", isOn: $draft.alertLaborOver)
                     AccountSwitchRow(label: "Food waste flagged", isOn: $draft.alertFoodWaste)
                     AccountSwitchRow(label: "AI visibility drops", isOn: $draft.alertAiVisibilityDrop)
+                    AccountSwitchRow(label: "Competitor moves (weekly)", isOn: $draft.alertCompetitorMove)
                     masterAlertPill.padding(.vertical, 9)
                 }
 
@@ -526,7 +527,7 @@ struct AccountAlertsDetailView: View {
     private var onCount: Int {
         [draft.alert1star, draft.alert2star, draft.alert5star, draft.alertHealth,
          draft.alertNegSpike, draft.alertNegativeTrend, draft.alertNoResponse, draft.alertLaborOver,
-         draft.alertFoodWaste, draft.alertAiVisibilityDrop].filter { $0 }.count
+         draft.alertFoodWaste, draft.alertAiVisibilityDrop, draft.alertCompetitorMove].filter { $0 }.count
     }
 
     private var pushCount: Int {
@@ -541,7 +542,7 @@ struct AccountAlertsDetailView: View {
         } subtitle: {
             Text("\(onCount)").font(.cavnarNumber(15.5, weight: 600))
                 + Text(" of ")
-                + Text("10").font(.cavnarNumber(15.5, weight: 600))
+                + Text("11").font(.cavnarNumber(15.5, weight: 600))
                 + Text(" triggers · Digest \(draft.digestEnabled ? draft.digestDay.capitalized : "off") · Quiet hours \(quietHoursEnabled ? "on" : "off")")
         }
     }
@@ -574,7 +575,7 @@ struct AccountAlertsDetailView: View {
     private var allAlertsOn: Bool {
         draft.alert1star && draft.alert2star && draft.alert5star && draft.alertHealth
             && draft.alertNegSpike && draft.alertNegativeTrend && draft.alertNoResponse && draft.alertLaborOver
-            && draft.alertFoodWaste && draft.alertAiVisibilityDrop
+            && draft.alertFoodWaste && draft.alertAiVisibilityDrop && draft.alertCompetitorMove
     }
 
     private func setAllAlerts(_ on: Bool) {
@@ -588,6 +589,7 @@ struct AccountAlertsDetailView: View {
         draft.alertLaborOver = on
         draft.alertFoodWaste = on
         draft.alertAiVisibilityDrop = on
+        draft.alertCompetitorMove = on
     }
 
     @ViewBuilder

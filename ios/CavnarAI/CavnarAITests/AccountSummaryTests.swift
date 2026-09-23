@@ -37,7 +37,7 @@ final class AccountSummaryTests: XCTestCase {
               "al_1star_push": true, "al_2star_push": true, "al_5star_push": false,
               "al_health_push": true, "al_spike_push": true, "al_unres_push": true,
               "alert_health_bypass_quiet": true, "alert_food_waste": false,
-              "alert_ai_visibility_drop": true, "alert_extra_emails": "chef@x.com", "push_sound": true
+              "alert_ai_visibility_drop": true, "alert_competitor_move": true, "alert_extra_emails": "chef@x.com", "push_sound": true
             }
           },
           "reviews": {"auto_approve_5star": true, "auto_approve_daily_cap": 3, "auto_approve_paused": false, "auto_approved_today": 2},

@@ -13873,6 +13873,8 @@ function openAlertsModal() {
     document.getElementById('al-rating-floor').value  = s.alert_rating_floor || 4.0;
     var laborEl = document.getElementById('al-labor-over');
     if (laborEl) laborEl.checked = !!s.alert_labor_over;
+    var compEl = document.getElementById('al-competitor-move');
+    if (compEl) compEl.checked = s.alert_competitor_move === undefined ? true : !!s.alert_competitor_move;
     var pushMap = {'al-push-1star':'al_1star_push','al-push-2star':'al_2star_push',
                    'al-push-5star':'al_5star_push','al-push-health':'al_health_push',
                    'al-push-spike':'al_spike_push','al-push-unres':'al_unres_push',
@@ -14338,6 +14340,7 @@ function saveAlertSettings() {
     alert_rating_threshold: document.getElementById('al-rating-thresh').checked ? 1 : 0,
     alert_rating_floor:    parseFloat(document.getElementById('al-rating-floor').value) || 4.0,
     alert_labor_over:      laborEl ? (laborEl.checked ? 1 : 0) : 0,
+    alert_competitor_move: document.getElementById('al-competitor-move') ? (document.getElementById('al-competitor-move').checked ? 1 : 0) : 1,
     urgent_via_sms:        smsOn ? 1 : 0,
     sms_consent:           document.getElementById('al-sms-consent').checked,
     urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0,
@@ -16739,6 +16742,10 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-labor-over" style="accent-color:var(--ember)"> Labor cost exceeds budget target</label>
       </div>
       {% endif %}
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Competitors</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-competitor-move" style="accent-color:var(--ember)"> A competitor&rsquo;s rating moves, or a new one opens (weekly)</label>
+      </div>
 
       <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">On your phone</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:6px">

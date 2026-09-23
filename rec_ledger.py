@@ -398,7 +398,7 @@ def sync_existing(db_path=DB_PATH, days=120) -> dict:
         except Exception:
             iss = []
         try:
-            asks = conn.execute("SELECT id, restaurant_id, action, outcome, created_at FROM ask_cavnar_actions "
+            asks = conn.execute("SELECT id, restaurant_id, action, outcome, created_at, proposal_id FROM ask_cavnar_actions "
                                 "WHERE created_at >= datetime('now', ?)", (since,)).fetchall()
         except Exception:
             asks = []
@@ -433,7 +433,10 @@ def sync_existing(db_path=DB_PATH, days=120) -> dict:
     for r in asks:
         ev = {"confirmed": "accepted", "dismissed": "dismissed"}.get(r["outcome"])
         if ev:
-            if record(r["restaurant_id"], rec_key("ask", r["action"]), ev, surface="ask",
+            # Answers name the proposal they settle (ask:<proposal id>, the key
+            # the card was shown under); an older client's answer does not.
+            akey = rec_key("ask", r["proposal_id"]) if r["proposal_id"] else rec_key("ask", r["action"])
+            if record(r["restaurant_id"], akey, ev, surface="ask",
                       meta={"kind": "hide"} if ev == "dismissed" else None,
                       source_ref=f"ask:{r['id']}", db_path=db_path):
                 bump("ask")

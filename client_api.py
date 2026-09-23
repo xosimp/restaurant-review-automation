@@ -2888,6 +2888,7 @@ def get_alert_settings(current_user):
         "alert_rating_threshold": r.alert_rating_threshold,
         "alert_rating_floor":    r.alert_rating_floor,
         "alert_labor_over":      r.alert_labor_over,
+        "alert_competitor_move": getattr(r, "alert_competitor_move", 1),
         "alert_any_review":      getattr(r, "alert_any_review", 0),
         "alert_resp_approved":   getattr(r, "alert_resp_approved", 0),
         "urgent_via_sms":        getattr(r, "urgent_via_sms", 0),
@@ -2973,6 +2974,10 @@ def save_alert_settings(current_user):
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
     }
+    # Only when the page sends it: an older page without the toggle must not
+    # switch competitor alerts off.
+    if "alert_competitor_move" in data:
+        _fields["alert_competitor_move"] = int(bool(data.get("alert_competitor_move")))
     try:
         update_restaurant(rid, _fields, expected_version=expected)
     except StaleWrite as e:

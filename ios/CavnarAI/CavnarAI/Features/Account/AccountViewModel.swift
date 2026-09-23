@@ -793,6 +793,7 @@ final class AccountViewModel {
         let alertHealthBypassQuiet: Bool
         let alertFoodWaste: Bool
         let alertAiVisibilityDrop: Bool
+        let alertCompetitorMove: Bool
         let alertExtraEmails: String
         let pushSound: Bool
         let contacts: [AlertContactBody]
@@ -801,6 +802,7 @@ final class AccountViewModel {
             case alertHealthBypassQuiet = "alert_health_bypass_quiet"
             case alertFoodWaste = "alert_food_waste"
             case alertAiVisibilityDrop = "alert_ai_visibility_drop"
+            case alertCompetitorMove = "alert_competitor_move"
             case alertExtraEmails = "alert_extra_emails"
             case pushSound = "push_sound"
             case alert1star = "alert_1star"
@@ -857,6 +859,7 @@ final class AccountViewModel {
             alertHealthBypassQuiet: settings.alertHealthBypassQuiet,
             alertFoodWaste: settings.alertFoodWaste,
             alertAiVisibilityDrop: settings.alertAiVisibilityDrop,
+            alertCompetitorMove: settings.alertCompetitorMove,
             alertExtraEmails: settings.alertExtraEmails,
             pushSound: settings.pushSound,
             contacts: contacts.map { AlertContactBody(name: $0.name, phone: $0.phone) }
