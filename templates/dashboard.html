@@ -1450,6 +1450,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 @keyframes hbBreath{0%,100%{transform:scale(.6);opacity:.45}50%{transform:scale(1.5);opacity:0}}
 /* hero chart */
 .hb-hero{margin-top:30px;position:relative}
+/* Home's value graph sits on the page itself (no card), so it gets its own
+   light: a fixed 520px circle that slides under the cursor by transform
+   alone (no repaint per move), with the grain at full strength to within
+   a few pixels of its edge. Masking the grain with the light left the
+   faint outer ring undithered, which on this wide section read as rings.
+   The generic .lit:after stays off here. */
+.hb-hero.lit:after{display:none}
+.hb-lit-layer{position:absolute;inset:-28px -28px;overflow:hidden;border-radius:28px;pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.22,.61,.36,1)}
+.hb-hero:hover .hb-lit-layer{opacity:1}
+.hb-lit-layer i{position:absolute;left:0;top:0;width:520px;height:520px;border-radius:50%;will-change:transform;transform:translate3d(calc(var(--mx,50%) - 232px),calc(var(--my,50%) - 232px),0);background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.11'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.012'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(200,75,47,0.1) 0%,rgba(200,75,47,0.093) 8%,rgba(200,75,47,0.08) 16%,rgba(200,75,47,0.064) 24%,rgba(200,75,47,0.048) 32%,rgba(200,75,47,0.034) 40%,rgba(200,75,47,0.022) 48%,rgba(200,75,47,0.0135) 56%,rgba(200,75,47,0.0075) 64%,rgba(200,75,47,0.0038) 72%,rgba(200,75,47,0.0016) 80%,rgba(200,75,47,0.0005) 90%,rgba(200,75,47,0.0) 100%);background-size:180px 180px,100% 100%;-webkit-mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%);mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%)}
+[data-theme="dark"] .hb-lit-layer i{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.012'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.11'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(224,100,68,0.13) 0%,rgba(224,100,68,0.1209) 8%,rgba(224,100,68,0.104) 16%,rgba(224,100,68,0.0832) 24%,rgba(224,100,68,0.0624) 32%,rgba(224,100,68,0.0442) 40%,rgba(224,100,68,0.0286) 48%,rgba(224,100,68,0.0176) 56%,rgba(224,100,68,0.0097) 64%,rgba(224,100,68,0.0049) 72%,rgba(224,100,68,0.0021) 80%,rgba(224,100,68,0.0007) 90%,rgba(224,100,68,0.0) 100%);background-size:180px 180px,100% 100%}
+@media (prefers-reduced-motion:reduce){.hb-lit-layer{transition:none}}
 .hb-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
 .hb-hero .hd .hb-kicker{font-size:14px;margin-bottom:10px}
 .hb-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink)}
@@ -2162,7 +2174,7 @@ svg:hover .hb-xh{opacity:1}
     var vals=sel.map(function(p){return +p.value||0;});
     var delta=vals.length>1?vals[vals.length-1]-vals[0]:0;
     var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':'year';
-    var h='<div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>a month, measured</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
+    var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>a month, measured</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
