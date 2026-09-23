@@ -9,7 +9,8 @@ issued with the page, a fetch wrapper echoes it back as an X-CSRF header, and
 a before_request hook on each protected blueprint requires the two to match.
 
 Deliberately NOT applied to: webhook_bp (external callers verified by HMAC
-signature), auth_bp (has its own form-token flow), status_bp (public GETs).
+signature), auth_bp (has its own form-token flow). status_bp IS protected:
+its public pages are GETs, and its /admin/status writes are not (SEC-23).
 """
 import hmac
 import config

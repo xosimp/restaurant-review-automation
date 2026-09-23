@@ -195,11 +195,12 @@ from mobile_api import mobile_bp
 from csrf import csrf_protect, ensure_csrf_cookie
 
 # Every browser-facing blueprint gets double-submit CSRF enforcement.
-# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens),
-# status_bp (public GETs), and mobile_bp (bearer-token auth, no cookie jar
-# to carry a CSRF cookie — see mobile_api.py's module docstring) are
-# intentionally exempt.
-for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp):
+# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens) and
+# mobile_bp (bearer-token auth, no cookie jar to carry a CSRF cookie — see
+# mobile_api.py's module docstring) are intentionally exempt. status_bp is
+# protected: its public pages are GETs, which the check never touches, and
+# its /admin/status writes post the public outage banner (SEC-23).
+for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp, status_bp):
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
@@ -807,6 +808,11 @@ try:
     _dbr.restore_if_requested()
     _init_db()
     _init_auth()
+    # The public status page's service rows. Seeded here, once, rather than
+    # by /status on every public GET (SEC-38); the scheduler's health check
+    # also re-seeds, so a service added to SERVICES appears without a deploy.
+    from status_manager import seed_default_services as _seed_status
+    _seed_status()
     _isn()
     _isa()
     _ec()

@@ -3876,20 +3876,14 @@ def mobile_refresh_competitors(current_user):
     second job system. (admin_routes.py despite its filename: this specific
     route is @login_required, not @admin_required — any logged-in owner can
     trigger it, matching the web dashboard's own "Refresh" button.)"""
-    import threading
-    import uuid
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
     if not (restaurant and restaurant.module_reviews and restaurant.module_labor
             and restaurant.module_inventory and restaurant.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    # One running refresh per restaurant: a second press joins it (SEC-31).
     import admin_routes as _admin
-    job_id = str(uuid.uuid4())
-    import ops as _ops
-    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
-    t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    return jsonify(ok=True, job_id=_admin.start_competitor_job(rid))
 
 
 @mobile_bp.route("/intel/refresh-status/<job_id>")

@@ -243,8 +243,6 @@ def test_a_delayed_action_left_running_is_reaped_and_reported(db_path, monkeypat
 
 # ── the competitor refresh (DATA-29) ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-29: the competitor refresh never checks active_job, so every press "
-                                       "starts another paid Places + Claude run")
 def test_a_second_competitor_refresh_joins_the_running_one(client, db_path, monkeypatch):
     import competitor
     rid = _restaurant(db_path, module_reviews=1, module_inventory=1, module_marketing=1)
