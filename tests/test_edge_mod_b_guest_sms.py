@@ -152,7 +152,6 @@ def test_the_public_form_never_re_subscribes_a_guest_who_texted_stop(db_path, we
     assert _unsubscribed(db_path, "+15551234567") == [1]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-9: a bare restaurant id is still accepted as a join token (ALLOW_LEGACY_JOIN_LINKS defaults on)")
 def test_a_bare_restaurant_id_is_not_a_join_token(db_path, web, monkeypatch):
     """A6 SMS #15 / MOD-MKT-9 — /api/public/guest-optin/1, /2, ... reaches
     every marketing restaurant with no printed link at all. (tests/

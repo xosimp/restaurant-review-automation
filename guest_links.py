@@ -3,8 +3,9 @@
 `/join/<restaurant_id>` let anyone walk the customer list by integer and
 read each restaurant's name. The link now carries a signature over the id
 (HMAC with the app secret), so a guessed id is a 404. The bare-integer
-form keeps working while ALLOW_LEGACY_JOIN_LINKS is on, because printed QR
-codes exist; turn it off once those are reissued.
+form is refused unless ALLOW_LEGACY_JOIN_LINKS=1 is set: no restaurant has
+a printed bare-id QR code, and accepting it let anyone reach every
+restaurant's opt-in form by counting (MOD-MKT-9).
 """
 import hashlib
 import hmac
@@ -26,7 +27,7 @@ def verify_join(token):
     if not token:
         return None
     if token.isdigit():
-        if os.getenv("ALLOW_LEGACY_JOIN_LINKS", "1") == "1":
+        if os.getenv("ALLOW_LEGACY_JOIN_LINKS", "0") == "1":
             return int(token)
         return None
     rid, _, sig = token.partition("-")

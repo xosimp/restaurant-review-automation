@@ -417,11 +417,14 @@ def test_a_second_envelope_for_an_active_client_neither_resets_the_password_nor_
     assert ds.mail["payment"] == [] and ds.mail["welcome"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-6: a client who signs the superseded envelope hits a dead end — nothing matches it")
 def test_signing_the_superseded_envelope_still_counts(db_path, ds):
     """A10 #33 / MOD-BIL-6 — the client signed the first email's envelope
     after Will re-sent the contract."""
-    rid = _restaurant(db_path, docusign_envelope_id="env_new", contract_status="sent", module_reviews=1)
+    # How a re-send really happens: the first envelope is recorded when it is
+    # sent, then the re-send replaces docusign_envelope_id.
+    rid = _restaurant(db_path, contract_status="sent", module_reviews=1)
+    models.update_restaurant(rid, {"docusign_envelope_id": "env_old"}, db_path=db_path)
+    models.update_restaurant(rid, {"docusign_envelope_id": "env_new"}, db_path=db_path)
     create_user(rid, "owner", "owner@x.test", "pw-owner-1", db_path=db_path)
     ds("env_old")
     assert get_restaurant(rid, db_path).contract_status == "signed"

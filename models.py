@@ -1210,6 +1210,14 @@ def init_db(db_path: str = DB_PATH):
         # The subscription a restaurant's checkout created. Paying in both the
         # monthly and the annual tab made two live subscriptions and two
         # setup charges (MOD-BIL-5); the second is cancelled against this.
+        # Every DocuSign envelope a restaurant has been sent. Re-sending a
+        # contract replaced docusign_envelope_id, so a client who then signed
+        # the FIRST email's envelope matched nothing (MOD-BIL-6).
+        """CREATE TABLE IF NOT EXISTS docusign_envelopes (
+            envelope_id   TEXT PRIMARY KEY,
+            restaurant_id INTEGER NOT NULL,
+            sent_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         """CREATE TABLE IF NOT EXISTS stripe_subscriptions (
             restaurant_id   INTEGER PRIMARY KEY,
             subscription_id TEXT NOT NULL,
@@ -2564,6 +2572,15 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     values = list(updates.values())
     conn = get_conn(db_path)
     try:
+        if updates.get("docusign_envelope_id"):
+            # Keep every envelope ever sent, so signing an older one still
+            # counts (MOD-BIL-6). Best-effort: a missing table never blocks
+            # the update itself.
+            try:
+                conn.execute("INSERT OR IGNORE INTO docusign_envelopes (envelope_id, restaurant_id) VALUES (?,?)",
+                             (updates["docusign_envelope_id"], restaurant_id))
+            except Exception as _env_e:
+                print(f"[update_restaurant] envelope history not recorded for {restaurant_id}: {_env_e}")
         if expected_version is None:
             conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
                          values + [restaurant_id])

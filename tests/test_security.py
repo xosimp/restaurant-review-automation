@@ -274,8 +274,10 @@ def test_join_links_are_signed_and_a_guessed_id_is_nothing(monkeypatch):
     assert guest_links.verify_join("43-" + tok.split("-")[1]) is None
     monkeypatch.setenv("ALLOW_LEGACY_JOIN_LINKS", "0")
     assert guest_links.verify_join("42") is None
+    monkeypatch.delenv("ALLOW_LEGACY_JOIN_LINKS")
+    assert guest_links.verify_join("42") is None                                   # off by default (MOD-MKT-9)
     monkeypatch.setenv("ALLOW_LEGACY_JOIN_LINKS", "1")
-    assert guest_links.verify_join("42") == 42                                     # printed QR codes, until reissued
+    assert guest_links.verify_join("42") == 42                                     # an explicit opt-in still works
     src = open("client_api.py").read()
     assert '/join/<token>' in src and '/api/public/guest-optin/<token>' in src and 'sign_join(rid)' in src
 

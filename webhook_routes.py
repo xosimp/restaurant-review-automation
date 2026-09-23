@@ -956,12 +956,17 @@ def docusign_webhook():
                           u.username, u.last_login
                    FROM restaurants r
                    JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
-                   WHERE r.docusign_envelope_id = ? LIMIT 1""",
-                (envelope_id,)
+                   WHERE r.docusign_envelope_id = ?
+                      OR r.id = (SELECT restaurant_id FROM docusign_envelopes WHERE envelope_id = ?)
+                   ORDER BY (r.docusign_envelope_id = ?) DESC LIMIT 1""",
+                (envelope_id, envelope_id, envelope_id)
             ).fetchone()
+            # A superseded envelope (the contract was re-sent, then the client
+            # signed the first email) still marks its restaurant signed.
             conn.execute(
-                "UPDATE restaurants SET contract_status='signed' WHERE docusign_envelope_id=?",
-                (envelope_id,)
+                "UPDATE restaurants SET contract_status='signed' WHERE docusign_envelope_id=? "
+                "OR id = (SELECT restaurant_id FROM docusign_envelopes WHERE envelope_id = ?)",
+                (envelope_id, envelope_id)
             )
             conn.commit()
             conn.close()
