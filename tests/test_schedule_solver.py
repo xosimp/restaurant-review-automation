@@ -78,6 +78,7 @@ def test_small_instances_reach_the_brute_force_optimum_and_say_it_is_proved(seed
         # the model of the rules agrees with the rule sweep, both ways
         written = ss._rows_for(prob, a)
         assert not _hard(written, c), (seed, combo)
+        assert not (ss._soft_repaired(written, c) - ss._soft_repaired(rows, c)), (seed, combo)
         cost = prob.evaluate(a)
         best = cost if best is None else min(best, cost)
     if best is None:
@@ -101,7 +102,10 @@ def test_every_legal_arrangement_the_sweep_accepts_is_in_the_search_space():
         per_date = {}
         for r in written:
             per_date[(r["employee"], r["date"])] = per_date.get((r["employee"], r["date"]), 0) + 1
-        if not _hard(written, c) and max(per_date.values()) == 1:
+        # legal: no hard breach, no new double, and nobody losing the run of
+        # days off the draft gave them
+        if not _hard(written, c) and max(per_date.values()) == 1 \
+                and not (ss._soft_repaired(written, c) - ss._soft_repaired(rows, c)):
             assert prob.feasible(a), combo
 
 
@@ -243,7 +247,13 @@ def test_the_time_limit_is_respected_on_a_big_week():
     res = ss.solve(rows, cons(names), signals=sig, max_seconds=1.0)
     took = time.monotonic() - t0
     assert len(rows) == 210 and took < 1.0 + 0.75, took
-    assert res["status"] in ("optimal", "time_limit") and not _hard(res["rows"], cons(names))
+    assert res["status"] in ("optimal", "time_limit")
+    # the draft rotates everyone through all seven days; nothing new is broken,
+    # and whatever the draft broke that is left is on a row kept as drafted
+    assert _breaches(res["rows"], cons(names)) <= _breaches(rows, cons(names))
+    kept = set(res["kept_rows"])
+    assert all(v["index"] in kept or any(rows[i]["employee"] == v["employee"] for i in kept)
+               for v in _hard(res["rows"], cons(names)))
 
 
 def test_interchangeable_shifts_do_not_read_as_changes():
@@ -307,6 +317,25 @@ def test_a_higher_score_that_breaks_a_hard_rule_is_refused(monkeypatch):
     def rigged(*a, **k):
         out = real(*a, **k)
         out["candidates"] = [illegal]
+        return out
+    monkeypatch.setattr(ss, "solve", rigged)
+    out = ss.improve(rows, {}, signals=sig, constraints=c)
+    assert not out["applied"] and out["rows"] == rows
+
+
+def test_a_missed_run_of_days_off_the_fix_pass_repaired_never_comes_back(monkeypatch):
+    names = ["Ann", "Bob"]
+    rows = [row(WEEK[0], "Ann"), row(WEEK[2], "Ann"), row(WEEK[4], "Bob"), row(WEEK[6], "Bob")]
+    c = cons(names)
+    c.compliance = dict(sr.DEFAULTS, min_consecutive_days_off=2)
+    sig = {"roster": names, "roster_roles": {n: "Server" for n in names}, "scores": {"Ann": 5, "Bob": 1}}
+    all_ann = [dict(r, employee="Ann") for r in rows]          # off Tue, Thu, Sat: no two together
+    assert ("ann", "days_off") in ss._soft_repaired(all_ann, c) and not ss._soft_repaired(rows, c)
+    real = ss.solve
+
+    def rigged(*a, **k):
+        out = real(*a, **k)
+        out["candidates"] = [all_ann]
         return out
     monkeypatch.setattr(ss, "solve", rigged)
     out = ss.improve(rows, {}, signals=sig, constraints=c)

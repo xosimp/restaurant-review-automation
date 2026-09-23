@@ -39,17 +39,24 @@ This module keeps the draft's shape and re-solves the assignment:
 
 The search is complete: backtracking over the most-constrained unit first,
 forward checking after every assignment (a person removed from every unit
-the assignment makes illegal for them; an emptied domain backtracks at
+the assignment makes illegal for them; an emptied domain, or a role's open
+units on a date with fewer distinct candidates than units, backtracks at
 once), and branch-and-bound on an admissible lower bound (the cheapest
-remaining person for each open unit). It runs as limited-discrepancy
-iterations so a good week is found early, and the last iteration is plain
-depth-first: when it finishes inside the time limit the answer is proved
-optimal for the cost model. Independent sub-problems (a role whose people
-share no shift, rule or pairing with any other) are solved separately,
-which is where most of the proofs come from.
+remaining person for each open unit). Interchangeable units (same date,
+role and times) are filled in order with people in ascending cost rank, so
+no arrangement is searched twice. Per independent part (people who share no
+shift, rule or pairing with another part): the draft itself is the first
+incumbent when it is legal; the heuristic's dive finds a week in
+milliseconds; a short complete pass proves the small parts; then
+large-neighbourhood rounds re-solve a few units at a time exactly with the
+same propagation and bound; and a last complete pass with what time is left
+proves the week optimal for the cost model when it finishes.
 
-Hard rules are never traded for score. A unit nobody may legally work is
-reported with each candidate's reason, and left as the draft had it.
+Hard rules are never traded for score. A shift no legal week can staff —
+nobody legal, more shifts of a role on a date than legal people, more than
+the role's people can carry this week, or a person the draft already
+overcommitted (their week is then kept whole) — is kept as drafted and
+named with why, and the rest of the week is solved around it.
 
 Nothing here calls a model, reads the database or writes anything.
 """
@@ -112,7 +119,8 @@ K_LEAD_PROFILE = 4.0      # nobody able to run a shift that wants a leader
 K_STRENGTH_GROUP = 20.0   # a role's combined score under its target, by share
 K_STRENGTH_FLOOR = 10.0   # ...under the 55% floor that caps a shift
 K_TRAINING = 2.0          # somebody weak with nobody stronger alongside
-K_DAYS_OFF = 1.5          # fewer consecutive days off than the rule (soft)
+K_DAYS_OFF = 25.0         # fewer consecutive days off than the rule, for somebody the draft already had short
+K_DAYS_OFF_NEW = 1000.0   # ...for somebody the draft (after the fix pass) gave their run: never worth it
 K_MIN_HOURS = 0.3         # per hour under somebody's stated minimum (soft)
 
 
@@ -157,6 +165,7 @@ class Problem:
         # staff; kept as drafted and named (solve's relaxation loop)
         self.relax = dict(relax or {})
         self.draft_overcommitted = set()
+        self.draft_days_off = set()
         self.c = constraints
         self.signals = signals = dict(signals or {})
         self.profiles = profiles
@@ -176,6 +185,23 @@ class Problem:
                 p = self.pidx.get(_low(v.get("employee")))
                 if v.get("hard") and v["kind"] in per_person and p is not None:
                     self.draft_overcommitted.add(p)
+                if v["kind"] == "days_off" and p is not None:
+                    self.draft_days_off.add(p)
+        # The run of days off the draft gives somebody (after the fix pass,
+        # which repairs a missed one) is theirs to keep: a propagated rule in
+        # the search, not a cost. Only whoever the draft already had short
+        # is left to the soft penalty.
+        self.week_ords = sorted(o for o in (_ordinal(d) for d in self.week_dates) if o is not None)
+        self.week_ord_set = set(self.week_ords)
+        full_req, part_req = self.days_off_rule
+        self.off_req = []
+        for p in range(len(self.names)):
+            req = part_req if self.employment[p] == "part" else full_req
+            try:
+                req = int(req or 0)
+            except (TypeError, ValueError):
+                req = 0
+            self.off_req.append(0 if p in self.draft_days_off else req)
         self._build_units(only_dates)
         self._build_domains()
         self._build_groups()
@@ -687,6 +713,28 @@ class Problem:
                 self.fx_ords[p][u.dord] = self.fx_ords[p].get(u.dord, 0) + 1
                 self.fx_units[p].append(u)
 
+    def _off_ok(self, p, ords, add=None) -> bool:
+        """Whether p keeps a run of `off_req` days off inside the week with
+        the dates in `ords` (and `add`) worked — the sweep's days_off rule,
+        asked only once two or more of the week's dates are worked. Adding a
+        date can only make it harder, so the search checks it forward."""
+        req = self.off_req[p]
+        if not req or not self.week_ords:
+            return True
+        worked = {o for o in ords if o in self.week_ord_set}
+        if add is not None:
+            worked.add(add)
+        if len(worked) < 2:
+            return True
+        run = best = 0
+        for o in self.week_ords:
+            if o in worked:
+                run = 0
+            else:
+                run += 1
+                best = max(best, run)
+        return best >= req
+
     def _fixed_blocks(self, u, p):
         for f in self.fx_units[p]:
             if self._conflict(u, f):
@@ -695,6 +743,8 @@ class Problem:
             return _rules.LABELS["over_max_hours"]
         if self.max_run and self._run_with(self.fx_ords[p], u.dord) > self.max_run:
             return _rules.LABELS["long_run"]
+        if not self._off_ok(p, self.fx_ords[p], u.dord):
+            return _rules.LABELS["days_off"]
         return None
 
     def _infeasible_entry(self, u):
@@ -986,7 +1036,7 @@ class Problem:
                             run += 1
                             best = max(best, run)
                     if best < int(req):
-                        pen += K_DAYS_OFF
+                        pen += K_DAYS_OFF if p in self.draft_days_off else K_DAYS_OFF_NEW
         return pen
 
     def evaluate(self, assign) -> float:
@@ -1031,6 +1081,8 @@ class Problem:
             if any(h > self.cap[p] + 0.05 for h in hours.values()):
                 return False
             if self.max_run and any(self._run_with(ords - {x}, x) > self.max_run for x in ords):
+                return False
+            if not self._off_ok(p, ords):
                 return False
         for members in self.kgroups.values():
             if not any(assign[i] in self.keyholders for i in members):
@@ -1209,6 +1261,8 @@ class _Search:
                 bad = vu.hours + self.st.hours[p].get(vu.bucket, 0.0) > room
                 if not bad and prob.max_run and vu.dord is not None and abs(vu.dord - unit.dord) <= prob.max_run:
                     bad = prob._run_with(ords, vu.dord) > prob.max_run
+                if not bad and prob.off_req[p] and vu.dord not in ords:
+                    bad = not prob._off_ok(p, ords, vu.dord)
                 if bad:
                     if not self._remove(v, p):
                         ok = False
@@ -1690,12 +1744,20 @@ def _hard(rows, constraints) -> set:
 
 
 def _objective(quality) -> float:
-    scored = [s for s in (quality or {}).get("shifts") or [] if s.get("scored")]
-    if not scored:
-        return 0.0
-    num = sum(s["score"] * sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
-    den = sum(sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
-    return num / (den or 1.0)
+    """The week score before rounding, week-level measures included — the
+    repair loop's own objective, so the two can never judge a week apart."""
+    import schedule_optimizer as _opt
+    return _opt.objective(quality)
+
+
+def _soft_repaired(rows, constraints) -> set:
+    """(person, kind) for the soft breaches the fix pass repairs
+    (schedule_rules.FIXABLE_SOFT, e.g. a missed run of days off): the solver
+    may not bring one back that the draft no longer has."""
+    if constraints is None:
+        return set()
+    return {(_low(v.get("employee")), v["kind"]) for v in _rules.violations(rows, constraints)
+            if not v.get("hard") and v["kind"] in _rules.FIXABLE_SOFT}
 
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
@@ -1742,6 +1804,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
                                     "infeasible", "notes", "optimal_for")}
     out["stats"] = stats
     before_hard = _hard(base, constraints)
+    before_soft = _soft_repaired(base, constraints)
     base_obj = _objective(before_q)
     best = None
     judged = 0
@@ -1751,6 +1814,8 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         new_hard = _hard(cand, constraints) - before_hard
         if new_hard:
             continue            # never: a better score is not worth a breach
+        if _soft_repaired(cand, constraints) - before_soft:
+            continue            # nor undoing a repair the fix pass made (days off)
         q = score(cand)
         judged += 1
         if not q.get("checked"):

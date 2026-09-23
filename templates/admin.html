@@ -633,7 +633,7 @@ async function experiments(){
   const block = (e) => {
     const cols = [
       {h:'Arm',key:'label',cell:r=>`${esc(r.label)}${r.arm===e.control?' <span class="chip">control</span>':''}`},
-      {h:'Weeks',key:'generated',r:true,cell:r=>`<span class="num">${fmtN(r.generated)}</span>${r.pinned?` <span class="dim">+${fmtN(r.pinned)} pinned</span>`:''}`},
+      {h:'Drafts',key:'generated',r:true,cell:r=>`<span class="num">${fmtN(r.generated)}</span>${r.pinned?` <span class="dim">+${fmtN(r.pinned)} pinned</span>`:''}`},
       {h:'Published',key:'n',r:true,val:r=>r.acceptance.n,cell:r=>`<span class="num">${fmtN(r.acceptance.n)}</span> <span class="dim">${fmtN(r.restaurants)} rest.</span>`},
       {h:'Accepted unedited',key:'acc',r:true,val:r=>r.acceptance.mean,cell:r=>`<span class="num">${pct(r.acceptance.mean)}</span>${ci(r.acceptance, pct)}`},
       {h:'vs control',key:'dacc',r:true,val:r=>r.vs_control&&r.vs_control.acceptance?r.vs_control.acceptance.diff:null,cell:r=>r.vs_control?dlt(r.vs_control.acceptance, pct):'<span class="dim">—</span>'},
