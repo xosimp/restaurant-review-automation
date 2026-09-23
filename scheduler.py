@@ -1160,32 +1160,44 @@ def refresh_expiring_tokens():
         log.error(f"refresh_expiring_tokens error: {e}")
 
 
+# One nightly metrics pass stops taking on restaurants after this long; the
+# job_cursors cursor makes the next night start where it stopped.
+METRICS_SYNC_SECONDS = int(os.getenv("METRICS_SYNC_SECONDS", "1800"))
+
+
 def run_marketing_metrics_sync():
     """Nightly: refresh Meta post-performance metrics for every restaurant
     with marketing on and a connected account. Previously this only ever ran
     client-side (a 60s poll while someone had the Marketing tab open), so the
     numbers behind the tab's analytics card were stale the moment nobody was
     looking — an owner who checks once a week saw whatever reach/engagement
-    happened to be cached from their last visit, not real current totals."""
+    happened to be cached from their last visit, not real current totals.
+
+    Bounded and resumable (resumable_sweep): it looped every connected
+    restaurant serially with no wall-clock bound and no cursor (MOD-MKT-15)."""
     try:
         from models import get_all_restaurants, in_service
-        from social_routes import refresh_post_metrics
+        import social_routes
 
-        candidates = [r for r in get_all_restaurants()
-                     if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)]
+        candidates = {r.id: r for r in get_all_restaurants()
+                      if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)}
         if not candidates:
             return
         log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
-        for r in candidates:
-            try:
-                result = refresh_post_metrics(r.id)
-                if result.get("ok"):
-                    log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
-                else:
-                    log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
-            except Exception as e:
-                log.error(f"Metrics sync error for {r.name}: {e}")
-                _ops.capture(e, job="marketing_metrics_sync", context=r.name)
+
+        def _one(rid):
+            r = candidates[rid]
+            result = social_routes.refresh_post_metrics(rid) or {}
+            if result.get("ok"):
+                log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
+            else:
+                log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
+
+        done, hit_bound = resumable_sweep("marketing_metrics_sync", list(candidates), _one,
+                                          METRICS_SYNC_SECONDS, workers=1, job="marketing_metrics_sync")
+        if hit_bound:
+            log.info(f"Marketing metrics sync stopped at its bound after {done}; "
+                     "the next pass resumes from there")
     except Exception as e:
         log.error(f"run_marketing_metrics_sync error: {e}")
 

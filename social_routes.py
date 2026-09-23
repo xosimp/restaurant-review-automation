@@ -434,18 +434,47 @@ def _ig_post_metrics(post_id, token, _req):
     return metrics
 
 
+import threading as _threading
+
+# Inside refresh_post_metrics the failures of one restaurant's pass are
+# collected here and reported ONCE: every failed Graph call used to run
+# ops.capture, so one expired token was ~50 operator-digest entries a
+# night (MOD-MKT-15).
+_insights_pass = _threading.local()
+
+
+def _meta_error_code(resp):
+    try:
+        return int(((resp.json() or {}).get("error") or {}).get("code"))
+    except Exception:
+        return None
+
+
 def _capture_insights_error(what, post_id, resp):
     """Surface a real Meta API failure (bad metric name, expired token,
     revoked permission) instead of letting it disappear into empty metrics
     forever — this is what makes 'analytics are working' verifiable rather
     than assumed."""
-    print(f"[insights] {what} for {post_id} failed: {resp.status_code} {resp.text[:300]}")
+    status = getattr(resp, "status_code", 0)
+    text = (getattr(resp, "text", "") or "")[:300]
+    print(f"[insights] {what} for {post_id} failed: {status} {text}")
+    bucket = getattr(_insights_pass, "errors", None)
+    if bucket is not None:
+        bucket.append({"what": what, "post_id": post_id, "status": status, "text": text,
+                       "code": _meta_error_code(resp)})
+        return
     try:
         import ops
-        ops.capture(Exception(resp.text[:300]), job="post_insights",
-                    context=f"{what} post={post_id} status={resp.status_code}")
+        ops.capture(Exception(text), job="post_insights",
+                    context=f"{what} post={post_id} status={status}")
     except Exception:
         pass
+
+
+# Metrics a sync can measure, and so the only columns it may write. `engaged`
+# is not a Graph field at all; writing metrics.get(k, 0) for every column
+# zeroed whatever a failed or fallback call did not return (MOD-MKT-15).
+_METRIC_COLUMNS = ("reach", "impressions", "engaged", "likes", "comments", "shares")
 
 
 def refresh_post_metrics(restaurant_id, limit=25):
@@ -459,6 +488,8 @@ def refresh_post_metrics(restaurant_id, limit=25):
     if not restaurant or (not restaurant.ig_token and not restaurant.fb_page_token):
         return {"ok": False, "error": "Not connected", "posts": []}
     conn = get_conn()
+    _insights_pass.errors = errors = []
+    token_dead = False
     try:
         rows = conn.execute(
             """SELECT id, topic, post_id, post_platform, created_at,
@@ -472,6 +503,11 @@ def refresh_post_metrics(restaurant_id, limit=25):
         for row in rows:
             if not row["post_id"]:
                 continue
+            if any(e.get("code") in (190, 102) for e in errors):
+                # The token is dead; the other 24 posts would each fail the
+                # same way. Stop and say so once.
+                token_dead = True
+                break
             try:
                 token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
                 if not token:
@@ -482,15 +518,12 @@ def refresh_post_metrics(restaurant_id, limit=25):
                     metrics = _fb_post_metrics(row["post_id"], token, _req)
                 else:
                     metrics = _ig_post_metrics(row["post_id"], token, _req)
-                if metrics:
+                measured = [c for c in _METRIC_COLUMNS if metrics.get(c) is not None]
+                if measured:
                     conn.execute(
-                        """UPDATE marketing_content_log
-                           SET reach=?, impressions=?, engaged=?, likes=?, comments=?, shares=?
-                           WHERE id=?""",
-                        (metrics.get("reach", 0), metrics.get("impressions", 0),
-                         metrics.get("engaged", 0), metrics.get("likes", 0),
-                         metrics.get("comments", 0), metrics.get("shares", 0),
-                         row["id"])
+                        "UPDATE marketing_content_log SET "
+                        + ", ".join(f"{c}=?" for c in measured) + " WHERE id=?",
+                        tuple(metrics[c] for c in measured) + (row["id"],)
                     )
                     conn.commit()
                 results.append({
@@ -503,9 +536,22 @@ def refresh_post_metrics(restaurant_id, limit=25):
                 _capture_insights_error("refresh_post_metrics row", row["post_id"], type("R", (), {"status_code": 0, "text": str(e)})())
                 results.append({"topic": row["topic"], "post_id": row["post_id"],
                                "platform": row["post_platform"], "metrics": {}})
+        if token_dead:
+            return {"ok": False, "posts": results,
+                    "error": "Meta says the connection has expired — reconnect Instagram & Facebook."}
         return {"ok": True, "posts": results}
     finally:
         conn.close()
+        _insights_pass.errors = None
+        if errors:
+            first = errors[0]
+            try:
+                import ops
+                ops.capture(Exception(first["text"]), job="post_insights",
+                            context=f"restaurant_id={restaurant_id} {len(errors)} failed call(s); "
+                                    f"first: {first['what']} post={first['post_id']} status={first['status']}")
+            except Exception:
+                pass
 
 
 @social_bp.route("/api/post-insights")

@@ -290,7 +290,6 @@ def _stored(db_path, row_id):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: refresh_post_metrics writes metrics.get('reach', 0) etc., so a failed insights call zeroes stored reach/impressions")
 def test_a_failed_facebook_insights_call_leaves_stored_reach_and_impressions_alone(db_path, monkeypatch, captures):
     """A6 Metrics #5 / MOD-MKT-15: engagement came back, insights did not."""
     rid = _restaurant(db_path, fb_page_token="fbt", fb_page_id="fbp")
@@ -309,7 +308,6 @@ def test_a_failed_facebook_insights_call_leaves_stored_reach_and_impressions_alo
     assert (after["reach"], after["impressions"]) == (500, 900), after
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: the IG fallback metric set omits impressions and the write replaces the stored value with 0")
 def test_the_instagram_fallback_keeps_the_impressions_it_did_not_fetch(db_path, monkeypatch, captures):
     """A6 Metrics #5 / MOD-MKT-15: Meta rejected `impressions`; the retry
     without it returned reach — the old impressions figure must survive."""
@@ -329,7 +327,6 @@ def test_the_instagram_fallback_keeps_the_impressions_it_did_not_fetch(db_path, 
     assert after["impressions"] == 900, after
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: neither metric function produces 'engaged', so every sync writes engaged=0")
 def test_a_sync_never_zeroes_a_metric_it_did_not_measure(db_path, monkeypatch, captures):
     """A6 Metrics #5 / MOD-MKT-15: `engaged` is not a Graph field at all."""
     rid = _restaurant(db_path, ig_token="igt", ig_user_id="igu")
@@ -379,7 +376,6 @@ def _run_sync_with_slow_restaurants(monkeypatch, hours_each=2.0):
     return passes
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: run_marketing_metrics_sync loops every connected restaurant serially with no wall-clock bound and no job_cursors cursor")
 def test_the_nightly_metrics_sync_is_bounded_and_resumes_where_it_stopped(db_path, monkeypatch, captures):
     """A6 Metrics #6 / MOD-MKT-15: CLAUDE.md — work that iterates every
     restaurant must be bounded and resumable (the run_daily_fetch pattern).
@@ -412,7 +408,6 @@ def test_the_nightly_metrics_sync_skips_restaurants_without_marketing_or_a_conne
 
 # ── Metrics sync #7 expired token → capture flood (MOD-MKT-15) ────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: every failed Graph call runs ops.capture, so one expired token is ~50 operator-digest entries a night")
 def test_an_expired_token_is_one_operator_signal_per_restaurant_not_one_per_call(db_path, monkeypatch, captures):
     """A6 Metrics #7 / MOD-MKT-15: 25 recent IG posts, token expired."""
     import scheduler
