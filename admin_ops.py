@@ -1376,6 +1376,11 @@ def _group(eps, key_fn, label_fn=None, min_n=1):
     return rows
 
 
+def _surface_label(surface):
+    import rec_ledger
+    return rec_ledger.surface_label(surface)
+
+
 def recommendation_acceptance(days=30, restaurant_id=None):
     """The internal Recommendation Acceptance dashboard: the funnel, the
     score, and what moves it — dollars or none, cross-module, model-written,
@@ -1409,7 +1414,7 @@ def recommendation_acceptance(days=30, restaurant_id=None):
             "total": total, "funnel": funnel,
             "by_module": _group(eps, lambda e: e["module"]),
             "by_kind": by_kind,
-            "by_surface": _group(eps, lambda e: e["surface"]),
+            "by_surface": _group(eps, lambda e: e["surface"], label_fn=_surface_label),
             "by_dollars": _group(eps, lambda e: "has a $ figure" if e["has_dollars"] else "no $ figure"),
             "by_cross_module": _group(eps, lambda e: "cross-module" if e["cross_module"] else "one module"),
             "by_model_written": _group(eps, lambda e: "model-written" if e["model_written"] else "rule-written"),
