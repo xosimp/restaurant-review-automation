@@ -1881,11 +1881,13 @@ def refresh_competitor_intel(current_user):
     if not (_r and _r.module_reviews and _r.module_labor and _r.module_inventory and _r.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     import threading, uuid
-    job_id = str(uuid.uuid4())
-    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
-    t = threading.Thread(target=_run_competitor_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    # A press while a refresh is running joins it. Every press used to start
+    # another thread and another paid Places + Claude run (DATA-29).
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "competitor_intel", current_user["restaurant_id"])
+    if not joined:
+        t = threading.Thread(target=_run_competitor_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
+        t.start()
+    return jsonify(ok=True, job_id=job_id, joined=joined)
 
 @admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])
 @login_required

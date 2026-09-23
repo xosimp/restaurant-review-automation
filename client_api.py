@@ -2447,24 +2447,32 @@ def _do_regenerate_draft(review_id, restaurant_id):
 
 
 def _do_save_draft(review_id, restaurant_id, draft_text):
-    from models import update_draft
     draft = (draft_text or "").strip()
     if not draft:
         return {"ok": False, "error": "Draft cannot be empty"}, 200
+    # One conditional write. It used to set response_status='drafted'
+    # unconditionally, so a draft saved from a second tab after the reply
+    # went live marked a live Google reply as an unsent draft — which
+    # retract then refused, stranding it (DATA-26). A posted or approved
+    # reply is not a draft to overwrite.
     conn = get_conn()
-    row = conn.execute("SELECT id FROM reviews WHERE id=? AND restaurant_id=?",
-                       (review_id, restaurant_id)).fetchone()
-    conn.close()
+    try:
+        cur = conn.execute(
+            "UPDATE reviews SET draft_response=?, response_status='drafted', draft_edited=1, "
+            "draft_needs_review=0, draft_review_reason=NULL "
+            "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
+            (draft, review_id, restaurant_id))
+        conn.commit()
+        if cur.rowcount == 1:
+            return {"ok": True}, 200
+        row = conn.execute("SELECT response_status FROM reviews WHERE id=? AND restaurant_id=?",
+                           (review_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
     if not row:
         return {"ok": False, "error": "Review not found"}, 200
-    update_draft(review_id, draft)
-    conn = get_conn()
-    conn.execute(
-        "UPDATE reviews SET response_status='drafted', draft_edited=1 WHERE id=? AND restaurant_id=?",
-        (review_id, restaurant_id)
-    )
-    conn.commit(); conn.close()
-    return {"ok": True}, 200
+    return {"ok": False, "error": "This reply has already been sent. Retract it before editing it.",
+            "response_status": row["response_status"]}, 409
 
 
 @client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
@@ -3275,7 +3283,15 @@ def _do_food_cost_quickcount(restaurant_id, items):
         except Exception:
             existing_fc = {}
 
-    prev = existing_fc.get("current")  # rotate current → previous
+    # Rotate current → previous — once per day. A second count the same day
+    # (a double-submit, a correction) replaces today's count and keeps the
+    # real baseline; it used to rotate again, so last week's prices were
+    # replaced by this week's and every drift read zero (DATA-27).
+    today_count = existing_fc.get("current")
+    if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
+        prev = existing_fc.get("previous") or None
+    else:
+        prev = today_count
     new_current = {"submitted_at": now_str, "items": items}
 
     # Compute price drift vs previous submission

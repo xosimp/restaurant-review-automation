@@ -244,8 +244,6 @@ def test_an_invited_teammate_ends_up_with_the_role_they_were_invited_as():
     assert role == "manager"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-56: create_user commits the login with the default 'client' "
-                                       "role and set_user_role narrows it in a separate commit")
 def test_an_invited_user_never_exists_with_the_client_role():
     rid = _loc("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "owner-pass-1")
@@ -256,8 +254,6 @@ def test_an_invited_user_never_exists_with_the_client_role():
     assert _roles_at_insert("dana@ej.test") == ["member"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-56: when the role-narrowing commit fails, the invited login "
-                                       "is left live with the primary-login 'client' role")
 def test_an_invite_whose_role_write_fails_leaves_no_owner_level_login(monkeypatch):
     rid = _loc("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "owner-pass-1")

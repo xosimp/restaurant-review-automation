@@ -3886,12 +3886,14 @@ def mobile_refresh_competitors(current_user):
             and restaurant.module_inventory and restaurant.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     import admin_routes as _admin
-    job_id = str(uuid.uuid4())
     import ops as _ops
-    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
-    t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    # A press while a refresh is running joins it — web and phone alike —
+    # instead of starting another paid Places + Claude run (DATA-29).
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "competitor_intel", rid)
+    if not joined:
+        t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
+        t.start()
+    return jsonify(ok=True, job_id=job_id, joined=joined)
 
 
 @mobile_bp.route("/intel/refresh-status/<job_id>")
@@ -4897,6 +4899,20 @@ def mobile_create_staff(current_user):
         pin = validate_pin(data.get("pin") or "")
     except PinError as pe:
         return jsonify(ok=False, error=str(pe)), 400
+
+    # The same name twice is the same person twice: a double-submit used to
+    # find the username taken, invent a suffix and create a second identity
+    # with the same name and PIN (DATA-37). Two different people who share
+    # a name need names that tell them apart on the sign-in list anyway.
+    conn = get_conn()
+    try:
+        dup = conn.execute("SELECT 1 FROM memberships WHERE restaurant_id=? AND COALESCE(is_active,1)=1 "
+                           "AND LOWER(TRIM(employee_name))=LOWER(?)", (rid, name)).fetchone()
+    finally:
+        conn.close()
+    if dup:
+        return jsonify(ok=False, error=f"{name} already has a staff account. To add a different person "
+                                       f"with the same name, add something that tells them apart."), 409
 
     base = "".join(c for c in name.lower() if c.isalnum()) or "staff"
     username, suffix = f"{base}.{rid}", 1

@@ -502,8 +502,6 @@ def test_a_competitor_refresh_starts_one_job_and_returns_its_id(app, db_path, co
     assert _row(db_path, "SELECT status FROM async_jobs WHERE job_id=?", (body["job_id"],))["status"] == "pending"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-31: refresh_competitor_intel has no pending-job check, "
-                                       "so every POST starts another Places+Claude thread")
 def test_a_second_competitor_refresh_while_one_is_pending_joins_it(app, db_path, counted_threads):
     rid, owner = _full_system_owner(db_path)
     c = _client(app, create_session(owner, db_path=db_path))

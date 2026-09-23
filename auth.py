@@ -1761,7 +1761,7 @@ def _end_staff_sessions_for_membership(membership_id: int, restaurant_id: int,
 
 def create_user(restaurant_id: int, username: str, email: str,
                 password: str, is_admin: bool = False,
-                db_path: str = DB_PATH) -> int:
+                db_path: str = DB_PATH, role: str = None) -> int:
     conn = get_conn(db_path)
     # Scored/stamped at creation too, not just on a later change — an
     # account whose password was never touched since Will set it up used
@@ -1772,7 +1772,14 @@ def create_user(restaurant_id: int, username: str, email: str,
     # A staff-PIN identity (the @staff.invalid address both staff paths
     # mint) is an employee from the start, never the 'client' column default
     # a console login gets (SEC-1).
-    role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
+    #
+    # `role`, when given, is written with the row itself. A teammate invite
+    # used to insert the 'client' default — the primary-login role — and
+    # narrow it in a second commit, so for that window, or for good if the
+    # second write failed, an invited teammate held owner-level access
+    # (DATA-56).
+    if not role:
+        role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
     cur = conn.execute("""
         INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at,
                            password_strength, role)
@@ -1921,11 +1928,6 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
         suffix += 1
         candidate = f"{username}{suffix}"
     conn.close()
-    try:
-        user_id = create_user(restaurant_id, candidate, email, temp_password,
-                              is_admin=False, db_path=db_path)
-    except sqlite3.IntegrityError:
-        return {"ok": False, "error": "That email is already in use."}
     # 'member' marks an invited teammate. The role column's existing
     # vocabulary is 'client' (every restaurant's primary login, the default)
     # and 'owner' (Will's multi-restaurant login that can switch its active
@@ -1933,8 +1935,13 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     # gated invite/revoke on role == 'owner', which no client login has, so
     # the whole Team feature was invisible and 403'd for every real account.
     # The distinction that actually matters is "primary login vs. someone
-    # that login invited", and that's what this value records.
-    set_user_role(user_id, role, db_path=db_path)
+    # that login invited", and that's what this value records — written
+    # with the row, never narrowed afterwards (DATA-56).
+    try:
+        user_id = create_user(restaurant_id, candidate, email, temp_password,
+                              is_admin=False, db_path=db_path, role=role)
+    except sqlite3.IntegrityError:
+        return {"ok": False, "error": "That email is already in use."}
     # An invited teammate also gets a membership, so authorization for this
     # login resolves through the same Identity → Tenant → Role path every
     # other account now uses rather than falling back to users.role.

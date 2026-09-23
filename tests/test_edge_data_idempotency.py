@@ -430,7 +430,6 @@ def test_two_concurrent_campaign_sends_text_each_guest_once(db_path, monkeypatch
 
 # ── DATA-14 · guest newsletter ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-14: concurrent newsletters each mint and write their own unsubscribe tokens; the last writer wins and the other batch's links are dead")
 def test_concurrent_newsletters_keep_every_unsubscribe_link_valid(db_path, monkeypatch):
     rid = _restaurant(db_path)
     for i, addr in enumerate(("ann@guest.test", "ben@guest.test")):
@@ -482,7 +481,6 @@ class _Resp:
         return self._body
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-25: immediate Instagram publishes carry no idempotency claim, so a re-click during the 20-second poll makes a second public post")
 def test_a_double_submitted_instagram_post_publishes_once(db_path, monkeypatch):
     rid = _restaurant(db_path)
     conn = models.get_conn(db_path)
@@ -548,7 +546,6 @@ def test_approving_twice_fires_the_webhook_once(db_path, monkeypatch):
     assert fired == {"webhook": 1, "google": 1, "alert": 1}
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-26: _do_save_draft sets response_status='drafted' unconditionally, stranding a live Google reply that retract then refuses")
 def test_saving_a_draft_on_a_posted_reply_leaves_it_posted(db_path):
     rid = _restaurant(db_path)
     review_id = _drafted_review(db_path, rid, status="posted")
@@ -561,7 +558,6 @@ def test_saving_a_draft_on_a_posted_reply_leaves_it_posted(db_path):
 
 # ── DATA-27 · food-cost quick count ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-27: every quick count rotates current into previous, so a double-submit replaces last week's baseline with this week's count")
 def test_submitting_the_same_count_twice_keeps_the_previous_week(db_path):
     rid = _restaurant(db_path)
     last_week = {"current": {"submitted_at": "2026-09-14",
@@ -609,7 +605,6 @@ def test_two_identical_drop_requests_become_one(db_path):
 
 # ── DATA-37 · staff account creation ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-37: a username collision invents a new suffix, so a double-submit creates a second identity with the same name and PIN")
 def test_creating_the_same_staff_member_twice_is_refused(app, db_path):
     rid = _restaurant(db_path)
     c = _web(app, db_path, _owner(db_path, rid))
@@ -627,7 +622,6 @@ def test_creating_the_same_staff_member_twice_is_refused(app, db_path):
 
 # ── DATA-50 · password reset tokens ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-50: consume_reset_token validates with a SELECT and updates WHERE id=?, so two concurrent submissions both succeed")
 def test_a_reset_token_works_once_under_concurrency(db_path):
     rid = _restaurant(db_path)
     create_user(rid, "resetme", "reset@edge.test", "old-password-1", db_path=db_path)

@@ -5397,6 +5397,19 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     user = validate_reset_token(token, db_path)
     if not user:
         return False
+    # Burn the token first, conditionally, so exactly one submission can
+    # win. Validate-then-update-by-id let two concurrent submissions both
+    # pass validation and both set a password (DATA-50).
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE users SET reset_token=NULL, reset_token_expires=NULL "
+                           "WHERE id=? AND reset_token=?", (user["id"], _hash_reset_token(token)))
+        conn.commit()
+        won = cur.rowcount == 1
+    finally:
+        conn.close()
+    if not won:
+        return False
     # Ends every session and clears must_reset_password (SEC-7, SEC-8).
     from auth import update_password
     update_password(user["id"], new_password, db_path=db_path)

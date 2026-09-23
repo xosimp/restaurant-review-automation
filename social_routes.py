@@ -171,6 +171,10 @@ def post_to_instagram(current_user):
     return jsonify(**payload), status
 
 
+# How long the same photo and caption are refused after a publish started.
+IG_PUBLISH_DEDUP_MINUTES = 10
+
+
 def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     """Shared by the web route above and mobile_api.py's own post-to-instagram."""
     import requests as _req
@@ -187,6 +191,19 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     if not image_url:
         return {"ok": False, "error": "Instagram requires an image. Paste a public image URL into the Image URL field before posting."}, 200
 
+    # One publish of this photo and caption at a time. An immediate publish
+    # carried no claim, so a re-click during the ~20-second processing poll
+    # (or the phone and the laptop at once) made a second public post
+    # (DATA-25). The claim is given back only when Meta definitely refused;
+    # a timeout may already be live, so it stands for the cooldown.
+    import hashlib as _hl_ig
+    import ops as _ops_ig
+    _claim = "ig_publish:%s:%s" % (restaurant_id, _hl_ig.sha256(
+        (image_url + "\x1f" + caption).encode("utf-8")).hexdigest()[:24])
+    if not _ops_ig.claim_cooldown(_claim, IG_PUBLISH_DEDUP_MINUTES):
+        return {"ok": False, "duplicate": True,
+                "error": "This post is already being published. Check Instagram before posting it again."}, 409
+
     r1 = _req.post(graph_url(f"{ig_user_id}/media"), data={
         "image_url":    image_url,
         "caption":      caption,
@@ -196,6 +213,7 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     if r1.status_code != 200:
         err = r1.json().get("error",{}).get("message","Unknown error")
         print(f"IG media create failed: {r1.text}")
+        _ops_ig.release_period("cooldown", _claim)      # nothing was posted
         return {"ok": False, "error": err}, 200
 
     creation_id = r1.json().get("id")
@@ -220,6 +238,7 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
 
     if r2.status_code != 200:
         err = r2.json().get("error",{}).get("message","Publish failed")
+        _ops_ig.release_period("cooldown", _claim)      # Meta refused it; nothing is live
         return {"ok": False, "error": err}, 200
 
     post_id = r2.json().get("id")

@@ -171,18 +171,30 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH) -
     # loop — so the first newsletter to a 5,000-person list opened 5,000
     # SQLite connections, each taking the write lock in turn while the send
     # loop was already the slowest thing in the request (audit #17).
+    #
+    # Written only where no token exists yet, then read back: two newsletters
+    # sent at once each minted their own and the last write won, so every
+    # link in the other batch pointed at no guest — a dead unsubscribe link
+    # (DATA-14). Whoever writes first, both batches now carry that token.
     missing = [p for p in people if not p.get("email_token")]
     if missing:
         minted = {p["id"]: _token() for p in missing}
         conn = get_conn(db_path)
         try:
-            conn.executemany("UPDATE guest_contacts SET email_token=? WHERE id=?",
+            conn.executemany("UPDATE guest_contacts SET email_token=? WHERE id=? AND email_token IS NULL",
                              [(tok, pid) for pid, tok in minted.items()])
             conn.commit()
+            ids = list(minted)
+            stored = {}
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                stored.update({r["id"]: r["email_token"] for r in conn.execute(
+                    "SELECT id, email_token FROM guest_contacts WHERE id IN (%s)" % ",".join("?" * len(chunk)),
+                    chunk)})
         finally:
             conn.close()
         for p in missing:
-            p["email_token"] = minted[p["id"]]
+            p["email_token"] = stored.get(p["id"]) or minted[p["id"]]
 
     sent, failed = 0, 0
     for person in people:
