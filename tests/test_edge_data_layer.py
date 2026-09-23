@@ -302,15 +302,12 @@ def _retired_negative(db_path, rid):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: get_pending_analysis does not filter deleted_at, so reviews the "
-                                       "retention setting retired are still sent to the model")
 def test_a_retired_review_is_not_sent_for_analysis(db_path):
     rid = _rid(db_path)
     _retired_negative(db_path, rid)
     assert models.get_pending_analysis(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: get_pending_drafts does not filter deleted_at")
 def test_a_retired_review_is_not_drafted(db_path):
     rid = _rid(db_path)
     _retired_negative(db_path, rid)
@@ -322,8 +319,6 @@ def test_a_retired_review_is_not_drafted(db_path):
     assert models.get_pending_drafts(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-60: the unresponded-negative alert query does not filter deleted_at, "
-                                       "so the owner is alerted about reviews the dashboard no longer shows")
 def test_a_retired_review_does_not_raise_a_no_response_alert(db_path, monkeypatch):
     rid = _rid(db_path)
     models.update_restaurant(rid, {"alert_no_response": 1, "urgent_via_email": 1}, db_path=db_path)

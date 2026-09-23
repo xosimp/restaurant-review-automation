@@ -3299,6 +3299,7 @@ def get_pending_analysis(restaurant_id: int, limit: int = 50,
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=0
           AND COALESCE(analysis_attempts, 0) < ?
+          AND deleted_at IS NULL      -- retired by the retention setting (DATA-60)
         ORDER BY fetched_at DESC LIMIT ?
     """, (restaurant_id, MAX_AI_ATTEMPTS, limit)).fetchall()
     conn.close()
@@ -3313,6 +3314,7 @@ def get_pending_drafts(restaurant_id: int, limit: int = 50,
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=1 AND response_status='pending'
           AND COALESCE(draft_attempts, 0) < ?
+          AND deleted_at IS NULL      -- retired by the retention setting (DATA-60)
         ORDER BY
             CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
             fetched_at DESC

@@ -1841,7 +1841,10 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
         FROM reviews r
         JOIN restaurants rest ON rest.id = r.restaurant_id
         WHERE r.sentiment='negative'
-          AND r.response_status = 'pending'
+          -- 'drafted' is still unanswered: with auto-drafting it is the
+          -- normal state of a review waiting on the owner (MOD-NOT-9).
+          AND r.response_status IN ('pending', 'drafted')
+          AND r.deleted_at IS NULL    -- not about a review the dashboard no longer shows (DATA-60)
           AND r.fetched_at <= datetime('now', '-48 hours')
           AND """ + models.in_service_sql("rest.billing_status") + """
           AND rest.alert_no_response = 1
