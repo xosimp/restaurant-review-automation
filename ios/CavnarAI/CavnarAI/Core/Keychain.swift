@@ -13,7 +13,7 @@ enum Keychain {
     /// that followed a backup to another phone would sign that phone in as
     /// this one (CLIENT-25). AfterFirstUnlock still lets a background refresh
     /// read the token while the phone is locked.
-    private static let accessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    private static var accessibility: CFString { kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly }
 
     /// Returns whether the value was stored. The status used to be
     /// discarded, so a failed write (a locked keychain, a full device) left

@@ -103,7 +103,7 @@ final class ReviewsListViewModel {
     /// list) belongs to the old paging and is dropped, not appended
     /// (CLIENT-30).
     private var generation = 0
-    nonisolated(unsafe) private var draftObserver: NSObjectProtocol?
+    private var draftObserver: NotificationToken?
 
     init(client: APIClient = .shared) {
         self.client = client
@@ -112,16 +112,13 @@ final class ReviewsListViewModel {
         // without this, reopening the same review offered "Write a reply"
         // again — a second paid draft for one the owner already had
         // (CLIENT-56).
-        draftObserver = NotificationCenter.default.addObserver(
+        draftObserver = NotificationToken(NotificationCenter.default.addObserver(
             forName: ReviewDetailViewModel.draftDidChange, object: nil, queue: nil
         ) { [weak self] note in
             guard let id = note.userInfo?["id"] as? Int, let draft = note.userInfo?["draft"] as? String else { return }
+            // Posted only from ReviewDetailViewModel, on the main actor.
             MainActor.assumeIsolated { self?.applyDraft(draft, toReview: id) }
-        }
-    }
-
-    deinit {
-        if let draftObserver { NotificationCenter.default.removeObserver(draftObserver) }
+        })
     }
 
     private func applyDraft(_ draft: String, toReview id: Int) {
@@ -230,4 +227,11 @@ final class ReviewsListViewModel {
         guard let index = reviews.firstIndex(where: { $0.id == reviewID }) else { return }
         reviews[index] = reviews[index].withStatus(status)
     }
+}
+
+/// Removes a block-based NotificationCenter observer when its owner goes away.
+final class NotificationToken {
+    private let token: NSObjectProtocol
+    init(_ token: NSObjectProtocol) { self.token = token }
+    deinit { NotificationCenter.default.removeObserver(token) }
 }
