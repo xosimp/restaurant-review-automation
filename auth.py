@@ -2823,6 +2823,8 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     acting_rid = (user.get("active_restaurant_id") if owner_switched
                   else (staff_rid or user.get("restaurant_id")))
     user["grants"] = _grants_for(conn, user["id"], acting_rid)
+    if (user.get("device_type") or "") == "admin-view-as":
+        user["view_as_read_only"] = _view_as_read_only(conn, token)
 
     # SEC-1: fail closed. An identity that HAS memberships but none active
     # where this session acts is not authorised there — it used to fall back
@@ -3013,6 +3015,9 @@ _MODULE_PREFIXES = (
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
+    # The weekly waste series the Food Cost tab charts. Unmapped, a manager
+    # without FOOD_COST_VIEW read it (SEC-24).
+    ("/api/inv-trend",              "inventory"),
     ("/mobile/api/food-cost",       "inventory"),
     # Marketing
     ("/api/marketing/",             "marketing"),
@@ -3029,6 +3034,63 @@ _MODULE_PREFIXES = (
     ("/api/intel/",                 "intel"),
     ("/api/ai-visibility",          "intel"),
     ("/mobile/api/intel",           "intel"),
+)
+
+
+# Every /api and /mobile/api route is either under a module prefix above or
+# on this list, which says why it is deliberately NOT gated by a module
+# (SEC-24; tests/test_edge_sec_permissions.py enforces it). A new route that
+# is on neither fails that test, so "which module owns this?" gets asked
+# when the route is written rather than discovered in an audit. Being on
+# this list is not "open to everyone": the account-holder switches check
+# permissions.is_principal / principal_only inside, team and loss routes
+# their own permissions, and the admin paths admin_required.
+_UNGATED_PREFIXES = (
+    # Signing in and out, the session, and the account's own security. Not a
+    # module; owner-only pieces check is_principal in the handler.
+    "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
+    "/mobile/api/forgot-password", "/mobile/api/reset-password", "/mobile/api/logout", "/mobile/api/me",
+    "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions",
+    "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
+    "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
+    "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",
+    # Account, settings, billing and team administration: restaurant-wide.
+    # ("/api/account" also covers /api/account-settings/...)
+    "/api/account", "/mobile/api/account", "/api/alert-settings", "/api/update-digest-day",
+    "/api/send-test-digest", "/api/billing-info", "/api/theme", "/api/dismiss-onboarding",
+    "/api/dismiss-welcome", "/api/email-history", "/api/send-referral", "/api/changelog",
+    "/mobile/api/changelog", "/api/log-activity", "/api/activity", "/mobile/api/activity",
+    "/api/team/", "/mobile/api/team/",
+    # Integrations. Credential writes are principal_only in the handler.
+    "/api/webhook", "/api/toast/", "/api/square/", "/api/clover/", "/api/rpower/",
+    "/mobile/api/connections/", "/api/instagram-",
+    # Cross-module surfaces: they read several modules and belong to none
+    # (Home, Ask Cavnar, the action/issue/goal/outcome loop, notifications,
+    # the morning brief), so a single module gate would be wrong for them.
+    "/api/home", "/mobile/api/home", "/api/ask-cavnar", "/mobile/api/ask-cavnar",
+    "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
+    "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
+    "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",
+    "/api/metrics", "/mobile/api/metrics", "/api/value", "/mobile/api/value",
+    "/api/cross-module", "/mobile/api/cross-module", "/api/good-news", "/mobile/api/good-news",
+    "/api/milestones", "/mobile/api/milestones", "/api/monthly-review", "/mobile/api/monthly-review",
+    "/api/morning-brief", "/mobile/api/morning-brief", "/api/closeout", "/mobile/api/closeout",
+    "/api/tasks", "/mobile/api/tasks",
+    # Comps and voids: LOSS_VIEW, checked in the handler.
+    "/api/loss-signals", "/mobile/api/loss-signals",
+    # Polled from every screen (the new-reviews count) or reached from the
+    # review card on Home; the Reviews tab itself is gated above.
+    "/api/review-count", "/api/mark-posted/", "/api/export-reviews",
+    # Competitor intel decides its own availability (full system + listing).
+    "/api/competitor-intel", "/api/refresh-competitor-intel",
+    # Social posting and Meta's app-review endpoints (social_routes).
+    "/api/post-to-facebook", "/api/post-to-instagram", "/api/post-insights", "/api/meta-review-test",
+    # Public pages whose token is the credential.
+    "/api/public/",
+    # One-off admin tools (admin_required), and two login_required debug
+    # endpoints (debug-insights, gbp-debug) that are candidates for removal
+    # after verification — listed so they stay visible, not endorsed.
+    "/api/debug-insights", "/api/gbp-debug", "/api/admin/",
 )
 
 
@@ -3211,6 +3273,9 @@ def login_required(f):
             from flask import jsonify as _jsonify_mp
             return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
                                module_forbidden=True, module=unauthorised), 403
+        if view_as_write_denied(user):
+            from flask import jsonify as _jsonify_vr
+            return _jsonify_vr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -3298,6 +3363,9 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mmp
             return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorised),
                                 module_forbidden=True, module=unauthorised), 403
+        if view_as_write_denied(user):
+            from flask import jsonify as _jsonify_mvr
+            return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 

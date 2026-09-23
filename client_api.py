@@ -2893,14 +2893,31 @@ def client_upload_data(current_user):
     if data_type not in ("shifts", "inventory"):
         return jsonify(ok=False, error="Invalid data type")
 
+    # The dataset belongs to a module, so replacing it takes that module's
+    # access. This path is outside auth._MODULE_PREFIXES (one route serves
+    # both datasets), so a manager without food-cost access could replace the
+    # inventory data the owner's margins are computed from (SEC-24).
+    from permissions import has_permission, FOOD_COST_VIEW, LABOR_VIEW
+    if not has_permission(current_user, FOOD_COST_VIEW if data_type == "inventory" else LABOR_VIEW):
+        return jsonify(ok=False, error="Your login doesn't have access to that module's data."), 403
+
     f = request.files.get("csv_file")
     if not f:
         return jsonify(ok=False, error="No file uploaded")
 
+    # Excel's "CSV UTF-8" starts with a byte-order mark, which plain utf-8
+    # keeps as '\ufeff' on the first header ('\ufeffdate' then fails the
+    # required-column check); a plain "CSV" save on Windows is cp1252, which
+    # utf-8 cannot decode at all ("José"). utf-8-sig first, then cp1252 —
+    # which maps every byte, so the order matters (SEC-26).
+    raw = f.read()
     try:
-        csv_content = f.read().decode("utf-8")
-    except Exception:
-        return jsonify(ok=False, error="Could not read file — make sure it's a CSV")
+        csv_content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_content = raw.decode("cp1252")
+        except UnicodeDecodeError:
+            return jsonify(ok=False, error="Could not read file — make sure it's a CSV")
 
     if not csv_content.strip():
         return jsonify(ok=False, error="File appears empty")
@@ -4507,9 +4524,12 @@ def webhook_get(current_user):
     wh = dict(row) if row else None
     if not wh:
         return jsonify(ok=True, webhook=None)
+    # The signing secret is the owner's; a teammate sees that a webhook
+    # exists and its health, not the key that forges its payloads (SEC-24).
+    from permissions import is_principal
     return jsonify(ok=True, webhook={
         "url":                  wh["url"],
-        "secret":               wh["secret"],
+        "secret":               wh["secret"] if is_principal(current_user) else None,
         "events":               json.loads(wh.get("events") or "[]"),
         "last_fired":           wh.get("last_fired_at"),
         "last_status":          wh.get("last_status"),
@@ -4527,6 +4547,10 @@ def webhook_deliveries_route(current_user):
 @client_bp.route("/api/webhook/reactivate", methods=["POST"])
 @login_required
 def webhook_reactivate(current_user):
+    from permissions import principal_only
+    denied = principal_only(current_user, "the webhook")
+    if denied:
+        return denied
     from webhooks import reactivate_webhook
     reactivate_webhook(current_user["restaurant_id"])
     return jsonify(ok=True)
@@ -4534,6 +4558,12 @@ def webhook_reactivate(current_user):
 @client_bp.route("/api/webhook", methods=["POST"])
 @login_required
 def webhook_save(current_user):
+    # The webhook receives every review and alert, signed with a secret this
+    # response hands back — an owner's decision, not any teammate's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the webhook")
+    if denied:
+        return denied
     from webhooks import save_webhook, InvalidWebhookURL
     import json
     data   = request.get_json()
@@ -4550,6 +4580,10 @@ def webhook_save(current_user):
 @client_bp.route("/api/webhook", methods=["DELETE"])
 @login_required
 def webhook_delete(current_user):
+    from permissions import principal_only
+    denied = principal_only(current_user, "the webhook")
+    if denied:
+        return denied
     from webhooks import delete_webhook
     delete_webhook(current_user["restaurant_id"])
     return jsonify(ok=True)
@@ -5279,7 +5313,13 @@ def _auto_approve_trust_safe(rid):
 def _do_auto_approve(rid, data, current_user=None):
     """The one rule: drafted 5-star responses get approved (and posted, when
     Google is connected) without waiting — capped per day, with a kill
-    switch. Runs inside the daily fetch (scheduler.auto_approve_five_stars)."""
+    switch. Runs inside the daily fetch (scheduler.auto_approve_five_stars).
+    Owner-only: it publishes replies under the brand with nobody reading
+    them first (SEC-24)."""
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can change auto-approve."}, 403
     cap = (data or {}).get("daily_cap", 5)
     try:
         cap = max(1, min(50, int(cap)))
@@ -5334,7 +5374,12 @@ def _do_account_hours(rid, data, current_user=None):
 
 def _do_data_retention(rid, data, current_user=None):
     """0 = keep everything; otherwise reviews older than N months are
-    soft-deleted by the nightly job (models.purge_expired_reviews)."""
+    soft-deleted by the nightly job (models.purge_expired_reviews).
+    Owner-only: a shorter window deletes review history (SEC-24)."""
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can change how long reviews are kept."}, 403
     try:
         months = int((data or {}).get("months", 0))
     except Exception:

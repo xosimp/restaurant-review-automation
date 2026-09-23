@@ -7,6 +7,9 @@ from auth import admin_required, login_required
 from models import update_restaurant
 
 clover_bp = Blueprint("clover", __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(clover_bp)
 
 
 # ── Admin routes ───────────────────────────────────────────────────────────────
@@ -79,6 +82,11 @@ def client_clover_status(current_user):
 @clover_bp.route("/api/clover/save", methods=["POST"])
 @login_required
 def client_save_clover(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     data        = request.get_json(force=True) or {}
     merchant_id = (data.get("merchant_id") or "").strip()
     api_token   = (data.get("api_token") or "").strip()
@@ -117,6 +125,11 @@ def client_sync_clover(current_user):
 @clover_bp.route("/api/clover/disconnect", methods=["POST"])
 @login_required
 def client_disconnect_clover(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "clover_merchant_id":  None,
         "clover_api_token":    None,

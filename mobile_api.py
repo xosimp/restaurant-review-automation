@@ -4340,9 +4340,14 @@ def mobile_update_profile(current_user):
 @mobile_bp.route("/connections/toast", methods=["POST"])
 @mobile_login_required
 def mobile_connect_toast(current_user):
-    """Saves Toast API credentials and immediately tries a token fetch so
-    a typo shows up now instead of at the next sync — same 3 fields the
-    admin panel sets, just self-service."""
+    """Saves Toast API credentials once Toast accepts them, so a typo shows
+    up now instead of at the next sync — same 3 fields the admin panel and
+    the web route (toast_routes.client_save_toast) set, just self-service."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     import toast as _toast
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
@@ -4352,23 +4357,36 @@ def mobile_connect_toast(current_user):
     if not client_id or not client_secret or not restaurant_guid:
         return jsonify(ok=False, error="All three fields are required"), 400
 
+    # Checked against Toast BEFORE anything is stored, exactly as the web
+    # route does (SEC-25). This used to save first and then call
+    # get_toast_token, so a typo overwrote working credentials — and with a
+    # cached token for the OLD credentials still on the row, get_toast_token
+    # returned that token and never asked Toast about the new ones at all.
+    result = _toast.test_credentials(client_id, client_secret, restaurant_guid)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Toast rejected those credentials")
+
     update_restaurant(rid, {
         "toast_client_id": client_id,
         "toast_client_secret": client_secret,
         "toast_restaurant_guid": restaurant_guid,
+        "toast_access_token": None,
+        "toast_token_expires": None,
         "toast_sync_error": None,
+        "pos_system": "Toast",
     })
-    try:
-        _toast.get_toast_token(rid)
-    except Exception as e:
-        update_restaurant(rid, {"toast_sync_error": str(e)})
-        return jsonify(ok=False, error=f"Saved, but couldn't connect: {e}")
+    _log_account_event(rid, "pos_connected", current_user, detail="Toast")
     return jsonify(ok=True)
 
 
 @mobile_bp.route("/connections/toast", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_toast(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Toast connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "toast_client_id": None, "toast_client_secret": None,
         "toast_restaurant_guid": None, "toast_access_token": None,
@@ -4387,6 +4405,11 @@ def mobile_connect_square(current_user):
     nightly sync. The web routes in square_routes.py are session-auth only
     (@login_required), which is why the app couldn't reach them and the
     Connections row was a status-only stub."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     import square as _square
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
@@ -4412,6 +4435,11 @@ def mobile_connect_square(current_user):
 @mobile_bp.route("/connections/square", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_square(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "square_access_token": None, "square_location_id": None,
         "square_last_synced": None, "square_sync_error": None,
@@ -4426,6 +4454,11 @@ def mobile_connect_clover(current_user):
     """Self-service Clover connect — merchant ID + API token, verified
     against Clover before storing. See mobile_connect_square for why these
     mobile routes exist alongside clover_routes.py's session-auth ones."""
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     import clover as _clover
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
@@ -4451,6 +4484,11 @@ def mobile_connect_clover(current_user):
 @mobile_bp.route("/connections/clover", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_clover(current_user):
+    # POS credentials are the owner's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Clover connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "clover_merchant_id": None, "clover_api_token": None,
         "clover_last_synced": None, "clover_sync_error": None,

@@ -226,7 +226,6 @@ def test_an_upload_is_refused_without_a_session(world):
 
 # ── Encoding (appendix #4, #5 / SEC-26) ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-26: a UTF-8 BOM (Excel 'CSV UTF-8') is decoded as utf-8, so the first header reads '\\ufeffdate' and the file is refused as missing 'date'")
 def test_a_bom_prefixed_utf8_shifts_csv_is_accepted_and_readable(world):
     _login(world, world["owner"])
     r = _upload(world, "shifts", b"\xef\xbb\xbf" + GOOD_SHIFTS.encode("utf-8"))
@@ -236,7 +235,6 @@ def test_a_bom_prefixed_utf8_shifts_csv_is_accepted_and_readable(world):
     assert _total_actual_hours(analysis) == 14.0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-26: a cp1252/Latin-1 file (e.g. 'José' from Excel on Windows) fails utf-8 decoding and is refused as 'Could not read file'")
 def test_a_cp1252_shifts_csv_is_accepted_with_its_accented_names_intact(world):
     _login(world, world["owner"])
     csv_text = SHIFTS_HEADER + "2026-09-01,Tuesday,José,Server,11:00,17:00,6,6,4000,\n"
@@ -376,7 +374,6 @@ def test_a_manager_is_refused_the_food_cost_cogs_route(world):
     assert world["client"].get("/api/food-cost/cogs").status_code == 403
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: /client/upload-data is not in the module gate, so a manager without FOOD_COST_VIEW can replace the inventory dataset")
 def test_a_manager_without_food_cost_access_cannot_upload_an_inventory_csv(world):
     _login(world, world["owner"])
     assert _upload(world, "inventory", INVENTORY_FULL).get_json()["ok"] is True
@@ -386,7 +383,6 @@ def test_a_manager_without_food_cost_access_cannot_upload_an_inventory_csv(world
     assert _stored(world, "inventory") == INVENTORY_FULL
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-24: /api/inv-trend is not in the module gate, so a manager without FOOD_COST_VIEW reads the waste series")
 def test_a_manager_without_food_cost_access_cannot_read_the_inventory_trend(world):
     _login(world, world["mgr"])
     assert world["client"].get("/api/inv-trend").status_code == 403

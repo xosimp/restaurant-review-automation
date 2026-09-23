@@ -7,6 +7,9 @@ from auth import admin_required, login_required
 from models import update_restaurant
 
 square_bp = Blueprint("square", __name__)
+# A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
+from security import json_object_guard as _json_object_guard
+_json_object_guard(square_bp)
 
 
 # ── Admin routes ───────────────────────────────────────────────────────────────
@@ -79,6 +82,11 @@ def client_square_status(current_user):
 @square_bp.route("/api/square/save", methods=["POST"])
 @login_required
 def client_save_square(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     data         = request.get_json(force=True) or {}
     access_token = (data.get("access_token") or "").strip()
     location_id  = (data.get("location_id") or "").strip()
@@ -117,6 +125,11 @@ def client_sync_square(current_user):
 @square_bp.route("/api/square/disconnect", methods=["POST"])
 @login_required
 def client_disconnect_square(current_user):
+    # POS credentials are the owner's, not any console role's (SEC-24).
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Square connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "square_access_token": None,
         "square_location_id":  None,
