@@ -52,6 +52,10 @@ def _row(r):
         "certifications": [c for c in (certs or []) if isinstance(c, str)],
         "preferred_dayparts": [p for p in (prefs or []) if p in ("morning", "night")],
         "desired_hours": (r["desired_hours"] if "desired_hours" in keys else None),
+        # The owner's word that this person knows the job. Shift history is
+        # a rolling upload window, so a ten-year server can read as "new"
+        # for as long as the window is short (experience_balance).
+        "experienced": bool(r["experienced"]) if "experienced" in keys and r["experienced"] is not None else False,
         "employee_name": r["employee_name"],
         "active": bool(r["active"]) if r["active"] is not None else True,
         "employment_type": r["employment_type"],
@@ -131,7 +135,7 @@ def _clean_windows(raw):
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
-           db_path=DB_PATH) -> dict:
+           experienced=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed."""
     name = (employee_name or "").strip()[:120]
@@ -190,7 +194,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
                                          "max_hours": None, "daypart_availability": {}, "is_minor": False,
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
-                                         "desired_hours": None}
+                                         "desired_hours": None, "experienced": False}
         new = {
             "active": int(bool(active)) if active is not None else int(current["active"]),
             "employment_type": (employment_type or None) if employment_type is not None else current["employment_type"],
@@ -202,6 +206,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "certifications": certifications if certifications is not None else current.get("certifications") or [],
             "preferred_dayparts": preferred_dayparts if preferred_dayparts is not None else current.get("preferred_dayparts") or [],
             "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
+            "experienced": int(bool(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -212,18 +217,19 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         given = {"active": active, "employment_type": employment_type, "min_hours": min_hours,
                  "max_hours": max_hours, "daypart_availability": daypart_availability, "is_minor": is_minor,
                  "time_windows": time_windows, "certifications": certifications,
-                 "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours}
+                 "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours,
+                 "experienced": experienced}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
-                            preferred_dayparts, desired_hours, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            preferred_dayparts, desired_hours, experienced, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
-                      json.dumps(new["preferred_dayparts"]), new["desired_hours"],
+                      json.dumps(new["preferred_dayparts"]), new["desired_hours"], new["experienced"],
                       (updated_by or "").strip()[:120] or None))
         conn.commit()
         row = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
@@ -336,6 +342,12 @@ def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
 
 def active_names(restaurant_id, db_path=DB_PATH) -> list:
     return [e["name"] for e in roster(restaurant_id, db_path=db_path)]
+
+
+def experienced_names(restaurant_id, db_path=DB_PATH) -> set:
+    """Names the owner has marked as experienced, whatever the shift
+    history window shows."""
+    return {n for n, v in get_all(restaurant_id, db_path).items() if v.get("experienced")}
 
 
 def stated_preferences(restaurant_id, db_path=DB_PATH) -> dict:

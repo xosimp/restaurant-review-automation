@@ -4596,7 +4596,8 @@ def init_staff_settings(db_path: str = DB_PATH):
     for name, decl in (("time_windows", "TEXT"),          # {"Monday": {"earliest": "10:00am", "latest": "9:00pm"}}
                        ("certifications", "TEXT"),        # ["alcohol", "food_handler", "manager"]
                        ("preferred_dayparts", "TEXT"),    # the employee's own: ["night"]
-                       ("desired_hours", "REAL")):        # the employee's own weekly wish
+                       ("desired_hours", "REAL"),         # the employee's own weekly wish
+                       ("experienced", "INTEGER")):       # owner's word that they know the job, whatever the history shows
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()

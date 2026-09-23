@@ -1978,6 +1978,10 @@ def _quality_signals(restaurant_id, result, **extra):
             signals[key] = fn(restaurant_id) or {}
         except Exception:
             signals[key] = {}
+    try:
+        signals["experienced"] = _staff.experienced_names(restaurant_id)
+    except Exception:
+        signals["experienced"] = set()
     _reconcile_to_roster(signals)
     try:
         weights = get_quality_weights(restaurant_id)

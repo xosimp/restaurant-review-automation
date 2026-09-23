@@ -34,23 +34,26 @@ After the backstops and before the sweep, three economic passes (`schedule_econo
 POS shift CSV (`date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes`) → `labor.py` loads and aggregates → labor % vs `labor_target_pct`, overtime detection (1.5× over 40h on the restaurant's own `week_start_day`-anchored workweek), overstaffed-day detection (high labor % on a day, contrasted against sales) → rendered on the Labor tab (web `#panel-labor`, iOS `LaborView`).
 
 ### Shift Quality Engine (`shift_quality.py`)
-Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per-shift facts: role, flagged constraints, closing, elsewhere-that-day, prior pattern, availability) feeds eleven `DimensionResult`s combined via the `DIMENSIONS` registry into one 0–100 score:
+Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per-shift facts: role, flagged constraints, closing, elsewhere-that-day, prior pattern, availability) feeds fourteen `DimensionResult`s combined via the `DIMENSIONS` registry into one 0–100 score:
 
-| Dimension | Default weight |
-|---|---|
-| coverage | 20 |
-| operational_strength | 18 |
-| leadership | 15 |
-| demand_match | 10 |
-| labor_efficiency | 10 |
-| experience_balance | 8 |
-| training_balance | 7 |
-| fatigue | 5 |
-| fairness | 3 |
-| stability | 2 |
-| cross_training | 2 |
+| Dimension | Default weight | Critical floor |
+|---|---|---|
+| coverage | 20 | 70 |
+| operational_strength | 18 | 55 |
+| leadership | 15 | 60 (owner-written rules only) |
+| demand_match | 10 | |
+| labor_efficiency | 10 | |
+| coverage_curve | 8 | 60 |
+| experience_balance | 8 | |
+| training_balance | 7 | |
+| fatigue | 7 | |
+| fairness | 6 | |
+| reliability | 5 | |
+| pairings | 4 | |
+| stability | 2 | |
+| cross_training | 2 | |
 
-Weights are per-restaurant editable (`quality_weights_json`). Three invariants hold everywhere:
+Weights are per-restaurant editable (`quality_weights_json`); `scripts/schedule_eval.py` replays saved weeks through the current code and is the check before any change to scoring. A shift is one date × daypart; a row counts in every daypart it is on the floor for (`present_dayparts`: its start's daypart, plus the other when it covers an hour of that daypart's core window), while its hours and week assignment count once. A profile's demand is settled per weekday from the restaurant's own sales (`profile_for_shift`), never the busiest of the days it covers. Experience withdraws when the history on file is too short for anybody to reach `EXPERIENCE_SHIFTS` and nobody is marked experienced (`staff_settings.experienced`). Fairness asks whether somebody on a closing, weekend or busy shift has more of that kind than their share among comparable people in their role. Labor efficiency treats under the day's target as fine when every required position (and every half hour, where measured) is covered. Invariants that hold everywhere:
 1. **No data → `None`, never `0`** — a dimension with nothing to measure withdraws and the rest renormalize. (A leadership dimension with zero ratings used to score `0` and cap otherwise-great shifts at nothing; fixed.)
 2. **A critical dimension under its floor caps the shift at its own score** — never an arbitrary extra penalty stacked on top.
 3. **Confidence is tracked separately from score.** A shift graded from 2 rated employees out of 9 says so; it isn't hidden inside the number.

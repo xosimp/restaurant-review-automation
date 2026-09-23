@@ -263,9 +263,24 @@ def test_demand_levels_come_from_real_sales_not_an_assumption():
     A lunch counter does not, and asserting it anyway is exactly the kind of
     invented fact this codebase keeps having to remove."""
     quiet_friday = sq.profiles_from_config(demand_by_day={"Friday": -40, "Saturday": -35})
-    friday = sq.resolve_profile("Friday", "night", quiet_friday)
+    friday = sq.profile_for_shift("Friday", "night", quiet_friday, {"Friday": -40, "Saturday": -35})
     assert friday.demand == "low"
     assert friday.source == "your sales history"
+
+
+def test_the_catch_all_does_not_take_the_busiest_days_demand_onto_quiet_shifts():
+    """The seven-day catch-all used to take the busiest weekday's level for
+    every day it covers, so a quiet Sunday dinner became "peak" (a 4.0 team
+    bar, double weight) whenever Saturday was one. Each shift now takes its
+    own weekday's level."""
+    by_day = {"Saturday": 40, "Sunday": -20, "Friday": 0}
+    profiles = sq.profiles_from_config(demand_by_day=by_day)
+    assert sq.profile_for_shift("Sunday", "night", profiles, by_day).demand == "low"
+    assert sq.profile_for_shift("Saturday", "night", profiles, by_day).demand == "peak"
+    assert sq.profile_for_shift("Friday", "morning", profiles, by_day).demand == "normal"
+    rows = [row(SUN, "A", "Cook"), row(SUN, "B", "Cook")]
+    out = sq.score_rows(rows, profiles=profiles, scores={"A": 3, "B": 3}, demand_by_day=by_day)
+    assert out["shifts"][0]["profile"]["demand"] == "low"
 
 
 def test_a_configured_profile_is_never_overwritten_by_sales_history():
@@ -362,9 +377,11 @@ def test_seven_days_in_a_row_is_flagged_even_at_low_demand():
 
 
 def test_hoarding_the_premium_shifts_shows_up_as_unfairness():
+    """Favourite has three of four weekend nights while two colleagues in the
+    same role, working a comparable week, have none: measured against her
+    share, not against the whole roster's extremes."""
     rows = [row(d, "Favourite", "Server") for d in (THU, FRI, SAT, SUN)]
-    rows += [row(MON, "Ignored", "Server"), row(TUE, "Ignored", "Server"),
-             row(MON, "Third", "Server")]
+    rows += [row(d, n, "Server") for d in (MON, TUE, WED) for n in ("Ignored", "Third")]
     busy_nights = [sq.ShiftProfile(key="nights", demand="peak", daypart="night",
                                    label="Nights", source="restaurant"),
                    sq.ShiftProfile(key="days", demand="low", daypart="morning",
@@ -373,6 +390,21 @@ def test_hoarding_the_premium_shifts_shows_up_as_unfairness():
                         scores={"Favourite": 4, "Ignored": 4, "Third": 4})
     fairness = [d for s in out["shifts"] for d in s["dimensions"] if d["key"] == "fairness"]
     assert fairness and min(f["score"] for f in fairness) < 100
+    assert any("Favourite has 3 of the week's weekend shifts" in w for f in fairness for w in f["weaknesses"])
+
+
+def test_fairness_does_not_compare_a_part_timer_with_a_closer():
+    """A two-shift lunch person is not "unfair" against a five-night closer:
+    the old roster-wide max-minus-min read that as unfairness on every shift
+    of a large week, whatever the schedule."""
+    rows = [row(d, n, "Server") for d in (MON, TUE, WED, THU, FRI) for n in ("Closer1", "Closer2", "Closer3")]
+    rows += [row(d, "Luncher", "Server", start="11:00am", end="3:00pm", hours=4) for d in (MON, TUE)]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(demand="normal")],
+                        typical_headcount={(day, part): {"Server": 3} for day in
+                                           ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+                                           for part in ("morning", "night")})
+    fairness = [d for s in out["shifts"] for d in s.get("dimensions") or [] if d["key"] == "fairness"]
+    assert fairness and all(f["score"] == 100 for f in fairness)
 
 
 # ── Experience, separate from rating ───────────────────────────────────────
@@ -384,12 +416,36 @@ def test_a_strong_but_brand_new_team_still_reads_as_inexperienced():
     rows = saturday({"Bartender": ["New1", "New2"], "Cook": ["New3", "New4"],
                      "Server": ["New5", "New6"]})
     scores = {f"New{i}": 5 for i in range(1, 7)}
-    out = sq.score_rows(rows, profiles=profiles(), scores=scores,
-                        tenure={f"New{i}": 2 for i in range(1, 7)})
+    # Somebody on file has 40 shifts, so the history is long enough for the
+    # question to be asked at all.
+    tenure = {f"New{i}": 2 for i in range(1, 7)}
+    tenure["Veteran"] = 40
+    out = sq.score_rows(rows, profiles=profiles(), scores=scores, tenure=tenure)
     experience = next(d for d in out["shifts"][0]["dimensions"]
                       if d["key"] == "experience_balance")
     assert experience["score"] < 50
     assert len(experience["facts"]["rookies"]) == 6
+
+
+def test_experience_withdraws_when_the_history_is_too_short_to_tell():
+    """14 days of uploaded history means nobody can have 20 shifts: scoring
+    that as 0 marked every shift down for the length of the upload window
+    (Gia Mia, 11.8 points a shift). It withdraws and says why."""
+    rows = saturday({"Bartender": ["A", "B"], "Server": ["C", "D"]})
+    out = sq.score_rows(rows, profiles=profiles(), scores={"A": 4, "B": 4, "C": 4, "D": 4},
+                        tenure={"A": 15, "B": 12, "C": 9, "D": 3})
+    shift = out["shifts"][0]
+    assert "experience_balance" in shift["not_applicable"]
+    assert any("too short" in b for b in shift["blind_spots"] + out["weaknesses"] + out["strengths"]) or \
+        any("too short" in b for s in out["shifts"] for b in s.get("blind_spots") or [])
+
+
+def test_an_owner_marked_veteran_counts_whatever_the_history_shows():
+    rows = saturday({"Bartender": ["A", "B"]})
+    out = sq.score_rows(rows, profiles=profiles(), scores={"A": 4, "B": 4},
+                        tenure={"A": 5, "B": 5}, experienced={"A"})
+    exp = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "experience_balance")
+    assert exp["facts"]["veterans"] == ["A"]
 
 
 def test_somebody_with_no_history_is_reported_not_assumed():
