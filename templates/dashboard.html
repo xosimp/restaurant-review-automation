@@ -826,11 +826,6 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-brief{width:100%;text-align:left;margin:0 0 16px}
 .ask-brief .hl{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);margin:0 0 3px;line-height:1.25}
 .ask-brief .sub{font-size:12.5px;color:var(--ink3);margin:0 0 12px}
-.ask-brief .row{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--paper3)}
-.ask-brief .row:first-of-type{border-top:0}
-.ask-brief .dot{flex:0 0 7px;width:7px;height:7px;border-radius:50%;margin-top:6px}
-.ask-brief .t{font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.4}
-.ask-brief .d{font-size:12.5px;color:var(--ink3);line-height:1.5;margin-top:1px}
 .ask-brief .lbl{font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink3);margin:0 0 8px}
 .ask-sugg{width:100%;display:flex;flex-direction:column;gap:8px}
 .ask-sugg button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:11px 14px;border-radius:12px;background:rgba(200,75,47,.10);border:1px solid rgba(200,75,47,.25);color:#e8956a;font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:600;cursor:pointer;transition:background .15s,transform .15s}
@@ -6291,7 +6286,14 @@ svg:hover .hb-xh{opacity:1}
 .ac-ring .n{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
 .ac-ring .n b{font-size:30px;font-weight:600;color:var(--ink);line-height:1}
 .ac-ring .n span{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
-.ac-hgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 14px}
+.ac-hgrid{display:flex;flex-direction:column;gap:16px}
+.ac-hgrp-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px 12px}
+.ac-hgrp-h i{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
+.ac-hgrp-h .n{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0;color:var(--ink2)}
+.ac-hgrp.bad .ac-hgrp-h{color:var(--red)}.ac-hgrp.bad .ac-hgrp-h i{background:var(--red)}
+.ac-hgrp.warn .ac-hgrp-h{color:var(--amber)}.ac-hgrp.warn .ac-hgrp-h i{background:var(--amber)}
+.ac-hgrp.ok .ac-hgrp-h{color:var(--green)}.ac-hgrp.ok .ac-hgrp-h i{background:var(--green)}
+.ac-hgrp-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 14px}
 .ac-hitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;font-family:inherit;color:inherit;transition:background .15s,border-color .15s,transform .15s}
 .ac-hitem:hover{background:var(--paper2);border-color:var(--ac-line);transform:translateY(-1px)}
 .ac-hitem:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
@@ -6314,7 +6316,7 @@ svg:hover .hb-xh{opacity:1}
 .ac-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--ac-line)}
 .ac-h h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005em}
 .ac-h p{margin:5px 0 0;font-size:15px;color:var(--ink3);max-width:60ch}
-.ac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.ac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .ac-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .ac-card{background:var(--ac-card);border:1px solid var(--ac-line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
 .ac-card:hover{box-shadow:0 6px 20px rgba(14,12,10,.08)}
@@ -6323,6 +6325,18 @@ svg:hover .hb-xh{opacity:1}
 .ac-card.span{grid-column:1 / -1}
 .ac-card.accent{border-color:var(--hb-tint2);box-shadow:0 0 0 1px var(--hb-tint),0 8px 28px var(--ac-glow)}
 .ac-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.ac-card-h .r{display:flex;align-items:center;gap:10px;flex:none}
+.ac-fold-btn .chev{display:inline-block;font-size:10px;transition:transform .2s ease}
+.ac-fold-btn[aria-expanded="true"] .chev{transform:rotate(180deg)}
+.ac-card-h:has(+ .ac-fold[hidden]){margin-bottom:0}
+/* Stacked blocks in a section breathe the same as blocks in a grid: a card
+   or grid directly under another used to touch it (Billing's pause card,
+   Security's memory, decisions and trust cards). */
+.ac-section > :not(.ac-h):not([hidden]) ~ :not(.ac-h){margin-top:16px}
+/* Every dropdown in Account settings is the size of the controls beside
+   it — the bare selects rendered at the browser's default, far smaller. */
+#panel-account .ac-row .c .ac-select,#panel-account .ac-inline .ac-select{width:auto;min-width:200px}
+#panel-account .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
 .ac-card-h p{margin:3px 0 0;font-size:15px;color:var(--ink3);line-height:1.5}
 .ac-card-h .r{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
@@ -6447,7 +6461,7 @@ svg:hover .hb-xh{opacity:1}
   .ac-hero{padding:22px 20px}
   .ac-hero-top{flex-direction:column;gap:14px}
   .ac-name{font-size:26px}
-  .ac-grid,.ac-grid.three,.ac-kv,.ac-kv.three,.ac-form,.ac-hgrid{grid-template-columns:1fr}
+  .ac-grid,.ac-grid.three,.ac-kv,.ac-kv.three,.ac-form,.ac-hgrp-items{grid-template-columns:1fr}
   .ac-h{flex-direction:column;align-items:flex-start}
   .ac-conn{flex-wrap:wrap}
   .ac-conn .a{width:100%;justify-content:flex-end}
@@ -6717,7 +6731,7 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-card-h"><div><h3>Need a break?</h3><p>Pause billing and the daily briefs for a while. Your data keeps flowing, so the day you come back the brief is current.</p></div></div>
         <div id="acct-pause-body">
           <div class="ac-row"><div class="l"><b>Pause the subscription</b><span>Stripe stops collecting, nothing is invoiced, and it resumes on its own on the date you pick.</span></div>
-            <div class="c" style="display:flex;gap:8px;align-items:center"><select id="acct-pause-days" aria-label="Pause length"><option value="14">2 weeks</option><option value="30" selected>30 days</option><option value="60">60 days</option></select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctPause(this)">Pause</button></div></div>
+            <div class="c" style="display:flex;gap:8px;align-items:center"><select class="ac-select" id="acct-pause-days" aria-label="Pause length"><option value="14">2 weeks</option><option value="30" selected>30 days</option><option value="60">60 days</option></select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctPause(this)">Pause</button></div></div>
         </div>
         <div id="acct-pause-on" hidden>
           <div class="ac-row"><div class="l"><b>Paused</b><span id="acct-pause-until">Resumes soon.</span></div>
@@ -6780,39 +6794,42 @@ svg:hover .hb-xh{opacity:1}
           <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
         </div>
         <div class="ac-card" id="as-ops-card" hidden>
-          <div class="ac-card-h"><div><h3>Morning brief &amp; issues</h3><p>What reaches you before service, and who a problem goes to.</p></div></div>
+          <div class="ac-card-h"><div><h3>Morning brief &amp; issues</h3><p>What reaches you before service, and who a problem goes to.</p></div>
+            <div class="r"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm ac-fold-btn" aria-expanded="false" aria-controls="as-ops-body" onclick="acctFold(this,'as-ops-body')"><span class="lbl">Show</span> <span class="chev" aria-hidden="true">&#9662;</span></button></div></div>
+          <div class="ac-fold" id="as-ops-body" hidden>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Morning brief</b><span>Yesterday, prime cost, the one thing to do first &mdash; to your phone, or email if the app isn&rsquo;t installed.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-mb-enabled" onchange="saveMorningBrief()" aria-label="Morning brief"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Send it at</b><span>Your restaurant&rsquo;s local time.</span></div>
-              <div class="c"><select id="as-mb-hour" onchange="saveMorningBrief()" aria-label="Morning brief hour"></select></div></div>
+              <div class="c"><select class="ac-select" id="as-mb-hour" onchange="saveMorningBrief()" aria-label="Morning brief hour"></select></div></div>
             <div class="ac-row"><div class="l"><b>Issues go to</b><span>Texted a link when a bad review lands or you open an issue. Only contacts who consented to texts can be picked.</span></div>
-              <div class="c"><select id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
+              <div class="c"><select class="ac-select" id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
             <div class="ac-row"><div class="l"><b>If nobody responds, escalate to</b><span id="as-route-esc-note">After two hours unacknowledged.</span></div>
-              <div class="c"><select id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
+              <div class="c"><select class="ac-select" id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
             <div class="ac-row"><div class="l"><b>Hold alerts through service</b><span>A two-star review at 12:15 can\u2019t be acted on until the rush is over. Held alerts arrive when it ends; health alerts never wait.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-hold-alerts" onchange="saveMorningBrief()" aria-label="Hold alerts through service"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Text the manager tonight\u2019s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
-              <div class="c"><select id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
+              <div class="c"><select class="ac-select" id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
             <div class="ac-row"><div><div class="ac-row-l">How much to hear from Cavnar AI</div><div class="ac-note">Calm is the brief, results and the close. Normal adds the pre-dinner pulse, coverage and opportunities, up to four a day. Everything is what it says.</div></div>
-              <div class="c"><select id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
+              <div class="c"><select class="ac-select" id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
-              <div class="c"><select id="as-senddelay" class="ac-input" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
+              <div class="c"><select id="as-senddelay" class="ac-select" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
             <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
+          </div>
         </div>
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
-            <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
-          <div id="eh-body" class="ac-list">Loading&hellip;</div>
+            <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm ac-fold-btn" aria-expanded="false" aria-controls="eh-fold" onclick="acctFold(this,'eh-fold')"><span class="lbl">Show</span> <span class="chev" aria-hidden="true">&#9662;</span></button></div></div>
+          <div class="ac-fold" id="eh-fold" hidden><div id="eh-body" class="ac-list">Loading&hellip;</div></div>
         </div>
       </div>
     </section>
@@ -6964,7 +6981,7 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
             <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status">Loading&hellip;</span></div></div>
           </div>
-          <div class="ac-inline" style="margin-top:6px">
+          <div class="ac-inline" style="margin-top:12px">
             <input class="ac-input" id="rec-email" type="email" placeholder="A second address you can always reach" aria-label="Recovery email">
             <button onclick="recSend(this)" class="cbtn cbtn-secondary cbtn-sm">Send code</button>
           </div>
@@ -7140,13 +7157,8 @@ window._askEmptyHtml = function() {
     if (o.restaurant) sub.push(o.restaurant);
     if (o.since_label) sub.push(o.since_label);
     if (sub.length) html += '<div class="sub">' + _askEsc(sub.join(' · ')) + '</div>';
-    var items = o.briefing || [], i;
-    for (i = 0; i < items.length; i++) {
-      html += '<div class="row"><span class="dot" style="background:' + _askSevColor(items[i].severity) + '"></span>'
-           + '<span><span class="t">' + _askEsc(items[i].title || '') + '</span>'
-           + (items[i].detail ? '<span class="d">' + _askEsc(items[i].detail) + '</span>' : '')
-           + '</span></div>';
-    }
+    // No bulleted recommendations here: Home already lists them, and the
+    // panel is for asking. The questions below come from the same signals.
     html += '</div>';
   } else {
     html += '<div class="ask-badge">' + ASK_SPARK + '</div><h3>Ask me anything</h3>'
@@ -7157,13 +7169,6 @@ window._askEmptyHtml = function() {
        + '</div></div>';
   return html;
 };
-
-function _askSevColor(sev) {
-  if (sev === 'critical') return '#eb5757';
-  if (sev === 'important') return '#f2994a';
-  if (sev === 'good') return '#6fcf97';
-  return 'var(--ink3)';
-}
 
 // Re-fetched when it goes stale rather than held for the life of the tab.
 // It was cached once per page load, so an owner who answered the review it
@@ -18936,6 +18941,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   }
 
   // Disclosures: add-employee, sign-in history, account activity.
+  // A card that opens and closes from its header (Morning brief & issues,
+  // Email history). Closed by default; the header says what it holds.
+  window.acctFold=function(btn,id){
+    var body=$(id);if(!body)return;
+    var open=body.hidden;body.hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');
+    var l=btn.querySelector('.lbl');if(l)l.textContent=open?'Hide':'Show';
+  };
   window.acctDisclose=function(btn,id){
     var body=$(id);if(!body)return;
     var open=!body.classList.contains('open');
@@ -19015,6 +19028,19 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card');
     else if(b&&b.error)setItem('subscription','warn','Couldn’t reach billing just now — try again in a minute');
     else setItem('subscription','warn','No subscription on file — Will can set one up');
+
+    // Grouped by status, worst first: what needs you, what's worth setting
+    // up, then what's done. The items keep their own click-through.
+    var grid=$('ac-health-grid'),all=[].slice.call(grid.querySelectorAll('.ac-hitem')),G=[['bad','Needs attention'],['warn','Worth setting up'],['ok','All set']],gi,j,frag=document.createDocumentFragment();
+    for(gi=0;gi<G.length;gi++){
+      var mine=[];for(j=0;j<all.length;j++)if(all[j].classList.contains(G[gi][0]))mine.push(all[j]);
+      if(!mine.length)continue;
+      var grp=document.createElement('div');grp.className='ac-hgrp '+G[gi][0];
+      grp.innerHTML='<div class="ac-hgrp-h"><i></i>'+G[gi][1]+' <span class="n">'+mine.length+'</span></div><div class="ac-hgrp-items"></div>';
+      var box=grp.lastChild;for(j=0;j<mine.length;j++)box.appendChild(mine[j]);
+      frag.appendChild(grp);
+    }
+    grid.innerHTML='';grid.appendChild(frag);
 
     var score=Math.round(pts/max*100);
     var n=$('ac-health-score');if(n)n.textContent=score;
