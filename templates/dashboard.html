@@ -734,7 +734,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .lb2-ai{background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line);border-radius:14px;box-shadow:var(--glow-ember);position:relative}
 .lb2-ai .tag:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin:0 8px 1px 0;vertical-align:middle;animation:hbBreath 2.4s ease-in-out infinite}
 .ask-b.ai .bb{background:var(--sf-ai),var(--paper2);border-color:var(--sf-ai-line);box-shadow:inset 2px 0 0 var(--ember2)}
-.hb-msg.ai{box-shadow:inset 2px 0 0 var(--ember2)}
 .hb-card.hb-rec{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.30),0 0 0 1px rgba(200,75,47,.07)}
 .hb-card.hb-rec:hover{box-shadow:0 2px 6px rgba(14,12,10,.06),0 34px 70px -28px rgba(14,12,10,.36),var(--glow-ember)}
 .fc2-recipe{background:var(--sf-ai),var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--sf-ai-line)}
@@ -1489,20 +1488,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:15.5px}
 .hb-clear .ok{width:28px;height:28px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 12px rgba(45,106,79,.35)}
 .hb-empty{font-size:14.5px;color:var(--ink3);padding:8px 0}
-.hb-ask{display:flex;gap:8px;margin-top:8px}
-.hb-ask input{flex:1;height:42px;border:1px solid var(--hb-line);border-radius:8px;padding:0 14px;font-family:inherit;font-size:15px;background:var(--hb-field);color:var(--ink)}
-.hb-ask input::placeholder{color:var(--ink3)}
-.hb-ask input:focus{border-color:var(--ember);outline:none;box-shadow:0 0 0 3px rgba(200,75,47,.14)}
-.hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.hb-sugg button{background:none;border:1px solid var(--hb-line);border-radius:999px;padding:6px 13px;font-family:inherit;font-size:13px;color:var(--ink2);cursor:pointer}
-.hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
-.hb-askout{margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;padding-right:4px}
-.hb-msg{font-size:14.5px;line-height:1.55;white-space:pre-wrap;max-width:92%;padding:8px 12px;border-radius:12px}
-.hb-msg.me{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:3px}
-.hb-msg.ai{align-self:flex-start;color:var(--ink);background:var(--hb-tint);border-bottom-left-radius:3px}
-.hb-msg.hb-think{color:var(--ink3);display:flex;align-items:center;gap:10px}
 
-.hb-askfoot{margin-top:10px;font-size:13.5px}
 /* locations */
 .hb-locs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 0}
 .hb-loc{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:background .12s ease}
@@ -1561,7 +1547,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
 .hb-load{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px;min-height:28px}
 .hb-load canvas{display:block;flex-shrink:0}
-.hb-msg.ai b{font-weight:600;color:var(--ink)}
 @media (max-width:1000px){.hb-sig{grid-template-columns:1fr}.hb-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.hb-sg:last-child{border-bottom:none;margin-bottom:0}.hb-act{grid-template-columns:1fr;gap:24px}.hb-act>div+div{border-left:none;padding-left:0;padding-top:20px;border-top:1px solid var(--hb-line)}.hb-pulse{justify-content:flex-start}.hb-tbl .hide-m{display:none}}
 @media (max-width:680px){.hb-wrap{padding:20px 18px 44px}.hb-hero svg{height:140px}.hb-row .t{white-space:normal}}
 /* ── Below the hero: rhythm ────────────────────────────────────────────
@@ -2058,65 +2043,23 @@ svg:hover .hb-xh{opacity:1}
     if(btn&&typeof switchTab==='function'){switchTab(module==='intel'?'competitor':module,btn);window.scrollTo(0,0);}
     else if(typeof toast==='function'){toast((MODLABEL[module]||'That module')+' isn\'t active on this account','warning');}
   };
-  // Ask from Home: the conversation renders right here under the input —
-  // question, live progress from the stream, then the answer. It never
-  // depends on the floating panel. Falls back to the plain JSON endpoint.
-  var _hbAskHistory=[],_hbAskBusy=false;
-  function askOut(){var o=document.getElementById('hb-ask-out');if(o)o.hidden=false;return o;}
-  // Markdown-lite for answers: **bold** kept, everything else flattened to plain text.
-  function mdLite(t){var h=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');return h;}
-  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');if(me)d.textContent=text;else{d.innerHTML=mdLite(text);if(typeof _askStagger==='function')_askStagger(d);}return d;}
-  function askInline(q){
-    var out=askOut();if(!out||_hbAskBusy)return;_hbAskBusy=true;
-    var inp=document.getElementById('hb-ask-in'),btn=document.querySelector('[data-ask-submit]');
-    if(inp)inp.disabled=true;if(btn)btn.disabled=true;
-    out.appendChild(askBubble(q,true));
-    var think=document.createElement('div');think.className='hb-msg ai hb-think';think.innerHTML='<canvas class="hb-orb" data-orb-state="composing" width="22" height="22" style="width:22px;height:22px"></canvas><span class="lbl">Thinking…</span>';out.appendChild(think);cavnarMountOrbs(think);
-    out.scrollTop=out.scrollHeight;
-    var historyToSend=_hbAskHistory.slice();
-    function finish(d){
-      _hbAskBusy=false;if(inp){inp.disabled=false;inp.focus();}if(btn)btn.disabled=false;
-      var answer=(d&&d.ok)?(d.answer||''):((d&&d.error)||'Something went wrong — try again.');
-      think.parentNode&&think.parentNode.removeChild(think);
-      out.appendChild(askBubble(answer,false));out.scrollTop=out.scrollHeight;
-      if(d&&d.ok){_hbAskHistory.push({role:'user',content:q});_hbAskHistory.push({role:'assistant',content:answer});}
-    }
-    function viaJson(){
-      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(apiJson).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar AI — check your connection.'});});
-    }
-    try{
-      fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null,surface:'home'})}).then(function(resp){
-        if(!resp.ok||!resp.body||!window.TextDecoder)throw new Error('stream unavailable');
-        var reader=resp.body.getReader(),dec=new TextDecoder(),buf='',done=false;
-        function pump(){return reader.read().then(function(res){
-          if(res.done){if(!done){done=true;viaJson();}return;}
-          buf+=dec.decode(res.value,{stream:true});var chunks=buf.split('\n\n');buf=chunks.pop();
-          for(var i=0;i<chunks.length;i++){var line=chunks[i].replace(/^data: /,'').trim();if(!line)continue;var evt;try{evt=JSON.parse(line);}catch(e){continue;}
-            if(evt.type==='progress'){var lb=think.querySelector('.lbl');if(lb){var prevL=lb.textContent.replace(/…$/,'');if(prevL&&prevL!=='Thinking'&&prevL!==(evt.label||'')){var stp=think.querySelector('.ask-steps');if(!stp){stp=document.createElement('div');stp.className='ask-steps';lb.parentNode.insertBefore(stp,lb);}var st=document.createElement('div');st.className='st';st.textContent=prevL;stp.appendChild(st);}lb.textContent=(evt.label||'Working')+'…';}var oc=think.querySelector('canvas.hb-orb');if(oc&&oc._orb&&window.CavnarOrb&&evt.state)CavnarOrb.setState(oc._orb,evt.state);}
-            else if(evt.type==='answer'){done=true;finish({ok:true,answer:evt.answer});}
-            else if(evt.type==='error'){done=true;finish({ok:false,error:evt.error});}}
-          if(!done)return pump();});}
-        return pump();
-      }).catch(function(){viaJson();});
-    }catch(e){viaJson();}
-  }
-  // Every "Ask about this" on the page lands the owner IN the Ask card:
-  // scroll it into view and put the caret there, then ask. Without this the
-  // answer rendered a screen and a half below the button that asked for it.
-  window.hbAsk=function(q){q=(q||'').trim();if(!q)return;
-    var i=document.getElementById('hb-ask-in');
-    if(i&&i.scrollIntoView){i.scrollIntoView({behavior:reduced()?'auto':'smooth',block:'center'});try{i.focus({preventScroll:true});}catch(e){i.focus();}}
-    askInline(q);};
-  window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
-  window.hbAskFull=function(){var panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();};
+  // Every "Ask" on Home (a brief line, an explanation, a deep link) opens
+  // the floating Cavnar AI panel and asks there: one conversation, on every
+  // page. Home no longer carries its own Ask card.
+  window.hbAsk=function(q){q=(q||'').trim();
+    var panel=document.getElementById('ask-cavnar-panel');
+    if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();
+    if(!q)return;
+    var inp=document.getElementById('ask-cavnar-input');
+    if(!inp||typeof sendAskCavnar!=='function')return;
+    inp.value=q;if(typeof askInputChanged==='function')askInputChanged();
+    sendAskCavnar();};
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full],[data-track-key],[data-dismiss-key],[data-open-module],[data-explain],[data-assign-key],[data-reprice-key],[data-restore-kind],[data-cover-issue]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-track-key],[data-dismiss-key],[data-open-module],[data-explain],[data-assign-key],[data-reprice-key],[data-restore-kind],[data-cover-issue]'):null;if(!t)return;
     e.preventDefault();
-    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();
-    else if(t.hasAttribute('data-ask-full'))hbAskFull();
     // Values come off the element, so an apostrophe in a recommendation's
     // title is just a character rather than a broken JS string literal.
-    else if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
+    if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
     else if(t.hasAttribute('data-assign-key'))hbAssignOpen(t);
     else if(t.hasAttribute('data-reprice-key'))hbReprice(t);
     else if(t.hasAttribute('data-restore-kind'))hbRestoreKind(t.getAttribute('data-restore-kind'));
@@ -2135,7 +2078,6 @@ svg:hover .hb-xh{opacity:1}
     else if(t.hasAttribute('data-explain'))hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
     else hbAsk(t.getAttribute('data-ask'));
   });
-  document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
   // A publish from Home sends exactly the number on its label (the recent
   // drafts, newest first) - never 25 including imported history.
   window.hbAct=function(kind,module,btn,count){if(kind==='publish_replies'){if(count>0){hbPublish(btn,count);return;}if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
@@ -2421,8 +2363,11 @@ svg:hover .hb-xh{opacity:1}
     fetch('/api/home/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({restore_kind:kind})})
       .then(apiJson).then(function(r){if(r&&r.ok){toast('It will show again','success');_hbLoadedAt=0;hbLoad(false);}}).catch(function(){});
   };
-  // Needs attention beside Ask, as two cards; the focus card above has
-  // already taken the most urgent item, so this list starts at the second.
+  // Needs attention: one card for everything waiting on the owner — the
+  // attention items (the focus card above has already taken the most
+  // urgent, so this list starts at the second) and the open issues, which
+  // arrive with the second load and are kept for the next render. Asking
+  // lives in the floating Cavnar AI button on every page.
   // Nothing connected yet: the readiness card is the page, so it leads.
   function hbIsFresh(d){
     var r=d.readiness;if(d.empty_state)return true;if(!r||!r.modules||!r.modules.length)return false;
@@ -2432,23 +2377,34 @@ svg:hover .hb-xh{opacity:1}
   function hbLocalHour(d){var m=/T(\d\d)/.exec(String(d.local_now||''));return m?+m[1]:12;}
   function hbLocalDow(d){var m=/^(\d{4})-(\d\d)-(\d\d)/.exec(String(d.local_now||''));if(!m)return 1;return new Date(+m[1],+m[2]-1,+m[3]).getDay();}
   function renderActions(d,used){return renderAttention(d,used)+renderRecs(d,used&&used.rec?1:0);}
+  var _hbIssues=null;
+  function hbIssueRows(iss){
+    var h='';
+    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    return h;
+  }
+  function hbAttnClearHtml(used){return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
   function renderAttention(d,used){
-    var items=(d.attention||[]).slice(used&&used.att?1:0),sg=d.ask_suggestions||[];
-    var h='<div class="hb-grid c2">';
-    h+='<div class="hb-card hb-rise" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':(items.length?'<span class="cnt">'+items.length+'</span>':''))+'</div>';
-    if(!items.length)h+='<div class="hb-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';
+    var items=(d.attention||[]).slice(used&&used.att?1:0),iss=_hbIssues||[],total=items.length+iss.length;
+    var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
+    if(!total)h+=hbAttnClearHtml(used);
     for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
+    h+='<div id="hb-attn-issues">'+hbIssueRows(iss)+'</div>';
     h+='</div>';
-    h+='<div class="hb-card hb-rise" style="--i:2"><div class="hb-h3"><span>Ask Cavnar AI</span></div><div class="hb-ask" style="margin-top:0"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ask-submit="1">Ask</button></div>';
-    if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
-    h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-full="1">Open the full chat →</button></div>';
-    var qa=(d.quick_actions||[]).filter(function(q){return q.kind!=='ask'&&q.kind!=='publish_replies'&&q.key!=='urgent';});
-    if(qa.length){h+='<div class="hb-h3" style="margin-top:18px"><span>Shortcuts</span></div><div class="hb-sugg" style="margin-top:0">';for(var q=0;q<Math.min(qa.length,4);q++){h+='<button onclick="hbAct(\''+esc(qa[q].kind)+'\',\''+esc(qa[q].module||'')+'\',this)">'+esc(qa[q].label)+'</button>';}h+='</div>';}
-    h+='</div></div>';
     return h;
+  }
+  // The open issues land after the first render: into the same card, with
+  // the count and the all-clear line kept honest.
+  function hbAttnSetIssues(iss){
+    _hbIssues=iss||[];
+    var box=document.getElementById('hb-attn-issues');if(!box)return;
+    box.innerHTML=hbIssueRows(_hbIssues);
+    var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+_hbIssues.length;
+    var cnt=document.getElementById('hb-attn-cnt');if(cnt){cnt.textContent=n;cnt.hidden=!n;}
+    var clr=document.getElementById('hb-attn-clear');if(clr&&_hbIssues.length)clr.parentNode.removeChild(clr);
   }
   function renderLocations(d){
     var c=d.context||{};if(!c.locations||c.locations.length<2)return '';
@@ -2809,29 +2765,16 @@ svg:hover .hb-xh{opacity:1}
     if(monday)day+=receipts;
     if(evening)day+=renderCloseout();
     var h='<div class="hb-sh first"><div><div class="k">The day</div><h2>This morning’s brief <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
-    h+='<div class="hb-grid c2" style="margin-top:14px">';
+    hbAttnSetIssues(iss);
+    h+='<div class="hb-grid" style="margin-top:14px">';
     // The brief as a timeline - a rail with a tone dot per line - rather
     // than a list: it is read top to bottom once, before service.
     h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt">'+lines.length+'</span>':'')+'</div>';
     if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
     else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
-    h+='</div><div class="hb-stack">';
-    h+='<div class="hb-card quiet hb-rise" style="--i:1"><div class="hb-h3"><span>Open issues</span>'+(iss.length?'<span class="cnt">'+iss.length+'</span>':'')+'</div>';
-    if(!iss.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing open.</span></div>';
-    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
     h+='</div>';
-    // Goals as progress bars: how far from the baseline to the target, on
-    // the same definitions goals.py measures with. A goal with no readable
-    // baseline gets its sentence and no bar - a bar at 0% would be a claim.
-    if(gl.length){h+='<div class="hb-card hb-rise" style="--i:2"><div class="hb-h3"><span>Goals</span></div>';
-      for(var k=0;k<Math.min(gl.length,3);k++){var o=gl[k];var pct=null,b=+o.baseline_value,c=+o.current,t=+o.target;
-        if(isFinite(b)&&isFinite(c)&&isFinite(t)&&b!==t){pct=o.lower_is_better?(b-c)/(b-t):(c-b)/(t-b);pct=Math.round(Math.max(0,Math.min(1,pct))*100);}
-        if(o.state==='met')pct=100;
-        h+='<div class="hb-goal '+(GOALTONE[o.state]||'watch')+'"><div class="l"><span>'+num(o.summary||o.label)+'</span>'+(pct!=null?'<b>'+pct+'%</b>':'')+'</div>'+(pct!=null?'<div class="bar"><i data-w="'+pct+'"></i></div>':'')+'</div>';}
-      h+='</div>';}
-    if(res.length){h+='<div class="hb-card rail good hb-rise" style="--i:3"><div class="hb-h3"><span>What your changes did</span></div>';for(var m=0;m<Math.min(res.length,3);m++){var r=res[m];h+='<div class="hb-row '+(RESULTTONE[r.verdict]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(r.summary)+'</span></div>';}
-      h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div></div>';}
-    h+='</div></div>';
+    // Open issues live in the Needs attention card (hbAttnSetIssues); goals
+    // and results are built by _hbMeasured below.
     // Everything up to here is the day; hand it to its slot and start the
     // proof section fresh. Goals and results were built inside the day
     // grid's stack (the markup that existed); "measured" owns them now, so

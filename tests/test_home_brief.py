@@ -262,8 +262,8 @@ def test_home_dates_are_m_d_yy_and_ask_uses_data_attributes(db_path):
     html = open("templates/dashboard.html").read()
     a = html.index('id="panel-home"'); b = html.index("<!-- /panel-home -->")
     panel = html[a:b]
-    assert 'data-ask="' in panel and 'data-ask-submit' in panel
-    assert "onclick=\"hbAsk(" not in panel and "hbAskSubmit()\"" not in panel
+    assert 'data-ask="' in panel
+    assert "onclick=\"hbAsk(" not in panel
     # The Home kicker used to read "9/16/26 · Simple EJ's" off now_mdy. It now
     # carries the full current date on its own ("September 16, 2026") — the
     # restaurant's own name directly under its own header was noise.
@@ -282,3 +282,19 @@ def test_a_manager_home_leaves_out_food_cost(db_path):
                for key in ("attention", "recommendations", "freshness", "brief")
                for x in (mgr.get(key) or []) if isinstance(x, dict))
     assert "labor" in {s["key"] for s in mgr["snapshot"]}
+
+
+def test_home_has_no_ask_card_and_one_attention_card_holding_open_issues():
+    """Asking lives in the floating Cavnar AI button on every page, so Home
+    carries no Ask card of its own; every "Ask" on Home opens that panel.
+    Needs attention and the open issues are one card."""
+    html = open("templates/dashboard.html").read()
+    a = html.index('id="panel-home"'); b = html.index("<!-- /panel-home -->")
+    panel = html[a:b]
+    assert "<span>Ask Cavnar AI</span>" not in panel and 'id="hb-ask-in"' not in panel
+    assert "<span>Open issues</span>" not in panel
+    ask = panel[panel.index("window.hbAsk=function"):][:700]
+    assert "toggleAskCavnar" in ask and "sendAskCavnar" in ask
+    attn = panel[panel.index("function renderAttention"):][:2500]
+    assert 'id="hb-attn-issues"' in attn and "hbIssueRows(" in attn
+    assert "hbAttnSetIssues(iss)" in panel
