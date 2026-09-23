@@ -218,8 +218,6 @@ def test_a_google_review_saves_through_the_same_path(db_path):
                                 rating=2, text="cold")], db_path=db_path)[0] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: reviews.platform CHECK allows only google/yelp/csv/manual, so "
-                                       "every TripAdvisor/DoorDash/UberEats row is rejected while the route reports ok")
 @pytest.mark.parametrize("platform", [None, "doordash", "ubereats"])
 def test_a_third_party_import_stores_what_it_reports(importer, db_path, platform):
     body = importer["post"](TA_CSV, platform=platform).get_json()
@@ -228,16 +226,24 @@ def test_a_third_party_import_stores_what_it_reports(importer, db_path, platform
     assert stored == body["imported"] == 2, f"route said imported={body.get('imported')}, stored {stored}"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: nothing stored but the route still answers ok=True — a refusal "
-                                       "is never reported to the owner")
 def test_an_import_that_stores_nothing_is_not_reported_as_success(importer, db_path):
     body = importer["post"](TA_CSV).get_json()
     if _stored(db_path, importer["rid"]) == 0:
         assert body["ok"] is False, f"nothing was stored and the owner was told {body}"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-21: the import's external_id is hash(text) (salted per process) plus "
-                                       "the row index, so a re-upload after a deploy duplicates every review")
+def test_an_import_whose_every_row_is_refused_says_so(importer, db_path, monkeypatch):
+    """The refusal branch itself: the CHECK no longer refuses these rows, so
+    stand in for any other reason the database turns every row away."""
+    def refuses_all(reviews, db_path=models.DB_PATH, downgrades=None, rejected=None):
+        rejected.extend((r.external_id, "CHECK constraint failed") for r in reviews)
+        return 0, []
+    monkeypatch.setattr(models, "save_reviews", refuses_all)
+    body = importer["post"](TA_CSV).get_json()
+    assert body["ok"] is False and body["imported"] == 0, body
+    assert _stored(db_path, importer["rid"]) == 0
+
+
 def test_a_reimport_after_a_restart_dedupes(importer, db_path, monkeypatch):
     import builtins
     assert importer["post"](TA_CSV).get_json()["ok"] is True

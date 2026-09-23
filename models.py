@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
 CREATE TABLE IF NOT EXISTS reviews (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id       INTEGER NOT NULL REFERENCES restaurants(id),
-    platform            TEXT    NOT NULL CHECK(platform IN ('google','yelp','csv','manual')),
+    platform            TEXT    NOT NULL CHECK(platform IN ('google','yelp','csv','manual','tripadvisor','doordash','ubereats')),
     external_id         TEXT    NOT NULL,
     author              TEXT,
     rating              INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
@@ -993,6 +993,60 @@ def _migrate_reviews_unique(conn):
         except Exception:
             pass
         print(f"[migrate] reviews re-key FAILED, table left untouched: {e}")
+
+
+_OLD_REVIEW_PLATFORM_CHECK = "CHECK(platform IN ('google','yelp','csv','manual'))"
+_REVIEW_PLATFORM_CHECK = "CHECK(platform IN ('google','yelp','csv','manual','tripadvisor','doordash','ubereats'))"
+
+
+def _migrate_reviews_platform_check(conn):
+    """Widen reviews.platform's CHECK to the third-party imports.
+
+    The CSV import (client_api.import_tripadvisor) writes 'tripadvisor',
+    'doordash' and 'ubereats', which the CHECK refused: every row was
+    rejected, save_reviews logged it, and the route told the owner
+    "imported: N" with nothing stored (DATA-21). SQLite cannot alter a CHECK,
+    so this is the same rebuild as _migrate_reviews_unique — new table, copy,
+    swap, one transaction — and a no-op once the table has the wider CHECK.
+    The table's indexes are captured first and replayed after the swap.
+    """
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").fetchone()
+        create = (row[0] if row else "") or ""
+        if _OLD_REVIEW_PLATFORM_CHECK not in create:
+            return
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(reviews)").fetchall()]
+        col_list = ", ".join(cols)
+        indexes = [r[0] for r in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='reviews' AND sql IS NOT NULL").fetchall()]
+        import re as _re
+        new_create, n = _re.subn(r'^CREATE TABLE\s+(?:"reviews"|reviews)(?=\s*\()', "CREATE TABLE reviews_platforms",
+                                 create.replace(_OLD_REVIEW_PLATFORM_CHECK, _REVIEW_PLATFORM_CHECK), count=1)
+        if n != 1:
+            print("[migrate] reviews platform CHECK: could not rewrite CREATE statement, leaving as is")
+            return
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP TABLE IF EXISTS reviews_platforms")
+        conn.execute(new_create)
+        conn.execute(f"INSERT INTO reviews_platforms ({col_list}) SELECT {col_list} FROM reviews")
+        conn.execute("DROP TABLE reviews")
+        conn.execute("ALTER TABLE reviews_platforms RENAME TO reviews")
+        for sql in indexes:
+            conn.execute(sql)
+        conn.execute("COMMIT")
+        conn.execute("PRAGMA foreign_keys=ON")
+        print("[migrate] reviews.platform now accepts tripadvisor, doordash and ubereats")
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        except Exception:
+            pass
+        print(f"[migrate] reviews platform CHECK FAILED, table left untouched: {e}")
 
 
 def _ensure_place_id_uniqueness(conn):
@@ -2382,6 +2436,7 @@ def init_db(db_path: str = DB_PATH):
         conn.close()
         raise
     _migrate_reviews_unique(conn)
+    _migrate_reviews_platform_check(conn)
     _ensure_place_id_uniqueness(conn)
     # Chats existed before conversations did — fold any pre-conversation
     # messages into one chat per restaurant so they show up in history.
@@ -3161,7 +3216,7 @@ def _cross_source_copy(conn, r: "Review"):
 
 
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
-                 downgrades: list = None) -> tuple[int, list]:
+                 downgrades: list = None, rejected: list = None) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
 
     Returns (new_count, new_review_objects). Pass a list as `downgrades` to
@@ -3268,6 +3323,10 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
                 unexpected.append((r.external_id, str(e)))
     conn.commit()
     conn.close()
+    if rejected is not None:
+        # Same out-parameter shape as `downgrades`: rows refused for a reason
+        # other than "this restaurant already has it" (DATA-21).
+        rejected.extend(unexpected)
     if edited:
         print(f"[reviews] {edited} review(s) were edited by their author and have been updated")
     if unexpected:

@@ -760,10 +760,15 @@ def import_tripadvisor(current_user):
         if rating < 1 or rating > 5:
             continue
         full_text = (title + " — " + text) if title else text
+        # A stable key from the review itself. It was hash(text) — salted per
+        # process, so a re-upload after any deploy duplicated every review —
+        # plus the row index, which a re-exported file shifts (DATA-21).
+        import hashlib as _hl
+        _key = _hl.sha256("\x1f".join((author, date, str(rating), full_text)).encode("utf-8")).hexdigest()[:24]
         reviews.append(Review(
             restaurant_id=rid,
             platform="tripadvisor",
-            external_id=f"ta_import_{i}_{hash(text[:40])}",
+            external_id=f"ta_import_{_key}",
             author=author or "TripAdvisor Guest",
             rating=rating,
             text=full_text,
@@ -779,16 +784,26 @@ def import_tripadvisor(current_user):
         for rv in reviews:
             rv.platform = plat_override
 
-    new_count, new_objs = save_reviews(reviews)
-    # Trigger AI processing in background
+    rejected = []
+    new_count, new_objs = save_reviews(reviews, rejected=rejected)
+    if rejected and not new_count:
+        # Nothing stored is not a success, whatever was parsed (DATA-21).
+        return jsonify(ok=False, error="None of these reviews could be saved. Nothing was imported — "
+                                       "contact support if this keeps happening.",
+                       imported=0, new=0, rejected=len(rejected)), 500
+    # Trigger AI processing in background. analyser has no
+    # process_new_reviews; the ImportError was swallowed, so an import was
+    # never analysed until the next fetch cycle's analyse_pending.
     if new_objs:
         try:
             import threading as _t
-            from analyser import process_new_reviews as _proc
-            _t.Thread(target=_proc, args=(new_objs,), daemon=True).start()
-        except Exception:
-            pass
-    return jsonify(ok=True, imported=len(reviews), new=new_count)
+            from analyser import analyse_pending as _proc
+            _t.Thread(target=_proc, args=(rid,), daemon=True).start()
+        except Exception as e:
+            import ops
+            ops.capture(e, job="review_import_analysis", context=f"restaurant_id={rid}")
+    return jsonify(ok=True, imported=len(reviews) - len(rejected), new=new_count,
+                   **({"rejected": len(rejected)} if rejected else {}))
 
 @client_bp.route("/api/response-performance")
 @login_required
