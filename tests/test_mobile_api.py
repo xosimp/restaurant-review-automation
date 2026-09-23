@@ -1859,10 +1859,16 @@ def test_change_password_succeeds_and_new_password_works_next_login(client, db_p
 
 # ── /mobile/api/account/2fa ────────────────────────────────────────────────
 
-def test_2fa_send_test_requires_owner_email(client, db_path):
+def test_2fa_send_test_requires_an_email_for_this_login(client, db_path):
+    """The code goes to the login's own email (SEC-20); with none on the
+    login and none on the restaurant, there is nowhere to send it."""
     rid = _restaurant(db_path)
     update_restaurant(rid, {"owner_email": ""}, db_path=db_path)
     token = _login(client, db_path, rid)
+    import sqlite3 as _sq
+    _c = _sq.connect(db_path)
+    _c.execute("UPDATE users SET email='' WHERE restaurant_id=?", (rid,))
+    _c.commit(); _c.close()
 
     resp = client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
     assert resp.status_code == 400

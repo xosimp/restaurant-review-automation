@@ -649,3 +649,79 @@ def test_apple_signin_refuses_an_unverified_provider_email(client, db_path, monk
     linked = conn.execute("SELECT apple_user_id FROM users WHERE id=?", (owner,)).fetchone()[0]
     conn.close()
     assert not linked
+
+
+# ── SEC-20: the code goes to the person signing in ─────────────────────────
+# Every code used to go to the owner, so a manager could not finish signing
+# in alone, and an owner learned to read codes out to whoever asked.
+
+@pytest.fixture
+def texts(monkeypatch):
+    import notify
+    box = []
+    monkeypatch.setattr(notify, "send_2fa_sms", lambda to, name, code: box.append((to, code)) or True)
+    return box
+
+
+def test_a_managers_web_code_goes_to_the_manager_not_the_owner(db_path, client, sent):
+    _setup(db_path, two_fa=True)
+    resp = _login_form(client, "mgr", "mgrpass12")
+    assert [to for to, _code in sent["2fa"]] == ["mgr@x.test"]
+    assert "mg***@x.test" in resp.get_data(as_text=True)
+
+
+def test_a_managers_app_code_goes_to_the_manager_not_the_owner(db_path, client, sent):
+    _setup(db_path, two_fa=True)
+    r = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"}).get_json()
+    assert r["requires_2fa"] and r["masked_email"] == "mg***@x.test"
+    assert [to for to, _code in sent["2fa"]] == ["mgr@x.test"]
+
+
+def test_the_owner_still_gets_their_code_by_text(db_path, client, sent, texts):
+    rid, _owner, _mgr = _setup(db_path, two_fa=True)
+    update_restaurant(rid, {"two_fa_method": "sms", "owner_phone": "+15125550100"}, db_path=db_path)
+    r = client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"}).get_json()
+    assert r["requires_2fa"] and [to for to, _c in texts] == ["+15125550100"] and sent["2fa"] == []
+
+
+def test_a_manager_without_a_phone_gets_a_text_restaurants_code_by_email(db_path, client, sent, texts):
+    """Text codes are the restaurant's choice; the owner's phone is not the
+    manager's, so the manager's own email carries it instead."""
+    rid, _owner, _mgr = _setup(db_path, two_fa=True)
+    update_restaurant(rid, {"two_fa_method": "sms", "owner_phone": "+15125550100"}, db_path=db_path)
+    client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"})
+    assert texts == [] and [to for to, _c in sent["2fa"]] == ["mgr@x.test"]
+
+
+def test_a_manager_with_a_phone_of_their_own_is_texted_there(db_path, client, sent, texts):
+    rid, _owner, mgr = _setup(db_path, two_fa=True)
+    update_restaurant(rid, {"two_fa_method": "sms", "owner_phone": "+15125550100"}, db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE users SET phone='+15125550199' WHERE id=?", (mgr,))
+    conn.commit(); conn.close()
+    client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"})
+    assert [to for to, _c in texts] == ["+15125550199"]
+
+
+def test_a_login_with_nowhere_to_send_a_code_is_refused_not_sent_to_the_owner(db_path, client, sent):
+    _rid, _owner, mgr = _setup(db_path, two_fa=True)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE users SET email='' WHERE id=?", (mgr,))
+    conn.commit(); conn.close()
+    resp = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"})
+    assert resp.status_code == 403 and "no email" in resp.get_json()["error"]
+    web = _login_form(client, "mgr", "mgrpass12")
+    assert "no email address or phone" in web.get_data(as_text=True)
+    assert sent["2fa"] == []
+    conn = models.get_conn(db_path)
+    left = conn.execute("SELECT COUNT(*) FROM two_fa_challenges WHERE user_id=?", (mgr,)).fetchone()[0]
+    conn.close()
+    assert left == 0, "a challenge was issued that nobody can receive"
+
+
+def test_a_resent_code_goes_where_the_first_one_did(db_path, client, sent):
+    _setup(db_path, two_fa=True)
+    pending = _pending_from_html(_login_form(client, "mgr", "mgrpass12"))
+    csrf = client.get_cookie("csrf_token").value
+    client.post("/resend-2fa", json={"pending_token": pending}, headers={"X-CSRF-Token": csrf})
+    assert [to for to, _c in sent["2fa"]] == ["mgr@x.test", "mgr@x.test"]

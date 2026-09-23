@@ -1218,6 +1218,72 @@ def view_as_write_denied(user) -> bool:
 _VIEW_AS_READ_ONLY_MSG = "This is a read-only support view. Nothing was changed."
 
 
+# ── Where a 2FA code goes (SEC-20) ──────────────────────────────────────────
+#
+# To the person signing in, never to someone else. Every code used to go to
+# the restaurant's owner_email/owner_phone, so a manager could not finish
+# signing in without the owner reading them a code — and an owner who reads
+# codes out on request is exactly who a phisher calls. The owner keeps the
+# restaurant-wide on/off switch and hears about each sign-in from the login
+# notice, but the code itself belongs to the login that asked for it.
+
+NO_TWO_FA_DESTINATION = ("This login has no email address or phone number to send a sign-in code to. "
+                         "Ask the account owner to add an email to your login under Team.")
+
+
+def _mask_phone(phone: str) -> str:
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    return "(•••) •••-" + digits[-4:] if len(digits) >= 4 else "your phone"
+
+
+def _mask_email(email: str) -> str:
+    return email[:2] + "***@" + email.split("@")[-1]
+
+
+def two_fa_destination(user, restaurant, method=None, strict=False):
+    """Where this login's 2FA code goes: {"kind": "sms"|"email", "to",
+    "masked", "name"}, or None when the login has nowhere of its own.
+
+    The login's own users.email / users.phone. The restaurant's owner_email
+    and owner_phone count as this login's only when it IS that owner — an
+    account holder whose email matches owner_email, or one with no email of
+    its own (the single login accounts started with, before team logins).
+
+    `method` defaults to the restaurant's chosen two_fa_method. A text code
+    for a login with no phone goes to its email instead, unless `strict`
+    (the setup test, which must prove the channel being switched on)."""
+    from permissions import is_principal
+    if not user or not restaurant:
+        return None
+    method = method or getattr(restaurant, "two_fa_method", None) or "email"
+    email = (user.get("email") or "").strip()
+    email = email if "@" in email else ""
+    phone = (user.get("phone") or "").strip()
+    owner_email = (getattr(restaurant, "owner_email", None) or "").strip()
+    name = user.get("name") or None
+    if is_principal(user) and (not email or email.lower() == owner_email.lower()):
+        email = email or (owner_email if "@" in owner_email else "")
+        phone = phone or (getattr(restaurant, "owner_phone", None) or "").strip()
+        name = getattr(restaurant, "owner_name", None) or name
+    if method == "sms" and phone:
+        return {"kind": "sms", "to": phone, "masked": _mask_phone(phone), "name": name}
+    if method == "sms" and strict:
+        return None
+    if email:
+        return {"kind": "email", "to": email, "masked": _mask_email(email), "name": name}
+    return None
+
+
+def send_two_fa_code(dest, restaurant, code) -> bool:
+    """Send a code to a two_fa_destination(). True only when it went out."""
+    rname = getattr(restaurant, "name", None) or "your restaurant"
+    if dest["kind"] == "sms":
+        from notify import send_2fa_sms
+        return bool(send_2fa_sms(dest["to"], rname, code))
+    from emails import send_2fa_code
+    return bool(send_2fa_code(dest["to"], rname, code, dest.get("name")))
+
+
 # ── 2FA challenges (SEC-20) ─────────────────────────────────────────────────
 
 TWO_FA_CODE_MINUTES = 10
@@ -1235,7 +1301,7 @@ def _new_two_fa_code() -> str:
 def issue_two_fa_challenge(restaurant_id: int, user_id: int, purpose: str = "login",
                            db_path: str = DB_PATH):
     """Start a 2FA challenge for one login. Returns (pending_secret, code):
-    the code goes to the owner by email or text, the pending secret rides in
+    the code goes to that login's own email or phone (two_fa_destination), the pending secret rides in
     the signed pending token (make_pending_token). Each sign-in attempt gets
     its own row, so two people signing in at one restaurant no longer
     overwrite each other's code. A 'setup' challenge ("Send test code") is one

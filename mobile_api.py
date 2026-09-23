@@ -250,22 +250,18 @@ def mobile_login():
     if two_fa_on and not device_ok:
         # This sign-in's own challenge — a second login at the restaurant no
         # longer overwrites it (SEC-20). See auth.issue_two_fa_challenge.
-        from auth import issue_two_fa_challenge
+        # To this login's own email or phone, never the owner's (SEC-20).
+        from auth import (issue_two_fa_challenge, two_fa_destination, send_two_fa_code,
+                          NO_TWO_FA_DESTINATION)
+        dest = two_fa_destination(user, rest)
+        if not dest:
+            return jsonify(ok=False, error=NO_TWO_FA_DESTINATION), 403
         pending, code = issue_two_fa_challenge(rid, user["id"], "login")
-        masked = "your registered email"
         try:
-            if rest.two_fa_method == "sms" and rest.owner_phone:
-                from notify import send_2fa_sms
-                send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
-                masked = "(•••) •••-" + "".join(c for c in rest.owner_phone if c.isdigit())[-4:]
-            else:
-                email = rest.owner_email or ""
-                if "@" in email:
-                    from emails import send_2fa_code
-                    send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
-                    masked = email[:2] + "***@" + email.split("@")[-1]
-        except Exception:
-            pass
+            send_two_fa_code(dest, rest, code)
+        except Exception as e:
+            print(f"[2fa] mobile login code send failed for user {user['id']}: {e}")
+        masked = dest["masked"]
         # "rid:uid:secret" — the user_id that actually passed the password step
         # is carried through, so verify-2fa issues a session for THAT login
         # rather than an unordered "LIMIT 1" over the restaurant's users. See
@@ -4578,11 +4574,16 @@ def mobile_send_2fa_test(current_user):
     restaurant = get_restaurant(rid)
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
-    email = restaurant.owner_email or ""
-    method = (request.get_json(silent=True) or {}).get("method") or "email"
-    if method == "sms" and not restaurant.owner_phone:
+    method = "sms" if (request.get_json(silent=True) or {}).get("method") == "sms" else "email"
+    # The code for turning 2FA on goes to whoever is turning it on, on the
+    # channel they picked (SEC-20).
+    from auth import two_fa_destination, send_two_fa_code, get_user_by_id
+    _me = dict(get_user_by_id(current_user["id"]) or {})
+    _me.update({k: current_user.get(k) for k in ("role", "is_admin", "restaurant_id") if k in current_user})
+    dest = two_fa_destination(_me, restaurant, method=method, strict=True)
+    if not dest and method == "sms":
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
-    if method != "sms" and (not email or "@" not in email):
+    if not dest:
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
     # This login's own setup challenge, never a sign-in in progress (SEC-20),
     # and one code a minute per login: each press was a paid SMS, and a
@@ -4610,34 +4611,19 @@ def mobile_send_2fa_test(current_user):
             _c3.commit()
         finally:
             _c3.close()
-    if method == "sms":
-        phone = restaurant.owner_phone
-        try:
-            from notify import send_2fa_sms
-            sent = send_2fa_sms(phone, restaurant.name or "your restaurant", code)
-        except Exception as e:
-            _unsent()
-            return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}"), 500
-        if not sent:
-            _unsent()
-            return jsonify(ok=False, error="Couldn't send the code — text delivery failed. Try again in a moment."), 502
-        masked = "(•••) •••-" + "".join(c for c in phone if c.isdigit())[-4:]
-        return jsonify(ok=True, masked=masked, method="sms")
     try:
-        from emails import send_2fa_code
-        sent = send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
+        sent = send_two_fa_code(dest, restaurant, code)
     except Exception as e:
         _unsent()
-        return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}"), 500
+        print(f"[2fa] setup code send failed for user {current_user['id']}: {e}")
+        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment."), 500
     if not sent:
         _unsent()
-        # send_2fa_code swallows its own failures (missing RESEND_API_KEY,
-        # a non-200 from Resend) and just returns False rather than raising
-        # — without this check the route reported ok=True regardless, so
-        # the app showed "Code sent" even when nothing went out.
-        return jsonify(ok=False, error="Couldn't send the code — email delivery failed. Try again in a moment."), 502
-    masked = email[:2] + "***@" + email.split("@")[-1]
-    return jsonify(ok=True, masked=masked, method="email")
+        # Both senders report their own failures (a missing key, a refusal)
+        # as False rather than raising; the app must not show "Code sent".
+        channel = "text" if dest["kind"] == "sms" else "email"
+        return jsonify(ok=False, error=f"Couldn't send the code — {channel} delivery failed. Try again in a moment."), 502
+    return jsonify(ok=True, masked=dest["masked"], method=dest["kind"])
 
 
 @mobile_bp.route("/account/2fa/verify", methods=["POST"])

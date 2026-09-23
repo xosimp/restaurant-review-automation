@@ -253,26 +253,19 @@ def login():
             # this login, and a second sign-in at the same restaurant gets its
             # own challenge instead of overwriting this one (SEC-20).
             from auth import issue_two_fa_challenge as _itfc
+            # To this login's own email or phone, never the owner's (SEC-20).
+            from auth import two_fa_destination as _tfd, send_two_fa_code as _stfc, NO_TWO_FA_DESTINATION as _no_dest
+            rest2 = get_restaurant(_rid)
+            _dest = _tfd(user, rest2)
+            if not _dest:
+                return render_template('login.html', error=_no_dest, google_sso_enabled=_google_sso_post,
+                                       csrf_token=_csrf_cookie)
             pending, code = _itfc(_rid, user["id"], "login")
-            # Send code via the restaurant's chosen 2FA method
             try:
-                rest2 = get_restaurant(_rid)
-                if rest2.two_fa_method == "sms" and rest2.owner_phone:
-                    from notify import send_2fa_sms
-                    send_2fa_sms(rest2.owner_phone, rest2.name or "your restaurant", code)
-                    _digits = "".join(c for c in rest2.owner_phone if c.isdigit())
-                    masked = "(•••) •••-" + _digits[-4:] if len(_digits) >= 4 else "your phone"
-                else:
-                    email = rest2.owner_email or ""
-                    if "@" in email:
-                        from emails import send_2fa_code
-                        owner = rest2.owner_name or None
-                        send_2fa_code(email, rest2.name or "your restaurant", code, owner)
-                        masked = email[:2] + "***@" + email.split("@")[-1] if "@" in email else email
-                    else:
-                        masked = "your registered email"
-            except Exception:
-                masked = "your registered email"
+                _stfc(_dest, rest2, code)
+            except Exception as _e_send:
+                print(f"[2fa] login code send failed for user {user['id']}: {_e_send}")
+            masked = _dest["masked"]
             # Encode restaurant_id AND the user_id that actually authenticated:
             # "rid:uid:secret". The user_id used to be absent, and verify-2fa
             # then resolved the session with get_user_by_restaurant_id(), an
@@ -363,9 +356,9 @@ def verify_2fa():
         import secrets as _sec5
         csrf4 = _sec5.token_hex(16)
         try:
-            _rest_v = get_restaurant(uid)
-            _email_v = _rest_v.owner_email if _rest_v else ""
-            masked = _email_v[:2] + "***@" + _email_v.split("@")[-1] if "@" in _email_v else "your registered email"
+            from auth import two_fa_destination as _tfd_v, get_user_by_id as _gubi_v
+            _dest_v = _tfd_v(_gubi_v(pending_user_id), rest)
+            masked = _dest_v["masked"] if _dest_v else "your registered email"
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
@@ -458,17 +451,15 @@ def resend_2fa():
     code = _rtfc(uid, _pending_uid_r, pending_secret_r)
     if not code:
         return jsonify(ok=False, error="Session expired — please log in again")
+    # The same login's own email or phone the first code went to (SEC-20).
+    from auth import two_fa_destination as _tfd_r, send_two_fa_code as _stfc_r, get_user_by_id as _gubi_r
+    _dest_r = _tfd_r(_gubi_r(_pending_uid_r), rest)
+    if not _dest_r:
+        return jsonify(ok=False, error="Session expired — please log in again")
     try:
-        if rest.two_fa_method == "sms" and rest.owner_phone:
-            from notify import send_2fa_sms
-            send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
-        else:
-            email = rest.owner_email or ""
-            if "@" in email:
-                from emails import send_2fa_code
-                send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
-    except Exception:
-        pass
+        _stfc_r(_dest_r, rest, code)
+    except Exception as _e_r:
+        print(f"[2fa] resend failed for user {_pending_uid_r}: {_e_r}")
     return jsonify(ok=True)
 
 @auth_bp.route("/logout", methods=["GET", "POST"])
@@ -501,33 +492,27 @@ def send_2fa_test(current_user):
     if not rest:
         return jsonify(ok=False, error="Restaurant not found")
     data = request.get_json(silent=True) or {}
-    method = data.get("method") or "email"
-    if method == "sms":
-        if not rest.owner_phone:
-            return jsonify(ok=False, error="No phone number found. Contact will@cavnar.ai to update your account phone.")
-    else:
-        email = rest.owner_email or ""
-        if not email or "@" not in email:
-            return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
+    method = "sms" if data.get("method") == "sms" else "email"
+    # The code for turning 2FA on goes to whoever is turning it on, on the
+    # channel they picked (SEC-20).
+    from auth import two_fa_destination as _tfd_t, send_two_fa_code as _stfc_t, get_user_by_id as _gubi_t
+    _me = dict(_gubi_t(current_user["id"]) or {})
+    _me.update({k: current_user.get(k) for k in ("role", "is_admin", "restaurant_id") if k in current_user})
+    dest = _tfd_t(_me, rest, method=method, strict=True)
+    if not dest:
+        if method == "sms":
+            return jsonify(ok=False, error="No phone number found for your login. Add one in Profile & Details, or send by email instead.")
+        return jsonify(ok=False, error="No email address found for your login. Contact will@cavnar.ai to update your account email.")
     # This login's own setup challenge: it never touches a sign-in someone
     # else has in progress at this restaurant (SEC-20).
     from auth import issue_two_fa_challenge as _itfc_t
     _pending_t, code = _itfc_t(current_user["restaurant_id"], current_user["id"], "setup")
-    if method == "sms":
-        try:
-            from notify import send_2fa_sms
-            send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
-        except Exception as e:
-            return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}")
-        digits = "".join(c for c in rest.owner_phone if c.isdigit())
-        masked = "(•••) •••-" + digits[-4:] if len(digits) >= 4 else "your phone"
-    else:
-        try:
-            from emails import send_2fa_code
-            send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
-        except Exception as e:
-            return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}")
-        masked = email[:2] + "***@" + email.split("@")[-1]
+    try:
+        _stfc_t(dest, rest, code)
+    except Exception as e:
+        print(f"[2fa] setup code send failed for user {current_user['id']}: {e}")
+        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment.")
+    masked = dest["masked"]
     return jsonify(ok=True, masked=masked, method=method)
 
 @auth_bp.route("/api/verify-2fa-setup", methods=["POST"])
