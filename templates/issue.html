@@ -46,8 +46,36 @@
 
   {% if issue.detail %}
   <div class="card"><div class="detail">{{ issue.detail }}</div>
-    <div class="meta">Opened {{ issue.created_at }}{% if issue.assignee_name %} · assigned to {{ issue.assignee_name }}{% endif %}</div>
+    <div class="meta">Opened {{ issue.created_at|format_date }}{% if issue.assignee_name %} · assigned to {{ issue.assignee_name }}{% endif %}</div>
   </div>
+  {% endif %}
+
+  {% if done is mapping and done.asked %}
+    <div class="card">
+      {% if done.asked.ok %}
+        <div class="ok">Asked {{ done.asked.name }} by {{ 'text' if done.asked.via == 'sms' else 'email' }} — they'll reply to you.</div>
+      {% else %}
+        <div class="detail">{{ done.asked.error }}</div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if issue.kind == 'coverage' and issue.status != 'resolved' and issue.meta and issue.meta.covers %}
+    {% set asked_names = (issue.meta.asked or [])|map(attribute='name')|list %}
+    <div class="card">
+      <p class="meta" style="margin-top:0">Free today and suggested to cover. One tap sends them the request; nothing on the schedule changes until you decide.</p>
+      {% for c in issue.meta.covers %}
+        {% if c.name in asked_names %}
+          <div class="meta">{{ c.name }} — asked.</div>
+        {% else %}
+          <form method="post" action="/i/{{ token }}" style="margin:10px 0 0">
+            <input type="hidden" name="action" value="ask_cover">
+            <input type="hidden" name="name" value="{{ c.name }}">
+            <button type="submit" class="cbtn cbtn-primary">Ask {{ c.name }} to cover</button>
+          </form>
+        {% endif %}
+      {% endfor %}
+    </div>
   {% endif %}
 
   {% if issue.status == 'resolved' %}

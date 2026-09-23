@@ -56,6 +56,40 @@ final class EdgeAskCavnarTests: XCTestCase {
                        "the action runs first; the audit line is written only after it did")
     }
 
+    // MARK: #23 — a card is one proposal, with what it commits to
+
+    func testAProposalCarriesItsIdTheMoneyAndTheWordsThatGoOut() throws {
+        let p = try JSONDecoder.cavnar.decode(AskProposal.self, from: Data("""
+        {"action": "send_supplier_order", "summary": "Email the suggested order to every supplier",
+         "route": {"mobile": "/mobile/api/food-cost/send-order", "method": "POST"}, "body": {},
+         "proposal_id": 41, "at_stake": 500.5, "preview": null,
+         "details": [{"label": "Sysco", "value": "3 items · $412.50 · to orders@sysco.test"},
+                     {"label": "Order total", "value": "$500.50"}]}
+        """.utf8))
+        XCTAssertEqual(p.proposalId, 41)
+        XCTAssertEqual(p.atStake, 500.5)
+        XCTAssertEqual(p.details?.last?.value, "$500.50")
+        XCTAssertEqual(p.id, "p41", "two cards with the same action are two proposals")
+    }
+
+    func testNotNowSendsTheProposalIdAndTheReason() async throws {
+        let bodies = Box<[[String: Any]]>([])
+        let client = EdgeHTTP.client { request in
+            if let json = EdgeHTTP.bodyJSON(request) { bodies.value.append(json) }
+            return EdgeHTTP.reply(request, 200, #"{"ok": true}"#)
+        }
+        let vm = AskCavnarViewModel(client: client)
+        let p = try JSONDecoder.cavnar.decode(AskProposal.self, from: Data("""
+        {"action": "send_guest_campaign", "summary": "Text the guest club",
+         "route": {"mobile": "/mobile/api/guest-campaign/send", "method": "POST"},
+         "body": {"message": "Half-price wings"}, "proposal_id": 7}
+        """.utf8))
+        await vm.dismiss(p, reason: "  Too soon after the last one ")
+        XCTAssertEqual(bodies.value.first?["proposal_id"] as? Int, 7)
+        XCTAssertEqual(bodies.value.first?["reason"] as? String, "Too soon after the last one")
+        XCTAssertEqual(bodies.value.first?["outcome"] as? String, "dismissed")
+    }
+
     // MARK: CLIENT-28 — fallback after progress
 
     func testAStreamThatAlreadyRanToolsIsNotReAskedFromScratch() async {

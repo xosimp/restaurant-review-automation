@@ -2205,10 +2205,116 @@ def build_proposal(name, tool_input, restaurant_id=None):
         summary = summary.replace("{review_id}", str(review_id))
         args = {k: v for k, v in args.items() if k != "review_id"}
 
-    return {
+    out = {
         "action": name,
         "summary": summary,
         "route": route,
         "body": args,
         "requires_confirmation": True,
     }
+    # What the card shows beyond its one-line summary: the money, the
+    # recipients, the words that would go out (#23). An owner was asked to
+    # confirm "Email the suggested order to every supplier" without seeing
+    # the total, or "Approve and post the reply to review #412" without the
+    # reply. Read-only lookups; a failure leaves the card as it was.
+    if restaurant_id is not None:
+        try:
+            out.update(proposal_details(name, dict(tool_input or {}), restaurant_id))
+        except Exception as e:
+            log.warning("ask_cavnar proposal details for %s failed: %s", name, e)
+    return out
+
+
+def _money(v):
+    try:
+        return f"${float(v):,.2f}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _review_row(restaurant_id, review_id):
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        return conn.execute("SELECT author, rating, text, draft_response, response_status FROM reviews "
+                            "WHERE id=? AND restaurant_id=? AND deleted_at IS NULL",
+                            (int(review_id), restaurant_id)).fetchone()
+    finally:
+        conn.close()
+
+
+def proposal_details(name, args, restaurant_id) -> dict:
+    """{"details": [{"label", "value"}], "preview": text that would go out,
+    "at_stake": dollars or None} for one proposal — read from the same data
+    the confirmed route will act on, never from the model's own words
+    (except where the model's words ARE what goes out: a guest text, a
+    caption, which are shown verbatim)."""
+    details, preview, stake = [], None, None
+    if name == "send_supplier_order":
+        from inventory import build_supplier_orders
+        orders = build_supplier_orders(restaurant_id) or {}
+        want = (args.get("supplier_email") or "").strip().lower()
+        groups = [g for g in orders.get("groups") or []
+                  if not want or (g.get("supplier_email") or "").strip().lower() == want]
+        stake = round(sum(float(g.get("total_cost") or 0) for g in groups), 2)
+        for g in groups[:6]:
+            details.append({"label": g.get("supplier_name") or g.get("supplier_email") or "Supplier",
+                            "value": f"{len(g.get('items') or [])} items · {_money(g.get('total_cost'))}"
+                                     + (f" · to {g['supplier_email']}" if g.get("supplier_email") else "")})
+        details.append({"label": "Order total", "value": _money(stake)})
+        if not orders.get("is_live", True):
+            details.append({"label": "Note", "value": "Sample data — nothing real would be ordered."})
+    elif name in ("approve_review", "draft_review_reply", "retract_review_reply"):
+        row = _review_row(restaurant_id, args.get("review_id"))
+        if row:
+            details.append({"label": "Review", "value": f"{row['rating']}★ from {row['author'] or 'a guest'}: "
+                                                        f"\u201c{(row['text'] or '')[:220]}\u201d"})
+            if name == "approve_review":
+                preview = row["draft_response"] or None
+                if not preview:
+                    details.append({"label": "Reply", "value": "No draft yet — draft one first."})
+            elif name == "retract_review_reply":
+                preview = row["draft_response"] or None
+    elif name == "approve_all_reviews":
+        from models import get_conn as _gc
+        conn = _gc()
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                             "AND response_status='drafted' AND COALESCE(draft_response,'')!=''",
+                             (restaurant_id,)).fetchone()[0]
+        finally:
+            conn.close()
+        details.append({"label": "Replies that would post", "value": str(n)})
+    elif name == "send_guest_campaign":
+        preview = (args.get("message") or "").strip() or None
+        try:
+            import guest_marketing
+            details.append({"label": "Recipients", "value": f"{guest_marketing.audience_size(restaurant_id)} "
+                                                            "consented guests"})
+        except Exception:
+            pass
+        if args.get("target_day"):
+            details.append({"label": "For", "value": str(args["target_day"])})
+    elif name in ("publish_instagram_post", "publish_facebook_post"):
+        preview = (args.get("caption") or "").strip() or None
+    elif name == "send_review_request":
+        details.append({"label": "To", "value": " · ".join(x for x in (args.get("name"), args.get("email")) if x)})
+    elif name == "create_issue":
+        import issues
+        routing = issues.get_routing(restaurant_id)
+        who = (routing.get("manager") or {}).get("name")
+        details.append({"label": "Texted to", "value": who or "nobody — no manager is routed"})
+        preview = " — ".join(x for x in (args.get("title"), args.get("detail")) if x) or None
+    elif name == "publish_schedule":
+        from models import get_schedule_history
+        rows = get_schedule_history(restaurant_id, limit=12) or []
+        sid = args.get("schedule_id")
+        row = next((r for r in rows if sid and r["id"] == int(sid)), rows[0] if rows else None)
+        if row:
+            from time_utils import mdy_range
+            details.append({"label": "Week", "value": mdy_range(row.get("week_start"), row.get("week_end"))})
+            if row.get("hours_scheduled") is not None:
+                details.append({"label": "Hours", "value": f"{float(row['hours_scheduled']):g} scheduled"
+                                + (f" against {float(row['hours_budget']):g} budgeted"
+                                   if row.get("hours_budget") else "")})
+    return {"details": [d for d in details if d.get("value")], "preview": preview, "at_stake": stake}

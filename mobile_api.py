@@ -1417,8 +1417,27 @@ def mobile_mark_notification_opened(current_user):
             _oc_open.observe(current_user["restaurant_id"], f"alert_{_atype}", user_id=current_user.get("id"))
     except Exception:
         pass
-    record_notification_open(current_user["restaurant_id"], data.get("type") or "",
-                             user_id=current_user["id"])
+    # Which notification this is (#39): the push carries its alert_log id and
+    # recommendation key, so time-to-open is measurable per notification and
+    # the open lands on the recommendation's trail. Older builds send only
+    # the type; both are optional.
+    rid = current_user["restaurant_id"]
+    alert_id = data.get("alert_id")
+    try:
+        alert_id = int(alert_id) if alert_id not in (None, "") else None
+    except (TypeError, ValueError):
+        alert_id = None
+    rec_key = str(data.get("rec_key") or "").strip()[:160] or None
+    record_notification_open(rid, data.get("type") or "", user_id=current_user["id"],
+                             alert_log_id=alert_id, rec_key=rec_key)
+    if rec_key:
+        try:
+            import rec_ledger
+            rec_ledger.record(rid, rec_key, "opened", surface="alert_push", user_id=current_user.get("id"),
+                              meta={"alert_id": alert_id, "alert_type": (data.get("type") or "")[:64]},
+                              source_ref=f"open:{alert_id or data.get('type')}:{current_user.get('id')}")
+        except Exception:
+            pass
     return jsonify(ok=True)
 
 
@@ -4179,6 +4198,7 @@ def _do_mobile_account(current_user):
             "alert_health_bypass_quiet": bool(getattr(restaurant, "alert_health_bypass_quiet", 0)),
             "alert_food_waste": bool(getattr(restaurant, "alert_food_waste", 0)),
             "alert_ai_visibility_drop": bool(getattr(restaurant, "alert_ai_visibility_drop", 0)),
+            "alert_competitor_move": bool(getattr(restaurant, "alert_competitor_move", 1)),
             "alert_extra_emails": getattr(restaurant, "alert_extra_emails", None) or "",
             "push_sound": bool(getattr(restaurant, "push_sound", 1) if getattr(restaurant, "push_sound", 1) is not None else 1),
         },
@@ -5380,6 +5400,11 @@ def mobile_save_alert_settings(current_user):
         "alert_extra_emails": _clean_email_list(data.get("alert_extra_emails")),
         "push_sound": 0 if data.get("push_sound") is False else 1,
     }
+    # Only when sent: this toggle defaults ON, and a build that predates it
+    # sends nothing for it — reading that as False would switch every
+    # owner's competitor alert off on their next save.
+    if "alert_competitor_move" in data:
+        _fields["alert_competitor_move"] = int(bool(data.get("alert_competitor_move")))
     try:
         update_restaurant(rid, _fields, expected_version=expected)
     except StaleWrite as e:

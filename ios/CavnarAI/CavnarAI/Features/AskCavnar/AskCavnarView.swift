@@ -772,6 +772,9 @@ private struct ProposalCard: View {
     private enum Phase { case pending, working, done, failed, uncertain }
     /// Why the last Confirm didn't go through, in the server's words.
     @State private var failure: String?
+    /// "Not now" opens an optional reason field before it dismisses.
+    @State private var askingWhy = false
+    @State private var reason = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -779,6 +782,38 @@ private struct ProposalCard: View {
                 .font(.cavnarBody(15, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // What confirming actually commits to: the money, the people it
+            // reaches, the words that go out (#23).
+            if let stake = proposal.atStake, stake > 0 {
+                Text(stake, format: .currency(code: "USD"))
+                    .font(.cavnarNumber(17, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+            }
+            if let details = proposal.details, !details.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(details, id: \.self) { d in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(d.label)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk3)
+                            Text(d.value)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            if let preview = proposal.preview, !preview.isEmpty {
+                Text(preview)
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+            }
 
             switch phase {
             case .done:
@@ -811,8 +846,7 @@ private struct ProposalCard: View {
                     .buttonStyle(.plain)
 
                     Button {
-                        Task { await viewModel?.dismiss(proposal) }
-                        phase = .done
+                        askingWhy = true
                     } label: {
                         Text("Not now")
                             .font(.cavnarBody(14, weight: 600))
@@ -824,6 +858,28 @@ private struct ProposalCard: View {
                             )
                     }
                     .buttonStyle(.plain)
+                }
+                if askingWhy {
+                    HStack(spacing: 8) {
+                        TextField("Why not? (optional)", text: $reason)
+                            .font(.cavnarBody(13))
+                            .foregroundStyle(Color.cavnarInk)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                            .submitLabel(.done)
+                            .onSubmit { dismissNow() }
+                        Button { dismissNow() } label: {
+                            Text("Dismiss")
+                                .font(.cavnarBody(14, weight: 600))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: CavnarRadius.control)
+                                        .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 if phase == .failed || phase == .uncertain {
                     Text(failure ?? "That didn't go through — try again.")
@@ -841,5 +897,12 @@ private struct ProposalCard: View {
                 .strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+
+    private func dismissNow() {
+        let why = reason
+        askingWhy = false
+        phase = .done
+        Task { await viewModel?.dismiss(proposal, reason: why) }
     }
 }

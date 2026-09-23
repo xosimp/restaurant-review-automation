@@ -465,6 +465,7 @@ class Restaurant:
     alert_health_bypass_quiet: int   = 0     # health/safety alerts ignore quiet hours
     alert_food_waste: int            = 0     # daily: waste flagged on several items / a real dollar amount
     alert_ai_visibility_drop: int    = 0     # daily: AI visibility score fell vs. the previous run
+    alert_competitor_move: int       = 1     # weekly: a tracked competitor's rating moved / a new one appeared
     alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
     push_sound: int                  = 1     # 0 = silent pushes
     auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
@@ -902,6 +903,27 @@ def ensure_columns(db_path: str = DB_PATH):
         # measurement after a redeploy instead of re-asking Perplexity
         # eight live questions on a request thread (MOD-INT-5).
         ("ai_visibility_runs", "payload_json", "TEXT"),
+        # Recommendation-trust audit (notify / issues / Ask). An issue filed
+        # with notify=False keeps that intent: issues.tick used to text every
+        # open, assigned, un-notified issue on the next pass, so a comp/void
+        # flag naming a manager was texted to the routed manager anyway (#1).
+        ("ops_issues", "notify_suppressed", "INTEGER DEFAULT 0"),
+        # Structured detail an issue's page acts on (a coverage issue's
+        # suggested covers, so "Ask Ana to cover" is one tap).
+        ("ops_issues", "meta_json", "TEXT"),
+        # A held alert's recommendation key and audience, so its release
+        # records and targets exactly what raising it would have.
+        ("alert_holds", "meta_json", "TEXT"),
+        # Which notification an open answers, so time-to-open is measurable
+        # (#39); keyed only by alert_type before.
+        ("notification_opens", "alert_log_id", "INTEGER"),
+        ("notification_opens", "rec_key", "TEXT"),
+        # One Ask proposal is settled by ITS id, not by every proposal with
+        # the same action name (#23); and why a "Not now" was said.
+        ("ask_cavnar_actions", "proposal_id", "INTEGER"),
+        ("ask_cavnar_actions", "reason", "TEXT"),
+        # Weekly competitor-movement alert, on by default (#48).
+        ("restaurants", "alert_competitor_move", "INTEGER DEFAULT 1"),
     ]
     try:
         for table, col, col_type in columns_to_add:
@@ -2733,7 +2755,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
-        "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
+        "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
@@ -3084,6 +3106,7 @@ def _restaurant_from_row(row) -> Restaurant:
         alert_health_bypass_quiet=row["alert_health_bypass_quiet"] if "alert_health_bypass_quiet" in row.keys() else 0,
         alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
         alert_ai_visibility_drop=row["alert_ai_visibility_drop"] if "alert_ai_visibility_drop" in row.keys() else 0,
+        alert_competitor_move=row["alert_competitor_move"] if "alert_competitor_move" in row.keys() and row["alert_competitor_move"] is not None else 1,
         alert_extra_emails=row["alert_extra_emails"] if "alert_extra_emails" in row.keys() else None,
         push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
         auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,
@@ -7260,15 +7283,29 @@ def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = D
 
 
 def record_notification_open(restaurant_id: int, alert_type: str, user_id: int = None,
-                             db_path: str = DB_PATH):
-    """One row when a notification is actually opened."""
+                             db_path: str = DB_PATH, alert_log_id: int = None, rec_key: str = None):
+    """One row when a notification is actually opened.
+
+    `alert_log_id` is the notification's own history row, carried in the
+    push payload, so time-to-open (opened_at - alert_log.fired_at) is
+    measurable per notification. Only accepted when that row belongs to this
+    restaurant — the id arrives from a client."""
     if not alert_type:
         return
     conn = get_conn(db_path)
     try:
+        log_id = None
+        if alert_log_id:
+            try:
+                ok = conn.execute("SELECT 1 FROM alert_log WHERE id=? AND restaurant_id=?",
+                                  (int(alert_log_id), restaurant_id)).fetchone()
+                log_id = int(alert_log_id) if ok else None
+            except (TypeError, ValueError):
+                log_id = None
         conn.execute(
-            "INSERT INTO notification_opens (restaurant_id, user_id, alert_type) VALUES (?,?,?)",
-            (restaurant_id, user_id, str(alert_type)[:64]))
+            "INSERT INTO notification_opens (restaurant_id, user_id, alert_type, alert_log_id, rec_key) "
+            "VALUES (?,?,?,?,?)",
+            (restaurant_id, user_id, str(alert_type)[:64], log_id, (str(rec_key)[:160] if rec_key else None)))
         conn.commit()
     finally:
         conn.close()
@@ -8215,7 +8252,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "digest_day", "digest_enabled", "login_notify", "staff_signin_notify", "marketing_emails_opt_out",
         "monthly_review_enabled",
         "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
-        "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
+        "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop", "alert_competitor_move",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
         "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_earned",
         "auto_publish_schedule", "auto_order_trusted", "weekly_plan_enabled", "send_delay_minutes", "auto_approve_daily_cap",
@@ -9177,20 +9214,27 @@ def clear_ask_history(restaurant_id, db_path: str = DB_PATH):
 
 
 def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="proposed",
-                   user_id=None, db_path: str = DB_PATH):
+                   user_id=None, proposal_id=None, reason=None, db_path: str = DB_PATH):
     """Audit trail for anything the assistant proposed.
 
     Written at proposal time and again at confirm/dismiss, so "did the
     assistant send that, and who approved it" is answerable after the fact.
+
+    `proposal_id` ties a confirm/dismiss to the ONE proposal it answers —
+    the id of that proposal's own row — so two proposals with the same
+    action name are no longer settled together. Proposal rows leave it
+    empty (their id IS the proposal id); the table stays append-only.
+    `reason` is the owner's optional why on a dismissal.
     """
     import json as _json
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO ask_cavnar_actions (restaurant_id, user_id, action, summary, body, outcome) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO ask_cavnar_actions (restaurant_id, user_id, action, summary, body, outcome, "
+            "proposal_id, reason) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, action, summary,
-             _json.dumps(body) if body else None, outcome)
+             _json.dumps(body) if body else None, outcome, proposal_id,
+             (str(reason).strip()[:300] or None) if reason else None)
         )
         conn.commit()
         return cur.lastrowid
@@ -9198,11 +9242,31 @@ def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="prop
         conn.close()
 
 
+def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
+    """The proposal row `proposal_id` names, scoped to this restaurant, with
+    its settlement (the latest confirm/dismiss row for it), or None."""
+    conn = get_conn(db_path)
+    try:
+        p = conn.execute("SELECT id, action, summary, body, outcome, created_at FROM ask_cavnar_actions "
+                         "WHERE id=? AND restaurant_id=? AND outcome='proposed'",
+                         (proposal_id, restaurant_id)).fetchone()
+        if not p:
+            return None
+        s = conn.execute("SELECT outcome, reason, created_at FROM ask_cavnar_actions WHERE restaurant_id=? "
+                         "AND proposal_id=? AND outcome!='proposed' ORDER BY id DESC LIMIT 1",
+                         (restaurant_id, proposal_id)).fetchone()
+    finally:
+        conn.close()
+    out = dict(p)
+    out["settled"] = dict(s) if s else None
+    return out
+
+
 def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, action, summary, outcome, created_at FROM ask_cavnar_actions "
+            "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
             "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
         ).fetchall()
     finally:

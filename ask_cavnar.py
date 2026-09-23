@@ -541,17 +541,31 @@ def _commitments_context(restaurant_id):
     # is the interesting state — but the same action appears twice (proposed,
     # then the outcome), so the outcome wins per action+summary pair.
     seen, settled, open_items = set(), [], []
+    settled_ids = set()
     for r in rows:
-        key = (r.get("action"), r.get("summary"))
-        if key in seen:
-            continue
-        seen.add(key)
+        # Newest first. An answer naming its proposal (#23) settles exactly
+        # that proposal; an answer from an older client (no proposal_id)
+        # settles by action + summary, as every answer did before.
+        pair = (r.get("action"), r.get("summary"))
+        if r.get("outcome") == "proposed":
+            if r.get("id") in settled_ids or pair in seen:
+                continue
+            seen.add(pair)
+        elif r.get("proposal_id"):
+            if r["proposal_id"] in settled_ids:
+                continue
+            settled_ids.add(r["proposal_id"])
+        else:
+            if pair in seen:
+                continue
+            seen.add(pair)
         when = (r.get("created_at") or "")[:10]
         label = r.get("summary") or (r.get("action") or "").replace("_", " ")
         if r.get("outcome") == "confirmed":
             settled.append(f"{label} — the owner confirmed it, {when}")
         elif r.get("outcome") == "dismissed":
-            settled.append(f"{label} — the owner declined it, {when}")
+            why = f" (their reason: {r['reason']})" if r.get("reason") else ""
+            settled.append(f"{label} — the owner declined it, {when}{why}")
         else:
             open_items.append(f"{label} — proposed {when}, never confirmed or dismissed")
     if not settled and not open_items:
@@ -624,6 +638,49 @@ def invalidate_context(restaurant_id=None):
 
 import models as _models_listen
 _models_listen.on_restaurant_change(invalidate_context)
+
+
+# ── proposals: one identity each (#23) ───────────────────────────────────────
+
+_ACTION_MODULE = {"send_supplier_order": "food", "publish_schedule": "labor", "generate_schedule": "labor",
+                  "send_guest_campaign": "marketing", "publish_instagram_post": "marketing",
+                  "publish_facebook_post": "marketing", "refresh_competitors": "intel"}
+
+
+def proposal_key(proposal_id) -> str:
+    """The recommendation key one Ask proposal carries: "ask:<id>"."""
+    return f"ask:{int(proposal_id)}"
+
+
+def record_proposals(restaurant_id, proposals, user_id=None):
+    """Log each proposal the answer carries and stamp its id on it.
+
+    Every confirm card used to be settled by its ACTION NAME alone, so two
+    supplier-order proposals a day apart were one thing: confirming today's
+    marked last week's as done, and "still proposed" could not say which.
+    Now each card carries `proposal_id` (its ask_cavnar_actions row), the
+    client answers THAT id, and the recommendation trail has it as
+    "ask:<id>". Mutates and returns `proposals`; never raises."""
+    from models import log_ask_action
+    shown = []
+    for p in proposals or []:
+        try:
+            pid = log_ask_action(restaurant_id, p["action"], summary=p.get("summary"),
+                                 body=p.get("body"), outcome="proposed", user_id=user_id)
+            p["proposal_id"] = pid
+            shown.append({"key": proposal_key(pid), "module": _ACTION_MODULE.get(p["action"], "reviews"
+                          if "review" in p["action"] else "ops"),
+                          "title": p.get("summary"), "dollar_value": p.get("at_stake"),
+                          "model_written": True, "kind": "ask"})
+        except Exception as e:
+            print(f"[ask_cavnar] could not log proposal {p.get('action')} rid={restaurant_id}: {e}")
+    if shown:
+        try:
+            import rec_ledger
+            rec_ledger.present_many(restaurant_id, shown, "ask", user_id=user_id)
+        except Exception as e:
+            print(f"[ask_cavnar] rec_ledger present failed rid={restaurant_id}: {e}")
+    return proposals
 
 
 def build_context(restaurant):

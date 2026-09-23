@@ -111,7 +111,16 @@ def clear_routing(restaurant_id, role, db_path=DB_PATH):
 # ── lifecycle ──────────────────────────────────────────────────────────────
 
 def _public(row):
-    return dict(row)
+    """The issue as clients read it. `meta` is the parsed meta_json (a
+    coverage issue's suggested covers and who was already asked), so a
+    client can render "Ask Ana to cover" without parsing a string."""
+    d = dict(row)
+    import json as _json
+    try:
+        d["meta"] = _json.loads(d.get("meta_json") or "null") or {}
+    except (TypeError, ValueError):
+        d["meta"] = {}
+    return d
 
 
 def _mint_link(issue_id, contact_id, purpose="assignee", db_path=DB_PATH):
@@ -129,12 +138,22 @@ def _mint_link(issue_id, contact_id, purpose="assignee", db_path=DB_PATH):
 
 
 def create_issue(restaurant_id, kind, title, detail=None, severity="normal", source_key=None,
-                 assignee_contact_id=None, created_by=None, notify=True, db_path=DB_PATH):
+                 assignee_contact_id=None, created_by=None, notify=True, meta=None, db_path=DB_PATH):
     """Open an issue, assign it, and text the assignee a link.
 
     Idempotent on source_key: the same review can never open two issues,
     however many times the scan that finds it runs. Returns (issue, token);
     the token is only ever returned at creation — only its hash is stored.
+
+    notify=False is PERSISTED (ops_issues.notify_suppressed), not just
+    honoured at creation. tick() texts every open, assigned issue whose
+    notified_at is empty — which is exactly what a filed-not-texted issue
+    looks like — so a comp/void flag naming a manager, filed deliberately
+    without a text, reached the routed manager's phone on the next tick
+    anyway. It still appears on Home and in the issue list.
+
+    `meta` is structured detail the issue's page acts on (a coverage
+    issue's suggested covers), stored as JSON.
     """
     if severity not in ("high", "normal"):
         severity = "normal"
@@ -161,13 +180,16 @@ def create_issue(restaurant_id, kind, title, detail=None, severity="normal", sou
                                     (restaurant_id, source_key)).fetchone()
             if existing:
                 return _public(existing), None
+        import json as _json
         cur = conn.execute(
             "INSERT INTO ops_issues (restaurant_id, kind, source_key, title, detail, severity, "
-            "assignee_contact_id, assignee_name, status, created_by, escalation_contact_id) "
-            "VALUES (?,?,?,?,?,?,?,?, 'open', ?, ?)",
+            "assignee_contact_id, assignee_name, status, created_by, escalation_contact_id, "
+            "notify_suppressed, meta_json) "
+            "VALUES (?,?,?,?,?,?,?,?, 'open', ?, ?, ?, ?)",
             (restaurant_id, kind, source_key, title[:200], (detail or "")[:2000] or None, severity,
              assignee_contact_id, assignee_name, created_by,
-             (routing.get("escalation") or {}).get("contact_id")))
+             (routing.get("escalation") or {}).get("contact_id"),
+             0 if notify else 1, _json.dumps(meta)[:4000] if meta else None))
         conn.commit()
         issue_id = cur.lastrowid
     finally:
@@ -210,6 +232,8 @@ def _sendable(issue_id, db_path=DB_PATH):
         conn.close()
     if not r or not r["phone"] or r["notified_at"] or r["status"] == "resolved":
         return None
+    if "notify_suppressed" in r.keys() and r["notify_suppressed"]:
+        return None                      # filed deliberately without a text
     if is_in_quiet_hours(r["restaurant_id"], db_path=db_path):
         return None
     return r
@@ -232,7 +256,28 @@ def _notify(issue_id, token, db_path=DB_PATH):
             conn.commit()
         finally:
             conn.close()
+        _present(r, "issue_sms", db_path)
     return bool(sent)
+
+
+_KIND_MODULE = {"review": "reviews", "stock": "food", "labor": "labor", "coverage": "labor",
+                "no_show": "labor", "checklist": "ops", "plan": "ops", "loss": "ops"}
+
+
+def _issue_key(r):
+    return r["source_key"] or f"issue:{r['id']}"
+
+
+def _present(r, surface, db_path=DB_PATH):
+    """The issue went out on `surface` — one line in the recommendation
+    trail. Never raises: measuring must not undo a text that already went."""
+    try:
+        import rec_ledger
+        rec_ledger.present_many(r["restaurant_id"], [{
+            "key": _issue_key(r), "module": _KIND_MODULE.get(r["kind"], "ops"), "title": r["title"]}],
+            surface, db_path=db_path)
+    except Exception as e:
+        print(f"[issues] rec_ledger present failed: {e}")
 
 
 def get_issue(restaurant_id, issue_id, db_path=DB_PATH):
@@ -293,6 +338,14 @@ def _resolve(restaurant_id, issue_id, note, db_path):
         row = conn.execute("SELECT source_key FROM ops_issues WHERE id=?", (issue_id,)).fetchone()
     finally:
         conn.close()
+    if changed:
+        try:
+            import rec_ledger
+            rec_ledger.record(restaurant_id, (row["source_key"] if row else None) or f"issue:{issue_id}",
+                              "completed", surface="issue_sms", meta={"note": (note or "")[:200]} if note else None,
+                              source_ref=f"issue:{issue_id}:resolved", db_path=db_path)
+        except Exception as e:
+            print(f"[issues] rec_ledger record failed: {e}")
     # Resolving the issue answers the recommendation that raised it. Before
     # this, a fixed problem stayed on Home as "worth your time" until the
     # owner also pressed Done there — two clicks for one fact. Coverage and
@@ -334,9 +387,11 @@ def reassign(restaurant_id, issue_id, contact_id, db_path=DB_PATH):
                          "AND COALESCE(sms_consent,0)=1", (contact_id, restaurant_id)).fetchone()
         if not c:
             raise ValueError("that contact is not a consented alert contact at this restaurant")
+        # An owner handing it to someone by name is asking for them to be
+        # told — that lifts a filed-without-a-text issue's suppression.
         conn.execute("UPDATE ops_issues SET assignee_contact_id=?, assignee_name=?, "
-                     "notified_at=NULL, status='open', acknowledged_at=NULL, escalated_at=NULL "
-                     "WHERE id=?", (contact_id, c["name"], issue_id))
+                     "notified_at=NULL, status='open', acknowledged_at=NULL, escalated_at=NULL, "
+                     "notify_suppressed=0 WHERE id=?", (contact_id, c["name"], issue_id))
         conn.commit()
     finally:
         conn.close()
@@ -434,8 +489,11 @@ def tick(db_path=DB_PATH, now=None):
     from notify import send_sms
     conn = get_conn(db_path)
     try:
+        # Never an issue filed with notify=False: "not notified yet" and
+        # "deliberately not texted" look identical in notified_at alone.
         held = conn.execute("SELECT id, restaurant_id FROM ops_issues WHERE status='open' "
-                            "AND notified_at IS NULL AND assignee_contact_id IS NOT NULL").fetchall()
+                            "AND notified_at IS NULL AND assignee_contact_id IS NOT NULL "
+                            "AND COALESCE(notify_suppressed, 0)=0").fetchall()
         stale = conn.execute(
             "SELECT i.*, r.escalate_after_minutes, r.contact_id AS esc_contact_id, "
             "c.phone AS esc_phone, c.name AS esc_name "
@@ -510,8 +568,9 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
     a name against them.
 
     Needs a routed manager, like every other auto-issue: no routing, no
-    issues. One per signal per day (source_key), so a signal that persists
-    does not re-text anyone.
+    issues. Labor is one per ISO week (source_key); stock is one OPEN issue
+    at a time, updated while it persists and closed when it clears
+    (_sync_stock_issue), so a signal that persists does not re-text anyone.
     """
     from datetime import date as _date
     if "manager" not in get_routing(restaurant_id, db_path):
@@ -537,28 +596,115 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
             if is_live and items:
                 analysis = (analysis_for(restaurant_id, items=items, is_live=True) or (None, None, {}))[2]
                 low = [x["item"] for x in (analysis.get("critical_low") or [])]
-                if low:
-                    _open("stock", f"{len(low)} item{'' if len(low) == 1 else 's'} critically low",
-                          "Running out today: " + ", ".join(low[:8]) +
-                          ("…" if len(low) > 8 else "") + ". Order or 86 before service.",
-                          severity="high" if len(low) >= 3 else "normal",
-                          key=f"stock:{stamp}")
+                issue = _sync_stock_issue(restaurant_id, low, stamp, db_path)
+                if issue:
+                    opened.append(issue)
         except Exception as e:
             _capture(e, "issue_signals_stock", restaurant_id)
 
     if getattr(r, "module_labor", 0):
         try:
             from labor import analyse_shifts_for_restaurant
+            from thresholds import LABOR_OVER_TARGET_PTS
+            import notify as _notify_mod
             labor = analyse_shifts_for_restaurant(restaurant_id) or {}
-            target = float(getattr(r, "labor_target_pct", 30) or 30)
-            pct = labor.get("labor_pct")
-            if labor.get("is_live") and pct is not None and float(pct) - target >= 3:
+            target = _notify_mod.labor_target_for(r, db_path=db_path)
+            # overall_labor_pct is what analyse_shifts returns; this read
+            # "labor_pct", a key it never had, so the labor issue could not
+            # open (#34). One threshold with the alert and Home.
+            pct = labor.get("overall_labor_pct")
+            if labor.get("is_live") and pct is not None and float(pct) - target >= LABOR_OVER_TARGET_PTS:
                 _open("labor", f"Labor {float(pct):.1f}% against a {target:.0f}% target",
-                      "Last week ran over. Trim the overstaffed days in next week's schedule "
-                      "before it is published.", key=f"labor:{today.strftime('%G-W%V')}")
+                      "The latest labor data ran over. Trim the overstaffed days in next week's "
+                      "schedule before it is published.", key=f"labor:{today.strftime('%G-W%V')}")
         except Exception as e:
             _capture(e, "issue_signals_labor", restaurant_id)
     return opened
+
+
+def _open_issue_of_kind(conn, restaurant_id, kind):
+    return conn.execute("SELECT * FROM ops_issues WHERE restaurant_id=? AND kind=? AND status!='resolved' "
+                        "ORDER BY id DESC LIMIT 1", (restaurant_id, kind)).fetchone()
+
+
+def _sync_stock_issue(restaurant_id, low, stamp, db_path=DB_PATH):
+    """ONE open stock issue, kept current — not a new one every day.
+
+    The key used to be stock:{date}, so an item that stayed low opened a new
+    issue and texted the manager again every morning (#18). Now: while one is
+    open it is updated in place with today's list (no text — the manager
+    already has it); when nothing is critically low any more it closes
+    itself; only when none is open does a new one open (and text).
+    Returns the newly opened issue, else None."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        current = _open_issue_of_kind(conn, restaurant_id, "stock")
+    finally:
+        conn.close()
+    if not low:
+        if current:
+            _resolve(restaurant_id, current["id"], "Closed automatically: everything is back above par.", db_path)
+        return None
+    title = f"{len(low)} item{'' if len(low) == 1 else 's'} critically low"
+    detail = ("Running out today: " + ", ".join(low[:8]) + ("…" if len(low) > 8 else "") +
+              ". Order or 86 before service.")
+    severity = "high" if len(low) >= 3 else "normal"
+    if current:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET title=?, detail=?, severity=?, meta_json=? WHERE id=?",
+                         (title, detail, severity, _json.dumps({"items": low[:40]}), current["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        return None
+    issue, token = create_issue(restaurant_id, "stock", title, detail=detail, severity=severity,
+                                source_key=f"stock:{stamp}", meta={"items": low[:40]}, db_path=db_path)
+    return issue if token else None
+
+
+def auto_close(restaurant_id, db_path=DB_PATH):
+    """Close the issues whose problem is gone, so nobody is chased about a
+    thing already fixed (#18): a review issue once its reply has posted (or
+    been approved to post). Stock closes in open_from_signals and coverage
+    in the coverage check, where the facts that close them are read.
+    Returns how many closed."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT o.id FROM ops_issues o JOIN reviews rv ON rv.restaurant_id=o.restaurant_id "
+            "AND o.source_key='review:' || rv.id WHERE o.restaurant_id=? AND o.kind='review' "
+            "AND o.status!='resolved' AND rv.response_status IN ('posted','approved')",
+            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        _resolve(restaurant_id, row["id"], "Closed automatically: the reply to this review was posted.", db_path)
+    return len(rows)
+
+
+def resolve_coverage(restaurant_id, day_iso, arrived_keys, db_path=DB_PATH):
+    """Close today's "hasn't clocked in" issues for the people who since
+    have. `arrived_keys` are staff_settings.name_key()s of everyone clocked
+    in (aliases already resolved). Returns the names closed."""
+    if not arrived_keys:
+        return []
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT id, source_key, title FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
+                            "AND status!='resolved' AND source_key LIKE ?",
+                            (restaurant_id, f"coverage:{day_iso}:%")).fetchall()
+    finally:
+        conn.close()
+    import staff_settings as _ss
+    closed = []
+    for row in rows:
+        who = row["source_key"].split(":", 2)[2]
+        if _ss.name_key(who) in arrived_keys:
+            _resolve(restaurant_id, row["id"], "Closed automatically: they clocked in.", db_path)
+            closed.append(who)
+    return closed
 
 
 def open_from_checklists(restaurant_id, db_path=DB_PATH, now_local=None):

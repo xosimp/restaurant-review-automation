@@ -19,10 +19,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         didSet {
             guard let router, let tap = heldTap else { return }
             heldTap = nil
-            router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt)
+            router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt,
+                                         alertId: tap.alertId, recKey: tap.recKey)
         }
     }
-    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?)?
+    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?, alertId: Int?, recKey: String?)?
 
     /// Whether the phone will actually show anything. A denial is permanent
     /// and silent: the app never asked, so an owner who tapped "Don't Allow"
@@ -326,6 +327,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // field, never executed, but there's no reason to accept an
         // arbitrarily long payload into one.
         let askPrompt = (cavnar["ask_prompt"] as? String).map { String($0.prefix(300)) }
+        // Which notification this was (its alert_log row) and the
+        // recommendation it carries, so the open ties back to the send
+        // (time-to-open) and to the recommendation's trail.
+        let alertId = Self.reviewId(from: cavnar["alert_id"])
+        let recKey = (cavnar["rec_key"] as? String).map { String($0.prefix(160)) }
         // Every action we register is .foreground and lands on the same
         // screen the notification itself does, so the action identifier
         // changes nothing here — it is the tap that matters. Dismissals are
@@ -333,10 +339,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
             guard let router else {
-                heldTap = (alertType, reviewId, askPrompt)
+                heldTap = (alertType, reviewId, askPrompt, alertId, recKey)
                 return
             }
-            router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt)
+            router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
+                                         alertId: alertId, recKey: recKey)
         }
     }
 

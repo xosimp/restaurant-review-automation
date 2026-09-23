@@ -333,6 +333,12 @@ def run_issue_scan(db_path=DB_PATH, local_hour=None):
             except Exception as e:
                 ops.capture(e, job="issue_scan", context=f"restaurant_id={r.id}")
         try:
+            # A review issue whose reply has posted is done — close it
+            # rather than leave the manager chased about a fixed thing (#18).
+            issues.auto_close(r.id, db_path=db_path)
+        except Exception as e:
+            ops.capture(e, job="issue_auto_close", context=f"restaurant_id={r.id}")
+        try:
             local = restaurant_now(r, naive=True)
             # The checklist is time-of-day sensitive, so it runs every pass —
             # its own grace period decides when it is late (issues.
@@ -671,18 +677,121 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
             import notify
             if not notify.briefing_allowed(r.id, "intraday_pulse", db_path):
                 continue
-            notify.record_notification(r.id, "intraday_pulse", db_path=db_path)
+            # Behind by enough, with more people on for dinner than the
+            # floor needs: the pulse names ONE specific move and its numbers.
+            # A suggestion only — nothing is sent to anyone (#50).
+            move = staffing_move(r, local, p, db_path=db_path)
+            body = (f"${p['net_sales']:,.0f} by {_clock(p['hour'])} against about ${p['typical']:,.0f} "
+                    f"on the last {p['samples']} {p['weekday']}s.")
+            if move:
+                body += " " + move["text"]
+            alert_id = notify.record_notification(r.id, "intraday_pulse", db_path=db_path,
+                                                  value=move["dollars"] if move else None)
+            data = {"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?", "alert_id": alert_id}
+            recs = [{"key": f"intraday_pulse:{local.date().isoformat()}", "module": "labor",
+                     "title": f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}"}]
+            if move:
+                data["staffing_move"] = move
+                recs.append({"key": move["key"], "module": "labor", "title": move["text"],
+                             "dollar_value": move["dollars"]})
+                data["rec_key"] = move["key"]
             push.fire_push(
                 r.id, "intraday_pulse",
-                f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}",
-                f"${p['net_sales']:,.0f} by {p['hour']}:00 against about ${p['typical']:,.0f} "
-                f"on the last {p['samples']} {p['weekday']}s.",
-                data={"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?"},
-                db_path=db_path, user_ids=audience)
+                f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}", body,
+                data=data, db_path=db_path, user_ids=audience)
+            try:
+                import rec_ledger
+                rec_ledger.present_many(r.id, recs, "alert_push", db_path=db_path)
+            except Exception as le:
+                ops.capture(le, job="pre_dinner_pulse_rec", context=f"restaurant_id={r.id}")
             sent += 1
         except Exception as e:
             ops.capture(e, job="pre_dinner_pulse", context=f"restaurant_id={r.id}")
     return {"sent": sent}
+
+
+def _clock(hour, minute=0) -> str:
+    """16 -> "4pm", 20:30 -> "8:30pm" — the way an owner says a time."""
+    h = int(hour) % 24
+    suffix = "am" if h < 12 else "pm"
+    h12 = h % 12 or 12
+    return f"{h12}{':%02d' % minute if minute else ''}{suffix}"
+
+
+# When a slow night suggests letting someone go, the time it suggests.
+PULSE_CUT_HOUR = 20
+PULSE_MOVE_MIN_BEHIND_PCT = 15
+PULSE_MOVE_MIN_HOURS = 1.0
+
+
+def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
+    """ONE specific staffing move for a night running behind, from the
+    published week and the restaurant's own labor rates — or None.
+
+    Only when today is at least PULSE_MOVE_MIN_BEHIND_PCT behind, and only
+    in a role with more people on at PULSE_CUT_HOUR than its dinner floor
+    (schedule_rules role floors; with no floor set, one person is the
+    floor). The person suggested is that role's latest starter, and the
+    saving is the hours from the cut to their scheduled end, at the role's
+    rate. {"text", "employee", "role", "cut_at", "hours", "dollars", "on",
+    "floor", "key"}. Servers are considered first — the usual first cut on
+    a slow floor — then whichever role has the most spare."""
+    try:
+        pct = float(pulse.get("pct") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pulse.get("direction") != "behind" or abs(pct) < PULSE_MOVE_MIN_BEHIND_PCT:
+        return None
+    import intraday
+    import schedule_rules as _sr
+    from models import get_role_rates
+    rows = intraday.published_rows(restaurant.id, local.date(), db_path=db_path)
+    if not rows:
+        return None
+    cut = PULSE_CUT_HOUR * 60
+    weekday = local.strftime("%A")
+    on_by_role = {}
+    for x in rows:
+        start, end = _sr.parse_minutes(x["shift_start"]), _sr.parse_minutes(x["shift_end"])
+        if start is None or end is None:
+            continue
+        if end <= start:
+            end += 24 * 60                       # closes past midnight
+        if start <= cut < end:
+            on_by_role.setdefault((x["role"] or "Staff").strip(), []).append({**x, "_start": start, "_end": end})
+    floors = _sr.role_floors(restaurant)
+    choices = []
+    for role, people in on_by_role.items():
+        floor = max(1, _sr.floor_for(floors, role, weekday, "night"))
+        spare = len(people) - floor
+        if spare <= 0:
+            continue
+        choices.append(("server" not in role.lower(), -spare, role, people, floor))
+    if not choices:
+        return None
+    choices.sort(key=lambda c: (c[0], c[1], c[2]))
+    _srv, _spare, role, people, floor = choices[0]
+    who = sorted(people, key=lambda x: (x["_start"], x["_end"]))[-1]
+    hours = round((who["_end"] - cut) / 60.0, 1)
+    if hours < PULSE_MOVE_MIN_HOURS:
+        return None
+    rates = get_role_rates(restaurant.id, db_path=db_path) or {}
+    rate = None
+    for k, v in rates.items():
+        if k != "_default" and k.strip().lower() == role.lower():
+            rate = float(v)
+    if rate is None:
+        rate = float(rates.get("_default") or getattr(restaurant, "hourly_rate", None) or 0) or None
+    dollars = round(hours * rate) if rate else None
+    end_label = who["shift_end"] or "close"
+    text = (f"{len(people)} {role.lower()}{'' if len(people) == 1 else 's'} on at {_clock(PULSE_CUT_HOUR)} "
+            f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
+            f"{_clock(PULSE_CUT_HOUR)} saves about {hours:g}h"
+            + (f" (~${dollars:,.0f})" if dollars else "") + ".")
+    import staff_settings as _ss
+    return {"text": text, "employee": who["employee"], "role": role, "cut_at": _clock(PULSE_CUT_HOUR),
+            "hours": hours, "dollars": dollars, "on": len(people), "floor": floor,
+            "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}
 
 
 def run_coverage_check(db_path=DB_PATH):
@@ -709,33 +818,52 @@ def run_coverage_check(db_path=DB_PATH):
             # the count crashed this job on every restaurant with a schedule
             # (MOD-LAB-1).
             on_today = {str(x.get("employee") or "") for x in (gaps.get("scheduled_rows") or [])}
+            # Someone who turned up late closes their own no-show issue on
+            # this pass — the manager is not left chasing a person already
+            # on the floor (#13 / #18).
+            if gaps.get("available"):
+                issues.resolve_coverage(r.id, local.date().isoformat(), set(gaps.get("arrived_keys") or []),
+                                        db_path=db_path)
+            import staff_settings as _ss
             for m in (gaps.get("missing") or []):
-                fits_text = ""
+                fits_text, fits = "", []
                 try:
                     import labor_replacements
                     fits = labor_replacements.for_gap(r.id, m.get("role"), local.strftime("%A"),
                                                       exclude=on_today | {m["employee"]}, db_path=db_path,
-                                                      on_date=local.date().isoformat())
+                                                      on_date=local.date().isoformat()) or []
                     fits_text = labor_replacements.sentence(fits)
                 except Exception as fe:
                     ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
+                # The suggested covers travel with the issue, so its page can
+                # offer "Ask Ana to cover" as one tap (intraday.ask_to_cover).
+                meta = {"missing": m["employee"], "role": m.get("role"), "shift_start": m.get("shift_start"),
+                        "covers": [{"name": f["name"], "score": f.get("score")} for f in fits]}
                 issue, token = issues.create_issue(
                     r.id, "coverage",
                     f"{m['employee']} hasn't clocked in",
                     detail=f"Scheduled {m['shift_start']} as {m['role']} — "
                            f"{m['minutes_late']} minutes ago, with no clock-in on the POS." + fits_text,
                     severity="high",
-                    source_key=f"coverage:{local.date().isoformat()}:{m['employee'].lower()}",
-                    db_path=db_path)
+                    source_key=f"coverage:{local.date().isoformat()}:{_ss.name_key(m['employee'])}",
+                    meta=meta, db_path=db_path)
                 if token:
                     opened += 1
+                    if fits:
+                        try:
+                            import rec_ledger
+                            rec_ledger.present(r.id, intraday.cover_key(issue), "labor", "issue_sms",
+                                               title=f"Ask {fits[0]['name']} to cover {m['employee']}",
+                                               db_path=db_path)
+                        except Exception as le:
+                            ops.capture(le, job="coverage_rec", context=f"restaurant_id={r.id}")
         except Exception as e:
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
     return {"opened": opened}
 
 
 def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
-           lines=None, email_type=None):
+           lines=None, email_type=None, rec=None):
     """Push to the people who have the app, email the ones who don't.
 
     morning_brief.deliver established this — push OR email, never both,
@@ -763,9 +891,12 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     for token in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True) or []):
         devices.setdefault(int(token.get("user_id") or 0), []).append(token)
 
-    notify.record_notification(restaurant_id, alert_type, db_path=db_path)
+    alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path)
     pushed = {u["id"] for u in people if devices.get(u["id"])}
     if pushed:
+        # The history row's id rides the payload so the open can name it
+        # (#39); the recommendation key too, when this is one.
+        data = dict(data or {}, alert_id=alert_id, **({"rec_key": rec["key"]} if rec else {}))
         push.fire_push(restaurant_id, alert_type, title, body, data=data,
                        db_path=db_path, user_ids=pushed)
     reached = len(pushed)
@@ -795,6 +926,15 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
                 })
             if getattr(result, "ok", False):
                 reached += 1
+    if rec and reached:
+        try:
+            import rec_ledger
+            if pushed:
+                rec_ledger.present_many(restaurant_id, [rec], "alert_push", db_path=db_path)
+            if reached > len(pushed):
+                rec_ledger.present_many(restaurant_id, [rec], "alert_email", db_path=db_path)
+        except Exception as e:
+            print(f"[strategy_jobs] rec_ledger present failed rid={restaurant_id}: {e}")
     return reached
 
 
@@ -910,16 +1050,28 @@ def run_demand_opportunity(db_path=DB_PATH):
     for r in _restaurants(db_path):
         if not getattr(r, "module_marketing", 0):
             continue
+        try:
+            expire_quiet_night_drafts(r.id, db_path=db_path)
+        except Exception as e:
+            ops.capture(e, job="quiet_night_expire", context=f"restaurant_id={r.id}")
         local = restaurant_now(r, naive=True)
         if not (DEMAND_OPPORTUNITY_HOUR <= local.hour < DEMAND_OPPORTUNITY_HOUR + 4):
             continue
-        # Claimed on the ISO WEEK, not the date — scheduler.local_due claims
-        # per day, which for a weekly job would mean one every morning.
-        if not ops.claim_period(f"demand_opportunity:{r.id}", local.strftime("%G-W%V")):
+        week = local.strftime("%G-W%V")
+        if ops.period_claimed(f"demand_opportunity:{r.id}", week):
             continue
         try:
+            # The date is checked BEFORE the week is claimed. The job looks
+            # two days out, so Monday's run asks about Wednesday; claiming
+            # first meant a Monday with no quiet Wednesday spent the week,
+            # and the quiet Thursday the Tuesday run would have found was
+            # never told (#32). Now only a run that has something to say
+            # claims the week.
             out = demand.quiet_night_ahead(r.id, today=local.date(), db_path=db_path)
             if not out.get("available"):
+                continue
+            # Claimed on the ISO WEEK, not the date — once a week at most.
+            if not ops.claim_period(f"demand_opportunity:{r.id}", week):
                 continue
             import morning_brief, notify
             audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
@@ -927,27 +1079,115 @@ def run_demand_opportunity(db_path=DB_PATH):
                 continue
             if not notify.briefing_allowed(r.id, "demand_opportunity", db_path):
                 continue
-            notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
-                                       value=float(out["typical_sales"]))
+            # Two weeks running of drafts nobody approved is an answer:
+            # keep the heads-up, stop spending model calls on copy that goes
+            # unused. Read BEFORE this week's notification is recorded —
+            # this week has no drafts yet and would read as "not an answer".
+            ignored = quiet_night_ignored_weeks(r.id, db_path=db_path)
+            alert_id = notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
+                                                  value=float(out["typical_sales"]))
             # The fill, drafted: a post and a guest text for that night,
             # saved as drafts behind the same approval as any other. The
             # push used to ask "what could fill it?" — now it says "here's
             # what I wrote; approve it". Drafting can fail (budget, model)
             # without costing the owner the heads-up.
-            drafted = _draft_quiet_night_fill(r, out, db_path)
+            drafted = {} if ignored >= QUIET_NIGHT_IGNORED_LIMIT else _draft_quiet_night_fill(r, out, db_path)
             body = (f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
                     f"typical day across {out['samples']} of them. ")
             body += ("A post and a guest text are drafted — approve them from Marketing."
                      if drafted else "Two days to do something about it.")
+            rec = {"key": f"quiet_night:{out.get('date') or out['weekday']}", "module": "marketing",
+                   "title": f"{out['weekday']} is usually your quietest night",
+                   "model_written": bool(drafted)}
             push.fire_push(
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
-                data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted},
+                data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted,
+                      "alert_id": alert_id, "rec_key": rec["key"]},
                 db_path=db_path, user_ids=audience)
+            try:
+                import rec_ledger
+                rec_ledger.present_many(r.id, [rec], "alert_push", db_path=db_path)
+            except Exception as le:
+                ops.capture(le, job="demand_opportunity_rec", context=f"restaurant_id={r.id}")
             sent += 1
         except Exception as e:
             ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")
     return {"sent": sent}
+
+
+# Drafted-and-ignored weeks in a row after which the fill is no longer drafted.
+QUIET_NIGHT_IGNORED_LIMIT = 2
+# The topic suffixes _draft_quiet_night_fill writes — how its drafts are known.
+_QN_POST_SUFFIX = " night — a reason to come in this week"
+_QN_SMS_SUFFIX = " night guest text"
+# A quiet-night draft is about a night two days after it was written; a day
+# past that it can only be wrong.
+QUIET_NIGHT_DRAFT_DAYS = 3
+
+
+def _quiet_night_drafts(conn, restaurant_id):
+    return conn.execute(
+        "SELECT id, status, created_at FROM marketing_drafts WHERE restaurant_id=? "
+        "AND (topic LIKE ? OR topic LIKE ?) ORDER BY created_at DESC, id DESC LIMIT 60",
+        (restaurant_id, "%" + _QN_POST_SUFFIX, "%" + _QN_SMS_SUFFIX)).fetchall()
+
+
+def quiet_night_ignored_weeks(restaurant_id, db_path=DB_PATH) -> int:
+    """How many of the most recent quiet-night weeks in a row had drafts and
+    none of them approved. A week whose drafts were deleted unapproved
+    counts as ignored too (its demand_opportunity notification says a fill
+    was drafted that week)."""
+    conn = get_conn(db_path)
+    try:
+        drafts = _quiet_night_drafts(conn, restaurant_id)
+        pushes = conn.execute(
+            "SELECT fired_at FROM alert_log WHERE restaurant_id=? AND alert_type='demand_opportunity' "
+            "ORDER BY id DESC LIMIT 6", (restaurant_id,)).fetchall()
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+    from datetime import datetime as _dt
+
+    def _wk(stamp):
+        try:
+            return _dt.strptime(str(stamp)[:10], "%Y-%m-%d").strftime("%G-W%V")
+        except ValueError:
+            return None
+    by_week = {}
+    for d in drafts:
+        wk = _wk(d["created_at"])
+        if wk:
+            by_week.setdefault(wk, []).append(d["status"])
+    weeks = [w for w in dict.fromkeys(_wk(p["fired_at"]) for p in pushes) if w]
+    ignored = 0
+    for wk in weeks:
+        statuses = by_week.get(wk)
+        if statuses is None:
+            break                       # nothing drafted that week — not an answer
+        if any(st == "approved" for st in statuses):
+            break
+        ignored += 1
+    return ignored
+
+
+def expire_quiet_night_drafts(restaurant_id, db_path=DB_PATH) -> int:
+    """A quiet-night post or guest text still unapproved after its night has
+    passed is retired (status 'expired'), so nobody can approve a "come in
+    Tuesday" on Thursday. approve_draft only approves status='draft'."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            "UPDATE marketing_drafts SET status='expired', updated_at=datetime('now') "
+            "WHERE restaurant_id=? AND status='draft' AND (topic LIKE ? OR topic LIKE ?) "
+            "AND created_at < datetime('now', ?)",
+            (restaurant_id, "%" + _QN_POST_SUFFIX, "%" + _QN_SMS_SUFFIX,
+             f"-{QUIET_NIGHT_DRAFT_DAYS} days")).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return n
 
 
 def _draft_quiet_night_fill(r, out, db_path):
@@ -956,7 +1196,7 @@ def _draft_quiet_night_fill(r, out, db_path):
     import ops
     saved = {}
     weekday = out.get("weekday") or "the quiet night"
-    topic = f"{weekday} night — a reason to come in this week"
+    topic = f"{weekday}{_QN_POST_SUFFIX}"
     try:
         import marketing, marketing_drafts
         body = marketing.generate_content("instagram_post", topic, restaurant_id=r.id)
@@ -971,7 +1211,7 @@ def _draft_quiet_night_fill(r, out, db_path):
         msg = guest_marketing.draft_campaign_message(r, campaign_type="slow_day", topic=topic)
         if msg and msg.strip():
             res = marketing_drafts.save_draft(r.id, msg.strip(), content_type="guest_sms",
-                                              topic=f"{weekday} night guest text")
+                                              topic=f"{weekday}{_QN_SMS_SUFFIX}")
             if res.get("ok"):
                 saved["sms_draft_id"] = res["id"]
     except Exception as e:
@@ -1001,11 +1241,25 @@ def run_trusted_orders(db_path=DB_PATH):
                        "A supplier order goes out in an hour",
                        f"{row.get('label')}. Undo from Home if you'd rather look first.",
                        {"delayed_action_id": row["id"]}, db_path,
-                       subject=f"Supplier order going out at {row['execute_at'][11:16]} UTC — {r.name}")
+                       subject=f"Supplier order going out at {_local_clock(r, row['execute_at'])} — {r.name}")
                 queued += 1
         except Exception as e:
             ops.capture(e, job="trusted_orders", context=f"restaurant_id={r.id}")
     return {"queued": queued}
+
+
+def _local_clock(restaurant, utc_stamp) -> str:
+    """A stored UTC "YYYY-MM-DD HH:MM:SS" as the restaurant's own wall clock,
+    "9:00am". The trusted-order subject said "going out at 13:00 UTC" to an
+    owner in Chicago (#16)."""
+    from datetime import datetime as _dt, timezone as _tz
+    from time_utils import restaurant_tz
+    try:
+        at = _dt.strptime(str(utc_stamp)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+        local = at.astimezone(restaurant_tz(restaurant))
+    except (TypeError, ValueError):
+        return "shortly"
+    return _clock(local.hour, local.minute)
 
 
 def run_preshift_nudge(db_path=DB_PATH):
@@ -1054,3 +1308,171 @@ def run_preshift_nudge(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="preshift_nudge", context=f"restaurant_id={r.id}")
     return {"sent": sent}
+
+
+
+# ── Review requests: measured, and nudged (#49) ───────────────────────────────
+# review_requests rows were written on every send and read by nothing: nobody
+# could say whether asking guests for a review ever produced one. Measured
+# here, honestly: Google does not give a reviewer's phone or email, so the
+# only join available is the NAME the guest gave us against the name on the
+# review. That over-counts common names and misses nicknames and initials,
+# and it says so wherever the figure is shown.
+REVIEW_REQUEST_MATCH_DAYS = 14
+REVIEW_REQUEST_MEASURE_DAYS = 90
+REVIEW_REQUEST_OFF_DAYS = 30
+REVIEW_NUDGE_WEEKDAY = 0                 # Monday
+REVIEW_NUDGE_HOUR = 10
+REVIEW_NUDGE_CURSOR_KEY = "review_request_nudge_cursor"
+REVIEW_NUDGE_MAX_SECONDS = 5 * 60
+REVIEW_MATCH_CAVEAT = ("Matched by name only — Google doesn't share a reviewer's phone or email, so a "
+                       "common name can be over-counted and a nickname missed.")
+
+
+def _parse_stamp(value):
+    """A stored timestamp or date as a naive UTC-ish datetime, else None.
+    The offset, where there is one, is dropped: a 14-day window does not
+    turn on a few hours."""
+    from datetime import datetime as _dt
+    text = str(value or "").strip().replace("Z", "")[:19]
+    try:
+        return _dt.fromisoformat(text).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def review_request_conversion(restaurant_id, days=REVIEW_REQUEST_MEASURE_DAYS, db_path=DB_PATH) -> dict:
+    """Of the review requests sent in the last `days` whose 14-day window has
+    closed, how many were followed by a Google review from someone of the
+    same name within REVIEW_REQUEST_MATCH_DAYS.
+
+    {"measured", "matched", "rate", "window_days", "sent_recently",
+     "basis": "name", "caveat"} — rate is None below 5 measured requests,
+    because 1 of 3 is not a conversion rate."""
+    import staff_settings as _ss
+    from datetime import datetime as _dt, timedelta as _td
+    conn = get_conn(db_path)
+    try:
+        reqs = conn.execute(
+            "SELECT customer_name, sent_at FROM review_requests WHERE restaurant_id=? "
+            "AND COALESCE(status,'sent') NOT IN ('failed') AND sent_at >= datetime('now', ?) "
+            "ORDER BY sent_at", (restaurant_id, f"-{int(days)} days")).fetchall()
+        reviews = conn.execute(
+            "SELECT id, author, COALESCE(NULLIF(review_date,''), fetched_at) AS at FROM reviews "
+            "WHERE restaurant_id=? AND platform='google' AND deleted_at IS NULL "
+            "AND datetime(COALESCE(NULLIF(review_date,''), fetched_at)) >= datetime('now', ?)",
+            (restaurant_id, f"-{int(days) + REVIEW_REQUEST_MATCH_DAYS} days")).fetchall()
+    finally:
+        conn.close()
+    now = _dt.utcnow()
+    window = _td(days=REVIEW_REQUEST_MATCH_DAYS)
+    recent = sum(1 for q in reqs if (_parse_stamp(q["sent_at"]) or now) >= now - _td(days=REVIEW_REQUEST_OFF_DAYS))
+    by_name = {}
+    for rv in reviews:
+        k = _ss.name_key(rv["author"])
+        at = _parse_stamp(rv["at"])
+        if k and at:
+            by_name.setdefault(k, []).append((at, rv["id"]))
+    used, measured, matched = set(), 0, 0
+    for q in reqs:
+        sent = _parse_stamp(q["sent_at"])
+        k = _ss.name_key(q["customer_name"])
+        if not sent or sent > now - window:
+            continue                        # its window hasn't closed yet
+        measured += 1
+        if not k:
+            continue
+        for at, rid_ in by_name.get(k, []):
+            if rid_ not in used and sent <= at <= sent + window:
+                used.add(rid_)
+                matched += 1
+                break
+    return {"measured": measured, "matched": matched,
+            "rate": round(matched / measured, 3) if measured >= 5 else None,
+            "window_days": REVIEW_REQUEST_MATCH_DAYS, "sent_recently": recent,
+            "basis": "name", "caveat": REVIEW_MATCH_CAVEAT}
+
+
+def _google_review_counts(restaurant_id, db_path=DB_PATH):
+    """(last 28 days, the 28 before) — reviews guests wrote on Google."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT SUM(d >= datetime('now','-28 days')) AS now_n, "
+            "SUM(d < datetime('now','-28 days') AND d >= datetime('now','-56 days')) AS prev_n FROM "
+            "(SELECT datetime(COALESCE(NULLIF(review_date,''), fetched_at)) AS d FROM reviews "
+            " WHERE restaurant_id=? AND platform='google' AND deleted_at IS NULL)", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return int(row["now_n"] or 0), int(row["prev_n"] or 0)
+
+
+def review_request_nudge(restaurant, db_path=DB_PATH):
+    """(title, body, rec, lines) when this restaurant should hear about review
+    requests this week, else None: requests have gone quiet (none sent in
+    REVIEW_REQUEST_OFF_DAYS), or new Google reviews are flat or falling
+    against the four weeks before. Always with the measured conversion when
+    there is one, and its caveat."""
+    rid = restaurant.id
+    conv = review_request_conversion(rid, db_path=db_path)
+    now_n, prev_n = _google_review_counts(rid, db_path)
+    off = conv["sent_recently"] == 0
+    flat = prev_n > 0 and now_n <= prev_n
+    if not off and not flat:
+        return None
+    lines = []
+    if off:
+        title = "No review requests went out this month"
+        lines.append(f"Nobody was asked for a review in the last {REVIEW_REQUEST_OFF_DAYS} days.")
+    else:
+        title = "New Google reviews have gone flat"
+        lines.append(f"{now_n} new Google review{'' if now_n == 1 else 's'} in the last 4 weeks, "
+                     f"against {prev_n} the 4 weeks before.")
+    if conv["rate"] is not None:
+        lines.append(f"When you asked: {conv['matched']} of {conv['measured']} guests "
+                     f"({conv['rate'] * 100:.0f}%) left a Google review within {conv['window_days']} days. "
+                     + conv["caveat"])
+    elif conv["measured"]:
+        lines.append(f"{conv['measured']} request{'' if conv['measured'] == 1 else 's'} measured so far — "
+                     "too few to call a rate yet.")
+    lines.append("Review requests go out after a visit from Marketing → Guests.")
+    rec = {"key": "review_requests", "module": "reviews", "title": title}
+    return title, " ".join(lines), rec, lines
+
+
+def run_review_request_nudge(db_path=DB_PATH, now_local=None):
+    """Monday morning, each restaurant in its own timezone: at most one
+    review-request nudge a week, through the briefing budget (_reach).
+    Bounded and resumable (scheduler.resumable_sweep); the ISO-week claim is
+    taken only on the day and hour it is meant for, and only when there is
+    something to say."""
+    import ops, scheduler
+    from time_utils import restaurant_now
+    by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_reviews", 0)}
+    sent = {"n": 0}
+
+    def _one(rid):
+        r = by_id[rid]
+        local = now_local or restaurant_now(r, naive=True)
+        if local.weekday() != REVIEW_NUDGE_WEEKDAY or not (REVIEW_NUDGE_HOUR <= local.hour < REVIEW_NUDGE_HOUR + 4):
+            return
+        week = local.strftime("%G-W%V")
+        if ops.period_claimed(f"review_request_nudge:{rid}", week):
+            return
+        out = review_request_nudge(r, db_path=db_path)
+        if not out:
+            return
+        title, body, rec, lines = out
+        import notify
+        if rec["key"] in notify.silenced_keys(rid, db_path):
+            return
+        if not ops.claim_period(f"review_request_nudge:{rid}", week):
+            return
+        if _reach(rid, "review_request_nudge", title, body,
+                  {"ask_prompt": "How are review requests working for us?"}, db_path,
+                  subject=title, lines=lines, rec=rec):
+            sent["n"] += 1
+
+    scheduler.resumable_sweep(REVIEW_NUDGE_CURSOR_KEY, sorted(by_id), _one, REVIEW_NUDGE_MAX_SECONDS,
+                              job="review_request_nudge")
+    return {"sent": sent["n"]}
