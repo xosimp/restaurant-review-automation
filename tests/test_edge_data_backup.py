@@ -40,7 +40,7 @@ def _scratch(tmp_path, monkeypatch):
     monkeypatch.chdir(cwd)
     monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 22, 2, 0))
     import emails
-    monkeypatch.setattr(emails, "deliver", lambda **kw: True)
+    monkeypatch.setattr(emails, "deliver", lambda *a, **kw: True)
     return cwd
 
 
@@ -114,14 +114,16 @@ def test_a_failed_snapshot_leaves_no_file_behind(tmp_path, monkeypatch):
 # ── the off-site copy (DATA-18) ────────────────────────────────────────────
 
 def test_the_offsite_copy_is_streamed_not_read_whole(tmp_path, monkeypatch):
-    import resend
     from cryptography.fernet import Fernet
     _live_db(str(tmp_path / "live.db"), monkeypatch)
     monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setenv("BACKUP_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setattr(scheduler, "_resend_key", lambda: "re_test_key")
     sent = []
-    monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda payload: sent.append(payload) or {"id": "x"}))
+    import emails
+    # The copy goes through emails.deliver (suppression, email_log, retry).
+    monkeypatch.setattr(emails, "deliver",
+                        lambda payload=None, **kw: sent.append(payload) or emails.SendResult(True, attempts=1))
 
     unsized = []
 

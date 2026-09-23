@@ -1517,6 +1517,8 @@ def init_db(db_path: str = DB_PATH):
             opened_at     TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_notification_opens ON notification_opens(restaurant_id, alert_type, opened_at)",
+        # ops.prune_ledgers deletes by age (MOD-NOT-14).
+        "CREATE INDEX IF NOT EXISTS idx_notification_opens_opened ON notification_opens(opened_at)",
         """CREATE TABLE IF NOT EXISTS notification_reads (
             user_id       INTEGER NOT NULL,
             restaurant_id INTEGER NOT NULL,
@@ -1719,6 +1721,7 @@ def init_db(db_path: str = DB_PATH):
             tapped_at  TEXT    NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_link_taps ON marketing_link_taps(link_id, visitor, tapped_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_link_taps_tapped ON marketing_link_taps(tapped_at)",
 
         # What a post did to the till. Cached per post because it reads POS
         # sales over a window and is not worth recomputing on every render.
@@ -2376,6 +2379,7 @@ def init_db(db_path: str = DB_PATH):
             value           REAL
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_due ON alert_holds(sent_at, release_at)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_holds_created ON alert_holds(created_at)",
 
         """CREATE TABLE IF NOT EXISTS invoice_imports (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
