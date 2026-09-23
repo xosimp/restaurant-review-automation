@@ -41,3 +41,16 @@ def test_every_walk_to_body_is_followed_by_a_found_check():
             line = SRC[:m.start()].count("\n") + 1
             bad.append(f"dashboard.html:{line}")
     assert not bad, "handlers that act on a click anywhere on the page: " + ", ".join(bad)
+
+
+def test_the_cursor_light_is_only_on_the_big_graphs():
+    """Owner's call: the hover spotlight belongs to the big graphs (Home's
+    value graph and each module's hero chart) and nothing else; the stat
+    sections get no hover background."""
+    i = SRC.index("var lit = document.querySelectorAll(")
+    sel = SRC[i:SRC.index(";", i)]
+    assert set(re.findall(r"\.([a-z0-9-]+):not\(\.lit\)", sel)) == {"rv2-hero", "lb2-hero", "hb-hero"}
+    assert ".hb-card:after{" not in SRC and ".hb-card:hover:after" not in SRC
+    # No hover BACKGROUND on the stat sections (a lift on Home's tiles stays).
+    for m in re.finditer(r"([^{}]*\.(?:hb|rv2|lb2)-sg:hover[^{}]*)\{([^}]*)\}", SRC):
+        assert "background" not in m.group(2), m.group(0)

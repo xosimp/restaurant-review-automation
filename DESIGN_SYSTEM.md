@@ -379,14 +379,16 @@ iOS (`CavnarSurface` on `cavnarCard(_:)`):
 
 | Tier | Use | Web | iOS |
 |---|---|---|---|
-| hero | the module's focal point near the top | `.rv2-hero`, `.lb2-hero`, `.hb-card.hero` — ambient ember light (`:before`), deep shadow, cursor light | `.cavnarCard(.hero)` |
+| hero | the module's focal point near the top | `.rv2-hero`, `.lb2-hero`, `.hb-hero`, `.hb-card.hero` — ambient ember light (`:before`), deep shadow; the graph heroes (`.hb-hero`, `.rv2-hero`, `.lb2-hero`) also carry the cursor light | `.cavnarCard(.hero)` |
 | card | informational | `.hb-card`, `.ac-card`, `.data-card` — hairline, lift on hover | `.cavnarCard()` |
-| recessed | supporting stats inside a card | `.hb-sg`, `.rv2-sg`, `.lb2-sg` — inset tone on hover, no border | — |
+| recessed | supporting stats inside a card | `.hb-sg`, `.rv2-sg`, `.lb2-sg` — no border, no hover tone | — |
 | floating | above the page | `.ask-panel`, `.ai-feed`, modals — glass, long shadow | `.cavnarCard(.floating)` |
 | ai | written by Cavnar AI | `.lb2-ai`, `.hb-rec`, `.ask-b.ai`, `.fc2-recipe` — warm surface, ember hairline, glow | `.cavnarCard(.ai)` |
 
-A recommendation must always read as more elevated than a table. Every
-lit surface carries the cursor light (`.lit`, `--mx/--my`).
+A recommendation must always read as more elevated than a table. The
+cursor light (`.lit`, `--mx/--my`) is for the big graphs ONLY — Home's
+value graph and each module's hero chart. Cards, sections and stat tiles
+get no spotlight and no hover background (owner's call, Sep 23 2026).
 
 **The ember thread (signature motif).** A 2px ember line with one light
 travelling along it, drawn from evidence to conclusion: Home's module pills

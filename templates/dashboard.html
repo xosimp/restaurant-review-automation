@@ -716,7 +716,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .rv2-hero>*,.lb2-hero>*{position:relative}
 @keyframes brandAmbient{from{transform:translate(0,0) scale(1);opacity:.85}to{transform:translate(6%,4%) scale(1.08);opacity:1}}
 .lb2-hero .lb2-ai{margin-top:18px}
-/* cursor light on every lit surface (Home's own, extended) */
+/* cursor light on the big graphs only: Home's value graph and each module's hero chart */
 .lit{position:relative}
 .lit:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .25s ease;background:radial-gradient(360px circle at var(--mx,50%) var(--my,50%),rgba(200,75,47,.10),transparent 60%)}
 .lit:hover:after{opacity:1}
@@ -726,7 +726,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .ac-card:hover,.fc2-fcp:hover,.data-card:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 44px -22px rgba(14,12,10,.22)}
 /* recessed tier: supporting stats sit INTO the card, separated by tone not line */
 .hb-sg,.rv2-sg,.lb2-sg{border-radius:12px;transition:background-color .2s ease}
-.hb-sg:hover,.rv2-sg:hover,.lb2-sg:hover{background:var(--sf-recess)}
 .hb-stat{transition:background-color .2s ease,transform .2s ease}
 /* floating tier: glass above the page */
 .ask-panel, .ai-feed, #explain-modal .box{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:var(--elev-float)}
@@ -1725,15 +1724,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    Foreground = the two hero cards (deeper shadow, a warm ambient glow that
    drifts slowly, the "monitoring" light). Middle = .hb-card. Background =
    .hb-card.quiet — inset tint, no border, no shadow — for what should
-   recede (open issues, still open, close-out). Every card carries a cursor
-   light (--mx/--my set on mousemove) so hover reads as illumination rather
-   than a colour swap. Warm secondaries (copper, amber) so the ember reads
+   recede (still open, close-out). Only the big graphs carry the cursor
+   light (.lit); cards lift on hover and nothing else. Warm secondaries (copper, amber) so the ember reads
    as chosen rather than the only orange the palette has. */
 #panel-home{--hb-copper:#b8643c;--hb-amber:#c9843f;--hb-good2:#2f7f5a;--hb-glow:rgba(200,75,47,.20);--hb-sheen:rgba(255,255,255,.7);--hb-halo:rgba(200,75,47,.18)}
 [data-theme="dark"] #panel-home{--hb-copper:#c9784f;--hb-amber:#e6a862;--hb-good2:#5ec38a;--hb-glow:rgba(224,100,68,.30);--hb-sheen:rgba(255,255,255,.07);--hb-halo:rgba(224,100,68,.24)}
 .hb-card{will-change:transform}
-.hb-card:after{content:'';position:absolute;inset:0;border-radius:inherit;background:radial-gradient(560px circle at var(--mx,50%) var(--my,-20%),var(--hb-sheen),transparent 46%);opacity:0;transition:opacity .3s ease;pointer-events:none;z-index:0}
-.hb-card:hover:after{opacity:1}
 .hb-card>*{position:relative;z-index:1}
 .hb-card:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 24px 44px -22px rgba(14,12,10,.24)}
 [data-theme="dark"] .hb-card:hover{border-color:rgba(255,255,255,.12);box-shadow:var(--elev-2)}
@@ -1909,13 +1905,6 @@ svg:hover .hb-xh{opacity:1}
   }
   document.addEventListener('mousemove',hbChartHover);
   document.addEventListener('mouseleave',function(){var t=document.getElementById('hb-tip');if(t)t.className='';},true);
-  // ── the cursor light on every card ────────────────────────────────────────
-  document.addEventListener('mousemove',function(e){
-    var c=e.target&&e.target.closest?e.target.closest('.hb-card'):null;if(!c)return;
-    var r=c.getBoundingClientRect();
-    c.style.setProperty('--mx',((e.clientX-r.left)/r.width*100).toFixed(1)+'%');
-    c.style.setProperty('--my',((e.clientY-r.top)/r.height*100).toFixed(1)+'%');
-  });
   // ── reveal as sections enter the viewport ─────────────────────────────────
   // .hb-rise is paused until cm-inview lands, so a card three screens down
   // animates when the owner reaches it rather than while it was unseen.
@@ -7311,7 +7300,7 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   });
   function brandify() {
     var i, el;
-    var lit = document.querySelectorAll('.rv2-hero:not(.lit),.lb2-hero:not(.lit),.hb-hero:not(.lit),.ac-card:not(.lit),.fc2-fcp:not(.lit),.lb2-ai:not(.lit),.data-card:not(.lit)');
+    var lit = document.querySelectorAll('.rv2-hero:not(.lit),.lb2-hero:not(.lit),.hb-hero:not(.lit)');
     for (i = 0; i < lit.length; i++) lit[i].classList.add('lit');
     // the thread: from the chart above to the read below, wherever a read exists
     var ai = document.querySelectorAll('.lb2-ai:not([data-thread])');
