@@ -386,7 +386,11 @@ def _coverage_world(db_path, monkeypatch):
     day = date(2026, 9, 21)
     sched_csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
                  f"{day},Monday,Dana K,Server,11:00am,10:00pm,8,\n")
-    models.save_schedule_history(rid, day.isoformat(), day.isoformat(), 40, 40, 30, sched_csv, [], db_path=db_path)
+    hid = models.save_schedule_history(rid, day.isoformat(), day.isoformat(), 40, 40, 30, sched_csv, [], db_path=db_path)
+    # Coverage reads the week staff were sent, so the fixture publishes it.
+    c = get_conn(db_path)
+    c.execute("UPDATE schedule_history SET published_at=datetime('now') WHERE id=?", (hid,))
+    c.commit(); c.close()
     monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 11, 30))
     monkeypatch.setattr(pos, "fetch_clock_ins_today", lambda rid_, d: ([], "toast"))
     return rid

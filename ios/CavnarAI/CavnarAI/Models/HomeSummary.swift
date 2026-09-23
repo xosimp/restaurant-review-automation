@@ -56,6 +56,12 @@ struct HomeSummary: Codable {
     /// leads it after 8pm, the weekly receipts on Monday. Optional — an
     /// older server omits it and the brief simply leads.
     let localNow: String?
+    /// Recommendation kinds that went quieter after the last four passed
+    /// unanswered (home_brief / decisions.quiet_kinds), with a way back.
+    let quieter: [HomeQuietKind]?
+    /// Who a card can be handed to — consented alert contacts; empty for a
+    /// login that may not open issues.
+    let assignees: [HomeAssignee]?
 
     var localHour: Int? {
         guard let s = localNow, let t = s.firstIndex(of: "T") else { return nil }
@@ -94,7 +100,19 @@ struct HomeSummary: Codable {
         case firstLook = "first_look"
         case readiness
         case localNow = "local_now"
+        case quieter, assignees
     }
+}
+
+struct HomeQuietKind: Codable, Hashable, Identifiable {
+    let kind: String
+    let label: String
+    var id: String { kind }
+}
+
+struct HomeAssignee: Codable, Hashable, Identifiable {
+    let id: Int
+    let name: String
 }
 
 /// home_brief.readiness: which modules have data flowing and what that
@@ -121,21 +139,52 @@ struct HomeReadiness: Codable {
 /// and after, and one that doesn't can only be read.
 struct HomeRecommendation: Codable, Identifiable, Hashable {
     let key: String
+    /// What to do, verb first.
     let title: String
+    /// Why now.
     let why: String?
     let evidence: String?
     let module: String?
     let metric: String?
-    /// The intelligence engine's confidence in this recommendation for
-    /// this restaurant (INTELLIGENCE_ENGINE.md). Optional: older servers
+    /// ONE confidence for the card, from its own evidence (the kind's
+    /// measured record here may move it a band). Optional: older servers
     /// omit it, and the card renders exactly as before.
     let confidence: HomeConfidence?
+    let timeframe: String?
+    let impact: String?
+    let strength: String?
+    /// Dollars a month at stake — only when measured, never invented.
+    let dollarsMonthly: Double?
+    let ifIgnored: String?
+    let alternative: String?
+    /// A one-tap finish (a reprice at the suggested price), when there is one.
+    let action: HomeRecAction?
+    let timesHidden: Int?
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, title, why, evidence, module, metric, confidence, timeframe, impact, strength, alternative, action
+        case dollarsMonthly = "dollars_monthly"
+        case ifIgnored = "if_ignored"
+        case timesHidden = "times_hidden"
+    }
+}
+
+struct HomeRecAction: Codable, Hashable {
+    let kind: String
+    let dish: String?
+    let price: Double?
+    let label: String?
+    let count: Int?
 }
 
 struct HomeConfidence: Codable, Hashable {
     let score: Double
     let band: String
+    /// "Medium confidence" — the one label the card shows.
+    let label: String?
+    /// What the band rests on ("6 reviews in 90 days").
+    let reason: String?
     let caution: String?
 }
 
@@ -234,7 +283,22 @@ struct NeedsAttentionItem: Codable, Identifiable {
     let cta: String?
     let secondary: String?
     let action: String?
+    /// The key an answer is recorded against (rec_ledger), whether the item
+    /// may be hidden at all (a critical one may not), and how often it has
+    /// been hidden before — the second hide asks why.
+    let recKey: String?
+    let dismissable: Bool?
+    let timesHidden: Int?
+    /// How many replies a publish tap sends — the number on its label (the
+    /// last 30 days' drafts), never 25 including imported history.
+    let count: Int?
 
     var id: String { type }
     var isPublishAction: Bool { action == "publish_replies" }
+
+    enum CodingKeys: String, CodingKey {
+        case type, module, title, detail, cta, secondary, action, dismissable, count
+        case recKey = "rec_key"
+        case timesHidden = "times_hidden"
+    }
 }

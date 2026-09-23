@@ -1644,6 +1644,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .ev{font-size:14px;color:var(--ink3);line-height:1.45}
 .hb-rec .ft{display:flex;gap:6px;align-items:center;margin-top:auto;padding-top:10px;flex-wrap:wrap}
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
+.hb-rec .why{font-size:14px;color:var(--ink2);line-height:1.45}
+.hb-rec .meta{display:flex;flex-wrap:wrap;gap:6px}
+.hb-rec .meta span{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 9px}
+.hb-rec .meta .usd{color:var(--ember);border-color:var(--hb-line)}
+.hb-rec .hb-conf{font-size:13px;color:var(--ink3);line-height:1.4}
+.hb-rec .hb-conf b{font-weight:700;color:var(--ink2)}
+.hb-rec .hb-conf.high b{color:var(--hb-good)}.hb-rec .hb-conf.low b{color:var(--ember2)}
+.hb-rec .ig{font-size:13px;color:var(--ink3);line-height:1.4}.hb-rec .ig b{color:var(--ink2);font-weight:600}
+.hb-assign{display:flex;gap:8px;align-items:center;margin-top:8px}.hb-assign .ac-select{flex:1;min-width:0}
+.hb-quiet{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;font-size:13px;color:var(--ink3)}
 .hb-rec-ans{margin-left:auto;display:inline-flex;align-items:center;gap:0;opacity:.55;transition:opacity .18s ease}.hb-rec:hover .hb-rec-ans{opacity:1}
 .hb-rec-ans .cbtn+.cbtn{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line)}
 /* Done / Not for us / Track on a module recommendation (rec_ledger) — Home's answer row, inline */
@@ -2100,37 +2110,55 @@ svg:hover .hb-xh{opacity:1}
   window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
   window.hbAskFull=function(){var panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();};
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full],[data-track-key],[data-dismiss-key],[data-open-module],[data-explain]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full],[data-track-key],[data-dismiss-key],[data-open-module],[data-explain],[data-assign-key],[data-reprice-key],[data-restore-kind],[data-cover-issue]'):null;if(!t)return;
     e.preventDefault();
     if(t.hasAttribute('data-ask-submit'))hbAskSubmit();
     else if(t.hasAttribute('data-ask-full'))hbAskFull();
     // Values come off the element, so an apostrophe in a recommendation's
     // title is just a character rather than a broken JS string literal.
     else if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
+    else if(t.hasAttribute('data-assign-key'))hbAssignOpen(t);
+    else if(t.hasAttribute('data-reprice-key'))hbReprice(t);
+    else if(t.hasAttribute('data-restore-kind'))hbRestoreKind(t.getAttribute('data-restore-kind'));
+    else if(t.hasAttribute('data-cover-issue'))hbAskCover(t);
     else if(t.hasAttribute('data-dismiss-key')){
       // Hidden before: the second hide is a question, not a repeat. The
       // answer is remembered and read back in every future answer.
       var why=null;
       if(t.getAttribute('data-ask-why')==='1'&&t.getAttribute('data-undo')!=='1'){why=window.prompt('You\u2019ve hidden this before. Tell Cavnar AI why, so it stops suggesting it:','');}
-      hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1',t.getAttribute('data-dismiss-kind'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
-      if(why&&why.trim()){fetch('/api/home/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:t.getAttribute('data-dismiss-key'),kind:'not_for_us',reason:why.trim(),title:t.getAttribute('data-track-title')||''})}).catch(function(){});}
+      // With a reason, the second hide IS the answer: "not for us", reason
+      // attached, one request - it reaches every surface through the ledger.
+      if(why&&why.trim())hbDismiss(t.getAttribute('data-dismiss-key'),false,'not_for_us',t.getAttribute('data-track-title'),null,why.trim());
+      else hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1',t.getAttribute('data-dismiss-kind'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
     }
     else if(t.hasAttribute('data-open-module'))hbOpen(t.getAttribute('data-open-module'));
     else if(t.hasAttribute('data-explain'))hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
     else hbAsk(t.getAttribute('data-ask'));
   });
   document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
-  window.hbAct=function(kind,module,btn){if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
+  // A publish from Home sends exactly the number on its label (the recent
+  // drafts, newest first) - never 25 including imported history.
+  window.hbAct=function(kind,module,btn,count){if(kind==='publish_replies'){if(count>0){hbPublish(btn,count);return;}if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
+  function hbPublish(btn,count){
+    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Publishing…'):function(){};
+    fetch('/api/reviews/approve-all',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:count})})
+      .then(apiJson).then(function(d){done();
+        if(!d||!d.ok){toast((d&&d.error)||'Could not publish','error');return;}
+        var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
+        _hbLoadedAt=0;hbLoad(true);})
+      .catch(function(){done();toast('Network error','error');});
+  }
   // Only the id travels through the inline handlers (CLIENT-17).
   window.hbSwitchLoc=function(rid){if(typeof switchLocation==='function')switchLocation(rid);};
   window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
   window.hbRange=function(r){_hbRange=r;if(_hbData)renderHero(_hbData);};
-  window.hbDismiss=function(key,undo,kind,title,metric){
+  window.hbDismiss=function(key,undo,kind,title,metric,reason){
     var body={key:key,undo:!!undo};
     if(kind){body.kind=kind;if(kind==='done'&&metric){body.title=title;body.metric=metric;}}
+    if(reason){body.reason=reason;body.title=title||'';}
     fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
       if(!d.ok){if(typeof toast==='function')toast(d.error||'Couldn\'t update that','error');return;}
-      var msg=undo?'Recommendation restored':(kind==='done'?(d.outcome?'Marked done - measuring from today, result on '+d.outcome.evaluate_on:'Marked done'):(kind==='not_for_us'?'Noted - it won\'t come back':'Hidden for two weeks'));
+      var msg=undo?'Recommendation restored':(kind==='done'?(d.outcome?'Marked done - measuring from today, result on '+mdy(d.outcome.evaluate_on):'Marked done'):(kind==='not_for_us'?'Noted - it won\'t come back':(kind==='snooze'?'Back tomorrow':'Hidden for two weeks')));
       if(typeof toast==='function')toast(msg,'success');
       _hbLoadedAt=0;hbLoad(false);
     }).catch(function(){if(typeof toast==='function')toast('Network error','error');});
@@ -2150,7 +2178,7 @@ svg:hover .hb-xh{opacity:1}
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
       if(btn){btn.textContent='Tracking';}
       if(d.warning){if(typeof toast==='function')toast(d.warning,'error');return;}
-      var when=(d.outcome&&d.outcome.evaluate_on)?(' - result on '+d.outcome.evaluate_on):'';
+      var when=(d.outcome&&d.outcome.evaluate_on)?(' - result on '+mdy(d.outcome.evaluate_on)):'';
       if(typeof toast==='function')toast('Measuring from today'+when,'success');
     }).catch(function(){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast('Network error','error');});
   };
@@ -2237,14 +2265,17 @@ svg:hover .hb-xh{opacity:1}
       // the confirm step and the innocent reading come here, and
       // renderConnections skips it, so the same finding is never on the
       // page twice.
-      var lk=null,lks=(g&&g.cross&&g.cross.links)||[];for(var li=0;li<lks.length;li++)if(lks[li].headline===ff.what)lk=lks[li];
+      var lk=null,lks=(g&&g.cross&&g.cross.links)||[];for(var li=0;li<lks.length;li++)if(lks[li].headline===(ff.link_headline||ff.what))lk=lks[li];
       if(lk){confirm=lk.confirm_by||ff.confirm_by||'';if(lk.alternative)alt+='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(lk.alternative)+'</div>';if(lk.not_a_cause)alt+='<div style="opacity:.8">'+num(lk.not_a_cause)+'</div>';}
       // fix_first is a full sentence when two modules agree, but a bare
       // label ("Food cost drivers") when it is the top of the money
       // ranking - and a label set in 28px Clash reads as a section title,
       // not a finding. Fold the ranking's own reason into the lead.
-      if(ff.claim_kind!=='inferred'&&ff.dollars_monthly){lead=ff.what+' is the largest single figure on the books';why='Ranked across every module, in dollars a month. The first place to look.';money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';}
-      else{lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1)+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';}}
+      // fix_first is always an action now (business_intelligence
+      // .pick_one_thing): the top driver's own fix, a diagnosis's
+      // recommended action, or the replies that are owed.
+      lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';
+      if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
     else if(att.length){lead=att[0].title;why=att[0].detail||'';ask='What should I do about this: '+att[0].title;}
     else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);ask='Walk me through this: '+recs[0].title;}
@@ -2270,7 +2301,7 @@ svg:hover .hb-xh{opacity:1}
     // item is named beside its button so "Reply now" is not floating under
     // a headline about food cost.
     if(att.length&&att[0].action){var a=att[0];var leadIsAtt=(lead===a.title);
-      h+='<span class="also">'+(leadIsAtt?'':'<span class="m">'+num(a.title)+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></span>';}
+      h+='<span class="also">'+(leadIsAtt?'':'<span class="m">'+num(a.title)+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button></span>';}
     else if(!clear&&!ff&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
@@ -2297,18 +2328,87 @@ svg:hover .hb-xh{opacity:1}
       // apostrophe into &#39;, the HTML parser turns it back, and the JS
       // that reaches the engine is a syntax error.
       var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>':'';
-      h+='<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
-        +'<div class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</div>'+(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
-        +(r.confidence&&r.confidence.band==='low'&&r.confidence.caution?'<div class="ev hb-conf low">'+esc(r.confidence.caution)+'</div>':'')
-        +'<div class="ft">'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
-        // Two answers that are not "hide for a fortnight". Done records an
-        // observed outcome when the card names a metric - the same thing
-        // Track this does - so acting on a recommendation without pressing
-        // Track no longer leaves the value ledger empty.
-        +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us">Not for us</button></span></div></div>';}
+      h+=hbRecCard(r,j,skip,isNew,trk,d);}
     try{var keep={};for(var sk in seen)if(seen.hasOwnProperty(sk))keep[sk]=1;for(var nk in seenNow)if(seenNow.hasOwnProperty(nk))keep[nk]=1;localStorage.setItem('cavnar_recs_seen',JSON.stringify(keep));}catch(e){}
-    return h+'</div></div>';
+    h+='</div>';
+    // Kinds the owner has passed over, unanswered, four times running sit below
+    // the top three, and the page says so, with the way back.
+    var qt=d.quieter||[];
+    if(qt.length){h+='<div class="hb-quiet"><span>Quieter: '+esc(qt.map(function(q){return q.label;}).join(', '))+' — the last four went by unanswered.</span>';
+      for(var qi=0;qi<qt.length;qi++)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-restore-kind="'+esc(qt[qi].kind)+'">Show '+esc(qt[qi].label.toLowerCase())+' again</button>';
+      h+='</div>';}
+    return h+'</div>';
   }
+  // One card answers five questions: what to do (the title, verb first),
+  // why now, what is at stake in dollars when it was measured, how sure -
+  // ONE confidence, from the card's own evidence, with its reason - and
+  // what happens if it is ignored. The timeframe, impact and strength the
+  // payload always carried are shown too.
+  var STRENGTH={strong:'strong evidence',moderate:'some evidence',early:'early signal'};
+  function hbRecCard(r,j,skip,isNew,trk,d){
+    var c=r.confidence||null,meta=[];
+    if(r.timeframe)meta.push('<span>'+esc(r.timeframe)+'</span>');
+    if(r.impact)meta.push('<span>'+esc(r.impact)+'</span>');
+    if(r.strength&&STRENGTH[r.strength])meta.push('<span>'+esc(STRENGTH[r.strength])+'</span>');
+    var act='';
+    if(r.action&&r.action.kind==='reprice')act='<button type="button" class="cbtn cbtn-primary cbtn-sm" data-reprice-key="'+esc(r.key)+'" data-reprice-dish="'+esc(r.action.dish)+'" data-reprice-price="'+esc(r.action.price)+'">'+esc(r.action.label||'Reprice')+'</button>';
+    else if(r.action&&r.action.kind==='publish_replies')act='<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbAct(\'publish_replies\',\'reviews\',this,'+(+r.action.count||0)+')">'+esc(r.action_label||'Publish now')+'</button>';
+    var who=(d&&d.assignees)||[];
+    return '<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
+      +'<div class="t">'+num(r.title)+'</div>'
+      +(r.why?'<div class="why">'+num(r.why)+'</div>':'')
+      +(meta.length||r.dollars_monthly?'<div class="meta">'+(r.dollars_monthly?'<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>':'')+meta.join('')+'</div>':'')
+      +(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
+      +(c&&c.label?'<div class="hb-conf '+esc(c.band)+'"><b>'+esc(c.label)+'</b>'+(c.reason?' — '+esc(c.reason):'')+'</div>':'')
+      +(r.if_ignored?'<div class="ig"><b>If ignored:</b> '+num(r.if_ignored)+'</div>':'')
+      +'<div class="ft">'+act+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
+      +(r.alternative?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(r.alternative)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding">Could also be…</button>':'')
+      +(who.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-assign-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-assign-detail="'+esc(r.why||'')+'">Assign</button>':'')
+      // Two answers that are not "hide for a fortnight". Done records an
+      // observed outcome when the card names a metric - the same thing
+      // Track this does - so acting on a recommendation without pressing
+      // Track no longer leaves the value ledger empty.
+      +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us">Not for us</button></span></div></div>';
+  }
+  // Hand a card to someone: pick a routed contact, and it becomes an issue
+  // texted to them, keyed to the recommendation (POST /api/home/assign).
+  function hbAssignOpen(btn){
+    var card=btn.closest?btn.closest('.hb-rec'):null;if(!card)return;
+    var old=card.querySelector('.hb-assign');if(old){old.parentNode.removeChild(old);return;}
+    var who=(_hbData&&_hbData.assignees)||[];if(!who.length)return;
+    var box=document.createElement('div');box.className='hb-assign';
+    var opts='';for(var i=0;i<who.length;i++)opts+='<option value="'+(+who[i].id)+'">'+esc(who[i].name)+'</option>';
+    box.innerHTML='<select class="ac-select" aria-label="Hand it to">'+opts+'</select><button type="button" class="cbtn cbtn-primary cbtn-sm">Hand it over</button>';
+    card.appendChild(box);
+    box.querySelector('button').addEventListener('click',function(){
+      var b=this,done=(typeof cbtnBusy==='function')?cbtnBusy(b,'Sending…'):function(){};
+      fetch('/api/home/assign',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:btn.getAttribute('data-assign-key'),title:btn.getAttribute('data-track-title'),detail:btn.getAttribute('data-assign-detail')||'',contact_id:box.querySelector('select').value})})
+        .then(apiJson).then(function(r){done();
+          if(r&&r.ok){toast('Handed to '+((r.issue&&r.issue.assignee_name)||'them')+' — it is on the issues list','success');_hbLoadedAt=0;hbLoad(false);}
+          else toast((r&&r.error)||'Could not hand that over','error');})
+        .catch(function(){done();toast('Network error','error');});
+    });
+  }
+  // One-tap reprice at the suggested price (the food-cost reprice route).
+  function hbReprice(btn){
+    var key=btn.getAttribute('data-reprice-key'),dish=btn.getAttribute('data-reprice-dish'),price=+btn.getAttribute('data-reprice-price');
+    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Repricing…'):function(){};
+    fetch('/api/food-cost/reprice/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({dish:dish,price:price})})
+      .then(apiJson).then(function(r){done();
+        if(r&&r.ok){hbRecEvent(key,'completed');toast(dish+' repriced','success');_hbLoadedAt=0;hbLoad(false);}
+        else toast((r&&r.error)||'Could not reprice that','error');})
+      .catch(function(){done();toast('Network error','error');});
+  }
+  // Any answer or open that has no route of its own goes to the ledger.
+  function hbRecEvent(key,event,surface){
+    if(!key)return;
+    fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,event:event,surface:surface||'home'})}).catch(function(){});
+  }
+  window.hbRestoreKind=function(kind){
+    fetch('/api/home/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({restore_kind:kind})})
+      .then(apiJson).then(function(r){if(r&&r.ok){toast('It will show again','success');_hbLoadedAt=0;hbLoad(false);}}).catch(function(){});
+  };
   // Needs attention beside Ask, as two cards; the focus card above has
   // already taken the most urgent item, so this list starts at the second.
   // Nothing connected yet: the readiness card is the page, so it leads.
@@ -2325,7 +2425,10 @@ svg:hover .hb-xh{opacity:1}
     var h='<div class="hb-grid c2">';
     h+='<div class="hb-card hb-rise" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':(items.length?'<span class="cnt">'+items.length+'</span>':''))+'</div>';
     if(!items.length)h+='<div class="hb-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';
-    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div>';}
+    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
+      // Every item answers like a recommendation - not today, or hide for
+      // two weeks - except a critical one (a guest waiting, a broken sync).
+      +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
     h+='</div>';
     h+='<div class="hb-card hb-rise" style="--i:2"><div class="hb-h3"><span>Ask Cavnar AI</span></div><div class="hb-ask" style="margin-top:0"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ask-submit="1">Ask</button></div>';
     if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
@@ -2703,7 +2806,7 @@ svg:hover .hb-xh{opacity:1}
     h+='</div><div class="hb-stack">';
     h+='<div class="hb-card quiet hb-rise" style="--i:1"><div class="hb-h3"><span>Open issues</span>'+(iss.length?'<span class="cnt">'+iss.length+'</span>':'')+'</div>';
     if(!iss.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing open.</span></div>';
-    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
     h+='</div>';
     // Goals as progress bars: how far from the baseline to the target, on
     // the same definitions goals.py measures with. A goal with no readable
@@ -2737,8 +2840,8 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
       for(var a=0;a<acts.length;a++){var y=acts[a];
         h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
-          +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
-          +(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':'')
+          +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
+          +(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':''))
           +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(y.key)+'\',this)">Not today</button></span></div>';}
       h+='</section>';
     }
@@ -2814,10 +2917,32 @@ svg:hover .hb-xh{opacity:1}
   };
   window.hbActionDo=function(route,btn){
     if(btn)btn.disabled=true;
-    fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
+    var body=(btn&&btn.getAttribute('data-body'))||'{}';
+    fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:body})
       .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
       .catch(function(){if(btn)btn.disabled=false;});
   };
+  // A coverage issue carries its suggested covers (meta.covers) and who was
+  // already asked (meta.asked): one tap asks the next person, by text or
+  // email (POST /api/issues/<id>/ask-cover). The schedule itself moves only
+  // when the manager decides who is on.
+  function hbCoverButtons(x){
+    var m=x.meta||{},covers=m.covers||[],asked={},h='',n=0;
+    if(x.status==='resolved'||!covers.length)return '';
+    for(var a=0;a<(m.asked||[]).length;a++)asked[String(m.asked[a].name||'').toLowerCase()]=1;
+    for(var i=0;i<covers.length&&n<2;i++){var nm=String(covers[i].name||'');if(!nm||asked[nm.toLowerCase()])continue;n++;
+      h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cover-issue="'+(+x.id)+'" data-cover-name="'+esc(nm)+'">Ask '+esc(nm.split(' ')[0])+' to cover</button>';}
+    return h;
+  }
+  function hbAskCover(btn){
+    var id=+btn.getAttribute('data-cover-issue'),name=btn.getAttribute('data-cover-name');
+    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Asking…'):function(){};
+    fetch('/api/issues/'+id+'/ask-cover',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+      .then(apiJson).then(function(d){done();
+        if(d&&d.ok){toast(name+' has been asked','success');hbFollow();}
+        else toast((d&&d.error)||'Could not ask them','error');})
+      .catch(function(){done();toast('Network error','error');});
+  }
   window.hbResolveIssue=function(id,btn){
     if(btn)btn.disabled=true;
     fetch('/api/issues/'+id+'/resolve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
@@ -2878,6 +3003,10 @@ svg:hover .hb-xh{opacity:1}
     if(!m)return;
     var q='';
     try{q=decodeURIComponent(m[1].replace(/\+/g,' '));}catch(e){q='';}
+    // The brief's links carry the recommendation's key (rec=) and where it
+    // was read (src=): the tap is an "opened" in the ledger.
+    var rk=/[?&]rec=([^&]+)/.exec(window.location.search||''),sr=/[?&]src=([^&]+)/.exec(window.location.search||'');
+    if(rk){try{hbRecEvent(decodeURIComponent(rk[1]),'opened',sr?decodeURIComponent(sr[1]):'brief_email');}catch(e){}}
     if(window.history&&window.history.replaceState)window.history.replaceState({},'',window.location.pathname+window.location.hash);
     if(q)setTimeout(function(){hbAsk(q);},400);
   }

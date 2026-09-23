@@ -6828,17 +6828,30 @@ def home_brief_group_api(current_user):
 @client_bp.route("/api/home/dismiss", methods=["POST"])
 @login_required
 def home_dismiss_api(current_user):
-    """Hide a recommendation for two weeks (or restore it with undo=true)."""
+    """Answer a Home card or Needs-attention item: hide (two weeks), done,
+    not for us, or snooze (`days`, default one) — or take an answer back
+    (undo=true), or bring back a kind that went quieter (restore_kind).
+
+    Every answer is written to rec_ledger as well as home_dismissals, so it
+    holds on every surface — the brief, the weekly email, the digest and the
+    queue all read rec_ledger.silenced_keys."""
     import home_brief
     data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    if data.get("restore_kind"):
+        import decisions
+        ok = decisions.restore_kind(rid, str(data["restore_kind"])[:60], user_id=current_user.get("id"))
+        home_brief.invalidate(rid)
+        return jsonify(ok=True, restored=bool(ok))
     key = (data.get("key") or "").strip()
     if not key:
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
-        return jsonify(**home_brief.undismiss(current_user["restaurant_id"], key))
+        return jsonify(**home_brief.undismiss(rid, key))
     kind = (data.get("kind") or "recommendation")[:40]
-    out = home_brief.dismiss(current_user["restaurant_id"], key, kind=kind, user_id=current_user.get("id"),
-                             reason=data.get("reason"), title=data.get("title"))
+    out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
+                             days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
+                             surface="home", role=current_user.get("role"))
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
@@ -6856,6 +6869,27 @@ def home_dismiss_api(current_user):
             import ops
             ops.capture(e, job="home_dismiss_done", context=f"key={key}")
     return jsonify(**out)
+
+
+@client_bp.route("/api/home/assign", methods=["POST"])
+@login_required
+def home_assign_api(current_user):
+    """Hand a Home card to someone: an issue keyed to the recommendation,
+    texted to the chosen consented contact, and recorded in the ledger as
+    accepted-and-delegated (home_brief.assign). Principal logins only — the
+    same line issue routing draws — and rate-limited like every route that
+    texts a phone."""
+    import home_brief
+    if not home_brief._may_assign(current_user):
+        return jsonify(ok=False, error="Only the owner can hand work to someone."), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"issue_text:{current_user['restaurant_id']}", max_calls=20, window_secs=3600):
+        return jsonify(ok=False, error="That's a lot in a short time — wait a few minutes and try again."), 429
+    data = request.get_json(silent=True) or {}
+    payload, status = home_brief.assign(current_user["restaurant_id"], data.get("key"), data.get("title"),
+                                        data.get("contact_id"), detail=(data.get("detail") or "")[:1000] or None,
+                                        user_id=current_user.get("id"), role=current_user.get("role"))
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/home")

@@ -589,6 +589,13 @@ def _follow_through_sections(restaurant_id, owner_view=False):
     def _list(lines):
         return "<br>".join(_html.escape(l) for l in lines)
 
+    # One "no" everywhere: a block whose recommendation the owner answered on
+    # any surface is not repeated in the digest; what IS shown is recorded
+    # as an impression (surface "digest") so the ledger knows it was said.
+    import review_common as _rc
+    silenced = _rc.silenced(restaurant_id)
+    shown = []
+
     try:
         import outcomes
         res = outcomes.recent_results(restaurant_id, days=7) or []
@@ -621,7 +628,10 @@ def _follow_through_sections(restaurant_id, owner_view=False):
         sg = (menu_intelligence.reprice_suggestions(restaurant_id) or {}).get("suggestions") or []
         # Only the ones worth a conversation: a dollar a month of lost margin
         # is not a weekly-review item.
-        worth = [x for x in sg if (x.get("monthly_margin_lost") or 0) >= 25][:3]
+        worth = [x for x in sg if (x.get("monthly_margin_lost") or 0) >= 25
+                 and f"reprice:{x.get('dish')}" not in silenced][:3]
+        shown += [{"key": f"reprice:{x['dish']}", "module": "food", "title": f"Reprice {x['dish']}",
+                   "dollar_value": x.get("monthly_margin_lost")} for x in worth if x.get("suggested_price")]
         if worth:
             out.append(report_eyebrow("Prices to revisit") + report_paragraph(_list(
                 f"{x['dish']}: {(x.get('drivers') or [{}])[0].get('ingredient', 'ingredient costs')} "
@@ -632,9 +642,11 @@ def _follow_through_sections(restaurant_id, owner_view=False):
         log.warning("digest reprice block failed: %s", e)
     try:
         import demand
-        slow = (demand.slow_days(restaurant_id) or {}).get("slow_days") or []
+        slow = [d for d in ((demand.slow_days(restaurant_id) or {}).get("slow_days") or [])
+                if f"slow_day:{d.get('day')}" not in silenced]
         if slow:
             d = slow[0]
+            shown.append({"key": f"slow_day:{d['day']}", "module": "labor", "title": f"Fill {d['day']}s"})
             out.append(report_eyebrow("Your quietest day") + report_paragraph(_html.escape(
                 f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day "
                 f"({d['samples']} weeks of history). A text to the guest club aimed at that "
@@ -652,7 +664,21 @@ def _follow_through_sections(restaurant_id, owner_view=False):
                                    f'{_html.escape(ls.get("note") or "")}</span>'))
     except Exception as e:
         log.warning("digest loss block failed: %s", e)
+    _digest_impressions(restaurant_id, shown)
     return out
+
+
+def _digest_impressions(restaurant_id, items):
+    """The digest's recommendation blocks, into rec_ledger — only when the
+    digest is being SENT (outside a web request), not previewed."""
+    try:
+        from flask import has_request_context
+        if not items or has_request_context():
+            return
+        import rec_ledger
+        rec_ledger.present_many(restaurant_id, [dict(it, position=i) for i, it in enumerate(items)], "digest")
+    except Exception as e:
+        log.warning("digest impressions not recorded: %s", e)
 
 
 def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = None,

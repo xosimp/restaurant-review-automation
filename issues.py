@@ -22,7 +22,16 @@ import config
 import secrets
 from datetime import datetime, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports):
+    a patch of models.get_conn reaches this module too."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 DEFAULT_ESCALATE_MINUTES = 120
 AUTO_REVIEW_MAX_RATING = 2

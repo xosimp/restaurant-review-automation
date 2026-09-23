@@ -964,20 +964,28 @@ def _do_mobile_home(current_user):
             "cta": f"Publish {min(n, 25)} {'reply' if n == 1 else 'replies'}",
             "secondary": "Read them first", "action": "publish_replies",
         })
-    if "labor" in active_keys and labor and labor.get("overtime_risk"):
-        ot_count = sum(1 for o in labor["overtime_risk"] if o.get("status") == "overtime")
-        if ot_count > 0:
+    # Overtime: live shifts only (the sample week is not this restaurant's
+    # staff — it read "7 staff members in overtime" on a new account), this
+    # payroll week only, and the analysis's own premium rather than a flat
+    # $38 a head — the same numbers web Home shows (home_brief).
+    if "labor" in active_keys and labor and labor.get("is_live"):
+        import home_brief as _hb_ot
+        from time_utils import restaurant_now as _rn_ot
+        _ot = _hb_ot.overtime_this_week(labor, _rn_ot(restaurant).date())
+        if _ot:
+            n_ot = _ot["people"]
             needs_attention.append({
                 "type": "labor_overtime", "module": "labor",
-                "title": f"{ot_count} staff member{'' if ot_count == 1 else 's'} in overtime",
-                "detail": f"Est. ${ot_count * 38}+ extra in OT wages this week",
+                "title": f"{n_ot} {'person' if n_ot == 1 else 'people'} over 40h this week",
+                "detail": (f"About ${_ot['premium']:,.0f} in overtime premium on {_ot['hours']:g} hours past 40"
+                           if _ot["premium"] is not None else f"{_ot['hours']:g} hours past 40 so far"),
                 "cta": "Open schedule", "secondary": None, "action": "open_module",
             })
     if "reviews" in active_keys and rstats.get("total", 0) > 0 and rstats.get("response_rate", 0) < 50:
         needs_attention.append({
             "type": "low_response_rate", "module": "reviews",
             "title": f"Response rate at {rstats['response_rate']}%",
-            "detail": "Restaurants answering 80%+ of reviews see measurably more new guests",
+            "detail": f"{rstats.get('responded', 0)} of {rstats['total']} reviews have a reply",
             "cta": "Answer reviews", "secondary": None, "action": "open_module",
         })
 
@@ -1024,26 +1032,38 @@ def _do_mobile_home(current_user):
                 "awaiting_approval": "reviews_awaiting_approval",
                 "urgent_reviews": "urgent_reviews",
                 "low_response_rate": "low_response_rate",
+                "overtime": "labor_overtime",
             }
-            if _attn:
-                needs_attention = [{
-                    "type": _TYPE_ALIASES.get(a.get("key"), a.get("key")),
-                    "module": a.get("module"),
-                    "title": a.get("title"),
-                    "detail": a.get("detail"),
-                    # home_brief nests the CTA as action:{label,kind,module};
-                    # the app's contract is a flat cta/action pair.
-                    "cta": (a.get("action") or {}).get("label") or "Open",
-                    # home_brief has no secondary-action concept; the app's
-                    # deck does, and "Read them first" next to a bulk
-                    # publish is the one that matters — it's the out for an
-                    # owner who doesn't want to publish unread.
-                    "secondary": ("Read them first"
-                                  if a.get("key") == "awaiting_approval" else None),
-                    "action": (a.get("action") or {}).get("kind") or "open_module",
-                    "severity": a.get("severity"),
-                    "evidence": a.get("evidence"),
-                } for a in _attn]
+            # The brief built, so ITS list is the answer — even when it is
+            # empty. Falling back to the local list whenever the brief had
+            # nothing let the local checks speak for a restaurant the brief
+            # had already judged fine (or had silenced).
+            needs_attention = [{
+                "type": _TYPE_ALIASES.get(a.get("key"), a.get("key")),
+                "module": a.get("module"),
+                "title": a.get("title"),
+                "detail": a.get("detail"),
+                # home_brief nests the CTA as action:{label,kind,module};
+                # the app's contract is a flat cta/action pair.
+                "cta": (a.get("action") or {}).get("label") or "Open",
+                # home_brief has no secondary-action concept; the app's
+                # deck does, and "Read them first" next to a bulk
+                # publish is the one that matters — it's the out for an
+                # owner who doesn't want to publish unread.
+                "secondary": ("Read them first"
+                              if a.get("key") == "awaiting_approval" else None),
+                "action": (a.get("action") or {}).get("kind") or "open_module",
+                "severity": a.get("severity"),
+                "evidence": a.get("evidence"),
+                # The key an answer is recorded against (rec_ledger), and
+                # whether this item may be hidden at all — a critical
+                # health item may not.
+                "rec_key": a.get("rec_key") or a.get("key"),
+                # How many a publish tap sends — the number on the label.
+                "count": (a.get("action") or {}).get("count"),
+                "dismissable": bool(a.get("dismissable")),
+                "times_hidden": int(a.get("times_hidden") or 0),
+            } for a in _attn]
             # home_brief's payload key is "recommendations". This read
             # "recs" — a key that has never existed in it — so the mobile
             # home response has carried an empty recommendations list since
@@ -1055,15 +1075,23 @@ def _do_mobile_home(current_user):
             # one action that would light up the rest (home_brief.readiness).
             # Web-only until the retention re-audit; the owner is on the phone.
             _brief_ready = _brief_payload.get("readiness")
+            _brief_quieter = _brief_payload.get("quieter") or []
+            _brief_assignees = _brief_payload.get("assignees") or []
         else:
             _brief_recs, _brief_wins, _brief_ready = [], [], None
+            _brief_quieter, _brief_assignees = [], []
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
         _brief_recs, _brief_wins, _brief_ready = [], [], None
+        _brief_quieter, _brief_assignees = [], []
 
     return {
         "ok": True,
         "recommendations": _brief_recs,
+        # Kinds gone quieter after four unanswered episodes, and who a card
+        # can be handed to — both from home_brief.
+        "quieter": _brief_quieter,
+        "assignees": _brief_assignees,
         "wins": _brief_wins,
         "username": current_user.get("username"),
         "setup_checklist": _setup_checklist(restaurant, rstats, labor, active_keys),
@@ -5887,6 +5915,13 @@ def mobile_home_dismiss(current_user):
     """Twin of /api/home/dismiss: hide (two weeks), done, not for us. The
     web has had all three; the phone could only Track."""
     return _capi.home_dismiss_api.__wrapped__(current_user=current_user)
+
+
+@mobile_bp.route("/home/assign", methods=["POST"])
+@mobile_login_required
+def mobile_home_assign(current_user):
+    """Twin of /api/home/assign: hand a Home card to a routed contact."""
+    return _capi.home_assign_api.__wrapped__(current_user=current_user)
 
 
 @mobile_bp.route("/account/dismiss-onboarding", methods=["POST"])

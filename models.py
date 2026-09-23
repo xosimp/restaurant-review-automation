@@ -7357,37 +7357,52 @@ def record_notification_open(restaurant_id: int, alert_type: str, user_id: int =
         conn.close()
 
 
-def money_surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> dict:
+# alert_log.value holds "the figure the alert fired on", and that figure is a
+# dollar amount for only some types: critical_low stores an ITEM COUNT,
+# price_spike a PERCENTAGE, demand_opportunity a whole night's typical
+# SALES. Summing the column across types added items and percentages to
+# dollars. Only types listed here — whose value is money at stake — count,
+# each with the module whose view it belongs to.
+SURFACED_DOLLAR_ALERTS = {
+    "food_waste": "inventory",      # notify: the week's waste cost, $
+}
+
+
+def money_surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH,
+                   denied_modules=None) -> dict:
     """What the alerts Cavnar AI raised were worth, in the dollars they
     already carried.
 
-    notify.record_notification has stamped alert_log.value since the
-    notification audit, and the column was read in exactly one place — a
-    food-waste repeat-suppression comparison in notify.py. Every valued
-    alert already knew its own dollar figure and nothing ever added them up,
-    so "Cavnar AI put $4,100 of problems in front of you this month" could
-    not be said despite being sitting in a column.
-
-    Counted per ALERT, which is what the owner experienced. Alert types
-    without a dollar value (a login, a staff sign-in) contribute nothing and
-    are not counted as zero-value alerts — they simply are not money.
+    Counted per ALERT, which is what the owner experienced, and only for the
+    alert types in SURFACED_DOLLAR_ALERTS: a type whose stored value is not
+    dollars is not money. `denied_modules` drops a type the viewer's role may
+    not see BEFORE the sum, so a manager without Food Cost cannot read the
+    waste dollars back out of a total.
     """
+    denied = set(denied_modules or ())
+    types = [t for t, mod in SURFACED_DOLLAR_ALERTS.items() if mod not in denied]
+    if not types:
+        return {"days": int(days), "items": [], "dollars": 0.0, "alerts": 0,
+                "basis": "alerts whose figure is dollars at stake"}
     since = f"-{int(days)} days"
+    marks = ",".join("?" for _ in types)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             f"SELECT alert_type, COUNT(*) AS n, COALESCE(SUM(value),0) AS total "
             f"FROM alert_log WHERE restaurant_id=? AND value IS NOT NULL "
-            f"AND fired_at >= datetime('now','{since}') "
+            f"AND alert_type IN ({marks}) "
+            f"AND fired_at >= datetime('now', ?) "
             f"GROUP BY alert_type ORDER BY total DESC",
-            (restaurant_id,)).fetchall()
+            (restaurant_id, *types, since)).fetchall()
     finally:
         conn.close()
     items = [{"alert_type": r["alert_type"], "count": r["n"],
               "dollars": round(float(r["total"] or 0), 2)} for r in rows]
     return {"days": int(days), "items": items,
             "dollars": round(sum(i["dollars"] for i in items), 2),
-            "alerts": sum(i["count"] for i in items)}
+            "alerts": sum(i["count"] for i in items),
+            "basis": "alerts whose figure is dollars at stake"}
 
 
 def notification_engagement(restaurant_id: int, days: int = 60, db_path: str = DB_PATH) -> list:

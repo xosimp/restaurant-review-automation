@@ -60,7 +60,7 @@ def test_labor_over_target_becomes_an_issue_once_a_week(db_path, monkeypatch):
     rid = _rid(db_path, module_labor=1)
     _routed(db_path, rid)
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
-                        lambda r: {"is_live": True, "labor_pct": 34.2})
+                        lambda r: {"is_live": True, "overall_labor_pct": 34.2})
     opened = issues.open_from_signals(rid, db_path=db_path)
     assert [i["kind"] for i in opened] == ["labor"]
     assert "34.2%" in opened[0]["title"]
@@ -72,7 +72,7 @@ def test_sample_labor_data_never_opens_an_issue(db_path, monkeypatch):
     rid = _rid(db_path, module_labor=1)
     _routed(db_path, rid)
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
-                        lambda r: {"is_live": False, "labor_pct": 44.0})
+                        lambda r: {"is_live": False, "overall_labor_pct": 44.0})
     assert issues.open_from_signals(rid, db_path=db_path) == []
 
 

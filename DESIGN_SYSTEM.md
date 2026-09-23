@@ -190,7 +190,8 @@ each chosen so no two adjacent sections share a silhouette:
 | Card | `.hb-card` (+ `.lift` hover, `.rail` / `.rail.good` / `.rail.ember` accent edge) | Needs attention, Ask, Open issues, Goals, results, worth, still open, close-out |
 | Hero card | `.hb-card.hero.hb-focus` — ember radial in the corner, Clash `.lead`, `.why`, `.ev` chips, `.ft` footer with `.money` | **Today's focus** and **What connects** only. Two per page, never more. |
 | Module join | `.hb-join` — pills joined by a lit ember line | The cross-module mark on a hero card |
-| Numbered card | `.hb-card.hb-rec` in `.hb-recs` (3-up) | Recommendations, with Track this |
+| Numbered card | `.hb-card.hb-rec` in `.hb-recs` (3-up) — `.t` the action (verb first), `.why` why now, `.meta` pills (`.usd` "$N/mo at stake" only when measured, then timeframe · impact · evidence strength), `.ev` evidence, ONE `.hb-conf.{high,medium,low}` line ("**Medium confidence** — what it rests on"), `.ig` "If ignored:", then the footer: one-tap action (reprice) / Track this / open module / Could also be… (`data-explain`, only when the source has an alternative) / Assign (inline `.hb-assign` select, only with assignees) / Done · Not for us, and the ✕ hide. iOS: `HomeRecommendations` rows, same order | Recommendations — every card answers what, why now, $, how sure, if ignored |
+| Quieter line | `.hb-quiet` under the cards — "Quieter: Trim day — the last four went by unanswered." + a text button per kind ("Show trim day again" → `restore_kind`). iOS: the same line under the card | A kind the owner has let expire unanswered four times running |
 | Receipt strip | `.hb-rcpt .it` — check + sentence + module | What Cavnar AI did — finished things must not look like a to-do |
 | Timeline | `.hb-tl .it` with a tone dot on a rail | The morning brief, read once top to bottom |
 | Stat tile | `.hb-stats .hb-stat` (+ `.good` / `.ember`) | Four *kinds* of number that must never be added together |
@@ -204,7 +205,10 @@ each chosen so no two adjacent sections share a silhouette:
 | Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm |
 
 Entrances are `.hb-rise` with `--i` for a 70ms stagger, 420ms, no overshoot.
-The list row `.hb-row` stays for what is genuinely a list.
+The list row `.hb-row` stays for what is genuinely a list. A Needs-attention
+row that is not critical carries the same answers as a card — "Not today"
+(text button) and the ✕ hide (`.hb-x`); a critical row (a guest waiting, a
+broken sync) never does. iOS: the `…` menu on the deck's top card.
 
 ---
 
