@@ -8,7 +8,7 @@ This documents **patterns and resource groups**, not every individual route — 
 |---|---|---|---|---|
 | `client_bp` | `client_api.py` | `/api/*` (+ page and public-token routes: `/approve/<id>`, `/e/<token>`, `/s/<token>`, `/join/<token>`, `/u/<token>`, `/m/<token>.jpg`) | web session cookie (`auth.login_required`) | 194 |
 | `mobile_bp` | `mobile_api.py` | `/mobile/api/*` | Bearer token (`auth.mobile_login_required`) | 205 |
-| `strategy_bp` / `strategy_mobile_bp` | `strategy_routes.py` | each `_ROUTES` entry at `/api/…` **and** `/mobile/api/…` | session / bearer | 68 + 68 |
+| `strategy_bp` / `strategy_mobile_bp` | `strategy_routes.py` | each `_ROUTES` entry at `/api/…` **and** `/mobile/api/…` | session / bearer | 113 + 113 |
 | `issue_link_bp` | `strategy_routes.py` | `/i/<token>` | signed token | 1 |
 | `admin_bp` | `admin_routes.py` | `/admin/*`, plus `/privacy`, `/terms`, `/sms-optin-preview`, `/.well-known/security.txt`, `/og-image.png`, `/favicon.*`, `/api/competitor-intel`, `/api/send-referral`, `/api/export-reviews` | `auth.admin_required` (writes need `is_admin`; the `support` role reads) | 96 |
 | `audit_bp` | `sales_audit_routes.py` | `/admin/audits/*` (+ a public shared report by token) | admin | 22 |
@@ -216,6 +216,26 @@ rates and pages are computed after redaction.
   result; `limit` ≤ 100; `next_before` is null on the last page (`before`
   also takes a plain UTC timestamp; anything else is a 400). Timestamps are
   UTC `YYYY-MM-DD HH:MM:SS`; clients render M/D/YY.
+- `GET recs/what-worked?days=90|180` (default 180; any other `days` is a
+  400) → `{ok, days, enough, sentences: [str], facts: {since, window,
+  acceptance: [{module, label, n, taken, dismissed, ignored, accept_rate,
+  accept_rate_low, accept_rate_high, enough}], changes: [{metric, label,
+  unit, lower_is_better, family, results, improved, worsened,
+  no_clear_change, mean_delta, mean_delta_pct, outcome_ids}], measured:
+  <outcomes.cumulative over the window>, most_effective: <as
+  recs/summary> | null, minimums: {settled_for_rate, measured_for_tag,
+  results_per_metric, measured_days}, caveat}}` — "What worked for you"
+  (`owner_report.what_worked`, rec-ROI #28), built without a model. A
+  sentence appears only when its own minimum is met: acceptance per module
+  with `enough` (ignored in the denominator); the mean stored `delta_pct`
+  (points for a % metric) of recommendations the owner took, per metric,
+  over ≥ 2 non-overlapping results that still count or showed no clear
+  change; measured dollars summed over the window's measured days, net,
+  after ≥ 14 of them; the most effective tag. `enough` = at least one
+  sentence; with none, `sentences` is `[]` and nothing is estimated. Words
+  are "associated with" / "measured", never causal. Redacted exactly like
+  `recs/summary` (module permissions, loss without LOSS_VIEW, owner-only);
+  the owner's monthly email carries the same sentences (viewer none).
 - `POST recs/checkin` `{key, did_it: "yes"|"no"|"partly",
   conditions_changed: bool, note?}` → `{ok, recorded, checkin: {did_it,
   conditions_changed, note, tracker_id, attribution: {implemented,

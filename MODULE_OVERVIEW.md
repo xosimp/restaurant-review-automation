@@ -203,7 +203,10 @@ Two halves:
 stated rate in one object the payload carries), `outcomes.py`
 (`total_value`, `cumulative`, `best_ever`, `realised`, `module_of_row`), `promise.py` (the
 sales audit, measured), `metrics.py` (`comp_rate`/`void_rate`),
-`models.money_surfaced`.
+`models.money_surfaced`, `owner_report.py` ("What worked for you" —
+`what_worked(rid, days, viewer)` behind `GET /recs/what-worked`, Home's card
+under the worth section, the Recommendations page and the owner's monthly
+email).
 
 **Design stance**: the product must be able to say what it has been worth
 without saying anything it cannot defend line by line.
@@ -228,6 +231,17 @@ without saying anything it cannot defend line by line.
   metric stood then and stands now, and stops. It does not score itself, and
   a category with no metric in this product (bar, waitlist, marketing
   revenue) says so rather than being dropped or zeroed.
+
+- **"What worked for you" is sentences over stored rows, never a model.**
+  `owner_report` joins the ledger summary (acceptance with ignored in the
+  denominator), the stored before/after results of recommendations the
+  owner took (one per metric per non-overlapping window, no-clear-change
+  included so the average is not only the movers), the measured days over
+  the window (net) and the most effective tag. Each clause has its own
+  minimum and is left out below it; the words are "associated with" and
+  "measured", never "caused" or "saved you". The web shows it on Home and on
+  the Recommendations page (`#recs` — what you followed by area, the
+  check-in, and every recommendation with its answer, reason and result).
 
 **Don't touch casually**: the separation of the four figures, and
 `metrics.DAYS_PER_MONTH`/`WEEKS_PER_MONTH` — one calendar, derived from
