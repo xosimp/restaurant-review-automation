@@ -216,6 +216,11 @@ struct IntelView: View {
                 Text("CAVNAR AI COMPETITIVE ANALYSIS")
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(1.1)
+                    .foregroundStyle(Color.cavnarEmber)
+                Spacer(minLength: 0)
+                // The sections are the model's read of Google-selected
+                // reviews (claim_kinds "sections": inferred) — J5.
+                ClaimKindTag(kind: summary.claimKinds?["sections"])
             }
             .foregroundStyle(Color.cavnarEmber)
 
@@ -700,7 +705,9 @@ struct IntelView: View {
                             .background(Capsule().fill(Color.cavnarPaper2))
                     }
                     if provisional {
-                        Text("new")
+                        // A rating on too few reviews to lean on — not a
+                        // new restaurant (J10).
+                        Text("few reviews")
                             .font(.cavnarBody(11, weight: 700))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.horizontal, 5).padding(.vertical, 1)

@@ -905,12 +905,10 @@ struct ShiftQualityPanel: View {
         }
     }
 
+    /// The one confidence colour map (J15): high green, moderate the same
+    /// as medium (ink2), low amber — a confidence is never red.
     private func confidenceTone(_ level: String) -> Color {
-        switch level {
-        case "high": return .cavnarGreen
-        case "moderate": return .cavnarAmber
-        default: return .cavnarRed
-        }
+        ConfidenceDisplay.tone(band: level).color
     }
 
     private var bandLabel: String {

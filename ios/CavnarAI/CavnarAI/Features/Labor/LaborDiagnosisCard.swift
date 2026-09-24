@@ -20,21 +20,17 @@ struct LaborDiagnosisCard: View {
                         .tracking(1.1)
                         .foregroundStyle(Color.cavnarEmber)
                     Spacer(minLength: 8)
-                    if let band = diagnosis.confidence {
-                        Text(band.uppercased())
-                            .font(.cavnarBody(10, weight: 700))
-                            .tracking(0.7)
-                            .foregroundStyle(tint(band))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(tint(band).opacity(0.14), in: Capsule())
-                    }
                 }
                 if let summary = diagnosis.summary {
                     HomeMixedText.make(summary, size: 13, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 row("Most likely cause", cause)
+                // How sure, as a percentage with what it rests on (K1/K6) —
+                // the shared line, not a bare band capsule.
+                if let c = diagnosis.confidence {
+                    ConfidenceLine(confidence: c, recKey: diagnosis.recKey, surface: "labor", module: "labor")
+                }
                 if let alt = diagnosis.alternativeCause {
                     row("It could also be", alt, quiet: true)
                 }
@@ -67,14 +63,6 @@ struct LaborDiagnosisCard: View {
                 .foregroundStyle(Color.cavnarInk3)
             HomeMixedText.make(text, size: 14, weight: quiet ? 500 : 600, color: quiet ? .cavnarInk2 : .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func tint(_ band: String) -> Color {
-        switch band {
-        case "high": return .cavnarGreen
-        case "medium": return .cavnarAmber
-        default: return .cavnarInk3
         }
     }
 }

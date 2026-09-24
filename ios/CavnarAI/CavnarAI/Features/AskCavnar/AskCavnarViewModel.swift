@@ -79,16 +79,26 @@ struct AskSuggestion: Decodable, Hashable, Identifiable, Sendable {
 /// and the owner is about to act on it.
 struct AskEvidence: Decodable, Hashable {
     var modules: [String] = []
-    var confidence: String = "unknown"
+    /// K5: the K1 object (a percentage computed from what the tools
+    /// returned, with "Why?"). An older server's band string ("high") still
+    /// decodes; nil when the server said nothing.
+    var confidence: TrustConfidence? = nil
     var unverifiedFigures: [String] = []
 
-    /// Nothing worth drawing a strip for.
+    /// Nothing worth drawing a strip for. A measured confidence is always
+    /// worth its line; a legacy band only when it is low (as before).
     var isEmpty: Bool {
-        modules.isEmpty && unverifiedFigures.isEmpty && confidence != "low"
+        guard modules.isEmpty && unverifiedFigures.isEmpty else { return false }
+        guard let c = confidence, ConfidenceDisplay(c).isRenderable else { return true }
+        return !c.isMeasuredShape && c.effectiveBand != "low"
     }
 
+    /// The line's label — "72% confidence", or "Medium confidence" for a
+    /// legacy band; nil when there is nothing to say.
     var confidenceLabel: String? {
-        confidence == "unknown" ? nil : "\(confidence) confidence"
+        guard let c = confidence else { return nil }
+        let d = ConfidenceDisplay(c)
+        return d.isRenderable ? d.lineLabel : nil
     }
 
     var warning: String? {
@@ -96,6 +106,28 @@ struct AskEvidence: Decodable, Hashable {
         let list = unverifiedFigures.joined(separator: ", ")
         let noun = unverifiedFigures.count > 1 ? "those figures" : "that figure"
         return "Couldn’t verify \(list) against your data — treat \(noun) as unconfirmed."
+    }
+}
+
+/// K5 names the answer's metadata `meta`; today's server merges it into the
+/// answer itself. Both places are read — the top-level one first.
+struct AskMeta: Decodable, Hashable, Sendable {
+    let confidence: TrustConfidence?
+
+    enum CodingKeys: String, CodingKey { case confidence }
+
+    /// Never throws: a `meta` that is not an object is no metadata, not an
+    /// answer event that fails to decode.
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { confidence = nil; return }
+        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+    }
+
+    static func pick(_ topLevel: TrustConfidence?, _ meta: AskMeta?) -> TrustConfidence? {
+        for c in [topLevel, meta?.confidence] {
+            if let c, ConfidenceDisplay(c).isRenderable { return c }
+        }
+        return nil
     }
 }
 
@@ -300,13 +332,14 @@ final class AskCavnarViewModel {
         let proposals: [AskProposal]?
         let conversationId: Int?
         let modulesConsulted: [String]?
-        let confidence: String?
+        let confidence: TrustConfidence?
+        let meta: AskMeta?
         let unverifiedFigures: [String]?
         let messageId: Int?
         let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
-            case ok, answer, error, truncated, proposals, confidence, suggestions
+            case ok, answer, error, truncated, proposals, confidence, suggestions, meta
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
@@ -315,7 +348,7 @@ final class AskCavnarViewModel {
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
-                        confidence: confidence ?? "unknown",
+                        confidence: AskMeta.pick(confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [])
         }
     }

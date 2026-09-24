@@ -320,6 +320,13 @@ struct IntelRevenue: Codable, Equatable {
     let value: Double?
     let source: String?
     let weeks: Int?
+    /// K8, when the server puts it on the projection itself.
+    var demandAccuracy: DemandAccuracy? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case value, source, weeks
+        case demandAccuracy = "demand_accuracy"
+    }
 }
 
 /// One published week: how much of the generated draft went out as it was.
@@ -519,9 +526,13 @@ struct ScheduleIntel: Codable, Equatable {
     var rotation: RotationPlan? = nil
     var splhObjective: SplhObjective? = nil
     var startingPoints: StartingPoints? = nil
+    /// K8 — how demand forecasts have held up here, shown beside the
+    /// projected revenue. Absent on an older server.
+    var demandAccuracy: DemandAccuracy? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, error, outcomes, ledger, behaviour, mentored, splh, revenue, rotation
+        case demandAccuracy = "demand_accuracy"
         case editPrediction = "edit_prediction"
         case splhObjective = "splh_objective"
         case startingPoints = "starting_points"

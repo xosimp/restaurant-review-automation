@@ -73,6 +73,13 @@ struct HomeSummary: Codable {
     /// Who a card can be handed to — consented alert contacts; empty for a
     /// login that may not open issues.
     let assignees: [HomeAssignee]?
+    /// K4/J2 — how current each source behind Home is, the stalest date
+    /// (`data_as_of`) and how many sources are live (`monitoring`). All
+    /// lenient: an odd value is empty, never a Home that fails to decode;
+    /// an older server omits them and the strip doesn't draw.
+    var freshness: HomeFreshnessList? = nil
+    var dataAsOf: LenientText? = nil
+    var monitoring: HomeMonitoring? = nil
 
     var localHour: Int? {
         guard let s = localNow, let t = s.firstIndex(of: "T") else { return nil }
@@ -114,7 +121,176 @@ struct HomeSummary: Codable {
         case firstLook = "first_look"
         case readiness
         case localNow = "local_now"
-        case quieter, assignees
+        case quieter, assignees, freshness, monitoring
+        case dataAsOf = "data_as_of"
+    }
+
+    /// "9/22/26" — `data_as_of` in the owner's format whether the server
+    /// sent M/D/YY or ISO; nil when absent or unreadable.
+    var dataAsOfDisplay: String? {
+        ConfidenceDisplay.mdyDate(asOf: dataAsOf?.value, asOfISO: nil)
+    }
+}
+
+// MARK: - Freshness (K4 / J2)
+
+/// One source behind Home and how current it is. The K4 shape is
+/// `{module, source, state, pct, as_of, basis}` with state current | aging
+/// | stale | not_connected | unknown | sample; an older server sent
+/// `{key, label, at, state: fresh|stale|missing|manual|sample, note}`.
+/// Both read; every field lenient.
+struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
+    enum State: String, Codable, Hashable {
+        case current, aging, stale, notConnected, unknown, sample
+    }
+
+    let module: String?
+    let source: String?
+    let state: State
+    let pct: Int?
+    let asOf: String?
+    let basis: String?
+
+    var id: String { (module ?? "") + "|" + (source ?? "") }
+
+    enum CodingKeys: String, CodingKey {
+        case module, source, state, pct, basis, key, label, at, note
+        case asOf = "as_of"
+    }
+
+    init(module: String?, source: String?, state: State, pct: Int? = nil, asOf: String? = nil, basis: String? = nil) {
+        self.module = module; self.source = source; self.state = state
+        self.pct = pct; self.asOf = asOf; self.basis = basis
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func text(_ k: CodingKeys) -> String? {
+            guard let s = (try? c.decodeIfPresent(String.self, forKey: k)) ?? nil else { return nil }
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
+        module = text(.module) ?? text(.key)
+        source = text(.source) ?? text(.label)
+        basis = text(.basis) ?? text(.note)
+        let rawAsOf = text(.asOf) ?? text(.at)
+        asOf = rawAsOf.flatMap { ConfidenceDisplay.mdyDate(asOf: $0, asOfISO: nil) }
+        if let i = (try? c.decodeIfPresent(Int.self, forKey: .pct)) ?? nil {
+            pct = max(0, min(100, i))
+        } else if let d = (try? c.decodeIfPresent(Double.self, forKey: .pct)) ?? nil, d.isFinite {
+            pct = max(0, min(100, Int(d.rounded())))
+        } else {
+            pct = nil
+        }
+        state = Self.state(text(.state), hasAge: rawAsOf != nil)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(module, forKey: .module)
+        try c.encodeIfPresent(source, forKey: .source)
+        try c.encode(Self.wire(state), forKey: .state)
+        try c.encodeIfPresent(pct, forKey: .pct)
+        try c.encodeIfPresent(asOf, forKey: .asOf)
+        try c.encodeIfPresent(basis, forKey: .basis)
+    }
+
+    /// Both vocabularies onto one. Unknown age is never current: an old
+    /// "fresh" with no date reads "unknown".
+    static func state(_ raw: String?, hasAge: Bool) -> State {
+        switch raw?.lowercased() {
+        case "current": return .current
+        case "fresh": return hasAge ? .current : .unknown
+        case "aging": return .aging
+        case "stale": return .stale
+        case "not_connected", "missing", "manual": return .notConnected
+        case "sample": return .sample
+        default: return .unknown
+        }
+    }
+
+    static func wire(_ s: State) -> String {
+        switch s {
+        case .current: return "current"
+        case .aging: return "aging"
+        case .stale: return "stale"
+        case .notConnected: return "not_connected"
+        case .unknown: return "unknown"
+        case .sample: return "sample"
+        }
+    }
+
+    /// The source's name as the strip prints it.
+    var name: String {
+        if let source { return source }
+        guard let module else { return "Data" }
+        return module == "inventory" ? "Food cost" : module.prefix(1).uppercased() + module.dropFirst()
+    }
+
+    /// What the chip says after the name: the basis, else what the state
+    /// means ("not connected", "age unknown", "sample data").
+    var caption: String? {
+        if let basis { return basis }
+        switch state {
+        case .notConnected: return "not connected"
+        case .unknown: return "age unknown"
+        case .sample: return "sample data"
+        case .current, .aging, .stale: return asOf.map { "as of " + $0 }
+        }
+    }
+}
+
+/// `freshness` read element by element: an entry that isn't an object is
+/// skipped, and a value that isn't a list is empty — never a failed Home.
+struct HomeFreshnessList: Codable, Hashable {
+    let entries: [HomeFreshnessEntry]
+
+    init(_ entries: [HomeFreshnessEntry]) { self.entries = entries }
+
+    init(from decoder: Decoder) throws {
+        guard var list = try? decoder.unkeyedContainer() else { entries = []; return }
+        var out: [HomeFreshnessEntry] = []
+        while !list.isAtEnd {
+            let before = list.currentIndex
+            if let e = try? list.decode(HomeFreshnessEntry.self) {
+                out.append(e)
+            } else {
+                // Step over the odd element (any JSON value).
+                _ = try? list.decode(JSONValue.self)
+            }
+            if list.currentIndex == before { break }
+        }
+        entries = out
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(entries)
+    }
+}
+
+/// `monitoring: {count_live, stalest_as_of}` — how many sources are
+/// current, and the stalest one's date. Lenient.
+struct HomeMonitoring: Codable, Hashable {
+    let countLive: Int?
+    let stalestAsOf: String?
+
+    enum CodingKeys: String, CodingKey {
+        case countLive = "count_live"
+        case stalestAsOf = "stalest_as_of"
+    }
+
+    init(countLive: Int?, stalestAsOf: String?) {
+        self.countLive = countLive; self.stalestAsOf = stalestAsOf
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            countLive = nil; stalestAsOf = nil; return
+        }
+        countLive = try? c.decodeIfPresent(Int.self, forKey: .countLive)
+        let s = (try? c.decodeIfPresent(String.self, forKey: .stalestAsOf)) ?? nil
+        stalestAsOf = s.flatMap { ConfidenceDisplay.mdyDate(asOf: $0, asOfISO: nil) }
     }
 }
 
@@ -160,12 +336,16 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     let evidence: String?
     let module: String?
     let metric: String?
-    /// ONE confidence for the card, from its own evidence (the kind's
-    /// measured record here may move it a band). Optional: older servers
-    /// omit it, and the card renders exactly as before.
-    let confidence: HomeConfidence?
+    /// ONE confidence for the card (K1: the percentage, what it rests on,
+    /// and the three dimensions behind "Why?"). Optional: older servers
+    /// omit it or send the band-only object, and both still render.
+    let confidence: TrustConfidence?
     let timeframe: String?
     let impact: String?
+    /// The old "evidence strength" pill's key. Decoded for an older server
+    /// or a cached summary and deliberately not rendered: the confidence
+    /// line replaced it (CA4 F1 — two strength readings on one card). New
+    /// servers leave the key out.
     let strength: String?
     /// Dollars a month at stake — only when measured, never invented.
     let dollarsMonthly: Double?
@@ -174,6 +354,9 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     /// A one-tap finish (a reprice at the suggested price), when there is one.
     let action: HomeRecAction?
     let timesHidden: Int?
+    /// True when the model wrote the card's words (K4) — a small
+    /// "AI-written" tag.
+    let modelWritten: Bool?
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
@@ -181,6 +364,31 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
         case dollarsMonthly = "dollars_monthly"
         case ifIgnored = "if_ignored"
         case timesHidden = "times_hidden"
+        case modelWritten = "model_written"
+    }
+}
+
+extension HomeRecommendation {
+    /// `key` and `title` are the card; everything else is read leniently —
+    /// an odd value is nil, never a Home that fails to decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        title = try c.decode(String.self, forKey: .title)
+        why = try? c.decodeIfPresent(String.self, forKey: .why)
+        evidence = try? c.decodeIfPresent(String.self, forKey: .evidence)
+        module = try? c.decodeIfPresent(String.self, forKey: .module)
+        metric = try? c.decodeIfPresent(String.self, forKey: .metric)
+        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+        timeframe = try? c.decodeIfPresent(String.self, forKey: .timeframe)
+        impact = try? c.decodeIfPresent(String.self, forKey: .impact)
+        strength = try? c.decodeIfPresent(String.self, forKey: .strength)
+        dollarsMonthly = try? c.decodeIfPresent(Double.self, forKey: .dollarsMonthly)
+        ifIgnored = try? c.decodeIfPresent(String.self, forKey: .ifIgnored)
+        alternative = try? c.decodeIfPresent(String.self, forKey: .alternative)
+        action = try? c.decodeIfPresent(HomeRecAction.self, forKey: .action)
+        timesHidden = try? c.decodeIfPresent(Int.self, forKey: .timesHidden)
+        modelWritten = try? c.decodeIfPresent(Bool.self, forKey: .modelWritten)
     }
 }
 
@@ -192,15 +400,9 @@ struct HomeRecAction: Codable, Hashable {
     let count: Int?
 }
 
-struct HomeConfidence: Codable, Hashable {
-    let score: Double
-    let band: String
-    /// "Medium confidence" — the one label the card shows.
-    let label: String?
-    /// What the band rests on ("6 reviews in 90 days").
-    let reason: String?
-    let caution: String?
-}
+// The card's confidence is `TrustConfidence` (Models/TrustConfidence.swift),
+// which still decodes the older {score, band, label, reason, caution}
+// object; `HomeConfidence` is kept there as an alias.
 
 struct HomeSetupStep: Codable, Identifiable, Hashable {
     let key: String
@@ -444,13 +646,41 @@ struct NeedsAttentionItem: Codable, Identifiable {
     /// How many replies a publish tap sends — the number on its label (the
     /// last 30 days' drafts), never 25 including imported history.
     let count: Int?
+    /// What the item rests on, in one line (K4) — shown inline under the
+    /// detail on the card, never hover- or press-only.
+    let evidence: String?
+    /// K1 — how sure Cavnar is, with "Why?". Absent on an older server.
+    let confidence: TrustConfidence?
 
     var id: String { type }
     var isPublishAction: Bool { action == "publish_replies" }
 
     enum CodingKeys: String, CodingKey {
-        case type, module, title, detail, cta, secondary, action, dismissable, count
+        case type, module, title, detail, cta, secondary, action, dismissable, count, evidence, confidence
         case recKey = "rec_key"
         case timesHidden = "times_hidden"
+    }
+}
+
+extension NeedsAttentionItem {
+    /// The four the card cannot draw without are required; every other
+    /// field is read leniently (an odd value is nil, never a Home that
+    /// fails to decode).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(String.self, forKey: .type)
+        module = try c.decode(String.self, forKey: .module)
+        title = try c.decode(String.self, forKey: .title)
+        detail = try c.decode(String.self, forKey: .detail)
+        cta = try? c.decodeIfPresent(String.self, forKey: .cta)
+        secondary = try? c.decodeIfPresent(String.self, forKey: .secondary)
+        action = try? c.decodeIfPresent(String.self, forKey: .action)
+        recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+        dismissable = try? c.decodeIfPresent(Bool.self, forKey: .dismissable)
+        timesHidden = try? c.decodeIfPresent(Int.self, forKey: .timesHidden)
+        count = try? c.decodeIfPresent(Int.self, forKey: .count)
+        let ev = (try? c.decodeIfPresent(String.self, forKey: .evidence)) ?? nil
+        evidence = (ev?.isEmpty ?? true) ? nil : ev
+        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
     }
 }

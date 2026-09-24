@@ -342,10 +342,13 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     var recKey: String? = nil
     var answered: Bool? = nil
     var answerable: Bool? = nil
+    /// K1, built from the facts the action cites (E16) — the shared
+    /// confidence line under the action. Absent on an older report.
+    var confidence: TrustConfidence? = nil
     var id: String { key ?? text }
 
     enum CodingKeys: String, CodingKey {
-        case text, why, urgency, effort, kind, key, answered, answerable
+        case text, why, urgency, effort, kind, key, answered, answerable, confidence
         case dollarsMonthly = "dollars_monthly"
         case recKey = "rec_key"
     }
@@ -389,9 +392,48 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     }
 }
 
+/// dsr.narrative's `verification`: lines checked, lines kept, and the lines
+/// dropped because a figure didn't trace (a list of {field, text, why} —
+/// only its length is shown). H13: estimates the lines cite are counted
+/// apart (`estimated` / `estimates`, a count or a list), so "traced to a
+/// measured fact" never covers them. Every field lenient.
 struct DSRVerification: Decodable, Hashable {
     let checked: Int?
     let kept: Int?
+    let dropped: Int?
+    let estimated: Int?
+
+    enum CodingKeys: String, CodingKey { case checked, kept, dropped, estimated, estimates }
+
+    init(checked: Int?, kept: Int?, dropped: Int? = nil, estimated: Int? = nil) {
+        self.checked = checked; self.kept = kept; self.dropped = dropped; self.estimated = estimated
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        checked = try? c.decodeIfPresent(Int.self, forKey: .checked)
+        kept = try? c.decodeIfPresent(Int.self, forKey: .kept)
+        dropped = Self.count(c, .dropped)
+        estimated = Self.count(c, .estimated) ?? Self.count(c, .estimates)
+    }
+
+    /// A count sent as a number or as the list it counts.
+    private static func count(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
+        if let n = (try? c.decodeIfPresent(Int.self, forKey: key)) ?? nil { return n }
+        if let list = (try? c.decodeIfPresent([JSONValue].self, forKey: key)) ?? nil { return list.count }
+        return nil
+    }
+
+    /// "Every figure above traced to a measured fact · 7 of 8 lines kept ·
+    /// 1 dropped because a figure didn't trace · 2 estimates, labelled as
+    /// such" — nil when nothing was checked.
+    var footer: String? {
+        guard let checked, let kept, checked > 0 else { return nil }
+        var s = "Every figure above traced to a measured fact \u{00B7} \(kept) of \(checked) lines kept"
+        if let d = dropped, d > 0 { s += " \u{00B7} \(d) dropped because a figure didn\u{2019}t trace" }
+        if let e = estimated, e > 0 { s += " \u{00B7} \(e) estimate\(e == 1 ? "" : "s"), labelled as such" }
+        return s
+    }
 }
 
 struct DSRNarrative: Decodable {

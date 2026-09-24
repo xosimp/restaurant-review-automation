@@ -53,10 +53,18 @@ struct FoodCostQuickEntryView: View {
                 title: "Food cost forecast", tone: Color.cavnarEmber, icon: "calendar",
                 isExpanded: $analyticsViewModel.forecastExpanded
             ) {
-                Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .lineSpacing(3)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .lineSpacing(3)
+                    // How the waste forecasts have held up here (K8) — so
+                    // the owner can weigh this one. Nothing when withheld.
+                    if let record = analyticsViewModel.cfo?.brief?.forecastAccuracy?.sentence {
+                        HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
         .overlay(alignment: .top) { successToast }

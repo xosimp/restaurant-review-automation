@@ -646,14 +646,6 @@ private struct ChatBubble: View {
 private struct EvidenceStrip: View {
     let evidence: AskEvidence
 
-    private var confidenceColor: Color {
-        switch evidence.confidence {
-        case "high": return Color.cavnarGreen
-        case "low":  return Color.cavnarRed
-        default:     return Color.cavnarInk3
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             if let warning = evidence.warning {
@@ -669,8 +661,15 @@ private struct EvidenceStrip: View {
             // Wraps rather than scrolls: a cross-module answer can name five
             // modules, and a strip that scrolls sideways under a paragraph is
             // something nobody discovers.
-            FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) }
-                      + (evidence.confidenceLabel.map { [($0, confidenceColor)] } ?? []))
+            if !evidence.modules.isEmpty {
+                FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) })
+            }
+            // How sure — the shared confidence line (K5): "72% confidence"
+            // in the one colour map (low is amber, never red — CA4 F9),
+            // with "Why?" when the server sent what it rests on.
+            if let c = evidence.confidence, evidence.confidenceLabel != nil {
+                ConfidenceLine(confidence: c, recKey: nil, surface: "ask", module: "ask")
+            }
         }
     }
 }

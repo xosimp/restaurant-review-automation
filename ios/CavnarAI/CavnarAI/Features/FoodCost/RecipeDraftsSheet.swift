@@ -14,6 +14,18 @@ struct RecipeDraftLine: Decodable, Identifiable {
     let confidence: String?
     var id: String { "\(ingredientId ?? 0)-\(name)" }
     enum CodingKeys: String, CodingKey { case name, qty, unit, confidence; case ingredientId = "ingredient_id" }
+
+    /// The quiet mark beside a line's quantity, so high and medium no longer
+    /// look the same (H6/J9): high — nothing; medium — a small "check" in
+    /// ink3; low — the amber "?". Nil for high or an unknown value.
+    enum Mark: Equatable { case check, doubt }
+    var mark: Mark? {
+        switch TrustConfidence.normalisedBand(confidence) {
+        case "medium": return .check
+        case "low": return .doubt
+        default: return nil
+        }
+    }
 }
 
 struct RecipeDraft: Decodable, Identifiable {
@@ -216,9 +228,16 @@ struct RecipeDraftsSheet: View {
                         Spacer(minLength: 6)
                         Text(Self.qty(line.qty) + (line.unit.map { " \($0)" } ?? ""))
                             .font(.cavnarNumber(14, weight: 600))
-                            .foregroundStyle(line.confidence == "low" ? Color.cavnarAmber : Color.cavnarInk)
-                        if line.confidence == "low" {
+                            .foregroundStyle(line.mark == .doubt ? Color.cavnarAmber : Color.cavnarInk)
+                        switch line.mark {
+                        case .doubt:
                             Text("?").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarAmber)
+                                .accessibilityLabel("Unsure — check this amount")
+                        case .check:
+                            Text("check").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                .accessibilityLabel("Worth a check")
+                        case nil:
+                            EmptyView()
                         }
                     }
                 }

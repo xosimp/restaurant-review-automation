@@ -137,8 +137,12 @@ struct ReviewsAnalyticsSection: View {
                 .tracking(1.1)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarEmber)
+            // Which way the rating is moving, and how sure that direction is
+            // — decoded all along and never shown.
+            ratingTrendLine
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 let parsed = Self.parseInsightLine(line)
+                let claim = Self.claimKey(forInsightLine: line).flatMap { viewModel.claimKinds[$0] }
                 if parsed.isForecast {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Forecast")
@@ -174,6 +178,12 @@ struct ReviewsAnalyticsSection: View {
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(parsed.text)
+                        // Measured / inferred / suggestion — what kind of
+                        // statement this line is (claim_kinds).
+                        if claim != nil {
+                            ClaimKindTag(kind: claim)
+                                .padding(.leading, 22)
+                        }
                         // The answer row sits under the line it answers —
                         // the "Do today" line, matched by the text the
                         // server keyed.
@@ -249,6 +259,20 @@ struct ReviewsAnalyticsSection: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(tier.open) open \(tier.label) \(tier.open == 1 ? "complaint" : "complaints")")
                 }
+                // The ones no tier was given, said rather than left out.
+                if viewModel.unclassifiedCount > 0 {
+                    HStack(spacing: 6) {
+                        Text("\(viewModel.unclassifiedCount)")
+                            .font(.cavnarNumber(12.5, weight: 700))
+                        Text("unclassified")
+                            .font(.cavnarBody(11.5))
+                    }
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.cavnarPaper3.opacity(0.6), in: Capsule())
+                    .accessibilityElement(children: .combine)
+                }
             }
             .padding(.vertical, 1)
         }
@@ -280,26 +304,27 @@ struct ReviewsAnalyticsSection: View {
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarEmber)
                 Spacer(minLength: 0)
-                Text(d.confidenceBand)
-                    .font(.cavnarBody(10, weight: 700))
-                    .tracking(0.7)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Self.confidenceTint(d.confidenceBand))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Self.confidenceTint(d.confidenceBand).opacity(0.14), in: Capsule())
+                // The cause is the model's read of the reviews — said so.
+                ClaimKindTag(kind: viewModel.claimKinds["why"])
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
 
-            Text("\(d.category.replacingOccurrences(of: "_", with: " ")) · \(d.mentionCount) negative reviews over \(d.windowDays) days"
+            HomeMixedText.make("\(d.category.replacingOccurrences(of: "_", with: " ")) · \(d.mentionCount) negative reviews over \(d.windowDays) days"
                  + (d.asOf.map { " · read \($0)" } ?? "")
-                 + ((d.stale ?? false) && d.staleNote == nil ? " · older read" : ""))
-                .font(.cavnarBody(12))
-                .foregroundStyle(Color.cavnarInk3)
+                 + ((d.stale ?? false) && d.staleNote == nil ? " · older read" : ""),
+                               size: 12, weight: 400, color: .cavnarInk3)
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
-                .padding(.bottom, 12)
+                .padding(.bottom, d.confidence == nil ? 12 : 8)
+
+            // How sure, as a percentage with what it rests on (K1/K6) — the
+            // shared confidence line, not a bare band capsule.
+            if let c = d.confidence {
+                ConfidenceLine(confidence: c, recKey: d.recKey, surface: "reviews", module: "reviews")
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
 
             // The server's own sentence for a read that hasn't been
             // refreshed — the same caveat the insight above uses.
@@ -443,11 +468,42 @@ struct ReviewsAnalyticsSection: View {
         .accessibilityLabel("Forecast. \("$" + abs(low).commaFormatted) to \("$" + abs(high).commaFormatted) a month \(m.direction == "at_risk" ? "at risk" : "of upside").")
     }
 
-    private static func confidenceTint(_ band: String) -> Color {
-        switch band {
-        case "high":   return .cavnarGreen
-        case "medium": return .cavnarAmber
-        default:       return .cavnarInk3
+    /// "Medium confidence trend" — the rating trend's own band, in the one
+    /// confidence colour map (green / ink2 / amber; never red or ember).
+    static func trendConfidenceLabel(_ band: String?) -> String? {
+        guard let b = TrustConfidence.normalisedBand(band) else { return nil }
+        return b.prefix(1).uppercased() + b.dropFirst() + " confidence trend"
+    }
+
+    /// The claim_kinds key an insight line is: 📊 this_week, ⚠️ watch,
+    /// ✅ do_today, 🔮 next_week.
+    static func claimKey(forInsightLine line: String) -> String? {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("📊") { return "this_week" }
+        if t.hasPrefix("⚠") { return "watch" }
+        if t.hasPrefix("✅") { return "do_today" }
+        if t.hasPrefix("🔮") { return "next_week" }
+        return nil
+    }
+
+    @ViewBuilder
+    private var ratingTrendLine: some View {
+        if let sentence = viewModel.ratingTrend?.sentence {
+            let band = viewModel.trendConfidence
+            let label = Self.trendConfidenceLabel(band)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                (HomeMixedText.make(sentence, size: 12.5, weight: 600, color: .cavnarInk2)
+                 + (label.map {
+                     HomeMixedText.make(" \u{00B7} " + $0, size: 12.5, weight: 700,
+                                        color: ConfidenceDisplay.tone(band: band).color)
+                 } ?? Text(verbatim: "")))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
+            }
+        } else if let label = Self.trendConfidenceLabel(viewModel.trendConfidence) {
+            HomeMixedText.make(label, size: 12.5, weight: 700,
+                               color: ConfidenceDisplay.tone(band: viewModel.trendConfidence).color)
         }
     }
 

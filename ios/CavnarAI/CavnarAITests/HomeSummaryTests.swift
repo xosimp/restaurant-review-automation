@@ -60,6 +60,83 @@ final class HomeSummaryTests: XCTestCase {
         XCTAssertEqual(result.posted, 2)
         XCTAssertEqual(result.failed, 0)
     }
+
+    // MARK: - Freshness (K4 / J2)
+
+    private func withFields(_ fields: String) throws -> HomeSummary {
+        let json = String(base.dropLast()) + ", " + fields + "}"
+        return try JSONDecoder.cavnar.decode(HomeSummary.self, from: Data(json.utf8))
+    }
+
+    func testDecodesTheK4FreshnessShape() throws {
+        let s = try withFields("""
+            "freshness": [
+              {"module": "labor", "source": "POS (Toast)", "state": "current", "pct": 94, "as_of": "9/23/26",
+               "basis": "synced 9/23/26"},
+              {"module": "reviews", "source": "Google reviews", "state": "aging", "pct": 61.6, "as_of": "2026-09-20",
+               "basis": "fetched 4 days ago"},
+              {"module": "inventory", "source": "Counts", "state": "stale", "pct": 20, "as_of": "9/9/26"},
+              {"module": "marketing", "source": "Instagram", "state": "not_connected", "pct": null},
+              {"module": "intel", "source": "Competitors", "state": "unknown"},
+              {"module": "labor", "source": "Shifts", "state": "sample", "basis": "sample data — upload shifts"}],
+            "data_as_of": "2026-09-09",
+            "monitoring": {"count_live": 1, "stalest_as_of": "9/9/26"}
+            """)
+        let e = try XCTUnwrap(s.freshness?.entries)
+        XCTAssertEqual(e.map(\.state), [.current, .aging, .stale, .notConnected, .unknown, .sample])
+        XCTAssertEqual(e[0].pct, 94)
+        XCTAssertEqual(e[1].pct, 62)
+        // Dates are M/D/YY whatever the server sent.
+        XCTAssertEqual(e[1].asOf, "9/20/26")
+        XCTAssertEqual(s.dataAsOfDisplay, "9/9/26")
+        XCTAssertEqual(s.monitoring?.countLive, 1)
+        XCTAssertEqual(e[3].caption, "not connected")
+        XCTAssertEqual(e[4].caption, "age unknown")
+        XCTAssertEqual(e[5].caption, "sample data — upload shifts")
+        let kicker = MainActor.assumeIsolated {
+            HomeFreshnessStrip.kicker(dataAsOf: s.dataAsOfDisplay, monitoring: s.monitoring)
+        }
+        XCTAssertEqual(kicker, "DATA AS OF 9/9/26 · 1 LIVE")
+        // The cache round trip keeps it.
+        let again = try JSONDecoder.cavnar.decode(HomeSummary.self, from: try JSONEncoder.cavnar.encode(s))
+        XCTAssertEqual(again.freshness, s.freshness)
+        XCTAssertEqual(again.dataAsOfDisplay, "9/9/26")
+    }
+
+    /// The older {key, label, at, state: fresh|stale|missing|manual|sample,
+    /// note} shape still reads — and a "fresh" with no date is never
+    /// current: unknown age is unknown.
+    func testDecodesTheOlderFreshnessShape() throws {
+        let s = try withFields("""
+            "freshness": [
+              {"key": "reviews", "label": "Reviews", "at": "2026-09-23 06:10:00", "state": "fresh"},
+              {"key": "labor", "label": "Labor", "at": null, "state": "fresh", "note": "POS"},
+              {"key": "inventory", "label": "Food cost", "at": null, "state": "sample", "note": "sample data"},
+              {"key": "marketing", "label": "Marketing", "at": null, "state": "manual"},
+              {"key": "intel", "label": "Intel", "at": "2026-08-01", "state": "stale"},
+              {"key": "x", "label": "X", "state": "missing"}]
+            """)
+        let e = try XCTUnwrap(s.freshness?.entries)
+        XCTAssertEqual(e.map(\.state), [.current, .unknown, .sample, .notConnected, .stale, .notConnected])
+        XCTAssertEqual(e[0].name, "Reviews")
+        XCTAssertEqual(e[0].asOf, "9/23/26")
+        XCTAssertEqual(e[1].caption, "POS")
+        XCTAssertNil(s.dataAsOfDisplay)
+    }
+
+    func testFreshnessAbsentOrOddNeverFailsHome() throws {
+        let absent = try JSONDecoder.cavnar.decode(HomeSummary.self, from: Data(base.utf8))
+        XCTAssertNil(absent.freshness)
+        XCTAssertNil(absent.dataAsOf)
+        XCTAssertNil(absent.monitoring)
+        let odd = try withFields(#""freshness": {"labor": "current"}, "data_as_of": 7, "monitoring": [1]"#)
+        XCTAssertEqual(odd.freshness?.entries, [])
+        XCTAssertNil(odd.dataAsOfDisplay)
+        XCTAssertNil(odd.monitoring?.countLive)
+        let mixed = try withFields(#""freshness": ["labor", 3, {"module": "labor", "state": "current", "as_of": "9/23/26"}]"#)
+        XCTAssertEqual(mixed.freshness?.entries.count, 1)
+        XCTAssertEqual(mixed.freshness?.entries.first?.name, "Labor")
+    }
 }
 
 final class HomeMixedTextTests: XCTestCase {

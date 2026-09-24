@@ -44,7 +44,9 @@ struct LaborDiagnosis: Decodable, Equatable {
     let alternativeCause: String?
     let whatWouldConfirm: String?
     let summary: String?
-    let confidence: String?
+    /// K6 — the K1 object (a percentage with "Why?"); an older server's
+    /// bare band ("medium") still decodes.
+    let confidence: TrustConfidence?
     let operationalEvidence: [Evidence]
     let recKey: String?
     let answered: Bool?
@@ -65,7 +67,7 @@ struct LaborDiagnosis: Decodable, Equatable {
         alternativeCause = try? c.decodeIfPresent(String.self, forKey: .alternativeCause)
         whatWouldConfirm = try? c.decodeIfPresent(String.self, forKey: .whatWouldConfirm)
         summary = try? c.decodeIfPresent(String.self, forKey: .summary)
-        confidence = try? c.decodeIfPresent(String.self, forKey: .confidence)
+        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
         operationalEvidence = (try? c.decodeIfPresent([Evidence].self, forKey: .operationalEvidence)) ?? []
         recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
         answered = try? c.decodeIfPresent(Bool.self, forKey: .answered)

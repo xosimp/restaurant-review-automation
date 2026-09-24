@@ -255,6 +255,10 @@ struct ScheduleReviewPanel: View {
                 .font(.cavnarBody(11, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarInk3)
+            if let note = result.standbyNote?.value {
+                HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(standbyDays) { day in
                 if let person = day.standby {
                     VStack(alignment: .leading, spacing: 6) {
@@ -264,6 +268,11 @@ struct ScheduleReviewPanel: View {
                                 + "\(person.employee) is off and could be on call.",
                             size: 13.5, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
+                        // What the % assumes / how it has held up (I9).
+                        if let note = day.calibrationText {
+                            HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let said = viewModel.standbyAsked[day.date] {
                             Text(said)
                                 .font(.cavnarBody(13))
@@ -295,6 +304,11 @@ struct ScheduleReviewPanel: View {
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
+            // How often a flag like this has been right here (I9).
+            if let note = result.likelyEditsNote?.value {
+                HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(predictedEdits) { edit in
                 HStack(alignment: .top, spacing: 10) {
                     Text("\(Int(((edit.likelihood ?? 0) * 100).rounded()))%")
@@ -307,6 +321,10 @@ struct ScheduleReviewPanel: View {
                         if let reason = edit.reason, !reason.isEmpty {
                             HomeMixedText.make(reason.prefix(1).uppercased() + reason.dropFirst() + ".",
                                                size: 13, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let note = edit.calibrationText {
+                            HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
