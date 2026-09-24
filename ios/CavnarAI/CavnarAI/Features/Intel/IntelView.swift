@@ -270,40 +270,61 @@ struct IntelView: View {
         let avgRating = summary.marketRating
             ?? (count > 0 ? summary.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : 0)
 
-        return HStack(spacing: 0) {
-            statTile(value: plainStatValue("\(count)"), label: "Tracked")
-            Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-            statTile(
-                value: count > 0 ? ratingText(avgRating, numberSize: 20, tone: Color.cavnarInk) : plainStatValue("—"),
-                label: "Market avg"
-            )
-            Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-            if let own = summary.ownRating {
-                // Colored relative to the competitor average, not an
-                // absolute threshold — a 4.1 that's genuinely ahead of a
-                // weak local market should read as good news exactly as
-                // much as a 4.1 that's behind a strong one should read as
-                // a gap to close. An absolute >=4.0-is-green cutoff doesn't
-                // know which of those it's looking at, and the competitor
-                // row accents below already use this same relative logic —
-                // this tile was the one place on the page disagreeing
-                // with itself.
-                // Coloured against the market ONLY when both numbers are
-                // the same kind. An average over the reviews we imported is
-                // not comparable to competitors' all-time Google ratings,
-                // and it used to be rendered red or green against them.
+        return VStack(spacing: 10) {
+            HStack(spacing: 0) {
+                statTile(value: plainStatValue("\(count)"), label: "Tracked")
+                Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
                 statTile(
-                    value: ratingText(own, numberSize: 20,
-                                      tone: summary.ratingsAreComparable
-                                        ? (own >= avgRating ? Color.cavnarGreen
-                                           : (own >= avgRating - 0.3 ? Color.cavnarAmber : Color.cavnarRed))
-                                        : Color.cavnarInk),
-                    label: summary.restaurantName ?? "Your rating"
+                    value: count > 0 ? ratingText(avgRating, numberSize: 20, tone: Color.cavnarInk) : plainStatValue("—"),
+                    label: "Market avg"
                 )
-            } else {
-                statTile(value: plainStatValue("\(summary.recommendations.count)"), label: "Action items")
+                Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
+                if let own = summary.ownRating {
+                    // Colored relative to the competitor average, not an
+                    // absolute threshold — a 4.1 that's genuinely ahead of a
+                    // weak local market should read as good news exactly as
+                    // much as a 4.1 that's behind a strong one should read as
+                    // a gap to close. An absolute >=4.0-is-green cutoff doesn't
+                    // know which of those it's looking at, and the competitor
+                    // row accents below already use this same relative logic —
+                    // this tile was the one place on the page disagreeing
+                    // with itself.
+                    // Coloured against the market ONLY when both numbers are
+                    // the same kind. An average over the reviews we imported is
+                    // not comparable to competitors' all-time Google ratings,
+                    // and it used to be rendered red or green against them.
+                    statTile(
+                        value: ratingText(own, numberSize: 20, tone: Self.ownRatingTone(summary, own: own, market: avgRating)),
+                        label: summary.restaurantName ?? "Your rating"
+                    )
+                } else {
+                    statTile(value: plainStatValue("\(summary.recommendations.count)"), label: "Action items")
+                }
+            }
+            // Where the owner stands, in the server's words (I10) — the
+            // same rule web and the first look use. Nothing when the two
+            // ratings aren't the same kind of number.
+            if let line = summary.standingLine {
+                HomeMixedText.make(line, size: 13, weight: 600,
+                                   color: summary.standingTone?.color ?? .cavnarInk2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    /// The own-rating tile's colour: the server's standing tone when it made
+    /// the comparison (I10), ink when it declined to (the two ratings are
+    /// not the same kind); only an older server that sends no standing
+    /// falls back to the client's own ±0.3★ rule.
+    static func ownRatingTone(_ summary: IntelSummary, own: Double, market: Double) -> Color {
+        if summary.standingTone != nil || summary.standing != nil {
+            guard summary.standing != nil else { return .cavnarInk }
+            return summary.standingTone?.color ?? .cavnarInk
+        }
+        guard summary.ratingsAreComparable else { return .cavnarInk }
+        return own >= market ? .cavnarGreen : (own >= market - 0.3 ? .cavnarAmber : .cavnarRed)
     }
 
     /// value arrives already fully styled (font + color on every segment)

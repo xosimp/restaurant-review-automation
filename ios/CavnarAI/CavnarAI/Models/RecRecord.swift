@@ -180,8 +180,22 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
     let dollarsMonthly: Double?
     let ownerCheckin: OwnerCheckin?
     let interim: Interim?
+    /// F1/F2/F3 (outcomes.py): the attribution grade as one clause ("a
+    /// clear move (more than twice normal variation), with nothing else
+    /// changing on this number"); whether the baseline overlapped the window
+    /// that triggered the recommendation — shown, NEVER counted; and the
+    /// false-alarm rate of the band the result was read against (0–1), with
+    /// how that band was estimated. All absent on an older server.
+    var gradePhrase: String? = nil
+    var baselineOverlapsTrigger: Bool? = nil
+    var falseAlarmRate: Double? = nil
+    var bandBasis: String? = nil
 
     enum CodingKeys: String, CodingKey {
+        case gradePhrase = "grade_phrase"
+        case baselineOverlapsTrigger = "baseline_overlaps_trigger"
+        case falseAlarmRate = "false_alarm_rate"
+        case bandBasis = "band_basis"
         case id, title, source, metric, unit, status, verdict, module, delta, attribution
         case concurrent, validated, counts, summary, informational, interim
         case sourceKey = "source_key"
@@ -235,6 +249,46 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
         dollarsMonthly = try? c.decodeIfPresent(Double.self, forKey: .dollarsMonthly)
         ownerCheckin = try? c.decodeIfPresent(OwnerCheckin.self, forKey: .ownerCheckin)
         interim = try? c.decodeIfPresent(Interim.self, forKey: .interim)
+        gradePhrase = try? c.decodeIfPresent(String.self, forKey: .gradePhrase)
+        // SQLite hands the flag back as 0/1; newer rows as a bool.
+        if let b = try? c.decodeIfPresent(Bool.self, forKey: .baselineOverlapsTrigger) {
+            baselineOverlapsTrigger = b
+        } else if let n = try? c.decodeIfPresent(Int.self, forKey: .baselineOverlapsTrigger) {
+            baselineOverlapsTrigger = n != 0
+        }
+        falseAlarmRate = try? c.decodeIfPresent(Double.self, forKey: .falseAlarmRate)
+        bandBasis = try? c.decodeIfPresent(String.self, forKey: .bandBasis)
+    }
+
+    /// Read against a baseline overlapping what triggered it (F1): the
+    /// result is shown and never counted, in value or in learning.
+    var overlapsTrigger: Bool { baselineOverlapsTrigger == true }
+
+    /// The lines under a finished result that say how far it can be read:
+    /// the not-counted flag first, then the grade, then what the comparison
+    /// was against and how often that band cries wolf. Empty for a result
+    /// with none of these (an older server).
+    var measurementNotes: [String] {
+        guard isEvaluated else { return [] }
+        var out: [String] = []
+        if overlapsTrigger {
+            out.append("Not counted \u{2014} its baseline overlaps the weeks that prompted the recommendation, so part of any move is the number settling back")
+        }
+        if let g = gradePhrase?.trimmingCharacters(in: .whitespaces), !g.isEmpty {
+            out.append(g.prefix(1).uppercased() + g.dropFirst())
+        }
+        var basis: [String] = []
+        if baselineKind == "before the trigger" {
+            basis.append("Compared with the same number of weeks before what prompted it")
+        }
+        if let f = falseAlarmRate, f > 0 {
+            basis.append("a change this size shows up by chance about \(Int((f * 100).rounded()))% of the time here")
+        }
+        if !basis.isEmpty {
+            let s = basis.joined(separator: "; ")
+            out.append(s.prefix(1).uppercased() + s.dropFirst())
+        }
+        return out
     }
 
     var isTracking: Bool { status == "tracking" }
@@ -792,6 +846,26 @@ enum RecValueFormat {
             return "Nothing measured yet. \(n) change\(n == 1 ? "" : "s") being measured now."
         }
         return "Nothing measured yet. Track a recommendation and its result lands here."
+    }
+
+    /// "Of that, $900/month were clear moves or held at their re-check;
+    /// $520/month came alongside other changes or crossed normal variation
+    /// only once." — the improvements by attribution grade (F4), each its
+    /// own figure, never summed with anything. Nil when neither is above 0.
+    static func gradeSplitLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String? {
+        let clear = d.consistentMonthly ?? 0, assoc = d.associatedMonthly ?? 0
+        switch (clear > 0, assoc > 0) {
+        case (true, true):
+            return "Of that, \(money(clear))/month were clear moves or held at their re-check; "
+                + "\(money(assoc))/month came alongside other changes or crossed normal variation only once."
+        case (false, true):
+            return "Every improvement came alongside other changes or crossed normal variation only once "
+                + "(\(money(assoc))/month) \u{2014} none is a clear move yet."
+        case (true, false):
+            return "All of it (\(money(clear))/month) were clear moves or held at their re-check."
+        default:
+            return nil
+        }
     }
 
     /// The server's own sentence, shown only when the net is below zero.

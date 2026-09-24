@@ -21,6 +21,12 @@ struct MarketingAnalyticsSection: View {
                 periodSwitcher
                 if let window = viewModel.window {
                     statsTile(window)
+                    // Why there's no +/−% beside the figures (F2) — a
+                    // blank change is "too few posts", never "no change".
+                    if let note = window.changeNote, !note.isEmpty {
+                        HomeMixedText.make(note + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if !window.byPlatform.isEmpty {
                         platformBars(window)
                     }
@@ -58,6 +64,11 @@ struct MarketingAnalyticsSection: View {
                     CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
                         .padding(.bottom, 10)
                 }
+                // A reason the read gave that nothing measured backs (H2).
+                if insight.causesVerified == false {
+                    CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
+                        .padding(.bottom, 10)
+                }
                 Text(insight.intro)
                     .font(.cavnarHeadline(18))
                     .foregroundStyle(Color.cavnarInk)
@@ -93,6 +104,16 @@ struct MarketingAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 8)
+                }
+                // The figure behind that line, computed in Python (H8) —
+                // last week's level carried forward, never extrapolated.
+                if let computed = insight.computedForecast?.line {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HomeMixedText.make(computed, size: 13, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ClaimKindTag(kind: "forecast")
+                    }
+                    .padding(.top, 6)
                 }
             } else {
                 Text("Publish a post or two and the brief will have something to say.")
@@ -258,6 +279,13 @@ struct MarketingAnalyticsSection: View {
                 .padding(.bottom, 4)
 
                 if attribution.ok, !attribution.posts.isEmpty {
+                    // What the posts' own verdicts say (F2), before any one
+                    // post's figure is read as the pattern.
+                    if let line = attribution.verdictLine {
+                        HomeMixedText.make(line + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 4)
+                    }
                     ForEach(Array(attribution.posts.enumerated()), id: \.element.id) { index, post in
                         attributionRow(post, divider: index > 0)
                     }
@@ -352,9 +380,14 @@ struct MarketingAnalyticsSection: View {
                 HStack(alignment: .firstTextBaseline) {
                     HomeMixedText.make("\(g.group.replacingOccurrences(of: "_", with: " ")) · \(g.posts) posts", size: 13.5, weight: 500, color: .cavnarInk2)
                     Spacer(minLength: 8)
-                    Text(Self.groupValue(g))
-                        .font(.cavnarNumber(13.5, weight: 700))
-                        .foregroundStyle(g.medianLiftPct >= 0 ? Color.cavnarGreen : Color.cavnarRed)
+                    // Coloured by the group's own verdict (F2) — a positive
+                    // median most of whose posts sat inside their band is
+                    // not a lift.
+                    HomeMixedText.make(Self.groupValue(g) + (g.liftVerdict == .noClearChange ? " \u{00B7} no clear change" : ""),
+                                       size: 13.5, weight: 700,
+                                       color: g.liftVerdict == .lifted ? .cavnarGreen
+                                            : (g.liftVerdict == .dropped ? .cavnarRed : .cavnarInk3))
+                        .multilineTextAlignment(.trailing)
                 }
                 .padding(.vertical, 5)
             }

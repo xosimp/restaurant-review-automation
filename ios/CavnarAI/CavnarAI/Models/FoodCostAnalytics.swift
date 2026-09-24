@@ -171,6 +171,15 @@ struct FoodCostAnalytics: Decodable {
     let wasteRatePct: Double?
     let benchmarkLabel: String?
     let benchmarkDetail: String?
+    /// I8: which kind of reading the benchmark label is — "measured",
+    /// "not_measured" (purchases on file but nothing logged as waste — NOT
+    /// the best result) or "no_data". The mobile analytics route does not
+    /// send it yet; `wasteState` infers it from the label then.
+    var benchmarkState: String? = nil
+    /// I8: the recoverable dollars are an "opportunity" — waste still being
+    /// thrown away, projected from one week's count — never money saved.
+    var recoverableKind: String? = nil
+    var annualRecoverableBasis: String? = nil
     let totalStockValue: Double?
     let totalItems: Int?
     let weekStart: String?
@@ -285,6 +294,9 @@ struct FoodCostAnalytics: Decodable {
         case wasteRatePct = "waste_rate_pct"
         case benchmarkLabel = "benchmark_label"
         case benchmarkDetail = "benchmark_detail"
+        case benchmarkState = "benchmark_state"
+        case recoverableKind = "recoverable_kind"
+        case annualRecoverableBasis = "annual_recoverable_basis"
         case totalStockValue = "total_stock_value"
         case totalItems = "total_items"
         case weekStart = "week_start"
@@ -298,6 +310,25 @@ struct FoodCostAnalytics: Decodable {
 
     /// Example data must never be read as the owner's own numbers.
     var showsExampleData: Bool { isLive == false }
+
+    /// The benchmark's kind of reading (I8): the server's `benchmark_state`,
+    /// else — for the mobile route, which does not pass it through — read
+    /// off the label inventory.py writes for a week with nothing logged
+    /// ("No waste recorded"), so that week can never draw as a 0.0% win.
+    var wasteState: String {
+        if let s = benchmarkState?.lowercased(), !s.isEmpty { return s }
+        let label = (benchmarkLabel ?? "").trimmingCharacters(in: .whitespaces)
+        if label.isEmpty || label == "\u{2014}" { return "no_data" }
+        if label.lowercased() == "no waste recorded" { return "not_measured" }
+        return "measured"
+    }
+
+    /// How the recoverable-per-year figure is described — a projection of
+    /// what is still being lost, never savings.
+    var recoverableBasisLine: String {
+        annualRecoverableBasis
+            ?? "Projected from one week's count \u{2014} what is still being lost, not money saved"
+    }
 
     var insight: AIInsight? {
         guard let insightIntro else { return nil }
@@ -489,10 +520,15 @@ struct FoodCostCFO: Decodable {
         /// else from `trust.forecast_accuracy` where the server carried it
         /// before K8.
         let forecastAccuracy: ForecastAccuracy?
+        /// K8 — the month-end prime-cost projection's own record
+        /// (forecast_log `profitability_month`, counted in months), shown
+        /// beside that projection. Absent on an older server.
+        var primeCostAccuracy: ForecastAccuracy? = nil
 
         enum CodingKeys: String, CodingKey {
             case trust
             case forecastAccuracy = "forecast_accuracy"
+            case primeCostAccuracy = "prime_cost_accuracy"
         }
 
         init(from decoder: Decoder) throws {
@@ -500,53 +536,89 @@ struct FoodCostCFO: Decodable {
             trust = try? c.decodeIfPresent(Trust.self, forKey: .trust)
             forecastAccuracy = (try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .forecastAccuracy))
                 ?? trust?.forecastAccuracy
+            primeCostAccuracy = (try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .primeCostAccuracy))
+                ?? trust?.primeCostAccuracy
         }
 
         struct Trust: Decodable {
             let recipeCoveragePct: Double?
             let inferredWastePct: Double?
             let forecastAccuracy: ForecastAccuracy?
+            var primeCostAccuracy: ForecastAccuracy? = nil
             enum CodingKeys: String, CodingKey {
                 case recipeCoveragePct = "recipe_coverage_pct"
                 case inferredWastePct = "inferred_waste_pct"
                 case forecastAccuracy = "forecast_accuracy"
+                case primeCostAccuracy = "prime_cost_accuracy"
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
                 recipeCoveragePct = try? c.decodeIfPresent(Double.self, forKey: .recipeCoveragePct)
                 inferredWastePct = try? c.decodeIfPresent(Double.self, forKey: .inferredWastePct)
                 forecastAccuracy = try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .forecastAccuracy)
+                primeCostAccuracy = try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .primeCostAccuracy)
             }
         }
     }
 }
 
-/// How a forecast has held up here (K8): `{reading, mean_error_pct,
-/// n_weeks, withheld}`. The pre-K8 server shape (`available`, `scored`) is
-/// read too. Every field lenient.
-struct ForecastAccuracy: Decodable, Equatable, Sendable {
+/// How a forecast has held up here (K8, forecast_log.accuracy):
+/// `{reading, mean_error_pct, n_weeks | n_months, withheld, bias_pct,
+/// reason}`. The pre-K8 server shape (`available`, `scored`) is read too.
+/// Every field lenient. `bias_pct` is forecast_log's signed error over the
+/// actual — positive means the forecasts ran HIGH.
+struct ForecastAccuracy: Codable, Equatable, Sendable {
     let reading: String?
     let meanErrorPct: Double?
     let nWeeks: Int?
     let withheld: Bool
+    /// Monthly kinds (the prime-cost projection) count months, not weeks.
+    var nMonths: Int? = nil
+    var biasPct: Double? = nil
+    /// The server's own words for why there is no reading, or why the next
+    /// forecast is withheld.
+    var reason: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case reading, withheld, available, scored
+        case reading, withheld, available, scored, reason
         case meanErrorPct = "mean_error_pct"
         case nWeeks = "n_weeks"
+        case nMonths = "n_months"
+        case biasPct = "bias_pct"
     }
 
-    init(reading: String?, meanErrorPct: Double?, nWeeks: Int?, withheld: Bool = false) {
+    init(reading: String?, meanErrorPct: Double?, nWeeks: Int?, withheld: Bool = false,
+         nMonths: Int? = nil, biasPct: Double? = nil, reason: String? = nil) {
         self.reading = reading; self.meanErrorPct = meanErrorPct; self.nWeeks = nWeeks; self.withheld = withheld
+        self.nMonths = nMonths; self.biasPct = biasPct; self.reason = reason
     }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            reading = nil; meanErrorPct = nil; nWeeks = nil; withheld = false
+            return
+        }
         reading = try? c.decodeIfPresent(String.self, forKey: .reading)
         meanErrorPct = try? c.decodeIfPresent(Double.self, forKey: .meanErrorPct)
-        nWeeks = (try? c.decodeIfPresent(Int.self, forKey: .nWeeks)) ?? (try? c.decodeIfPresent(Int.self, forKey: .scored)) ?? nil
+        nMonths = try? c.decodeIfPresent(Int.self, forKey: .nMonths)
+        nWeeks = (try? c.decodeIfPresent(Int.self, forKey: .nWeeks))
+            ?? (nMonths == nil ? ((try? c.decodeIfPresent(Int.self, forKey: .scored)) ?? nil) : nil)
         let available = try? c.decodeIfPresent(Bool.self, forKey: .available)
         withheld = ((try? c.decodeIfPresent(Bool.self, forKey: .withheld)) ?? nil) ?? (available == false)
+        biasPct = try? c.decodeIfPresent(Double.self, forKey: .biasPct)
+        let r = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? nil
+        reason = (r?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) ? nil : r
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(reading, forKey: .reading)
+        try c.encodeIfPresent(meanErrorPct, forKey: .meanErrorPct)
+        try c.encodeIfPresent(nWeeks, forKey: .nWeeks)
+        try c.encodeIfPresent(nMonths, forKey: .nMonths)
+        try c.encode(withheld, forKey: .withheld)
+        try c.encodeIfPresent(biasPct, forKey: .biasPct)
+        try c.encodeIfPresent(reason, forKey: .reason)
     }
 
     /// "Past forecasts here have been roughly right (22% mean error over 6
@@ -555,8 +627,32 @@ struct ForecastAccuracy: Decodable, Equatable, Sendable {
         guard !withheld, let reading, !reading.isEmpty else { return nil }
         var detail: [String] = []
         if let e = meanErrorPct { detail.append("\(Int(e.rounded()))% mean error") }
-        if let n = nWeeks, n > 0 { detail.append("over \(n) week\(n == 1 ? "" : "s")") }
+        if let n = nWeeks, n > 0 {
+            detail.append("over \(n) week\(n == 1 ? "" : "s")")
+        } else if let m = nMonths, m > 0 {
+            detail.append("over \(m) month\(m == 1 ? "" : "s")")
+        }
         return "Past forecasts here have been \(reading)" + (detail.isEmpty ? "" : " (\(detail.joined(separator: " ")))")
+    }
+
+    /// "They have run 9% high on average" — only past 2%, where a lean is
+    /// worth saying; nil otherwise.
+    var biasClause: String? {
+        guard let b = biasPct, abs(b) >= 2 else { return nil }
+        return "they have run \(Int(abs(b).rounded()))% \(b > 0 ? "high" : "low") on average"
+    }
+
+    /// The whole line an owner reads beside a forecast: the record and its
+    /// lean when there is one; when the record says the forecast is too wide
+    /// to state (`withheld`), the server's reason — never a number that was
+    /// withheld. Nil when there is nothing measured to say.
+    var line: String? {
+        if withheld {
+            guard reading != nil || meanErrorPct != nil, let reason else { return nil }
+            return reason.prefix(1).uppercased() + reason.dropFirst()
+        }
+        guard let s = sentence else { return nil }
+        return biasClause.map { s + "; " + $0 } ?? s
     }
 }
 

@@ -99,6 +99,25 @@ struct IntelSummary: Decodable {
     let marketRatingReviews: Int?
     let marketRatingN: Int?
     let claimKinds: [String: String]?
+    /// I10: where the owner stands against the market — one rule for every
+    /// surface (competitor_intel_format.market_standing): the gap in stars,
+    /// "ahead" | "level" | "behind" | nil, the words and the tone. Nil
+    /// (and "neutral") when the two ratings are not the same kind of number.
+    /// Absent on an older server, which keeps the client's own colouring.
+    var ownVsMarket: Double? = nil
+    var standing: String? = nil
+    var standingLabel: String? = nil
+    var standingTone: ServerTone? = nil
+
+    /// "You lead the block · +0.3★ against the market" — nil when the
+    /// server made no comparison.
+    var standingLine: String? {
+        guard standing != nil, let label = standingLabel?.trimmingCharacters(in: .whitespaces), !label.isEmpty
+        else { return nil }
+        guard let gap = ownVsMarket else { return label }
+        let signed = (gap > 0 ? "+" : gap < 0 ? "\u{2212}" : "\u{00B1}") + String(format: "%.1f", abs(gap))
+        return "\(label) \u{00B7} \(signed)\u{2605} against the market"
+    }
 
     /// True only when the owner's rating and the market figure are the same
     /// kind of number.
@@ -149,6 +168,10 @@ struct IntelSummary: Decodable {
         case marketRatingReviews = "market_rating_reviews"
         case marketRatingN = "market_rating_n"
         case claimKinds = "claim_kinds"
+        case ownVsMarket = "own_vs_market"
+        case standing
+        case standingLabel = "standing_label"
+        case standingTone = "standing_tone"
         case stale
         case ageDays = "age_days"
         case asOf = "as_of"

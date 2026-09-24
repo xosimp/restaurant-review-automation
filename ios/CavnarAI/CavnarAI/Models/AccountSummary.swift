@@ -83,10 +83,70 @@ struct AccountInfo: Decodable {
 struct ConnectionStatus: Decodable {
     let connected: Bool
     let lastSynced: String?
+    /// G3 (pos_health.provider_state): every POS row's one provider-agnostic
+    /// reading — "current" | "aging" | "stale" | "error" | "unknown" |
+    /// "not_connected" — its age in days, and the last sync error. G9: the
+    /// Google row's review `source` ("gbp" | "places_sampled" | "none") and
+    /// its `label` ("Google reviews (sampled — Places returns 5 at a time)").
+    /// All absent on an older server.
+    var syncState: String? = nil
+    var ageDays: Double? = nil
+    var error: String? = nil
+    var source: String? = nil
+    var label: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case connected
+        case connected, error, source, label
         case lastSynced = "last_synced"
+        case syncState = "sync_state"
+        case ageDays = "age_days"
+    }
+
+    init(connected: Bool, lastSynced: String? = nil, syncState: String? = nil, ageDays: Double? = nil,
+         error: String? = nil, source: String? = nil, label: String? = nil) {
+        self.connected = connected; self.lastSynced = lastSynced; self.syncState = syncState
+        self.ageDays = ageDays; self.error = error; self.source = source; self.label = label
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        connected = (try? c.decodeIfPresent(Bool.self, forKey: .connected)) ?? false
+        lastSynced = try? c.decodeIfPresent(String.self, forKey: .lastSynced)
+        syncState = (try? c.decodeIfPresent(String.self, forKey: .syncState))?.lowercased()
+        ageDays = try? c.decodeIfPresent(Double.self, forKey: .ageDays)
+        let e = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+        error = (e?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) ? nil : e
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        let l = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil
+        label = (l?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) ? nil : l
+    }
+
+    /// "Last synced 9/21/26" — M/D/YY, never the raw stamp.
+    var lastSyncedText: String? {
+        guard let raw = lastSynced?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        return "Last synced " + CavnarDate.mdyLocal(raw)
+    }
+
+    enum SyncTone: Equatable { case good, warn, bad, neutral }
+
+    /// What the sync state says, in words, and its tone: current is good,
+    /// aging and stale are a warning (a sync that simply stopped), an error
+    /// is bad; unknown says so. Nil when the server sent no state or the row
+    /// isn't connected.
+    var syncLine: (text: String, tone: SyncTone)? {
+        guard let s = syncState, s != "not_connected" else { return nil }
+        let days: String? = ageDays.map { d in
+            let n = Int(d.rounded(.down))
+            return n <= 0 ? "today" : "\(n) day\(n == 1 ? "" : "s") ago"
+        }
+        switch s {
+        case "current": return ("Syncing \u{00B7} last data " + (days ?? "recently"), .good)
+        case "aging": return ("Last sync " + (days ?? "a while ago") + " \u{2014} running late", .warn)
+        case "stale": return ("No sync since " + (days ?? "a while") + " \u{2014} figures from this POS are out of date", .warn)
+        case "error": return ("Sync failing" + (error.map { ": \($0)" } ?? ""), .bad)
+        case "unknown": return ("Sync state unknown", .neutral)
+        default: return nil
+        }
     }
 }
 
@@ -96,10 +156,36 @@ struct AccountConnections: Decodable {
     let toast: ConnectionStatus
     let square: ConnectionStatus
     let clover: ConnectionStatus
+    /// G3: RPOWER (connected by Cavnar, not from the phone) and the one POS
+    /// reading the rest of the product uses (pos_health.pos_sync_state).
+    /// Absent on an older server.
+    var rpower: ConnectionStatus? = nil
+    var pos: POSSyncState? = nil
 
     enum CodingKeys: String, CodingKey {
         case googleBusiness = "google_business"
-        case instagram, toast, square, clover
+        case instagram, toast, square, clover, rpower, pos
+    }
+
+    /// `{provider, connected, last_synced, age_days, error, state}`.
+    struct POSSyncState: Decodable {
+        var provider: String?
+        var connected: Bool?
+        var state: String?
+        var ageDays: Double?
+        var error: String?
+        enum CodingKeys: String, CodingKey {
+            case provider, connected, state, error
+            case ageDays = "age_days"
+        }
+        init(from decoder: Decoder) throws {
+            guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+            provider = try? c.decodeIfPresent(String.self, forKey: .provider)
+            connected = try? c.decodeIfPresent(Bool.self, forKey: .connected)
+            state = try? c.decodeIfPresent(String.self, forKey: .state)
+            ageDays = try? c.decodeIfPresent(Double.self, forKey: .ageDays)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+        }
     }
 }
 

@@ -54,7 +54,19 @@ struct GoalRow: Decodable, Identifiable {
         switch state {
         case "met", "moving_right_way": return .cavnarGreen
         case "moving_wrong_way", "missed": return .cavnarRed
+        // F10: over the line but inside its normal week-to-week movement —
+        // not yet a clear hit, so neutral, never a met goal's green.
+        case "at_target": return .cavnarInk2
         default: return .cavnarInk3
+        }
+    }
+
+    /// The state in words when the server's summary is absent — "at the
+    /// target, within normal movement" for F10's new state.
+    var stateLabel: String? {
+        switch state {
+        case "at_target": return "at the target, within its normal movement \u{2014} not yet a clear hit"
+        default: return nil
         }
     }
 }
@@ -249,6 +261,14 @@ final class HomeFollowThroughViewModel {
             /// A measured sales rise: revenue, not profit — kept apart from
             /// the savings and never added to them (re-audit A6).
             let salesLift: SalesLift?
+            /// F4 (CA2 #7): the improvements by attribution grade — clear or
+            /// held moves apart from ones tied to other changes (or past the
+            /// band only once). PARTS of `monthly`, shown side by side and
+            /// never added to it or to anything else. I7: `scope` says what
+            /// kind of figure `monthly` is ("monthly_rate").
+            var consistentMonthly: Double? = nil
+            var associatedMonthly: Double? = nil
+            var scope: String? = nil
             struct SalesLift: Decodable {
                 let monthly: Double?
                 let wins: Int?
@@ -300,7 +320,19 @@ final class HomeFollowThroughViewModel {
                 case validatedMonthly = "validated_monthly"
                 case unpricedWins = "unpriced_wins"
                 case salesLift = "sales_lift"
+                case consistentMonthly = "consistent_monthly"
+                case associatedMonthly = "associated_monthly"
+                case scope
             }
+        }
+        /// I7: the headings the four figures sit under — "What was measured"
+        /// over `delivered` only, then "What Cavnar surfaced / still
+        /// available" (value_delivered.VALUE_SECTIONS). Absent on an older
+        /// server, which keeps the built-in headings.
+        struct Section: Decodable {
+            let key: String?
+            let heading: String?
+            let figures: [String]?
         }
         /// A SUM of measured days, net of what got worse — never a monthly
         /// figure times months. `total` is null when no day has been
@@ -380,6 +412,15 @@ final class HomeFollowThroughViewModel {
         let surfaced: Surfaced?
         let promise: Promise?
         let ledger: Ledger?
+        var sections: [Section]? = nil
+
+        /// The heading the server gives a section ("measured" / "surfaced"),
+        /// else `fallback`.
+        func heading(_ key: String, fallback: String) -> String {
+            guard let h = sections?.first(where: { $0.key == key })?.heading?
+                .trimmingCharacters(in: .whitespaces), !h.isEmpty else { return fallback }
+            return h
+        }
 
         /// Whether Home's worth card has anything to say. An unpriced win
         /// counts: a restaurant whose only measured win is a rating rise
@@ -442,6 +483,16 @@ final class HomeFollowThroughViewModel {
             /// The money fallback as the RANGE it is (K4): never collapsed
             /// to one figure. Only drawn when `dollarsMonthly` is absent.
             let money: Money?
+            /// F6: the dollars corrected by measured results
+            /// (RecDollarCalibration). Absent on an older server.
+            var dollarsAdjusted: Double? = nil
+            var calibrationN: Int? = nil
+            var calibrationNote: String? = nil
+            /// The monthly figure the hero states — calibrated when sent.
+            var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
+            var dollarsNote: String? {
+                RecDollarCalibration.note(adjusted: dollarsAdjusted, n: calibrationN, note: calibrationNote)
+            }
             struct Money: Decodable, Equatable {
                 let low: Double?
                 let high: Double?
@@ -474,9 +525,15 @@ final class HomeFollowThroughViewModel {
                 case linkHeadline = "link_headline"
                 case recKey = "rec_key"
                 case claimKind = "claim_kind"
+                case dollarsAdjusted = "dollars_adjusted"
+                case calibrationN = "calibration_n"
+                case calibrationNote = "calibration_note"
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
+                dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
+                calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
+                calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)
                 key = try? c.decodeIfPresent(String.self, forKey: .key)
                 what = try? c.decodeIfPresent(String.self, forKey: .what)
                 why = try? c.decodeIfPresent(String.self, forKey: .why)
@@ -941,7 +998,8 @@ struct HomeFollowThrough: View {
                 HomeSectionHeader(kicker: "Where you're heading", title: "Goals")
                 VStack(spacing: 0) {
                     ForEach(Array(viewModel.goals.enumerated()), id: \.element.id) { index, goal in
-                        lineRow(goal.summary ?? goal.label ?? "", tone: goal.tone,
+                        lineRow(goal.summary ?? [goal.label, goal.stateLabel].compactMap { $0 }.joined(separator: ": "),
+                                tone: goal.tone,
                                 showsDivider: index < viewModel.goals.count - 1)
                     }
                 }
@@ -1026,6 +1084,13 @@ struct HomeFollowThrough: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if let label = r.attributionLabel, !label.isEmpty {
                         HomeMixedText.make(label, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // Shown, never counted, when its baseline overlapped
+                    // the trigger; the grade; the band's false-alarm rate.
+                    ForEach(r.measurementNotes, id: \.self) { note in
+                        HomeMixedText.make(note + ".", size: 12.5, weight: 500,
+                                           color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1202,11 +1267,17 @@ struct HomeFollowThrough: View {
     @ViewBuilder
     private var valueCard: some View {
         if let v = viewModel.value, let d = v.delivered, v.showsWorthCard {
-            HomeSectionHeader(kicker: "Worth", title: "What was measured")
+            HomeSectionHeader(kicker: "Worth", title: v.heading("measured", fallback: "What was measured"))
             VStack(alignment: .leading, spacing: 0) {
                 let unpriced = RecValueFormat.unpricedWinLines(d)
                 if (d.wins ?? 0) > 0 {
                     lineRow(Self.deliveredLine(d), tone: .cavnarGreen, showsDivider: true)
+                    // The same improvements split by how clearly they can
+                    // be read (F4) — parts of the figure above, never added
+                    // to it.
+                    if let split = RecValueFormat.gradeSplitLine(d) {
+                        lineRow(split, tone: .cavnarInk3, showsDivider: true)
+                    }
                     if let big = d.biggest?.summary {
                         lineRow("Biggest so far: " + big, tone: .cavnarInk3, showsDivider: true)
                     }
@@ -1283,7 +1354,8 @@ struct HomeFollowThrough: View {
             op > 0 ? "\(Self.money(op))/month still on the table \u{2014} available, not captured" : nil
         }
         if avoided != nil || surfaced != nil || opportunity != nil {
-            HomeSectionHeader(kicker: "Not measured", title: "What Cavnar surfaced / still available")
+            HomeSectionHeader(kicker: "Not measured",
+                              title: v.heading("surfaced", fallback: "What Cavnar surfaced / still available"))
             VStack(alignment: .leading, spacing: 0) {
                 if let avoided {
                     lineRow(avoided, tone: .cavnarInk3, showsDivider: rates.isEmpty && (surfaced != nil || opportunity != nil))

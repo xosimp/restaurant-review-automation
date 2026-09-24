@@ -19,6 +19,8 @@ struct HomeValueBand: View {
     /// "+$X since the 1st" beside a net figure would compare unlike things.
     /// Nil (or not net) is the band exactly as before.
     var headline: HomeValueHeadline? = nil
+    /// HomeValueBlock.scope (I7) — "monthly_rate" on today's server.
+    var scope: String? = nil
     /// True once this band has actually been revealed on screen.
     ///
     /// Both animations in here — the count-up and the sparkline's line
@@ -56,7 +58,9 @@ struct HomeValueBand: View {
                 .opacity(hasRealTrend ? 1 : 0.35)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(isNet ? "MEASURED VALUE \u{00B7} NET PER MONTH" : "MEASURED VALUE \u{00B7} PER MONTH")
+                // The period comes from the payload's own `scope` (I7).
+                Text(isNet ? "MEASURED VALUE \u{00B7} NET \(HomeValueBlock.periodCaption(scope: scope))"
+                           : "MEASURED VALUE \u{00B7} \(HomeValueBlock.periodCaption(scope: scope))")
                     .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.6)
                     .foregroundStyle(Color.cavnarEmber2)

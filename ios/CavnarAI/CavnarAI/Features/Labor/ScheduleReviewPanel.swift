@@ -255,7 +255,9 @@ struct ScheduleReviewPanel: View {
                 .font(.cavnarBody(11, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarInk3)
-            if let note = result.standbyNote?.value {
+            // What the % assumes and the base rate it is smoothed toward
+            // (I9: each day's `assumption` + `base_rate`, said once).
+            if let note = result.standbyNote?.value ?? StandbyDay.basisLine(standbyDays) {
                 HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -305,8 +307,10 @@ struct ScheduleReviewPanel: View {
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             // How often a flag like this has been right here (I9).
-            if let note = result.likelyEditsNote?.value {
-                HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+            // (the backtest every predicted row carries — the same on each,
+            // so stated once here with the base rate).
+            if let note = result.likelyEditsNote?.value ?? predictedEdits.lazy.compactMap(\.backtestLine).first {
+                HomeMixedText.make(note + (note.hasSuffix(".") ? "" : "."), size: 12.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(predictedEdits) { edit in
@@ -323,7 +327,9 @@ struct ScheduleReviewPanel: View {
                                                size: 13, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        if let note = edit.calibrationText {
+                        // The row's own note only when the block above
+                        // could not state the backtest once for all rows.
+                        if edit.backtestLine == nil, let note = edit.calibrationText {
                             HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

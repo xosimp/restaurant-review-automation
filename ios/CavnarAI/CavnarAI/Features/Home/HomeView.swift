@@ -156,6 +156,7 @@ struct HomeView: View {
                                 history: summary.valueHistory,
                                 measuredOn: summary.valueByModule ?? [],
                                 headline: summary.valueHeadline,
+                                scope: summary.value?.scope,
                                 // Its count-up and line reveal wait for this
                                 // rather than for onAppear — see the flag's
                                 // own comment in HomeValueBand.

@@ -28,6 +28,13 @@ struct HomeDayCard: View {
                                 Circle().fill(line.toneColor).frame(width: 8, height: 8).padding(.top, 6)
                                 VStack(alignment: .leading, spacing: 4) {
                                     HomeMixedText.make(line.text, size: 14.5, weight: 500, color: .cavnarInk2)
+                                    ClaimKindTag(kind: line.claimKind)
+                                    // How today's kind of forecast has held
+                                    // up here (K8), under the forecast line.
+                                    if line.key == "today", let record = viewModel.demandAccuracy?.sentence {
+                                        HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
                                     if let ask = line.ask, !ask.isEmpty {
                                         HomeAskLink(question: ask, label: "Ask")
                                     }
@@ -131,16 +138,21 @@ final class HomeDayViewModel {
         /// Every key the line stands for (running low: one per named item).
         let recKeys: [String]?
         let answerable: Bool?
+        /// K4: "forecast" on today's line (demand.forecast_day), and the
+        /// like — a small tag beside it. Absent on an older server.
+        var claimKind: String? = nil
         var id: String { (key ?? "") + text }
 
         enum CodingKeys: String, CodingKey {
             case key, text, tone, ask, answerable
             case recKey = "rec_key"
             case recKeys = "rec_keys"
+            case claimKind = "claim_kind"
         }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
             key = try? c.decodeIfPresent(String.self, forKey: .key)
             text = try c.decode(String.self, forKey: .text)
             tone = try? c.decodeIfPresent(String.self, forKey: .tone)
@@ -207,13 +219,24 @@ final class HomeDayViewModel {
         }
     }
     private struct BriefResponse: Decodable {
-        struct Brief: Decodable { let lines: [BriefLine]? }
+        struct Brief: Decodable {
+            let lines: [BriefLine]?
+            /// K8: how far today's forecast has been off here, nightly and
+            /// out of sample — beside the forecast line, never in its text.
+            var demandAccuracy: DemandAccuracy? = nil
+            enum CodingKeys: String, CodingKey {
+                case lines
+                case demandAccuracy = "demand_accuracy"
+            }
+        }
         let ok: Bool
         let brief: Brief?
     }
     private struct IssuesResponse: Decodable { let ok: Bool; let issues: [Issue] }
 
     var lines: [BriefLine] = []
+    /// The brief's K8 demand record, shown under today's forecast line.
+    var demandAccuracy: DemandAccuracy?
     var issues: [Issue] = []
     /// "Ana has been asked", per issue, after a cover request.
     var coverNote: [Int: String] = [:]
@@ -229,6 +252,7 @@ final class HomeDayViewModel {
         let (brief, iss) = await (b, i)
         // The focus and money lines have their own cards on Home; an
         // all-clear alone is not a brief.
+        demandAccuracy = brief?.brief?.demandAccuracy
         lines = (brief?.brief?.lines ?? []).filter { $0.key != "fix_first" && $0.key != "money" }
         if lines.count == 1, lines[0].key == "all_clear" { lines = [] }
         issues = iss?.issues ?? []

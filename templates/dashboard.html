@@ -1814,6 +1814,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-recipe-ln i{color:var(--amber);font-style:normal;font-weight:700}
 .fc2-recipe-ln i.m{color:var(--ink3)}
 .fc2-recipe-ft{display:flex;justify-content:flex-end;gap:10px}
+.fc2-recipe-ft{align-items:center}
+.fc2-recipe-yield{display:inline-flex;align-items:center;gap:8px;margin-right:auto;font-size:12.5px;color:var(--ink3)}
+.fc2-recipe-yield input{font-family:'Space Grotesk',sans-serif}
+.fc2-recipe-note i{color:var(--amber);font-style:normal;font-weight:700}.fc2-recipe-note i.m{color:var(--ink3)}
+.fc2-recipe-ln small{font-size:11px;color:var(--ink3)}
 .fc2-import{margin-top:12px}
 .fc2-import summary{cursor:pointer;font-size:13.5px;color:var(--ink2)}
 .fc2-count-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 16px}
@@ -2622,7 +2627,9 @@ svg:hover .hb-xh{opacity:1}
       // fix_first is always an action now (business_intelligence
       // .pick_one_thing): the top driver's own fix, a diagnosis's
       // recommended action, or the replies that are owed.
-      lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';else if(ff.money)money=hbMoneyRange(ff.money);
+      lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly){var ffa=(typeof ff.dollars_adjusted==='number'&&isFinite(ff.dollars_adjusted))?ff.dollars_adjusted:null;
+        money='$'+num2(ffa!==null?ffa:ff.dollars_monthly)+'<small>/month'+(ffa!==null?' · '+esc(ff.calibration_note||('adjusted from '+(+ff.calibration_n||0)+' measured results')):'')+'</small>';}
+      else if(ff.money)money=hbMoneyRange(ff.money);
       if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
     else if(att.length){lead=att[0].title;why=att[0].detail||'';if(att[0].evidence)ev=String(att[0].evidence).split(' · ').filter(function(x){return x;}).slice(0,3);fconf=att[0].confidence_detail||att[0].confidence||null;fkey=att[0].rec_key||att[0].key||'';ask='What should I do about this: '+att[0].title;}
@@ -2720,6 +2727,18 @@ svg:hover .hb-xh{opacity:1}
   // gone (confidence audit CA4 F1): it was a second verdict that
   // could contradict the confidence line on the same card, and the
   // confidence's Evidence strength row now says the same thing, measured.
+  // The figure a card is shown with, corrected by what this restaurant's
+  // measured results of its kind came to (rec_learning.adjusted_dollars,
+  // CA2 #8): dollars_adjusted replaces the stated figure, which stays in
+  // the title, and the line says "adjusted from N measured results". Below
+  // the floor the server sends no adjusted figure and the card is as before.
+  function hbRecDollars(r){
+    if(!r||!r.dollars_monthly)return '';
+    var adj=(typeof r.dollars_adjusted==='number'&&isFinite(r.dollars_adjusted))?r.dollars_adjusted:null;
+    if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>';
+    var n=+r.calibration_n||0,note=r.calibration_note||(n?'adjusted from '+n+' measured result'+(n===1?'':'s'):'adjusted from measured results');
+    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo at stake</span><span>'+num(note)+'</span>';
+  }
   function hbRecCard(r,j,skip,isNew,trk,d){
     var c=r.confidence_detail||r.confidence||null,meta=[];
     if(r.timeframe)meta.push('<span>'+esc(r.timeframe)+'</span>');
@@ -2731,7 +2750,7 @@ svg:hover .hb-xh{opacity:1}
     return '<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
       +'<div class="t">'+num(r.title)+(r.model_written?' '+cavConf.claimTag('',true):'')+'</div>'
       +(r.why?'<div class="why">'+num(r.why)+'</div>':'')
-      +(meta.length||r.dollars_monthly?'<div class="meta">'+(r.dollars_monthly?'<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>':'')+meta.join('')+'</div>':'')
+      +(meta.length||r.dollars_monthly?'<div class="meta">'+hbRecDollars(r)+meta.join('')+'</div>':'')
       +(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
       +(c?cavConfLine(c,{key:r.key,surface:'home',module:'home',cls:'hb-conf'}):'')
       +(r.if_ignored?'<div class="ig"><b>If ignored:</b> '+num(r.if_ignored)+'</div>':'')
@@ -2912,7 +2931,9 @@ svg:hover .hb-xh{opacity:1}
   // simply leaves that column out, it never blanks Home.
   var TONE={bad:'critical',action:'important',good:'good',neutral:'watch'};
   var BRIEF_MOD={reviews:'reviews',stock:'food',schedule:'labor',slow_day:'marketing',loss:'ops',money:'home',fix_first:'home'};
-  var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
+  // at_target (goals.target_band): across the line but inside its noise
+  // band - not yet a clear hit, so it is not drawn as met.
+  var GOALTONE={met:'good',at_target:'watch',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
   // A result's colour. The counts flag is the server's word on whether it still
   // counts (outcomes.counts_in_delivered): a result the owner said they
   // never made, one that faded at its re-check, or an alert read is not a
@@ -3138,7 +3159,15 @@ svg:hover .hb-xh{opacity:1}
     // the measured result under "What was measured", the estimate, the
     // alert total and the gap under "What Cavnar surfaced · still
     // available" - side by side, never one column that reads as addends.
-    var h='<div class="hb-sh"><div><div class="k dim">Worth</div><h2>What Cavnar AI measured and surfaced</h2></div><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations →</button></div><section class="hb-card hb-rise" aria-label="Worth"><div class="hb-vsplit"><div class="hb-vgrp"><div class="hb-h3"><span>What was measured</span></div><div class="hb-stats">';
+    // The two headings are the server's (value_delivered.VALUE_SECTIONS via
+    // /api/value sections, fix I7); the words below are the fallback for
+    // an older server.
+    var secH={measured:'What was measured',surfaced:'What Cavnar surfaced · still available'},vs=v.sections||[];
+    for(var si=0;si<vs.length;si++){if(vs[si]&&vs[si].key&&vs[si].heading)secH[vs[si].key]=String(vs[si].heading).replace(' / ',' · ');}
+    // Which kind of "measured" the tile is (delivered.scope): a monthly
+    // RATE here, never an all-time total.
+    var scopeWord=d.scope==='monthly_rate'?'a monthly rate':(d.scope==='all_time_sum'?'all-time sum':(d.scope==='measured_days_sum'?'summed over measured days':''));
+    var h='<div class="hb-sh"><div><div class="k dim">Worth</div><h2>What Cavnar AI measured and surfaced</h2></div><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations →</button></div><section class="hb-card hb-rise" aria-label="Worth"><div class="hb-vsplit"><div class="hb-vgrp"><div class="hb-h3"><span>'+esc(secH.measured)+'</span>'+(scopeWord?'<span class="cnt">'+esc(scopeWord)+'</span>':'')+'</div><div class="hb-stats">';
     // Measured results, NET of the ones that got worse (rec-ROI #1): the
     // improvements alone read as if nothing had gone the other way. The
     // net can be below zero and says so; it is never floored at zero.
@@ -3149,7 +3178,7 @@ svg:hover .hb-xh{opacity:1}
     else h+='<div class="hb-stat"><div class="k">Measured results</div><div class="v txt" style="font-size:17px;padding-top:4px">Nothing yet</div><div class="s">'+(d.in_flight?d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now':'Track a recommendation and its result lands here')+'</div></div>';
     h+='</div></div>';
     var oth=h.length;
-    h+='<div class="hb-vgrp other"><div class="hb-h3"><span>What Cavnar surfaced · still available</span><span class="cnt">estimates and gaps, never added in</span></div><div class="hb-stats">';
+    h+='<div class="hb-vgrp other"><div class="hb-h3"><span>'+esc(secH.surfaced)+'</span><span class="cnt">estimates and gaps, never added in</span></div><div class="hb-stats">';
     var othOpen=h.length;
     if(av.hours>0||av.dollars>0){
       // The breakdown opens as a centred modal rather than pushing the
@@ -3176,6 +3205,13 @@ svg:hover .hb-xh{opacity:1}
         +'<div style="margin-bottom:10px">$'+num2(cum.gained)+' gained, $'+num2(cum.lost)+' lost, over '+(cum.measured_days||0)+' measured day'+(cum.measured_days===1?'':'s')+(cum.until?' to '+esc(mdy(cum.until)):'')+'.</div>'
         +'<div style="opacity:.75">'+esc(d.caveat||'')+'</div>';
       vr+='<div class="hb-row '+(ct<0?'critical':'good')+'"><span class="d"></span><span class="t wrap"><span class="hb-num">'+(ct<0?'−':'')+'$'+num2(Math.abs(ct))+'</span> measured'+(ct<0?' net':'')+(cum.since?' since '+esc(mdy(cum.since)):'')+' <span class="vm">— summed over the days actually measured, net of what got worse</span></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(cbody)+'" data-explain-title="Measured so far">How?</button></div>';}
+    // The improvements by attribution grade (outcomes, CA2 #7): parts of
+    // the measured figure said apart - a clear move or one that held at its
+    // re-check, and one that came alongside other changes or crossed normal
+    // variation only once. Never added to anything; shown only when some of
+    // it is the weaker kind, since otherwise it is the whole figure again.
+    var cm=+d.consistent_monthly||0,am=+d.associated_monthly||0;
+    if(am>0&&d.wins>0)vr+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">'+(cm>0?'Of the improvements, <span class="hb-num">$'+num2(cm)+'</span>/mo were clear moves or held at their re-check; <span class="hb-num">$'+num2(am)+'</span>/mo':'All <span class="hb-num">$'+num2(am)+'</span>/mo of the improvements')+' came alongside other changes or crossed normal variation only once <span class="vm">— associated, not proven</span></span></div>';
     if(d.validated>0)vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><span class="hb-num">'+d.validated+'</span> '+(d.validated===1?'result':'results')+' held at '+(d.validated===1?'its':'their')+' re-check with nothing else changing on '+(d.validated===1?'its number':'their numbers')+(d.validated_monthly?' · <span class="hb-num">$'+num2(d.validated_monthly)+'</span>/mo of it':'')+' <span class="vm">— validated</span></span></div>';
     // Unpriced wins, each said as the server measured it ("Average rating
     // 4.2★ → 4.5★, improved"), with the recommendation it followed.
@@ -4005,8 +4041,14 @@ svg:hover .hb-xh{opacity:1}
     if(acts.length){
       h+='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>What to do about it <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
-        var meta='';if(isNum(x.dollars_monthly))meta+='<span class="usd">'+hn(money(x.dollars_monthly))+'/mo at stake</span>';
-        if(URGENCY[x.urgency])meta+='<span>'+esc(URGENCY[x.urgency])+'</span>';if(x.effort)meta+='<span>'+esc(x.effort)+' effort</span>';
+        // The calibrated figure when this restaurant's measured results
+        // of the kind correct it (rec_learning.attach_dollar_calibration).
+        var meta='';if(isNum(x.dollars_monthly)){var xa=isNum(x.dollars_adjusted)?x.dollars_adjusted:null;
+          meta+='<span class="usd">'+hn(money(xa!==null?xa:x.dollars_monthly))+'/mo at stake</span>'+(xa!==null?'<span>'+prose(x.calibration_note||('adjusted from '+(+x.calibration_n||0)+' measured results'))+'</span>':'');}
+        if(URGENCY[x.urgency])meta+='<span'+(x.urgency_basis&&!x.urgency_adjusted?' title="'+esc(x.urgency_basis)+'"':'')+'>'+esc(URGENCY[x.urgency])+'</span>';if(x.effort)meta+='<span>'+esc(x.effort)+' effort'+(x.effort_source==='model'?' (Cavnar AI\u2019s estimate)':'')+'</span>';
+        // A "Today" the cited facts don't carry is moved to "This week" by
+        // the server (dsr/narrative.check_urgency, H13); the line says so.
+        var uadj=x.urgency_adjusted&&typeof x.urgency_adjusted==='object'?x.urgency_adjusted:null;
         // The report is a record: an action already answered keeps its line
         // and loses its buttons; one the server says can't be answered never
         // had any (API_REFERENCE.md, "Recommendation fields").
@@ -4016,7 +4058,9 @@ svg:hover .hb-xh{opacity:1}
         // E16) - urgency and effort stay the model's labels, said as such.
         var acf=(x.confidence_detail||x.confidence)&&window.cavConfLine?cavConfLine(x.confidence_detail||x.confidence,{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
         h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
-          +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')+acf+ans+'</div>';}
+          +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')
+          +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
+          +acf+ans+'</div>';}
       h+='</div>';}
     var vf=n.verification;
     // "Traced to a measured fact" never covers an estimate (H13): a line
@@ -4026,6 +4070,7 @@ svg:hover .hb-xh{opacity:1}
     if(vf&&isNum(vf.checked)){var dropped=(vf.dropped||[]).length,est=vf.estimated!=null?vf.estimated:vf.estimates;
       var nEst=isNum(est)?est:((est&&est.length)||0);
       h+='<div class="dr-foot">Every measured figure above traced to a fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'
+        +(isNum(vf.measured)?' · '+hn(vf.measured)+' measured':'')
         +(nEst?' · '+hn(nEst)+' '+(nEst===1?'line rests':'lines rest')+' on an estimate, and says so':'')
         +(dropped?' · '+hn(dropped)+' dropped because a figure didn’t trace':'')+' · written by Cavnar AI</div>';}
     return h;
@@ -4089,6 +4134,13 @@ svg:hover .hb-xh{opacity:1}
       // deduction list only when an older report has no definition.
       if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+(def.net?' <b>Net</b> is '+esc(def.net)+'.':((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':'')));
       var ly=bl.last_year;if(ly&&ly.source==='pos_sync')h+=note('Last year is the nightly POS sync’s figure for '+esc(md(ly.date))+' — the same weekday a year back.');
+      // The forecast's own stated range (10th-90th percentile of past same
+      // weekdays; null below demand.RANGE_MIN_SAMPLES, when no range is
+      // claimed at all), and whether the night landed inside it (K8).
+      if(isNum(m.forecast_net)){var fb=bl.forecast||{};
+        if(isNum(m.forecast_low)&&isNum(m.forecast_high)){var inR=isNum(m.net)&&m.net>=m.forecast_low&&m.net<=m.forecast_high;
+          h+=note('The forecast was '+hn(money(m.forecast_net))+(fb.basis?' ('+esc(fb.basis)+')':'')+', with a likely range of '+hn(money(m.forecast_low))+'–'+hn(money(m.forecast_high))+(isNum(m.net)?' — tonight landed '+(inR?'inside':'outside')+' it.':'.'));}
+        else if(has(m,'forecast_low'))h+=note('The forecast was '+hn(money(m.forecast_net))+(fb.basis?' ('+esc(fb.basis)+')':'')+' — too few past nights to state a range yet.');}
       return h;},
     labor:function(b){
       var m=b.metrics||{},d=b.detail||{},t='';
@@ -4116,6 +4168,9 @@ svg:hover .hb-xh{opacity:1}
       if(isNum(m.critical_low))t+=tile('Running low',esc(cnt(m.critical_low))+'<small>critical</small>',isNum(m.low_stock)?hn(cnt(m.low_stock))+' more low':'',m.critical_low>0?'bad':'');
       var h=t?'<div class="hb-stats">'+t+'</div>':'';
       if(est.label)h+=note(esc(est.label));
+      // Under the costed-units floor the food cost % is withheld, and the
+      // server says why (dsr/block_food coverage_note, I11).
+      if(est.coverage_note)h+=note(prose(est.coverage_note));
       var l='',sk=(d.stock||{}).critical||[];
       for(var i=0;i<sk.length;i++){var s=sk[i];l+=row('<b>'+esc(s.item)+'</b> — '+hn(cnt(s.current_stock))+' '+esc(s.unit||'')+' left'+(isNum(s.days_remaining)?' · '+hn(cnt(s.days_remaining))+' days':''),'critical');}
       var vi=(d.variance||{}).items||[];
@@ -4128,7 +4183,9 @@ svg:hover .hb-xh{opacity:1}
     reviews:function(b){
       var m=b.metrics||{},d=b.detail||{},t='';
       if(has(m,'received'))t+=tile('Received',esc(cnt(m.received)));
-      if(has(m,'avg_rating'))t+=tile('Average',isNum(m.avg_rating)?esc(m.avg_rating.toFixed(1))+'★':'—');
+      // Too few reviews for a night's rating: a dash with the reason
+      // (dsr/block_reviews rating_note, I11), never a blank read as zero.
+      if(has(m,'avg_rating')||d.rating_note)t+=tile('Average',isNum(m.avg_rating)?esc(m.avg_rating.toFixed(1))+'★':'—',(!isNum(m.avg_rating)&&d.rating_note)?prose(d.rating_note):'');
       if(isNum(m.urgent))t+=tile('Urgent',esc(cnt(m.urgent)),'',m.urgent>0?'bad':'');
       if(isNum(m.drafts_awaiting))t+=tile('Drafts waiting',esc(cnt(m.drafts_awaiting)));
       if(isNum(m.replies_posted))t+=tile('Replies posted',esc(cnt(m.replies_posted)));
@@ -4664,6 +4721,10 @@ svg:hover .hb-xh{opacity:1}
     var r=[];if(it.reason_code&&REASON[it.reason_code])r.push(REASON[it.reason_code]);if(it.reason)r.push('“'+it.reason+'”');
     return r.length?'<div class="why">Why: '+esc(r.join(' — '))+'</div>':'';
   }
+  // outcomes._BASELINE_PHRASE: what a result was measured against.
+  var BASELINE_PHRASE={'prior window':'the same length of time before','matched weekdays':'the same weekdays in the weeks before',
+    'same weeks last year':'the weeks before, adjusted by how the same weeks moved last year',
+    'before the trigger':'the same number of weeks before what prompted the recommendation'};
   function result(it){
     var o=it.tracker_id?st.out[it.tracker_id]:null;if(!o)return '';
     var label=o.metric_label||o.metric||'',h='<div class="rh-res" data-rh-tracker="'+esc(o.id)+'">';
@@ -4676,10 +4737,22 @@ svg:hover .hb-xh{opacity:1}
     }else if(o.status==='evaluated'){
       h+='<div class="k">Measured'+(o.evaluate_on?' '+md(o.evaluate_on):'')+'</div><div class="r">'+prose(o.result_line||o.summary||'')+'</div>';
       if(o.attribution_label)h+='<div class="l">'+esc(o.attribution_label)+'</div>';
+      // What it was compared with and how wide "normal" was, from the
+      // tracker itself (outcomes: baseline_kind, noise band, CA2 #1/#3).
+      var bph=BASELINE_PHRASE[o.baseline_kind||'prior window'];
+      var bx=[];if(bph)bx.push('Compared with '+esc(bph));
+      // band_basis (metrics.noise_band) already states the false-alarm
+      // rate in words; the bare rate is the fallback.
+      if(o.band_basis)bx.push('normal variation is '+prose(o.band_basis));
+      else if(isNum(o.false_alarm_rate)&&o.false_alarm_rate>0)bx.push('a change that did nothing still reads as moved about <span class="hb-num">'+Math.round(o.false_alarm_rate*100)+'%</span> of the time');
+      if(bx.length)h+='<div class="x">'+bx.join('; ')+'.</div>';
       var cc=o.concurrent||[],cn=[];for(var i=0;i<cc.length&&i<4;i++)cn.push(esc(cc[i].label||cc[i].kind)+(cc[i].date?' ('+md(cc[i].date)+')':''));
       if(cn.length)h+='<div class="x">Also changed in those weeks: '+cn.join(', ')+(cc.length>4?' and '+(cc.length-4)+' more':'')+'.</div>';
       var ft=[];
       if(o.validated)ft.push('<span class="rh-pill valid">Validated</span>');
+      // Measured only against the weeks that prompted it: shown, never
+      // counted in the value figures or the learning (F1).
+      if(o.baseline_overlaps_trigger)ft.push('<span class="rh-pill partial">Not counted</span>');
       if(o.recheck_verdict)ft.push('<span class="x" style="margin:0">Re-checked'+(o.rechecked_at?' '+utcDay(o.rechecked_at):'')+': '+esc(RECHECK[o.recheck_verdict]||o.recheck_verdict)+'</span>');
       else if(o.recheck_on&&(o.verdict==='improved'||o.verdict==='worsened'))ft.push('<span class="x" style="margin:0">Re-check on '+md(o.recheck_on)+'</span>');
       var ck=o.owner_checkin;if(ck&&DID[ck.did_it])ft.push('<span class="rh-pill you">'+esc(DID[ck.did_it])+(ck.conditions_changed?' · something else changed':'')+'</span>');
@@ -5847,14 +5920,16 @@ svg:hover .hb-xh{opacity:1}
     <div class="lb2-sg"><div class="k"><span>Cost by role</span></div><div class="v"><span class="hb-num stat-n">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
       {% if labor.role_summary %}<div class="lb2-donut"><div class="ring"><svg id="role-donut-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg><div class="tot"><div id="role-donut-total"></div><div>total</div></div></div><div id="role-donut-legend"></div></div>{% else %}<div class="hb-empty" style="height:150px;display:flex;align-items:center">Role breakdown appears once shifts carry a role.</div>{% endif %}
       <div class="cap"><span>share of labor cost · hours · headcount</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Vs industry</span><i class="{% if _lp <= _lt %}good{% elif _lp <= _lt + 3 %}warn{% else %}bad{% endif %}">{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div><div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs 33–36% full-service average</small></div>
-      <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span><span style="left:70%;color:var(--hb-bad)">35%</span><span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div><div class="tick h" style="left:70%"></div></div></div>
+    <div class="lb2-sg"><div class="k"><span>Vs industry</span><i class="{% if _lp <= _lt %}good{% elif _lp <= _lt + 3 %}warn{% else %}bad{% endif %}">{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div>{# One industry benchmark for web and iOS (thresholds.LABOR_INDUSTRY_PCT, fix I10), with its source. #}
+      {% set _ind = savings_breakdown.labor_industry_pct if savings_breakdown.labor_industry_pct else 34.5 %}
+      <div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs <span class="hb-num">{{ _ind }}</span>% industry benchmark</small></div>
+      <div class="lb2-bench"{% if savings_breakdown.labor_industry_basis %} title="Industry benchmark: {{ savings_breakdown.labor_industry_basis }}"{% endif %}><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span><span style="left:{{ (_ind/50*100)|int }}%;color:var(--hb-bad)">{{ _ind }}%</span><span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div><div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div></div></div>
       <div class="lb2-money">
         {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimized / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
-        {% else %}<div><div class="l">Vs 32% avg / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
+        {% else %}<div><div class="l">Vs <span class="hb-num">{{ _ind }}</span>% industry / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
         <div><div class="l">Overtime premium</div><div class="x stat-n {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
       </div>
-      <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40</span></div></div>
+      <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40{% if savings_breakdown.labor_industry_basis %} · industry {{ _ind }}%: {{ savings_breakdown.labor_industry_basis }}{% endif %}</span></div></div>
   </div>
   <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
        with a headline count, an ember mark and the thing you do about it —
@@ -6140,12 +6215,13 @@ svg:hover .hb-xh{opacity:1}
     {# A calendar of holidays, not a forecast: nothing in this restaurant's
        own data backs "expect elevated covers" or "your busiest Sundays
        follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
-       where the answer lives. The date is M/D/YY when the server sends
-       date_iso; the older date_str otherwise. #}
+       where the answer lives. demand.upcoming_holidays sends date_str
+       already M/D/YY and a `label` that states only this restaurant's own
+       last-year figure (claim_kind "measured"), else the generic line. #}
     <div class="hb-kicker" style="margin-top:18px">Holidays ahead</div>
     <ul class="lb2-events">
       {% for event in labor_upcoming %}
-      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date_iso|format_date if event.date_iso else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.basis %}{{ event.basis }}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
+      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
       {% endfor %}
     </ul>
     {% endif %}
@@ -6892,7 +6968,11 @@ svg:hover .hb-xh{opacity:1}
 <div class="hb-wrap">
   {% set _wl = inv.benchmark_label %}
   {% set _ostock_total = inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0 %}
+  {# benchmark_state (inventory.py): "not_measured" is a week with nothing logged as waste — never the
+     best result, so it never reads "On track" or green (CA4 F11, fix I8). #}
   {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
+  {% elif inv.benchmark_state == 'not_measured' %}{% set _head = 'No waste logged this week' %}{% set _tone = 'neutral' %}
+  {% elif inv.benchmark_state == 'no_data' %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}
   {% elif _wl in ['Excellent','On Track'] %}{% set _head = 'On track' %}{% set _tone = 'good' %}
   {% elif _wl == 'Above Average' %}{% set _head = 'Waste is above target' %}{% set _tone = 'warn' %}
   {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
@@ -6953,7 +7033,7 @@ svg:hover .hb-xh{opacity:1}
         <div class="n{{ ' sample' if not inv.is_live }}"><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="fc2-num-lbl">Projected annual waste</div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo — projected from this week's count</span></div></div>
         {# An opportunity figure, so it is not green and never "saved" (CA4 F11):
            it is one week's count scaled to a year, and says so. #}
-        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year · opportunity</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo of waste above each category's tolerance band — one week's count × 52, an estimate, not money saved</span></div></div>
+        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year · opportunity</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo of waste above each category's tolerance band — {{ inv.annual_recoverable_basis or "one week's count × 52, an estimate, not money saved" }}</span></div></div>
       </div>
     </div>
   </div>
@@ -6996,7 +7076,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
 
   <div class="lb2-sig">
-    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ 'bad' if _wl in ['Above Average','Concerning','Needs Attention'] else ('good' if _wl in ['Excellent','On Track'] else '') }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo you can claw back</small></div>
+    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ (inv.benchmark_tone if inv.benchmark_tone in ['good','warn','bad'] else '') if inv.benchmark_tone is defined and inv.benchmark_tone else ('bad' if _wl in ['Above Average','Concerning','Needs Attention'] else ('good' if _wl in ['Excellent','On Track'] else '')) }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo still being lost · {{ inv.recoverable_kind or 'opportunity' }}</small></div>
       <div class="fc2-gauge" id="fc2-gauge"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="shaping" width="36" height="36"></canvas></div></div>
       {# _ostock_total is overstock_units x unit_cost — working capital sitting
    above par, not money leaving each month. It was added to the monthly waste
@@ -7851,11 +7931,23 @@ svg:hover .hb-xh{opacity:1}
   {% set avg_comp_rating = (ns.rating_sum / ns.rated)|round(1) if ns.rated > 0 else 0 %}
   {% set own = rstats.avg_rating if (mod_reviews and rstats.avg_rating) else None %}
   {% set own_vs_avg = (own - avg_comp_rating)|round(1) if (own is not none and ns.rated > 0) else None %}
+  {% set own_basis = 'imported_sample' if own is not none else None %}
+  {# The server's one definition (competitor_intel_format via intel_market, fix I10) wins when it is there:
+     the market average is weighted by review volume and leaves provisional ratings out, the owner's rating
+     is Google's all-time one when Cavnar has it, and the standing is compared only against that. #}
+  {% if intel_market %}
+    {% set avg_comp_rating = intel_market.market_rating if intel_market.market_rating is not none else 0 %}
+    {% set own = intel_market.own_rating %}
+    {% set own_basis = intel_market.own_rating_basis %}
+    {% set own_vs_avg = intel_market.own_vs_market %}
+  {% endif %}
   {% if not _cd %}{% set _head = 'Meet the neighbors' %}{% set _tone = 'neutral' %}
-  {% elif own_vs_avg is none %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}
+  {% elif intel_market and intel_market.standing_label %}{% set _head = intel_market.standing_label %}{% set _tone = intel_market.standing_tone or 'neutral' %}
+  {% elif own_vs_avg is none or intel_market %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}
   {% elif own_vs_avg >= 0.3 %}{% set _head = 'You lead the block' %}{% set _tone = 'good' %}
   {% elif own_vs_avg >= -0.1 %}{% set _head = 'Neck and neck' %}{% set _tone = 'warn' %}
   {% else %}{% set _head = 'Behind the block' %}{% set _tone = 'bad' %}{% endif %}
+  {% set _own_word = 'your Google rating (all time)' if own_basis == 'google_all_time' else "your imported reviews' average (not compared with Google's all-time ratings)" %}
   {% set _upd = competitor_updated_at[:10] if competitor_updated_at else None %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
@@ -7868,7 +7960,7 @@ svg:hover .hb-xh{opacity:1}
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ comp_count }}</span></span><span class="l">tracked</span></span>
-      <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ avg_comp_rating if comp_count else '—' }}{% if comp_count %}<small>★</small>{% endif %}</span></span><span class="l">market avg</span></span>
+      <span class="hb-chip {{ 'good' if (comp_count and avg_comp_rating) else 'sample' }}"{% if intel_market and intel_market.market_rating_n %} title="Weighted by review volume across {{ intel_market.market_rating_n }} rated places; places with too few reviews are left out"{% endif %}><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ avg_comp_rating if (comp_count and avg_comp_rating) else '—' }}{% if comp_count and avg_comp_rating %}<small>★</small>{% endif %}</span></span><span class="l">market avg</span></span>
       {% if own is not none %}<span class="hb-chip {{ 'good' if (own_vs_avg is none or own_vs_avg >= 0) else 'bad' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ own }}<small>★</small></span></span><span class="l">your rating</span></span>{% endif %}
       <span class="hb-chip sample" id="in2-chip-ai"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-ai-n">—</span></span><span class="l">AI visibility</span></span>
       <span class="hb-chip sample" id="in2-chip-gbp"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-gbp-n">—</span></span><span class="l">Listing strength</span></span>
@@ -7879,8 +7971,8 @@ svg:hover .hb-xh{opacity:1}
   <section class="lb2-hero in2-rating-hero" aria-label="Rating comparison">
     <div class="hd">
       <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
-        {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ your Google rating · market avg {{ avg_comp_rating }}★</small></div>
-        <div class="delta {{ 'good' if own_vs_avg > 0 else ('bad' if own_vs_avg < 0 else '') }}">{% if own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% elif own_vs_avg < 0 %}▼ {{ own_vs_avg|abs }} below the block{% else %}Tied with the block{% endif %} <span>· {{ comp_count }} restaurants nearby</span></div>
+        {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
+        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if own_vs_avg > 0 else ('bad' if own_vs_avg < 0 else '') }}">{% if own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% elif own_vs_avg < 0 %}▼ {{ own_vs_avg|abs }} below the block{% else %}Tied with the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>{% endif %}
         {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
       </div>
     </div>
@@ -8267,7 +8359,7 @@ svg:hover .hb-xh{opacity:1}
     {% set _wide = 'rpower' in mark %}
     {% if ident and not sync_error %}
       <div class="ic on" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
-      <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced {{ last_synced[:16].replace('T',' ') }} UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
+      <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced <span class="ac-num">{{ last_synced|format_date }} {{ last_synced[11:16] }}</span> UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
       <div class="a">
         <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
         <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
@@ -8694,6 +8786,9 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-conn">
           {% if restaurant.gmb_refresh_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Connected &mdash; approved replies post to Google</span></div>
           <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>
+          {# Places-only reviews are a SAMPLE of the listing (admin_ops.review_source, G9): never "connected". #}
+          {% elif restaurant.reviews_live and restaurant.google_place_id %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google reviews (sampled &mdash; Places returns 5 at a time)</b><span>Reading your public listing, not your Business Profile &mdash; connect it to see every review and post replies</span></div>
+          <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Not connected &mdash; replies stay in your inbox</span></div>
           <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
         </div>
@@ -10582,6 +10677,11 @@ function recCheckinHtml(c,surface){
     +'<div class="rck-k">Check in<span>'+(o.evaluate_on?' · result landed '+recEsc(window.mdy?window.mdy(o.evaluate_on):o.evaluate_on):'')+'</span></div>'
     +'<div class="rck-t">'+recEsc(it.title||o.title||'')+'</div>'
     +(o.result_line?'<div class="rck-r">'+(window.num?window.num(o.result_line):recEsc(o.result_line))+'</div>':'')
+    // How strong the move was (outcomes.grade_phrase), said before the
+    // owner is asked; a result measured only against the weeks that
+    // prompted it says it won't count (F1).
+    +(o.grade_phrase?'<div class="rck-lab">'+recEsc(o.grade_phrase.charAt(0).toUpperCase()+o.grade_phrase.slice(1))+'.</div>':'')
+    +(o.baseline_overlaps_trigger?'<div class="rck-lab">Measured only against the weeks that prompted it, so it isn\u2019t counted either way.</div>':'')
     +'<div class="rck-q"><span class="q">Did you make this change?</span><span class="rck-a">'
     +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ck="yes">Yes</button>'
     +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ck="partly">Partly</button>'
@@ -10660,7 +10760,10 @@ function renderInsightRecs(el,recs,surface){
     // directly under the read's own "Do today:" row; a separate labelled
     // row at the foot of the box read as controls for the whole read.
     var row=r.kind==='do_today'?insightRowStartingWith(el,'Do today'):null;
-    if(row){var ex=row.querySelector('.rec-line.inrow');if(ex)ex.parentNode.removeChild(ex);var a=document.createElement('div');a.className='rec-line inrow';a.innerHTML=recControlsHtml(r.key,surface,surface);row.appendChild(a);continue;}
+    // The Do-today line carries its OWN measured confidence (K1 in
+    // recs[].confidence_detail, E13) - drawn with the line's answers.
+    var rcf=(r.confidence_detail&&window.cavConfLine)?cavConfLine(r.confidence_detail,{key:r.key,surface:surface,module:surface}):'';
+    if(row){var ex=row.querySelector('.rec-line.inrow');if(ex)ex.parentNode.removeChild(ex);var a=document.createElement('div');a.className='rec-line inrow';a.innerHTML=rcf+recControlsHtml(r.key,surface,surface);row.appendChild(a);continue;}
     h+='<div class="rec-line"><span class="k">Suggestion</span>'+recControlsHtml(r.key,surface,surface)+'</div>';}
   if(!h)return;
   box.innerHTML=h;
@@ -12227,12 +12330,15 @@ function loadMktWindow(){
       if(!node) return;
       if(v === null || typeof v === 'undefined'){ node.textContent = ''; return; }
       node.textContent = (v > 0 ? '+' : '') + Math.round(v) + '%';
-      node.style.color = v >= 0 ? '#2d6a4f' : 'var(--red)';
+      node.style.color = v >= 0 ? 'var(--hb-good)' : 'var(--red)';
     };
-    delta('mkt-win-reach-d', d.change.reach);
-    delta('mkt-win-eng-d', d.change.engagement);
+    delta('mkt-win-reach-d', (d.change||{}).reach);
+    delta('mkt-win-eng-d', (d.change||{}).engagement);
     var plats = document.getElementById('mkt-win-platforms');
     var html = '';
+    // No period-on-period % under the post floor (marketing_signals
+    // change_note, CA1 M5): the blank change says why.
+    if(d.change_note) html += '<div style="font-size:12px;color:var(--ink3);padding:4px 0 7px">' + _escHtml(d.change_note) + '.</div>';
     for(var i=0;i<(d.by_platform||[]).length;i++){
       var p = d.by_platform[i];
       html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
@@ -12256,6 +12362,11 @@ function loadMktAttribution(){
       return;
     }
     var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish\u2019s own units the same way, and reviews in the next two weeks that mentioned it. Correlations, not proof \u2014 a busy Friday is still a busy Friday.</div>';
+    // What the posts' own verdicts say (marketing_signals verdicts,
+    // CA1 M3): how many cleared their band each way, never a median alone.
+    var vc=d.verdicts||null;
+    if(vc){var vn=(+vc.lifted||0)+(+vc.dropped||0)+(+vc.no_clear_change||0);
+      if(vn)html+='<div style="margin-bottom:10px;font-size:13px;color:var(--ink2)">Of <b class="hb-num">'+vn+'</b> measured post'+(vn===1?'':'s')+': <b class="hb-num" style="color:var(--hb-good)">'+(+vc.lifted||0)+'</b> lifted sales past normal variation, <b class="hb-num">'+(+vc.no_clear_change||0)+'</b> showed no clear change, <b class="hb-num" style="color:var(--red)">'+(+vc.dropped||0)+'</b> dropped.</div>';}
     // The verdict is the server's: a lift inside the weekday's own noise
     // band is "no clear change", never green (marketing_signals.lift_verdict).
     function _liftBadge(p){
@@ -12268,7 +12379,11 @@ function loadMktAttribution(){
     function _postRow(p){
       var about=[];if(p.menu_item_name)about.push(p.menu_item_name);if(p.occasion)about.push(String(p.occasion).replace('_',' '));
       var extra=[];
-      if(p.item_lift_pct!=null&&p.menu_item_name)extra.push(_escHtml(p.menu_item_name)+' <b class="hb-num">'+(p.item_lift_pct>0?'+':'')+Math.round(p.item_lift_pct)+'%</b> units');
+      // The dish's own units carry their own band and verdict (item_verdict):
+      // inside it is "no clear change", whatever the sign.
+      if(p.item_lift_pct!=null&&p.menu_item_name){var iv=p.item_verdict,itx=(p.item_lift_pct>0?'+':'')+Math.round(p.item_lift_pct)+'%';
+        extra.push(_escHtml(p.menu_item_name)+' '+(iv==='no_clear_change'?'units: no clear change <span class="hb-num">('+itx+(p.item_noise_band_pct!=null?', within \u00b1'+Math.round(p.item_noise_band_pct)+'%':'')+')</span>'
+          :'<b class="hb-num" style="color:'+(iv==='lifted'?'var(--hb-good)':(iv==='dropped'?'var(--red)':'inherit'))+'">'+itx+'</b> units'));}
       if(p.reviews_mentioning)extra.push('<b class="hb-num">'+p.reviews_mentioning+'</b> review'+(p.reviews_mentioning===1?'':'s')+' mentioned it');
       if(p.engagement_rate!=null)extra.push('<b class="hb-num">'+(Math.round(p.engagement_rate*1000)/10)+'%</b> engagement');
       if(p.guest_list_delta)extra.push('guest list <b class="hb-num">'+(p.guest_list_delta>0?'+':'')+p.guest_list_delta+'</b>');
@@ -12280,7 +12395,7 @@ function loadMktAttribution(){
     }
     for(var i=0;i<d.posts.length;i++)html+=_postRow(d.posts[i]);
     if((d.weakest||[]).length){html+='<div class="hb-kicker" style="margin-top:12px">What didn\u2019t land</div>';for(var w=0;w<d.weakest.length;w++)html+=_postRow(d.weakest[w]);}
-    function _groups(title,rows,noun){if(!(rows||[]).length)return '';var g='<div class="hb-kicker" style="margin-top:12px">'+title+'</div>';for(var k=0;k<rows.length;k++){var r=rows[k];g+='<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px"><span>'+_escHtml(String(r.group).replace('_',' '))+' <span style="color:var(--ink3)">\u00b7 '+r.posts+' '+noun+'</span></span><span class="hb-num" style="font-weight:700;color:'+(r.median_lift_pct>=0?'var(--hb-good)':'var(--red)')+'">'+(r.median_lift_pct>0?'+':'')+Math.round(r.median_lift_pct)+'% median'+(r.median_item_lift_pct!=null?' \u00b7 dish '+(r.median_item_lift_pct>0?'+':'')+Math.round(r.median_item_lift_pct)+'%':'')+'</span></div>';}return g;}
+    function _groups(title,rows,noun){if(!(rows||[]).length)return '';var g='<div class="hb-kicker" style="margin-top:12px">'+title+'</div>';for(var k=0;k<rows.length;k++){var r=rows[k];g+='<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px"><span>'+_escHtml(String(r.group).replace('_',' '))+' <span style="color:var(--ink3)">\u00b7 '+r.posts+' '+noun+'</span></span><span class="hb-num" style="font-weight:700;color:'+(r.verdict?(r.verdict==='lifted'?'var(--hb-good)':(r.verdict==='dropped'?'var(--red)':'var(--ink3)')):(r.median_lift_pct>=0?'var(--hb-good)':'var(--red)'))+'"'+(r.verdicts?' title="'+(+r.verdicts.lifted||0)+' lifted \u00b7 '+(+r.verdicts.no_clear_change||0)+' no clear change \u00b7 '+(+r.verdicts.dropped||0)+' dropped"':'')+'>'+(r.verdict==='no_clear_change'?'no clear change \u00b7 ':'')+(r.median_lift_pct>0?'+':'')+Math.round(r.median_lift_pct)+'% median'+(r.median_item_lift_pct!=null?' \u00b7 dish '+(r.median_item_lift_pct>0?'+':'')+Math.round(r.median_item_lift_pct)+'%':'')+'</span></div>';}return g;}
     html+=_groups('By kind of post',d.by_kind,'posts')+_groups('By occasion',d.by_occasion,'posts')+_groups('By dish',d.by_dish,'posts');
     body.innerHTML = html;
   }).catch(function(){});
@@ -12536,7 +12651,7 @@ function loadMktInsight(){
   fetch('/api/mkt-insight').then(apiJson).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
     try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));
-        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[]}));}catch(e){}
+        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[]}));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
     applyFigureCaveat(el,d);
@@ -12654,14 +12769,21 @@ function lb2ImportCovers(btn){
 // other module shows, and the line leaves the prose.
 function laborSplitUnverified(html){
   var m=/(?:\n|<br\s*\/?>)*\s*UNVERIFIED:\s*([^\n<]*)\s*$/i.exec(String(html||''));
-  if(!m)return {html:html,figs:null};
-  return {html:String(html).slice(0,m.index),figs:m[1].split(/\s*,\s*/).filter(function(x){return x;})};
+  if(!m)return {html:html,figs:null,note:null};
+  // ai_guard.unverified_note: a bare "$145, 38%" list when only figures
+  // failed; otherwise labelled parts ("figures not in the data: ...;
+  // figures attached to the wrong day or item: ...; a cause no stored
+  // diagnosis supports (...)"), said whole rather than split on commas.
+  if(/figures not in the data:|attached to the wrong|a cause no stored/i.test(m[1]))return {html:String(html).slice(0,m.index),figs:null,note:m[1]};
+  return {html:String(html).slice(0,m.index),figs:m[1].split(/\s*,\s*/).filter(function(x){return x;}),note:null};
 }
-function laborApplyCaveats(el,figs,d){
+function laborApplyCaveats(el,figs,d,note){
   if(!el)return;
   if(figs)applyFigureCaveat(el,{figures_verified:false,unsupported_figures:figs});
-  // A cached read served because a new one failed says how old it is (H15).
-  if(d&&d.stale)el.insertBefore(aiCaveat('Older read','This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.'),el.firstChild);
+  if(note)el.insertBefore(aiCaveat('Unverified', 'Cavnar could not check everything in this read: '+note+'. Check before acting on it.'),el.firstChild);
+  // A cached read served because a new one failed says how old it is (H15):
+  // the server's stale_note, else its as_of (M/D/YY).
+  if(d&&d.stale)el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
 }
 function loadLaborInsight(){
   laborLoaded=true;
@@ -12678,7 +12800,7 @@ function loadLaborInsight(){
       _laborInsightFull=cs.html;
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
       el.innerHTML=cs.html;
-      laborApplyCaveats(el,cs.figs,null);
+      laborApplyCaveats(el,cs.figs,null,cs.note);
       return;
     }
   }catch(e){}
@@ -12692,7 +12814,7 @@ function loadLaborInsight(){
       try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));}catch(e){}
       elLaborInsight.classList.remove('insight-loading');
       typewriterEffect(elLaborInsight,ls.html);
-      laborApplyCaveats(elLaborInsight,ls.figs,d);
+      laborApplyCaveats(elLaborInsight,ls.figs,d,ls.note);
     }
   }).catch(function(){
     var elLaborErr=document.getElementById('labor-insight');
@@ -15643,6 +15765,10 @@ function fc2LoadCfo(){
             +(p.dollars_vs_last_month>0?'worse':'better')+' than last month';
         }
         h+='. Projection, not a measurement. '+wtEsc(p.basis||'')+'</span></div>';
+        // The frozen mid-month projection's own record (K8, CA1 F16):
+        // prime_cost_accuracy {reading, mean_error_pct, n_months, withheld}.
+        var pca=fc2AccLine(b.prime_cost_accuracy||t.prime_cost_accuracy,'month-end projections');
+        if(pca)h+='<div class="fc2-row alt"><div class="k">How close these have been</div><div class="v">'+pca+'</div></div>';
       }
       if(dg&&dg.cause){
         var fcl=cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'food',module:'food'});
@@ -15685,8 +15811,7 @@ function fc2LoadCfo(){
       // K8: forecast_accuracy {reading, mean_error_pct, n_weeks, withheld}
       // on the brief; an older server nests it in trust with "scored".
       var fa=b.forecast_accuracy||t.forecast_accuracy;
-      if(fa&&!fa.withheld&&fa.available!==false&&fa.reading){var fn=fa.n_weeks!=null?fa.n_weeks:fa.scored;tl.push('past forecasts here have been '+wtEsc(fa.reading)+(fa.mean_error_pct!=null?' ('+fa.mean_error_pct+'% mean error'+(fn!=null?' over '+fn+(fa.n_weeks!=null?' week'+(fa.n_weeks===1?'':'s'):''):'')+')':''));}
-      else if(fa&&fa.withheld){tl.push('the waste forecast is held back: past forecasts here have been too far off to show');}
+      var fal=fc2AccLine(fa,'waste forecasts');if(fal)tl.push(fal);
       if(tl.length){h+='<div class="fc2-row alt"><div class="k">How far to trust this</div><div class="v">'+tl.join(' · ')+'</div></div>';}
       h+='</div></div>';
       host.innerHTML=h;host.hidden=false;
@@ -15694,6 +15819,23 @@ function fc2LoadCfo(){
         applyFigureCaveat(host.querySelector('.fc2-cfo-bd'),{figures_verified:false,unsupported_figures:dg.unsupported_figures});
       }
     }).catch(function(){host.hidden=true;});
+}
+
+// One line for a forecast's own record (contract K8, forecast_log.accuracy):
+// {available, reading, mean_error_pct, bias_pct, n_weeks | n_months,
+// withheld, reason}. Below the scoring floor it says how many periods are
+// scored and how many it needs (the server's reason), never a figure.
+function fc2AccLine(fa,what){
+  if(!fa||typeof fa!=='object')return '';
+  var e=function(x){return (typeof wtEsc==='function')?wtEsc(x):String(x==null?'':x);};
+  var hn=function(x){return '<span class="hb-num">'+x+'</span>';};
+  if(fa.withheld)return 'the next forecast is held back: '+e(fa.reason||('past '+what+' here have been too far off to show'));
+  if(fa.available===false||!fa.reading)return fa.reason?'how accurate '+e(what)+' are here: '+e(fa.reason).replace(/(\d+)/g,'<span class="hb-num">$1</span>'):'';
+  var n=fa.n_weeks!=null?fa.n_weeks:(fa.n_months!=null?fa.n_months:fa.scored),unit=fa.n_months!=null?'month':'week';
+  var out='past '+e(what)+' here have been '+e(fa.reading);
+  if(fa.mean_error_pct!=null)out+=' ('+hn(fa.mean_error_pct+'%')+' mean error'+(n!=null?' over '+hn(n)+' '+unit+(n===1?'':'s'):'')+')';
+  if(typeof fa.bias_pct==='number'&&Math.abs(fa.bias_pct)>=5)out+=', running '+hn(Math.abs(fa.bias_pct)+'%')+' '+(fa.bias_pct>0?'high':'low')+' on average';
+  return out;
 }
 
 // ── Actual food cost % (COGS / net sales) ───────────────────────────────────
@@ -15756,9 +15898,31 @@ function fc2LoadRecipeDrafts(note){
     var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'What each dish is made of is what every plate cost and margin rests on. Drafts wait here until you accept them.');
     if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
     for(var i=0;i<ds.length;i++){var dr=ds[i];
-      h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
-      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];var lc=String(ln.confidence||'').toLowerCase();if(lc==='moderate')lc='medium';h+='<span class="fc2-recipe-ln'+(lc==='low'?' low':(lc==='medium'?' med':''))+'" title="'+esc(lc==='low'?'Low confidence — check this line':(lc==='medium'?'Medium confidence — worth a glance':(lc==='high'?'High confidence':'')))+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(lc==='low'?' <i>?</i>':(lc==='medium'?' <i class="m" aria-label="medium confidence">·</i>':''))+'</span>';}
-      h+='</div><div class="fc2-recipe-ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
+      // What kind of draft this is (recipes._draft_flags, H6): a model's
+      // estimate from the ingredient list, or a transcribed recipe card.
+      var dtag=dr.is_estimate===true?(window.cavConf?cavConf.claimTag('estimate'):''):(dr.is_estimate===false?'<span class="ck-tag" data-claim="transcribed">From your card</span>':'');
+      h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dtag?' '+dtag:'')+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
+      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];var lc=String(ln.confidence||'').toLowerCase();if(lc==='moderate')lc='medium';
+        // A unit Python could not convert (unit_ok false) is never written on
+        // an unedited accept; it reads as a line to check, whatever its
+        // confidence. The card's own quantity and unit ride in the title.
+        var bad=ln.unit_ok===false,tip=[];
+        if(bad)tip.push(ln.unit_note||'Unit could not be converted — this line is skipped unless you fix it');
+        tip.push(lc==='low'?'Low confidence — check this line':(lc==='medium'?'Medium confidence — worth a glance':(lc==='high'?'High confidence':'')));
+        if(ln.card_qty!=null&&(ln.card_unit||'')!==''&&(String(ln.card_qty)!==String(ln.qty)||ln.card_unit!==ln.unit))tip.push('the card said '+ln.card_qty+' '+ln.card_unit);
+        if(ln.per==='batch')tip.push('per batch, not per plate');
+        if(ln.source==='estimate')tip.push('estimated');else if(ln.source==='transcribed')tip.push('from the card');
+        h+='<span class="fc2-recipe-ln'+((bad||lc==='low')?' low':(lc==='medium'?' med':''))+'" title="'+esc(tip.filter(function(x){return x;}).join(' · '))+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.per==='batch'?' <small>/batch</small>':'')+((bad||lc==='low')?' <i>?</i>':(lc==='medium'?' <i class="m" aria-label="medium confidence">·</i>':''))+'</span>';}
+      h+='</div>';
+      var uw=dr.unit_warnings||[];
+      if(uw.length){var uwl=[];for(var k=0;k<uw.length&&k<4;k++)uwl.push(esc(uw[k].name||'')+(uw[k].note?' ('+esc(uw[k].note)+')':''));
+        h+='<div class="fc2-recipe-note" style="margin-top:6px">Units to check: '+uwl.join(', ')+(uw.length>4?' and '+(uw.length-4)+' more':'')+' — skipped on accept unless you fix them.</div>';}
+      var lv=dr.confidence_levels||[];
+      if(lv.length>1)h+='<div class="fc2-recipe-note" style="margin-top:4px">Lines are '+esc(lv.join(', '))+' confidence — <i>?</i> marks low, <i class="m">·</i> medium.</div>';
+      // A batch card needs its yield before its quantities can be read per
+      // plate (needs_yield); accept sends it as yield.
+      var yl=dr.needs_yield?'<label class="fc2-recipe-yield">Plates this batch makes <input type="number" min="1" step="1" class="ac-input" data-recipe-yield="'+esc(dr.id)+'" style="width:84px" aria-label="Plates this batch makes"></label>':'';
+      h+='<div class="fc2-recipe-ft">'+yl+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
     // The menu, pasted. Nobody photographs a recipe card, and a
     // restaurant without a POS has no dishes for the Tuesday job to draft
     // against — but every owner has the menu. One paste does the rest.
@@ -15798,9 +15962,17 @@ function fc2ImportRecipes(btn){
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept],[data-recipe-reject]'):null;if(!t)return;
   var id=t.getAttribute('data-recipe-accept')||t.getAttribute('data-recipe-reject'),accept=t.hasAttribute('data-recipe-accept');
+  var body={};
+  if(accept){var yi=document.querySelector('[data-recipe-yield="'+id+'"]');
+    if(yi){var yv=parseFloat(yi.value);if(!(yv>0)){if(typeof toast==='function')toast('Say how many plates this batch makes first','error');yi.focus();return;}body['yield']=yv;}}
   var done=cbtnBusy(t,accept?'Writing\u2026':'\u2026');
-  fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/'+(accept?'accept':'reject'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(apiJson).then(function(d){
-    done();if(typeof toast==='function')toast(d&&d.ok?(accept?'Recipe written':'Draft removed'):((d&&d.error)||'Could not do that'),d&&d.ok?'success':'error');fc2LoadRecipeDrafts();
+  fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/'+(accept?'accept':'reject'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+    done();
+    // Lines whose units couldn't be converted are skipped, and named (H6).
+    var sk=(d&&d.unit_skipped)||[];
+    var msg=d&&d.ok?(accept?('Recipe written'+(sk.length?' \u2014 skipped '+sk.slice(0,3).join(', ')+(sk.length>3?' and '+(sk.length-3)+' more':'')+': units couldn\u2019t be converted':'')):'Draft removed'):((d&&d.error)||'Could not do that');
+    if(typeof toast==='function')toast(msg,d&&d.ok?'success':'error');
+    if(!(d&&d.needs_yield))fc2LoadRecipeDrafts();
   }).catch(function(){done();});
 });
 var FC2_ICON={
@@ -17738,11 +17910,24 @@ function renderAIVisibility(d) {
   // interval sits in that band, and a range that straddles two bands says
   // so instead of picking one.
   var aivRng = aivRangeReading(ai, d.ai_score_low, d.ai_score_high);
+  // The server's one table wins (client_api.ai_visibility_band): the words
+  // and tone it sends are read from the range, never the point. A range
+  // that crosses a band edge comes back as band "uncertain" with a long
+  // sentence; the flag has room for a few words, so it says the short form
+  // and carries the server's sentence as its title.
+  if (d.ai_score_label) {
+    aivRng = {label: (d.ai_score_band === 'uncertain' ? 'range too wide to call' : d.ai_score_label),
+              title: d.ai_score_label,
+              tone: (d.ai_score_tone === 'neutral' ? '' : (d.ai_score_tone || '')),
+              range: aivRng.range};
+  }
   // Listing strength: one threshold table for the words AND the colour (the
   // label ran 80/60/40 while the colour ran 70/40, so 75 read "a few gaps"
-  // in green). A server that sends presence_tone / presence_label wins.
-  var presLabel = d.presence_label || (gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps')));
-  var presTone = d.presence_tone || (gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad'));
+  // in green). The server's presence_band_label / presence_tone win
+  // (client_api.presence_band); presence_label is the metric's NAME
+  // ("Listing strength"), not its band.
+  var presLabel = d.presence_band_label || (gbp >= 80 ? 'strong' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps')));
+  var presTone = (d.presence_tone && d.presence_tone !== 'neutral') ? d.presence_tone : (d.presence_tone === 'neutral' ? '' : (gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad')));
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
   if (scoreEl) {
@@ -17759,6 +17944,7 @@ function renderAIVisibility(d) {
     // instead now, not stuffed into this flag (which only has room for a
     // couple words before it wraps the "Visibility orbit" label above it).
     scoreLbl.textContent = !measured ? 'not measured' : aivRng.label;
+    scoreLbl.title = (measured && aivRng.title) ? aivRng.title : '';
     scoreLbl.className = !measured ? 'bad' : aivRng.tone;
   }
   var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
@@ -17789,7 +17975,7 @@ function renderAIVisibility(d) {
   var gbpLbl = document.getElementById('aiv-gbp-label');
   if (gbpEl) {
     if (!gbpHas) { gbpEl.textContent = '\u2014'; gbpEl.style.color = 'var(--ink3)'; }
-    else { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = presTone === 'good' ? 'var(--hb-good)' : (presTone === 'warn' ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
+    else { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = presTone === 'good' ? 'var(--hb-good)' : (presTone === 'warn' ? 'var(--hb-warn)' : (presTone === 'bad' ? 'var(--hb-bad)' : 'var(--ink2)')); }
   }
   if (gbpLbl) {
     if (!gbpHas) { gbpLbl.textContent = 'not measured'; gbpLbl.className = ''; }
@@ -18241,7 +18427,17 @@ function aiCaveat(title, detail){
 /* Prepends the caveat when the server says the figures in this passage were
    not all traceable to the data behind it. */
 function applyFigureCaveat(el, d){
-  if(!el || !d || d.figures_verified!==false) return;
+  if(!el || !d) return;
+  // A cause the model stated that no stored diagnosis carries (ai_guard.
+  // unsupported_causes, H2): the sentence stays, flagged as a guess, the
+  // same way an untraced figure is.
+  if(d.causes_verified===false){
+    var cs=d.unsupported_causes||[];
+    el.insertBefore(aiCaveat('Unsupported cause', cs.length
+      ? 'Cavnar AI gave a reason here that no measured diagnosis supports (\u201c'+String(cs[0]).slice(0,120)+'\u201d). Treat it as a guess, not a finding.'
+      : 'Cavnar AI gave a reason here that no measured diagnosis supports. Treat it as a guess, not a finding.'), el.firstChild);
+  }
+  if(d.figures_verified!==false) return;
   var n=(d.unsupported_figures||[]).length;
   var detail=n
     ? 'Cavnar could not trace '+(n===1?'a figure':n+' figures')+' in this to your data ('+(d.unsupported_figures||[]).slice(0,3).join(', ')+'). Check before acting on '+(n===1?'it':'them')+'.'
@@ -20460,7 +20656,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // generator: roster & settings, scheduling rules, events & reservations,
   // shift requests. Every figure here is the server's; nothing is invented
   // on the client. ES5 only.
-  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],likely:[],gen:null,chunked:false,likelyNote:'',standbyNote:'',demand:null};
+  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],likely:[],gen:null,chunked:false,likelyNote:'',standbyNote:'',likelyBase:null,standbyBase:null,demand:null};
   var _RV_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   function _rvRow(i){return (window._schedRows||[])[i]||{};}
   function _rvWhen(r){var d=r.day||(r.date?mdy(r.date):'');return d+(r.shift_start?' '+r.shift_start:'');}
@@ -20476,10 +20672,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(d.generation_seconds!==undefined)_rv.gen=d.generation_seconds;
     if(d.chunked!==undefined)_rv.chunked=!!d.chunked;
     // The calibration the percentages carry (I9): the edit predictor's own
-    // backtest beside its %, and the standby % said as the estimate it is.
-    // Optional - an older server sends neither and the static caveat stands.
-    if(d.likely_edits_note!==undefined)_rv.likelyNote=d.likely_edits_note||'';
-    if(d.standby_note!==undefined)_rv.standbyNote=d.standby_note||'';
+    // backtest rides on every predicted row (schedule_learning.
+    // predict_row_edits: calibration_note, backtest_hits / _flagged /
+    // _weeks, base_rate), and each standby day carries its assumption and
+    // the restaurant's base no-show rate. The group notes are read from the
+    // first row that has them; an older server sends none and the static
+    // caveat stands.
+    if(d.likely_edits!==undefined){_rv.likelyNote='';_rv.likelyBase=null;
+      for(var li=0;li<_rv.likely.length;li++){var lr=_rv.likely[li];if(lr&&lr.kind==='predicted'&&lr.calibration_note){
+        _rv.likelyNote=String(lr.calibration_note);_rv.likelyBase=(typeof lr.base_rate==='number')?lr.base_rate:null;break;}}}
+    if(d.standby_days!==undefined){_rv.standbyNote='';_rv.standbyBase=null;
+      for(var si=0;si<_rv.standby.length;si++){var sr0=_rv.standby[si];if(sr0&&sr0.assumption){
+        _rv.standbyNote=String(sr0.assumption);_rv.standbyBase=(typeof sr0.base_rate==='number')?sr0.base_rate:null;break;}}}
     if(d.demand_accuracy!==undefined)_rv.demand=d.demand_accuracy||null;
   }
   // K8: how far this restaurant's demand forecasts have been off, on the
@@ -20552,7 +20756,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+=_rvDemandLine(_rv.demand);
     var sbAsk=[];for(i=0;i<_rv.standby.length;i++)if(_rv.standby[i]&&_rv.standby[i].standby&&_rv.standby[i].standby.employee)sbAsk.push(i);
     if(sbAsk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Standby</div><div class="sr-note" style="margin:0 0 4px">'+esc(_rv.standbyNote||'An estimate from each person’s own attendance record, assuming one no-show doesn’t make another likelier.')+'</div>';
+      h+='<div class="sr-grp"><div class="sr-k">Standby</div><div class="sr-note" style="margin:0 0 4px">'+(_rv.standbyNote?num(_rv.standbyNote):esc('An estimate from each person’s own attendance record, assuming one no-show doesn’t make another likelier.'))
+        +(_rv.standbyBase!=null?' Overall no-show rate here: <span class="hb-num">'+Math.round(_rv.standbyBase*1000)/10+'%</span>.':'')+'</div>';
       for(i=0;i<sbAsk.length;i++){var sd=_rv.standby[sbAsk[i]],sp=sd.standby;
         h+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedAskStandby('+sbAsk[i]+',this)">Ask '+esc(sp.employee)+'</button></div>';}
@@ -20563,7 +20768,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
        edit they keep making are already lines above. */
     var lk=[];for(i=0;i<_rv.likely.length;i++)if(_rv.likely[i]&&_rv.likely[i].kind==='predicted')lk.push(_rv.likely[i]);
     if(lk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.'+(_rv.likelyNote?' '+num(_rv.likelyNote):'')+'</div>';
+      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.'+(_rv.likelyNote?' '+num(_rv.likelyNote.charAt(0).toUpperCase()+_rv.likelyNote.slice(1))+'.':'')
+        +(_rv.likelyBase!=null?' Across all rows, <span class="hb-num">'+Math.round(_rv.likelyBase*100)+'%</span> get changed.':'')+'</div>';
       for(i=0;i<lk.length;i++){var le=lk[i],rs=String(le.reason||'');
         h+='<div class="sr-line"><span class="d"></span><span><span class="hb-num">'+Math.round((+le.likelihood||0)*100)+'%</span> <b>'+esc(le.employee)+'</b>, '+esc(mdy(le.date))+' '+esc(le.shift_start||'')+' '+esc(le.role||'')
           +(rs?' &mdash; '+esc(rs.charAt(0).toUpperCase()+rs.slice(1))+'.':'')+'</span></div>';}
@@ -20789,10 +20995,16 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var pct=Math.round((+r.no_show_rate||0)*100);
     // Red where the engine flags the person (shift_quality.UNRELIABLE_RATE,
     // 20%), not at a client-side 10% the scorer never used (CA1 L14): the
-    // server's own flag or threshold wins when it sends one.
-    var thr=(_roster&&_roster.no_show_threshold!=null)?+_roster.no_show_threshold:0.2;
+    // server's own flag or threshold wins when it sends one. Each row
+    // carries both (staff_settings.reliability: unreliable,
+    // no_show_threshold), plus the raw count the smoothed rate came from.
+    var thr=(r.no_show_threshold!=null)?+r.no_show_threshold:((_roster&&_roster.no_show_threshold!=null)?+_roster.no_show_threshold:0.2);
     var bad=r.unreliable===true||(r.unreliable!==false&&(+r.no_show_rate||0)>=thr);
-    return '<span class="rst-rel '+(bad?'bad':(pct===0?'good':''))+'" title="'+r.shifts+' shift'+(r.shifts===1?'':'s')+' on record'+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+'">'+pct+'% no-show</span>';
+    // The % is smoothed toward this restaurant's own base rate, so two
+    // misses in six shifts don't read as a flat 33%; the title says both.
+    var raw=(r.no_shows!=null)?(r.no_shows+' of '+r.shifts+' shift'+(r.shifts===1?'':'s')+' missed'+(r.raw_no_show_rate!=null?' ('+Math.round(r.raw_no_show_rate*100)+'% raw)':'')):(r.shifts+' shift'+(r.shifts===1?'':'s')+' on record');
+    var smooth=(r.base_rate!=null)?' · smoothed toward this restaurant\u2019s '+Math.round(r.base_rate*1000)/10+'% overall rate':'';
+    return '<span class="rst-rel '+(bad?'bad':(pct===0?'good':''))+'" title="'+esc(raw+smooth+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+' · flagged at '+Math.round(thr*100)+'%')+'">'+pct+'% no-show</span>';
   }
   window.renderRoster=function(){
     var d=_roster,el=document.getElementById('roster-body');if(!d||!el)return;
@@ -21347,6 +21559,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Revenue projection: the figure and where it came from, or why not.
     h+=_intLearnHtml(d);
     h+='<div class="int-rev">'+(rev.value?'<span class="hb-num">'+_intMoney(rev.value)+'</span><span>projected weekly revenue</span>':'<span>No weekly revenue projection yet</span>')+'<span class="src">'+esc(rev.source||'')+(rev.weeks?' · '+rev.weeks+' week'+(rev.weeks===1?'':'s'):'')+'</span></div>';
+    // How the frozen weekly projections have held up (K8, demand.
+    // week_projection_accuracy) and the nightly forecast's record
+    // (demand_accuracy), when this payload carries them.
+    var wpa=(typeof fc2AccLine==='function')?fc2AccLine(d.week_projection_accuracy,'weekly revenue projections'):'';
+    if(wpa)h+='<div class="sr-note" style="margin-top:6px">'+wpa.charAt(0).toUpperCase()+wpa.slice(1)+'.</div>';
+    if(d.demand_accuracy&&typeof _rvDemandLine==='function')h+=_rvDemandLine(d.demand_accuracy);
     // Outcomes by weekday × daypart.
     h+='<div class="lb2-sub" style="margin-top:14px">What published weeks did<small>by weekday and daypart · a troubled daypart is flagged</small></div>';
     if(!nOut)h+='<div class="hb-empty">Nothing recorded yet — the first published week writes the first row.</div>';
@@ -21358,7 +21576,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         for(j=0;j<parts.length;j++){var o=outs[wd][parts[j]];
           if(!o){h+='<td><span class="dim">—</span></td>';continue;}
           h+='<td><div class="cell'+(o.troubled?' trbl':'')+'">'+(o.troubled?'<span class="flag">troubled</span> ':'')+'<span class="hb-num">'+esc(o.avg_hours)+'h</span>'+(o.splh?' · <span class="hb-num">'+_intMoney(o.splh)+'</span>/h':'')+(o.rating?' · <span class="hb-num">'+esc(o.rating)+'</span>★':'')
-            +'<small>'+o.weeks+' week'+(o.weeks===1?'':'s')+(o.issues?' · '+o.issues+' issue'+(o.issues===1?'':'s'):' · no issues')+(o.avg_sales?' · '+_intMoney(o.avg_sales)+' sales':'')+'</small></div></td>';
+            +'<small>'+o.weeks+' week'+(o.weeks===1?'':'s')+(o.issues_label?' · '+esc(o.issues_label):(o.issues==null?' · not watched':(o.issues?' · '+o.issues+' issue'+(o.issues===1?'':'s'):' · no issues')))+(o.avg_sales?' · '+_intMoney(o.avg_sales)+' sales':'')+'</small></div></td>';
         }
         h+='</tr>';
       }

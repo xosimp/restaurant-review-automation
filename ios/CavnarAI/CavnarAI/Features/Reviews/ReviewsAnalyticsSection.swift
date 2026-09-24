@@ -44,6 +44,10 @@ struct ReviewsAnalyticsSection: View {
                 if !viewModel.unsupportedNames.isEmpty {
                     CavnarCaveat.unverifiedNames(viewModel.unsupportedNames)
                 }
+                // A reason the read gave that no stored diagnosis backs (H2).
+                if viewModel.causesUnverified {
+                    CavnarCaveat.unverifiedCauses(viewModel.unsupportedCauses)
+                }
                 if viewModel.insightIsStale {
                     CavnarCaveat.olderRead(asOf: viewModel.insightAsOf)
                 }
@@ -56,10 +60,20 @@ struct ReviewsAnalyticsSection: View {
                     // The ember thread: the chart above to the read below.
                     EmberThread().padding(.leading, 6)
                     insightCard(insight)
+                    // Next week's rating, computed from the fitted trend in
+                    // Python (H8) — tagged so it never reads as the model's.
+                    if let forecast = viewModel.ratingForecast?.line {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            HomeMixedText.make(forecast, size: 13, weight: 500, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ClaimKindTag(kind: "forecast")
+                        }
+                    }
                     // Open complaints ranked by how serious they are rather
                     // than how many there are. Sits directly under the read
                     // because it is the same question that read is answering.
-                    if !viewModel.severityTiers.isEmpty {
+                    // The unclassified count shows even with no tier open.
+                    if !viewModel.severityTiers.isEmpty || viewModel.unclassifiedCount > 0 {
                         severityStrip(viewModel.severityTiers)
                     }
                 } else if viewModel.isLoading {
@@ -188,6 +202,12 @@ struct ReviewsAnalyticsSection: View {
                         // the "Do today" line, matched by the text the
                         // server keyed.
                         if let rec = Self.rec(for: line, in: viewModel.insightRecs) {
+                            // The line's own confidence (E13), not the
+                            // rating trend's.
+                            if let c = rec.confidenceDetail {
+                                ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
+                                    .padding(.leading, 22)
+                            }
                             RecAnswerRow(key: rec.key, surface: "reviews")
                                 .padding(.leading, 22)
                         }
@@ -209,6 +229,10 @@ struct ReviewsAnalyticsSection: View {
                             .foregroundStyle(Color.cavnarInk2)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let c = rec.confidenceDetail {
+                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
+                            .padding(.leading, 22)
                     }
                     RecAnswerRow(key: rec.key, surface: "reviews")
                         .padding(.leading, 22)

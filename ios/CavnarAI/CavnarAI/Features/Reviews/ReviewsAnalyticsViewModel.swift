@@ -18,6 +18,13 @@ final class ReviewsAnalyticsViewModel {
     /// wrong — the whole premise is that Cavnar has read the reviews — and
     /// the figure check cannot see it, because a name is not a figure.
     var unsupportedNames: [String] = []
+    /// H2: the read gave a reason no measured signal backs — the view says
+    /// so above it (CavnarCaveat.unverifiedCauses).
+    var causesUnverified = false
+    var unsupportedCauses: [String] = []
+    /// H8: next week's rating, computed from the fitted trend (not the
+    /// model's words). Nil when there is no trend to carry forward.
+    var ratingForecast: ComputedForecast?
     /// The root-cause read: the step after "food quality is your
     /// most-mentioned complaint". Nil when no complaint cluster clears the
     /// evidence floor, which is a state the UI shows as nothing at all
@@ -107,9 +114,18 @@ final class ReviewsAnalyticsViewModel {
         let recs: [ReviewInsightRec]?
         let claimKinds: ClaimKindMap?
         let trend: ReviewRatingTrend?
+        /// H2: false when the read states a cause no stored diagnosis backs
+        /// (the sentences are in `unsupportedCauses`); H8: next week's rating
+        /// forecast, computed in Python rather than written by the model.
+        /// Optional: absent means "not flagged" / no forecast.
+        var causesVerified: Bool? = nil
+        var unsupportedCauses: [String]? = nil
+        var forecast: ComputedForecast? = nil
 
         enum CodingKeys: String, CodingKey {
-            case ok, insight, diagnosis, confidence, stale, severity, recs, trend
+            case ok, insight, diagnosis, confidence, stale, severity, recs, trend, forecast
+            case causesVerified = "causes_verified"
+            case unsupportedCauses = "unsupported_causes"
             case figuresVerified = "figures_verified"
             case unsupportedFigures = "unsupported_figures"
             case namesVerified = "names_verified"
@@ -147,6 +163,9 @@ final class ReviewsAnalyticsViewModel {
         unsupportedNames = (insightPayload?.namesVerified == false)
             ? (insightPayload?.unsupportedNames ?? [])
             : []
+        causesUnverified = insightPayload?.causesVerified == false
+        unsupportedCauses = causesUnverified ? (insightPayload?.unsupportedCauses ?? []) : []
+        ratingForecast = insightPayload?.forecast
         diagnosis = insightPayload?.diagnosis
         revenueAtRisk = (insightPayload?.revenueAtRisk?.available == true)
             ? insightPayload?.revenueAtRisk : nil
@@ -295,7 +314,28 @@ struct ReviewInsightRec: Decodable, Sendable, Equatable, Identifiable {
     let key: String
     let text: String
     let kind: String?
+    /// E13: the "Do today" line's OWN measured confidence (K1) — not the
+    /// rating trend's band, which is what top-level `confidence` is.
+    /// Absent on an older server.
+    var confidenceDetail: TrustConfidence? = nil
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, text, kind
+        case confidenceDetail = "confidence_detail"
+    }
+
+    init(key: String, text: String, kind: String?, confidenceDetail: TrustConfidence? = nil) {
+        self.key = key; self.text = text; self.kind = kind; self.confidenceDetail = confidenceDetail
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        text = try c.decode(String.self, forKey: .text)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        confidenceDetail = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail)
+    }
 }
 
 /// The monthly revenue range implied by a rating movement. `available` is

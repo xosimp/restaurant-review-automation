@@ -278,6 +278,16 @@ function orDefault(v, d){ return v == null ? d : v; }
 // Setup completeness (G14): what is connected and configured - renamed from
 // "data completeness", which collided with the intelligence layer's feature
 // completeness. Either key, so this reads an older payload too.
+// The POS column from freshness.pos_state (pos_health.pos_sync_state, G3):
+// the provider, when it last synced, and a chip when the sync is stale or
+// failing — a sync that stopped without writing an error is not "fine".
+function posCell(f){
+  const ps = (f && f.pos_state) || null;
+  if(!ps) return `<span class="num">${ago(f && f.pos)}</span>`;
+  if(ps.state === 'not_connected') return '<span class="dim">—</span>';
+  const bad = ps.state === 'error' || ps.state === 'stale' || ps.state === 'unknown';
+  return `<span class="num">${ago(ps.last_synced || (f && f.pos))}</span>${ps.provider?' <span class="dim">'+esc(String(ps.provider).toUpperCase()==='RPOWER'?'RPOWER':ps.provider)+'</span>':''}${bad?` <span class="chip ${ps.state==='error'?'bad':'warn'}" title="${esc(ps.error||'')}">${esc(ps.state)}</span>`:''}`;
+}
 function setupDone(r){ return (r && (r.setup_completeness || r.data_completeness)) || {}; }
 function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
 function fmtD(s){ const d = parseTs(s); return d ? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + (d.getFullYear()!==new Date().getFullYear()?' '+d.getFullYear():'') : '—'; }
@@ -297,7 +307,9 @@ const intb = (s, label) => `<span class="b ${INT[s]||'off'}">${esc(label||s)}</s
 const MOD = {healthy:'ok', stale:'warn', no_data:'warn', unconfigured:'bad', off:'off'};
 const MODL = {healthy:'healthy', stale:'stale', no_data:'no data', unconfigured:'not configured', off:'off'};
 const modchip = (m) => `<span class="chip ${MOD[m.state]}" title="${esc(m.label)}: ${MODL[m.state]}${m.last_data?' · last '+ago(m.last_data):''}">${esc(m.label)}</span>`;
-const intchip = (i) => i.in_use||i.key==='google_business' ? `<span class="chip ${INT[i.state]}" title="${esc(i.label)}: ${i.state}${i.error?' — '+esc(i.error):''}${i.last_success?' · '+ago(i.last_success):''}">${esc(i.label.replace(' POS','').replace(' & Facebook','').replace('Google Business','GBP').replace('Outbound webhook','Webhook'))}</span>` : '';
+// A POS row carries pos_health.provider_state's reading (sync_state:
+// current | aging | stale | error, age_days) beside the connect state (G3).
+const intchip = (i) => i.in_use||i.key==='google_business' ? `<span class="chip ${INT[i.state]}" title="${esc(i.label)}: ${i.state}${i.sync_state?' · sync '+esc(i.sync_state)+(i.age_days!=null?' ('+i.age_days+'d)':''):''}${i.error?' — '+esc(i.error):''}${i.last_success?' · '+ago(i.last_success):''}">${esc(i.label.replace(' POS','').replace(' & Facebook','').replace('Google Business','GBP').replace('Outbound webhook','Webhook'))}</span>` : '';
 const clientLink = (id, label) => `<a href="#client/${id}" onclick="event.stopPropagation()">${esc(label)}</a>`;
 function bars(vals, key, badKey){ const max = Math.max(1, ...vals.map(v=>+v[key]||0)); return `<div class="bars">${vals.map(v=>`<i style="height:${Math.max(3, 44*(+v[key]||0)/max)}px" class="${badKey&&v[badKey]?'bad':''}" title="${esc(v.day||'')}: ${fmtN(v[key])}${badKey&&v[badKey]?' · '+v[badKey]+' failed':''}"></i>`).join('')}</div>`; }
 function sortable(rows, defaultKey){ return {rows, key: defaultKey, dir: 'desc'}; }
@@ -475,7 +487,7 @@ async function locations(){
         {h:'Billing', val:r=>r.billing.status, cell:r=>bill(r.billing.status)},
         {h:'Modules', cell:r=>r.modules.map(modchip).join('')},
         {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
-        {h:'Reviews', cell:r=>`<span class="num">${ago(r.freshness.reviews)}</span>`},{h:'POS', cell:r=>`<span class="num">${ago(r.freshness.pos)}</span>`},{h:'Inventory', cell:r=>`<span class="num">${ago(r.freshness.inventory)}</span>`},
+        {h:'Reviews', cell:r=>`<span class="num">${ago(r.freshness.reviews)}</span>`},{h:'POS', cell:r=>posCell(r.freshness)},{h:'Inventory', cell:r=>`<span class="num">${ago(r.freshness.inventory)}</span>`},
         {h:'AI 30d', r:true, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span>`},{h:'Alerts 7d', r:true, cell:r=>`<span class="num">${fmtN(r.alerts_7d)}</span>`},
         {h:'Issues', wrap:true, cell:r=>r.issues.length?r.issues.slice(0,3).map(i=>`<span class="chip ${i.severity==='critical'?'bad':'warn'}">${esc(i.title)}</span>`).join('')+(r.issues.length>3?`<span class="dim">+${r.issues.length-3}</span>`:''):'<span class="dim">—</span>'},
         {h:'Last active', cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
@@ -514,7 +526,7 @@ async function integrations(){
       {h:'Last success', key:'last_success', cell:r=>`<span class="num">${ago(r.last_success)}</span> <span class="dim">${fmtDT(r.last_success)}</span>`},
       {h:'Freshness', key:'freshness', cell:r=>r.freshness==='—'?'<span class="dim">—</span>':`<span class="chip ${r.freshness==='fresh'?'ok':'warn'}">${esc(r.freshness)}</span>`},
       {h:'Most recent error', key:'error', wrap:true, cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:'<span class="dim">—</span>'},
-      {h:'', cell:r=>r.integration==='toast'?`<button class="btn s" onclick="event.stopPropagation();toastOpen(${r.restaurant_id},'${esc(r.restaurant)}')">Credentials</button> ${r.state!=='off'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/toast/sync/${r.restaurant_id}','Sync Toast')">Sync</button>`:''}`:r.integration==='instagram'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/refresh-ig-token/${r.restaurant_id}','Refresh Instagram token')">Refresh token</button>`:r.integration==='google_business'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/fetch-reviews/${r.restaurant_id}','Fetch reviews')">Fetch</button>`:`<a class="btn s" href="/admin/client-settings/${r.restaurant_id}" onclick="event.stopPropagation()">Settings</a>`}
+      {h:'', cell:r=>r.integration==='toast'?`<button class="btn s" onclick="event.stopPropagation();toastOpen(${r.restaurant_id},'${esc(r.restaurant)}')">Credentials</button> ${r.state!=='off'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/toast/sync/${r.restaurant_id}','Sync Toast')">Sync</button>`:''}`:r.integration==='instagram'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/refresh-ig-token/${r.restaurant_id}','Refresh Instagram token')">Refresh token</button>`:r.integration==='google_business'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/fetch-reviews/${r.restaurant_id}','Fetch reviews')">Fetch</button>`:r.integration==='rpower'?`<button class="btn s" onclick="event.stopPropagation();rpowerOpen(${r.restaurant_id},'${esc(r.restaurant)}')">Token &amp; sync</button>`:`<a class="btn s" href="/admin/client-settings/${r.restaurant_id}" onclick="event.stopPropagation()">Settings</a>`}
     ], rows, {id:'int-t', sort:'state', empty:'No integrations match.'})}`;
 }
 
@@ -560,7 +572,7 @@ async function intelligence(){
     <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(L.restaurants),'Active restaurants')}${kpi(fmtN(L.with_features),'With a feature row this month')}${kpi(fmtN(L.cohorts_at_floor.length),'Cohorts at the floor', L.cohorts_at_floor.length?'good':'')}${kpi(fmtN(d.patterns.new_this_week),'New patterns · 7d', d.patterns.new_this_week?'ember':'')}${kpi(pct(R.acceptance_rate),'Recommendation acceptance','',R.answered?fmtN(R.answered)+' answered':'')}${kpi(pct(R.success_rate),'Measured improvement','',R.measured?fmtN(R.measured)+' measured':'')}</div>
     ${!L.cohorts_at_floor.length && L.restaurants < d.floor ? `<div class="warnbox" style="margin-bottom:12px"><b>Below the floor.</b> ${L.restaurants} active restaurant${L.restaurants===1?'':'s'}; cross-restaurant patterns and benchmarks appear once ${d.floor} are live. Level 1 (each restaurant's own memory) is already learning.</div>` : ''}
     <div class="grid g3" style="margin-bottom:14px">
-      <div class="card"><div class="ch"><h2>Highest-confidence insights</h2></div><div class="cb">${d.top_insights.length ? d.top_insights.map(p=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b>${Math.round(p.confidence*100)}%</b> <span class="dim">${esc(p.cohort==='platform'?'platform':p.cohort)}</span><div style="white-space:normal">${esc(p.sentence)}</div><div class="dim">n=${p.n_with}+${p.n_without} · d=${p.cohen_d} · p=${p.p_value} · q=${p.q_value}</div></div>`).join('') : '<div class="empty">No pattern has cleared the bar yet (each side ≥5 restaurants, |d| ≥ 0.3, p ≤ .05, q ≤ .10).</div>'}</div></div>
+      <div class="card"><div class="ch"><h2>Strongest patterns</h2><span class="sub" title="${esc((d.top_insights[0]||{}).strength_basis||'effect size, significance and sample combined for ordering — not the chance the pattern is right')}">pattern strength, not the chance a pattern is right</span></div><div class="cb">${d.top_insights.length ? d.top_insights.map(p=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b class="num">${patStrength(p)}</b> <span class="dim">${esc(p.strength_label||'pattern strength')} ·</span> <span class="dim">${esc(p.cohort==='platform'?'platform':p.cohort)}</span><div style="white-space:normal">${esc(p.sentence)}</div><div class="dim">n=${p.n_with}+${p.n_without} · d=${p.cohen_d} · p=${p.p_value} · q=${p.q_value}</div></div>`).join('') : '<div class="empty">No pattern has cleared the bar yet (each side ≥5 restaurants, |d| ≥ 0.3, p ≤ .05, q ≤ .10).</div>'}</div></div>
       <div class="card"><div class="ch"><h2>Emerging trends</h2></div><div class="cb">${d.emerging.length ? d.emerging.map(t=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b>${esc(t.cohort_label)}</b> · ${esc(t.metric)}<div class="dim">${t.from} → ${t.to} over ${t.weeks} weeks (${t.relative_per_week>0?'+':''}${Math.round(t.relative_per_week*1000)/10}%/wk, n=${t.n_latest})</div></div>`).join('') : '<div class="empty">A trend needs six weekly points over a cohort at the floor.</div>'}</div></div>
       <div class="card"><div class="ch"><h2>Savings generated</h2></div><div class="cb">${['delivered','avoided','surfaced','opportunity'].map(k=>`<div style="display:flex;justify-content:space-between;padding:4px 0"><span>${k}</span><span class="num">${fmtUSD(d.savings[k],0)}</span></div>`).join('')}<div class="dim" style="white-space:normal;margin-top:6px">${esc(d.savings.note)} ${d.savings.restaurants_counted} restaurants counted.</div></div></div>
     </div>
@@ -574,7 +586,7 @@ async function intelligence(){
       <div class="k" style="margin:10px 0 6px">Model confidence over time</div>${d.confidence_over_time.length ? table([{h:'Week',key:'week'},{h:'Kind',key:'rec_kind'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Mean confidence',key:'mean_confidence',r:true,cell:r=>`<span class="num">${r.mean_confidence==null?'—':pct(r.mean_confidence)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>`<span class="num">${pct(r.acceptance_rate)}</span>`},{h:'Improved',key:'success_rate',r:true,cell:r=>`<span class="num">${pct(r.success_rate)}</span>`}], d.confidence_over_time, {id:'int-conf', sort:'week'}) : '<div class="empty">Logged weekly by the learning pass once a kind clears the floor.</div>'}</div>
     </div>
     <div class="k" style="margin-bottom:6px">All patterns</div>
-    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Conf.',key:'confidence',r:true,cell:r=>`<span class="num">${Math.round(r.confidence*100)}%</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${fmtD(r.first_seen)}</span>`}], d.patterns.rows, {id:'int-pat', sort:'confidence'}) : '<div class="empty">Nothing discovered yet.</div>'}
+    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${fmtD(r.first_seen)}</span>`}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}
     <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
 }
 
@@ -682,6 +694,14 @@ function _calTable(rows, floor, id, first){
     {h:'Shown', key:'predicted_mean', r:true, cell:r=>`<span class="num">${f(r.predicted_mean)}</span>`},
     {h:'Improved', key:'observed_rate', r:true, cell:r=>(r.n||0)<floor ? `<span class="dim">n&lt;${floor}</span>` : `<span class="num">${f(r.observed_rate)}</span>${r.low!=null?` <span class="dim num">${f(r.low)}–${f(r.high)}</span>`:''}`},
     {h:'Reliability', key:'bar', cell:r=>_calBar(r, floor)}], rows, {id, sort:'range'});
+}
+// A pattern's strength_pct (intelligence.patterns.strength_fields): an
+// ordering blend of effect size, significance and sample, not a probability,
+// so it is never labelled "confidence". An older server sends only
+// `confidence` (0-1).
+function patStrength(p){
+  const v = (p && p.strength_pct != null) ? p.strength_pct : (p && p.confidence != null ? Math.round(p.confidence*100) : null);
+  return v == null ? '—' : v + '%';
 }
 function confidenceCalibration(k){
   if(!k || k.ok === false || !Array.isArray(k.bands)) return `<div class="card"><div class="ch"><h2>Confidence calibration</h2></div><div class="cb"><div class="empty">No calibration yet — it needs recommendations shown with a confidence percentage and measured since.</div></div></div>`;

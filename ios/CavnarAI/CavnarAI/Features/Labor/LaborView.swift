@@ -102,7 +102,8 @@ struct LaborView: View {
                                     scrollToReveal(Self.intelID, proxy: proxy)
                                 }, onAddPair: { pair in
                                     Task { await setupViewModel.addSuggestedPair(pair) }
-                                })
+                                }, demandAccuracy: viewModel.stats?.demandAccuracy,
+                                   weekProjectionAccuracy: viewModel.stats?.weekProjectionAccuracy)
                                 .id(Self.intelID)
                                 // Rating the team, then the targets those
                                 // ratings feed. In that order because a
@@ -183,17 +184,40 @@ struct LaborView: View {
                                     Text(event.name)
                                         .font(.cavnarBody(14.5, weight: 700))
                                         .foregroundStyle(Color.cavnarInk)
-                                    Text(daysAwayLabel(event.daysAway))
-                                        .font(.cavnarBody(14, weight: 600))
-                                        .foregroundStyle(Color.cavnarEmber2)
+                                    // M/D/YY from the server (date_str), then
+                                    // how far off it is.
+                                    HomeMixedText.make("\(event.dateStr) · \(daysAwayLabel(event.daysAway))",
+                                                       size: 14, weight: 600, color: .cavnarEmber2)
                                 }
-                                Text(forecastCopy(daysAway: event.daysAway))
-                                    .font(.cavnarBody(14))
-                                    .foregroundStyle(Color.cavnarInk2)
-                                    .lineSpacing(3)
+                                if let label = event.label, !label.isEmpty {
+                                    // This restaurant's own last-year figure,
+                                    // or "check your own history" — never a
+                                    // generic claim about covers (I5).
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        HomeMixedText.make(label, size: 14, color: .cavnarInk2)
+                                            .lineSpacing(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        ClaimKindTag(kind: event.claimKind)
+                                    }
+                                    Text(event.planningLine)
+                                        .font(.cavnarBody(13.5))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                } else {
+                                    Text(forecastCopy(daysAway: event.daysAway))
+                                        .font(.cavnarBody(14))
+                                        .foregroundStyle(Color.cavnarInk2)
+                                        .lineSpacing(3)
+                                }
                             }
                         }
                     }
+                }
+                // How the demand forecast behind staffing has held up here,
+                // and the frozen weekly projections' record (K8) — the only
+                // mobile payload that carries either is /labor.
+                ForEach(Self.forecastRecordLines(viewModel.stats), id: \.self) { line in
+                    HomeMixedText.make(line + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -549,6 +573,17 @@ struct LaborView: View {
     }()
 
 
+    /// The demand forecast's record and the weekly projection's, each only
+    /// when something was measured (K8).
+    static func forecastRecordLines(_ stats: LaborStats?) -> [String] {
+        var out: [String] = []
+        if let d = stats?.demandAccuracy?.sentence { out.append(d) }
+        if let w = stats?.weekProjectionAccuracy?.line {
+            out.append(w.replacingOccurrences(of: "Past forecasts here", with: "Past weekly sales projections here"))
+        }
+        return out
+    }
+
     private func daysAwayLabel(_ days: Int) -> String {
         if days == 0 { return "today" }
         if days == 1 { return "tomorrow" }
@@ -796,7 +831,7 @@ struct LaborView: View {
                     // Cost, the budget trim, staggered starts, and what the
                     // forecast could not see — each only when the payload
                     // carried it.
-                    ScheduleWeekNotes(result: result)
+                    ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()

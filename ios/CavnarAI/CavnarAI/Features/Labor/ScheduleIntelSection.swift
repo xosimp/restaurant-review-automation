@@ -11,6 +11,11 @@ struct ScheduleIntelSection: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     var onExpand: (() -> Void)? = nil
     var onAddPair: ((SuggestedPair) -> Void)? = nil
+    /// K8 from GET /labor (LaborStats) — the schedule-intel payload itself
+    /// carries neither: how demand forecasts and the frozen weekly
+    /// projections have held up here, read beside the projected week.
+    var demandAccuracy: DemandAccuracy? = nil
+    var weekProjectionAccuracy: ForecastAccuracy? = nil
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     private static let dayparts = ["morning", "night"]
@@ -49,7 +54,8 @@ struct ScheduleIntelSection: View {
                     if let start = intel.startingPoints, start.ownHistory != true { startingPointsBlock(start) }
                     if let revenue = intel.revenue, let value = revenue.value {
                         revenueLine(revenue, value: value,
-                                    accuracy: intel.demandAccuracy ?? revenue.demandAccuracy)
+                                    accuracy: intel.demandAccuracy ?? revenue.demandAccuracy ?? demandAccuracy,
+                                    weekRecord: weekProjectionAccuracy?.line)
                     }
                     if let outcomes = intel.outcomes, !outcomes.isEmpty { outcomesBlock(outcomes) }
                     if let splh = intel.splh, !splh.isEmpty { splhBlock(splh, objective: intel.splhObjective) }
@@ -301,7 +307,8 @@ struct ScheduleIntelSection: View {
 
     // MARK: Revenue
 
-    private func revenueLine(_ revenue: IntelRevenue, value: Double, accuracy: DemandAccuracy? = nil) -> some View {
+    private func revenueLine(_ revenue: IntelRevenue, value: Double, accuracy: DemandAccuracy? = nil,
+                             weekRecord: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("$\(value.commaFormatted)")
                 .font(.cavnarNumber(22, weight: 700))
@@ -316,6 +323,12 @@ struct ScheduleIntelSection: View {
                 }
                 // How these projections have held up here (K8) — so the
                 // figure is read with its record beside it.
+                if let record = weekRecord {
+                    HomeMixedText.make(record.replacingOccurrences(of: "Past forecasts here",
+                                                                   with: "Past weekly projections here"),
+                                       size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let record = accuracy?.sentence {
                     HomeMixedText.make(record, size: 12.5, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -397,7 +410,7 @@ struct ScheduleIntelSection: View {
         if let w = o.weeks, w > 0 { parts.append("\(w) \(w == 1 ? "week" : "weeks")") }
         if let h = o.avgHours, h > 0 { parts.append("\(h.commaFormatted)h") }
         if let s = o.avgSales, s > 0 { parts.append("$\(s.commaFormatted) sales") }
-        if let i = o.issues, i > 0 { parts.append("\(i) \(i == 1 ? "issue" : "issues")") }
+        if let issues = o.issuesText { parts.append(issues) }
         if let r = o.rating { parts.append("rated \(String(format: "%.1f", r))") }
         return parts.joined(separator: " · ")
     }

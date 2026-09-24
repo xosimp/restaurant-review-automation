@@ -215,10 +215,12 @@ struct AIVisibilitySection: View {
             HStack(spacing: 0) {
                 heroStat(
                     value: scoreText,
-                    tone: measured ? aiScoreTone(result.aiScore ?? 0) : Color.cavnarInk3,
+                    // The server's chip, read from the 90% range (I4); the
+                    // point breakpoints only for an older server.
+                    tone: measured ? (result.aiScoreTone?.color ?? aiScoreTone(result.aiScore ?? 0)) : Color.cavnarInk3,
                     // Named, not "AI". One system is asked.
                     label: (result.platform ?? "AI").uppercased(),
-                    sub: measured ? aiScoreLabel(result.aiScore ?? 0) : "Not measured",
+                    sub: measured ? (result.aiChipText ?? aiScoreLabel(result.aiScore ?? 0)) : "Not measured",
                     claim: result.aiScore == nil ? nil : result.claimKinds?["ai_score"]
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
@@ -241,8 +243,10 @@ struct AIVisibilitySection: View {
                         // source for the thresholds); the client's own
                         // breakpoints only for an older server.
                         tone: listing.map { Self.presenceColor(server: result.presenceTone, score: $0) } ?? Color.cavnarInk3,
-                        label: "LISTING STRENGTH",
-                        sub: listing.map { gbpScoreLabel($0) + ((result.presenceUnmeasured ?? 0) > 0
+                        label: result.presenceHeading.uppercased(),
+                        // The band in the server's words (I10), one table
+                        // with the tone above.
+                        sub: listing.map { (result.presenceChipText ?? gbpScoreLabel($0)) + ((result.presenceUnmeasured ?? 0) > 0
                                                                ? " \u{00B7} of \(result.presenceMeasured ?? 0) read" : "") }
                             ?? "Not measured",
                         expandable: true, isExpanded: showGbpChecklist,
@@ -347,9 +351,11 @@ struct AIVisibilitySection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.5))
                 }
             }
-            Text(sub)
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk.opacity(0.55))
+            // Mixed: a range chip ("somewhere between 30% and 90%…") keeps
+            // its figures in Space Grotesk.
+            HomeMixedText.make(sub, size: 14, color: Color.cavnarInk.opacity(0.55))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             // Measured, or a partial check's estimate (claim_kinds) — J5.
             ClaimKindTag(kind: claim)
         }
@@ -440,12 +446,7 @@ struct AIVisibilitySection: View {
     /// The listing-strength colour: the server's `presence_tone` (good /
     /// warn / bad) when sent, else the local breakpoints.
     static func presenceColor(server: ServerTone?, score: Int) -> Color {
-        switch server?.value {
-        case "good": return .cavnarGreen
-        case "warn": return .cavnarAmber
-        case "bad": return .cavnarRed
-        default: return gbpTone(score)
-        }
+        server?.color ?? gbpTone(score)
     }
 
     // MARK: - GBP checklist breakdown — was a full-width, single-column

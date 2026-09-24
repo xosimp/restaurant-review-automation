@@ -95,6 +95,11 @@ struct LaborSavingsBreakdown: Codable {
     let laborOvertime: Double
     let laborVsIndustryMonthly: Double
     let laborVsIndustryAnnual: Double
+    /// I10: the benchmark the comparison is against (thresholds.
+    /// LABOR_INDUSTRY_PCT, 34.5) and where it comes from — one figure for
+    /// web and iOS. Absent on an older server, which keeps 34.5.
+    var laborIndustryPct: Double? = nil
+    var laborIndustryBasis: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case laborMonthly = "labor_monthly"
@@ -102,19 +107,45 @@ struct LaborSavingsBreakdown: Codable {
         case laborOvertime = "labor_overtime"
         case laborVsIndustryMonthly = "labor_vs_industry_monthly"
         case laborVsIndustryAnnual = "labor_vs_industry_annual"
+        case laborIndustryPct = "labor_industry_pct"
+        case laborIndustryBasis = "labor_industry_basis"
+    }
+
+    /// "34.5%" — the benchmark as the tiles name it.
+    var industryPctText: String {
+        let p = laborIndustryPct ?? 34.5
+        return (p == p.rounded() ? String(Int(p)) : String(format: "%.1f", p)) + "%"
     }
 }
 
+/// One holiday in the next three weeks (demand.upcoming_holidays): the date
+/// already M/D/YY (`date_str`), and `label` — this restaurant's own sales
+/// on it last year ("Last year 18% above a typical Saturday here — …"),
+/// else "Holiday — check your own history". Never a generic "expect
+/// elevated covers" (I5). `label`, `lift_pct` and `claim_kind` are absent
+/// on an older server.
 struct LaborUpcomingEvent: Codable, Identifiable {
     let name: String
     let dateStr: String
     let daysAway: Int
+    var label: String? = nil
+    var liftPct: Int? = nil
+    var claimKind: String? = nil
     var id: String { name }
 
     enum CodingKeys: String, CodingKey {
-        case name
+        case name, label
         case dateStr = "date_str"
         case daysAway = "days_away"
+        case liftPct = "lift_pct"
+        case claimKind = "claim_kind"
+    }
+
+    /// What to do about it, by how close it is — timing only, no claim
+    /// about covers the data didn't make.
+    var planningLine: String {
+        if daysAway <= 7 { return "Check this week's schedule against it." }
+        return "Flag it for your next schedule build."
     }
 }
 
@@ -765,14 +796,64 @@ struct LikelyEdit: Codable, Identifiable, Equatable {
     /// in the server's words. Either key; lenient; absent on older servers.
     var calibrationNote: LenientText? = nil
     var note: LenientText? = nil
+    /// I9 (schedule_learning.predict_row_edits): the leave-one-out backtest
+    /// every predicted row carries — how often a flag was right on past
+    /// drafts (hits of flagged, over `backtestWeeks` drafts) and the base
+    /// rate of any row being edited. The same on every row of a draft.
+    var backtestHitRate: Double? = nil
+    var backtestHits: Int? = nil
+    var backtestFlagged: Int? = nil
+    var backtestWeeks: Int? = nil
+    var baseRate: Double? = nil
     var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")-\(date ?? "")" }
     enum CodingKeys: String, CodingKey {
         case kind, employee, date, role, likelihood, reason, text, index, note
         case shiftStart = "shift_start"
         case calibrationNote = "calibration_note"
+        case backtestHitRate = "backtest_hit_rate"
+        case backtestHits = "backtest_hits"
+        case backtestFlagged = "backtest_flagged"
+        case backtestWeeks = "backtest_weeks"
+        case baseRate = "base_rate"
     }
     /// The calibration sentence to show under the %, if any.
     var calibrationText: String? { calibrationNote?.value ?? note?.value }
+
+    /// "Flags like this were right 5 of 8 times (62%) on your last 6
+    /// drafts · 12% of all rows get edited" — the block-level record, from
+    /// the backtest fields; nil when the row carries none.
+    var backtestLine: String? {
+        guard let hits = backtestHits, let flagged = backtestFlagged, flagged > 0 else { return nil }
+        var s = "Flags like this were right \(hits) of \(flagged) times"
+        if let r = backtestHitRate { s += " (\(Int((r * 100).rounded()))%)" }
+        if let w = backtestWeeks, w > 0 { s += " on your last \(w) draft\(w == 1 ? "" : "s")" }
+        if let b = baseRate { s += " \u{00B7} \(Int((b * 100).rounded()))% of all rows get edited" }
+        return s
+    }
+}
+
+extension LikelyEdit {
+    /// Lenient: an odd value on any calibration field is nil, never a
+    /// schedule that fails to decode.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        employee = try? c.decodeIfPresent(String.self, forKey: .employee)
+        date = try? c.decodeIfPresent(String.self, forKey: .date)
+        role = try? c.decodeIfPresent(String.self, forKey: .role)
+        shiftStart = try? c.decodeIfPresent(String.self, forKey: .shiftStart)
+        likelihood = try? c.decodeIfPresent(Double.self, forKey: .likelihood)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        text = try? c.decodeIfPresent(String.self, forKey: .text)
+        index = try? c.decodeIfPresent(Int.self, forKey: .index)
+        calibrationNote = try? c.decodeIfPresent(LenientText.self, forKey: .calibrationNote)
+        note = try? c.decodeIfPresent(LenientText.self, forKey: .note)
+        backtestHitRate = try? c.decodeIfPresent(Double.self, forKey: .backtestHitRate)
+        backtestHits = try? c.decodeIfPresent(Int.self, forKey: .backtestHits)
+        backtestFlagged = try? c.decodeIfPresent(Int.self, forKey: .backtestFlagged)
+        backtestWeeks = try? c.decodeIfPresent(Int.self, forKey: .backtestWeeks)
+        baseRate = try? c.decodeIfPresent(Double.self, forKey: .baseRate)
+    }
 }
 
 /// A day likely to lose somebody to a no-show, and who could be on call.
@@ -801,14 +882,33 @@ struct StandbyDay: Codable, Identifiable, Equatable {
     /// independent"), in the server's words. Either key; lenient.
     var calibrationNote: LenientText? = nil
     var note: LenientText? = nil
+    /// I9 (schedule_learning.standby_days): what the % assumes — "Assumes
+    /// no-shows are independent of each other…" — and this restaurant's own
+    /// no-show rate every person's is smoothed toward (0–1). The same on
+    /// every day, so the block states them once.
+    var assumption: LenientText? = nil
+    var baseRate: Double? = nil
     var id: String { date }
     enum CodingKeys: String, CodingKey {
-        case date, day, standby, answerable, note
+        case date, day, standby, answerable, note, assumption
         case chanceOfANoShow = "chance_of_a_no_show"
         case recKey = "rec_key"
         case calibrationNote = "calibration_note"
+        case baseRate = "base_rate"
     }
     var calibrationText: String? { calibrationNote?.value ?? note?.value }
+
+    /// The block's one line on what the standby % rests on: the server's
+    /// assumption, then the base rate — "…smoothed toward it. Overall no-show
+    /// rate here: 4%." Nil when neither was sent.
+    static func basisLine(_ days: [StandbyDay]) -> String? {
+        let assumption = days.lazy.compactMap { $0.assumption?.value }.first
+        let base = days.lazy.compactMap(\.baseRate).first
+        var parts: [String] = []
+        if let assumption { parts.append(assumption.hasSuffix(".") ? assumption : assumption + ".") }
+        if let base { parts.append("Overall no-show rate here: \(Int((base * 100).rounded()))%.") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
 }
 
 /// One `overtime_forecast[]` item of a delivered draft — decoded leniently
@@ -976,6 +1076,12 @@ struct LaborStats: Codable {
     let periodTooShortToProject: Bool?
     let periodDays: Int?
     let dataCaveat: String?
+    /// K8: how far the demand forecast behind staffing has been off here
+    /// (demand.demand_accuracy), and the frozen weekly sales projections'
+    /// own record (forecast_log, `revenue_week`). The only mobile payload
+    /// that carries either. Lenient; absent on an older server.
+    var demandAccuracy: DemandAccuracy? = nil
+    var weekProjectionAccuracy: ForecastAccuracy? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1009,6 +1115,8 @@ struct LaborStats: Codable {
         case periodTooShortToProject = "period_too_short_to_project"
         case periodDays = "period_days"
         case dataCaveat = "data_caveat"
+        case demandAccuracy = "demand_accuracy"
+        case weekProjectionAccuracy = "week_projection_accuracy"
     }
 }
 
