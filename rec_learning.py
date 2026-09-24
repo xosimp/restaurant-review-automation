@@ -58,6 +58,7 @@ def get_conn(db_path=None):
 # returned with enough=false and the surfaces say "too few yet".
 MIN_SETTLED_FOR_RATE = 10
 MIN_MEASURED_FOR_RATE = 5
+PRIOR_MIN_MEASURED = 10       # cohort measured results before a cohort rate stands in (intelligence.confidence)
 SUMMARY_WINDOWS = (30, 90, 180)
 _Z90 = 1.645
 CLEAR_VERDICTS = ("improved", "worsened", "no_clear_change")
@@ -746,6 +747,70 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> 
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
     return Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now)
+
+
+def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None, episodes=None) -> dict:
+    """This restaurant's measured record for one recommendation kind — the
+    Historical Accuracy input of the confidence engine (rec_trust).
+
+    Counted exactly as the owner's record is: episodes that were shown and
+    taken, read through learned_verdict (a disowned, conditions-changed,
+    informational, faded or reversed result is never a win), one result per
+    overlapping after-window. Returns
+      {kind, measured, improved, rate, low, high, source, prior_measured,
+       prior_improved, prior_restaurants}
+    where `rate` is the own improved share only at MIN_MEASURED_FOR_RATE
+    measured; below that `source` is "cohort" when the anonymous cohort
+    (this restaurant excluded) clears privacy.cohort_ok and has at least
+    PRIOR_MIN_MEASURED measured results, else "none" and rate None.
+    Never raises. `episodes` lets a caller that already loaded the ledger
+    (Home) pass it in."""
+    kind = str(kind or "")
+    now = now or datetime.utcnow()
+    out = {"kind": kind, "measured": 0, "improved": 0, "rate": None, "low": None, "high": None,
+           "source": "none", "prior_measured": 0, "prior_improved": 0, "prior_restaurants": 0}
+    try:
+        if episodes is None:
+            conn = get_conn(db_path)
+            try:
+                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
+                                 lean=True)
+            finally:
+                conn.close()
+        mine = [e for e in episodes
+                if e.get("shown") and _taken(e)
+                and (e.get("kind") or rec_ledger.kind_of(e["key"])) == kind]
+        measured = [e for e in _one_per_window(mine) if e["verdict"] in CLEAR_VERDICTS]
+        out["measured"] = len(measured)
+        out["improved"] = sum(1 for e in measured if e["verdict"] == "improved")
+    except Exception as e:
+        print(f"[rec_learning] kind_record unavailable for {restaurant_id}/{kind}: {e}")
+        return out
+    if out["measured"] >= MIN_MEASURED_FOR_RATE:
+        out["rate"] = out["improved"] / out["measured"]
+        out["low"], out["high"] = wilson(out["improved"], out["measured"])
+        out["source"] = "own"
+        return out
+    try:
+        import intelligence
+        from intelligence import privacy
+        if restaurant is None:
+            restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
+        cohort = intelligence.cohort_for(restaurant)[0] if restaurant is not None else None
+        if cohort:
+            s = intelligence.recommendation_success(kind, cohort=cohort, db_path=db_path,
+                                                    exclude_restaurant_id=restaurant_id)
+            privacy.assert_anonymous(s)
+            pm = int(s.get("measured") or 0)
+            if pm >= PRIOR_MIN_MEASURED and privacy.cohort_ok(s.get("measured_restaurants")):
+                pi = int(s.get("improved") or 0)
+                out.update(prior_measured=pm, prior_improved=pi,
+                           prior_restaurants=int(s.get("measured_restaurants") or 0),
+                           rate=pi / pm, source="cohort")
+                out["low"], out["high"] = wilson(pi, pm)
+    except Exception as e:
+        print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
+    return out
 
 
 # ── the check-in ────────────────────────────────────────────────────────────
