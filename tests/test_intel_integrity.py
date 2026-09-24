@@ -292,9 +292,18 @@ def test_one_question_flipping_is_not_a_drop():
 
 
 def test_a_real_collapse_still_alerts():
-    got = notify._ai_visibility_drop(_runs([(17, 6, 1), (83, 6, 5)]))
+    got = notify._ai_visibility_drop(_runs([(17, 6, 1), (100, 6, 6)]))
     assert got is not None
-    assert got[0] == 17 and got[1] == 83 and got[2] >= 2
+    assert got[0] == 17 and got[1] == 100 and got[2] >= 2
+
+
+def test_a_drop_inside_both_runs_ranges_is_not_a_drop():
+    """5 of 6 → 1 of 6 moves four questions, but the two 90% ranges
+    (50-96% and 4-50%) still touch: the Intel page draws that as within
+    run-to-run variation, so the owner is not texted about it (CA1 I4,
+    fix I4). The alert and the cross-module link read one rule."""
+    assert notify.visibility_range(5, 6) == (50, 96) and notify.visibility_range(1, 6) == (4, 50)
+    assert notify._ai_visibility_drop(_runs([(17, 6, 1), (83, 6, 5)])) is None
 
 
 def test_a_sample_too_small_to_judge_never_alerts():

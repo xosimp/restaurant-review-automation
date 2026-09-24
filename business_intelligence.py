@@ -264,7 +264,7 @@ def _visibility(restaurant_id, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT ai_score, gbp_score, created_at FROM ai_visibility_runs "
+            "SELECT ai_score, gbp_score, created_at, answered, appeared FROM ai_visibility_runs "
             "WHERE restaurant_id=? AND ai_score IS NOT NULL "
             "ORDER BY created_at DESC, id DESC LIMIT 1", (restaurant_id,)).fetchone()
     finally:
@@ -272,8 +272,13 @@ def _visibility(restaurant_id, db_path=DB_PATH):
     if not row:
         return None
     from ai_guard import freshness
+    import notify
     fresh = freshness(row["created_at"], stale_after_days=21)
+    # The range travels with the point (fix I4): a score from a handful of
+    # questions is only as precise as its 90% interval, and Ask quotes this.
+    lo, hi = notify.visibility_range(row["appeared"], row["answered"])
     return {"ai_score": row["ai_score"], "gbp_score": row["gbp_score"],
+            "ai_score_low": lo, "ai_score_high": hi, "answered": row["answered"],
             # The age travels with the score. A visibility number from six
             # weeks ago reads exactly like this morning's without it.
             "as_of": fresh["as_of"], "age_days": fresh["age_days"],
@@ -475,9 +480,13 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
     # ── intel × reviews: AI visibility and the rating moving together ──
     vis = data.get("visibility") or {}
     if vis.get("ai_score") is not None and not vis.get("stale"):
-        prev = _previous_visibility(restaurant_id, db_path, before=vis.get("as_of"))
-        drop = (prev - vis["ai_score"]) if prev is not None else 0
-        if drop >= VISIBILITY_DROP_POINTS:
+        # A drop only when the two runs' 90% ranges do not overlap — the
+        # same rule as the owner's drop alert (notify._ai_visibility_drop).
+        # This compared two POINT scores against 15 points, and with six
+        # questions one question flipping moves the point ~17: Home could
+        # state a drop the Intel page's own range called noise (CA4 F4).
+        prev_run, drop = _visibility_drop(restaurant_id, db_path)
+        if drop is not None and drop >= VISIBILITY_DROP_POINTS:
             # The reviews brief carries clusters and diagnoses, not the
             # trend, so read it from its own module — a first draft looked
             # for a key that does not exist and would never have fired.
@@ -487,7 +496,10 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             except Exception:
                 trend = {}
             direction = trend.get("direction")
-            if direction == "down":
+            # rating_trend says "declining" (review_intelligence.
+            # TREND_DIRECTIONS); this checked "down" and never fired.
+            if direction == "declining":
+                prev = prev_run.get("ai_score")
                 links.append({
                     "kind": "intel_x_reviews",
                     "subject": "visibility_down",
@@ -496,7 +508,10 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     "headline": (f"Your AI-search visibility fell {drop:.0f} points and your weekly rating "
                                  f"has been slipping over the same stretch"),
                     "evidence": [
-                        f"AI visibility {prev} → {vis['ai_score']} between the last two weekly runs",
+                        f"AI visibility {prev} → {vis['ai_score']} between the last two weekly runs"
+                        + (f" (ranges {prev_run.get('low')}-{prev_run.get('high')} and "
+                           f"{vis.get('ai_score_low')}-{vis.get('ai_score_high')}, which do not overlap)"
+                           if prev_run.get("low") is not None and vis.get("ai_score_low") is not None else ""),
                         f"Rating trend down over the last 8 weeks"
                         + (f" ({trend['first']:.1f} → {trend['latest']:.1f})"
                            if trend.get("first") and trend.get("latest") else ""),
@@ -542,8 +557,31 @@ def _review_volume_shift(restaurant_id, db_path=DB_PATH):
             "pct": (now_n - before_n) / before_n * 100.0}
 
 
+def _visibility_drop(restaurant_id, db_path=DB_PATH):
+    """(previous_run, drop_points) when the last two comparable runs show a
+    drop whose 90% ranges do not overlap (notify._ai_visibility_drop — the
+    owner's drop alert reads the same rule), else ({}, None). previous_run
+    is {"ai_score", "low", "high"}."""
+    try:
+        from models import last_two_ai_visibility_runs
+        import notify
+        runs = last_two_ai_visibility_runs(restaurant_id, db_path)
+        got = notify._ai_visibility_drop(runs)
+    except Exception:
+        return {}, None
+    if not got:
+        return {}, None
+    now_s, prev_s, _moved = got
+    prev = runs[1]
+    lo, hi = notify.visibility_range(prev.get("appeared"), prev.get("answered"))
+    return {"ai_score": prev_s, "low": lo, "high": hi}, float(prev_s) - float(now_s)
+
+
 def _previous_visibility(restaurant_id, db_path=DB_PATH, before=None):
-    """The ai_score from the run before the latest one, or None."""
+    """The ai_score from the run before the latest one, or None.
+
+    No caller since the intel x reviews link moved to _visibility_drop
+    (9/24/26). Candidate for future cleanup after additional verification."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(

@@ -191,11 +191,18 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
 
 
 def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
-                    event_date=None, source: str = "manual", note: str = None) -> dict:
+                    event_date=None, source: str = "manual", note: str = None,
+                    infer_waste: bool = True) -> dict:
     """Insert an absolute recount event. If the ledger expected more stock
     than was actually counted, auto-insert an inferred 'waste' event for
     the gap — a recount finding MORE than expected (a prior undercount,
-    typically) never fabricates negative waste, it's just logged."""
+    typically) never fabricates negative waste, it's just logged.
+
+    `infer_waste=False` anchors the count without calling the gap waste:
+    an item 86'd at close RAN OUT IN SERVICE (closeout.py), so the gap
+    between what the ledger expected and zero is usage the recipes did not
+    capture, not stock thrown away — recorded as waste it inflated inferred
+    waste and the "unexplained" share on every 86 (CA1 F20, fix I8)."""
     import math
     from models import db_conn
     event_date_str = _as_date_str(event_date)
@@ -224,7 +231,10 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
         # id > the anchor recount's id, so inserting waste afterward would
         # double-subtract the same gap the recount's own qty already bakes in.
         inferred_waste = 0.0
-        if gap > 0:
+        if gap > 0 and not infer_waste:
+            log.info(f"[inventory_ledger] recount for ingredient {ingredient_id} ({source}): "
+                     f"gap of {gap} not inferred as waste")
+        elif gap > 0:
             conn.execute(
                 "INSERT INTO ingredient_stock_events "
                 "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "

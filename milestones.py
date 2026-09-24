@@ -181,7 +181,12 @@ def check_savings(restaurant_id, db_path=DB_PATH):
                        f"the days each change was measured and held, net of any that got worse. Every "
                        f"dollar came from a before-and-after on your own numbers — measured, not an "
                        f"estimate, and not proof the change alone caused it."),
-                 value=float(tier), db_path=db_path)
+                 value=float(tier),
+                 # Which "measured" this is (fix I7, CA4 F16): an all-time
+                 # SUM over measured days — not Home's monthly rate, not the
+                 # owner report's window sum.
+                 data={"scope": "all_time_sum", "claim_kind": "measured", "total": round(total, 2)},
+                 db_path=db_path)
         if m:
             fired = m                     # keep the highest newly crossed tier
     return fired
@@ -220,7 +225,7 @@ def check_anniversary(restaurant_id, restaurant=None, today=None, db_path=DB_PAT
         log.warning("milestones.check_anniversary total: %s", e)
     return fire(restaurant_id, "anniversary", f"anniversary:{months}",
                 f"{label.capitalize()} with Cavnar AI", body=body,
-                value=float(months), db_path=db_path)
+                value=float(months), data={"scope": "all_time_sum"}, db_path=db_path)
 
 
 def check_response_rate(restaurant_id, rate=None, db_path=DB_PATH):
@@ -243,9 +248,14 @@ def check_response_rate(restaurant_id, rate=None, db_path=DB_PATH):
         return None
     return fire(restaurant_id, "response_rate", "response_rate:100",
                 "Every review answered",
-                body=("Every review on your dashboard has a response. Guests who see "
-                      "an owner reply come back more often, and it is the single "
-                      "cheapest thing a restaurant can do about its rating."),
+                # The old body claimed guests who see replies return more,
+                # and that replying is the cheapest rating fix — neither had a
+                # source anywhere in the product, the same kind of claim Home
+                # dropped under #46 (CA4 F5). What stays is what is true: the
+                # replies are public.
+                body=("Every review on your dashboard has a response. Each reply is "
+                      "published on your listing, where the next guest reading it "
+                      "sees an owner who answers."),
                 value=100.0, db_path=db_path)
 
 

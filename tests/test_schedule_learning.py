@@ -416,13 +416,24 @@ def test_standby_days_names_the_riskiest_dates(db_path, rid, monkeypatch):
     w = _week(6)
     rows = [_row(w[0], "Ana"), _row(w[0], "Bob"), _row(w[5], "Ana"), _row(w[5], "Bob"), _row(w[5], "Cy")]
     out = sl.standby_days(rid, w, rows=rows, db_path=db_path)
-    assert [d["date"] for d in out] == [w[5]]
+    assert out[0]["date"] == w[5]
     sat = out[0]
-    assert sat["chance_of_a_no_show"] == 0.5 and sat["no_record"] == 1 and sat["scheduled"] == 3
-    assert sat["people"] == [{"employee": "Ana", "no_show_rate": 0.5, "basis": "Saturdays"}]
+    assert sat["no_record"] == 1 and sat["scheduled"] == 3
+    # Calibrated (fix I9, CA1 L16): every rate smoothed toward the
+    # restaurant's own base rate (2 misses in 16 clocked shifts), and Cy —
+    # no clock-in record — counts AT that rate instead of being left out,
+    # which biased the chance low. The combination's assumption is stated.
+    import staff_settings
+    base = 2 / 16
+    ana = staff_settings.smoothed_rate(2, 4, base)
+    bob = staff_settings.smoothed_rate(0, 4, base)
+    assert sat["people"][0] == {"employee": "Ana", "no_show_rate": ana, "basis": "Saturdays"}
+    assert sat["chance_of_a_no_show"] == round(1 - (1 - ana) * (1 - bob) * (1 - round(base, 2)), 2)
+    assert ana < 0.5 and sat["base_rate"] == round(base, 3)
+    assert "independent" in sat["assumption"]
     # without rows it reads the stored week
     _history(db_path, rid, w[0], _csv(rows))
-    assert [d["date"] for d in sl.standby_days(rid, w, db_path=db_path)] == [w[5]]
+    assert sl.standby_days(rid, w, db_path=db_path)[0]["date"] == w[5]
 
 
 # ── overtime forecast ──────────────────────────────────────────────────

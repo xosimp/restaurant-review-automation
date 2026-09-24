@@ -953,26 +953,25 @@ def _operational_block(ctx) -> str:
 
 
 # ── Forecasts that get scored ───────────────────────────────────────────────
+#
+# The rules — insert-once per period, score only closed periods, one error
+# denominator, withhold on an "often wide" record — live in forecast_log.py
+# for every kind. These names stay because the scheduler, the insight and
+# the tests call them.
 
 def record_forecast(restaurant_id: int, kind: str, horizon_end: str, predicted: float,
-                    basis: str = None, db_path: str = DB_PATH) -> None:
-    """Store a forecast so it can be checked later.
+                    basis: str = None, db_path: str = DB_PATH) -> dict:
+    """Freeze a forecast for the period containing `horizon_end`
+    (forecast_log.record: insert-once — the first prediction for a period
+    is the forecast; a later, better-informed one never replaces it).
 
     The weekly waste forecast was emitted to the owner and never compared to
-    what happened. A forecast nobody scores costs nothing to get wrong, which
-    is the opposite of what a projection is for.
-    """
-    conn = get_conn(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, basis) "
-            "VALUES (?,?,?,?,?) "
-            "ON CONFLICT(restaurant_id, kind, horizon_end) DO UPDATE SET "
-            "predicted=excluded.predicted, basis=excluded.basis, created_at=datetime('now')",
-            (restaurant_id, kind, horizon_end, round(_f(predicted), 2), basis))
-        conn.commit()
-    finally:
-        conn.close()
+    what happened, and then — keyed on today + 7 — re-recorded every day
+    the insight was opened. A forecast nobody scores costs nothing to get
+    wrong; one re-written daily scores itself."""
+    import forecast_log
+    return forecast_log.record(restaurant_id, kind, predicted, period_of=horizon_end,
+                               basis=basis, db_path=db_path)
 
 
 PROFITABILITY_FORECAST_DAY = 15   # the day of the month the projection is frozen for scoring
@@ -987,113 +986,41 @@ def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, to
     perfect. One fixed prediction, taken by the nightly job on or after the
     15th, is a forecast; the last render before month end is a reading."""
     from datetime import date as _date
-    import calendar as _cal
+    import forecast_log
     today = today or _date.today()
     if today.day < PROFITABILITY_FORECAST_DAY:
         return {"recorded": False, "reason": "before the 15th"}
-    horizon = today.replace(day=_cal.monthrange(today.year, today.month)[1]).isoformat()
-    conn = get_conn(db_path)
-    try:
-        have = conn.execute("SELECT 1 FROM forecast_log WHERE restaurant_id=? AND kind='profitability_month' "
-                            "AND horizon_end=?", (restaurant_id, horizon)).fetchone()
-    finally:
-        conn.close()
-    if have:
+    if forecast_log.frozen(restaurant_id, "profitability_month", today, db_path=db_path):
         return {"recorded": False, "reason": "already frozen this month"}
     proj = profitability_projection(restaurant_id, db_path=db_path)
     if not proj.get("available") or proj.get("prime_cost_pct") is None:
         return {"recorded": False, "reason": proj.get("reason") or "no projection"}
-    record_forecast(restaurant_id, "profitability_month", horizon, proj["prime_cost_pct"],
-                    basis=f"{proj.get('days_elapsed')} days of the month, prime cost run rate", db_path=db_path)
-    return {"recorded": True, "horizon_end": horizon, "predicted": proj["prime_cost_pct"]}
+    out = forecast_log.record(restaurant_id, "profitability_month", proj["prime_cost_pct"], period_of=today,
+                              basis=f"{proj.get('days_elapsed')} days of the month, prime cost run rate",
+                              db_path=db_path)
+    if not out.get("recorded"):
+        return {"recorded": False, "reason": "already frozen this month"}
+    return {"recorded": True, "horizon_end": out["horizon_end"], "predicted": proj["prime_cost_pct"]}
 
 
-def score_forecasts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """Fill in the actual for every forecast whose period has closed."""
-    from waste_trend import load_waste_history
-    conn = get_conn(db_path)
-    try:
-        due = _rows_raw(conn,
-            "SELECT id, kind, horizon_end, predicted FROM forecast_log "
-            "WHERE restaurant_id=? AND actual IS NULL AND horizon_end <= date('now')",
-            (restaurant_id,))
-    finally:
-        conn.close()
-    if not due:
-        return {"scored": 0}
-
-    weeks, _t = load_waste_history(restaurant_id, None, db_path=db_path)
-    by_week = {}
-    for w in weeks:
-        try:
-            iso = date.fromisoformat(w["week_end"]).isocalendar()
-            by_week[(iso[0], iso[1])] = _f(w.get("waste"))
-        except Exception:
-            continue
-
-    scored = 0
-    conn = get_conn(db_path)
-    try:
-        for f in due:
-            actual = None
-            if f["kind"] == "waste_week":
-                try:
-                    iso = date.fromisoformat(f["horizon_end"]).isocalendar()
-                    actual = by_week.get((iso[0], iso[1]))
-                except Exception:
-                    actual = None
-            elif f["kind"] == "profitability_month":
-                # Prime cost = food cost % + labor % over the closed month,
-                # from the same measurements the monthly review reads.
-                try:
-                    import metrics as _m
-                    from monthly_review import month_bounds as _mb
-                    ms, me = _mb(date.fromisoformat(f["horizon_end"]))
-                    fc, _ = _m.measure(restaurant_id, "food_cost_pct", ms.isoformat(), me.isoformat(), db_path)
-                    lb, _ = _m.measure(restaurant_id, "labor_pct", ms.isoformat(), me.isoformat(), db_path)
-                    actual = (float(fc) + float(lb)) if fc is not None and lb is not None else None
-                except Exception:
-                    actual = None
-            if actual is None:
-                continue
-            pred = _f(f["predicted"])
-            err = round(abs(actual - pred) / pred * 100, 1) if pred > 0 else None
-            # Signed as well: (predicted − actual)/actual, so a run of
-            # forecasts that keep landing high can be read as a bias and
-            # corrected, not just reported as "often wide".
-            signed = round((pred - actual) / actual * 100, 1) if actual > 0 else None
-            conn.execute(
-                "UPDATE forecast_log SET actual=?, error_pct=?, signed_error_pct=?, scored_at=datetime('now') WHERE id=?",
-                (round(actual, 2), err, signed, f["id"]))
-            scored += 1
-        conn.commit()
-    finally:
-        conn.close()
-    return {"scored": scored}
+def score_forecasts(restaurant_id: int, db_path: str = DB_PATH, today=None) -> dict:
+    """Fill in the actual for every forecast whose period has CLOSED — every
+    kind, not only Food Cost's (forecast_log.score_due). A week still in
+    progress is never scored against the partial figure it has so far."""
+    import forecast_log
+    return forecast_log.score_due(restaurant_id, today=today, db_path=db_path)
 
 
 def forecast_accuracy(restaurant_id: int, kind: str = "waste_week",
                       db_path: str = DB_PATH) -> dict:
-    """How well this module's forecasts have actually held up.
+    """How well this module's forecasts have actually held up — one row per
+    closed period (contract K8: reading, mean_error_pct, n_weeks, withheld).
 
     Shown alongside a new forecast so an owner can weigh it. A module that
-    has been 40% out four times running should say so next to the fifth.
-    """
-    conn = get_conn(db_path)
-    rows = _rows_raw(conn,
-        "SELECT predicted, actual, error_pct FROM forecast_log "
-        "WHERE restaurant_id=? AND kind=? AND actual IS NOT NULL "
-        "ORDER BY horizon_end DESC LIMIT 8", (restaurant_id, kind))
-    conn.close()
-    errs = [_f(r["error_pct"]) for r in rows if r["error_pct"] is not None]
-    if len(errs) < 2:
-        return {"available": False, "scored": len(errs),
-                "reason": "not enough scored forecasts yet to say how accurate these are"}
-    mean_err = sum(errs) / len(errs)
-    return {"available": True, "scored": len(errs),
-            "mean_error_pct": round(mean_err, 1),
-            "reading": ("close" if mean_err <= 15 else
-                        "roughly right" if mean_err <= 30 else "often wide")}
+    has been 40% out four times running says so instead of stating a fifth
+    figure (`withheld`)."""
+    import forecast_log
+    return forecast_log.accuracy(restaurant_id, kind, db_path=db_path)
 
 
 CALIBRATION_MIN_SCORED = 3
@@ -1101,35 +1028,20 @@ CALIBRATION_MIN_BIAS_PCT = 10.0
 
 
 def forecast_calibration(restaurant_id: int, kind: str = "waste_week", db_path: str = DB_PATH) -> dict:
-    """The forecast error loop. Reads the signed error of the last eight
-    scored forecasts; with three or more and a mean bias past
-    CALIBRATION_MIN_BIAS_PCT, returns the factor that would have made them
-    land, so the next projection is corrected and SAYS so. Absent — never
-    a silent tweak — until the record exists."""
-    conn = get_conn(db_path)
-    rows = _rows_raw(conn,
-        "SELECT signed_error_pct FROM forecast_log WHERE restaurant_id=? AND kind=? "
-        "AND signed_error_pct IS NOT NULL ORDER BY horizon_end DESC LIMIT 8", (restaurant_id, kind))
-    conn.close()
-    errs = [_f(r["signed_error_pct"]) for r in rows]
-    if len(errs) < CALIBRATION_MIN_SCORED:
-        return {"available": False, "scored": len(errs)}
-    bias = sum(errs) / len(errs)
-    if abs(bias) < CALIBRATION_MIN_BIAS_PCT:
-        return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": 1.0,
-                "reading": "no consistent lean"}
-    factor = round(1.0 / (1.0 + bias / 100.0), 4)
-    return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": factor,
-            "reading": f"ran {abs(bias):.0f}% {'high' if bias > 0 else 'low'} across the last {len(errs)} scored weeks"}
+    """The forecast error loop (forecast_log.calibration): with three or
+    more scored periods and a mean bias past CALIBRATION_MIN_BIAS_PCT, the
+    factor that would have made them land, so the next projection is
+    corrected and SAYS so. Absent — never a silent tweak — until the record
+    exists."""
+    import forecast_log
+    return forecast_log.calibration(restaurant_id, kind, db_path=db_path)
 
 
 def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH):
     """(corrected_value, calibration) — the value unchanged when there is no
     record to correct it with."""
-    cal = forecast_calibration(restaurant_id, kind, db_path=db_path)
-    if not cal.get("available") or cal.get("factor", 1.0) == 1.0 or predicted is None:
-        return predicted, cal
-    return round(_f(predicted) * cal["factor"], 2), cal
+    import forecast_log
+    return forecast_log.calibrated(restaurant_id, kind, predicted, db_path=db_path)
 
 
 # ── The root-cause pass ─────────────────────────────────────────────────────
@@ -1399,6 +1311,9 @@ def build_evidence(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "suppliers": supplier_comparison(restaurant_id, db_path=db_path),
         "operational": operational_context(restaurant_id, db_path=db_path),
         "forecast_accuracy": forecast_accuracy(restaurant_id, db_path=db_path),
+        # The frozen mid-month prime-cost projection's own record (CA1 F16):
+        # scored every month and, until now, shown nowhere.
+        "prime_cost_accuracy": forecast_accuracy(restaurant_id, "profitability_month", db_path=db_path),
     }
 
 
@@ -1660,7 +1575,13 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "can_wait": later[:3] or None,
         "trust": {"recipe_coverage_pct": ev["coverage"].get("coverage_pct"),
                   "inferred_waste_pct": ev["waste_sources"].get("inferred_pct"),
-                  "forecast_accuracy": ev["forecast_accuracy"]},
+                  "forecast_accuracy": ev["forecast_accuracy"],
+                  "prime_cost_accuracy": ev.get("prime_cost_accuracy")},
+        # Contract K8: the waste forecast's record at the top level, where a
+        # client reads it beside the forecast ({reading, mean_error_pct,
+        # n_weeks, withheld}); the prime-cost projection's beside it.
+        "forecast_accuracy": ev["forecast_accuracy"],
+        "prime_cost_accuracy": ev.get("prime_cost_accuracy"),
         "food_cost": {"pct": fc.get("pct"), "target": fc.get("target"),
                       "label": fc.get("label"), "missing": fc.get("missing")},
         "profitability": pp,

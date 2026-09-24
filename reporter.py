@@ -134,10 +134,18 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     if len(_lh) >= 2:
                         _vals = [r["labor_pct"] for r in reversed(_lh)]
                         _facts["labor"].update({"from_pct": float(_vals[0]), "weeks": len(_vals)})
-                        if _vals[-1] > _vals[0] + 1.5:
+                        # "Trending" only past the labor % noise band scaled
+                        # for weekly periods (weekly_review.band_scale, fix
+                        # I12): a flat 1.5 points over 2-3 periods called
+                        # ordinary week-to-week wobble a trend.
+                        import metrics as _metrics_lr
+                        import weekly_review as _wr_lr
+                        _cmp = _metrics_lr.compare("labor_pct", float(_vals[0]), float(_vals[-1]),
+                                                   band_scale=_wr_lr.band_scale("labor_pct"))
+                        if _cmp["verdict"] == "worsened":
                             _facts["labor"]["direction"] = "up"
                             labor_context += f" — trending UP from {_vals[0]:.1f}% ({len(_vals)} weeks)"
-                        elif _vals[-1] < _vals[0] - 1.5:
+                        elif _cmp["verdict"] == "improved":
                             _facts["labor"]["direction"] = "down"
                             labor_context += f" — trending DOWN from {_vals[0]:.1f}% ({len(_vals)} weeks, improving)"
                 except Exception:
@@ -968,7 +976,11 @@ def render_group_html(items: list, owner_name: str = None, group_name: str = Non
     parts = []
     for rest, rep in items:
         parts.append((rest, _digest_parts(rep, rest.name, owner_name, rest.id, True)))
-    rated = [(r, p) for r, p in parts if p.get("rating")]
+    # The group's one ranking floor (thresholds.GROUP_RANK_MIN_REVIEWS, fix
+    # I12) — Home's group brief ranks on the same one, so the email and the
+    # dashboard never name different leaders.
+    from thresholds import GROUP_RANK_MIN_REVIEWS
+    rated = [(r, p) for r, p in parts if p.get("rating") and (p.get("total") or 0) >= GROUP_RANK_MIN_REVIEWS]
     sections = []
     if len(rated) >= 2:
         best = max(rated, key=lambda x: x[1]["rating"])

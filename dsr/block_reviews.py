@@ -122,9 +122,16 @@ def collect(ctx):
     ratings = [int(rv["rating"]) for rv in day if rv.get("rating") is not None]
     # Counts that depend on the fetch are unknown while it is behind: a
     # short count is not a count.
+    # A night's average rating only on thresholds.RATING_MIN_REVIEWS reviews
+    # — the floor metrics.measure("avg_rating") applies everywhere else. One
+    # review made "the night's rating" (CA1 D6); below the floor the count
+    # is stated and the rating is not.
+    from thresholds import RATING_MIN_REVIEWS
+    rated_enough = len(ratings) >= RATING_MIN_REVIEWS
     metrics = {
         "received": None if delayed else len(day),
-        "avg_rating": None if (delayed or not ratings) else round(sum(ratings) / len(ratings), 2),
+        "avg_rating": (None if (delayed or not rated_enough)
+                       else round(sum(ratings) / len(ratings), 2)),
         "positive": None if delayed else sum(1 for rv in analysed if rv["sentiment"] == "positive"),
         "negative": None if delayed else sum(1 for rv in analysed if rv["sentiment"] == "negative"),
         "not_analysed": None if delayed else len(day) - len(analysed),
@@ -155,6 +162,12 @@ def collect(ctx):
                     "held_basis": "urgent or flagged drafts a person reads one at a time"}
                    if queue is not None else None),
         "unavailable_parts": gaps,
+        # Why the night carries no rating when it has reviews: "3 reviews —
+        # not rated" rather than a blank a reader takes for a zero.
+        "rating_note": (None if delayed or rated_enough or not ratings else
+                        f"{len(ratings)} review{'' if len(ratings) == 1 else 's'} — not rated "
+                        f"(a rating needs {RATING_MIN_REVIEWS})"),
+        "rating_min_reviews": RATING_MIN_REVIEWS,
     }
     if delayed:
         return dsr.block(dsr.AWAITING, source="google", block_name="reviews",

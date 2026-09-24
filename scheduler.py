@@ -2193,6 +2193,41 @@ def run_food_cost_snapshots():
     return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored}
 
 
+FORECAST_SCORING_CURSOR_KEY = "forecast_scoring_cursor"
+
+
+def run_forecast_scoring():
+    """Daily — score every frozen forecast whose period has closed, for every
+    restaurant holding one (forecast_log.score_due).
+
+    The food-cost snapshot pass above scores its own restaurants, but it
+    only walks restaurants with Food Cost on; the week's sales projection
+    (frozen at schedule publish) and the labor, marketing and review
+    forecast lines belong to restaurants that may not have it. Bounded and
+    resumable like every sweep here."""
+    import forecast_log
+    ids = forecast_log.restaurants_due()
+    c = {"scored": 0, "restaurants": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        try:
+            n = forecast_log.score_due(rid).get("scored", 0)
+            with lock:
+                c["scored"] += n
+                c["restaurants"] += 1
+        except Exception as e:
+            _ops.capture(e, job="forecast_scoring", context=f"restaurant_id={rid}")
+
+    _done, ran_out = resumable_sweep(FORECAST_SCORING_CURSOR_KEY, ids, _one, SWEEP_MAX_SECONDS,
+                                     workers=SWEEP_WORKERS, job="forecast_scoring")
+    if ran_out:
+        _ops.capture(RuntimeError(f"Forecast scoring stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                  f"the rest lead the next pass"), job="forecast_scoring", context="time_bound")
+    log.info(f"Forecast scoring: {c['scored']} scored across {c['restaurants']} restaurants")
+    return c
+
+
 def run_food_cost_diagnoses():
     """Daily — the root-cause read over each restaurant's ranked cost drivers.
 
@@ -2819,6 +2854,11 @@ def scheduler_loop():
             if _due(now, 5) and _ops.claim_period("food_cost_snapshots", str(today)):
                 log.info("Writing food cost snapshots...")
                 _ops.run_job("food_cost_snapshots", run_food_cost_snapshots)
+
+            # After the snapshot, so a closed week's waste figure is on file
+            # before its forecast is scored.
+            if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
+                _ops.run_job("forecast_scoring", run_forecast_scoring)
 
             if _due(now, 6) and _ops.claim_period("review_diagnoses", str(today)):
                 log.info("Running review root-cause diagnoses...")

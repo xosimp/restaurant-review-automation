@@ -251,6 +251,30 @@ def test_rows_like_the_ones_the_manager_keeps_changing_are_flagged_with_why(db):
     assert "rows a fill-in pass added" in gus["reason"]
 
 
+def test_the_likely_edit_percentage_is_withheld_until_its_backtest_has_weeks(db):
+    """The per-row "% likely" is a naive-Bayes score, not a calibrated
+    probability (CA1 L15). With three drafts the model is ready but no
+    held-out week can be scored (each training set is two weeks), so nothing
+    is shown — it used to be (fix I9)."""
+    rid = _restaurant(db)
+    _edit_history(db, rid, 3)
+    assert sl.edit_predictor(rid, db_path=db)["ready"] is True
+    assert sl.edit_prediction_backtest(sl.prediction_weeks(rid, db_path=db))["weeks"] < sl.PREDICT_MIN_BACKTEST_WEEKS
+    assert sl.predict_row_edits(rid, _draft(9), db_path=db) == []
+
+
+def test_every_likely_edit_carries_its_backtest_beside_it(db):
+    rid = _restaurant(db)
+    _edit_history(db, rid, 5)
+    flagged = sl.predict_row_edits(rid, _draft(9), db_path=db)
+    bt = sl.edit_prediction_backtest(sl.prediction_weeks(rid, db_path=db))
+    assert flagged and all(f["backtest_hit_rate"] == bt["hit_rate"] and f["backtest_weeks"] == bt["weeks"]
+                           for f in flagged)
+    zed = next(f for f in flagged if f["employee"] == "Zed")
+    assert f"right {bt['hits']} of {bt['flagged']} times on your last {bt['weeks']} drafts" in zed["text"]
+    assert zed["calibration_note"] in zed["text"] and zed["base_rate"] == bt["base_rate"]
+
+
 def test_held_out_hit_rate_on_the_edit_history(db):
     rid = _restaurant(db)
     _edit_history(db, rid, 6)

@@ -15,7 +15,14 @@ how many days it rests on and returns nothing when that is too few.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports): a
+    test that redirects models.get_conn reaches every read here too."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 # Yesterday is "off" only past this far from its typical weekday. Day-to-day
 # sales swing ±10-15% on their own.
@@ -49,17 +56,158 @@ def _weekday_history(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS, db_pa
     return [float(r["sales"]) for r in rows]
 
 
+# The stated range around a forecast is the empirical 10th-90th percentile of
+# the same weekday's own history — an interval a night lands inside about
+# 8 times in 10 — and only once there are RANGE_MIN_SAMPLES of them. It used
+# to be the min and max of as few as three nights: not an interval, just the
+# two most extreme nights on file (CA2 #6). Below the floor the range is
+# withheld and says why.
+RANGE_LOW_PCTL = 10
+RANGE_HIGH_PCTL = 90
+RANGE_MIN_SAMPLES = 8
+
+
+def _percentile(vals, q):
+    """Linear-interpolated percentile (q in 0-100) of a non-empty list."""
+    s = sorted(vals)
+    if len(s) == 1:
+        return s[0]
+    pos = (len(s) - 1) * q / 100.0
+    lo = int(pos)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
+
+
 def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
-    """Typical sales for `day` (default today), from its own weekday history."""
+    """Typical sales for `day` (default today), from its own weekday history.
+
+    `low`/`high` are the 10th-90th percentile of those nights once there are
+    RANGE_MIN_SAMPLES of them; None before that, with `range_note` saying so."""
     day = day or date.today()
     weekday = day.strftime("%A")
     hist = _weekday_history(restaurant_id, weekday, day, db_path=db_path)
     if len(hist) < MIN_SAMPLES:
         return {"available": False, "day": day.isoformat(), "weekday": weekday,
                 "reason": f"only {len(hist)} past {weekday}s with sales on file"}
-    return {"available": True, "day": day.isoformat(), "weekday": weekday,
-            "typical_sales": round(_median(hist), 2), "samples": len(hist),
-            "low": round(min(hist), 2), "high": round(max(hist), 2)}
+    out = {"available": True, "day": day.isoformat(), "weekday": weekday,
+           "typical_sales": round(_median(hist), 2), "samples": len(hist),
+           "claim_kind": "forecast", "low": None, "high": None, "range_note": None}
+    if len(hist) >= RANGE_MIN_SAMPLES:
+        out.update({"low": round(_percentile(hist, RANGE_LOW_PCTL), 2),
+                    "high": round(_percentile(hist, RANGE_HIGH_PCTL), 2),
+                    "range_basis": (f"10th-90th percentile of the last {len(hist)} {weekday}s")})
+    else:
+        out["range_note"] = (f"range not yet measurable — {len(hist)} past {weekday}s, "
+                             f"needs {RANGE_MIN_SAMPLES}")
+    return out
+
+
+# ── how good the forecast has been ──────────────────────────────────────────
+
+# Nights of nightly-report history read, and the fewest scored nights before
+# an accuracy figure is stated.
+ACCURACY_WINDOW_DAYS = 56
+ACCURACY_MIN_NIGHTS = 7
+
+
+def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_path=DB_PATH) -> dict:
+    """How far forecast_day has been off, out of sample (contract K8).
+
+    Every nightly report stores the night's own forecast next to what the
+    night did — dsr_metrics `sales.forecast_net` and `sales.vs_forecast_pct`
+    (dsr/block_sales.py), the forecast taken strictly from the nights BEFORE
+    it — and nothing ever aggregated them, so staffing advice rested on a
+    demand forecast whose error nobody had measured (CA2 #6).
+
+    {"available", "n_nights", "mean_error_pct" (mean |actual vs forecast|),
+     "bias_pct" (mean signed: + means nights ran ABOVE the forecast),
+     "inside_range_pct" (share of nights inside the stated 10th-90th
+     range, over the nights that had one), "n_ranged", "window_days",
+     "reason"}. Nothing below ACCURACY_MIN_NIGHTS scored nights."""
+    today = today or date.today()
+    start = (today - timedelta(days=days)).isoformat()
+    end = (today - timedelta(days=1)).isoformat()
+    base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None,
+            "inside_range_pct": None, "n_ranged": 0, "window_days": days, "claim_kind": "measured"}
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+            "AND business_date BETWEEN ? AND ? AND metric IN "
+            "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high') "
+            "AND value IS NOT NULL", (restaurant_id, start, end)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    nights = {}
+    for r in rows:
+        nights.setdefault(r["business_date"], {})[r["metric"]] = float(r["value"])
+    pcts = [n["sales.vs_forecast_pct"] for n in nights.values() if "sales.vs_forecast_pct" in n]
+    ranged = [n for n in nights.values()
+              if all(k in n for k in ("sales.net", "sales.forecast_low", "sales.forecast_high"))]
+    base["n_nights"] = len(pcts)
+    if len(pcts) < ACCURACY_MIN_NIGHTS:
+        base["reason"] = (f"only {len(pcts)} nights scored against their forecast in the last {days} days "
+                          f"— needs {ACCURACY_MIN_NIGHTS}")
+        return base
+    inside = [n for n in ranged if n["sales.forecast_low"] <= n["sales.net"] <= n["sales.forecast_high"]]
+    base.update({
+        "available": True,
+        "mean_error_pct": round(sum(abs(p) for p in pcts) / len(pcts), 1),
+        "bias_pct": round(sum(pcts) / len(pcts), 1),
+        "n_ranged": len(ranged),
+        "inside_range_pct": round(len(inside) / len(ranged) * 100) if ranged else None,
+        "basis": (f"{len(pcts)} nights in the last {days} days, each forecast from the nights before it"),
+    })
+    return base
+
+
+def week_projection(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
+    """The week's sales, projected day by day from forecast_day — the
+    figure a published schedule is built against. {"total", "days":
+    [dates it covers], "by_day", "missing": [dates with no forecast]}."""
+    by_day, missing = {}, []
+    for d in week_dates or []:
+        try:
+            day = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
+        except ValueError:
+            continue
+        fc = forecast_day(restaurant_id, day, db_path=db_path)
+        if fc.get("available"):
+            by_day[day.isoformat()] = fc["typical_sales"]
+        else:
+            missing.append(day.isoformat())
+    return {"total": round(sum(by_day.values()), 2) if by_day else None,
+            "days": sorted(by_day), "by_day": by_day, "missing": missing}
+
+
+def freeze_week_projection(restaurant_id, week_start, db_path=DB_PATH) -> dict:
+    """Freeze the week's sales projection when its schedule is published, so
+    it can be scored once the week closes (forecast_log kind revenue_week,
+    insert-once: republishing the same week never moves it). Only the days
+    that had a forecast are projected, and only those are summed back when
+    it is scored. Never raises."""
+    try:
+        import forecast_log
+        start = week_start if isinstance(week_start, date) else date.fromisoformat(str(week_start)[:10])
+        dates = [start + timedelta(days=i) for i in range(7)]
+        proj = week_projection(restaurant_id, dates, db_path=db_path)
+        if proj["total"] is None:
+            return {"recorded": False, "reason": "no weekday has enough history to project"}
+        return forecast_log.record(
+            restaurant_id, "revenue_week", proj["total"], period_of=start,
+            basis={"days": proj["days"], "method": "forecast_day median per weekday, frozen at publish"},
+            db_path=db_path)
+    except Exception as e:
+        print(f"[demand] week projection not frozen rid={restaurant_id}: {e}")
+        return {"recorded": False, "reason": str(e)}
+
+
+def week_projection_accuracy(restaurant_id, db_path=DB_PATH) -> dict:
+    """The frozen weekly projections' record (forecast_log.accuracy)."""
+    import forecast_log
+    return forecast_log.accuracy(restaurant_id, "revenue_week", db_path=db_path)
 
 
 def yesterday_vs_typical(restaurant_id, today=None, db_path=DB_PATH):
@@ -90,16 +238,40 @@ def yesterday_vs_typical(restaurant_id, today=None, db_path=DB_PATH):
             "direction": "above" if pct > 0 else "below"}
 
 
+# "Reliably" slow (the word Ask and the quiet-night push use) needs more than
+# a low median: at least this share of that weekday's own nights must sit
+# under the restaurant's typical day. A weekday whose median is low because
+# of two dead nights among six ordinary ones is not reliably anything.
+RELIABLY_SLOW_SHARE = 0.75
+
+
 def slow_days(restaurant_id, db_path=DB_PATH):
-    """Weekdays that run materially below this restaurant's typical day."""
+    """Weekdays that run materially — and consistently — below this
+    restaurant's typical day. Each carries `consistency`: the share of its
+    own nights under the typical day."""
     import labor
     fc = labor.build_demand_forecast(restaurant_id, weeks=LOOKBACK_WEEKS, db_path=db_path)
     if not fc.get("ok"):
         return {"available": False, "reason": fc.get("reason", "not enough history")}
-    slow = [d for d in fc.get("days", [])
-            if d["vs_average_pct"] <= -SLOW_DAY_PCT and d["samples"] >= MIN_SAMPLES]
+    overall = fc.get("overall_median") or fc.get("typical_day")
+    slow = []
+    for d in fc.get("days", []):
+        if not (d["vs_average_pct"] <= -SLOW_DAY_PCT and d["samples"] >= MIN_SAMPLES):
+            continue
+        consistency = None
+        try:
+            hist = _weekday_history(restaurant_id, d["day"], date.today() + timedelta(days=1),
+                                    db_path=db_path)
+            typical = float(overall) if overall else (d.get("median_sales") or 0) / (1 + d["vs_average_pct"] / 100.0)
+            if hist and typical:
+                consistency = round(sum(1 for v in hist if v < typical) / len(hist), 2)
+        except Exception:
+            consistency = None
+        if consistency is None or consistency < RELIABLY_SLOW_SHARE:
+            continue
+        slow.append(dict(d, consistency=consistency))
     return {"available": True, "slow_days": slow, "all_days": fc.get("days", []),
-            "threshold_pct": SLOW_DAY_PCT}
+            "threshold_pct": SLOW_DAY_PCT, "consistency_floor": RELIABLY_SLOW_SHARE}
 
 
 def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
@@ -197,3 +369,63 @@ def quiet_night_ahead(restaurant_id, today=None, db_path=DB_PATH):
     return {"available": True, "date": target.isoformat(), "weekday": weekday,
             "typical_sales": fc["typical_sales"], "samples": fc["samples"],
             "below_average_pct": abs(match.get("vs_average_pct") or 0)}
+
+
+# ── the holidays ahead, said from this restaurant's own history ─────────────
+
+HOLIDAY_LOOKAHEAD_DAYS = 21
+HOLIDAY_GENERIC_LABEL = "Holiday — check your own history"
+
+
+def upcoming_holidays(restaurant_id, now=None, days=HOLIDAY_LOOKAHEAD_DAYS, db_path=DB_PATH) -> list:
+    """The holidays in the next `days`, for the Labor tab's banner on web and
+    iOS (one list for both).
+
+    The banner used to say "Expect elevated covers… your busiest Sundays
+    follow this pattern" for every holiday on a generic calendar, whether or
+    not this restaurant had ever been busy on it (CA1 L30). Each entry now
+    carries what THIS restaurant's own sales showed on that holiday last
+    year (schedule_economics.holiday_lift — its sales against the same
+    weekday either side), or the generic label and nothing else:
+    [{"name", "date", "date_str" (M/D/YY), "days_away", "lift_pct",
+      "based_on", "label", "claim_kind"}]."""
+    import re
+    from datetime import datetime
+    from time_utils import mdy
+    now = now or datetime.now()
+    out = []
+    try:
+        from marketing import get_upcoming_holidays
+        hol_str = get_upcoming_holidays(now) or ""
+    except Exception:
+        hol_str = ""
+    for chunk in hol_str.split(", "):
+        m = re.search(r'\((\w+ \d+)\)$', chunk)
+        if not m:
+            continue
+        try:
+            hdate = datetime.strptime(m.group(1) + " " + str(now.year), "%b %d %Y")
+        except ValueError:
+            continue
+        if hdate.date() < now.date():
+            hdate = hdate.replace(year=now.year + 1)
+        away = (hdate.date() - now.date()).days
+        if not 0 <= away <= days:
+            continue
+        iso = hdate.date().isoformat()
+        entry = {"name": chunk[:chunk.rfind("(")].strip(), "date": iso, "date_str": mdy(iso),
+                 "days_away": away, "lift_pct": None, "based_on": None,
+                 "label": HOLIDAY_GENERIC_LABEL, "claim_kind": None}
+        try:
+            import schedule_economics
+            own = (schedule_economics.holiday_lift(restaurant_id, [iso], db_path=db_path) or {}).get(iso) or {}
+            if own.get("lift_pct") is not None and own.get("based_on"):
+                lift = int(own["lift_pct"])
+                entry.update({
+                    "lift_pct": lift, "based_on": own["based_on"], "claim_kind": "measured",
+                    "label": (f"Last year {abs(lift)}% {'above' if lift >= 0 else 'below'} a typical "
+                              f"{hdate.strftime('%A')} here — {own['based_on']}")})
+        except Exception:
+            pass
+        out.append(entry)
+    return out

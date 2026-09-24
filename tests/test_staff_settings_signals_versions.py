@@ -90,9 +90,18 @@ def test_reliability_needs_clock_data_and_a_sample(db_path, rid, monkeypatch):
     rows.append({"employee": "Newbie", "scheduled_hours": 8, "actual_hours": 0})
     monkeypatch.setattr(models, "_cached_shifts", lambda r: rows)
     rel = ss.reliability(rid, db_path=db_path)
-    assert rel["Flaky"]["no_show_rate"] == 0.25 and rel["Flaky"]["shifts"] == 8
-    assert rel["Solid"]["no_show_rate"] == 0.0
+    assert rel["Flaky"]["raw_no_show_rate"] == 0.25 and rel["Flaky"]["shifts"] == 8
+    assert rel["Flaky"]["no_shows"] == 2
+    assert rel["Solid"]["raw_no_show_rate"] == 0.0
     assert "NoClock" not in rel and "Newbie" not in rel
+    # Smoothed toward the restaurant's own base rate (3 misses in 17 clocked
+    # shifts, Newbie's included) with a 6-shift prior (fix I9, CA1 L14):
+    # (2 + 6·3/17) / (8 + 6) and (0 + 6·3/17) / (8 + 6).
+    assert rel["Flaky"]["no_show_rate"] == 0.22 and rel["Solid"]["no_show_rate"] == 0.08
+    # The red line is the engine's own (shift_quality.UNRELIABLE_RATE).
+    import shift_quality
+    assert rel["Flaky"]["no_show_threshold"] == shift_quality.UNRELIABLE_RATE == 0.2
+    assert rel["Flaky"]["unreliable"] is True and rel["Solid"]["unreliable"] is False
 
 
 # ── demand signals ─────────────────────────────────────────────────────
@@ -114,7 +123,15 @@ def test_signals_are_validated_and_upserted(db_path, rid):
     wedding = next(s for s in up if s["label"] == "Wedding")
     assert wedding["covers"] == 90
     trivia = next(s for s in up if s["label"] == "Trivia")
-    assert trivia["lift_pct"] == 25          # an event with no figure is a busy night
+    # An event with no figure is ASSUMED busier — said as an assumption,
+    # never stored as a 25% lift that raises the day's demand level
+    # (CA1 L29, fix I13).
+    assert trivia["lift_pct"] is None
+    by = ds.by_date(rid, ["2026-10-11"], db_path=db_path)["2026-10-11"]
+    assert by["lift_pct"] is None and by["assumed"] is True
+    assert by["assumed_lift_pct"] == ds.ASSUMED_EVENT_LIFT_PCT
+    block = ds.prompt_block({"2026-10-11": by}, ["2026-10-11"])
+    assert "ASSUMED" in block and "assumption, not a figure" in block
 
 
 def test_by_date_turns_covers_into_a_lift_against_the_typical_day(db_path, rid, monkeypatch):

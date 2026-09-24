@@ -101,12 +101,15 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
                                   if row["verdict"] in ("improved", "worsened") else None)
         rows.append(row)
 
+    # Prime cost for the CLOSED month under review, measured the way the
+    # frozen mid-month projection is scored (food cost % + labor % over the
+    # window, metrics.measure) — never profitability_projection, which reads
+    # the CURRENT month to date: on the 1st it was withheld, mid-month it
+    # reported this month under last month's heading, and the in-app screen
+    # and the email disagreed depending on the day they were built (CA4 F12).
     prime = None
     if getattr(restaurant, "module_inventory", 0):
-        import food_cost_intelligence as fci
-        p = _safe(fci.profitability_projection, restaurant_id, db_path=db_path)
-        if p and p.get("available"):
-            prime = {"pct": p.get("prime_cost_pct"), "delta": p.get("prime_pct_delta")}
+        prime = _safe(_closed_prime, restaurant_id, last_start, last_end, prev_start, prev_end, db_path)
 
     import outcomes as _outcomes
     results = [r for r in (_safe(_outcomes.list_outcomes, restaurant_id, status="evaluated",
@@ -142,6 +145,24 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
             "plan": _plan_score(restaurant_id, last_start, last_end, db_path),
             "goals": goal_rows, "priorities": priorities,
             "fix_first": brief.get("fix_first")}
+
+
+def _closed_prime(restaurant_id, start, end, prev_start, prev_end, db_path):
+    """{"pct", "previous", "delta", "claim_kind": "measured", "window"} for
+    the closed window, or None when either half of it cannot be measured —
+    never a prime cost with one component assumed."""
+    def _prime(s, e):
+        fc, _ = metrics.measure(restaurant_id, "food_cost_pct", s.isoformat(), e.isoformat(), db_path)
+        lb, _ = metrics.measure(restaurant_id, "labor_pct", s.isoformat(), e.isoformat(), db_path)
+        return round(float(fc) + float(lb), 1) if fc is not None and lb is not None else None
+    now = _prime(start, end)
+    if now is None:
+        return None
+    was = _prime(prev_start, prev_end)
+    return {"pct": now, "previous": was,
+            "delta": round(now - was, 1) if was is not None else None,
+            "claim_kind": "measured", "window": [start.isoformat(), end.isoformat()],
+            "basis": "food cost % + labor % over the closed month, measured"}
 
 
 def _plan_score(restaurant_id, start, end, db_path):
@@ -204,9 +225,12 @@ def lines(review):
                    f"{_fmt(m['previous'], m['unit'])}{money}{yoy_clause(m)}.")
     if review.get("prime_cost") and review["prime_cost"].get("pct") is not None:
         p = review["prime_cost"]
-        drift = (f", {abs(p['delta']):.1f} points {'up' if p['delta'] > 0 else 'down'} on last month"
-                 if p.get("delta") else "")
-        out.append(f"Prime cost is running at {p['pct']:.1f}% of sales{drift}.")
+        span = "last quarter" if review.get("months", 1) > 1 else "last month"
+        drift = (f", {abs(p['delta']):.1f} points {'up' if p['delta'] > 0 else 'down'} on "
+                 f"{review['compared_with']}" if p.get("delta") else "")
+        # Measured over the closed window, and said so — "is running at"
+        # read as this month's run rate, which is what it used to be.
+        out.append(f"Prime cost (food cost + labor) was {p['pct']:.1f}% of sales {span}{drift}, measured.")
     plan = review.get("plan")
     if plan:
         span = "last quarter" if review.get("months", 1) > 1 else "last month"

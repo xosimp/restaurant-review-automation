@@ -471,40 +471,50 @@ def test_marketing_link_stays_quiet_under_the_review_floor_or_a_small_move(db_pa
     assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "marketing_x_reviews"]
 
 
-def _visibility_runs(db_path, rid, *scores):
+def _visibility_runs(db_path, rid, *runs):
+    """runs: (appeared, answered) per run, oldest first; the score is theirs."""
     conn = get_conn(db_path)
-    for i, s in enumerate(scores):
-        conn.execute("INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, created_at) "
-                     "VALUES (?,?,?,datetime('now', ?))", (rid, s, 50, f"-{len(scores) - i} days"))
+    for i, (k, n) in enumerate(runs):
+        conn.execute("INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared, "
+                     "city_basis, created_at) VALUES (?,?,?,?,?,?,datetime('now', ?))",
+                     (rid, round(k / n * 100), 50, n, k, "profile:austin", f"-{len(runs) - i} days"))
     conn.commit(); conn.close()
 
 
 def test_intel_link_needs_a_visibility_drop_and_a_falling_rating(db_path, monkeypatch):
     import review_intelligence as ri
     rid = _restaurant(db_path)
-    _visibility_runs(db_path, rid, 70, 50)                       # 20-point drop
-    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "down", "first": 4.6, "latest": 4.1})
-    data = _data(rid, db_path, visibility={"ai_score": 50, "stale": False, "as_of": None})
+    _visibility_runs(db_path, rid, (7, 7), (1, 7))               # 100 → 14: ranges 72-100 and 3-45
+    # rating_trend says "declining" (review_intelligence.TREND_DIRECTIONS);
+    # this test mocked "down", which the real function never returns, so the
+    # link passed here and never fired in production (CA1 red flag 3).
+    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "declining", "first": 4.6, "latest": 4.1})
+    data = _data(rid, db_path, visibility={"ai_score": 14, "stale": False, "as_of": None,
+                                           "ai_score_low": 3, "ai_score_high": 45})
     links = [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
     assert len(links) == 1
-    assert "fell 20 points" in links[0]["headline"] and "4.6 → 4.1" in links[0]["evidence"][1]
+    assert "fell 86 points" in links[0]["headline"] and "4.6 → 4.1" in links[0]["evidence"][1]
+    assert "do not overlap" in links[0]["evidence"][0]
     assert "competitor" in links[0]["not_a_cause"]
     # A steady rating: the same drop is not a link.
     monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "flat"})
     assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
 
 
-def test_intel_link_ignores_a_small_drop_a_stale_score_and_a_first_run(db_path, monkeypatch):
+def test_intel_link_ignores_an_overlapping_drop_a_stale_score_and_a_first_run(db_path, monkeypatch):
+    """A 20-point drop on six questions (5 of 6 → 4 of 6 ... and even
+    83 → 50) sits inside both runs' 90% ranges: the Intel page draws it as
+    noise, so no link may state it (CA4 F4, fix I4)."""
     import review_intelligence as ri
     rid = _restaurant(db_path)
-    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "down"})
-    _visibility_runs(db_path, rid, 60, 50)                       # 10 points: under the floor
+    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "declining"})
+    _visibility_runs(db_path, rid, (5, 6), (3, 6))               # 83 → 50: 33 points, ranges overlap
     data = _data(rid, db_path, visibility={"ai_score": 50, "stale": False})
     assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
-    _visibility_runs(db_path, rid, 80, 50)
-    stale = _data(rid, db_path, visibility={"ai_score": 50, "stale": True})
+    _visibility_runs(db_path, rid, (7, 7), (1, 7))
+    stale = _data(rid, db_path, visibility={"ai_score": 14, "stale": True})
     assert not [l for l in bi.correlations(rid, data=stale, db_path=db_path) if l["kind"] == "intel_x_reviews"]
     rid2 = _restaurant(db_path)
-    _visibility_runs(db_path, rid2, 40)                          # one run: nothing to compare
-    data2 = _data(rid2, db_path, visibility={"ai_score": 40, "stale": False})
+    _visibility_runs(db_path, rid2, (3, 7))                      # one run: nothing to compare
+    data2 = _data(rid2, db_path, visibility={"ai_score": 43, "stale": False})
     assert not [l for l in bi.correlations(rid2, data=data2, db_path=db_path) if l["kind"] == "intel_x_reviews"]

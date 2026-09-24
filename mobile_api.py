@@ -2458,10 +2458,13 @@ def _do_mobile_labor(restaurant_id):
     # exactly as much — a CSV missing one column produced $62,100/month of
     # claimed savings. A sub-week period has no monthly rate to compare at
     # all. Both now yield no claim rather than a large one.
-    if analysis_failed or hours_are_estimated or sales_data_missing or period_too_short or not overall_pct:
-        labor_vs_industry_monthly = 0
-    else:
-        labor_vs_industry_monthly = max(0, round((0.345 - overall_pct / 100) * monthly_sales_est))
+    # The benchmark and these guards now live in thresholds.
+    # labor_vs_industry_monthly, which the web tile reads too — it used 32%
+    # with none of them (CA1 L33).
+    import thresholds as _thr
+    labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
+        overall_pct, total_sales, period_days, hours_are_estimated=hours_are_estimated,
+        sales_data_missing=sales_data_missing, analysis_failed=analysis_failed or period_too_short)
 
     savings_breakdown = {
         "labor_monthly": labor_monthly,
@@ -2469,42 +2472,38 @@ def _do_mobile_labor(restaurant_id):
         "labor_overtime": round(ot_premium),
         "labor_vs_industry_monthly": labor_vs_industry_monthly,
         "labor_vs_industry_annual": labor_vs_industry_monthly * 12,
+        "labor_industry_pct": _thr.LABOR_INDUSTRY_PCT,
+        "labor_industry_basis": _thr.LABOR_INDUSTRY_BASIS,
     }
 
     # Upcoming holiday/event scheduling forecast — same 21-day window and
     # holiday-string parsing client_api.py's schedule builder and
     # hosted_dashboard.py's web Labor tab both already use.
+    # The same list the web Labor tab renders (demand.upcoming_holidays):
+    # the date M/D/YY, and a label from this restaurant's own sales on that
+    # holiday last year, else "Holiday — check your own history" (CA1 L30).
     labor_upcoming = []
     try:
-        import re
-        from marketing import get_upcoming_holidays
+        import demand as _demand_hol
         from time_utils import restaurant_now
-        now = restaurant_now(restaurant, naive=True)
-        hol_str = get_upcoming_holidays(now)
-        if hol_str:
-            for chunk in hol_str.split(", "):
-                m = re.search(r'\((\w+ \d+)\)$', chunk)
-                if not m:
-                    continue
-                try:
-                    hdate = datetime.strptime(m.group(1) + " " + str(now.year), "%b %d %Y")
-                    if hdate < now:
-                        hdate = hdate.replace(year=now.year + 1)
-                    days_away = (hdate - now).days
-                    if 0 <= days_away <= 21:
-                        labor_upcoming.append({
-                            "name": chunk[:chunk.rfind("(")].strip(),
-                            "date_str": hdate.strftime("%B %-d"),
-                            "days_away": days_away,
-                        })
-                except Exception:
-                    pass
+        labor_upcoming = _demand_hol.upcoming_holidays(restaurant_id, now=restaurant_now(restaurant, naive=True))
     except Exception:
-        pass
+        labor_upcoming = []
+
+    # Contract K8: how far the demand forecast behind staffing has been off,
+    # out of sample, and the frozen weekly projections' own record.
+    try:
+        import demand as _demand_acc
+        demand_accuracy = _demand_acc.demand_accuracy(restaurant_id)
+        week_projection_accuracy = _demand_acc.week_projection_accuracy(restaurant_id)
+    except Exception:
+        demand_accuracy = week_projection_accuracy = None
 
     return {
         "ok": True,
         "is_live": bool(analysis.get("is_live")),
+        "demand_accuracy": demand_accuracy,
+        "week_projection_accuracy": week_projection_accuracy,
         "overall_labor_pct": overall_pct,
         "target": target,
         # "On track" is a claim about a measured number. Without one there is
@@ -3679,20 +3678,10 @@ def _market_rating(competitors: list) -> dict:
     """
     # Provisional ratings are excluded from the market figure. A four-review
     # venue at 5.0 would otherwise pull the market average the owner is
-    # measured against.
-    rated = [(float(c.get("rating") or 0), int(c.get("review_count") or 0))
-             for c in competitors
-             if c.get("rating") and not c.get("rating_is_provisional")]
-    if not rated:
-        return {"market_rating": None, "market_rating_reviews": 0, "market_rating_n": 0}
-    total_reviews = sum(n for _r, n in rated)
-    if total_reviews > 0:
-        weighted = sum(r * n for r, n in rated) / total_reviews
-    else:
-        weighted = sum(r for r, _n in rated) / len(rated)
-    return {"market_rating": round(weighted, 1),
-            "market_rating_reviews": total_reviews,
-            "market_rating_n": len(rated)}
+    # measured against. The one definition lives in competitor_intel_format
+    # now, and the web Intel header and the welcome email read it too.
+    from competitor_intel_format import market_rating
+    return market_rating(competitors)
 
 
 def _intel_recs_fields(restaurant_id):
@@ -3751,21 +3740,17 @@ def _do_mobile_intel(restaurant_id):
         # fetch_location_rating. When it is absent the sample is shown, and
         # own_rating_basis says which it is so no surface can present the
         # two as the same kind of number.
-        own_rating = None
-        own_rating_basis = None
-        own_rating_count = None
-        _gbp = getattr(restaurant, "gbp_rating", None)
-        if _gbp:
-            own_rating = round(float(_gbp), 1)
-            own_rating_basis = "google_all_time"
-            own_rating_count = getattr(restaurant, "gbp_review_count", None)
-        elif restaurant.module_reviews:
+        from competitor_intel_format import own_rating as _own_rating, market_standing as _standing
+        _sample = {}
+        if not getattr(restaurant, "gbp_rating", None) and restaurant.module_reviews:
             from models import get_review_stats
-            rstats = get_review_stats(restaurant_id)
-            if rstats and rstats.get("avg_rating"):
-                own_rating = rstats["avg_rating"]
-                own_rating_basis = "imported_sample"
-                own_rating_count = rstats.get("total")
+            _sample = get_review_stats(restaurant_id) or {}
+        _own = _own_rating(getattr(restaurant, "gbp_rating", None), getattr(restaurant, "gbp_review_count", None),
+                           _sample.get("avg_rating"), _sample.get("total"))
+        own_rating = _own["own_rating"]
+        own_rating_basis = _own["own_rating_basis"]
+        own_rating_count = _own["own_rating_count"]
+        _market = _market_rating(blob.get("competitors") or [])
 
         return {
             "ok": True,
@@ -3814,7 +3799,10 @@ def _do_mobile_intel(restaurant_id):
             # competitor's rating rests on. An unweighted mean let a
             # twelve-review venue count as much as a three-thousand-review
             # one, which is an average of averages, not a market average.
-            **_market_rating(blob.get("competitors") or []),
+            **_market,
+            # Where the owner stands against it, one rule for every surface
+            # (own_vs_market, standing, standing_label, standing_tone).
+            **_standing(_own, _market),
             # Which claims here are measured and which are the model's read
             # of five Google-selected reviews. Same convention Reviews ships.
             "claim_kinds": {

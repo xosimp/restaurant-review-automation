@@ -229,7 +229,12 @@ def _ready(ctx, data, provider, closed_by):
 
     fc = _forecast(ctx)
     fc_net = float(fc["typical_sales"]) if fc else None
-    metrics.update({"forecast_net": fc_net, "vs_forecast": _delta(net, fc_net), "vs_forecast_pct": _pct(net, fc_net)})
+    metrics.update({"forecast_net": fc_net, "vs_forecast": _delta(net, fc_net), "vs_forecast_pct": _pct(net, fc_net),
+                    # The forecast's own stated range (10th-90th percentile,
+                    # None under demand.RANGE_MIN_SAMPLES), stored per night so
+                    # demand.demand_accuracy can report how often nights land
+                    # inside it (contract K8, CA2 #6).
+                    "forecast_low": (fc or {}).get("low"), "forecast_high": (fc or {}).get("high")})
     baselines["forecast"] = ({"net": fc_net, "source": "demand.forecast_day", "samples": fc.get("samples"),
                               "basis": f"median of the last {fc.get('samples')} {fc.get('weekday')}s"}
                              if fc else {"net": None, "source": None})

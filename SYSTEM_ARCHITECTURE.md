@@ -136,7 +136,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`), `run_loss_sync` |
 | `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`), `run_learning` |
 | `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` |
-| `inventory_depletion`, `food_cost_snapshots` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots` |
+| `inventory_depletion`, `food_cost_snapshots`, `forecast_scoring` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots`, `run_forecast_scoring` (every frozen forecast whose period closed, all restaurants) |
 | `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations`, `outcome_rechecks` | 6am | the two root-cause passes, then `run_outcome_evaluations`, then `run_outcome_rechecks` |
 | `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |
 | `auto_draft_schedule` | Thu 6am | `run_auto_draft_schedules` |

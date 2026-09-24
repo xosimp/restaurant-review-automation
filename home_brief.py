@@ -1764,7 +1764,12 @@ def _build(current_user, present=True):
     portfolio = None
     if len(locations) > 1:
         needing = [l for l in locations if l["health"] in ("critical", "important")]
-        best = max((l for l in locations if l.get("rating_30d")), key=lambda l: (l["rating_30d"], l["reviews_30d"]), default=None)
+        # The group's one ranking floor (thresholds.GROUP_RANK_MIN_REVIEWS,
+        # fix I12): a location is "strongest" on a rating with that many
+        # reviews behind it — this ranked on any rating at all.
+        from thresholds import GROUP_RANK_MIN_REVIEWS as _GRMR
+        best = max((l for l in locations if l.get("rating_30d") and (l.get("reviews_30d") or 0) >= _GRMR),
+                   key=lambda l: (l["rating_30d"], l["reviews_30d"]), default=None)
         worst = max(locations, key=lambda l: ({"critical": 3, "important": 2, "watch": 1, "healthy": 0}[l["health"]], l["attention"]))
         portfolio = {"total": len(locations), "healthy": sum(1 for l in locations if l["health"] == "healthy"), "needing": len(needing),
                      "biggest_issue": ({"location": worst["name"], "id": worst["id"], "issue": worst["top_issue"]} if worst["top_issue"] else None),
@@ -1944,7 +1949,8 @@ def build_group_brief(current_user, fresh=False):
         for i in l["issues"]:
             attention.append({**i, "location": l["name"], "restaurant_id": l["id"], "severity_rank": rank[i["severity"]]})
     attention.sort(key=lambda a: (a["severity_rank"], a["location"]))
-    rated = [l for l in locs if l["reviews"]["rating_30d"] and l["reviews"]["reviews_30d"] >= 3]
+    from thresholds import GROUP_RANK_MIN_REVIEWS as _GRMR
+    rated = [l for l in locs if l["reviews"]["rating_30d"] and l["reviews"]["reviews_30d"] >= _GRMR]
     best = max(rated, key=lambda l: (l["reviews"]["rating_30d"], l["reviews"]["reviews_30d"]), default=None)
     worst = min(rated, key=lambda l: (l["reviews"]["rating_30d"], -l["reviews"]["reviews_30d"]), default=None)
     heaviest = max([l for l in locs if l["labor"]], key=lambda l: l["labor"]["over"], default=None)

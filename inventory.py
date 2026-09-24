@@ -489,8 +489,10 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     annual_recoverable = round(recoverable * 12, 2)
 
     # Industry benchmark: waste cost as % of what was actually purchased over
-    # the SAME period the waste covers.
-    # 4-5% = industry target | 5-8% = above average | 8-15% = concerning | >15% = serious
+    # the SAME period the waste covers. The bands, exactly as coded below:
+    # 0 recorded = not measured (nothing logged is not "nothing wasted") |
+    # <=4% excellent (at or under the 4-5% target) | <=6% on track |
+    # <=10% above average | <=15% concerning | >15% needs attention.
     #
     # purchases_window comes from the receiving ledger (cogs.purchases_in_window)
     # and is the correct denominator. The fallback below is the sum of each
@@ -512,15 +514,28 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     # Benchmark rating. The tone is a semantic name, not a hex: these values
     # crossed a module boundary into home_brief, which tested them against
     # the string "green" and therefore never once matched.
+    # `benchmark_state` says which kind of reading the label is: "measured"
+    # (a waste rate against real purchases), "not_measured" (purchases, but
+    # nothing logged as waste — which is not the same as nothing wasted, so
+    # it is never scored as the best result) or "no_data".
+    benchmark_state = "measured"
     if not _has_benchmark:
         benchmark_label  = "—"
         benchmark_tone   = "neutral"
         benchmark_detail = "Upload inventory data to see benchmark"
+        benchmark_state  = "no_data"
+    elif total_waste_cost <= 0:
+        # This used to read "Excellent — No waste recorded this week": a week
+        # nobody logged waste scored as the best possible result (CA4 F11).
+        benchmark_label  = "No waste recorded"
+        benchmark_tone   = "neutral"
+        benchmark_detail = ("No waste recorded this week — a week with nothing logged is not the "
+                            "same as a week with nothing wasted")
+        benchmark_state  = "not_measured"
     elif waste_rate_pct <= 4:
         benchmark_label  = "Excellent"
         benchmark_tone   = "good"
-        benchmark_detail = ("No waste recorded this week" if total_waste_cost <= 0
-                            else "At or below the 4% industry target")
+        benchmark_detail = "At or below the 4% industry target"
     elif waste_rate_pct <= 6:
         benchmark_label  = "On Track"
         benchmark_tone   = "good"
@@ -576,6 +591,13 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "annual_recoverable":       annual_recoverable,
         "recoverable_weekly":       round(total_recoverable_week, 2),
         "recoverable_basis":        RECOVERABLE_BASIS,
+        # What kind of figure the recoverable dollars are (CA4 F11): an
+        # OPPORTUNITY — waste still being thrown away — projected from one
+        # week's count, never money saved. Clients style it as available,
+        # not as a win.
+        "recoverable_kind":         "opportunity",
+        "annual_recoverable_basis": (f"one week's count × {WEEKS_PER_MONTH:.2f} weeks a month × 12 "
+                                     "— a projection of what is still being lost, not money saved"),
         "projection_basis":         ("one week extrapolated at "
                                      f"{WEEKS_PER_MONTH:.2f} weeks a month — a single week, "
                                      "not a trend"),
@@ -599,6 +621,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "benchmark_label":          benchmark_label,
         "benchmark_tone":           benchmark_tone,
         "benchmark_detail":         benchmark_detail,
+        "benchmark_state":          benchmark_state,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
@@ -899,30 +922,34 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         # the one, and it carries a confidence the other never had.
         try:
             from waste_trend import build_waste_trend as _bwt
-            _stats = (_bwt(restaurant_id) or {}).get("stats") or {}
+            _bwt_payload = _bwt(restaurant_id) or {}
+            _stats = _bwt_payload.get("stats") or {}
             _d, _p = _stats.get("wow_delta"), _stats.get("wow_pct")
+            _anoms = {a["index"] for a in (_stats.get("anomalies") or [])}
+            _latest_is_anomaly = (_stats.get("weeks") or 0) - 1 in _anoms
             if _d is not None:
                 direction = "UP" if _d > 0 else "DOWN"
                 wow_context = (f"\n- vs last week (ISO weeks): waste is {direction} "
                                f"${abs(_d):,.2f}"
                                + (f" ({abs(_p):g}%)" if _p is not None else "")
                                + " — mention this trend")
-                # The forecast dollars are computed here rather than left to
-                # the model, and only when the direction is one the series can
-                # actually bear. A single week extrapolated is not a forecast;
-                # waste_trend's own confidence and anomaly detection decide
-                # whether there is a trend to project at all.
-                _conf = _stats.get("confidence")
-                _anoms = {a["index"] for a in (_stats.get("anomalies") or [])}
-                _latest_is_anomaly = (_stats.get("weeks") or 0) - 1 in _anoms
-                if _conf in ("high", "medium") and not _latest_is_anomaly:
-                    _curr = float(_stats.get("latest") or analysis['total_waste_cost_week'])
-                    forecast_next_week = round(max(0.0, _curr + _d), 2)
-                    forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
-                elif _latest_is_anomaly:
+                if _latest_is_anomaly:
                     wow_context += ("\n- NOTE: the most recent week sits outside this series' "
                                     "own spread, so it is an outlier rather than a new level. "
                                     "Do not project from it.")
+            # The forecast dollars are computed here rather than left to the
+            # model. It used to be latest week + last week's change —
+            # momentum — issued whenever the series had 5+ weeks, and on a
+            # flat, noisy series it missed by more than simply repeating last
+            # week (probe W, CA2 #5: ~$101 a week against ~$62 for last week
+            # and ~$53 for a four-week mean). Next week is now the mean of
+            # the last four ISO weeks, any outlier week left out — an outlier
+            # is not a level (forecast_log.waste_next_week).
+            import forecast_log as _flog
+            forecast_next_week = _flog.waste_next_week(
+                [w.get("waste") for w in (_bwt_payload.get("weeks") or [])], _anoms)
+            if forecast_next_week is not None:
+                forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
         except Exception as _we:
             print(f"[inventory wow] {_we}")
 
@@ -1153,42 +1180,53 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         except Exception:
             pass
 
-    # Projected only when waste_trend's own confidence and anomaly checks say
-    # there is a direction to project — see the wow_context block above, which
-    # sets forecast_next_week to None when the latest week is an outlier or
-    # the series cannot bear a direction. The dollars are computed in Python;
-    # asking the model "what does that mean if it continues" guarantees a
+    # Next week's waste, from the four-week mean computed above (None under
+    # three usable weeks). The dollars are computed in Python; asking the
+    # model "what does that mean if it continues" guarantees a
     # model-generated number, because the consequence of a projection is by
     # definition not in the prompt.
-    has_trend = bool(wow_context) and forecast_next_week is not None
+    #
+    # Three rules from the confidence audit (CA2 #5, forecast_log.py):
+    #   * frozen once per ISO week — the first render of a week records next
+    #     week's forecast and later renders never add rows (the old key,
+    #     today + 7, wrote one row a day and inflated "N scored");
+    #   * the RAW mean is what gets recorded and scored, so the error loop
+    #     measures the method, while the owner is shown the bias-corrected
+    #     figure when the record has a consistent lean (it used to be
+    #     computed and left in `basis` while the activity feed said the
+    #     shown figure was corrected);
+    #   * withheld outright — no FORECAST line — while this restaurant's own
+    #     record of waste forecasts reads "often wide". It keeps being
+    #     recorded and scored, so the record can recover.
     forecast_instruction = ""
-    if has_trend:
+    forecast_shown = None
+    if restaurant_id and forecast_next_week is not None:
+        try:
+            import forecast_log as _flog_f
+            from datetime import date as _d_f, timedelta as _td_f
+            _facc = _flog_f.accuracy(restaurant_id, "waste_week")
+            _corr, _cal = _flog_f.calibrated(restaurant_id, "waste_week", forecast_next_week)
+            _corrected = _cal.get("available") and _cal.get("factor", 1.0) != 1.0
+            _flog_f.record(
+                restaurant_id, "waste_week", forecast_next_week,
+                period_of=_d_f.today() + _td_f(days=7),
+                basis=(f"mean of the last {_flog_f.WASTE_FORECAST_WEEKS} ISO weeks, outlier weeks left out"
+                       + (f"; prior forecasts {_cal['reading']}, shown corrected as ${_corr:,.0f}"
+                          if _corrected else "")))
+            if not _facc.get("withheld"):
+                forecast_shown = _corr if _corrected else forecast_next_week
+        except Exception as _fe:
+            print(f"[inventory forecast log] {_fe}")
+    if forecast_shown is not None:
+        _shown_monthly = round(forecast_shown * WEEKS_PER_MONTH, 2)
         forecast_instruction = (
             '\n- Then, on a final new line, add exactly "FORECAST:" followed by one sentence '
-            "predicting where waste cost is headed next week based on the week-over-week trend "
-            f"above. If it continues at this rate next week lands near ${forecast_next_week:,.0f} "
-            f"(${forecast_monthly:,.0f} a month) — quote those figures exactly and invent no others. "
-            "Only include this if the trend is genuinely supported by the data given."
+            "saying where waste cost is likely to land next week. Going by the average of the last "
+            f"four weeks, next week lands near ${forecast_shown:,.0f} (${_shown_monthly:,.0f} a month)"
+            + (f", already corrected because earlier forecasts here {_cal['reading']}"
+               if _corrected else "")
+            + " — quote those figures exactly, call it a forecast, and invent no others."
         )
-        # Stored so it can be scored against what actually happens. A forecast
-        # nobody checks costs nothing to get wrong, which is the opposite of
-        # what a projection is for. See food_cost_intelligence.score_forecasts.
-        if restaurant_id:
-            try:
-                import food_cost_intelligence as _fci_f
-                from datetime import date as _d_f, timedelta as _td_f
-                # The raw projection is what gets scored (so the loop stays
-                # honest); the basis records what the record said about it.
-                _corr, _cal = _fci_f.calibrated(restaurant_id, "waste_week", forecast_next_week)
-                _fci_f.record_forecast(
-                    restaurant_id, "waste_week",
-                    (_d_f.today() + _td_f(days=7)).isoformat(),
-                    forecast_next_week,
-                    basis="week-over-week delta on the ISO-week waste series"
-                          + (f"; prior forecasts {_cal['reading']}, corrected figure ${_corr:,.0f}"
-                             if _cal.get("available") and _cal.get("factor", 1.0) != 1.0 else ""))
-            except Exception as _fe:
-                print(f"[inventory forecast log] {_fe}")
 
     has_why = "Most likely:" in diag_block
 

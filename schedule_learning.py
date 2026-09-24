@@ -713,10 +713,36 @@ def edit_predictor(restaurant_id, db_path=DB_PATH, weeks=None) -> dict:
     return fit_edit_model(weeks)
 
 
+# The per-row "% likely you'll change it" is a naive-Bayes score, not a
+# calibrated probability (CA1 L15). It stays a percentage (owner decision,
+# 9/24/26) but is shown only once this restaurant's own leave-one-out
+# backtest covers PREDICT_MIN_BACKTEST_WEEKS held-out weeks, and every row
+# carries that backtest's hit rate beside it: "flags like this were right
+# 5 of 8 times on your past drafts".
+PREDICT_MIN_BACKTEST_WEEKS = 4
+
+
 def predict_row_edits(restaurant_id, rows: list, db_path=DB_PATH, model=None) -> list:
-    """predict_edits over a draft for this restaurant's own history."""
-    model = edit_predictor(restaurant_id, db_path=db_path) if model is None else model
-    return predict_edits(model, rows)
+    """predict_edits over a draft for this restaurant's own history —
+    withheld ([]) until the backtest has PREDICT_MIN_BACKTEST_WEEKS weeks
+    with at least one flag, and each row calibrated against it
+    (`backtest_hit_rate`, `backtest_flagged`, `backtest_hits`,
+    `backtest_weeks`, `base_rate`, `calibration_note`)."""
+    weeks = prediction_weeks(restaurant_id, db_path=db_path)
+    model = fit_edit_model(weeks) if model is None else model
+    if not model or not model.get("ready"):
+        return []
+    bt = edit_prediction_backtest(weeks)
+    if (bt.get("weeks") or 0) < PREDICT_MIN_BACKTEST_WEEKS or not bt.get("flagged"):
+        return []
+    note = (f"flags like this were right {bt['hits']} of {bt['flagged']} times on your last "
+            f"{bt['weeks']} drafts")
+    out = []
+    for p in predict_edits(model, rows):
+        out.append(dict(p, backtest_hit_rate=bt["hit_rate"], backtest_flagged=bt["flagged"],
+                        backtest_hits=bt["hits"], backtest_weeks=bt["weeks"], base_rate=bt["base_rate"],
+                        calibration_note=note, text=p["text"].rstrip(".") + f" ({note})."))
+    return out
 
 
 def edit_prediction_summary(restaurant_id, db_path=DB_PATH) -> dict:
@@ -1100,6 +1126,14 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     if not rows:
         return []
     tally = {k.strip().lower(): v for k, v in _attendance_tally(restaurant_id).items()}
+    # Calibration (fix I9, CA1 L16): every person's rate is smoothed toward
+    # this restaurant's own base rate (staff_settings.smoothed_rate), and a
+    # person with no clocked record counts AT that base rate rather than
+    # being left out — leaving them out biased the chance low exactly when
+    # the least was known. The combination assumes one person's no-show says
+    # nothing about another's, and the payload says so.
+    from staff_settings import no_show_base_rate, smoothed_rate
+    base = no_show_base_rate(tally)
     wanted = set(week_dates or [])
     by_date = {}
     for r in rows:
@@ -1111,18 +1145,21 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     for d, people in by_date.items():
         wd = _weekday(d)
         risks, unknown = [], 0
+        assumed = []
         for low, name in people.items():
             t = tally.get(low) or {}
             day_e, all_e = t.get(wd), t.get("all")
             if day_e and day_e[0] >= ATTENDANCE_MIN_WEEKDAY_SHIFTS:
-                risks.append((name, day_e[1] / day_e[0], f"{wd}s"))
+                risks.append((name, smoothed_rate(day_e[1], day_e[0], base), f"{wd}s"))
             elif all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS:
-                risks.append((name, all_e[1] / all_e[0], "overall"))
+                risks.append((name, smoothed_rate(all_e[1], all_e[0], base), "overall"))
             else:
                 unknown += 1
-        expected = sum(p for _n, p, _b in risks)
+                assumed.append((name, round(base, 2), "no record — this restaurant's overall rate"))
+        everyone = risks + assumed
+        expected = sum(p for _n, p, _b in everyone)
         stay = 1.0
-        for _n, p, _b in risks:
+        for _n, p, _b in everyone:
             stay *= (1 - p)
         chance = 1 - stay
         if chance < min_risk:
@@ -1130,6 +1167,10 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
         top = sorted((x for x in risks if x[1] > 0), key=lambda x: (-x[1], x[0]))[:3]
         out.append({"date": d, "day": wd, "scheduled": len(people), "no_record": unknown,
                     "expected_no_shows": round(expected, 2), "chance_of_a_no_show": round(chance, 2),
+                    "base_rate": round(base, 3),
+                    "assumption": ("Assumes no-shows are independent of each other. People with no clock-in "
+                                   "record count at this restaurant's overall rate; every rate is smoothed "
+                                   "toward it."),
                     "people": [{"employee": n, "no_show_rate": round(p, 2), "basis": b} for n, p, b in top]})
     out.sort(key=lambda x: (-x["chance_of_a_no_show"], x["date"]))
     out = out[:limit]
@@ -1159,10 +1200,14 @@ def _standby_person(restaurant_id, day, rows, tally, db_path):
     if not fits:
         return None
 
+    from staff_settings import no_show_base_rate, smoothed_rate
+    _base = no_show_base_rate(tally)
+
     def _rate(name):
         t = tally.get(name.strip().lower()) or {}
         all_e = t.get("all")
-        return all_e[1] / all_e[0] if all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS else None
+        return (smoothed_rate(all_e[1], all_e[0], _base)
+                if all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS else None)
 
     ranked = sorted(fits, key=lambda f: (_rate(f["name"]) is None, _rate(f["name"]) or 0, -(f.get("score") or 0),
                                          f["name"]))

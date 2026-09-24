@@ -2029,7 +2029,11 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
     # reliability
     rel = (ctx.reliability or {}).get(name)
     if rel and float(rel.get("no_show_rate") or 0) >= UNRELIABLE_RATE:
-        bits.append(f"has missed {int(round(float(rel['no_show_rate']) * 100))}% of scheduled shifts")
+        # The rate is smoothed toward the restaurant's base rate
+        # (staff_settings.reliability); the words use what happened.
+        bits.append(f"has missed {rel['no_shows']} of {rel['shifts']} scheduled shifts"
+                    if rel.get("no_shows") is not None and rel.get("shifts") else
+                    f"has missed {int(round(float(rel['no_show_rate']) * 100))}% of scheduled shifts")
     # constraints
     note = (ctx.constraints or {}).get(name)
     if note:
@@ -3723,17 +3727,12 @@ def demand_from_pct(vs_average_pct) -> str | None:
     asserting it anyway is exactly the kind of invented fact that has had
     to be removed from this codebase repeatedly. Where real sales history
     exists it overrides the assumption.
+
+    The cut-offs are thresholds.demand_level's one table (+25 / +8 / -15),
+    which the staff pre-shift line reads too.
     """
-    if vs_average_pct is None:
-        return None
-    pct = float(vs_average_pct)
-    if pct >= 25:
-        return "peak"
-    if pct >= 8:
-        return "high"
-    if pct <= -15:
-        return "low"
-    return "normal"
+    import thresholds
+    return thresholds.demand_level(vs_average_pct)
 
 
 def profiles_from_config(stored: list = None, default_strength: dict = None,

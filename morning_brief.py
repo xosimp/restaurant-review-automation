@@ -228,7 +228,16 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         t = top[0]
         amount = (f"{_money(t['monthly_low'])}-{_money(t['monthly_high'])}" if t.get("is_range")
                   else _money(t["monthly"]))
+        # `money` carries the figure structured (K4's {low, high, label}), so
+        # a client never has to regex it out of the text — the web hero took
+        # the first dollar amount and turned "$1,200-$2,400" into "$1,200"
+        # (CA4 F3). A point figure has low == high.
+        lo_m = t.get("monthly_low") if t.get("is_range") else t.get("monthly")
+        hi_m = t.get("monthly_high") if t.get("is_range") else t.get("monthly")
         lines.append({"key": "money", "tone": "neutral", "rec": t.get("key"),
+                      "money": {"low": lo_m, "high": hi_m, "per": "month",
+                                "label": f"{t['label']} — opportunity, {amount}/month",
+                                "claim_kind": t.get("claim_kind"), "basis": t.get("basis")},
                       "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month.",
                       "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
@@ -368,10 +377,17 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # claim they were measured (_email_html).
     if fc and fc.get("available"):
         context = _day_context(restaurant, today) or ""
-        lines.append({"key": "today", "tone": "neutral", "outside": bool(context),
+        # The range is the forecast's own 10th-90th percentile once there
+        # are enough weeks behind it (demand.forecast_day); it used to be the
+        # min and max of as few as three nights. `forecast` marks the line so
+        # the email footer never calls it measured.
+        rng = (f"usually {_money(fc['low'])}-{_money(fc['high'])}, over {fc['samples']} weeks"
+               if fc.get("low") is not None and fc.get("high") is not None
+               else f"from {fc['samples']} past {fc['weekday']}s; range not yet measurable")
+        lines.append({"key": "today", "tone": "neutral", "outside": bool(context), "forecast": True,
+                      "claim_kind": "forecast",
                       "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
-                               f"(range {_money(fc['low'])}-{_money(fc['high'])} over {fc['samples']} weeks)"
-                               + context + "."),
+                               f"({rng})" + context + "."),
                       "ask": "What should I focus on before service today?"})
     elif restaurant is not None:
         # No forecast yet, but the weather and the calendar are still worth
@@ -448,7 +464,15 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             l["answerable"] = rec_delivery.answerable(l["rec"])
             if l.get("recs"):
                 l["rec_keys"] = line_keys(l)
-    return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+    out = {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+    # Contract K8: how far today's forecast has been off, nightly and out of
+    # sample — beside the forecast line, never inside its text. Only for a
+    # viewer who may read labor (the forecast is labor-module data).
+    if "labor" not in denied:
+        acc = _safe(demand.demand_accuracy, restaurant_id, today=today, db_path=db_path)
+        if acc is not None:
+            out["demand_accuracy"] = acc
+    return out
 
 
 # How many items the running-low line names; only those are its keys.
@@ -598,12 +622,21 @@ def _review_variety(restaurant_id, today, db_path):
     import review_intelligence as ri
     wd = today.weekday()
     if wd in (1, 4):                                    # Tue, Fri: the trend
+        # rating_trend's directions are "improving" / "declining" / "flat"
+        # (review_intelligence.TREND_DIRECTIONS). This compared "up"/"down"
+        # and so never fired (CA1 red flag 3). Said only on a medium or high
+        # confidence read, with the weeks and reviews it rests on.
         t = ri.rating_trend(restaurant_id, weeks=8, db_path=db_path) or {}
         d = t.get("direction")
-        if d in ("up", "down") and t.get("first") is not None and t.get("latest") is not None:
-            return {"key": "rv:trend", "tone": "good" if d == "up" else "bad",
-                    "text": f"Your weekly rating has been {'climbing' if d == 'up' else 'slipping'} "
-                            f"over the last 8 weeks — {t['first']:.1f} to {t['latest']:.1f}.",
+        if (d in ("improving", "declining") and t.get("confidence") in ("medium", "high")
+                and t.get("first") is not None and t.get("latest") is not None):
+            solid = [w for w in (t.get("series") or [])
+                     if (w.get("count") or 0) >= (t.get("min_reviews_per_week") or 0)]
+            n_rev = sum(int(w.get("count") or 0) for w in solid)
+            rests = (f" ({len(solid)} weeks, {n_rev} reviews)" if solid else "")
+            return {"key": "rv:trend", "tone": "good" if d == "improving" else "bad",
+                    "text": f"Your weekly rating has been {'climbing' if d == 'improving' else 'slipping'} "
+                            f"over the last 8 weeks — {t['first']:.1f} to {t['latest']:.1f}{rests}.",
                     "ask": "What is driving my rating trend?"}
     if wd in (2, 5):                                    # Wed, Sat: dayparts
         d = ri.daypart_breakdown(restaurant_id, db_path=db_path) or {}
@@ -716,9 +749,20 @@ def _email_html(brief, restaurant_name):
         for l in brief["lines"])
     # Honest about provenance: the weather and the holidays are public
     # facts, not measured from the restaurant's data.
-    source = ("Every figure above is measured from your own data, except the weather and the calendar."
-              if any(l.get("outside") for l in brief["lines"])
-              else "Every figure above is measured from your own data.")
+    # And honest about forecasts: today's expected sales and the projected
+    # prime cost are FROM the restaurant's data but are not measurements, and
+    # the footer used to cover them with "measured" (CA1 H9 / red flag 18).
+    outside = any(l.get("outside") for l in brief["lines"])
+    forecast = any(l.get("forecast") for l in brief["lines"])
+    source = "Every figure above is from your own data"
+    if forecast and outside:
+        source += " — measured, except today's forecast (a projection), the weather and the calendar."
+    elif forecast:
+        source += " — measured, except today's forecast, which is a projection."
+    elif outside:
+        source = "Every figure above is measured from your own data, except the weather and the calendar."
+    else:
+        source = "Every figure above is measured from your own data."
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
             f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}</p>'
             f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'

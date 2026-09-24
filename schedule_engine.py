@@ -295,7 +295,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     try:
         _forecast = build_demand_forecast(restaurant_id)
         if _forecast.get("ok"):
-            _demand_by_day = {d["day"]: d["vs_average_pct"] for d in _forecast["days"]}
+            # A weekday's level only on DEMAND_LEVEL_MIN_READINGS nights —
+            # a median of two is one of them (CA1 L25).
+            from thresholds import DEMAND_LEVEL_MIN_READINGS as _MINR
+            _demand_by_day = {d["day"]: d["vs_average_pct"] for d in _forecast["days"]
+                              if (d.get("samples") or 0) >= _MINR}
     except Exception:
         _demand_by_day = {}
     _profiles = []
@@ -892,7 +896,11 @@ def _reliability_block(reliability: dict) -> str:
                     if float(r.get("no_show_rate") or 0) >= 0.2), key=lambda kv: -kv[1]["no_show_rate"])
     if not risky:
         return ""
-    lines = [f"  {n}: missed {int(round(r['no_show_rate'] * 100))}% of {r['shifts']} clocked shifts" for n, r in risky[:8]]
+    # Chosen on the smoothed rate (staff_settings.reliability); said with the
+    # raw count, which is what actually happened.
+    lines = [f"  {n}: missed {r['no_shows']} of {r['shifts']} clocked shifts" if r.get("no_shows") is not None
+             else f"  {n}: missed {int(round(r['no_show_rate'] * 100))}% of {r['shifts']} clocked shifts"
+             for n, r in risky[:8]]
     return ("\n\nATTENDANCE (from clock-ins): the people below miss shifts often. Do not leave any of them alone in "
             "a role, and do not rely on them for the busiest shift of the week; a second body alongside them is the fix, "
             "not fewer hours:\n" + "\n".join(lines))
@@ -2028,7 +2036,9 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     try:
         forecast = build_demand_forecast(restaurant_id)
         if forecast.get("ok"):
-            demand_by_day = {d["day"]: d["vs_average_pct"] for d in forecast["days"]}
+            from thresholds import DEMAND_LEVEL_MIN_READINGS as _MINR
+            demand_by_day = {d["day"]: d["vs_average_pct"] for d in forecast["days"]
+                             if (d.get("samples") or 0) >= _MINR}
     except Exception:
         demand_by_day = {}
 
