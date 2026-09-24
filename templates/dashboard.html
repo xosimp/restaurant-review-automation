@@ -3170,6 +3170,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-co-r:first-of-type{border-top:none}
 .dr-co-r .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding-top:3px}
 .dr-co-r .v{font-size:15px;line-height:1.55;color:var(--ink);white-space:pre-wrap}
+.ac-row .l i.dr-n{font-style:normal;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
 .dr-withheld{font-size:13px;color:var(--ink3);margin-top:18px}
 /* progress: the stage checklist ticking, each line the server's own time */
 .dr-prog{margin-top:24px}
@@ -15487,7 +15488,7 @@ function _dsrRenderCats(d) {
   var un = d.unmapped || [], mp = d.category_map || [], h = '';
   for (var i = 0; i < un.length; i++) {
     var u = un[i];
-    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(u.department) + '</b><span>Unmapped &middot; <span class="hb-num">$' + Math.round(u.net || 0).toLocaleString('en-US') + '</span> on ' + _ehEsc(d.unmapped_as_of || 'the latest night') + '</span></div>'
+    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(u.department) + '</b><span>Unmapped' + (typeof u.net === 'number' ? ' &middot; <i class="dr-n">$' + Math.round(u.net).toLocaleString('en-US') + '</i>' : '') + ' on ' + _ehEsc(d.unmapped_as_of || 'the latest night') + '</span></div>'
        + '<div class="c"><select class="ac-select" data-dsr-dept="' + _ehEsc(u.department) + '" aria-label="Category for ' + _ehEsc(u.department) + '">' + _dsrOptions('') + '</select></div></div>';
   }
   for (var j = 0; j < mp.length; j++) {
