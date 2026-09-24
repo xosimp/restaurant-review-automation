@@ -98,6 +98,17 @@ def _review(db_path, rid, text="The chicken was raw and I got sick", author="Dan
     return review_id
 
 
+def _above_the_floor(db_path, rid):
+    """Three more reviews in the window: the Reviews read is not generated
+    under notify.MIN_TREND_REVIEWS_PER_WEEK reviews in 28 days (NS4 C1), and
+    these tests are about what happens once it is."""
+    from datetime import datetime as _dt
+    for _ in range(3):      # dated now, so the test does not age out of the window
+        _review(db_path, rid, text="Lovely dinner.", author="Sam P.", rating=5, processed=1,
+                sentiment="positive", response_status="posted",
+                review_date=_dt.now().strftime("%Y-%m-%dT%H:%M:%S"))
+
+
 def _row(db_path, review_id):
     conn = get_conn(db_path)
     row = dict(conn.execute("SELECT * FROM reviews WHERE id=?", (review_id,)).fetchone())
@@ -270,6 +281,7 @@ def test_the_review_itself_reaches_the_drafter_fenced(db_path, monkeypatch):
 def test_review_insight_urgent_excerpts_reach_the_model_fenced(db_path, monkeypatch):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, text=_INJECTION, processed=1, sentiment="negative", urgency="high")
+    _above_the_floor(db_path, rid)
     seen = []
     monkeypatch.setattr(ai_utils, "create_with_retry",
                         lambda client, **kw: seen.append(kw) or _Msg("Reviews are steady."))
@@ -319,6 +331,7 @@ def _mobile_headers(db_path, rid):
 def test_a_failed_review_insight_returns_no_raw_provider_error(db_path, monkeypatch, web):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, processed=1, sentiment="negative")
+    _above_the_floor(db_path, rid)
     _web_login(monkeypatch, rid)
 
     def boom(*a, **k):
@@ -331,6 +344,7 @@ def test_a_failed_review_insight_returns_no_raw_provider_error(db_path, monkeypa
 def test_the_web_review_insight_says_ai_is_paused_under_a_budget_stop(db_path, monkeypatch, web):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, processed=1, sentiment="negative")
+    _above_the_floor(db_path, rid)
     _web_login(monkeypatch, rid)
 
     def paused(*a, **k):
@@ -345,6 +359,7 @@ def test_the_web_review_insight_says_ai_is_paused_under_a_budget_stop(db_path, m
 def test_the_mobile_review_insight_says_ai_is_paused_under_a_budget_stop(db_path, monkeypatch, mobile):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, processed=1, sentiment="negative")
+    _above_the_floor(db_path, rid)
     headers = _mobile_headers(db_path, rid)
 
     def paused(*a, **k):
@@ -358,6 +373,7 @@ def test_the_mobile_review_insight_says_ai_is_paused_under_a_budget_stop(db_path
 def test_a_failed_review_insight_serves_the_last_good_read_marked_stale(db_path, monkeypatch):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, processed=1, sentiment="negative")
+    _above_the_floor(db_path, rid)
     client_api._cache_set("review-insight:" + str(rid), {"insight": "Yesterday's read."})
     # Expire it so the live path runs and fails.
     ts, body = client_api._insight_cache["review-insight:" + str(rid)]
