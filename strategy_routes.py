@@ -1626,6 +1626,23 @@ def _do_recs_timeline(u):
     return rec_learning.timeline(_rid(u), limit=limit, before=before, viewer=u), 200
 
 
+def _do_recs_what_worked(u):
+    """GET /recs/what-worked?days=90|180 — "What worked for you" in
+    sentences, built without a model from the ledger summary, the stored
+    results and the measured days (owner_report.what_worked, rec-ROI #28).
+    Redacted for this login exactly as /recs/summary is; any other `days`
+    is a 400."""
+    import owner_report
+    raw = request.args.get("days") or str(owner_report.DEFAULT_DAYS)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        days = None
+    if days not in owner_report.WINDOWS:
+        return {"ok": False, "error": "days must be 90 or 180"}, 400
+    return owner_report.what_worked(_rid(u), days=days, viewer=u), 200
+
+
 def _do_recs_checkin(u):
     """"Did you make this change? Did anything else change?" — one answer
     per tap, recorded as a `checkin` on the recommendation's latest episode
@@ -3196,6 +3213,7 @@ _ROUTES = [
     ("/recs/event", ["POST"], _do_rec_event, "rec_event"),
     ("/recs/summary", ["GET"], _do_recs_summary, "recs_summary"),
     ("/recs/timeline", ["GET"], _do_recs_timeline, "recs_timeline"),
+    ("/recs/what-worked", ["GET"], _do_recs_what_worked, "recs_what_worked"),
     ("/recs/checkin", ["POST"], _do_recs_checkin, "recs_checkin"),
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),

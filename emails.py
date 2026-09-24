@@ -2229,6 +2229,19 @@ def _monthly_review_sections(restaurant_id, months=1):
                                           f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
     except Exception as e:
         print(f"[monthly] results block failed: {e}")
+    # "What worked for you" (rec-ROI #28): what the owner followed and what
+    # it was associated with over six months, in sentences built without a
+    # model (owner_report). The monthly goes to the owner, so nothing is
+    # redacted; a clause whose minimum isn't met is simply not there, and
+    # with none met the block is left out rather than padded.
+    try:
+        import owner_report as _or
+        worked = _or.email_lines(restaurant_id)
+        if worked:
+            out.append(report_eyebrow("What worked for you")
+                       + report_paragraph(_list(worked)))
+    except Exception as e:
+        print(f"[monthly] what-worked block failed: {e}")
     try:
         import goals as _g
         if review.get("goals"):

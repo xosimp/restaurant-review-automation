@@ -1243,20 +1243,29 @@ def _denied_row(r, denied) -> bool:
     return bool(denied) and (module_of_row(r) in denied or module_of(r.get("metric")) in denied)
 
 
-def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None) -> dict:
+def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, exclude_metrics=None) -> dict:
     """Measured dollars accrued so far, net of changes that got worse: a SUM
     of measured days, never a monthly figure times months. `total` is None
     when no day has been measured yet (nothing measured is not $0).
     `days` counts days on which a counted move held; `measured_days` every
-    day read."""
+    day read. `since` (ISO date) keeps only the days on or after it — the
+    owner report's "over the past 6 months" (owner_report.what_worked);
+    `exclude_metrics` drops metrics a viewer may not read (comps and voids
+    without LOSS_VIEW) before anything is summed."""
     denied = set(denied_modules or ())
+    excluded = {str(m).split(":", 1)[0] for m in (exclude_metrics or ())}
+    sql = "SELECT day, module, metric, dollars, held, counted FROM outcome_value_days WHERE restaurant_id=?"
+    args = [restaurant_id]
+    if since:
+        sql += " AND day >= ?"
+        args.append(str(since)[:10])
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT day, module, metric, dollars, held, counted FROM outcome_value_days "
-                            "WHERE restaurant_id=? ORDER BY day", (restaurant_id,)).fetchall()
+        rows = conn.execute(sql + " ORDER BY day", args).fetchall()
     finally:
         conn.close()
-    rows = [dict(r) for r in rows if not _denied_row(dict(r), denied)]
+    rows = [dict(r) for r in rows if not _denied_row(dict(r), denied)
+            and str(r["metric"] or "").split(":", 1)[0] not in excluded]
     counted = [r for r in rows if r["counted"]]
     by_module = {}
     for r in counted:
