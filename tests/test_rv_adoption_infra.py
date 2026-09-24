@@ -65,6 +65,22 @@ def test_points_can_be_a_move_between_two_prompt_percentages():
     assert rv.validate("Tuesday ran 7.2 points over the period's labor ratio.", _ctx()).verdict == "pass"
 
 
+def test_a_prompt_figure_takes_its_kind_from_its_own_words():
+    # Ask's snapshot is text: "$867 a month above target (an opportunity)"
+    # makes $867 an opportunity, so "You saved $867" is rewritten, not only
+    # flagged; a measured neighbour in the same line stays measured.
+    snap = ("LABOR: 31.4% of sales; labor cost $12,400; $867 a month above target (an opportunity).\n"
+            "SALES: $5,000 vs expected $4,800.")
+    ctx = Ctx(surface="ask", context_text=snap, policy={"context_facts": True})
+    v = rv.validate("You saved $867 a month on labor.", ctx)
+    assert "not money saved" in v.text and "You saved" not in v.text
+    assert rv.validate("Labor cost $12,400 this period.", ctx).verdict == "pass"
+    assert rv.validate("Sales came in at $5,000.", ctx).verdict == "pass"
+    # without the policy a prompt-only context keeps the legacy path: flagged, not rewritten
+    legacy = rv.validate("You saved $867 a month on labor.", Ctx(surface="ask", context_text=snap))
+    assert "You saved" in legacy.text and "F4" in legacy.codes
+
+
 def test_typed_only_policy_turns_the_prompt_fallback_off():
     v = rv.validate("Labor ran 31.0%.", _ctx(policy={"typed_only": True}))
     assert "F1" in v.codes

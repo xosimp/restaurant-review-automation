@@ -1200,7 +1200,7 @@ def _validation_context(corpus, restaurant_id, confidence=None, actions_done=())
         restaurant_id=restaurant_id, surface="ask", facts=_typed_facts(corpus), context_text=text,
         untrusted=_untrusted_blocks(corpus), cause_anchors=_cause_anchors(corpus),
         names_allowed=allowed, tenant_names_denied=denied, confidence=confidence,
-        policy={"action": "ask_cavnar", "check_counts": True, "actions_done": done})
+        policy={"action": "ask_cavnar", "check_counts": True, "actions_done": done, "context_facts": True})
 
 
 _FIGURE_RULES = ("F1", "F2", "F3", "F5", "F7", "F8", "X1")

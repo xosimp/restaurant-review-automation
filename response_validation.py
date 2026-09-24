@@ -1081,7 +1081,66 @@ def _context_pool_for(txt: str) -> dict:
     pct_pool = sorted(set(known["pct"]) | (set(known["bare"]) - counted))[:4000]
     money = _g._money_periods(txt)
     return {"money": money, "money_keys": sorted(money), "bare": sorted(known["bare"]),
+            "money_kinds": _context_money_kinds(txt),
             "pct_pool": pct_pool, "dirs": _g._directions(txt), "memo": {}}
+
+
+# The words beside a money figure in a prompt that say what kind it is — read
+# within its own clause, strongest first. "$867 a month above target (an
+# opportunity)", "$2,400 recoverable", "a projected $19,850", "budget $4,000".
+_CTX_KIND_WORDS = (
+    ("opportunity", re.compile(r"\b(?:recoverable|opportunit\w*|at\s+stake|above\s+(?:the\s+)?target|over\s+target|"
+                               r"gap|potential|available|not\s+(?:money\s+)?(?:saved|captured)|could\s+save|"
+                               r"savings?\s+(?:opportunity|potential|available))\b", re.I)),
+    ("projection", re.compile(r"\b(?:project\w*|forecast\w*|on\s+pace|run[- ]rate|if\s+nothing\s+changes|"
+                              r"expected|annuali[sz]ed)\b", re.I)),
+    ("estimate", re.compile(r"\b(?:estimat\w*|approximat\w*|est\.)", re.I)),
+    ("plan", re.compile(r"\b(?:budget\w*|goal|target\s+(?:of|is|:)|planned)\b", re.I)),
+)
+_CLAUSE_EDGE_RE = re.compile(r"[\n;•]|(?<=[a-z0-9)])\.\s")
+_NEIGHBOUR_FIG_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%")
+_COMPARE_EDGE_RE = re.compile(r"\b(?:vs\.?|versus|against|compared|than|and|or|but|while|from)\b|,", re.I)
+
+
+def _context_money_kinds(txt: str) -> dict:
+    """{value: {kind…}} for each money figure the prompt states: the kind its
+    own clause names, else measured. A value stated twice with two kinds
+    keeps both (then no single kind decides a claim about it)."""
+    t = _g._prepared(txt)
+    out = {}
+    for pat in (_g._MONEY_RE, _g._DOLLARS_RE):
+        for m in pat.finditer(t):
+            try:
+                v = _g._value(m)
+            except ValueError:
+                continue
+            a = max(0, m.start() - 90)
+            b = min(len(t), m.end() + 90)
+            left = t[a:m.start()]
+            right = t[m.end():b]
+            edges = list(_CLAUSE_EDGE_RE.finditer(left))
+            if edges:
+                left = left[edges[-1].end():]
+            e = _CLAUSE_EDGE_RE.search(right)
+            if e:
+                right = right[:e.start()]
+            # Only this figure's own words: stop at a neighbouring figure
+            # ("sales $5,000 vs expected $4,800" — "expected" is $4,800's).
+            prev = list(_NEIGHBOUR_FIG_RE.finditer(left))
+            if prev:
+                left = left[prev[-1].end():]
+            nxt = _NEIGHBOUR_FIG_RE.search(right)
+            if nxt:
+                right = right[:nxt.start()]
+            # ... and on the right, not past a comparison: the words after
+            # "vs" / "against" / "than" describe what it is compared with.
+            cut = _COMPARE_EDGE_RE.search(right)
+            if cut:
+                right = right[:cut.start()]
+            clause = left + " " + right
+            kind = next((k for k, rx in _CTX_KIND_WORDS if rx.search(clause)), "measured")
+            out.setdefault(v, set()).add(kind)
+    return out
 
 
 class _Facts:
@@ -1181,14 +1240,19 @@ class _Run:
         self.pct = _pct(ctx.confidence)
         self.level = target_level(self.pct)
         self.facts = _Facts(ctx.facts)
-        self.typed = bool(ctx.facts)
-        self.legacy = (not self.typed) and bool(ctx.context_text)
         # Typed facts AND the prompt text (the adoption shape, workstream A):
         # the typed facts carry the kinds, periods and entities that matter
         # (money above all); a figure none of them holds may still be one the
-        # prompt stated, and is then read as a measured figure with the old
-        # presence semantics — never less strict than the check it replaced.
-        self.hybrid = self.typed and bool(ctx.context_text) and not ctx.policy.get("typed_only")
+        # prompt stated, and is then read as a fact with the old presence
+        # semantics — its kind read from the words beside it in the prompt
+        # ("$867 a month above target (an opportunity)") — never less strict
+        # than the check it replaced. policy["context_facts"] turns the same
+        # reading on for a site whose facts are all in its prompt (Ask's
+        # snapshot); without it, a prompt-only context keeps the legacy path.
+        self.hybrid = bool(ctx.context_text) and not ctx.policy.get("typed_only") and \
+            (bool(ctx.facts) or bool(ctx.policy.get("context_facts")))
+        self.typed = bool(ctx.facts) or self.hybrid
+        self.legacy = (not self.typed) and bool(ctx.context_text)
         self._ctx_pool = None
         anchors = [a for a in ctx.cause_anchors if not _NEGATED_ANCHOR_RE.search(a["text"])]
         if self.public:
@@ -1573,9 +1637,11 @@ class _Run:
         if memo_key in pool["memo"]:
             return pool["memo"][memo_key]
         hits = []
+        kinds_of = {}
         if ctype == "money":
             for k in self._near(pool["money_keys"], v, tol):
                 hits += [(k, "$", p) for p in (pool["money"][k] or {None})]
+                kinds_of[k] = pool["money_kinds"].get(k) or {"measured"}
             if not hits:
                 hits = [(k, "", None) for k in self._near(pool["bare"], v, tol)]
         elif ctype == "pct":
@@ -1595,8 +1661,9 @@ class _Run:
         out = []
         for k, unit, period in hits[:4]:
             dirs = pool["dirs"].get(("money" if ctype == "money" else "pct", k)) or set()
-            out.append(Fact(key="context", value=k, unit=unit, kind="measured", period=period,
-                            direction=next(iter(dirs)) if len(dirs) == 1 else None, source="context"))
+            for kind in sorted(kinds_of.get(k) or {"measured"}):
+                out.append(Fact(key="context", value=k, unit=unit, kind=kind, period=period,
+                                direction=next(iter(dirs)) if len(dirs) == 1 else None, source="context"))
         pool["memo"][memo_key] = out
         return out
 
