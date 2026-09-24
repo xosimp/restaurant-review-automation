@@ -20,6 +20,7 @@ another restaurant even if the model asks it to.
 """
 import json
 import logging
+import re as _re
 
 log = logging.getLogger(__name__)
 
@@ -933,6 +934,39 @@ def _read_schedule_history(restaurant_id, limit=8):
     }
 
 
+def _read_schedule_rules(restaurant_id):
+    """The scheduling rules set in Cavnar for this restaurant — what the
+    code checks — so a labor-law question is answered with the rule in
+    force here, said as a setting, never as the law (NS5 M11)."""
+    import schedule_rules as _sr
+    import staff_settings as _ss
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    comp = _sr.compliance(r) if r else dict(_sr.DEFAULTS)
+    pack = comp.pop("_pack", None) or {}
+    minors = []
+    try:
+        for name, st in _ss.get_all(restaurant_id).items():
+            if st.get("is_minor") or st.get("minor_age_band"):
+                band = st.get("minor_age_band")
+                minors.append({"name": name, "age_band": band or "not set",
+                               "limits": {k: v for k, v in _sr.minor_rules(band, getattr(r, "jurisdiction", None)).items()
+                                          if k != "source"} or {"latest_end": comp.get("minor_latest_end"),
+                                                                "max_daily_hours": comp.get("minor_max_daily_hours")}})
+    except Exception:
+        pass
+    return {
+        "rules_in_force": {k: v for k, v in comp.items() if v not in (None, "")},
+        "jurisdiction_pack": ({"label": pack.get("label"), "starting_values": pack.get("applied"),
+                               "notes": pack.get("notes")} if pack else None),
+        "role_floors": _sr.role_floors(r) if r else {},
+        "minors": minors,
+        "note": ("These are the values set in Cavnar, which the schedule is checked against. They are starting "
+                 "values, not legal advice: say them as 'the rule set in Cavnar', never as what the law requires, "
+                 "and tell the owner to check with counsel for their exact situation."),
+    }
+
+
 def _set_staff_contact(restaurant_id, employee_name=None, email=None, phone=None):
     """Add or correct how a member of staff is reached.
 
@@ -1438,6 +1472,20 @@ TOOLS = [
                             "for every shift, which shifts fell under their target and why, and "
                             "how confident the engine was. Use this for any question about how "
                             "good a schedule is, not just who is on it."),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_schedule_rules,
+        "module": "module_labor",
+        "spec": {
+            "name": "read_schedule_rules",
+            "description": ("The scheduling rules set in Cavnar for this restaurant: rest between shifts, "
+                            "shift and weekly hours limits, meal breaks, the schedule notice rule, the "
+                            "jurisdiction pack's starting values, staffing floors, and each minor's age band "
+                            "and limits. Call it before answering ANY labor-law, compliance or scheduling-rule "
+                            "question, and quote what it returns as the rule set here — never as the law."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2171,6 +2219,9 @@ TOOLS = [
             ),
             "input_schema": {"type": "object", "required": ["message"], "properties": {
                 "message": {"type": "string", "description": "The exact SMS body to send."},
+                "link_url": {"type": "string",
+                             "description": "Optional: one page on the restaurant's OWN website (its menu or "
+                                            "booking page), sent as a tracked link. Any other domain is refused."},
                 "target_day": {"type": "string",
                                "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                                         "Saturday", "Sunday"],
@@ -2492,7 +2543,14 @@ def build_proposal(name, tool_input, restaurant_id=None):
     tool = _BY_NAME.get(name)
     if not tool or tool["kind"] != "write":
         return None
-    args = {k: v for k, v in (tool_input or {}).items() if v is not None}
+    # Only the fields the tool's own schema declares, and never one of the
+    # switches that change what the confirmed route does beyond what the
+    # card says (NS5 C1): `acknowledge` sent a week with hard breaches to
+    # staff under "Send the current schedule", `earned`/`include_4star`
+    # turned on 3-4 star auto-publishing under a card that said 5-star.
+    args = proposal_args(name, tool_input)
+    if proposal_refusal(name, args, restaurant_id):
+        return None
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -2542,6 +2600,10 @@ def build_proposal(name, tool_input, restaurant_id=None):
         "summary": summary,
         "route": route,
         "body": args,
+        # Every field the confirmed route will receive, labelled — the card
+        # renders all of them, so what the owner approves is what runs
+        # (NS5 C1). The clients post only these keys.
+        "fields_shown": fields_shown(args),
         "requires_confirmation": True,
     }
     # What the card shows beyond its one-line summary: the money, the
@@ -2551,9 +2613,121 @@ def build_proposal(name, tool_input, restaurant_id=None):
     # reply. Read-only lookups; a failure leaves the card as it was.
     if restaurant_id is not None:
         try:
-            out.update(proposal_details(name, dict(tool_input or {}), restaurant_id))
+            out.update(proposal_details(name, proposal_args(name, tool_input), restaurant_id))
         except Exception as e:
             log.warning("ask_cavnar proposal details for %s failed: %s", name, e)
+    return out
+
+
+# Switches no model may set on a proposal, whatever a schema says: each
+# changes what the confirmed route does beyond the card's summary.
+# `draft_hash` is set by build_proposal itself from the draft as it stands.
+PROPOSAL_DENYLIST = frozenset({
+    "acknowledge", "resend", "draft_hash", "earned", "include_4star", "paused",
+    "automatic", "manual", "force", "override", "skip_checks", "bulk", "auto",
+})
+
+_FIELD_LABELS = {
+    "schedule_id": "Schedule #", "enabled": "Auto-approve", "daily_cap": "At most a day",
+    "months": "Keep reviews (months)", "supplier_email": "Supplier", "draft_hash": "Order version",
+    "message": "Message", "link_url": "Link", "target_day": "For", "title": "Title", "detail": "Detail",
+    "severity": "Severity", "assignee_contact_id": "Assigned contact #", "caption": "Caption",
+    "image_url": "Image", "topic": "Topic", "name": "Name", "email": "Email",
+}
+
+
+def proposal_args(name, tool_input) -> dict:
+    """The model's input cut to the tool's declared fields, minus the
+    denylist and empty values."""
+    tool = _BY_NAME.get(name) or {}
+    allowed = set(((tool.get("spec") or {}).get("input_schema") or {}).get("properties") or {})
+    return {k: v for k, v in (tool_input or {}).items()
+            if v is not None and k in allowed and k not in PROPOSAL_DENYLIST}
+
+
+def own_domains(restaurant_id) -> set:
+    """The hosts a proposal may link guests to: the restaurant's own
+    website (menu_url), where its logo is hosted, and Cavnar's own short
+    links. Lower-case, without "www."."""
+    from urllib.parse import urlparse
+    out = set()
+    try:
+        import config
+        out.add(urlparse(config.base_url()).netloc.lower())
+    except Exception:
+        pass
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id) if restaurant_id is not None else None
+    except Exception:
+        r = None
+    for raw in (getattr(r, "menu_url", None), getattr(r, "brand_logo_url", None)):
+        raw = (raw or "").strip()
+        if not raw:
+            continue
+        host = urlparse(raw if "://" in raw else "https://" + raw).netloc.lower()
+        if host:
+            out.add(host)
+    return {h[4:] if h.startswith("www.") else h for h in out if h}
+
+
+_LINK_RE = _re.compile(
+    r"(?:https?://|www\.)[^\s<>\"']+"
+    r"|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|us|biz|info|me|app|ly|link|site|online|shop|"
+    r"store|xyz|example|club|live|win|top|click|page|menu|restaurant|bar|cafe|pizza)\b(?:/[^\s<>\"']*)?", _re.I)
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlparse
+    u = (url or "").strip().rstrip(".,;:!?)")
+    host = urlparse(u if "://" in u else "https://" + u).netloc.lower().split("@")[-1].split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def _is_own(host: str, domains: set) -> bool:
+    return bool(host) and any(host == d or host.endswith("." + d) for d in domains)
+
+
+def proposal_refusal(name, tool_input, restaurant_id=None):
+    """Why a proposal cannot be built as the model wrote it, or None: a
+    link to anywhere but the restaurant's own domains — in a link field or
+    inside the words that go out (NS5 C1). Guest texts and captions reach
+    the public; a review that planted a link must not ride along."""
+    args = proposal_args(name, tool_input)
+    domains = None
+    for k, v in args.items():
+        if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):
+            continue
+        for m in _LINK_RE.finditer(v):
+            if domains is None:
+                domains = own_domains(restaurant_id)
+            host = _host(m.group(0))
+            if not _is_own(host, domains):
+                return (f"The {_FIELD_LABELS.get(k, k).lower()} links to {host or 'another site'}, which is not "
+                        "the restaurant's own website. Links in anything guests receive go only to the "
+                        "restaurant's own site — leave the link out or use their menu or booking page.")
+    return None
+
+
+def _shown(v) -> str:
+    if isinstance(v, bool):
+        return "On" if v else "Off"
+    if isinstance(v, (list, tuple)):
+        return ", ".join(str(x) for x in v)
+    if isinstance(v, dict):
+        return json.dumps(v, default=str)
+    return str(v)
+
+
+def fields_shown(body) -> list:
+    """[{"key", "label", "value"}] — every field of a proposal's body, in
+    the words the card shows."""
+    out = []
+    for k, v in (body or {}).items():
+        val = _shown(v)
+        if k == "draft_hash":
+            val = "the order as it stands now (" + val[:8] + ")"
+        out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
     return out
 
 
@@ -2608,15 +2782,35 @@ def proposal_details(name, args, restaurant_id) -> dict:
             elif name == "retract_review_reply":
                 preview = row["draft_response"] or None
     elif name == "approve_all_reviews":
-        from models import get_conn as _gc
+        # The words, not a count (NS5 M10): the same set and the same check
+        # client_api._do_approve_all runs, so the card lists what would post
+        # and says how many the check would hold back.
+        from models import get_conn as _gc, BULK_PUBLISHABLE_SQL, bulk_publish_window, get_restaurant as _gr
+        from ai_guard import check_review_reply
         conn = _gc()
         try:
-            n = conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                             "AND response_status='drafted' AND COALESCE(draft_response,'')!=''",
-                             (restaurant_id,)).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT id, rating, author, text, draft_response FROM reviews WHERE restaurant_id=? AND "
+                f"{BULK_PUBLISHABLE_SQL} ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT 25",
+                (restaurant_id, bulk_publish_window())).fetchall()
         finally:
             conn.close()
-        details.append({"label": "Replies that would post", "value": str(n)})
+        r_obj = _gr(restaurant_id)
+        said = " ".join(x for x in ((getattr(r_obj, "voice_notes", "") or "") if r_obj else "",
+                                    (getattr(r_obj, "menu_notes", "") or "") if r_obj else "") if x)
+        never = (getattr(r_obj, "never_say", "") or "") if r_obj else ""
+        go, held = [], 0
+        for r in rows:
+            if check_review_reply(r["draft_response"], never_say=never, allowed_source=said + " " + (r["text"] or "")):
+                held += 1
+            else:
+                go.append(r)
+        details.append({"label": "Replies that would post", "value": str(len(go))})
+        if held:
+            details.append({"label": "Held for you to read", "value": f"{held} — their wording needs a look first"})
+        for r in go:
+            details.append({"label": f"{r['rating']}\u2605 {r['author'] or 'a guest'}",
+                            "value": (r["draft_response"] or "").strip()})
     elif name == "send_guest_campaign":
         preview = (args.get("message") or "").strip() or None
         try:
@@ -2627,6 +2821,8 @@ def proposal_details(name, args, restaurant_id) -> dict:
             pass
         if args.get("target_day"):
             details.append({"label": "For", "value": str(args["target_day"])})
+        if args.get("link_url"):
+            details.append({"label": "Link", "value": str(args["link_url"])})
     elif name in ("publish_instagram_post", "publish_facebook_post"):
         preview = (args.get("caption") or "").strip() or None
     elif name == "send_review_request":
@@ -2649,4 +2845,16 @@ def proposal_details(name, args, restaurant_id) -> dict:
                 details.append({"label": "Hours", "value": f"{float(row['hours_scheduled']):g} scheduled"
                                 + (f" against {float(row['hours_budget']):g} budgeted"
                                    if row.get("hours_budget") else "")})
+            # The gate, as it stands now: a week with blockers is refused on
+            # confirm (the card never carries an acknowledgement), so say why
+            # before the tap and where to send it knowingly (NS5 C1/H3).
+            try:
+                from client_api import publish_blockers
+                blockers = publish_blockers(restaurant_id, row["id"])
+            except Exception:
+                blockers = []
+            if blockers:
+                details.append({"label": "Needs a look first",
+                                "value": "; ".join(blockers[:4]) + (" …" if len(blockers) > 4 else "")
+                                         + " — review it on the Labor tab and send it from there."})
     return {"details": [d for d in details if d.get("value")], "preview": preview, "at_stake": stake}

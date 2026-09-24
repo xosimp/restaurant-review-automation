@@ -889,6 +889,27 @@ private struct ProposalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
             }
+            // Every field the confirmed route receives (NS5 C1) — what the
+            // owner approves is what runs.
+            if let shown = proposal.fieldsShown, !shown.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SENT WITH THIS")
+                        .font(.cavnarBody(10.5, weight: 700))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.cavnarEmber2)
+                    ForEach(shown, id: \.self) { f in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(f.label)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk3)
+                            Text(f.value)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
 
             switch phase {
             case .done:

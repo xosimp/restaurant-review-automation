@@ -9565,6 +9565,26 @@ function _appendAskCavnarProposal(p) {
     pv.textContent = p.preview;
     card.appendChild(pv);
   }
+  /* Every field the confirmed route receives, as the server lists it
+     (fields_shown) - what the owner approves is what runs (NS5 C1). */
+  var shown = p.fields_shown || [];
+  if (shown.length) {
+    var sk = document.createElement('div');
+    sk.className = 'ask-sug-k';
+    sk.textContent = 'Sent with this';
+    card.appendChild(sk);
+    var fl = document.createElement('dl');
+    fl.className = 'dl';
+    for (var f = 0; f < shown.length; f++) {
+      var fdt = document.createElement('dt');
+      fdt.textContent = shown[f].label;
+      var fdd = document.createElement('dd');
+      fdd.textContent = shown[f].value;
+      fl.appendChild(fdt);
+      fl.appendChild(fdd);
+    }
+    card.appendChild(fl);
+  }
   var row = document.createElement('div');
   row.className = 'r';
   var confirm = document.createElement('button');
@@ -9681,6 +9701,19 @@ function _recordAskCavnarAction(p, outcome, reason, reasonCode) {
   }).catch(function(){});
 }
 
+/* The body posted on confirm: only the fields the card showed. A card from
+   an older server (no fields_shown) posts its body as before. */
+function _askShownBody(p) {
+  var body = p.body || {};
+  if (!p.fields_shown) return body;
+  var out = {}, i, k;
+  for (i = 0; i < p.fields_shown.length; i++) {
+    k = p.fields_shown[i].key;
+    if (body.hasOwnProperty(k)) out[k] = body[k];
+  }
+  return out;
+}
+
 function _runAskCavnarProposal(p, card, btn) {
   btn.disabled = true;
   btn.textContent = 'Working…';
@@ -9688,7 +9721,7 @@ function _runAskCavnarProposal(p, card, btn) {
   var method = (p.route && p.route.method) || 'POST';
   if (!route) { card.innerHTML = '<div class="err">No route for that action.</div>'; return; }
   var opts = {method: method, headers: {'Content-Type': 'application/json'}};
-  if (method !== 'GET') opts.body = JSON.stringify(p.body || {});
+  if (method !== 'GET') opts.body = JSON.stringify(_askShownBody(p));
   // The proposal fires the very same authenticated endpoint the button in
   // the UI uses, so it can never reach anything the user couldn't do.
   fetch(route, opts).then(apiJson).then(function(d) {
