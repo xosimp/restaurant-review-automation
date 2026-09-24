@@ -183,6 +183,33 @@ def _bench(cat, cls):
     return table.get(cls) or table["full_service"]
 
 
+_BAND_ORDER = ("low", "moderate", "high")
+
+
+def answered_band(answers, qids, estimate=False):
+    """A category's confidence from the answers it rests on (R14, B1 H6):
+    every one answered reads high, at least half moderate, fewer low — and
+    an owner's own estimate (a walkaway count, a guess at a share) is never
+    high. None when none of them was answered: no band is shown then, never
+    a default "moderate"."""
+    qids = [q for q in qids if q]
+    if not qids:
+        return None
+    given = sum(1 for q in qids if (answers or {}).get(q) not in (None, "", [], {}))
+    if not given:
+        return None
+    frac = given / len(qids)
+    band = "high" if frac >= 1.0 else ("moderate" if frac >= 0.5 else "low")
+    if estimate and band == "high":
+        band = "moderate"
+    return band
+
+
+def _lower_of(*bands):
+    known = [b for b in bands if b in _BAND_ORDER]
+    return min(known, key=_BAND_ORDER.index) if known else None
+
+
 def _insufficient(key, label, missing, note=None, module=None):
     return {"key": key, "label": label, "status": "insufficient", "low": 0, "likely": 0, "high": 0,
             "confidence": None, "current_state": note or "Not enough data to calculate reliably.",
@@ -675,7 +702,9 @@ def calc_reviews(a, fin, cls, owner):
     slow = rt in ("Within a week", "Longer", "Don't respond")
     weak_process = (rr is not None and rr < 60) or slow or unanswered is True or personal == "Templated" or _yes(a, "rev_categorize") is False
     if rating >= 4.6 and not weak_process:
-        return {"key": "reviews", "label": "Reviews", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": "moderate",
+        return {"key": "reviews", "label": "Reviews", "status": "none", "low": 0, "likely": 0, "high": 0,
+                "confidence": answered_band(a, ("rev_google_rating", "rev_response_rate", "rev_response_time",
+                                                "rev_unanswered", "rev_personalized", "rev_categorize")),
                 "current_state": "Google rating %.1f with a consistent response process." % rating,
                 "opportunity": "Performing well — protect it", "calc": None, "missing": missing, "module": module}
     if rating >= 4.6:
@@ -741,7 +770,10 @@ def calc_marketing(a, fin, cls, owner):
         missing.append("Ask %s whether they track which campaigns actually produce revenue." % owner)
     if total["likely"] == 0 and total["high"] == 0:
         state = "Marketing spend about $%s/mo%s." % ("{:,.0f}".format(spend), " with ROI tracked" if roi else "")
-        return {"key": "marketing", "label": "Marketing", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": "moderate",
+        return {"key": "marketing", "label": "Marketing", "status": "none", "low": 0, "likely": 0, "high": 0,
+                "confidence": answered_band(a, ("mkt_spend_month", "mkt_roi_tracked", "mkt_know_channels",
+                                                "mkt_agency_cost" if agency else None,
+                                                "mkt_agency_replace" if agency else None)),
                 "current_state": state, "opportunity": "Performing well — spend is tracked and no agency replacement in play",
                 "calc": None, "missing": missing, "module": module}
     calc = {"current_metric": "spend $%s/mo%s%s" % ("{:,.0f}".format(spend), (", agency $%s/mo" % "{:,.0f}".format(agency)) if agency else "", "" if roi else ", ROI not tracked"),
@@ -774,7 +806,8 @@ def calc_waitlist(a, fin, cls, owner):
     if walk is None or ac is None:
         return _insufficient("waitlist", "Waitlist & Guest Flow", missing)
     if walk == 0:
-        return {"key": "waitlist", "label": "Waitlist & Guest Flow", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": "moderate",
+        return {"key": "waitlist", "label": "Waitlist & Guest Flow", "status": "none", "low": 0, "likely": 0, "high": 0,
+                "confidence": answered_band(a, ("wl_walkaways_week",), estimate=True),
                 "current_state": "Owner reports no meaningful walkaways.", "opportunity": "Performing well", "calc": None, "missing": [], "module": module}
     ps = party if party else 2.5
     lost = walk * ps * ac * 52
@@ -814,7 +847,9 @@ def calc_operations(a, fin, cls, owner):
         out["hours_week"] = hours
         return out
     if monitored == "Daily":
-        return {"key": "operations", "label": "Operations", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": "moderate",
+        return {"key": "operations", "label": "Operations", "status": "none", "low": 0, "likely": 0, "high": 0,
+                "confidence": answered_band(a, ("ops_comps_month" if _num(a, "ops_comps_month") is not None
+                                                else "food_comps_week", "ops_comps_monitored")),
                 "current_state": "Comps and voids (%s) are reviewed daily by person." % src, "opportunity": "Performing well — controls in place",
                 "calc": None, "missing": [], "module": module, "hours_week": hours}
     rng = _rng(comps * 12, 0.15, 0.25, 0.35)
@@ -855,8 +890,16 @@ def calc_technology(a, fin, cls, owner):
     excluded = [r for r in rows if r["replace"] and r["category"].lower() in NEVER_REPLACED]
     dup_only = [r for r in rows if r["duplicate"] and not r["replace"] and r["cost"] > 0]
     base = sum(r["cost"] for r in replaceable) * 12
+    # The band is how completely the owner answered the tool list (R14, B1
+    # H6) — it was "high" whatever was said: a cost on every tool and an
+    # explicit replace answer on each.
+    _raw = [row for row in ((a or {}).get("tech_tools") or []) if isinstance(row, dict)]
+    _answered = sum(1 for row in _raw if row.get("replace") in ("yes", "no", True, False)
+                    and str(row.get("cost") or "").strip() not in ("", "0"))
+    _frac = _answered / len(_raw) if _raw else 0
+    tech_conf = "high" if _frac >= 1.0 else ("moderate" if _frac >= 0.5 else "low")
     if base == 0:
-        return {"key": "technology", "label": "Technology", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": "high",
+        return {"key": "technology", "label": "Technology", "status": "none", "low": 0, "likely": 0, "high": 0, "confidence": tech_conf,
                 "current_state": "Software stack about $%s/mo (%d tools). Nothing marked replaceable." % ("{:,.0f}".format(total_month), len(rows)),
                 "opportunity": "No consolidation savings counted" + (" — %d overlapping tool(s) flagged but kept" % len(dup_only) if dup_only else ""),
                 "calc": None, "missing": [], "module": module, "spend_month": total_month, "spend_annual": total_month * 12}
@@ -868,7 +911,7 @@ def calc_technology(a, fin, cls, owner):
             "assumptions": ["POS, payroll and accounting are never counted — Cavnar AI does not replace them." + (" (%s marked replaceable and excluded.)" % ", ".join(r["category"] for r in excluded) if excluded else ""),
                             "Marketing agency fees are counted in Marketing, not here."],
             "method": "consolidation", "overlap": "Agency fees excluded (Marketing). Only owner-marked tools count."}
-    out = {"key": "technology", "label": "Technology", "status": "ok", "confidence": "high",
+    out = {"key": "technology", "label": "Technology", "status": "ok", "confidence": tech_conf,
            "current_state": "Software stack about $%s/mo across %d tools; %d marked replaceable." % ("{:,.0f}".format(total_month), len(rows), len(replaceable)),
            "opportunity": "Consolidate replaceable tools into one platform", "calc": calc, "missing": [], "module": module,
            "spend_month": total_month, "spend_annual": total_month * 12}
@@ -1280,21 +1323,18 @@ def apply_notes(cats, notes_read):
            "caveats": list(notes_read.get("caveats") or []), "applied": 0}
     if out["stale"]:
         return out
-    # Net direction per category, clamped to one step: three notes that all
-    # say "less certain" move labor from high to moderate, not to low.
-    net = {}
-    for ins in insights:
-        k = ins.get("category") or ""
-        if ins.get("effect") == "raise_confidence":
-            net[k] = net.get(k, 0) + 1
-        elif ins.get("effect") == "lower_confidence":
-            net[k] = net.get(k, 0) - 1
-    for k, d in net.items():
+    # Notes only ever LOWER a band (R14, B1 H6), one step at most: three
+    # notes that all say "less certain" move labor from high to moderate,
+    # not to low. A "raise_confidence" note is context, never a raise — the
+    # rule every other surface follows (a model's read only lowers), and
+    # this report goes to a prospective owner. A category with no computed
+    # band is left without one, never defaulted to "moderate".
+    lower = {ins.get("category") or "" for ins in insights if ins.get("effect") == "lower_confidence"}
+    for k in lower:
         c = cats.get(k)
-        if c and c.get("status") == "ok" and d:
-            cur = c.get("confidence") if c.get("confidence") in _CONF_ORDER else "moderate"
-            i = _CONF_ORDER.index(cur)
-            c["confidence"] = _CONF_ORDER[min(2, i + 1)] if d > 0 else _CONF_ORDER[max(0, i - 1)]
+        if c and c.get("status") == "ok" and c.get("confidence") in _CONF_ORDER:
+            i = _CONF_ORDER.index(c["confidence"])
+            c["confidence"] = _CONF_ORDER[max(0, i - 1)]
     for ins in insights:
         c = cats.get(ins.get("category") or "")
         if not c:

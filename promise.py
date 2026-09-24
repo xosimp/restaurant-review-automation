@@ -135,7 +135,12 @@ def compare(restaurant_id, today=None, db_path=None):
                  "status": cat.get("status"),
                  "promised_low": cat.get("low"), "promised_likely": cat.get("likely"),
                  "promised_high": cat.get("high"),
-                 "confidence": cat.get("confidence")}
+                 # Only a band the audit computed for a sized category (R14,
+                 # B1 H6): a "none" or unsized area carries no band, and a
+                 # value outside the engine's three is not carried forward.
+                 "confidence": (cat.get("confidence")
+                                if cat.get("status") == "ok"
+                                and cat.get("confidence") in ("low", "moderate", "high") else None)}
         if cat.get("status") == "insufficient":
             entry["state"] = "not_sized"
             entry["note"] = "The audit could not size this — not enough was known that day."
