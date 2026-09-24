@@ -1138,16 +1138,20 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
     live = outcomes.in_flight_on(restaurant_id, metric)
     if live:
         return {"ok": True, "outcome": live, "already_tracking": True,
+                "tracker_refused": outcomes.TrackerRefused(live, metric).reply(),
                 "note": ("A change on this metric is already being measured — "
                          f"\"{live.get('title')}\". Only one runs at a time per metric, so "
                          "their before/after readings don't overlap. Tell the owner it is "
                          "already being tracked.")}
     try:
-        o = outcomes.record(restaurant_id, "ask", f"ask:{title.lower()[:80]}",
-                            title, metric)
+        res = outcomes.start(restaurant_id, "ask", f"ask:{title.lower()[:80]}", title, metric,
+                             gate="metric")
     except ValueError as e:
         return {"error": str(e)}
-    return {"ok": True, "outcome": o}
+    if not res["ok"]:
+        return {"ok": True, "already_tracking": True, "tracker_refused": res["tracker_refused"],
+                "note": res["tracker_refused"]["reason"] + " Tell the owner it is already being tracked."}
+    return {"ok": True, "outcome": res["outcome"], "tracker": res["tracker"]}
 
 
 # ── The nightly Daily Sales Report (dsr/) ──────────────────────────────────
@@ -1843,7 +1847,7 @@ TOOLS = [
             "name": "set_goal",
             "description": (
                 "Set a goal the owner stated (no confirmation needed — private and replaceable). "
-                "Only when the owner states a target themselves; never invent one. metric: labor_pct | food_cost_pct | sales | avg_rating | weekly_waste | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service). "
+                "Only when the owner states a target themselves; never invent one. metric: labor_pct | overtime_hours | food_cost_pct | sales | avg_rating | weekly_waste | response_hours | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service). "
                 "target is in the metric's own unit (percent points, dollars per day, stars)."
             ),
             "input_schema": {"type": "object", "required": ["metric", "target"],
@@ -1864,7 +1868,7 @@ TOOLS = [
             "description": (
                 "Start measuring the effect of a change the owner says they are making "
                 "(no confirmation — it only measures). The baseline is taken now and a before/after "
-                "result comes back when the window closes. metric: labor_pct | food_cost_pct | sales | avg_rating | weekly_waste | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service)."
+                "result comes back when the window closes. metric: labor_pct | overtime_hours | food_cost_pct | sales | avg_rating | weekly_waste | response_hours | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service)."
             ),
             "input_schema": {"type": "object", "required": ["title", "metric"],
                              "additionalProperties": False, "properties": {

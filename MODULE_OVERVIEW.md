@@ -177,6 +177,16 @@ Two halves:
 **Files**: `metrics.py`, `outcomes.py`, `goals.py`, `menu_intelligence.py`, `demand.py`, `loss_detection.py`, `issues.py`, `invoices.py`, `morning_brief.py`, `preshift.py`, `strategy_routes.py` (HTTP, web + mobile twins + the public `/i/<token>` issue page), `strategy_jobs.py` (scheduled half).
 
 **Design stance**: every number is measured, never generated. `metrics.py` is the one registry of "what can be measured before and after" (unknown is `None`, never 0; each metric has a noise band below which the verdict is `no_clear_change`). `outcomes.py` tracks a committed change against that metric and always carries `CAUSATION_CAVEAT` — before/after, not proven cause. `goals.py` holds one active target per metric.
+
+**Outcomes after the rec-ROI audit** (`outcomes.py`, `metrics.py`; contracts in API_REFERENCE.md → "Outcomes and value"):
+- **Metrics**: eleven — `labor_pct`, `overtime_hours` (hours past 40 per whole payroll week from the shifts file; a week with no shifts is unknown; dollars at the overtime premium only, `metrics.overtime_premium_per_hour` = blended wage × (1.5 − 1)), `food_cost_pct`, `weekly_waste`, `sales`, `weekday_sales:<Day>`, `avg_rating`, `complaints:<cat>`, `response_hours` (median review-to-reply hours, ≥5 replies, no dollars), `comp_rate`, `void_rate`. `metrics.FAMILIES` groups the ones that measure the same money or experience (labor cost, food cost, sales, guest rating, reply speed, comps, voids). `compare` returns the `band` it used and the `multiple` of it the move covered; a relative band has a floor (`_NOISE_FLOOR`).
+- **One tracker per number.** `outcomes.record(gate=)` refuses a second tracker on the same metric (`"metric"`, every owner-pressed door, Ask, observe, reprice, campaigns, schedule accepts) or anywhere in the family (`"family"`, the automatic starts: Accept/Done on `recs/event`, Home Done). `outcomes.start` turns a refusal (`TrackerRefused`) into the `tracker_refused` reply. An alert-opened tracker is informational and never blocks.
+- **What a recommendation measures**: `outcomes.metric_for_rec` — a DSR action by its kind (`DSR_ACTION_METRICS`: control_hours/adjust_staffing → labor %, reduce_waste → waste, respond_reviews → reply time, the rest nothing — authoritative), else the metric it was presented with (`rec_instances.expected_metric`). Track falls back to the module's natural metric (`strategy_routes.REC_TRACK_METRICS`); Marketing and Intel have none.
+- **Credit**: `module` is stored on the row from the recommendation (`resolve_module`: caller → `rec_instances.module` → DSR block → source → the metric's `METRIC_MODULE`, where `sales` is `other`).
+- **Baselines** (`_baseline`): `prior window` for metrics a season does not move; `matched weekdays` for labor %, food cost %, sales (a window a whole number of weeks back); `same weeks last year` when ≥80% of both of last year's windows are measured — this year's before-window moved as those weeks moved last year, compared with a band widened by `SEASONAL_BAND_SCALE`.
+- **Evaluation** stores after-value, delta, `delta_pct`, the other changes in the window (`find_concurrent`: trackers and accepted recommendations on the same family; price changes, owner events, unbalanced holidays and closures for trading-volume families), and the grade (`grade`): `none` / `associated` (past the band once, or anything with a concurrent change or an unchecked window) / `consistent` (≥ `CONSISTENT_MULTIPLE` bands, nothing else changing) / `held` (still past the band at re-check, nothing else changing). No label claims cause.
+- **Re-check** (`recheck`, daily job): at `recheck_on` = max(start + 90, evaluate_on + window) the window ending the day before is read against the same baseline — `held` / `faded` / `reversed` / `unknown`. Faded or reversed stops counting and stops accruing. `validated` = improved + held + nothing else on the family.
+- **Value**: `total_value` counts one result per family per overlapping window (`distinct`), for wins and for losses; `monthly` is the improvements, `worsened` beside it, `net_monthly` the difference (may be negative, `net_note` says so), `validated_monthly` the part that held. Rating and reply-time wins count in `wins_measured` / `wins_by_module` with a `result_line`, never priced. `cumulative` sums `outcome_value_days`: the after-window's measured days at the evaluated figure's daily share, then one trailing re-read a day while the move holds (capped at the evaluated figure, up to `ACCRUAL_HORIZON_DAYS`), net of losses, one counted row per family and direction a day.
 - **Menu**: `menu_intelligence.dish_scorecard` joins margin (inventory_ledger) to review dish mentions; `reprice_suggestions` refuses sample inventory and only proposes a price that restores the previous food-cost %.
 - **Demand**: `demand.py` forecasts from medians of the same weekday; slow days and a prep list follow from it.
 - **Loss**: `loss_detection.py` — comps/voids/refunds from POSes that report them (RPOWER); a spike needs 2× baseline AND $75 AND 4 events; approver concentration attributes to the APPROVING manager. Worded "worth reviewing", never an accusation, and **owner-only** everywhere (routes, digest, brief — never a manager).
@@ -189,8 +199,9 @@ Two halves:
 
 ## Customer value / ROI (audit #20)
 
-**Files**: `value_delivered.py` (the four figures), `outcomes.py`
-(`total_value`, `best_ever`, `realised`, `module_of`), `promise.py` (the
+**Files**: `value_delivered.py` (the four figures, and `rates()` — every
+stated rate in one object the payload carries), `outcomes.py`
+(`total_value`, `cumulative`, `best_ever`, `realised`, `module_of_row`), `promise.py` (the
 sales audit, measured), `metrics.py` (`comp_rate`/`void_rate`),
 `models.money_surfaced`.
 

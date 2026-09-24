@@ -1045,6 +1045,10 @@ RUNNABLE_JOBS = {
     "review_fetch":            {"cadence": "8am / 12pm / 4pm / 8pm CT", "what": "Fetch new reviews and draft replies", "target": ("scheduler", "run_daily_fetch")},
     "quality_calibration":     {"cadence": "Sunday 5am CT", "what": "Suggest Shift Quality weights (calibrate_weights, what Apply writes)", "target": ("strategy_jobs", "run_quality_calibration")},
     "schedule_outcomes":       {"cadence": "Monday 4am CT", "what": "Record what each published week actually did, by daypart", "target": ("strategy_jobs", "run_schedule_outcomes")},
+    # Safe to run on demand: a re-check is written once and accrual reads
+    # forward from each tracker's accrued_through, so a second pass adds
+    # nothing. Sends nothing.
+    "outcome_rechecks":        {"cadence": "6am CT daily", "what": "Re-check measured results at 90 days and accrue measured savings day by day", "target": ("strategy_jobs", "run_outcome_rechecks")},
     "reservation_sync":        {"cadence": "Wednesday 5am CT", "what": "Reservation feeds into events & reservations (no provider live yet)", "target": ("reservation_feeds", "run_reservation_sync")},
     "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
     "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},

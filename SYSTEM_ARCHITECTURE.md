@@ -137,7 +137,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`), `run_learning` |
 | `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` |
 | `inventory_depletion`, `food_cost_snapshots` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots` |
-| `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations` | 6am | the two root-cause passes, then `run_outcome_evaluations` |
+| `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations`, `outcome_rechecks` | 6am | the two root-cause passes, then `run_outcome_evaluations`, then `run_outcome_rechecks` |
 | `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |
 | `auto_draft_schedule` | Thu 6am | `run_auto_draft_schedules` |
 | `refresh_tokens` | 7am | `refresh_expiring_tokens` |
@@ -188,7 +188,8 @@ Every tick: `notify.release_due_alerts()` (alerts held through a rush). Every 20
 ## Strategic jobs (`strategy_jobs.py`, gated in `scheduler.scheduler_loop`)
 
 - `loss_sync` — daily after `pos_sync` (3am CT+): comps/voids/refunds into `pos_loss_daily`; an unsupported POS is normal, not a failure.
-- `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended, marks met goals.
+- `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended (storing after-value, % change, the other changes in the window and the attribution grade, and accruing the window's measured days into `outcome_value_days`), marks met goals.
+- `outcome_rechecks` — daily 6am CT+, after `outcome_evaluations` (`strategy_jobs.run_outcome_rechecks`): re-checks each measured move at `outcomes.RECHECK_DAYS` (a win that no longer holds stops counting in Delivered and stops accruing), then accrues measured dollars day by day while each move holds. Bounded and resumable (`_bounded_each`, cursor `outcome_rechecks_cursor` in `job_cursors`); each tracker's `accrued_through` is its own cursor, so a second run adds nothing. Sends nothing; runnable from the admin console (`admin_ops.RUNNABLE_JOBS`).
 - `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`. Bounded (40 minutes) with a `job_cursors` cursor, so a pass that runs out of time resumes where it stopped.
 - `issue_scan` — hourly: bad reviews → issues where a manager is routed.
 - `closing_summary` — at each restaurant's own close (a close at or after midnight is the same night's, owned by its business date — `time_utils.service_window`), after one last POS reading: tonight against a typical same weekday plus the close-out handover, to the brief's audience. Skipped in quiet hours and when there is nothing to say — and for every restaurant the nightly DSR runs for (`dsr_enabled` and a POS connected, `dsr.deliver.replaces_closing_summary`): its DSR notice replaces this one, one notification not two.

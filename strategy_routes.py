@@ -242,27 +242,38 @@ def _do_outcome_record(u):
             return {"ok": False, "error": "Track for between 7 and 180 days."}, 400
     else:
         wd = None
+    source_key = b.get("source_key") or f"manual:{title.lower()[:80]}"
     try:
-        o = outcomes.record(_rid(u), b.get("source") or "manual",
-                            b.get("source_key") or f"manual:{title.lower()[:80]}",
-                            title, b["metric"], user_id=u.get("id"),
-                            window_days=wd)
+        # One tracker per metric (rec-ROI #3): a second Track on a number
+        # already being measured is answered, not started.
+        res = outcomes.start(_rid(u), b.get("source") or "manual", source_key, title, b["metric"],
+                             user_id=u.get("id"), window_days=wd, module=b.get("module"), gate="metric")
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
+    o = res.get("outcome") or {}
     # "Track this" on a recommendation is the owner acting on it: the
     # ledger records it as accepted (which also quiets the card while it is
-    # measured), so the tracker's verdict lands on a taken episode.
+    # measured), so the tracker's verdict lands on a taken episode. Taken
+    # even when another tracker already measures the number — the owner
+    # still took it; it just is not measured on its own.
     if (b.get("source") or "") == "recommendation" and b.get("source_key"):
         try:
             import rec_ledger as _rl
             surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "home"
+            meta = ({"tracking": o.get("id"), "metric": o.get("metric")} if o else
+                    {"metric": b["metric"], "tracker_refused": (res["tracker_refused"].get("in_flight") or {}).get("id")})
             _rl.record(_rid(u), str(b["source_key"]), "accepted", surface=surface, user_id=u.get("id"),
-                       role=u.get("role"), meta={"tracking": o.get("id"), "metric": o.get("metric")},
-                       source_ref=f"track:{o.get('id')}")
+                       role=u.get("role"), meta=meta,
+                       source_ref=f"track:{o.get('id')}" if o else f"track-refused:{source_key}")
             import home_brief as _hb
             _hb.invalidate(_rid(u))
         except Exception as _tx:
             print(f"[outcomes] tracked recommendation not recorded in the ledger: {_tx}")
+    if not res["ok"]:
+        # ok stays true: the answer was taken. Both clients show `warning`.
+        refused = res["tracker_refused"]
+        return {"ok": True, "tracker_refused": refused, "warning": refused["reason"],
+                "message": refused["reason"]}, 200
     # A tracker whose BASELINE could not be measured will come back "unknown"
     # when its window closes, 28 days from now, having told the owner
     # nothing. Still allowed — it is their change to track, and the data may
@@ -273,7 +284,7 @@ def _do_outcome_record(u):
         warning = (f"Tracking started, but {(o.get('metric_label') or o['metric']).lower()} "
                    f"can't be read right now ({o.get('baseline_detail') or 'no data'}), so "
                    f"there may be nothing to compare against.")
-    return {"ok": True, "outcome": o, "warning": warning}, 200
+    return {"ok": True, "outcome": o, "tracker": res["tracker"], "warning": warning}, 200
 
 
 def _do_outcome_abandon(u, outcome_id):
@@ -302,6 +313,10 @@ def _do_value(u):
     # dollars straight back by subtraction.
     denied = set() if _metric_visible(u, "food_cost_pct") else {"inventory"}
     out = value_delivered.breakdown(rid, denied_modules=denied)
+    # Every stated rate, beside the four figures (never one of them) — the
+    # same object delivered.rates carries, so a surface prices a reply from
+    # the server's REPLY_RATE, not its own copy (rec-ROI #12).
+    out["rates"] = value_delivered.rates()
     # Distinct work since sign-up. Needs no button and carries no dollars,
     # so it is not filtered by module permission — a manager may know the
     # product drafted 200 replies.
@@ -327,7 +342,8 @@ def _do_value(u):
 
 def _do_metrics(u):
     import metrics
-    keys = [k for k in ("labor_pct", "food_cost_pct", "sales", "avg_rating", "weekly_waste")
+    keys = [k for k in ("labor_pct", "overtime_hours", "food_cost_pct", "sales", "avg_rating", "weekly_waste",
+                        "response_hours")
             if _metric_visible(u, k)]
     return {"ok": True, "metrics": [{"key": k, **metrics.describe(k)} for k in keys]}, 200
 
@@ -1391,14 +1407,19 @@ def _do_calibration_apply(u):
 
 
 # The metric a module's recommendation is measured against when the owner
-# taps Track — the module's natural number, in the order to try. The first
-# one this restaurant can actually measure is used; with none, no tracker
-# starts and the answer says so (M-8). Intel has no metric of its own, so
-# neither client offers Track there.
+# taps Track and the recommendation carries no metric of its own — the
+# module's natural number, in the order to try. The first one this
+# restaurant can actually measure is used; with none, no tracker starts and
+# the answer says so (M-8). Intel has no metric of its own, and neither has
+# Marketing: a post has no honest metric (outcomes.OBSERVED_ACTIONS says so
+# of post_published), and "marketing": ("sales",) started a sales tracker
+# that read every unrelated thing that moved sales as the post working —
+# and credited it to Labor (rec-ROI #11). Track on either answers "nothing
+# to measure it against yet". A marketing recommendation that DOES carry a
+# metric (a slow-day text aimed at one weekday's sales) is measured on it.
 REC_TRACK_METRICS = {
     "reviews": ("avg_rating",),
     "food": ("food_cost_pct", "weekly_waste"),
-    "marketing": ("sales",),
     "labor": ("labor_pct",),
 }
 
@@ -1419,29 +1440,54 @@ def _rec_title(rid, key):
         return None
 
 
-def _start_rec_tracker(rid, key, module, user_id):
-    """Track: a real before-and-after tracker (outcomes.record) on the
-    module's natural metric. Returns (outcome row, metric description) or
-    (None, None) when nothing here can be measured for this restaurant."""
+def _start_rec_tracker(rid, key, module, user_id, event="accepted", body_metric=None):
+    """A real before-and-after tracker (outcomes.start) for an answered
+    recommendation (rec-ROI #18). Returns (result, metric description):
+    result is {"tracker": ...} when one started, {"tracker_refused": ...}
+    when one could not, or None when nothing was attempted.
+
+    Which metric: the one the recommendation CARRIES (a DSR action's kind,
+    #39 — authoritative, so "reorder" measures nothing; else the metric it
+    was presented with). Track ("accepted") with none falls back to the
+    module's natural number (REC_TRACK_METRICS); Done ("completed") with
+    none starts nothing — Done never promised a measurement.
+
+    Automatic, so the family gate (#18): nothing starts while anything in
+    the metric's family is already being measured, and the reply says what
+    is and until when."""
     import metrics
     import outcomes
-    for metric in REC_TRACK_METRICS.get(module or "", ()):
+    carried, authoritative = outcomes.metric_for_rec(rid, key, body_metric=body_metric)
+    if carried:
+        candidates = (carried,)
+    elif authoritative or event != "accepted":
+        return ({"tracker_refused": outcomes.no_metric_reply()} if event == "accepted" else None), None
+    else:
+        candidates = REC_TRACK_METRICS.get(module or "", ())
+    if not candidates:
+        return {"tracker_refused": outcomes.no_metric_reply()}, None
+    from datetime import date as _date, timedelta as _td
+    unreadable = None
+    for metric in candidates:
         try:
-            from datetime import date as _date, timedelta as _td
-            value = metrics.trailing(rid, metric, end=(_date.today() - _td(days=1)).isoformat())["value"]
+            got = metrics.trailing(rid, metric, end=(_date.today() - _td(days=1)).isoformat())
         except Exception as e:
             print(f"[recs] {metric} not measurable for {rid}: {e}")
             continue
-        if value is None:
+        if got["value"] is None:
+            unreadable = unreadable or (metric, got.get("detail"))
             continue
         title = _rec_title(rid, key) or key
         try:
-            row = outcomes.record(rid, "recommendation", key, title, metric, user_id=user_id)
+            res = outcomes.start(rid, "recommendation", key, title, metric, user_id=user_id,
+                                 module=module, gate="family")
         except Exception as e:
             print(f"[recs] tracker failed for {rid} {key}: {e}")
             return None, None
-        return row, metrics.describe(metric)
-    return None, None
+        return res, metrics.describe(metric)
+    if unreadable:
+        return {"tracker_refused": outcomes.not_measurable_reply(*unreadable)}, None
+    return {"tracker_refused": outcomes.no_metric_reply()}, None
 
 
 def _do_rec_event(u):
@@ -1486,22 +1532,37 @@ def _do_rec_event(u):
     module = meta.get("module") or (surface if surface in REC_TRACK_METRICS else None)
     message = None
     tracking = None
+    started = None
+    if event in ("completed", "accepted"):
+        # Accept/Done on a recommendation that carries a metric starts its
+        # tracker (rec-ROI #18, #39), under the family gate. `body_metric`
+        # lets a client name the metric a line was shown with.
+        started, info = _start_rec_tracker(_rid(u), key.strip(), module, u.get("id"), event=event,
+                                           body_metric=b.get("metric") if isinstance(b.get("metric"), str) else None)
+    tracker = (started or {}).get("tracker")
+    refused = (started or {}).get("tracker_refused")
+    if tracker:
+        meta["tracker_id"] = tracker.get("id")
     if event == "completed":
         silence = _rl.SILENCE_DAYS["done"]
         message = "Done \u2014 Cavnar won\u2019t suggest it again"
+        if tracker:
+            message += f". Now {tracker['label_text']}"
+        elif refused and refused.get("code") == "in_flight":
+            message += f". {refused['reason']}"
     elif event == "dismissed" and meta.get("kind") == "not_for_us":
         message = "Noted \u2014 it won\u2019t come back"
     elif event == "accepted":
-        row, info = _start_rec_tracker(_rid(u), key.strip(), module, u.get("id"))
-        if row:
-            window = int(info["default_window_days"])
+        if tracker:
+            window = int(tracker.get("window_days") or info["default_window_days"])
             # Not re-asked while its outcome is being measured.
             silence = max(_rl.ACCEPTED_QUIET_DAYS, window)
-            meta["tracker_id"] = row.get("id")
-            tracking = {"metric": info["key"], "label": info["label"], "window_days": window,
-                        "evaluate_on": row.get("evaluate_on")}
-            message = (f"Tracking \u2014 Cavnar will compare {info['label'].lower()} over the next "
+            tracking = {"metric": tracker["metric"], "label": tracker["label"], "window_days": window,
+                        "evaluate_on": tracker.get("evaluate_on")}
+            message = (f"Tracking \u2014 Cavnar will compare {tracker['label'].lower()} over the next "
                        f"{window} days with the {window} before")
+        elif refused and refused.get("code") == "in_flight":
+            message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. {refused['reason']}")
         else:
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
                        "here Cavnar can measure it against yet")
@@ -1512,6 +1573,10 @@ def _do_rec_event(u):
         out["message"] = message
     if tracking:
         out["tracking"] = tracking
+    if tracker:
+        out["tracker"] = tracker
+    elif refused:
+        out["tracker_refused"] = refused
     return out, 200
 
 
@@ -1647,22 +1712,28 @@ def _do_recommendation_event(u):
     # The same answer in the one trail every surface reads: "Not for us"
     # keeps this recommendation off the draft from now on, on any device.
     rkey = _si.schedule_rec_key(kind, text)
+    started = None
     if action == "accepted":
         _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"))
         # An accepted "Trim about Nh…" is measured like Home's trim_day: the
         # labor % after against before (outcomes). The other kinds are read
         # against what the night itself recorded (schedule_intel.
-        # measure_accepted_recommendations, Mondays).
+        # measure_accepted_recommendations, Mondays). One tracker per metric
+        # (rec-ROI #3): a second trim while labor % is measured is answered.
         if kind == "hours":
             try:
                 import outcomes as _oc
-                _oc.record(_rid(u), "schedule", rkey, text[:160] or "Trim the schedule", "labor_pct", user_id=u.get("id"))
+                started = _oc.start(_rid(u), "schedule", rkey, text[:160] or "Trim the schedule", "labor_pct",
+                                    user_id=u.get("id"), module="labor", gate="metric")
             except Exception as _ox:
                 print(f"[schedule] could not start the outcome tracker: {_ox}")
     elif action == "dismissed":
         _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
                    meta={"kind": "not_for_us"})
-    return {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}, 200
+    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}
+    if started:
+        out.update({k: started[k] for k in ("tracker", "tracker_refused") if k in started})
+    return out, 200
 
 
 

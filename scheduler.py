@@ -2827,6 +2827,13 @@ def scheduler_loop():
                 from strategy_jobs import run_outcome_evaluations
                 _ops.run_job("outcome_evaluations", run_outcome_evaluations)
 
+            # 6am+, after the evaluations — re-check measured moves at 90
+            # days and accrue measured dollars day by day (rec-ROI #14, #33;
+            # strategy_jobs.run_outcome_rechecks). Sends nothing.
+            if _due(now, 6) and _ops.claim_period("outcome_rechecks", str(today)):
+                from strategy_jobs import run_outcome_rechecks
+                _ops.run_job("outcome_rechecks", run_outcome_rechecks)
+
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
             # never at a Chicago hour that is 4am in Los Angeles (A-10). The
