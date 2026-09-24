@@ -185,7 +185,7 @@ def weak_reply():
             _it("One urgent review came in and the rating averaged 3.3 stars.", "reviews.urgent",
                 "reviews.rating_avg"),
         ],
-        "biggest_risk": _it("Food cost is running 2.6 points over its 30% target.", "food.est_cost_pct",
+        "biggest_risk": _it("Estimated food cost is running 2.6 points over its 30% target.", "food.est_cost_pct",
                             "food.target_pct"),
         "biggest_win": None,
         "biggest_financial_opportunity": _it("$1,180 a month in food cost is recoverable.",

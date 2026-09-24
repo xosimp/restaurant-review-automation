@@ -1014,6 +1014,86 @@ def _sanitize_history(history):
     return cleaned
 
 
+# ── which earlier answers may verify a figure (H4) ─────────────────────────
+#
+# How long a recorded check is kept. History replays at most
+# _MAX_HISTORY_MESSAGES turns of a live chat; a month is far past that.
+ANSWER_CHECK_KEEP_DAYS = 30
+
+
+def _answer_hash(text) -> str:
+    """The key an answer is recorded under — the answer as history replays
+    it (stripped and cut to _MAX_HISTORY_TURN_LENGTH, _sanitize_history's
+    own rule), so the turn the client sends back finds its record."""
+    import hashlib
+    body = str(text or "").strip()[:_MAX_HISTORY_TURN_LENGTH]
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+
+
+def record_answer_check(restaurant_id, answer, unverified, db_path=None) -> None:
+    """Record what the figure check found in an answer this server wrote.
+    Never raises — a lost record only means that answer cannot verify a
+    later one, which is the safe direction."""
+    if not restaurant_id or not str(answer or "").strip():
+        return
+    import models as _m
+    try:
+        conn = _m.get_conn(db_path) if db_path else _m.get_conn()
+        try:
+            conn.execute("INSERT OR REPLACE INTO ask_answer_checks (restaurant_id, answer_hash, unverified, created_at) "
+                         "VALUES (?,?,?,datetime('now'))",
+                         (restaurant_id, _answer_hash(answer), json.dumps(list(unverified or []))))
+            conn.execute("DELETE FROM ask_answer_checks WHERE restaurant_id=? AND created_at < datetime('now', ?)",
+                         (restaurant_id, f"-{ANSWER_CHECK_KEEP_DAYS} days"))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ask_cavnar] answer check not recorded rid={restaurant_id}: {e}")
+
+
+def _recorded(answer, meta, restaurant_id):
+    """`meta`, after recording the answer's figure check (H4)."""
+    try:
+        record_answer_check(restaurant_id, answer, (meta or {}).get("unverified_figures") or [])
+    except Exception:
+        pass
+    return meta
+
+
+def _verified_history(restaurant_id, messages, db_path=None) -> list:
+    """The history turns the figure check may read: an assistant turn this
+    server recorded with nothing unverified in it. Never a user turn — the
+    owner's own figure is not their data — and never an answer with no
+    record (sent by a client, written before the record existed, or edited
+    on the way back)."""
+    turns = [m["content"] for m in (messages or [])
+             if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
+    if not turns or not restaurant_id:
+        return []
+    import models as _m
+    try:
+        conn = _m.get_conn(db_path) if db_path else _m.get_conn()
+        try:
+            hashes = [_answer_hash(t) for t in turns]
+            rows = conn.execute(
+                f"SELECT answer_hash, unverified FROM ask_answer_checks WHERE restaurant_id=? "
+                f"AND answer_hash IN ({','.join('?' * len(hashes))})", (restaurant_id, *hashes)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ask_cavnar] answer checks unreadable rid={restaurant_id}: {e}")
+        return []
+    clean = set()
+    for r in rows:
+        try:
+            if not json.loads(r["unverified"] or "[]"):
+                clean.add(r["answer_hash"])
+        except Exception:
+            continue
+    return [t for t in turns if _answer_hash(t) in clean]
+
+
 # ask() lived here: a no-tools, 320-token twin of ask_with_tools that nothing
 # has called since the tool loop landed. It was kept in step with the prompt
 # by hand for months, it could not propose an action or read anything, and
@@ -1309,7 +1389,14 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # and neither is snapshot+tools, because "as I said, labor was 31.4%"
     # quotes a figure from earlier in the conversation. A corpus missing any
     # of the three turns a correct citation into a false alarm.
-    seen_corpus = [context] + [m["content"] for m in messages if isinstance(m.get("content"), str)]
+    #
+    # Except what the conversation itself asserted (H4). History comes back
+    # from the client, so an earlier answer's invented figure verified the
+    # next answer that repeated it, and a figure the owner typed verified
+    # the model's echo of it as "from your data". An earlier ANSWER counts
+    # only when the server recorded that its own figures checked out
+    # (record_answer_check); the owner's words never do.
+    seen_corpus = [context] + _verified_history(getattr(restaurant, "id", None), messages)
     tools_used = []
     # Modules a tool reported reading that its own name does not reveal.
     consulted = []
@@ -1354,7 +1441,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         if getattr(message, "stop_reason", None) != "tool_use":
             answer = _answer_of(message)
             return (answer, truncated, proposals,
-                    _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
+                    _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
 
         # Echo the assistant turn back verbatim — the API requires the
         # tool_use blocks it produced to be present before their results.
@@ -1468,7 +1555,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             )
             answer = _answer_of(final)
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
-                    _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
+                    _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
 
     # Ran out of rounds (or of time) — answer with what it has rather than
     # looping.
@@ -1480,7 +1567,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     )
     answer = _answer_of(final)
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
-            _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
+            _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
 
 
 # Which module each tool speaks for, so an answer can say what it consulted.

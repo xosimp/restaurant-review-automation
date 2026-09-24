@@ -224,6 +224,43 @@ def _valid_value(q, value):
     return s
 
 
+def _value_in_note(q, value, note_text) -> bool:
+    """Whether the note a suggestion cites actually states that value (H12).
+    The prompt says "the value must be exactly what the note says"; only the
+    type and range were checked, so a suggestion could cite one note and
+    carry a number from nowhere. A number must be one the note writes (a
+    "$22k" is 22,000); a choice must be written in the note; a yes/no is not
+    a figure and needs only a note that resolves."""
+    import re as _re
+    from ai_guard import _figures
+    t = q.get("type")
+    text = str(note_text or "")
+    if t in ("currency", "percent", "integer", "decimal", "rating"):
+        try:
+            n = float(str(value).replace("$", "").replace(",", "").replace("%", ""))
+        except ValueError:
+            return False
+        f = _figures(text)
+        pool = f["money"] | f["pct"] | f["bare"]
+        return any(abs(n - k) <= max(0.01, 0.001 * abs(n)) for k in pool)
+    if t == "yesno":
+        return True
+    low = " ".join(text.lower().split())
+    v = " ".join(str(value).lower().split())
+    if not v:
+        return False
+    if t == "date":
+        from time_utils import mdy
+        try:
+            return v in low or mdy(v) in low
+        except Exception:
+            return v in low
+    if v in low:
+        return True
+    words = [w for w in _re.findall(r"[a-z0-9]+", v) if len(w) >= 3]
+    return bool(words) and all(w in low for w in words)
+
+
 def _sanitize(parsed, notes, answers):
     insights, suggestions, caveats = [], [], []
     for ins in parsed.get("insights") or []:
@@ -253,10 +290,15 @@ def _sanitize(parsed, notes, answers):
         cur = answers.get(q["id"])
         if cur not in (None, "") and str(cur).strip().lower() == v.lower():
             continue
+        # The note it cites must exist and must state the value (H12) — a
+        # suggestion with no note behind it used to be kept with a stand-in.
         try:
-            n = notes[int(sg.get("note"))]
+            idx = int(sg.get("note"))
+            n = notes[idx] if idx >= 0 else None
         except (TypeError, ValueError, IndexError):
-            n = {"section": q["section"], "source": "note"}
+            n = None
+        if n is None or not _value_in_note(q, v, n.get("text")):
+            continue
         suggestions.append({"note": sg.get("note"), "id": q["id"], "label": q["label"], "section": q["section"], "value": v,
                             "current": cur if cur not in (None, "") else None, "reason": str(sg.get("reason") or "").strip()[:200],
                             "source": n["source"]})

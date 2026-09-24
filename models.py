@@ -951,6 +951,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("marketing_attribution", "verdict", "TEXT"),
         ("marketing_attribution", "noise_band_pct", "REAL"),
         ("food_cost_diagnoses", "unsupported_figures", "TEXT"),
+        # The model's own high/medium/low, kept beside the capped band the
+        # surfaces show (`confidence`), so it can be compared with measured
+        # outcomes later and never feeds anything on its own (H1, K6).
+        ("review_diagnoses", "model_confidence", "TEXT"),
+        ("food_cost_diagnoses", "model_confidence", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
@@ -2135,6 +2140,18 @@ def init_db(db_path: str = DB_PATH):
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_restaurant ON ask_cavnar_messages(restaurant_id, id)",
+        # What the figure check found in each answer Ask gave, keyed by a
+        # hash of the answer as history replays it (ask_cavnar.record_
+        # answer_check). An earlier answer verifies a later one only when its
+        # own figures verified: history comes back from the client, and an
+        # invented figure used to verify the next answer that repeated it (H4).
+        """CREATE TABLE IF NOT EXISTS ask_answer_checks (
+            restaurant_id INTEGER NOT NULL,
+            answer_hash   TEXT    NOT NULL,
+            unverified    TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, answer_hash)
+        )""",
         # Chats, not one endless transcript. Each conversation is a
         # separate thread the owner can reopen or delete from the app's
         # chat history; a message belongs to exactly one. `title` is the
@@ -8659,7 +8676,7 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
     """
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT id, draft_response FROM reviews
+        SELECT id, draft_response, text FROM reviews
         WHERE restaurant_id=? AND rating IN ({placeholders}) AND response_status='drafted'
           AND draft_response IS NOT NULL AND deleted_at IS NULL
           AND COALESCE(urgency, 'normal') != 'high'
@@ -8671,7 +8688,16 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
         ORDER BY COALESCE(review_date, fetched_at) DESC, id DESC
     """.replace("{placeholders}", ",".join("?" * len(ratings))), (restaurant_id, *ratings)).fetchall()
     conn.close()
-    return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows]
+    # A review the health keywords fire on but the analyser read as normal
+    # urgency is exactly the disagreement nobody has measured (H5): the
+    # model may be right about the negation, but the rule that publishes
+    # unread must not bet on it. Left for a person.
+    try:
+        from notify import health_keyword_hits
+    except Exception:
+        return []            # cannot check: publish nothing unread
+    return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows
+            if not health_keyword_hits(r["text"])]
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:

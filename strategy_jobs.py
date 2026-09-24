@@ -407,6 +407,90 @@ def _plan_item_unverified(item, unverified):
     return any(fig and fig in text for fig in (unverified or []))
 
 
+# How far back the guest text the echo check reads goes (H7): the snapshot
+# and the review tools hand the model reviews from about this window.
+PLAN_ECHO_REVIEW_DAYS = 120
+PLAN_ECHO_REVIEW_LIMIT = 400
+
+
+def _guest_shingles(restaurant_id, db_path=DB_PATH) -> set:
+    """Six-word runs of this restaurant's recent review text — what the
+    weekly plan must never repeat (the DSR narrative's echo rule)."""
+    from ai_guard import shingles
+    out = set()
+    try:
+        from models import get_conn
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT text FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND text IS NOT NULL "
+                "AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', ?) "
+                "ORDER BY id DESC LIMIT ?",
+                (restaurant_id, f"-{PLAN_ECHO_REVIEW_DAYS} days", PLAN_ECHO_REVIEW_LIMIT)).fetchall()
+        finally:
+            conn.close()
+        for r in rows:
+            out |= shingles(r["text"])
+    except Exception as e:
+        print(f"[weekly_plan] guest text unreadable rid={restaurant_id}: {e}")
+    return out
+
+
+def _plan_cause_anchors(restaurant_id, db_path=DB_PATH) -> list:
+    """The causes this system holds for a restaurant — the stored review
+    and food cost diagnoses and labor.diagnose's lead driver — the only
+    causes a plan item may state (H2)."""
+    out = []
+    try:
+        import review_intelligence as _ri
+        for d in _ri.get_diagnoses(restaurant_id, db_path=db_path, include_stale=True)[:3]:
+            out += [d.get("cause"), d.get("alternative_cause")]
+    except Exception:
+        pass
+    try:
+        import food_cost_intelligence as _fci
+        d = _fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) or {}
+        out += [d.get("cause"), d.get("alternative_cause")]
+    except Exception:
+        pass
+    try:
+        import labor
+        d = labor.diagnose(labor.analyse_shifts_for_restaurant(restaurant_id)) or {}
+        out += [d.get("cause"), d.get("alternative_cause")]
+    except Exception:
+        pass
+    return [a for a in out if a]
+
+
+def _plan_item_problem(item, unverified, guest_shingles=frozenset(), cause_anchors=None):
+    """Why a plan item is not filed, or None (H7). The plan is filed with
+    nobody reading it first, from a snapshot that carries public review
+    text, so an item needs what an owner would have checked: at least one
+    money, percentage or rating figure the answer's verifier traced to what
+    the model read (the prompt's "cite a figure you actually read", now
+    enforced), no figure it could not trace, no link or injection tell
+    (ai_guard.injection_residue), and no six-word echo of a guest's words."""
+    from ai_guard import echoes, figure_claims, injection_residue
+    text = f"{item.get('title') or ''}. {item.get('why') or ''}"
+    why = injection_residue(text)
+    if why:
+        return why
+    if echoes(text, guest_shingles):
+        return "it repeats a guest's own words"
+    if _plan_item_unverified(item, unverified):
+        return "it states a figure nothing it read supports"
+    bad = [u for u in (unverified or []) if u]
+    figures = [c for c in figure_claims(text) if c["kind"] in ("money", "pct", "star") and not c["year"]
+               and not any(c["raw"] in u or u in c["raw"] for u in bad)]
+    if not figures:
+        return "it cites no verified figure"
+    if cause_anchors is not None:
+        from ai_guard import unsupported_causes
+        if unsupported_causes(text, cause_anchors):
+            return "it states a cause no stored diagnosis supports"
+    return None
+
+
 def run_weekly_plan(db_path=DB_PATH):
     """Monday 7am local: the agent — not a script — reads the week and files
     up to three owned actions as issues (notify=False: they appear on Home,
@@ -440,8 +524,13 @@ def run_weekly_plan(db_path=DB_PATH):
             answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None,
                                                            read_only=True)
             unverified = (_meta or {}).get("unverified_figures") or []
+            guest = _guest_shingles(r.id, db_path=db_path)
+            anchors = _plan_cause_anchors(r.id, db_path=db_path)
             for i, item in enumerate(_parse_plan(answer)):
-                if _plan_item_unverified(item, unverified):
+                why_not = _plan_item_problem(item, unverified, guest, anchors)
+                if why_not:
+                    ops.capture(RuntimeError(f"weekly plan item not filed: {why_not}"),
+                                job="weekly_plan", context=f"restaurant_id={r.id}")
                     continue
                 issues.create_issue(
                     r.id, "plan", item["title"],

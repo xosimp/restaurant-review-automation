@@ -319,7 +319,10 @@ def complaint_clusters(restaurant_id: int, days: int = DIAGNOSIS_WINDOW_DAYS,
                 b["dayparts"][ents["daypart"]] = b["dayparts"].get(ents["daypart"], 0) + 1
             if weekday:
                 b["weekdays"][weekday] = b["weekdays"].get(weekday, 0) + 1
-            sev = (r["severity"] if "severity" in r.keys() else None) or "service"
+            # NULL is unclassified, never a tier (H14): the analyser stores
+            # no severity when the model gave none, and this used to call it
+            # "service" while the analyser called it "minor".
+            sev = (r["severity"] if "severity" in r.keys() else None) or _UNCLASSIFIED
             b["severities"][sev] = b["severities"].get(sev, 0) + 1
             sc = (r["specific_complaint"] if "specific_complaint" in r.keys() else None)
             if sc and len(b["complaints"]) < 8:
@@ -361,8 +364,8 @@ def complaint_clusters(restaurant_id: int, days: int = DIAGNOSIS_WINDOW_DAYS,
             if pair_n >= MIN_CLUSTER_MENTIONS and (pair_n / total) >= CONCENTRATION_MIN_SHARE:
                 pair = {"days": [top2[0][0], top2[1][0]], "count": pair_n,
                         "share": round(pair_n / total, 2)}
-        worst = min((s for s in b["severities"]),
-                    key=lambda s: _SEVERITY_ORDER.get(s, 99), default="service")
+        classified = [s for s in b["severities"] if s != _UNCLASSIFIED]
+        worst = min(classified, key=lambda s: _SEVERITY_ORDER.get(s, 99), default=_UNCLASSIFIED)
         out.append({
             "category": cat,
             "mentions": total,
@@ -376,6 +379,7 @@ def complaint_clusters(restaurant_id: int, days: int = DIAGNOSIS_WINDOW_DAYS,
             "complaints": b["complaints"],
             "worst_severity": worst,
             "severity_counts": b["severities"],
+            "unclassified": b["severities"].get(_UNCLASSIFIED, 0),
             "first_seen": b["earliest"],
             "last_seen": b["latest"],
             "window_days": int(days),
@@ -387,6 +391,10 @@ def complaint_clusters(restaurant_id: int, days: int = DIAGNOSIS_WINDOW_DAYS,
 
 
 _SEVERITY_ORDER = {"safety": 0, "legal": 1, "operational": 2, "service": 3, "minor": 4}
+# One constant for "no tier" (analyser.UNCLASSIFIED); ranked where the
+# analyser says an untiered review sorts, and counted apart everywhere.
+_UNCLASSIFIED = "unclassified"
+_SEVERITY_ORDER[_UNCLASSIFIED] = _SEVERITY_ORDER["service"]
 
 
 def severity_breakdown(restaurant_id: int, days: int = 90, db_path: str = DB_PATH) -> dict:
@@ -1016,8 +1024,13 @@ def _diagnosis_inputs(restaurant_id, cluster, db_path):
     excerpts = "\n".join(
         f"  {r['id']} ({r['rating']}★): " + wrap_untrusted((r["text"] or "")[:300])
         for r in rows) or "  (none available)"
+    # The complaint phrase is the analyser's extraction FROM guest text — a
+    # stranger's words one step removed, and it went into this prompt with
+    # no fence, so an instruction a guest planted survived into it and any
+    # number in it counted as a verified figure. Fenced like the excerpts;
+    # verify_figures never reads inside a fence (H10).
     complaints = "\n".join(
-        f"  {c['review_id']}: {c['complaint']} ({c['when']})"
+        f"  {c['review_id']} ({c['when']}): " + wrap_untrusted(str(c['complaint'] or "")[:160])
         for c in cluster["complaints"]) or "  (no specific complaints extracted)"
 
     conc = []
@@ -1036,6 +1049,33 @@ def _diagnosis_inputs(restaurant_id, cluster, db_path):
     return excerpts, complaints, concentration, {r["id"] for r in rows} | set(ids)
 
 
+def _operational_lines(ctx) -> dict:
+    """{module: its line} for the modules that reported — the lines
+    _operational_block joins, kept apart so a diagnosis's operational
+    evidence is checked against the ONE module line it names (H1, K6)."""
+    lines = {}
+    lab = ctx.get("labor")
+    if lab:
+        age = f", data through {lab['covers_to']}" + (f" ({lab['age_days']} days ago)" if lab.get("age_days") else "") if lab.get("covers_to") else ""
+        lines["labor"] = (f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% target, "
+                          f"{lab['understaffed_days']} understaffed and {lab['overstaffed_days']} overstaffed days "
+                          f"over {lab['period_days']} days{age}")
+    fc = ctx.get("food_cost")
+    if fc:
+        top = f", top waste item {fc['top_waste_item']}" if fc.get("top_waste_item") else ""
+        lines["food_cost"] = (f"- Food cost: ${fc['waste_cost_week']} of waste this week{top}, "
+                              f"{fc['critical_low']} items critically low")
+    wt = ctx.get("waste")
+    if wt:
+        lines["waste"] = (f"- Waste trend: {wt['direction']} over {wt['weeks']} weeks "
+                          f"({wt['change_pct']}% change, {wt['confidence']} confidence)")
+    mk = ctx.get("marketing")
+    if mk:
+        lines["marketing"] = (f"- Marketing: {mk['posts_30d']} measured posts in 30 days, "
+                              f"best was '{mk['best_topic']}' at {mk['best_reach']} reach+impressions")
+    return lines
+
+
 def _operational_block(ctx) -> str:
     """The cross-module evidence, or an explicit statement that there is none.
 
@@ -1043,26 +1083,7 @@ def _operational_block(ctx) -> str:
     which is a different claim from "we have no data" — and it is the second
     one that has to pull the confidence down.
     """
-    lines = []
-    lab = ctx.get("labor")
-    if lab:
-        age = f", data through {lab['covers_to']}" + (f" ({lab['age_days']} days ago)" if lab.get("age_days") else "") if lab.get("covers_to") else ""
-        lines.append(f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% target, "
-                     f"{lab['understaffed_days']} understaffed and {lab['overstaffed_days']} overstaffed days "
-                     f"over {lab['period_days']} days{age}")
-    fc = ctx.get("food_cost")
-    if fc:
-        top = f", top waste item {fc['top_waste_item']}" if fc.get("top_waste_item") else ""
-        lines.append(f"- Food cost: ${fc['waste_cost_week']} of waste this week{top}, "
-                     f"{fc['critical_low']} items critically low")
-    wt = ctx.get("waste")
-    if wt:
-        lines.append(f"- Waste trend: {wt['direction']} over {wt['weeks']} weeks "
-                     f"({wt['change_pct']}% change, {wt['confidence']} confidence)")
-    mk = ctx.get("marketing")
-    if mk:
-        lines.append(f"- Marketing: {mk['posts_30d']} measured posts in 30 days, "
-                     f"best was '{mk['best_topic']}' at {mk['best_reach']} reach+impressions")
+    lines = list(_operational_lines(ctx).values())
     for note in ctx.get("notes") or []:
         lines.append(f"- {note}")
     if not lines:
@@ -1071,13 +1092,25 @@ def _operational_block(ctx) -> str:
     return "\n".join(lines)
 
 
-def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id):
+OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing")
+
+
+def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None):
     """Reject a diagnosis that cites what it was not given.
 
     The same discipline ai_guard applies to figures, applied to citations. A
     root-cause paragraph is only worth more than a summary because the owner
     can click through to the reviews behind it; an id that does not exist
     breaks that in the one place it matters most.
+
+    `op_lines` is {module: the line the model was handed} (_operational_
+    lines). Each operational_evidence entry is kept only when its value is
+    that module's line (ai_guard.verify_operational_evidence) and carries
+    verified: True; the rest are dropped, never shown as a cross-check (H1,
+    K6). The model's own band is kept as `model_confidence`; `confidence`
+    is that band capped — medium at most with no verified operational
+    evidence (the prompt's rule, now enforced), low with an unverified
+    figure. It is never raised.
     """
     if not isinstance(raw, dict):
         raise ValueError("diagnosis was not a JSON object")
@@ -1097,12 +1130,17 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id):
     conf = str(raw.get("confidence") or "").strip().lower()
     conf = conf if conf in CONFIDENCES else "low"
 
-    op = []
-    for e in (raw.get("operational_evidence") or [])[:4]:
-        if isinstance(e, dict) and e.get("module") in ("labor", "food_cost", "waste", "marketing"):
-            op.append({"module": e["module"],
-                       "metric": str(e.get("metric") or "")[:80],
-                       "value": str(e.get("value") or "")[:80]})
+    from ai_guard import cap_band, verify_operational_evidence
+    op, op_dropped = verify_operational_evidence(raw.get("operational_evidence"), op_lines or {},
+                                                 OPERATIONAL_MODULES)
+    if op_dropped:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"review_diagnosis operational evidence not in its input: "
+                                     f"{[(d['module'], d['value']) for d in op_dropped][:3]}"),
+                        job="review_diagnosis", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
 
     def _line(key, limit=400):
         return " ".join(str(raw.get(key) or "").split())[:limit] or None
@@ -1114,6 +1152,7 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id):
         "evidence_review_ids": cited,
         "operational_evidence": op,
         "confidence": conf,
+        "model_confidence": conf,
         "recommended_action": _line("recommended_action"),
         "expected_outcome": _line("expected_outcome"),
     }
@@ -1126,13 +1165,13 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id):
     joined = " ".join(v for v in (out["cause"], out["alternative_cause"],
                                   out["what_would_confirm"], out["recommended_action"],
                                   out["expected_outcome"]) if v)
-    bad = verify_figures(joined, prompt, "review_diagnosis", restaurant_id)
+    bad = verify_figures(joined, prompt, "review_diagnosis", restaurant_id, check_counts=True)
     if bad:
         # Not dropped: an owner reading a cause with one unverified number is
         # better served by seeing it flagged than by seeing a hole. The flag
         # is what stops the UI presenting it as measured.
         out["unsupported_figures"] = bad
-        out["confidence"] = "low"
+    out["confidence"] = cap_band(conf, verified_evidence=len(op), unverified_figures=bad)
     return out
 
 
@@ -1161,6 +1200,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
         return []
     ctx = operational_context(restaurant_id, db_path=db_path)
     op_block = _operational_block(ctx)
+    op_lines = _operational_lines(ctx)
     client = get_client()
     today = restaurant_now(restaurant).strftime("%B %d, %Y")
 
@@ -1206,7 +1246,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             # A leading sentence before the JSON failed json.loads (AI-26).
             from ai_utils import parse_json_reply
             result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
-                                         allowed, prompt, restaurant_id)
+                                         allowed, prompt, restaurant_id, op_lines=op_lines)
             _save_diagnosis(restaurant_id, cluster, result, {}, db_path)
             result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
                            "window_days": cluster["window_days"], "stale": False})
@@ -1230,8 +1270,8 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
             (restaurant_id, category, window_days, mention_count, cause, alternative_cause,
              evidence_review_ids, operational_evidence, confidence, what_would_confirm,
              recommended_action, expected_outcome, revenue_at_risk_low, revenue_at_risk_high,
-             unsupported_figures, generated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+             unsupported_figures, model_confidence, generated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
         ON CONFLICT(restaurant_id, category, window_days) DO UPDATE SET
             mention_count=excluded.mention_count, cause=excluded.cause,
             alternative_cause=excluded.alternative_cause,
@@ -1243,6 +1283,7 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
             revenue_at_risk_low=excluded.revenue_at_risk_low,
             revenue_at_risk_high=excluded.revenue_at_risk_high,
             unsupported_figures=excluded.unsupported_figures,
+            model_confidence=excluded.model_confidence,
             generated_at=excluded.generated_at
     """, (restaurant_id, cluster["category"], cluster["window_days"], cluster["mentions"],
           result["cause"], result["alternative_cause"],
@@ -1259,7 +1300,10 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
           # Kept with the row so every surface reading it back shows the
           # caveat; they were dropped on save, so the cause read as
           # measured everywhere except the one response that wrote it (M-17).
-          json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None))
+          json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None,
+          # The model's own band, kept apart from the capped one so it can
+          # later be compared with what was measured (H1).
+          result.get("model_confidence")))
     conn.commit()
     conn.close()
 
@@ -1317,13 +1361,22 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
                 return json.loads(v) if v else fallback
             except Exception:
                 return fallback
+        # Only verified cross-checks are ever served (K6): a row written
+        # before the check existed carries the model's unchecked entries, and
+        # its band is capped the way a new one would be.
+        from ai_guard import cap_band
+        _op = [e for e in _j(r["operational_evidence"], []) if isinstance(e, dict) and e.get("verified") is True]
+        _unsup = _j(r["unsupported_figures"] if "unsupported_figures" in r.keys() else None, [])
+        _model_conf = (r["model_confidence"] if "model_confidence" in r.keys() else None) or r["confidence"]
         out.append({
             "category": r["category"], "window_days": r["window_days"],
             "mention_count": r["mention_count"], "cause": r["cause"],
             "alternative_cause": r["alternative_cause"],
             "evidence_review_ids": _j(r["evidence_review_ids"], []),
-            "operational_evidence": _j(r["operational_evidence"], []),
-            "confidence": r["confidence"], "what_would_confirm": r["what_would_confirm"],
+            "operational_evidence": _op,
+            "confidence": cap_band(r["confidence"], verified_evidence=len(_op), unverified_figures=_unsup),
+            "model_confidence": _model_conf,
+            "what_would_confirm": r["what_would_confirm"],
             "recommended_action": r["recommended_action"],
             "expected_outcome": r["expected_outcome"],
             "unsupported_figures": _j(r["unsupported_figures"] if "unsupported_figures" in r.keys() else None, []),

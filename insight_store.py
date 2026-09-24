@@ -276,3 +276,188 @@ def answered(restaurant_id, keys, db_path=DB_PATH) -> set:
     except Exception:
         return set()
     return {k for k in keys if k in s}
+
+
+# ── one piece of advice across surfaces (H16) ───────────────────────────────
+#
+# "Not for us" held only for the key it was said to. Home's "Trim Tuesday
+# staffing" is trim_day:Tuesday; the nightly report's "cut a server from
+# Tuesday dinner" is dsr_action:adjust_staffing:labor; the Reviews read's
+# "Do today" line was a hash of its own words. Declining one never stopped
+# the others saying the same thing in other words. An advice signature is
+# what the advice is ABOUT — a lever family and the one thing it names (a
+# weekday, an item, a dish, a review theme) — read from the key's subject
+# tags (rec_ledger.tags_for) and, for a key that carries no subject (a
+# hashed line, a DSR action on a whole block), from its words. Two pieces
+# of advice with the same signature are the same advice; a declined
+# signature is dropped server-side on every surface that checks it.
+
+# rec_ledger topics folded into the lever families a signature compares:
+# trimming a day's staffing and cutting that day's hours are one piece of
+# advice however each surface files it.
+_SIG_FAMILY = {"staffing": "labor", "hours": "labor", "overtime": "labor",
+               "replies": "replies", "guest_experience": "guest_experience",
+               "waste": "waste", "ordering": "ordering", "purchasing": "ordering",
+               "pricing": "pricing", "posting": "marketing", "marketing": "marketing",
+               "guest_outreach": "guest_outreach", "training": "training", "food_cost": "food_cost",
+               "sales": "sales", "competition": "competition", "visibility": "visibility"}
+# Only for a key whose tags carry no topic. The earliest match in the text wins.
+_SIG_TEXT_TOPICS = (
+    ("replies", r"\b(?:respond\w*|repl(?:y|ies|ied)|response)\b"),
+    ("labor", r"\b(?:staff\w*|schedul\w*|shifts?|headcount|trim\w*|overstaff\w*|understaff\w*|labor|"
+              r"overtime|servers?|cooks?|bussers?|openers?|closers?)\b"),
+    ("ordering", r"\b(?:order\w*|reorder\w*|restock\w*|pars?)\b"),
+    ("waste", r"\b(?:waste\w*|spoil\w*|portion\w*)\b"),
+    ("pricing", r"\b(?:pric\w*|reprice\w*)\b"),
+    ("marketing", r"\b(?:post\w*|instagram|facebook|caption\w*|promot\w*)\b"),
+    ("training", r"\b(?:train\w*|coach\w*|huddle\w*|pre-shift)\b"),
+)
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+# Keys whose kind is a model-written line rather than a lever (besides insight_*).
+_MODEL_LINE_KINDS = ("digest_move", "monthly_move", "ask_tip")
+# How long a "not for us" silences (rec_ledger.SILENCE_DAYS: ten years) against
+# a plain hide (14 days): a silence past this is a decline.
+_DECLINE_MIN_DAYS = 60
+
+
+def _text_topic(text):
+    low = str(text or "").lower()
+    best = None
+    for family, pat in _SIG_TEXT_TOPICS:
+        m = re.search(pat, low)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), family)
+    return best[1] if best else None
+
+
+def _text_subject(text):
+    low = str(text or "").lower()
+    for d in _WEEKDAYS:
+        if re.search(rf"(?<![a-z]){d}(?:s|'s|’s)?(?![a-z])", low):
+            return f"day:{d}"
+    try:
+        from analyser import CATEGORIES, category_label
+        for c in CATEGORIES:
+            label = category_label(c)
+            if re.search(rf"(?<![a-z]){re.escape(label)}(?![a-z])", low):
+                return f"category:{c}"
+    except Exception:
+        pass
+    return None
+
+
+def advice_signature(key, text=None):
+    """"<family>:<subject>" — what one recommendation is about, the same for
+    the same advice on every surface (trim_day:Tuesday and a DSR action to
+    cut Tuesday's hours are both "labor:day:tuesday"), or None when the key
+    and its words do not name both a lever and a single subject. Never a
+    bare lever ("labor"): declining one Tuesday cut is not declining all
+    staffing advice."""
+    try:
+        import rec_ledger
+        tags = rec_ledger.tags_for(key)
+    except Exception:
+        tags = []
+    topic = next((t.split(":", 1)[1] for t in tags if t.startswith("topic:")), None)
+    family = _SIG_FAMILY.get(topic) if topic else None
+    # A model-written line's kind names only the module it was read on
+    # (insight_review is "guest_experience" whatever the line says), so its
+    # own words say what lever it pulls: "cut a server Tuesday" on the
+    # Reviews read is the same advice as Home's trim_day:Tuesday.
+    kind = str(key or "").split(":", 1)[0]
+    if text and (kind.startswith("insight_") or kind in _MODEL_LINE_KINDS):
+        family = _text_topic(text) or family
+    family = family or _text_topic(text)
+    subject = next((t for t in tags if t.startswith(("day:", "item:", "dish:", "category:"))), None)
+    subject = subject or _text_subject(text)
+    if not family or not subject:
+        return None
+    return f"{family}:{subject}"
+
+
+def signature_key(prefix: str, text: str) -> str:
+    """The key for a model-written line that names what it is about —
+    "<prefix>:<signature>" (insight_review:replies:category:food_quality) —
+    so the same advice tomorrow in other words is the same key. A line whose
+    signature cannot be read keeps line_key's hash."""
+    sig = advice_signature(f"{prefix}:x", text)
+    return f"{prefix}:{sig}"[:160] if sig else line_key(prefix, text)
+
+
+def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
+    """The advice signatures of every recommendation this restaurant said
+    "not for us" to, on any surface, while the answer holds. A plain hide
+    (two weeks) is not a decline and is not carried across."""
+    if not restaurant_id:
+        return set()
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return set()
+    try:
+        rows = conn.execute(
+            "SELECT key, title FROM rec_instances WHERE restaurant_id=? AND status='dismissed' "
+            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now', ?)",
+            (restaurant_id, f"+{_DECLINE_MIN_DAYS} days")).fetchall()
+    except Exception as e:
+        print(f"[insight_store] declined signatures failed: {e}")
+        return set()
+    finally:
+        conn.close()
+    out = set()
+    for r in rows:
+        sig = advice_signature(r["key"], r["title"])
+        if sig:
+            out.add(sig)
+    return out
+
+
+# ── forecasts the model used to write (H8) ──────────────────────────────────
+#
+# The labor note, the marketing brief and the Reviews read each ended on a
+# FORECAST / "Next week" line the model wrote and nothing ever scored. They
+# are computed in Python now, and each is logged to forecast_log — the table
+# food cost's waste forecast already uses — once per ISO week, the rule
+# food_cost_intelligence.record_profitability_forecast follows: a projection
+# re-recorded on every page open converges on the actual and scores itself
+# perfect. Kinds, each recorded in the unit forecast_log scores it in:
+# labor_week (labor % of sales for the ISO week), marketing_reach_week (the
+# week's posts' reach SUMMED — not the per-post figure the brief shows) and
+# review_rating_week (the week's mean star rating). Scoring belongs to
+# forecast_log's own helpers; record_weekly_forecast is the one adapter the
+# three callers go through, so it can be pointed at forecast_log.record(rid,
+# kind, value, period_of=next_week_end(today)) without touching them.
+WEEKLY_FORECAST_KINDS = ("labor_week", "marketing_reach_week", "review_rating_week")
+
+
+def next_week_end(today=None):
+    """The Sunday that ends the ISO week after `today`'s — what "next week"
+    predicts through."""
+    from datetime import date, timedelta
+    today = today or date.today()
+    return today + timedelta(days=(6 - today.weekday()) + 7)
+
+
+def record_weekly_forecast(restaurant_id, kind, predicted, basis=None, today=None, db_path=DB_PATH) -> dict:
+    """Freeze one forecast for next week, once. Returns {"recorded": bool,
+    "horizon_end", "reason"?}. Never raises: a forecast that could not be
+    logged is still shown and says nothing it would not otherwise."""
+    if kind not in WEEKLY_FORECAST_KINDS or predicted is None or not restaurant_id:
+        return {"recorded": False, "reason": "nothing to record"}
+    horizon = next_week_end(today).isoformat()
+    try:
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, basis) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(restaurant_id, kind, horizon_end) DO NOTHING",
+                (restaurant_id, kind, horizon, round(float(predicted), 2), (basis or "")[:300] or None))
+            conn.commit()
+            done = cur.rowcount == 1
+            return {"recorded": done, "horizon_end": horizon,
+                    **({} if done else {"reason": "already frozen this week"})}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[insight_store] forecast not recorded rid={restaurant_id} {kind}: {e}")
+        return {"recorded": False, "reason": "could not be stored"}

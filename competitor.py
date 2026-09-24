@@ -128,7 +128,10 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
             action="menu_extract_pdf",
         )
         result = extract_text(msg).strip()
-        return "" if "NO_MENU_FOUND" in result or len(result) < 30 else result
+        if "NO_MENU_FOUND" in result or len(result) < 30:
+            return ""
+        # Only items the PDF's own text contains (H11).
+        return spot_check_menu(result, text)
     except Exception as e:
         print(f"[fetch_menu_from_pdf_bytes] error: {e}")
         return ""
@@ -227,7 +230,9 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
             return ""
-        return result
+        # Only items the page's own text contains (H11): the extraction was
+        # stored and quoted with nothing checking it against its source.
+        return spot_check_menu(result, clean)
     except Exception as e:
         print(f"[fetch_menu_from_url] error: {e}")
         return ""
@@ -844,13 +849,12 @@ Write a competitive intelligence report for {restaurant_name} in this EXACT form
 {greeting}, here is your competitive landscape snapshot.
 
 WHAT COMPETITORS ARE DOING WELL:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters.
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R3]. A bullet with no review of that restaurant behind it must not be written.
 
 WHAT COMPETITORS ARE DOING POORLY:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters.
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R4].
 
-PRICE POSITIONING:
-One sentence, 15 words or fewer, based on the Google price levels listed above — a real field, not an impression. State where these competitors sit as a group. You may add whether review language agrees, but never state a positioning that the price levels alone do not support. Skip this section entirely if fewer than two competitors have a price level listed.
+(Do not write a price positioning section — it is computed from the price levels and added for you.)
 
 Recommendations:
 Write between ZERO and THREE, numbered "1.", "2.", "3.". Write one only where these reviews give a genuine, specific reason to act this week — never pad to three. Each is 15 words or fewer and ends with the ids of the competitor reviews it rests on, in square brackets, exactly as they appear above, e.g. [R2, R5]. A recommendation with no review behind it must not be written. Kinds that fit:
@@ -879,7 +883,7 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         # did not. A figure the model states that was never in its input is
         # exactly what an owner would act on.
         from ai_guard import verify_figures
-        unsupported = verify_figures(text, prompt, "competitor_insight", restaurant_id)
+        unsupported = verify_figures(text, prompt, "competitor_insight", restaurant_id, check_counts=True)
 
         # And a named restaurant that was never in the competitor list is an
         # invented competitor, which is the single worst thing this module
@@ -890,6 +894,11 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         # citing nothing, or an id that was never handed over, is dropped,
         # and if none survive the section says so honestly (audit #31).
         text = _validate_recommendation_citations(text, competitors)
+        # Strengths and weaknesses are cite-checked the same way, and the
+        # price line is computed from the price levels, not written (H11).
+        text = _validate_bullets(text, competitors)
+        text = _with_price_positioning(text, price_positioning(
+            competitors, (restaurant_profile or {}).get("price_level")))
 
         if unsupported or invented:
             notes = []
@@ -911,10 +920,187 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         return ""
 
 
+# Words in a restaurant's name too generic to identify it on their own.
+_GENERIC_NAME_WORDS = {"restaurant", "kitchen", "grill", "cafe", "café", "house", "bistro", "pizza", "pizzeria",
+                       "tavern", "diner", "eatery", "bar", "pub", "the", "and", "co", "company", "taqueria",
+                       "cantina", "trattoria", "steakhouse", "brewing", "brewery", "bakery", "deli", "express"}
+
+
+def _named_competitors(line, competitors) -> list:
+    """The competitors a line names — the full name, or its first word
+    when that word identifies it (not "The", not "Pizza")."""
+    import re as _re
+    low = str(line or "").lower()
+    out = []
+    for c in competitors or []:
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        first = _re.sub(r"['’]s$", "", name.split()[0].lower())
+        if name.lower() in low or (len(first) >= 4 and first not in _GENERIC_NAME_WORDS
+                                   and _re.search(rf"(?<![a-z]){_re.escape(first)}", low)):
+            out.append(c)
+    return out
+
+
+def _refs_of(competitors) -> set:
+    return {str(r.get("ref")).upper() for c in competitors or [] for r in (c.get("reviews") or []) if r.get("ref")}
+
+
+def _cites_about_named(line, cites, competitors) -> bool:
+    """A line that names a competitor may cite only that competitor's
+    reviews (H11): an id that exists but belongs to another restaurant is a
+    complaint attributed to the wrong place. A line naming none is left to
+    the existence check."""
+    named = _named_competitors(line, competitors)
+    if not named:
+        return True
+    own = _refs_of(named)
+    return all(c in own for c in cites)
+
+
+def _validate_bullets(text, competitors):
+    """The DOING WELL / DOING POORLY bullets, cite-checked (H11). Each bullet
+    must name a competitor and end with the ids of that competitor's reviews
+    it rests on; one that cites nothing, an id never handed over, or another
+    restaurant's review is dropped. The ids are taken off the kept bullets
+    — the section reads as it always did — and a section left with no
+    bullet is removed with its header."""
+    import re as _re
+    from competitor_intel_format import split_citations
+    known = _refs_of(competitors)
+    out, dropped = [], 0
+    section = None
+    pending_header = None
+    kept_in_section = 0
+    for line in (text or "").splitlines():
+        st = line.strip()
+        head = _re.match(r"^\**\s*WHAT COMPETITORS ARE DOING (WELL|POORLY)\s*:?\s*\**\s*$", st, _re.I)
+        if head:
+            section = head.group(1).upper()
+            pending_header, kept_in_section = line, 0
+            continue
+        if section and _re.match(r"^\**\s*(PRICE POSITIONING|Recommendations?)\b", st, _re.I):
+            section = None
+            pending_header = None
+        if section and st.startswith("-"):
+            body, cites = split_citations(st.lstrip("- ").strip())
+            if (cites and all(c in known for c in cites) and _named_competitors(body, competitors)
+                    and _cites_about_named(body, cites, competitors)):
+                if pending_header is not None:
+                    out.append(pending_header)
+                    pending_header = None
+                out.append(f"- {body}")
+                kept_in_section += 1
+            else:
+                dropped += 1
+            continue
+        if section and not st and pending_header is not None:
+            continue
+        out.append(line)
+    if dropped:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"competitor insight: {dropped} strength/weakness bullet(s) without a valid "
+                                     f"citation to the named competitor dropped"),
+                        job="competitor_insight", context="bullet citations")
+        except Exception:
+            pass
+    return "\n".join(out)
+
+
+_PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)", 3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
+
+
+def price_positioning(competitors, own_level=None) -> str | None:
+    """The PRICE POSITIONING sentence, computed from Google's price levels —
+    a real field — rather than written by the model (H11). None when fewer
+    than two competitors list one, the rule the prompt used to state."""
+    levels = []
+    for c in competitors or []:
+        try:
+            lv = int(c.get("price_level"))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= lv <= 4:
+            levels.append(lv)
+    if len(levels) < 2:
+        return None
+    counts = {lv: levels.count(lv) for lv in sorted(set(levels))}
+    top = max(counts, key=lambda lv: (counts[lv], -lv))
+    spread = ", ".join(f"{n} at {'$' * lv}" for lv, n in counts.items())
+    line = (f"{counts[top]} of the {len(levels)} competitors that list a Google price level sit at "
+            f"{_PRICE_WORDS[top]}" + (f" ({spread})." if len(counts) > 1 else "."))
+    try:
+        own = int(own_level) if own_level is not None else None
+    except (TypeError, ValueError):
+        own = None
+    if own and 1 <= own <= 4:
+        rel = "the same level as" if own == top else ("above" if own > top else "below")
+        line += f" Your own listing is {'$' * own}, {rel} most of them."
+    return line
+
+
+def _with_price_positioning(text, sentence):
+    """The insight with its PRICE POSITIONING section replaced by the
+    computed sentence, or removed when there is none."""
+    import re as _re
+    lines = (text or "").splitlines()
+    out, skipping = [], False
+    for line in lines:
+        st = line.strip()
+        if _re.match(r"^\**\s*PRICE POSITIONING\s*:?\s*\**", st, _re.I):
+            skipping = True
+            continue
+        if skipping:
+            if _re.match(r"^\**\s*(WHAT COMPETITORS|Recommendations?)\b", st, _re.I):
+                skipping = False
+            else:
+                continue
+        out.append(line)
+    body = "\n".join(out)
+    if not sentence:
+        return body
+    m = _re.search(r"(?im)^\s*\**\s*Recommendations?\s*:?\s*\**\s*$", body)
+    block = f"PRICE POSITIONING:\n{sentence}\n\n"
+    return (body[:m.start()] + block + body[m.start():]) if m else (body.rstrip() + "\n\n" + block.rstrip())
+
+
+def spot_check_menu(summary, source_text) -> str:
+    """A menu extraction with every item the source text does not contain
+    taken out (H11). The extraction is "Signature dishes: a, b. Mains: c."
+    — each listed item is kept only when its significant words appear in
+    the page or PDF it was read from, so an item the model imagined never
+    reaches the competitor read. "" when nothing survives."""
+    import re as _re
+    src = " ".join(_re.findall(r"[a-z0-9]+", str(source_text or "").lower()))
+    if not summary or not src:
+        return ""
+    src_words = set(src.split())
+
+    def present(item):
+        words = [w for w in _re.findall(r"[a-z0-9]+", item.lower()) if len(w) >= 3]
+        return bool(words) and all(w in src_words or w.rstrip("s") in src_words for w in words)
+
+    out_parts, kept_total = [], 0
+    for part in _re.split(r"(?<=\.)\s+(?=[A-Z][A-Za-z ]{2,30}:)", summary.strip()):
+        m = _re.match(r"^\s*([A-Za-z][A-Za-z /&-]{1,40}):\s*(.*)$", part.strip(), _re.S)
+        if not m:
+            continue
+        label, items = m.group(1).strip(), m.group(2).strip().rstrip(".")
+        items = items.strip("[]")
+        kept = [i.strip() for i in _re.split(r",|;", items) if i.strip() and present(i.strip())]
+        if kept:
+            out_parts.append(f"{label}: {', '.join(kept)}.")
+            kept_total += len(kept)
+    return " ".join(out_parts) if kept_total else ""
+
+
 def _validate_recommendation_citations(text, competitors):
     """Rewrite the Recommendations section keeping only lines whose
-    citations all resolve to a review the model was given. Nothing else in
-    the text changes."""
+    citations all resolve to a review the model was given — and, when the
+    line names a competitor, to THAT competitor's reviews (H11). Nothing
+    else in the text changes."""
     import re as _re
     from competitor_intel_format import split_citations, NOTHING_TO_ACT_ON
     known = {str(r.get("ref")).upper() for c in competitors for r in (c.get("reviews") or []) if r.get("ref")}
@@ -935,7 +1121,7 @@ def _validate_recommendation_citations(text, competitors):
         if in_list and _re.match(r"^\d+[.)]\s+", st):
             content = _re.sub(r"^\d+[.)]\s+", "", st)
             _body, cites = split_citations(content)
-            if cites and all(c in known for c in cites):
+            if cites and all(c in known for c in cites) and _cites_about_named(_body, cites, competitors):
                 kept.append(f"{_body} [{', '.join(cites)}]")
             else:
                 dropped += 1

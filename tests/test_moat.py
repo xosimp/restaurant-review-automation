@@ -376,7 +376,14 @@ def test_a_recipe_photo_becomes_a_pending_draft_with_unmatched_lines_named(db_pa
     monkeypatch.setattr(ai_utils, "create_with_retry", lambda client, **kw: _Msg())
     draft = recipes.extract_from_image(rid, b"\xff\xd8fakejpeg", "image/jpeg", client=_Client(), db_path=db_path)
     assert draft["menu_item_id"] == 7 and draft["menu_item_matched"] is True
-    assert draft["lines"] == [{"ingredient_id": 1, "name": "Mozzarella", "qty": 0.25, "unit": "lb", "confidence": "high"}]
+    # The card's own unit is kept beside the converted quantity, and a card
+    # that states no yield is a batch until the owner says (H6).
+    line = draft["lines"][0]
+    assert len(draft["lines"]) == 1
+    assert {k: line[k] for k in ("ingredient_id", "name", "qty", "unit", "confidence")} == \
+        {"ingredient_id": 1, "name": "Mozzarella", "qty": 0.25, "unit": "lb", "confidence": "high"}
+    assert line["card_unit"] == "lb" and line["unit_ok"] is True and line["per"] == "batch"
+    assert draft["needs_yield"] is True
     assert draft["unmatched"][0]["name"] == "San Marzano tomatoes"
     assert "not on your list: San Marzano tomatoes" in draft["note"]
     pending = recipes.list_drafts(rid, db_path=db_path)

@@ -895,7 +895,8 @@ def _do_recipe_draft_accept(u, draft_id):
         return _forbidden("Only someone who can see food cost can review recipes.")
     import recipes
     from client_api import log_account_event
-    out = recipes.accept(_rid(u), int(draft_id), lines=_body().get("lines"), user_id=u.get("id"))
+    out = recipes.accept(_rid(u), int(draft_id), lines=_body().get("lines"), user_id=u.get("id"),
+                         yield_count=_body().get("yield"))
     if out.get("ok"):
         log_account_event(_rid(u), "recipe_accepted", current_user=u, detail=f"draft #{draft_id}, {out['written']} lines")
     return out, (200 if out.get("ok") else 409)

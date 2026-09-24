@@ -1078,27 +1078,10 @@ def _verify_named_entities(generated: str, context: str) -> list:
     capitalisation and the platform names the prompt always carries do not
     trip it.
     """
-    import re as _re_n
-    known = {w.lower() for w in _re_n.findall(r"[A-Za-z][\w'-]+", context or "")}
-    # Words that are capitalised in ordinary prose and are never a guest.
-    _SKIP = {"google", "yelp", "monday", "tuesday", "wednesday", "thursday",
-             "friday", "saturday", "sunday", "january", "february", "march",
-             "april", "may", "june", "july", "august", "september", "october",
-             "november", "december", "cavnar", "respond", "review", "reviews"}
-    out = []
-    patterns = (
-        r"\b(?:from|by|to|for|with)\s+([A-Z][a-z]{2,})\b",   # "respond to Amanda"
-        r"\b([A-Z][a-z]{2,})\s+[A-Z]\.",                       # "Amanda L."
-        r"\b([A-Z][a-z]{2,})'s\b",                             # "Amanda's review"
-    )
-    for pat in patterns:
-        for m in _re_n.finditer(pat, generated or ""):
-            name = m.group(1)
-            low = name.lower()
-            if low in _SKIP or low in known or name in out:
-                continue
-            out.append(name)
-    return out
+    # The check itself lives in ai_guard now, so the weekly digest runs the
+    # same one (H9).
+    from ai_guard import unsupported_names
+    return unsupported_names(generated, context)
 
 
 def _do_today_confidence(rid, payload):
@@ -1134,22 +1117,30 @@ def _review_insight_recs(rid, payload):
     payload["recs"] = []
     m = _re_dt.search(r"(?m)^.*Do today:\s*(.+)$", text)
     promote = bool(payload.get("figures_verified", True) and payload.get("names_verified", True)
-                   and not payload.get("error"))
+                   and payload.get("causes_verified", True) and not payload.get("error"))
     if m and promote:
         line = m.group(1).strip()
-        key = insight_store.line_key("insight_review", line)
+        # Keyed on what the advice is about, not a hash of its words (H16):
+        # the read is rewritten daily, and a hash made every rewording a new
+        # recommendation the owner had never answered.
+        key = insight_store.signature_key("insight_review", line)
+        sig = insight_store.advice_signature(key, line)
+        declined = sig is not None and sig in insight_store.declined_signatures(rid)
         # The line's OWN confidence (confidence audit E13): it was stored
         # with the rating-trend slope's band (payload["confidence"]), which
         # says how steady the rating line is, not how well supported this
         # action is — and admin's acceptance-by-confidence mixed the two.
         conf = _do_today_confidence(rid, payload)
-        kept = insight_store.present_recs(rid, "reviews", "reviews",
-                                          [{"key": key, "text": line, "title": line, "model_written": True,
-                                            "confidence": conf, "confidence_band": conf.get("band")}])
+        kept = [] if declined else insight_store.present_recs(
+            rid, "reviews", "reviews",
+            [{"key": key, "text": line, "title": line, "model_written": True,
+              "confidence": conf, "confidence_band": conf.get("band")}])
         if kept:
             payload["recs"].append({"key": key, "text": line, "kind": "do_today", "rec_key": key,
-                                    "answerable": True, "confidence_detail": conf})
+                                    "answerable": True, "confidence_detail": conf, "advice_signature": sig})
         else:
+            # Answered here — or "not for us" to the same advice on another
+            # surface (Home, the nightly report): left out server-side.
             payload["insight"] = (text[:m.start()] + text[m.end():]).replace("\n\n\n", "\n\n").strip()
     if payload.get("diagnoses"):
         # Both clients render `diagnosis` — the first — and only it.
@@ -1439,10 +1430,15 @@ def _do_review_insight(rid):
         has_trend = bool(_trend["direction"] in ("improving", "declining")
                          and _trend["confidence"] in ("high", "medium"))
         has_diag = bool(_diags)
-        forecast_line = (
-            "\n\U0001f52e Next week: [1 sentence on where the rating trend is headed IF it "
-            "continues. Say 'if nothing changes'. This is a projection, not a measurement.]"
-        ) if has_trend else ""
+        # "Next week" is computed here, not asked of the model (H8): the
+        # model wrote a projection nothing checked or scored. One week of the
+        # fitted slope on from the latest week that cleared the floor,
+        # clamped to the star scale, and logged to forecast_log once per ISO
+        # week so it can be scored against the week that closes.
+        _rating_next = None
+        if has_trend and _trend.get("latest") is not None:
+            _rating_next = round(min(5.0, max(1.0, float(_trend["latest"]) + float(_trend.get("slope") or 0))), 1)
+        forecast_line = ""
         why_line = (
             "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
             "DIAGNOSIS block, what else it could be, and the one thing that would tell them "
@@ -1541,8 +1537,29 @@ def _do_review_insight(rid):
         # rather than dropped — this is on-screen text the owner is reading
         # now, so it carries a flag instead of a hole — but the flag is what
         # lets the UI stop presenting an unverified number as a fact.
-        from ai_guard import verify_figures, CLAIM_KINDS
-        _unsupported = verify_figures(insight, prompt, "review_insight", rid)
+        from ai_guard import verify_figures, CLAIM_KINDS, unsupported_causes
+        # The prompt forbids an invented count as much as an invented dollar
+        # figure, so counts are checked too (H3).
+        _unsupported = verify_figures(insight, prompt, "review_insight", rid, check_counts=True)
+        # "Never assert a cause that is not in the DIAGNOSIS block" was the
+        # prompt's word only. A causal sentence must carry the stored cause
+        # (or its alternative); anything else is flagged like an unverified
+        # figure and withholds the Do today controls (H2).
+        _cause_anchors = ([_diags[0].get("cause"), _diags[0].get("alternative_cause"),
+                           str(_diags[0].get("category") or "").replace("_", " ")] if _diags else [])
+        _unsupported_causes = unsupported_causes(insight, _cause_anchors, job="review_insight", restaurant_id=rid)
+        if _rating_next is not None:
+            insight = (insight.rstrip() + f"\n\U0001f52e Next week: if nothing changes, the weekly rating heads "
+                       f"toward about {_rating_next}★ — a projection from {_trend['weeks_above_floor']} weeks of "
+                       f"the trend, not a measurement.")
+            try:
+                import insight_store as _ist_fc
+                _ist_fc.record_weekly_forecast(
+                    rid, "review_rating_week", _rating_next,
+                    basis=(f"latest week {_trend['latest']} + fitted slope {_trend.get('slope')} a week, "
+                           f"{_trend['weeks_above_floor']} weeks at {_trend['min_reviews_per_week']}+ reviews"))
+            except Exception as _fce:
+                print(f"[review-insight] forecast not logged: {_fce}")
         # A name the model wrote that was never in its input. verify_figures
         # cannot see this — a fabricated guest is not a figure — and it is the
         # most damaging thing this passage can get wrong, because the whole
@@ -1580,6 +1597,10 @@ def _do_review_insight(rid):
             "unsupported_figures": _unsupported,
             "names_verified": not _invented_names,
             "unsupported_names": _invented_names,
+            "causes_verified": not _unsupported_causes,
+            "unsupported_causes": _unsupported_causes,
+            "forecast": ({"kind": "review_rating_week", "predicted": _rating_next, "computed": True}
+                         if _rating_next is not None else None),
             "claim_kinds": _kinds,
             "confidence": _trend.get("confidence"),
             "trend": {k: _trend[k] for k in
@@ -2295,7 +2316,8 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     # Done / Track (M-16): the marketing path never wrote an "UNVERIFIED:"
     # marker, so checking for one promoted every line.
     extra = dict(extra or {})
-    promote = bool(extra.get("figures_verified", True)) and "UNVERIFIED:" not in (text or "")
+    promote = (bool(extra.get("figures_verified", True)) and bool(extra.get("causes_verified", True))
+               and "UNVERIFIED:" not in (text or ""))
     recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote)
     out = dict(extra)
     out["insight"] = text if raw else format_insight_html(text, rec_items=recs, surface="marketing",
@@ -2318,6 +2340,32 @@ MKT_TREND_MIN_POSTS = 2
 MKT_TREND_MIN_CHANGE_PCT = 20
 
 
+def _mkt_checks(stored):
+    """The guard results a stored marketing read carries, for a cache or
+    store hit — the figure check, the cause check (H2) and the computed
+    forecast (H8) travel with the text so a hit keeps its caveats."""
+    stored = stored if isinstance(stored, dict) else {}
+    return {"figures_verified": stored.get("figures_verified", True),
+            "unsupported_figures": stored.get("unsupported_figures") or [],
+            "causes_verified": stored.get("causes_verified", True),
+            "unsupported_causes": stored.get("unsupported_causes") or [],
+            "forecast": stored.get("forecast")}
+
+
+def _mkt_forecast(reach_vals, diff_pct):
+    """(FORECAST line, predicted) for next week's average reach per post,
+    computed here rather than written by the model (H8): last full week's
+    level, carried forward — the measured trend is stated beside it, never
+    extrapolated into a figure nobody measured. (None, None) with no trend."""
+    if not reach_vals or diff_pct is None:
+        return None, None
+    last = int(round(float(reach_vals[-1])))
+    line = (f"FORECAST: Average reach per post moved {'up' if diff_pct > 0 else 'down'} "
+            f"{abs(int(diff_pct))}% across {len(reach_vals)} weeks; if posting keeps its current pace, "
+            f"expect about {last:,} per post next week (last week's level; a projection, not a measurement).")
+    return line, last
+
+
 def _do_mkt_insight(rid, raw=False):
     """Shared by the web route above and mobile_api.py. raw=True skips
     format_insight_html(), for a client that renders its own layout.
@@ -2331,9 +2379,7 @@ def _do_mkt_insight(rid, raw=False):
     # The whole read is cached — text and its figure check — so a cache hit
     # keeps the caveat (M-16). An older entry is the bare string.
     if isinstance(cached, dict) and cached.get("insight"):
-        return _mkt_insight_out(rid, cached["insight"], raw,
-                                {"figures_verified": cached.get("figures_verified", True),
-                                 "unsupported_figures": cached.get("unsupported_figures") or []}), 200
+        return _mkt_insight_out(rid, cached["insight"], raw, _mkt_checks(cached)), 200
     if cached and isinstance(cached, str):
         return _mkt_insight_out(rid, cached, raw), 200
     try:
@@ -2358,6 +2404,9 @@ def _do_mkt_insight(rid, raw=False):
         # Pull post performance with weekly trend detection
         perf_clause = ""
         _trend_lines = []
+        _mkt_reach_vals, _mkt_diff = [], None
+        _mkt_week_sums = []
+        _mkt_topics = []
         try:
             from models import get_conn as _gc
             _conn = _gc()
@@ -2384,6 +2433,7 @@ def _do_mkt_insight(rid, raw=False):
             _conn.close()
             _perf_lines = []
             if _perf_rows:
+                _mkt_topics = [r["topic"] for r in _perf_rows if r["topic"]]
                 _sorted = sorted(_perf_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0), reverse=True)
                 for _r in _sorted[:3]:
                     _parts = []
@@ -2405,11 +2455,16 @@ def _do_mkt_insight(rid, raw=False):
             # a "strategy pivot".
             _reach_vals = [w["avg_reach"] for w in _weekly
                            if w["avg_reach"] and (w["reach_posts"] or 0) >= MKT_TREND_MIN_POSTS]
+            # The same weeks' SUMMED reach — the unit forecast_log scores
+            # marketing_reach_week in (the week's posts' reach added up).
+            _mkt_week_sums = [float(w["avg_reach"]) * int(w["reach_posts"] or 0) for w in _weekly
+                              if w["avg_reach"] and (w["reach_posts"] or 0) >= MKT_TREND_MIN_POSTS]
             if len(_reach_vals) >= MKT_TREND_MIN_WEEKS:
                 _diff_pct = round((_reach_vals[-1] - _reach_vals[0]) / max(_reach_vals[0], 1) * 100)
                 _span = (str(len(_reach_vals)) + " weeks with " + str(MKT_TREND_MIN_POSTS)
                          + "+ posts each (" + str(int(_reach_vals[0])) + " to " + str(int(_reach_vals[-1])) + ")")
                 if abs(_diff_pct) >= MKT_TREND_MIN_CHANGE_PCT:
+                    _mkt_reach_vals, _mkt_diff = list(_reach_vals), _diff_pct
                     _steady = (all(_reach_vals[i] >= _reach_vals[i+1] for i in range(len(_reach_vals)-1))
                                or all(_reach_vals[i] <= _reach_vals[i+1] for i in range(len(_reach_vals)-1)))
                     _trend_lines.append("Average reach per post " + ("up " if _diff_pct > 0 else "down ")
@@ -2427,10 +2482,9 @@ def _do_mkt_insight(rid, raw=False):
                 perf_clause += "\nDouble down on BEST topics. Rethink or avoid WEAK ones. Reference the trend when advising."
         except Exception:
             pass
-        has_trend = bool(_trend_lines) and "no clear direction" not in " ".join(_trend_lines)
-        forecast_instruction = (
-            '\nFORECAST: one short sentence on where reach is heading, based only on the trend above.'
-        ) if has_trend else ""
+        # The FORECAST line is computed after the call (_mkt_forecast, H8),
+        # never asked of the model: its projection was unscored.
+        forecast_instruction = ""
         # Written to the shape parse_insight_sections() actually reads: a
         # one-line intro, then numbered recommendations, then an optional
         # FORECAST line. It used to ask for "two short paragraphs", which the
@@ -2472,12 +2526,8 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         _fp_m = _ist_m.fingerprint(prompt)
         _stored_m = _ist_m.get(rid, "marketing", _fp_m)
         if isinstance(_stored_m, dict) and _stored_m.get("insight"):
-            _cache_set(cache_key, {"insight": _stored_m["insight"],
-                                   "figures_verified": _stored_m.get("figures_verified", True),
-                                   "unsupported_figures": _stored_m.get("unsupported_figures") or []})
-            return _mkt_insight_out(rid, _stored_m["insight"], raw,
-                                    {"figures_verified": _stored_m.get("figures_verified", True),
-                                     "unsupported_figures": _stored_m.get("unsupported_figures") or []}), 200
+            _cache_set(cache_key, dict(_mkt_checks(_stored_m), insight=_stored_m["insight"]))
+            return _mkt_insight_out(rid, _stored_m["insight"], raw, _mkt_checks(_stored_m)), 200
         from ai_utils import create_with_retry, extract_text, model_for, get_client
         _client = get_client()
         msg = create_with_retry(
@@ -2489,14 +2539,37 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             action="marketing_insight",
         )
         insight = extract_text(msg).strip()
-        from ai_guard import verify_figures
+        from ai_guard import verify_figures, unsupported_causes
+        # A FORECAST line the model wrote anyway is not the forecast: it is
+        # removed and the computed one stands in its place (H8).
+        import re as _re_mf
+        insight = _re_mf.sub(r"(?im)^\s*forecast:.*$\n?", "", insight).strip()
         _unsupported = verify_figures(insight, prompt, "marketing_insight", rid)
-        _cache_set(cache_key, {"insight": insight, "figures_verified": not _unsupported,
-                               "unsupported_figures": _unsupported})
-        _ist_m.put(rid, "marketing", _fp_m, {"insight": insight, "figures_verified": not _unsupported,
-                                            "unsupported_figures": _unsupported})
-        return _mkt_insight_out(rid, insight, raw, {"figures_verified": not _unsupported,
-                                                    "unsupported_figures": _unsupported}), 200
+        # A cause is allowed only where it carries something measured here —
+        # a topic that was posted, a named holiday (H2).
+        _causes = unsupported_causes(insight, list(_mkt_topics) + [h.strip() for h in (upcoming or "").split(",")],
+                                     job="marketing_insight", restaurant_id=rid)
+        _fc_line, _fc_pred = _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        if _fc_line:
+            insight = insight.rstrip() + "\n" + _fc_line
+            try:
+                # Logged in the scorer's unit — the week's SUMMED reach
+                # (last week's, carried forward) — never the per-post
+                # figure the line shows (forecast_log kind contract).
+                if _mkt_week_sums:
+                    _ist_m.record_weekly_forecast(rid, "marketing_reach_week", round(_mkt_week_sums[-1]),
+                                                  basis=f"last week's summed reach carried forward; "
+                                                        f"{len(_mkt_reach_vals)} weeks of "
+                                                        f"{MKT_TREND_MIN_POSTS}+ posts")
+            except Exception as _fce:
+                print(f"[MktInsight] forecast not logged: {_fce}")
+        _checks = {"figures_verified": not _unsupported, "unsupported_figures": _unsupported,
+                   "causes_verified": not _causes, "unsupported_causes": _causes,
+                   "forecast": ({"kind": "marketing_reach_week", "predicted": _fc_pred, "computed": True}
+                                if _fc_line else None)}
+        _cache_set(cache_key, dict(_checks, insight=insight))
+        _ist_m.put(rid, "marketing", _fp_m, dict(_checks, insight=insight))
+        return _mkt_insight_out(rid, insight, raw, _checks), 200
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"[MktInsight] ERROR: {str(e)}")
@@ -2505,8 +2578,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             _sv = stale[1]
             if isinstance(_sv, dict):
                 return _mkt_insight_out(rid, _sv.get("insight") or "", raw,
-                                        {"stale": True, "figures_verified": _sv.get("figures_verified", True),
-                                         "unsupported_figures": _sv.get("unsupported_figures") or []}), 200
+                                        dict(_mkt_checks(_sv), stale=True)), 200
             return _mkt_insight_out(rid, _sv, raw, {"stale": True}), 200
         # A budget stop or outage says so (AI-11); anything else keeps the
         # retry wording.
@@ -2815,7 +2887,16 @@ def labor_insight_api(current_user):
         import traceback; traceback.print_exc()
         stale = _insight_cache.get("labor-insight:" + str(rid))
         if stale:
-            return jsonify(**_labor_insight_out(rid, stale[1], uid))
+            # Past its window by definition (the TTL is bypassed here), so it
+            # says how old it is — the Reviews fallback's rule (H15, CA1 L6):
+            # a read from hours ago read exactly like one from this minute.
+            from ai_guard import freshness as _fresh_lab
+            _age = _fresh_lab(stale[0].isoformat(timespec="seconds"), stale_after_days=0)
+            return jsonify(stale=True, as_of=_age.get("as_of"), as_of_iso=_age.get("as_of_iso"),
+                           age_days=_age.get("age_days"),
+                           stale_note=(f"From a read on {_age['as_of']} — the latest one couldn't be written."
+                                       if _age.get("as_of") else "From an earlier read — the latest one couldn't be written."),
+                           **_labor_insight_out(rid, stale[1], uid))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its
