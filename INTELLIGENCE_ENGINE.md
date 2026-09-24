@@ -311,9 +311,22 @@ the last 365 days of episodes.
   reads a year of episodes without their `shown` rows (only whether each
   has one — B18).
 - weight = 1 + mean over the kind and its tags of
-  0.5 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
+  0.2 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
   dollar calibration (median measured ÷ predicted, ≥ 3 pairs, shrunk toward
-  1, held to 0.8–1.2), **bounded to 0.75–1.25**.
+  1, held to 0.8–1.2), **bounded below at 0.75 and above by a ceiling that
+  scales with measured success**: 1 + 0.25 × (Wilson 90% lower bound of the
+  kind's — or its best tag's — own improved ÷ measured, above the prior,
+  over the prior's headroom). No measured result, no lift above 1.0; 3 of 3
+  allows ≈1.01, 30 of 30 ≈1.21 (CA2 probe E: both used to hit 1.25).
+  Acceptance weighs 0.2 (it was 0.5): rank decides exposure and exposure
+  drives acceptance, so what the owner likes may nudge rank but never lift
+  it on its own.
+- The same calibration corrects the dollars a recommendation is SHOWN with:
+  `Effectiveness.adjusted_dollars(key, dollars)` → `{dollars,
+  dollars_adjusted, calibration_n, calibration_ratio, note}` —
+  `dollars_adjusted` is None below 3 measured pairs, otherwise the figure ×
+  the ratio with the note "adjusted from N measured results" (the surfaces
+  carry it on the rec; Group E/J render it).
 - A worse result downweights that key (0.20 each, capped 0.30) and its kind
   (0.08 each, capped 0.20), halving every 60 days; with the penalty the
   weight never goes below 0.6.
@@ -325,6 +338,69 @@ The owner's own record of the same trail — what they followed by module,
 what worked by tag, the timeline, the check-in — is `rec_learning.summary`,
 `timeline` and the `/recs/*` routes (`API_REFERENCE.md`), redacted per
 viewer.
+
+## What a measured result is allowed to say (confidence audit, 9/24/26)
+
+Every rate the engine learns rests on `recommendation_outcomes`, so the
+measurement is held to these rules (outcomes.py, metrics.py; tests in
+`tests/test_outcome_calibration.py`):
+
+- **Regression to the mean (CA2 #1).** A triggered tracker — one whose key
+  names a recommendation a surface showed, or an alert read — is never
+  measured against the window that fired it. `trigger_start`/`trigger_end`
+  are the tracker's window length ending the day before its episode chain
+  was first shown; `trigger_value` is the metric over it. The baseline is the
+  window's MIRROR about the trigger (`outcomes.mirror_window`: same length,
+  as far before the trigger as the after-window starts after it), seasonally
+  adjusted where a year allows (`baseline_kind` "before the trigger" or
+  "same weeks last year"). A number's pull back from a bad stretch is the
+  same looking back as forward, so a change that does nothing reads
+  improved as often as worsened: CA2 probe R replayed read 57% improved /
+  12% worsened against the trigger window and 5% / 6% now. (A trailing
+  8–12-week baseline was tried and read worsened twice as often as improved
+  — the after-window sits nearer the trigger than most of those weeks.) A
+  recommendation taken more than `TRIGGER_MAX_GAP_DAYS` (56) after its
+  trigger window ended uses the plain baseline, which can no longer overlap
+  it. When the mirror cannot be read, the old baseline is used and a result whose
+  baseline overlaps the trigger window is flagged `baseline_overlaps_trigger`:
+  shown, never counted — not in learning, not in delivered value.
+- **Noise bands per restaurant (CA2 #3).** `metrics.noise_band` estimates
+  this restaurant's spread of the metric over its own non-overlapping
+  windows of the comparison's length (≥4 windows over up to a year, else ≥6
+  whole weeks scaled by √(7/L) for a per-day metric, else the stated band
+  alone): band = max(stated, 1.645 × σ_L × √(1 + L/B)), a two-sided 10%
+  false-alarm rate that the stated floor only lowers. The tracker stores
+  `noise_band`, `noise_sigma`, `false_alarm_rate` and `band_basis` at its
+  start and every read of it (evaluation, re-check, accrual, the grade, the
+  interim reading) uses it. A 7-day caller passes `window_days=7`.
+- **One success definition (CA2 #4).** `rec_learning.learned_verdict` is
+  the only mapping; `outcomes.result_counts` is its value twin (not an alert
+  read, a routine supplier order or advice not taken; not disowned; no
+  "something else changed" check-in; not measured against its trigger
+  window) and a result counts in learning exactly when it counts in
+  delivered value (the learning == value test). `features.
+  outcomes_improved_rate_90d` reads through it — `CLEAR_VERDICTS`
+  denominator, one result per number per overlapping window, None below
+  `MIN_MEASURED_FOR_RATE` (5); `recs_*_28d` come from the ledger, every
+  surface. `scoring.kind_stats` carries `success_enough` and `public()`
+  withholds a rate below 5; an `auto` action (delayed.py) is its own bucket,
+  neither taken nor declined. `memory.own_record` names a kind as "worked"
+  only as `rec_learning.most_effective` would (≥5 measured, success ≥ even,
+  ranked by the Wilson lower bound) and says "k of n"; a memory slope is
+  said only when the series moved past the metric's stated band over the
+  weeks read.
+- **Advice not taken (CA2 #11).** `outcomes.observe_untaken` (run by
+  `evaluate_due` for each restaurant) gives a recommendation that was shown
+  and then dismissed (not "already doing it") or left to expire an
+  informational tracker, `observed:untaken:<rec_id>`, on the number it
+  carried, measured the same way. `rec_learning.untaken_comparison` (and
+  `kind_record["untaken"]`) sets taken beside not-taken — "Compared with
+  when you didn't: …" — only over 5 results each side, never as cause.
+  feedback.sync skips these trackers.
+- **Pattern strength.** A pattern's `confidence` is a display blend of
+  effect size, p and n, not the probability it is right; payloads carry it
+  as `strength_pct` with its label and basis (`patterns.strength_fields`),
+  and Ask's context says "strength … not a probability".
 
 ## Pattern-discovery architecture
 

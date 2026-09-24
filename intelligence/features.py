@@ -240,24 +240,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             f["guest_list_size"] = None
 
         # ── the recommendation loop ────────────────────────────────────────
-        dis = conn.execute(
-            "SELECT kind FROM home_dismissals WHERE restaurant_id=? AND dismissed_at >= ?",
-            (restaurant_id, d28.isoformat())).fetchall()
-        f["recs_answered_28d"] = len(dis)
-        f["recs_done_28d"] = sum(1 for r in dis if r["kind"] == "done")
-        f["recs_declined_28d"] = sum(1 for r in dis if r["kind"] == "not_for_us")
-        ev = conn.execute(
-            "SELECT verdict FROM recommendation_outcomes WHERE restaurant_id=? AND status='evaluated' AND evaluate_on >= ?",
-            (restaurant_id, d90.isoformat())).fetchall()
-        f["outcomes_evaluated_90d"] = len(ev)
-        # The share of CLEAR verdicts that improved (re-audit A31): an
-        # unknown or a no-clear-change is not a failure, and counting them in
-        # the denominator read a restaurant with thin data as one whose
-        # changes don't work.
-        clear = [r for r in ev if r["verdict"] in ("improved", "worsened")]
-        if clear:
-            f["outcomes_improved_rate_90d"] = round(sum(1 for r in clear if r["verdict"] == "improved")
-                                                    / len(clear), 3)
+        f.update(_rec_loop(conn, restaurant_id, d28, d90))
     finally:
         conn.close()
     # People on the floor per role family and daypart, per $1k of sales
@@ -270,6 +253,65 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
     except Exception as e:
         print(f"[intelligence] staffing ratios unavailable for {restaurant_id}: {e}")
     return f
+
+
+def _rec_loop(conn, restaurant_id, d28, d90) -> dict:
+    """The recommendation-loop features, by the ONE success definition
+    (CA2 #4, CA1 red flag 13):
+
+      recs_*_28d                 from the ledger (rec_instances / rec_events),
+                                 every surface — not the legacy Home-only
+                                 home_dismissals table: episodes some surface
+                                 SHOWED, answered in the last 28 days; done =
+                                 taken (accepted, completed, implemented),
+                                 declined = dismissed.
+      outcomes_evaluated_90d     results evaluated in the last 90 days.
+      outcomes_improved_rate_90d improved ÷ measured, each result read
+                                 through rec_learning.learned_verdict (a
+                                 disowned, conditions-changed, informational,
+                                 trigger-window, faded or reversed result is
+                                 never a win), the CLEAR_VERDICTS denominator
+                                 (no clear change is measured, not a win), one
+                                 result per number per overlapping window —
+                                 and None below MIN_MEASURED_FOR_RATE: one
+                                 result the owner disowned used to publish a
+                                 1.0 benchmark (CA2 probe B)."""
+    import rec_learning
+    import rec_ledger
+    out = {"recs_answered_28d": None, "recs_done_28d": None, "recs_declined_28d": None,
+           "outcomes_evaluated_90d": None, "outcomes_improved_rate_90d": None}
+    try:
+        rows = conn.execute(
+            "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
+            "WHERE i.restaurant_id=? AND e.at >= ? AND e.event IN ('accepted','completed','implemented','dismissed') "
+            "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown')",
+            (restaurant_id, d28.isoformat())).fetchall()
+        answered, done, declined = set(), set(), set()
+        for r in rows:
+            if not rec_ledger.counts_in_acceptance(r["key"]):
+                continue
+            answered.add(r["rec_id"])
+            (declined if r["event"] == "dismissed" else done).add(r["rec_id"])
+        out["recs_answered_28d"] = len(answered)
+        out["recs_done_28d"] = len(done)
+        out["recs_declined_28d"] = len(declined - done)
+    except Exception as e:
+        print(f"[intelligence] ledger answers unreadable for {restaurant_id}: {e}")
+    try:
+        ev = [dict(r) for r in conn.execute(
+            "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND status='evaluated' AND evaluate_on >= ?",
+            (restaurant_id, d90.isoformat())).fetchall()]
+    except Exception as e:
+        print(f"[intelligence] results unreadable for {restaurant_id}: {e}")
+        return out
+    out["outcomes_evaluated_90d"] = len(ev)
+    eps = [{"rec_id": r["id"], "verdict": rec_learning.learned_verdict(r.get("verdict"), r), "tracker": r}
+           for r in ev]
+    clear = [e for e in rec_learning._one_per_window(eps) if e["verdict"] in rec_learning.CLEAR_VERDICTS]
+    if len(clear) >= rec_learning.MIN_MEASURED_FOR_RATE:
+        out["outcomes_improved_rate_90d"] = round(sum(1 for e in clear if e["verdict"] == "improved")
+                                                  / len(clear), 3)
+    return out
 
 
 def completeness(f: dict) -> float:

@@ -179,6 +179,13 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None, s
         "net_by_module": v.get("net_by_module", v["by_module"]),
         "validated_monthly": v.get("validated_monthly", 0.0),
         "validated": v.get("validated", 0),
+        # The improvements by attribution grade, side by side (CA2 #7): a
+        # clear or held move apart from one tied to other changes (or past
+        # the band only once). Parts of `monthly`, never added to it again.
+        "consistent_monthly": v.get("consistent_monthly", 0.0),
+        "consistent": v.get("consistent", 0),
+        "associated_monthly": v.get("associated_monthly", 0.0),
+        "associated": v.get("associated", 0),
         "faded": v.get("faded", 0),
         "evaluated": v["evaluated"],
         "in_flight": v["in_flight"],
@@ -466,6 +473,10 @@ def headline(restaurant_id: int, user=None, db_path: str = DB_PATH) -> dict:
         "by_module": [{"module": m, "label": MODULE_VALUE_LABELS.get(m, m), "monthly": round(x, 2)}
                       for m, x in parts],
         "wins": v.get("wins"),
+        # Parts of `monthly` by attribution grade (CA2 #7), for a surface to
+        # say apart — never summed with anything.
+        "consistent_monthly": int(round(v.get("consistent_monthly") or 0)),
+        "associated_monthly": int(round(v.get("associated_monthly") or 0)),
         "unpriced_wins": v.get("unpriced_wins") or [],
         "cumulative": cum,
         "sales_lift": {"monthly": lift.get("monthly", 0.0), "net_monthly": lift.get("net_monthly", 0.0),
@@ -519,6 +530,12 @@ def value_lines(d) -> list:
         s += "."
         if net > 0:
             s += f" If that holds for a year, about ${net * 12:,.0f} — a projection, not a measurement."
+        assoc, clear = float(d.get("associated_monthly") or 0), float(d.get("consistent_monthly") or 0)
+        if assoc and clear:
+            s += (f" Of the improvements, ${clear:,.0f}/month were clear moves or held at their re-check; "
+                  f"${assoc:,.0f}/month came alongside other changes or crossed normal variation only once.")
+        elif assoc:
+            s += " Every improvement came alongside other changes or crossed normal variation only once."
         out.append(s)
     cum = d.get("cumulative") or {}
     if cum.get("total") is not None and cum.get("measured_days"):

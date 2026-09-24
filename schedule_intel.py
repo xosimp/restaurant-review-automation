@@ -180,18 +180,29 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
         return {}
     finally:
         conn.close()
+    # "No issues" is a reading only on a night the coverage check watched
+    # (watched_dates, A-19; CA1 L20): a daypart whose nights nobody watched
+    # said "· no issues" on the web.
+    dates = sorted(str(r["date"]) for r in rows if r["date"])
+    seen = watched_dates(restaurant_id, dates[0], dates[-1], db_path) if dates else set()
     acc = {}
     for r in rows:
         try:
             wd = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
         except ValueError:
             continue
-        e = acc.setdefault(wd, {}).setdefault(r["daypart"], {"weeks": 0, "hours": 0.0, "sales": 0.0, "sales_n": 0, "issues": 0, "ratings": []})
+        e = acc.setdefault(wd, {}).setdefault(r["daypart"], {"weeks": 0, "hours": 0.0, "sales": 0.0, "sales_n": 0,
+                                                             "issues": 0, "ratings": [], "watched": 0,
+                                                             "clean_watched": 0})
         e["weeks"] += 1
         e["hours"] += float(r["hours"] or 0)
         if r["sales"] is not None:
             e["sales"] += float(r["sales"]); e["sales_n"] += 1
         e["issues"] += int(r["issues"] or 0)
+        if (r["issues"] or 0) or str(r["date"]) in seen:
+            e["watched"] += 1
+            if not (r["issues"] or 0):
+                e["clean_watched"] += 1
         if r["review_rating"] is not None:
             e["ratings"].append(float(r["review_rating"]))
     out = {}
@@ -201,12 +212,25 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
                 continue
             avg_h = e["hours"] / e["weeks"]
             avg_s = (e["sales"] / e["sales_n"]) if e["sales_n"] else None
+            if e["issues"]:
+                label = f"{e['issues']} issue{'s' if e['issues'] != 1 else ''}"
+            elif e["watched"]:
+                label = f"no issues on {e['watched']} watched night{'s' if e['watched'] != 1 else ''}"
+            else:
+                label = "not watched — coverage wasn't checked on these nights"
             out.setdefault(wd, {})[part] = {
                 "weeks": e["weeks"], "avg_hours": round(avg_h, 1), "avg_sales": round(avg_s, 0) if avg_s else None,
                 "splh": round(avg_s / avg_h, 0) if (avg_s and avg_h) else None,
-                "issues": e["issues"], "troubled": e["issues"] >= max(2, e["weeks"] // 2),
+                "issues": e["issues"],
+                # `issues` is None when no night was a reading at all, so a
+                # client cannot print "no issues" for nights nobody watched.
+                "issues_known": bool(e["issues"] or e["watched"]),
+                "watched": e["watched"], "clean_watched": e["clean_watched"], "issues_label": label,
+                "troubled": e["issues"] >= max(2, e["watched"] // 2) if e["watched"] else False,
                 "rating": round(sum(e["ratings"]) / len(e["ratings"]), 2) if e["ratings"] else None,
             }
+            if not out[wd][part]["issues_known"]:
+                out[wd][part]["issues"] = None
     return out
 
 
@@ -812,18 +836,66 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
 _REC_WHEN = re.compile(r"\bon (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (morning|night|lunch|dinner)\b")
 
 
+# A night recommendation's verdict (CA1 L22): one night after accepting used
+# to decide "improved" (no issue) or "worsened" (any), with no baseline — a
+# single quiet Friday proved the advice. Now it is the SHARE of that weekday
+# and daypart's watched nights with a coverage or no-show issue, over at
+# least REC_MIN_NIGHTS_AFTER nights after acceptance, against the same
+# nights over the REC_BASELINE_WEEKS before it (at least REC_MIN_NIGHTS_BEFORE
+# of them), and it moves only past a band: the larger of REC_RATE_FLOOR and
+# metrics.BAND_K standard errors of the difference of two proportions — the
+# same 10% two-sided false-alarm rule the outcome engine uses.
+REC_MIN_NIGHTS_AFTER = 7
+REC_MIN_NIGHTS_BEFORE = 4
+REC_BASELINE_WEEKS = 12
+REC_RATE_FLOOR = 0.15
+REC_ACCEPTED_LOOKBACK_DAYS = 180          # long enough for seven weekly nights to land
+
+
+def _evidence_nights(rows, restaurant_id, db_path):
+    """The rows that are evidence: a night with an issue always; a night
+    with none only when the coverage check was watching it (A-19)."""
+    if not rows:
+        return []
+    dates = sorted(str(o["date"]) for o in rows)
+    seen = watched_dates(restaurant_id, dates[0], dates[-1], db_path)
+    return [o for o in rows if (o["issues"] or 0) or str(o["date"]) in seen]
+
+
+def night_rate_verdict(before_issue_nights, before_n, after_issue_nights, after_n) -> dict:
+    """{verdict, before_rate, after_rate, band, before_n, after_n} for an
+    issue-night share before and after; verdict "unknown" below the night
+    floors. Pure."""
+    out = {"before_n": before_n, "after_n": after_n, "before_rate": None, "after_rate": None, "band": None,
+           "verdict": "unknown"}
+    if before_n < REC_MIN_NIGHTS_BEFORE or after_n < REC_MIN_NIGHTS_AFTER:
+        return out
+    import metrics
+    pb, pa = before_issue_nights / before_n, after_issue_nights / after_n
+    pooled = (before_issue_nights + after_issue_nights) / float(before_n + after_n)
+    se = (pooled * (1 - pooled) * (1.0 / before_n + 1.0 / after_n)) ** 0.5
+    band = max(REC_RATE_FLOOR, metrics.BAND_K * se)
+    diff = pb - pa                      # a fall in the issue share is better
+    out.update(before_rate=round(pb, 3), after_rate=round(pa, 3), band=round(band, 3),
+               verdict="improved" if diff > band else "worsened" if -diff > band else "no_clear_change")
+    return out
+
+
 def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None) -> int:
     """For accepted schedule recommendations about one night ("Fill the gap
-    on Friday night…", "Move somebody … onto Saturday night"), read what that
-    night recorded once its published week is over (schedule_outcomes): no
-    coverage or no-show issue is "improved", any is "worsened". Recorded as
+    on Friday night…", "Move somebody … onto Saturday night"), read that
+    weekday and daypart's issue share once REC_MIN_NIGHTS_AFTER of its
+    nights after acceptance have been recorded in published, finished weeks
+    (schedule_outcomes), against the REC_BASELINE_WEEKS before it
+    (night_rate_verdict). Only watched nights count (A-19). Recorded ONCE as
     the recommendation's outcome in rec_ledger. Idempotent."""
     import rec_ledger as _rl
     today = today or date.today()
     conn = get_conn(db_path)
     try:
         acc = conn.execute("SELECT kind, key, created_at FROM schedule_recommendation_events WHERE restaurant_id=? "
-                           "AND action='accepted' AND created_at >= datetime('now', '-60 days')", (restaurant_id,)).fetchall()
+                           "AND action='accepted' AND created_at >= datetime('now', ?)",
+                           (restaurant_id, f"-{REC_ACCEPTED_LOOKBACK_DAYS} days")).fetchall()
         out = conn.execute("SELECT o.date, o.daypart, o.issues, h.week_start, h.week_end FROM schedule_outcomes o "
                            "JOIN schedule_history h ON h.id=o.history_id WHERE o.restaurant_id=? AND h.week_end < ?",
                            (restaurant_id, today.isoformat())).fetchall()
@@ -839,19 +911,23 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
             continue
         day, part = m.group(1), {"lunch": "morning", "dinner": "night"}.get(m.group(2), m.group(2))
         accepted_on = str(a["created_at"])[:10]
-        match = [o for o in out if o["daypart"] == part and o["date"] >= accepted_on
-                 and datetime.strptime(o["date"], "%Y-%m-%d").strftime("%A") == day]
-        if not match:
-            continue
-        o = sorted(match, key=lambda x: x["date"])[0]
-        # An issue on the night is evidence either way; a night with none is
-        # "improved" only if the coverage check was watching it (A-19).
-        if not (o["issues"] or 0) and o["date"] not in watched_dates(restaurant_id, o["date"], o["date"], db_path):
-            continue
-        verdict = "improved" if not (o["issues"] or 0) else "worsened"
+        since = (date.fromisoformat(accepted_on) - timedelta(weeks=REC_BASELINE_WEEKS)).isoformat()
+        same = {}
+        for o in out:
+            if o["daypart"] == part and datetime.strptime(o["date"], "%Y-%m-%d").strftime("%A") == day:
+                same.setdefault(o["date"], o)            # one reading per night
+        after = _evidence_nights([o for d, o in same.items() if d >= accepted_on], restaurant_id, db_path)
+        before = _evidence_nights([o for d, o in same.items() if since <= d < accepted_on], restaurant_id, db_path)
+        res = night_rate_verdict(sum(1 for o in before if o["issues"]), len(before),
+                                 sum(1 for o in after if o["issues"]), len(after))
+        if res["verdict"] == "unknown":
+            continue                                     # not enough watched nights yet: read again next week
         if _rl.record(restaurant_id, schedule_rec_key(a["kind"], a["key"]), "outcome",
-                      meta={"verdict": verdict, "date": o["date"], "issues": o["issues"] or 0},
-                      source_ref=f"night:{o['date']}:{part}", db_path=db_path):
+                      meta={"verdict": res["verdict"], "day": day, "daypart": part,
+                            "before_rate": res["before_rate"], "after_rate": res["after_rate"],
+                            "band": res["band"], "before_nights": res["before_n"], "after_nights": res["after_n"],
+                            "through": max(o["date"] for o in after)},
+                      source_ref=f"nights:{accepted_on}:{day}:{part}", db_path=db_path):
             n += 1
     return n
 

@@ -81,11 +81,14 @@ def test_conditions_changed_caps_the_grade_and_says_why(db_path):
     rid = _rid(db_path)
     oid = _insert(db_path, rid, "Trim", "labor_pct", 400.0, "2026-06-01", attribution="consistent")
     r = outcomes.apply_checkin(rid, oid, "yes", True, db_path=db_path)
-    assert r["attribution"] == "associated" and r["counts"] is True
+    # "Something else changed" takes the result out of Delivered as it takes
+    # it out of learning (CA2 #7 — it used to keep counting here while
+    # rec_learning read it as unknown).
+    assert r["attribution"] == "associated" and r["counts"] is False
     assert "you said something else changed" in r["attribution_label"]
     # Answering again without the change restores the grade it had.
     r = outcomes.apply_checkin(rid, oid, "yes", False, db_path=db_path)
-    assert r["attribution"] == "consistent"
+    assert r["attribution"] == "consistent" and r["counts"] is True
 
 
 def test_another_restaurants_tracker_is_untouched(db_path):

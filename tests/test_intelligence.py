@@ -168,18 +168,40 @@ def test_feedback_sync_derives_events_idempotently(db_path):
         feedback.record(rid, "x", "x:1", "teleported", db_path=db_path)
 
 
-def test_a_restaurants_own_record_needs_no_floor_and_names_what_worked(db_path):
+def test_a_restaurants_own_record_names_what_worked_only_over_the_floor(db_path):
+    # Updated (CA2 finding 9, CA1 A10/E4): "worked" used to need one
+    # improvement and no floor; it now follows rec_learning.most_effective —
+    # MIN_MEASURED_FOR_RATE clear results, success at least even — and the
+    # line says "k of n".
     rid = _rid(db_path)
     for i in range(3):
         feedback.record(rid, "cut_waste", f"cut_waste:{i}", "measured", outcome="improved", days_to_effect=20, db_path=db_path)
     feedback.record(rid, "trim_day", "trim_day:Mon", "not_for_us", db_path=db_path)
     feedback.record(rid, "trim_day", "trim_day:Tue", "hidden", db_path=db_path)
     rec = memory.own_record(rid, db_path=db_path)
-    assert rec["worked"] == ["cut_waste"] and rec["ignored"] == ["trim_day"]
+    assert rec["worked"] == [] and rec["ignored"] == ["trim_day"]
+    assert rec["by_kind"]["cut_waste"]["success_rate"] is None           # 3 measured: below the floor
+    assert rec["by_kind"]["cut_waste"]["improved"] == 3
+    for i in range(3, 5):
+        feedback.record(rid, "cut_waste", f"cut_waste:{i}", "measured", outcome="improved", days_to_effect=20, db_path=db_path)
+    rec = memory.own_record(rid, db_path=db_path)
+    assert rec["worked"] == ["cut_waste"]
     assert rec["by_kind"]["cut_waste"]["success_rate"] == 1.0 and rec["by_kind"]["cut_waste"]["median_days_to_improvement"] == 20
     lines = memory.lines(memory.restaurant_memory(rid, db_path=db_path))
-    assert any("measurably improved" in l and "cut_waste" in l for l in lines)
+    assert any("5 of 5 measured results improved" in l and "cut_waste" in l for l in lines)
     assert any("declined or hidden" in l and "trim_day" in l for l in lines)
+
+
+def test_one_improvement_beside_four_worse_is_never_what_worked(db_path):
+    """CA2 probe C: 1 improved and 4 worsened read "measurably improved
+    things here: cut_waste" in Ask's prompt."""
+    rid = _rid(db_path)
+    feedback.record(rid, "cut_waste", "cut_waste:a", "measured", outcome="improved", db_path=db_path)
+    for i in range(4):
+        feedback.record(rid, "cut_waste", f"cut_waste:w{i}", "measured", outcome="worsened", db_path=db_path)
+    rec = memory.own_record(rid, db_path=db_path)
+    assert rec["worked"] == [] and rec["by_kind"]["cut_waste"]["success_rate"] == 0.2
+    assert not any("cut_waste" in l for l in memory.lines({"record": rec}))
 
 
 def test_busiest_days_and_seasonality_refuse_without_enough_history(db_path):

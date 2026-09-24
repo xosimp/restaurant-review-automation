@@ -274,11 +274,15 @@ def test_3_schedule_accept_is_refused_while_labor_is_measured(db_path):
 
 def test_3_reprice_is_refused_while_food_cost_is_measured(db_path):
     rid = _rid(db_path)
+    # A supplier order is informational now (CA2 #7): it is routine buying,
+    # not a change aimed at food cost %, so it no longer claims the number
+    # and never blocks a real change on it.
     order = outcomes.observe(rid, "supplier_order_sent", user_id=1)
-    assert order and order["module"] == "inventory"
+    assert order and order["module"] == "inventory" and order["informational"]
+    live = outcomes.record(rid, "manual", "manual:food", "Tighten portions", "food_cost_pct", user_id=1)
     got = client_api.track_reprice(rid, user_id=1)
-    assert client_api.tracker_fields(got)["tracker_refused"]["in_flight"]["id"] == order["id"]
-    assert [m for _k, m, _mod in _tracking(db_path, rid)] == ["food_cost_pct"]
+    assert client_api.tracker_fields(got)["tracker_refused"]["in_flight"]["id"] == live["id"]
+    assert [m for _k, m, _mod in _tracking(db_path, rid)] == ["food_cost_pct", "food_cost_pct"]
 
 
 def test_3_reprice_alone_starts_and_is_credited_to_food_cost(db_path):

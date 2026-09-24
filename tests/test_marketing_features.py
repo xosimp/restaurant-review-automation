@@ -548,8 +548,21 @@ def test_performance_is_reported_for_a_window_and_against_the_one_before(rid, db
     assert window["reach"] == 1000
     assert window["engagement_rate"] == 10.0
     assert window["previous"]["posts"] == 1
-    assert window["change"]["reach"] == 100.0
+    # One post against one is no period-on-period change (CA1 M5): the %
+    # waits for MIN_POSTS_FOR_CHANGE posts in each period, and says why.
+    assert window["change"]["reach"] is None and "Too few posts" in window["change_note"]
     assert window["by_platform"][0]["platform"] == "instagram"
+
+    conn = get_conn(db_path)
+    for days_ago, reach, likes in ((4, 1000, 100), (5, 1000, 100), (41, 500, 25), (42, 500, 25)):
+        at = (_now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT INTO marketing_content_log (restaurant_id, topic, post_id, post_platform, "
+            "reach, likes, posted_at, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (rid, f"p{days_ago}", f"ig{days_ago}", "instagram", reach, likes, at, at))
+    conn.commit(); conn.close()
+    window = marketing_signals.performance_window(rid, days=30, db_path=db_path)
+    assert window["change"]["reach"] == 100.0 and window["change_note"] is None
 
 
 def test_a_post_published_today_counts_toward_this_window(rid, db_path):

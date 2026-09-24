@@ -126,12 +126,38 @@ def _sentence(h, cand, cohort_label, n_total):
 
 
 def _confidence(cand) -> float:
-    """0..1 from effect size, p and n — a reader's shorthand, not a p."""
+    """0..1 from effect size, p and n — a reader's shorthand, not a p.
+
+    PATTERN STRENGTH, not the probability the pattern is right (CA1 red
+    flag 9, CA2 finding 2): 0.4 × effect size (|Cohen's d| ÷ 0.8, capped at
+    1 — 0.8 is a "large" effect), 0.35 × how far p sits under MAX_P, 0.25 ×
+    sample (n ÷ 40, capped at 1). The weights order patterns for display;
+    they were never fitted to anything. Payloads carry it as `strength_pct`
+    (0–100) with `confidence` kept for older readers (strength_fields)."""
     n = cand["n_with"] + cand["n_without"]
     size = min(1.0, abs(cand["cohen_d"] or 0) / 0.8)
     sig = max(0.0, 1.0 - (cand["p_value"] or 1) / MAX_P)
     scale = min(1.0, n / 40.0)
     return round(0.4 * size + 0.35 * sig + 0.25 * scale, 3)
+
+
+STRENGTH_LABEL = "pattern strength"
+STRENGTH_BASIS = ("effect size, significance and sample combined for ordering — not the chance the pattern is "
+                  "right")
+
+
+def strength_fields(d) -> dict:
+    """A pattern row as payloads carry it: `strength_pct` (0–100, the
+    _confidence blend), its label and basis, and `confidence` (0–1) kept
+    for older readers (CA1 E4 / red flag 9)."""
+    try:
+        c = float(d.get("confidence"))
+    except (TypeError, ValueError):
+        c = None
+    d["strength_pct"] = int(round(c * 100)) if c is not None else None
+    d["strength_label"] = STRENGTH_LABEL
+    d["strength_basis"] = STRENGTH_BASIS
+    return d
 
 
 def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES) -> dict:
@@ -227,7 +253,7 @@ def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20)
         d = dict(r)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
-        out.append(privacy.assert_anonymous(d))
+        out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 
 
@@ -242,7 +268,7 @@ def all_patterns(db_path=DB_PATH, limit=100) -> list:
         d = dict(r)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
-        out.append(privacy.assert_anonymous(d))
+        out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 
 

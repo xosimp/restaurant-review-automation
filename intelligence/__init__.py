@@ -77,5 +77,8 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
             lines.append(f"{b['label']}: this restaurant is in the {b['standing']} of {b['n']} {b['cohort_label'].lower()} "
                          f"(band {b['p25']}–{b['p75']}, middle {b['p50']}).")
     for p in patterns.active(cohort, db_path=db_path, limit=3):
-        lines.append(f"Pattern ({p['confidence']:.0%} confidence): {p['sentence']}")
+        # Pattern STRENGTH (patterns.strength_fields), never worded as the
+        # chance the pattern is right (CA1 red flag 9).
+        lines.append(f"Pattern (strength {p['confidence']:.0%}: effect size, significance and sample — not a "
+                     f"probability): {p['sentence']}")
     return lines
