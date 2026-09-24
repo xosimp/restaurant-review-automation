@@ -577,6 +577,61 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 #explain-inner h2{color:#f0ebe0;font-size:20px;font-weight:800;margin:0 0 14px}
 #explain-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
 #explain-body{color:#c8bfb0;font-size:13px;line-height:1.65}
+/* ── Confidence line + its Why? panel (contract K1; DESIGN_SYSTEM §12
+   "Confidence") ─────────────────────────────────────────────────────────
+   One line wherever a recommendation says how sure it is: a small meter,
+   "72% confidence" (digits in the number face), the weakest dimension's
+   basis, and a Why? text button that opens the three dimensions in the
+   explanation modal. Tone: .good (75 and up) green, .mid (50-74) ink2,
+   .warn (under 50, or not yet measurable) amber. Never red (red means bad)
+   and never ember (ember is the brand speaking, not a verdict, §9). */
+.cf{--cf-c:var(--ink2);display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px;line-height:1.45;color:var(--ink3)}
+.cf.good{--cf-c:var(--green)}.cf.warn{--cf-c:var(--amber)}
+.cf>b{font-weight:700;color:var(--cf-c)}
+.cf>b .hb-num{font-weight:600;letter-spacing:-.01em}
+.cf .cf-r{color:var(--ink3)}
+.cf .cf-why{margin-left:2px}
+.cf .cf-c{flex-basis:100%;font-size:12.5px;color:var(--amber)}
+/* On a panel that is dark in both themes (the shift-quality panel): the
+   dark palette's values, as the component's own tokens. */
+.cf.on-dark{--cf-c:#c4bdb4;color:rgba(240,235,224,.6)}.cf.on-dark.good{--cf-c:#4ead7a}.cf.on-dark.warn{--cf-c:#d4a030}
+.cf.on-dark .cf-r{color:rgba(240,235,224,.6)}.cf.on-dark .cf-m{background:rgba(255,255,255,.1)}
+.cf-m,.cf-p-bar{position:relative;display:inline-block;flex:0 0 auto;border-radius:999px;color:var(--cf-c)}
+.cf-m{width:46px;height:6px;background:var(--paper3)}
+/* The glow is for a verdict colour; neutral ink would only smudge. */
+.cf.mid .cf-m i{box-shadow:none;background-image:linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,0) 80%)}
+.cf-m i,.cf-p-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:inherit;background-color:currentColor;background-image:linear-gradient(90deg,rgba(255,255,255,.34),rgba(255,255,255,0) 72%);box-shadow:0 0 9px -1px currentColor;transform-origin:left center;transform:scaleX(0);animation:cmBar .9s cubic-bezier(.2,.8,.2,1) .12s forwards}
+.cf-m.none{background:repeating-linear-gradient(135deg,var(--paper3) 0 3px,transparent 3px 6px)}
+.cf-m.none i,.cf-p-bar.none i{display:none}
+/* The panel always sits on the explanation modal, which is dark in both
+   themes (#explain-inner pins its own gradient), so it carries the dark
+   palette's values as its own tokens rather than the theme's. */
+.cf-p{--p-ink:#f0ebe0;--p-ink2:#c8bfb0;--p-ink3:rgba(240,235,224,.55);--p-good:#4ead7a;--p-mid:#c4bdb4;--p-warn:#d4a030;--p-track:rgba(255,255,255,.09);--p-line:rgba(240,235,224,.1);--p-c:var(--p-mid)}
+.cf-p .good{--p-c:var(--p-good)}.cf-p .mid{--p-c:var(--p-mid)}.cf-p .warn{--p-c:var(--p-warn)}
+.cf-p-hero{display:flex;align-items:flex-end;flex-wrap:wrap;gap:6px 16px;padding:2px 0 16px;border-bottom:1px solid var(--p-line)}
+.cf-p-big{font-size:46px;font-weight:600;line-height:.95;letter-spacing:-.03em;color:var(--p-c);text-shadow:0 0 22px currentColor}
+.cf-p-big small{font-size:20px;margin-left:2px;opacity:.8}
+.cf-p-hero .cf-p-bar{flex:1 1 150px;height:9px;margin-bottom:9px}
+.cf-p-why{flex-basis:100%;font-size:13px;color:var(--p-ink2);line-height:1.5}
+.cf-p-bar{display:block;height:6px;background:var(--p-track);color:var(--p-c);margin:8px 0 7px}
+.cf-p-bar.none{background:repeating-linear-gradient(135deg,var(--p-track) 0 4px,transparent 4px 8px)}
+.cf-p-caution{margin-top:14px;padding:9px 12px;border-left:2px solid var(--p-warn);background:rgba(212,160,48,.08);border-radius:0 8px 8px 0;font-size:13px;color:var(--p-ink);line-height:1.5}
+.cf-p-k{margin:18px 0 2px;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--p-ink3)}
+.cf-p-row{padding:12px 0;border-top:1px solid var(--p-line)}
+.cf-p-k+.cf-p-row{border-top:none}
+.cf-p-h{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.cf-p-h .t{font-size:14.5px;font-weight:700;color:var(--p-ink)}
+.cf-p-h .v{font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--p-c)}
+.cf-p-row .b{font-size:13px;color:var(--p-ink2);line-height:1.5}
+.cf-p-row .d{font-size:12px;color:var(--p-ink3);margin-top:3px}
+.cf-p-ft{margin-top:10px;padding-top:12px;border-top:1px solid var(--p-line);font-size:12px;color:var(--p-ink3);line-height:1.5}
+/* The small claim tag (J5): what kind of statement a line is - AI-written,
+   computed, measured, forecast. Quiet by design: ink3 on the recess, never
+   a status colour. */
+.ck-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:12px;font-size:12.5px;color:var(--ink3);line-height:1.5}
+.ck-strip .sep{opacity:.6}
+.ck-tag{display:inline-flex;align-items:center;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);background:var(--paper2);border:1px solid var(--paper3);border-radius:999px;padding:2px 7px;line-height:1.3;vertical-align:middle;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.cf-m i,.cf-p-bar i{animation:none;transform:none}}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -862,8 +917,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-eva-warn{font-size:12px;line-height:1.45;color:var(--red);border-left:2px solid var(--red);padding:2px 0 2px 8px;margin-bottom:7px}
 .ask-eva-chips{display:flex;flex-wrap:wrap;gap:5px}
 .ask-eva-chip{font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink3);background:var(--paper2);border:1px solid var(--paper3);border-radius:999px;padding:3px 8px}
-.ask-eva-chip.conf.high{color:var(--green);border-color:var(--green)}
-.ask-eva-chip.conf.low{color:var(--red);border-color:var(--red)}
+.ask-eva .cf.ask-eva-cf{margin-top:7px}
 .ask-prop{align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:14px;padding:12px 14px}
 .ask-prop .t{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:9px}
 .ask-prop .r{display:flex;gap:8px}
@@ -1525,6 +1579,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-row.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-row.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-row.watch .d{background:var(--ink3);color:transparent}
 .hb-row.good .d{background:var(--hb-good);color:var(--hb-good)}
 .hb-row .t.wrap{white-space:normal;line-height:1.45}
+.hb-att .t .hb-att-ev{font-size:14px;font-weight:500;color:var(--ink3);line-height:1.45;margin-top:2px}
+.hb-att .t .cf{margin-top:4px;font-weight:400}
 .hb-row .t{flex:1;min-width:0;font-size:16px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hb-row .no{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--ember);width:26px;flex-shrink:0}
 .hb-row .m{font-size:13.5px;color:var(--ink3);white-space:nowrap}
@@ -1647,6 +1703,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
 .hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
 .hb-focus .ft .sp{display:none}
+.hb-focus-cf{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
 .hb-focus .ft .also{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hb-focus .ft .also .m{font-size:14.5px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 /* a link between two modules — the "across your restaurant" mark */
@@ -1678,9 +1735,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .meta{display:flex;flex-wrap:wrap;gap:6px}
 .hb-rec .meta span{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 9px}
 .hb-rec .meta .usd{color:var(--ember);border-color:var(--hb-line)}
-.hb-rec .hb-conf{font-size:13px;color:var(--ink3);line-height:1.4}
-.hb-rec .hb-conf b{font-weight:700;color:var(--ink2)}
-.hb-rec .hb-conf.high b{color:var(--hb-good)}.hb-rec .hb-conf.low b{color:var(--ember2)}
+/* .hb-conf is now the shared .cf confidence line (K1), which carries its
+   own tone; the old high/low colours (low was ember2, against §9) went
+   with the band-only line. */
+.hb-rec .cf{margin-top:1px}
 .hb-rec .ig{font-size:13px;color:var(--ink3);line-height:1.4}.hb-rec .ig b{color:var(--ink2);font-weight:600}
 .hb-assign{display:flex;gap:8px;align-items:center;margin-top:8px}.hb-assign .ac-select{flex:1;min-width:0}
 .hb-quiet{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;font-size:13px;color:var(--ink3)}
@@ -1745,9 +1803,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-recipe-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:14.5px;color:var(--ink)}
 .fc2-recipe-note{font-size:12.5px;color:var(--ink3)}
 .fc2-recipe-lines{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.fc2-unit-warn{color:var(--amber)!important}
+.fc2-unit-q{color:var(--amber);font-weight:700}
 .fc2-recipe-ln{font-size:13px;color:var(--ink2);background:var(--hb-inner,var(--paper2));border:1px solid var(--paper3);border-radius:999px;padding:4px 10px}
-.fc2-recipe-ln.low{border-style:dashed}
-.fc2-recipe-ln i{color:var(--ember);font-style:normal;font-weight:700}
+/* Recipe-line confidence (the model's, per line): high plain, medium a
+   quiet ink3 dot on a dotted edge, low a dashed edge and an amber "?" -
+   amber is "check this", never ember (§9). */
+.fc2-recipe-ln.low{border-style:dashed;border-color:var(--amber)}
+.fc2-recipe-ln.med{border-style:dotted}
+.fc2-recipe-ln i{color:var(--amber);font-style:normal;font-weight:700}
+.fc2-recipe-ln i.m{color:var(--ink3)}
 .fc2-recipe-ft{display:flex;justify-content:flex-end;gap:10px}
 .fc2-import{margin-top:12px}
 .fc2-import summary{cursor:pointer;font-size:13.5px;color:var(--ink2)}
@@ -1766,6 +1831,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-ledger span>.hb-num:first-child{margin:-3px 0 -3px -8px}
 /* stat tiles */
 .hb-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
+.hb-vsplit{display:grid;grid-template-columns:minmax(190px,1fr) minmax(0,2.2fr);gap:18px 22px}
+.hb-vsplit .hb-vgrp.other{padding-left:22px;border-left:1px solid var(--hb-line2)}
+.hb-vsplit.solo{grid-template-columns:1fr}
+.hb-vsplit .hb-vgrp .hb-h3 .cnt{font-weight:500;letter-spacing:0;text-transform:none;font-size:12px}
+@media (max-width:760px){.hb-vsplit{grid-template-columns:1fr}.hb-vsplit .hb-vgrp.other{padding-left:0;border-left:none;padding-top:16px;border-top:1px solid var(--hb-line2)}}
 .hb-stat{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
 .hb-stat .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
 .hb-stat .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:7px;line-height:1;white-space:nowrap}
@@ -1846,6 +1916,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-live i{position:relative;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
 .hb-live i:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.4;animation:hbBreath 2.2s ease-in-out infinite}
 .hb-live .hb-num{color:var(--ink2)}
+.hb-fresh{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:16px;font-size:12.5px;color:var(--ink3)}
+.hb-fresh-k{font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:11px;color:var(--ink3);margin-right:2px}
+.hb-fresh-k .hb-num{letter-spacing:0;color:var(--ink2)}
+.hb-fresh-it{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2);line-height:1.35}
+.hb-fresh-it b{font-weight:700;color:var(--ink2)}
+.hb-fresh-it i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0}
+.hb-fresh-it.current i{background:var(--hb-good);box-shadow:0 0 7px var(--hb-good)}
+.hb-fresh-it.aging i{background:var(--hb-warn);box-shadow:0 0 7px var(--hb-warn)}
+.hb-fresh-it.stale{border-color:var(--hb-warn)}.hb-fresh-it.stale i{background:var(--hb-warn);box-shadow:0 0 9px var(--hb-warn)}
+.hb-fresh-it.sample i{background:repeating-linear-gradient(135deg,var(--ink3) 0 2px,transparent 2px 4px)}
+.hb-fresh-it .pc{color:var(--ink2);font-weight:600}
 .hb-join .ln:before{left:6px;margin-left:-5.5px;animation:hbTravel 2.6s cubic-bezier(.45,0,.2,1) infinite,hbGlow 2s ease-in-out infinite}
 /* The sphere runs the line at full strength and stops where the pulse sits:
    both centred 6px inside the end, on the line, clear of the pill's edge. */
@@ -1886,6 +1967,147 @@ svg:hover .hb-xh{opacity:1}
   </div>
 </div>
 
+<script id="cav-conf">
+/* ── Confidence (contract K1): one line and a Why? panel, every surface ─────
+   The server sends one object per recommendation-bearing item:
+     {pct, band, label, reason, score, caution, version,
+      dimensions:{evidence:{pct,basis,n}, accuracy:{pct,basis,n,improved,
+      source,low,high}, freshness:{pct,basis,as_of,as_of_iso,stalest}}}
+   Older payloads send a bare band ("high") or {band, label, reason}; both
+   still render, as a band line with no Why?. Percentages stay (the owner's
+   call) and every one shown is the server's own figure: a missing one is a
+   dash with what it needs, never an invented number. Tone: 75 and up green,
+   50-74 ink, under 50 or not yet measurable amber - never red, never ember.
+   Global so every module's renderer (Home, Reviews, Food Cost, Labor,
+   Marketing, Ask, the daily report) draws the same component.
+   tests/test_confidence_web.py runs this block under node. */
+(function(){
+  var NUMRX=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
+  var MIN_MEASURED=5;
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUMRX,'<span class="hb-num">$1</span>');}return out;}
+  function isNum(v){return typeof v==='number'&&isFinite(v);}
+  function pctOf(v){
+    if(isNum(v))return Math.max(0,Math.min(100,Math.round(v)));
+    if(typeof v==='string'&&/^\s*\d+(\.\d+)?\s*$/.test(v))return pctOf(parseFloat(v));
+    return null;
+  }
+  function mdyIso(x){var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(x||''));return m?(+m[2])+'/'+(+m[3])+'/'+m[1].slice(2):'';}
+  function isMdy(x){return /^\d{1,2}\/\d{1,2}\/\d{2}$/.test(String(x||''));}
+  function tone(p){return p==null?'warn':(p>=75?'good':(p>=50?'mid':'warn'));}
+  function bandTone(b){return b==='high'?'good':(b==='medium'?'mid':(b==='low'?'warn':'mid'));}
+  function cap(s){s=String(s||'');return s.charAt(0).toUpperCase()+s.slice(1);}
+  function obj(v){return v&&typeof v==='object'&&!(v instanceof Array)?v:null;}
+  function str(v){return typeof v==='string'?v:'';}
+  // Normalise any confidence the server sends to one shape, or null.
+  function norm(c){
+    if(c==null||c==='')return null;
+    if(typeof c==='string'){
+      var b=c.toLowerCase();if(b==='moderate')b='medium';
+      if(b!=='high'&&b!=='medium'&&b!=='low')return null;
+      return {pct:null,band:b,label:cap(b)+' confidence',reason:'',caution:'',dims:null,k1:false,tone:bandTone(b)};
+    }
+    c=obj(c);if(!c)return null;
+    var dims=obj(c.dimensions);
+    var k1=c.version!=null||!!dims||c.hasOwnProperty('pct');
+    var pct=pctOf(c.pct),band=String(c.band||'').toLowerCase();if(band==='moderate')band='medium';
+    var label;
+    if(pct!=null){band=pct>=75?'high':(pct>=50?'medium':'low');label=pct+'% confidence';}
+    else if(k1){band='low';label=(str(c.label)&&str(c.label).indexOf('%')<0)?c.label:'Confidence not yet measurable';}
+    else{label=str(c.label)||(band?cap(band)+' confidence':'');}
+    if(!label)return null;
+    return {pct:pct,band:band,label:label,reason:str(c.reason),caution:str(c.caution),dims:dims,k1:k1,
+            tone:(pct!=null||k1)?tone(pct):bandTone(band)};
+  }
+  // The three rows of the Why? panel, in a fixed order.
+  function rows(n){
+    var d=n&&n.dims;if(!d)return [];
+    var out=[],e=obj(d.evidence),a=obj(d.accuracy),f=obj(d.freshness),p;
+    p=e?pctOf(e.pct):null;
+    out.push({key:'evidence',title:'Evidence strength',pct:p,tone:tone(p),value:p==null?'—':p+'%',
+              basis:e?(str(e.basis)||(p==null?'Not measured':'')):'Not measured',detail:''});
+    p=a?pctOf(a.pct):null;
+    if(a&&p!=null){
+      var det=[];
+      if(isNum(a.improved)&&isNum(a.n)&&a.n>0)det.push(a.improved+' of '+a.n+' measured');
+      if(isNum(a.low)&&isNum(a.high))det.push('likely '+Math.round(a.low)+'–'+Math.round(a.high)+'%');
+      var bs=str(a.basis);
+      if(a.source==='cohort'&&!/like yours/i.test(bs))det.unshift('From restaurants like yours');
+      out.push({key:'accuracy',title:'Historical accuracy',pct:p,tone:tone(p),value:p+'%',basis:bs,detail:det.join(' · ')});
+    }else{
+      var nn=a&&isNum(a.n)?a.n:0;
+      out.push({key:'accuracy',title:'Historical accuracy',pct:null,tone:'warn',value:'—',
+                basis:(a&&str(a.basis))||('Not enough history yet ('+nn+' measured, needs '+MIN_MEASURED+')'),detail:''});
+    }
+    p=f?pctOf(f.pct):null;
+    var asOf=f?(isMdy(f.as_of)?f.as_of:mdyIso(f.as_of_iso||f.as_of)):'';
+    out.push({key:'freshness',title:'Data freshness',pct:p,tone:tone(p),value:p==null?'—':p+'%',
+              basis:f?(str(f.basis)||(p==null?'Not measured':'')):'Not measured',detail:asOf?'as of '+asOf:''});
+    return out;
+  }
+  function meter(p,cls){return '<span class="'+cls+(p==null?' none':'')+'" aria-hidden="true"><i style="width:'+(p==null?0:p)+'%"></i></span>';}
+  function footer(n){
+    var a=n.dims&&obj(n.dims.accuracy),noTrack=!a||pctOf(a.pct)==null;
+    return 'The overall figure combines all three — the weakest pulls it down most.'
+      +(noTrack?' Without a track record here it stays at 70% or below.':'');
+  }
+  function panel(n){
+    var h='<div class="cf-p">';
+    h+='<div class="cf-p-hero '+n.tone+'"><div class="cf-p-big hb-num">'+(n.pct==null?'—':n.pct+'<small>%</small>')+'</div>'
+      +meter(n.pct,'cf-p-bar')+'<div class="cf-p-why">'+(n.pct==null?esc(n.label)+(n.reason?' — ':''):'')+num(n.reason)+'</div></div>';
+    if(n.caution)h+='<div class="cf-p-caution">'+num(n.caution)+'</div>';
+    h+='<div class="cf-p-k">What it rests on</div>';
+    var rs=rows(n);
+    for(var i=0;i<rs.length;i++){var r=rs[i];
+      h+='<div class="cf-p-row '+r.tone+'" data-dim="'+r.key+'"><div class="cf-p-h"><span class="t">'+esc(r.title)+'</span><span class="v hb-num">'+esc(r.value)+'</span></div>'
+        +meter(r.pct,'cf-p-bar')+(r.basis?'<div class="b">'+num(r.basis)+'</div>':'')+(r.detail?'<div class="d">'+num(r.detail)+'</div>':'')+'</div>';}
+    return h+'<div class="cf-p-ft">'+esc(footer(n))+'</div></div>';
+  }
+  // The line. o: {key, surface, module, noReason, cls}. Returns '' when
+  // there is nothing to say (no confidence, or "unknown").
+  function line(c,o){
+    o=o||{};var n=norm(c);if(!n)return '';
+    var h='<div class="cf '+n.tone+(o.cls?' '+esc(o.cls):'')+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'">'
+      // A band from an older server has no percentage to draw, so no meter;
+      // a K1 object with none draws the hatched, empty one.
+      +(n.k1?'<span class="cf-m'+(n.pct==null?' none':'')+'" role="img" aria-label="'+esc(n.label)+'"><i style="width:'+(n.pct==null?0:n.pct)+'%"></i></span>':'')
+      +'<b>'+num(n.label)+'</b>'
+      +(n.reason&&!o.noReason?'<span class="cf-r">— '+num(n.reason)+'</span>':'');
+    if(n.dims){
+      h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cf-why" data-explain="'+esc(panel(n))+'" data-explain-title="How sure is this?" data-explain-kicker="Confidence"'
+        +(o.key?' data-explain-key="'+esc(o.key)+'" data-explain-surface="'+esc(o.surface||'home')+'" data-explain-module="'+esc(o.module||o.surface||'home')+'"':'')
+        +' aria-label="Why '+esc(n.label)+'?">Why?</button>';
+    }
+    if(n.caution&&!n.dims)h+='<span class="cf-c">'+num(n.caution)+'</span>';
+    return h+'</div>';
+  }
+  // The claim tag (J5): AI-written beats the kind, because the owner's
+  // question is who wrote the sentence before what kind of figure it is.
+  var CLAIM={measured:'Measured',computed:'Computed',forecast:'Forecast',inferred:'Inferred',estimate:'Estimate',estimated:'Estimate'};
+  function claimTag(kind,modelWritten){
+    var t=modelWritten?'AI-written':(CLAIM[String(kind||'').toLowerCase()]||'');
+    return t?'<span class="ck-tag" data-claim="'+esc(modelWritten?'model':kind)+'">'+esc(t)+'</span>':'';
+  }
+  // What kind of claim each part of a payload makes (ai_guard.CLAIM_KINDS,
+  // the payload's claim_kinds {part: kind}), grouped by kind: "Measured:
+  // this week, severity · Inferred: what to watch". names maps a part key
+  // to the owner's word for it; an unnamed key is its words. The kinds the
+  // owner would not recognise (configuration, partial) are left out.
+  var STRIP_ORDER=['measured','computed','inferred','forecast','suggestion','estimate'];
+  function claimStrip(kinds,names,modelWritten){
+    kinds=obj(kinds);if(!kinds&&!modelWritten)return '';
+    var groups={},k,out=[];
+    for(k in kinds){if(!kinds.hasOwnProperty(k))continue;var kd=String(kinds[k]||'').toLowerCase();if(STRIP_ORDER.indexOf(kd)<0)continue;
+      (groups[kd]=groups[kd]||[]).push((names&&names[k])||String(k).replace(/_/g,' '));}
+    if(modelWritten)out.push(claimTag('',true)+' <span>read by Cavnar AI, figures checked against your data</span>');
+    for(var i=0;i<STRIP_ORDER.length;i++){var g=groups[STRIP_ORDER[i]];if(!g)continue;
+      out.push('<span class="ck-tag">'+esc(STRIP_ORDER[i]==='suggestion'?'Suggestion':(CLAIM[STRIP_ORDER[i]]||STRIP_ORDER[i]))+'</span> <span>'+esc(g.join(', '))+'</span>');}
+    return out.length?'<div class="ck-strip">'+out.join('<span class="sep">·</span>')+'</div>':'';
+  }
+  window.cavConf={norm:norm,rows:rows,line:line,panel:panel,tone:tone,footer:footer,claimTag:claimTag,claimStrip:claimStrip};
+  window.cavConfLine=line;
+})();
+</script>
 <script>
 (function(){
   // ── Home renderer (ES5) ───────────────────────────────────────────────────
@@ -2012,7 +2234,35 @@ svg:hover .hb-xh{opacity:1}
   }
   function hbLiveStart(){if(_hbLiveTimer)clearInterval(_hbLiveTimer);_hbLiveTimer=setInterval(hbLiveTick,30000);}
   function hbSignals(d){var n=0,sn=d.snapshot||[];for(var i=0;i<sn.length;i++)if(!sn[i].sample&&sn[i].status!=='coming_soon')n++;return n;}
-  function hbLive(d,label){return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+hbSignals(d)+'</span> signals · <span class="ago">'+esc(ago(d.generated_at))+'</span></span>';}
+  // "Monitoring N signals · just now" read as live when the data under it
+  // was days old: N counted stale snapshots and "just now" was when the
+  // brief was BUILT (CA4 F7). With the server's monitoring block (K4/E7) N
+  // is only the sources that are current and the age is the stalest
+  // source's date; an older server keeps the old reading.
+  function hbLive(d,label){
+    var mo=d.monitoring;
+    if(mo&&typeof mo==='object'&&mo.count_live!=null){
+      var asOf=mo.stalest_as_of?(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(mo.stalest_as_of)?mo.stalest_as_of:mdy(mo.stalest_as_of)):'';
+      return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+(+mo.count_live||0)+'</span> live '+((+mo.count_live)===1?'source':'sources')+(asOf?' · oldest data <span class="hb-num">'+esc(asOf)+'</span>':' · <span class="ago">'+esc(ago(d.generated_at))+'</span>')+'</span>';}
+    return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+hbSignals(d)+'</span> signals · <span class="ago">'+esc(ago(d.generated_at))+'</span></span>';}
+  // How current each source under the page is (K4 freshness[] + data_as_of).
+  // The server computed this per module and no client drew it, so a Home
+  // built on a nine-day-old review pull looked as current as today's
+  // (CA3 F1, CA4 F7). One pill per source: its state dot, its name, its
+  // basis ("POS synced 9/23/26"), and its freshness % when measured.
+  var FRESH_STATE={current:'current',fresh:'current',aging:'aging',stale:'stale',not_connected:'off',missing:'off',manual:'off',unknown:'unknown',sample:'sample'};
+  var FRESH_WORD={aging:'aging',stale:'stale',off:'not connected',unknown:'age unknown',sample:'sample data'};
+  function renderFreshness(d){
+    var fr=d.freshness||[];if(!fr.length&&!d.data_as_of)return '';
+    var h='<div class="hb-fresh hb-rise" style="--i:2" aria-label="How current your data is">';
+    if(d.data_as_of)h+='<span class="hb-fresh-k">Data as of <span class="hb-num">'+esc(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(d.data_as_of)?d.data_as_of:mdy(d.data_as_of))+'</span></span>';
+    for(var i=0;i<fr.length;i++){var f=fr[i]||{},st=FRESH_STATE[f.state]||'unknown';
+      var lbl=f.label||MODLABEL[f.module||f.key]||f.source||f.module||f.key||'';if(!lbl)continue;
+      var basis=f.basis||f.note||(f.as_of?'as of '+f.as_of:'');
+      var pc=(typeof f.pct==='number'&&isFinite(f.pct))?Math.round(f.pct):null;
+      h+='<span class="hb-fresh-it '+st+'" title="'+esc(basis)+'"><i></i><b>'+esc(lbl)+'</b>'+(basis?' '+num(basis):(FRESH_WORD[st]?' '+esc(FRESH_WORD[st]):''))+(pc!=null&&st!=='sample'&&st!=='off'?' <span class="pc hb-num">'+pc+'%</span>':'')+'</span>';}
+    return h+'</div>';
+  }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
   function bars(items,w,h,col,opts){
     opts=opts||{};if(!items||!items.length)return '';
@@ -2167,7 +2417,8 @@ svg:hover .hb-xh{opacity:1}
     else if(t.hasAttribute('data-open-module'))hbOpen(t.getAttribute('data-open-module'));
     else if(t.hasAttribute('data-explain')){
       // Opening a keyed recommendation's evidence is part of its record (#38).
-      if(t.getAttribute('data-explain-key')&&typeof recEvidenceViewed==='function')recEvidenceViewed(t.getAttribute('data-explain-key'),'home','home');
+      // A confidence Why? outside Home names its own surface and module.
+      if(t.getAttribute('data-explain-key')&&typeof recEvidenceViewed==='function')recEvidenceViewed(t.getAttribute('data-explain-key'),t.getAttribute('data-explain-surface')||'home',t.getAttribute('data-explain-module')||'home');
       hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
     }
     else hbAsk(t.getAttribute('data-ask'));
@@ -2340,14 +2591,24 @@ svg:hover .hb-xh{opacity:1}
     return (ev||[]).filter(function(x){var ns=String(x).match(/\d[\d,]*(?:\.\d+)?/g)||[];if(!ns.length)return true;
       for(var q=0;q<ns.length;q++)if(said.indexOf(ns[q])<0)return true;return false;});
   }
+  // A money line's structured range (K4 money: {low, high, label}): both
+  // ends, in the number face, and the label that says what kind of figure
+  // it is. A range whose ends agree is one figure.
+  function hbMoneyRange(m){
+    if(!m||typeof m!=='object')return '';
+    var lo=+m.low,hi=+m.high;if(!isFinite(lo)&&!isFinite(hi))return '';
+    if(!isFinite(lo))lo=hi;if(!isFinite(hi))hi=lo;
+    var fig='$'+num2(lo)+(Math.round(hi)!==Math.round(lo)?'–$'+num2(hi):'');
+    return fig+'<small>/month'+(m.label?' · '+esc(String(m.label).charAt(0).toLowerCase()+String(m.label).slice(1)):'')+'</small>';
+  }
   function renderFocus(d,g){
     var att=d.attention||[],recs=d.recommendations||[];
     var lines=(g&&g.brief&&g.brief.brief&&g.brief.brief.lines)||[];
     var ff=g&&g.cross&&g.cross.fix_first;
     var byKey={};for(var i=0;i<lines.length;i++)byKey[lines[i].key]=lines[i];
     var lead='',why='',ev=[],money='',ask='',kick='Today’s focus',clear=false,mods=[];
-    var alt='',confirm='';
-    if(ff&&ff.what){kick='If you only do one thing';ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
+    var alt='',confirm='',fconf=null,fkey='',ftag='';
+    if(ff&&ff.what){kick='If you only do one thing';fconf=ff.confidence||null;fkey=ff.rec_key||ff.key||'';ftag=cavConf.claimTag(ff.claim_kind,ff.model_written);ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
       // When the lead IS a cross-module link, this card owns it entirely -
       // the confirm step and the innocent reading come here, and
       // renderConnections skips it, so the same finding is never on the
@@ -2361,16 +2622,24 @@ svg:hover .hb-xh{opacity:1}
       // fix_first is always an action now (business_intelligence
       // .pick_one_thing): the top driver's own fix, a diagnosis's
       // recommended action, or the replies that are owed.
-      lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';
+      lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';else if(ff.money)money=hbMoneyRange(ff.money);
       if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
-    else if(att.length){lead=att[0].title;why=att[0].detail||'';ask='What should I do about this: '+att[0].title;}
-    else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);ask='Walk me through this: '+recs[0].title;}
+    else if(att.length){lead=att[0].title;why=att[0].detail||'';if(att[0].evidence)ev=String(att[0].evidence).split(' · ').filter(function(x){return x;}).slice(0,3);fconf=att[0].confidence||null;fkey=att[0].rec_key||att[0].key||'';ask='What should I do about this: '+att[0].title;}
+    else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);fconf=recs[0].confidence||null;fkey=recs[0].key||'';ftag=recs[0].model_written?cavConf.claimTag('',true):'';ask='Walk me through this: '+recs[0].title;}
     else if(byKey.all_clear){lead=byKey.all_clear.text;clear=true;kick='All clear';ask=byKey.all_clear.ask;}
     else{lead='Nothing needs you right now.';clear=true;kick='All clear';why='Cavnar AI is watching. This fills in as your numbers come in.';ask='What are you watching for me right now?';}
     // The biggest dollar opportunity rides along as the figure, unless the
-    // lead already carries its own.
-    if(!money&&byKey.money){var mm=/\$[\d,]+(?:\.\d+)?/.exec(byKey.money.text||'');var lab=/opportunity: (.+?), \$/.exec(byKey.money.text||'');if(mm)money=mm[0]+'<small>/month'+(lab?' · '+esc(lab[1].toLowerCase()):'')+'</small>';}
+    // lead already carries its own - and it is said as what it is, an
+    // opportunity, with its whole range. The regex that took the first
+    // dollar amount turned "$1,200-$2,400/month" into "$1,200/month", the
+    // false precision business_intelligence refuses to publish (CA4 F3).
+    // The line's structured money {low, high, label} is read first (K4);
+    // an older server's text keeps its range when the regex reads one.
+    if(!money&&byKey.money){
+      if(byKey.money.money)money=hbMoneyRange(byKey.money.money);
+      else{var mm=/\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$[\d,]+(?:\.\d+)?)?/.exec(byKey.money.text||'');var lab=/opportunity: (.+?), \$/.exec(byKey.money.text||'');
+        if(mm)money=esc(mm[0].replace(/\s*[-–]\s*/,'–'))+'<small>/month · opportunity'+(lab?': '+esc(lab[1].toLowerCase()):'')+'</small>';}}
     // Say each thing once: a confirm step that IS the lead (a link's
     // fix_first leads with its confirm_by) is not repeated under it, and an
     // evidence chip whose every figure is already in the lead or the why
@@ -2387,6 +2656,9 @@ svg:hover .hb-xh{opacity:1}
     if(why)h+='<div class="why">'+num(why)+'</div>';
     if(confirm)h+='<div class="why"><strong>To confirm:</strong> '+num(confirm)+'</div>';
     if(ev.length){h+='<div class="ev">';for(var e=0;e<ev.length;e++)h+='<span>'+num(ev[e])+'</span>';h+='</div>';}
+    // How sure, on the most prominent item on the page too (CA4: the one
+    // thing carried a confidence and a claim kind and showed neither).
+    if((fconf||ftag)&&!clear)h+='<div class="hb-focus-cf">'+ftag+(fconf?cavConfLine(fconf,{key:fkey,surface:'home',module:'home'}):'')+'</div>';
     h+='<div class="ft">'+(money?'<div class="money hb-num">'+money+'</div>':'')+'<span class="sp"></span>';
     var ffKey=ff&&(ff.rec_key||ff.key)||'';
     if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding"'+(ffKey?' data-explain-key="'+esc(ffKey)+'"':'')+'>Could also be…</button>';
@@ -2443,24 +2715,25 @@ svg:hover .hb-xh{opacity:1}
   // One card answers five questions: what to do (the title, verb first),
   // why now, what is at stake in dollars when it was measured, how sure -
   // ONE confidence, from the card's own evidence, with its reason - and
-  // what happens if it is ignored. The timeframe, impact and strength the
-  // payload always carried are shown too.
-  var STRENGTH={strong:'strong evidence',moderate:'some evidence',early:'early signal'};
+  // what happens if it is ignored. The timeframe and impact the payload
+  // always carried are shown too. The separate evidence-strength pill is
+  // gone (confidence audit CA4 F1): it was a second verdict that
+  // could contradict the confidence line on the same card, and the
+  // confidence's Evidence strength row now says the same thing, measured.
   function hbRecCard(r,j,skip,isNew,trk,d){
     var c=r.confidence||null,meta=[];
     if(r.timeframe)meta.push('<span>'+esc(r.timeframe)+'</span>');
     if(r.impact)meta.push('<span>'+esc(r.impact)+'</span>');
-    if(r.strength&&STRENGTH[r.strength])meta.push('<span>'+esc(STRENGTH[r.strength])+'</span>');
     var act='';
     if(r.action&&r.action.kind==='reprice')act='<button type="button" class="cbtn cbtn-primary cbtn-sm" data-reprice-key="'+esc(r.key)+'" data-reprice-dish="'+esc(r.action.dish)+'" data-reprice-price="'+esc(r.action.price)+'">'+esc(r.action.label||'Reprice')+'</button>';
     else if(r.action&&r.action.kind==='publish_replies')act='<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbAct(\'publish_replies\',\'reviews\',this,'+(+r.action.count||0)+')">'+esc(r.action_label||'Publish now')+'</button>';
     var who=(d&&d.assignees)||[];
     return '<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
-      +'<div class="t">'+num(r.title)+'</div>'
+      +'<div class="t">'+num(r.title)+(r.model_written?' '+cavConf.claimTag('',true):'')+'</div>'
       +(r.why?'<div class="why">'+num(r.why)+'</div>':'')
       +(meta.length||r.dollars_monthly?'<div class="meta">'+(r.dollars_monthly?'<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>':'')+meta.join('')+'</div>':'')
       +(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
-      +(c&&c.label?'<div class="hb-conf '+esc(c.band)+'"><b>'+esc(c.label)+'</b>'+(c.reason?' — '+esc(c.reason):'')+'</div>':'')
+      +(c?cavConfLine(c,{key:r.key,surface:'home',module:'home',cls:'hb-conf'}):'')
       +(r.if_ignored?'<div class="ig"><b>If ignored:</b> '+num(r.if_ignored)+'</div>':'')
       +'<div class="ft">'+act+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
       +(r.alternative?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(r.alternative)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding" data-explain-key="'+esc(r.key)+'">Could also be…</button>':'')
@@ -2536,7 +2809,11 @@ svg:hover .hb-xh{opacity:1}
     var items=(d.attention||[]).slice(used&&used.att?1:0),iss=_hbIssues||[],total=items.length+iss.length;
     var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
     if(!total)h+=hbAttnClearHtml(used);
-    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
+    // What an item rests on is on the row, not in a hover tooltip a phone
+    // never shows (CA4 J4): the evidence (or, from an older server, the
+    // detail) under the title, then its confidence line.
+    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=a.confidence?cavConfLine(a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
+      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
@@ -2611,6 +2888,7 @@ svg:hover .hb-xh{opacity:1}
     // yet, because nothing else has data; otherwise it sits after the
     // recommendations and hides once complete.
     h+=renderSignals(d);
+    h+=renderFreshness(d);
     var fresh=hbIsFresh(d);
     if(fresh)h+=renderReadiness(d);
     h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
@@ -2855,7 +3133,12 @@ svg:hover .hb-xh{opacity:1}
     // number (a measurement, an estimate at stated rates, an alert total,
     // a gap) and a list made them read as one column that could be added
     // up - the exact mistake value_delivered.py exists to prevent.
-    var h='<div class="hb-sh"><div><div class="k dim">Measured</div><h2>What Cavnar AI has been worth</h2></div><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations →</button></div><section class="hb-card hb-rise" aria-label="Worth"><div class="hb-stats">';
+    // One heading claimed all four were "Measured" worth, over two tiles
+    // that grow as the restaurant does worse (CA4 F6, J6). The card is split:
+    // the measured result under "What was measured", the estimate, the
+    // alert total and the gap under "What Cavnar surfaced · still
+    // available" - side by side, never one column that reads as addends.
+    var h='<div class="hb-sh"><div><div class="k dim">Worth</div><h2>What Cavnar AI measured and surfaced</h2></div><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations →</button></div><section class="hb-card hb-rise" aria-label="Worth"><div class="hb-vsplit"><div class="hb-vgrp"><div class="hb-h3"><span>What was measured</span></div><div class="hb-stats">';
     // Measured results, NET of the ones that got worse (rec-ROI #1): the
     // improvements alone read as if nothing had gone the other way. The
     // net can be below zero and says so; it is never floored at zero.
@@ -2864,6 +3147,10 @@ svg:hover .hb-xh{opacity:1}
     else if(d.wins>0)h+='<div class="hb-stat good"><div class="k">Measured results</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(d.monthly||0)+'" data-p="$">$'+num2(d.monthly)+'</span><small>/mo</small></div><div class="s">across '+d.wins+' change'+(d.wins===1?'':'s')+(d.annual?' · about $'+num2(d.annual)+' a year if it holds':'')+'</div></div>';
     else if(uw.length)h+='<div class="hb-stat good"><div class="k">Measured results</div><div class="v hb-num">'+uw.length+'<small>improved</small></div><div class="s">not priced in dollars — what moved is listed below</div></div>';
     else h+='<div class="hb-stat"><div class="k">Measured results</div><div class="v txt" style="font-size:17px;padding-top:4px">Nothing yet</div><div class="s">'+(d.in_flight?d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now':'Track a recommendation and its result lands here')+'</div></div>';
+    h+='</div></div>';
+    var oth=h.length;
+    h+='<div class="hb-vgrp other"><div class="hb-h3"><span>What Cavnar surfaced · still available</span><span class="cnt">estimates and gaps, never added in</span></div><div class="hb-stats">';
+    var othOpen=h.length;
     if(av.hours>0||av.dollars>0){
       // The breakdown opens as a centred modal rather than pushing the
       // rest of the card down the page.
@@ -2876,6 +3163,8 @@ svg:hover .hb-xh{opacity:1}
     }
     if(sf.dollars>0)h+='<div class="hb-stat"><div class="k">Put in front of you</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(sf.dollars)+'" data-p="$">$'+num2(sf.dollars)+'</span></div><div class="s">of problems, across '+sf.alerts+' alerts in '+sf.days+' days</div></div>';
     if(op.monthly>0)h+='<div class="hb-stat ember"><div class="k">Still on the table</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(op.monthly)+'" data-p="$">$'+num2(op.monthly)+'</span><small>/mo</small></div><div class="s">available, not captured</div></div>';
+    // No estimate, alert total or gap: the second group is not drawn empty.
+    if(h.length===othOpen)h=h.slice(0,oth).replace('class="hb-vsplit"','class="hb-vsplit solo"');else h+='</div></div>';
     h+='</div>';
     // What the figures above rest on, one line each: the running total of
     // measured days (only once a day has been measured - nothing measured
@@ -3021,6 +3310,12 @@ svg:hover .hb-xh{opacity:1}
     else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];
       var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1,also:l.rec_keys||[]}):'';
       h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+    // K8: how far the demand forecast in this brief has been off here,
+    // measured against the nights that closed (dsr_metrics vs_forecast).
+    var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
+    if(da&&+da.n_nights>0)h+='<div class="hb-empty" style="font-size:12.5px;margin-top:10px">'+cavConf.claimTag('forecast')+' Past demand forecasts here: '
+      +(da.inside_range_pct!=null?'inside their range on <span class="hb-num">'+Math.round(+da.inside_range_pct)+'%</span> of ':'')+'<span class="hb-num">'+(+da.n_nights)+'</span> nights'
+      +(da.mean_error_pct!=null?' · <span class="hb-num">'+Math.round(+da.mean_error_pct)+'%</span> mean error':'')+'.</div>';
     h+='</div>';
     // Open issues live in the Needs attention card (hbAttnSetIssues); goals
     // and results are built by _hbMeasured below.
@@ -3717,12 +4012,22 @@ svg:hover .hb-xh{opacity:1}
         // had any (API_REFERENCE.md, "Recommendation fields").
         var ans=x.answered?'<div class="ft"><span class="rec-ans-done">Answered</span></div>'
           :(rk&&x.answerable!==false&&typeof recControlsHtml==='function'?'<div class="ft">'+recControlsHtml(rk,'dsr',MODULE[blk]||'ops')+'</div>':'');
+        // Each action's confidence is built from the facts it cites (K1,
+        // E16) - urgency and effort stay the model's labels, said as such.
+        var acf=x.confidence&&window.cavConfLine?cavConfLine(x.confidence,{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
         h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
-          +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')+ans+'</div>';}
+          +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')+acf+ans+'</div>';}
       h+='</div>';}
     var vf=n.verification;
-    if(vf&&isNum(vf.checked)){var dropped=(vf.dropped||[]).length;
-      h+='<div class="dr-foot">Every figure above traced to a measured fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'+(dropped?' · '+hn(dropped)+' dropped because a figure didn’t trace':'')+' · written by Cavnar AI</div>';}
+    // "Traced to a measured fact" never covers an estimate (H13): a line
+    // that cites the estimated food cost or the forecast is counted apart
+    // and said to be an estimate. The count is read from whichever shape
+    // the server sends (a number, or the list of lines).
+    if(vf&&isNum(vf.checked)){var dropped=(vf.dropped||[]).length,est=vf.estimated!=null?vf.estimated:vf.estimates;
+      var nEst=isNum(est)?est:((est&&est.length)||0);
+      h+='<div class="dr-foot">Every measured figure above traced to a fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'
+        +(nEst?' · '+hn(nEst)+' '+(nEst===1?'line rests':'lines rest')+' on an estimate, and says so':'')
+        +(dropped?' · '+hn(dropped)+' dropped because a figure didn’t trace':'')+' · written by Cavnar AI</div>';}
     return h;
   }
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
@@ -4497,10 +4802,6 @@ svg:hover .hb-xh{opacity:1}
 .rv-diag-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .rv-diag-row .v{font-size:14.5px;line-height:1.6;color:var(--ink2)}
 .rv-diag-row.alt .v{color:var(--ink3);font-size:13.5px}
-.rv-conf{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:999px}
-.rv-conf.high{background:var(--green-bg);color:var(--hb-good)}
-.rv-conf.medium{background:var(--amber-bg);color:var(--hb-warn)}
-.rv-conf.low{background:var(--paper2);color:var(--ink3)}
 .rv-diag-ev{display:flex;flex-wrap:wrap;gap:6px}
 .rv-diag-ev button{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;color:var(--ink2);cursor:pointer;font-family:inherit}
 .rv-diag-ev button:hover{border-color:var(--ember);color:var(--ember)}
@@ -4512,6 +4813,7 @@ svg:hover .hb-xh{opacity:1}
 .rv-sev .s .n{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;font-weight:700}
 .rv-sev .s.safety{background:var(--red-bg);color:var(--hb-bad);border-color:var(--red-bg)}
 .rv-sev .s.legal{background:var(--amber-bg);color:var(--hb-warn);border-color:var(--amber-bg)}
+.rv-sev .s.unclassified{color:var(--ink3);border-style:dashed}
 /* signals */
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 /* A flex column, not block: .rv2-sig's grid already stretches every .rv2-sg
@@ -4728,7 +5030,7 @@ svg:hover .hb-xh{opacity:1}
   <div id="rv-inbox-header"></div>
   <div id="rv-panel-analytics">
     <section class="rv2-hero" aria-label="Rating trend">
-      <div class="hd"><div><div class="hb-kicker">Rating · last 8 weeks</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
+      <div class="hd"><div><div class="hb-kicker">{{ 'Google rating (all time)' if restaurant.gbp_rating else 'Average rating · all reviews' }}</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
       <div id="rv-hero-chart"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="searching" width="44" height="44"></canvas><span>Charting your rating…</span></div></div>
       <div id="trend-avg-rating" hidden></div>
     </section>
@@ -4912,7 +5214,7 @@ svg:hover .hb-xh{opacity:1}
      arrived while the figure that prompted the question was sliding out of
      view. Same branded frame as the milestone moment below. -->
 <div id="explain-modal"><div id="explain-inner"><div class="c-ember"></div><div class="c-sub" id="explain-kicker">How this is counted</div><h2 id="explain-title"></h2><div id="explain-body"></div><button id="explain-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px">Got it</button></div></div>
-<div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub" id="congrats-kicker">A milestone</div><h2 id="congrats-title"></h2><p id="congrats-body"></p><div id="congrats-stats"><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div></div><p id="congrats-note" style="margin-top:12px;font-size:12px;color:var(--ink3)">This won't appear again.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it</button></div></div>
+<div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub" id="congrats-kicker">A milestone</div><h2 id="congrats-title"></h2><p id="congrats-body"></p><div id="congrats-stats"><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Michael Luca, Harvard Business School (2011), on independent restaurants' Yelp ratings</div></div><p id="congrats-note" style="margin-top:12px;font-size:12px;color:var(--ink3)">This won't appear again.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it</button></div></div>
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor" style="max-width:100%;padding:0;min-height:100%;position:relative">
@@ -4965,10 +5267,9 @@ svg:hover .hb-xh{opacity:1}
 .lb2-ai{margin-top:16px;padding:16px 20px;border-radius:10px;background:var(--hb-tint);font-size:16px;line-height:1.65;color:var(--ink2)}
 .lb2-ai .tag{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:7px}
 #panel-labor #labor-insight{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
-.hb-conf.low{color:var(--ember2);font-style:normal}
 .diag{margin-top:12px;padding:14px 16px;border-radius:12px;background:var(--sf-recessed,var(--hb-tint));border:1px solid var(--paper3)}
 .diag-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
-.diag-conf{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink3)}.diag-conf.high{color:var(--hb-good)}.diag-conf.medium{color:var(--ember2)}
+.diag .cf.diag-cf{margin-top:6px}
 .diag-cause{font-size:16px;line-height:1.55;color:var(--ink);margin-top:6px}
 .diag-alt{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}.diag-alt b{color:var(--ink3);font-weight:600}
 .diag-evs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.diag-ev{font-size:12px;color:var(--ink3);padding:4px 9px;border-radius:999px;border:1px solid var(--paper3)}.diag-ev b{color:var(--ink)}
@@ -5487,9 +5788,17 @@ svg:hover .hb-xh{opacity:1}
   {% set _over = (_lp - _lt)|round(1) %}
   {% set _days = labor.date_range.days if labor.date_range else 0 %}
   {% set _ot = labor.overtime_risk|selectattr('status','equalto','overtime')|list|length if labor.overtime_risk else 0 %}
+  {# "On target" is a claim about a measured number. With shifts but no
+     sales on some days, estimated hours, or conflicting sales, the
+     percentage covers part of the period - the phone has said "Incomplete
+     data" there for a while (mobile_api data_complete); the web now agrees.
+     Over target still says so: a partial figure already over is not
+     reassuring. #}
+  {% set _partial = labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.sales_data_missing) %}
   {% if not labor.is_live %}{% set _head = 'Add your shifts to light this up' %}{% set _tone = 'neutral' %}
   {% elif _over > 3 %}{% set _head = _over ~ ' pts over target' %}{% set _tone = 'bad' %}
   {% elif _over > 0 %}{% set _head = 'Slightly over target' %}{% set _tone = 'warn' %}
+  {% elif _partial %}{% set _head = 'Incomplete data' %}{% set _tone = 'warn' %}
   {% else %}{% set _head = 'On target' %}{% set _tone = 'good' %}{% endif %}
   <div class="hb-top">
     <div style="min-width:300px;flex:1 1 460px">
@@ -5669,7 +5978,7 @@ svg:hover .hb-xh{opacity:1}
       <div style="background:#1e1a14;border-radius:8px;padding:12px 14px;margin-bottom:16px">
         <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Estimated impact</div>
         <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings * 4.33)|int|format_num}}/mo saved</div>
-        <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied</div>
+        <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied — an estimate: this window's weekly overspend (${{ labor.potential_savings|int|format_num }}) × 4.33 weeks, not a measured result</div>
       </div>
       <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="cbtn cbtn-primary cbtn-lg cbtn-block">Got it — open the CSV ✓</button>
     </div>
@@ -5828,10 +6137,15 @@ svg:hover .hb-xh{opacity:1}
   </div>
 
     {% if labor_upcoming %}
-    <div class="hb-kicker" style="margin-top:18px">Scheduling forecast</div>
+    {# A calendar of holidays, not a forecast: nothing in this restaurant's
+       own data backs "expect elevated covers" or "your busiest Sundays
+       follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
+       where the answer lives. The date is M/D/YY when the server sends
+       date_iso; the older date_str otherwise. #}
+    <div class="hb-kicker" style="margin-top:18px">Holidays ahead</div>
     <ul class="lb2-events">
       {% for event in labor_upcoming %}
-      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.days_away <= 3 %}Expect elevated covers — confirm full kitchen and floor coverage.{% elif event.days_away <= 7 %}Check this week's schedule now; add 1–2 servers on the day if you're usually at capacity.{% else %}Flag for the next schedule build — your busiest Sundays follow this pattern.{% endif %}</span></li>
+      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date_iso|format_date if event.date_iso else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.basis %}{{ event.basis }}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
       {% endfor %}
     </ul>
     {% endif %}
@@ -6556,10 +6870,7 @@ svg:hover .hb-xh{opacity:1}
 .fc2-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .fc2-row .v{font-size:14.5px;line-height:1.6;color:var(--ink2)}
 .fc2-row.alt .v{color:var(--ink3);font-size:13.5px}
-.fc2-conf{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:999px}
-.fc2-conf.high{background:var(--green-bg);color:var(--hb-good)}
-.fc2-conf.medium{background:var(--amber-bg);color:var(--hb-warn)}
-.fc2-conf.low{background:var(--paper2);color:var(--ink3)}
+.fc2-drv .cf.fc2-drv-cf{margin-top:5px}
 /* One driver. The dollars lead because that is the ranking. */
 .fc2-drv{display:flex;align-items:flex-start;gap:12px;padding:11px 0;border-top:1px solid var(--hb-line2)}
 .fc2-drv:first-child{border-top:none;padding-top:2px}
@@ -6640,7 +6951,9 @@ svg:hover .hb-xh{opacity:1}
            supplier. The sample class dims them so example data never renders
            at the same authority as the owner's own. #}
         <div class="n{{ ' sample' if not inv.is_live }}"><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="fc2-num-lbl">Projected annual waste</div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo — projected from this week's count</span></div></div>
-        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo — waste above each category's tolerance band</span></div></div>
+        {# An opportunity figure, so it is not green and never "saved" (CA4 F11):
+           it is one week's count scaled to a year, and says so. #}
+        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year · opportunity</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo of waste above each category's tolerance band — one week's count × 52, an estimate, not money saved</span></div></div>
       </div>
     </div>
   </div>
@@ -7036,7 +7349,9 @@ svg:hover .hb-xh{opacity:1}
     <div class="insight-text insight-loading" id="mkt-insight" style="padding-left:4px"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3d2e1e;font-size:11px;color:var(--ember2);padding-left:4px;display:flex;align-items:flex-start;gap:7px">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:2px" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="var(--ember)"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="var(--ember)"/><rect x="12" y="1" width="3" height="14" rx="1" fill="var(--ember)"/></svg>
-      <span>Restaurants posting weekly Google Business updates get <strong style="color:var(--ember)">3–7× more direction requests</strong> — use the content calendar below to stay consistent.</span>
+      {# The "3-7x more direction requests" figure had no source the product
+         could show (CA1 M9, CA4 F5); the line now says only what is true. #}
+      <span>A weekly Google Business update keeps your listing current — use the content calendar below to stay consistent.</span>
     </div>
   </div>
 
@@ -7514,6 +7829,7 @@ svg:hover .hb-xh{opacity:1}
 .in2-comp .row .rt .c{font-size:13px;color:var(--ink3);margin-top:2px}
 .in2-comp .row .rt .df{display:inline-block;margin-top:5px;font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--hb-line2);color:var(--ink3)}
 .in2-comp .row.ahead .rt .df{background:rgba(78,173,122,.16);color:var(--hb-good)}.in2-comp .row.behind .rt .df{background:rgba(227,51,63,.14);color:var(--hb-bad)}
+.in2-upd #in2-days-old.stale{color:var(--hb-warn);font-weight:600}
 .in2-upd{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;color:var(--ink3);flex-wrap:wrap}
 
 .in2-empty{margin-top:30px;padding:40px 24px;border-radius:14px;background:var(--hb-tint);text-align:center}
@@ -7555,7 +7871,7 @@ svg:hover .hb-xh{opacity:1}
       <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ avg_comp_rating if comp_count else '—' }}{% if comp_count %}<small>★</small>{% endif %}</span></span><span class="l">market avg</span></span>
       {% if own is not none %}<span class="hb-chip {{ 'good' if (own_vs_avg is none or own_vs_avg >= 0) else 'bad' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ own }}<small>★</small></span></span><span class="l">your rating</span></span>{% endif %}
       <span class="hb-chip sample" id="in2-chip-ai"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-ai-n">—</span></span><span class="l">AI visibility</span></span>
-      <span class="hb-chip sample" id="in2-chip-gbp"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-gbp-n">—</span></span><span class="l">GBP complete</span></span>
+      <span class="hb-chip sample" id="in2-chip-gbp"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-gbp-n">—</span></span><span class="l">Listing strength</span></span>
     </div>
   </div>
 
@@ -7618,7 +7934,7 @@ svg:hover .hb-xh{opacity:1}
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
           <div class="in2-orbit" id="in2-orbit"></div></div>
           <div class="in2-queries" id="in2-queries" hidden></div>
-        <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
+        <div class="lb2-sg"><div class="k"><span>Listing strength</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
         </div>
@@ -7654,7 +7970,7 @@ svg:hover .hb-xh{opacity:1}
           {% for r in c.reviews[:1] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}
           {% if c.reviews|length > 1 %}<div id="extra-reviews-{{ loop.index }}" style="display:none">{% for r in c.reviews[1:] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}</div>
           <button class="more" onclick="toggleExtraReviews({{ loop.index }}, this)">Show {{ c.reviews|length - 1 }} more review{{ 's' if c.reviews|length - 1 > 1 else '' }}</button>{% endif %}</div>
-        <div class="rt"><div class="r hb-num">{% if c.rating %}{{ c.rating }}<small>★</small>{% else %}<small>unrated</small>{% endif %}</div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews</div>{% if diff is not none %}<span class="df">{% if diff > 0 %}▲ {{ diff }} ahead{% elif diff < 0 %}▼ {{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
+        <div class="rt"><div class="r hb-num">{% if c.rating %}{{ c.rating }}<small>★</small>{% else %}<small>unrated</small>{% endif %}</div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews{% if c.rating_is_provisional %} <span class="ck-tag" title="Fewer than 15 reviews: a handful of opinions, not a settled rating">few reviews</span>{% endif %}</div>{% if diff is not none and not c.rating_is_provisional %}<span class="df">{% if diff > 0 %}▲ {{ diff }} ahead{% elif diff < 0 %}▼ {{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
       </div>
       {% endfor %}
     </div>
@@ -7664,7 +7980,9 @@ svg:hover .hb-xh{opacity:1}
     (function(){
       var parts="{{ _upd }}".split('-');
       var daysOld=Math.floor((Date.now()-new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2])).getTime())/86400000);
-      if(daysOld>=7){var b=document.getElementById('intel-stale-badge');if(b)b.style.display='inline-block';var d=document.getElementById('in2-days-old');if(d)d.textContent='· '+daysOld+' days ago';}
+      // #intel-stale-badge never existed in the markup (CA1 I12), so the
+      // age line is the one that says it: the days, and that it is old.
+      if(daysOld>=7){var d=document.getElementById('in2-days-old');if(d){d.textContent='· '+daysOld+' days ago — treat it as background';d.className='stale';}}
     })();
     </script>
     {% endif %}
@@ -8969,7 +9287,12 @@ function _appendAskCavnarEvidence(d) {
   // string so no client could show either.
   var mods = d.modules_consulted || [];
   var bad = d.unverified_figures || [];
-  if (!mods.length && !bad.length && d.confidence !== 'low') return;
+  // meta.confidence is the K1 object now (K5): a percentage computed from
+  // what the tools returned, not "high" for reading two modules. A bare
+  // band from an older server still renders as its band.
+  var cfHtml = (d.confidence && d.confidence !== 'unknown' && window.cavConfLine)
+    ? cavConfLine(d.confidence, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
+  if (!mods.length && !bad.length && !cfHtml) return;
   var messages = document.getElementById('ask-cavnar-messages');
   var row = document.createElement('div');
   row.className = 'ask-eva';
@@ -8992,13 +9315,14 @@ function _appendAskCavnarEvidence(d) {
     c.textContent = mods[i];
     chips.appendChild(c);
   }
-  if (d.confidence && d.confidence !== 'unknown') {
-    var conf = document.createElement('span');
-    conf.className = 'ask-eva-chip conf ' + d.confidence;
-    conf.textContent = d.confidence + ' confidence';
-    chips.appendChild(conf);
-  }
   if (chips.childNodes.length) row.appendChild(chips);
+  if (cfHtml) {
+    // Low is amber, like every other surface - it was red here (CA4 F9),
+    // which means bad, not unsure.
+    var cfBox = document.createElement('div');
+    cfBox.innerHTML = cfHtml;
+    if (cfBox.firstChild) row.appendChild(cfBox.firstChild);
+  }
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
 }
@@ -9930,10 +10254,22 @@ function loadSentimentTrend(){
     function lab(w,short){var k=w.week_key||'';var y=k.slice(0,4)||yr;var m=(w.label||'').split('/');if(m.length!==2)return w.label||'';return (+m[0])+'/'+(+m[1])+(short?'':'/'+String(y).slice(-2));}
     var avgs=weeks.map(function(w){return w.avg_rating||0;});
     if(hero&&C){hero.innerHTML=C.glowLine(avgs,1000,170,'#e8956a',{pad:10,floor:Math.min.apply(null,avgs)-0.3,ceil:5})+'<div class="ax hb-num"><span>'+lab(weeks[0])+'</span><span>'+lab(weeks[weeks.length-1])+'</span></div>';}
+    // A week against a week says something only when each side has enough
+    // reviews to be more than one guest's mood: Home and the SMS alert both
+    // want 3 a side, and so does this (CA4 F8). Empty weeks were filtered
+    // out above, so "vs N weeks ago" counted non-empty weeks, not calendar
+    // ones - the comparison names the week it is against instead, with
+    // both counts, and the rating's own label says what the big number is.
+    var RV_MIN_A_SIDE=3;
     var d=document.getElementById('rv-hero-delta');
-    if(d&&avgs.length>1){var dl=avgs[avgs.length-1]-avgs[0];d.className='delta '+(dl>0.05?'good':dl<-0.05?'bad':'');d.innerHTML='<span class="hb-num">'+(dl>=0?'+':'−')+Math.abs(dl).toFixed(1)+'★</span> <span>this week vs '+weeks.length+' weeks ago</span>';}
+    var f0=weeks[0],l0=weeks[weeks.length-1],enough=weeks.length>1&&(f0.total||0)>=RV_MIN_A_SIDE&&(l0.total||0)>=RV_MIN_A_SIDE;
+    if(d&&weeks.length>1){
+      if(enough){var dl=avgs[avgs.length-1]-avgs[0];d.className='delta '+(dl>0.05?'good':dl<-0.05?'bad':'');d.innerHTML='<span class="hb-num">'+(dl>=0?'+':'−')+Math.abs(dl).toFixed(1)+'★</span> <span>week of <span class="hb-num">'+lab(l0)+'</span> (<span class="hb-num">'+l0.total+'</span> reviews) vs week of <span class="hb-num">'+lab(f0)+'</span> (<span class="hb-num">'+f0.total+'</span>)</span>';}
+      else{d.className='delta';d.innerHTML='<span>Too few reviews a week to compare — needs <span class="hb-num">'+RV_MIN_A_SIDE+'</span> on each side</span>';}}
     var ts=document.getElementById('trend-summary');
-    if(ts){var f=weeks[0],l=weeks[weeks.length-1];var fp=f.total?f.positive/f.total:0,lp=l.total?l.positive/l.total:0;ts.innerHTML=lp>fp+0.1?'<span style="color:var(--green);font-weight:600">↑ Trending positive</span>':(lp<fp-0.1?'<span style="color:var(--red);font-weight:600">↓ Trending negative</span>':'→ Holding steady');}
+    if(ts){var fp=f0.total?f0.positive/f0.total:0,lp=l0.total?l0.positive/l0.total:0;
+      ts.innerHTML=!enough?'Weekly average · '+weeks.length+' week'+(weeks.length===1?'':'s')+' with reviews'
+        :(lp>fp+0.1?'<span style="color:var(--green);font-weight:600">↑ Trending positive</span>':(lp<fp-0.1?'<span style="color:var(--red);font-weight:600">↓ Trending negative</span>':'→ Holding steady'));}
     if(bars&&C){bars.innerHTML=C.stacked(weeks.slice(-8).map(function(w){return {label:lab(w,true),pos:w.positive||0,neg:w.negative||0,total:w.total||0};}),320,86);}
     var n=document.getElementById('rv-sent-n');if(n)n.textContent=weeks[weeks.length-1].total;
     var lbls=document.getElementById('sentiment-trend-labels');if(lbls)lbls.textContent=weeks.length+' weeks';
@@ -10007,6 +10343,7 @@ function loadReviewInsight(){
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
       el.innerHTML=processInsightHtml(cd.insight||'');
       applyInsightCaveats(el,cd);
+      renderReviewClaims(el,cd);
       renderSeverityStrip(cd);
       renderReviewDiagnosis(cd);
       renderInsightRecs(el,cd.recs,'reviews');
@@ -10024,6 +10361,7 @@ function loadReviewInsight(){
     el.classList.remove('insight-loading');
     typewriterEffect(el,processInsightHtml(html));
     applyInsightCaveats(el,d);
+    renderReviewClaims(el,d);
     renderSeverityStrip(d);
     renderReviewDiagnosis(d);
     renderInsightRecs(el,d.recs,'reviews');
@@ -10031,6 +10369,24 @@ function loadReviewInsight(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
   });
+}
+/* What each line of the read is (J5) and how steady the rating trend under
+   it is (the trend's own confidence, decoded by iOS and shown by neither
+   client before). The read itself is the model's, so it says so. */
+var RV_CLAIM_NAMES={this_week:'this week',watch:'what to watch',do_today:'do today',rating_trend:'rating trend',severity_breakdown:'severity',dayparts:'dayparts',why:'why',next_week:'next week',revenue_at_risk:'revenue at risk',benchmark:'benchmark'};
+function renderReviewClaims(el,d){
+  if(!el||!d||!window.cavConf)return;
+  var old=el.parentNode&&el.parentNode.querySelector('.rv-claims-box');if(old)old.parentNode.removeChild(old);
+  var h=cavConf.claimStrip(d.claim_kinds,RV_CLAIM_NAMES,!!d.insight);
+  var t=d.trend||{},tc=String(t.confidence||d.confidence||'').toLowerCase();
+  if(t.direction&&tc&&tc!=='unknown'){
+    var dirWord={improving:'improving',declining:'slipping',flat:'holding steady',up:'improving',down:'slipping'}[t.direction]||t.direction;
+    var tl='<div class="ck-strip rv-trend-cf"><span class="ck-tag">Computed</span> <span>Rating trend '+_rvEsc(dirWord)+' — '+_rvEsc(tc==='moderate'?'medium':tc)+' confidence'+(t.weeks_above_floor!=null?', from <span class="hb-num">'+(+t.weeks_above_floor)+'</span> weeks with 3+ reviews':'')+'</span></div>';
+    h=(h||'')+tl;
+  }
+  if(!h)return;
+  var box=document.createElement('div');box.className='rv-claims-box';box.innerHTML=h;
+  if(el.parentNode)el.parentNode.insertBefore(box,el.nextSibling);
 }
 /* Every caveat the server attached to this passage, in one place. Figures
    were already checked; names were not, and a fabricated guest name is the
@@ -10348,6 +10704,10 @@ function renderSeverityStrip(d){
     s.title=t.total+' in the last '+(d.severity.days||90)+' days, '+t.open+' still open';
     box.appendChild(s);
   }
+  /* Reviews the analyser has not placed in a tier yet (H14 exposes the
+     count) are said as such, never folded into "minor". */
+  var unc=+((d.severity&&d.severity.unclassified)||d.unclassified||0);
+  if(unc>0){var u=document.createElement('span');u.className='s unclassified';u.innerHTML='<span class="n">'+unc+'</span> not yet classified';u.title='Not placed in a severity tier yet, so not counted above';box.appendChild(u);any=true;}
   box.hidden=!any;
 }
 /* The diagnosis card. Renders nothing at all when there is no diagnosis —
@@ -10377,16 +10737,21 @@ function renderReviewDiagnosis(d){
     if(money){box.innerHTML=money;box.hidden=false;}else{box.hidden=true;box.innerHTML='';}
     return;
   }
-  var conf=(dg.confidence||'low');
+  /* One confidence component everywhere (K1/K6): the pill that said only
+     "medium confidence" - the model's own rating - is the .cf line with
+     its evidence, track record and freshness behind Why?. A read from
+     before the object shipped still says its band. */
+  var cfl=cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'reviews',module:'reviews'});
   var h=''
     +'<div class="rv-diag">'
     +'<div class="rv-diag-hd">'
     +'<span class="t">Why this is happening</span>'
-    +'<span class="rv-conf '+conf+'">'+conf+' confidence</span>'
+    +(window.cavConf?cavConf.claimTag('',true):'')
     +'<span class="m">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
     +dg.mention_count+' negative reviews over '+dg.window_days+' days'
     +(dg.stale?' · older read':'')+'</span>'
     +'</div><div class="rv-diag-bd">'
+    +(cfl?'<div class="rv-diag-row"><div class="k">How sure</div>'+cfl+'</div>':'')
     +'<div class="rv-diag-row"><div class="k">Most likely cause</div><div class="v">'+_rvEsc(dg.cause)+'</div></div>';
   if(dg.alternative_cause){
     h+='<div class="rv-diag-row alt"><div class="k">It could also be</div><div class="v">'+_rvEsc(dg.alternative_cause)+'</div></div>';
@@ -10410,7 +10775,7 @@ function renderReviewDiagnosis(d){
   var oe=dg.operational_evidence||[];
   if(oe.length){
     var ol=[];
-    for(var k=0;k<oe.length;k++){ol.push(_rvEsc(oe[k].module.replace(/_/g,' '))+': '+_rvEsc(oe[k].metric)+' '+_rvEsc(oe[k].value));}
+    for(var k=0;k<oe.length;k++){ol.push(_rvEsc(String(oe[k].module||'').replace(/_/g,' '))+': '+_rvEsc(oe[k].metric)+' '+_rvEsc(oe[k].value)+(oe[k].verified?' <span class="ck-tag" title="Checked against the stored figure">checked</span>':''));}
     h+='<div class="rv-diag-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
   }
   var ids=dg.evidence_review_ids||[];
@@ -10874,7 +11239,19 @@ function updateReviewStats(){
     }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
-    if(countEl){ var _lift = (gSalesLiftYr >= 1000) ? ('<strong style="color:var(--ink)">$'+Math.round(gSalesLiftYr/1000)+'k/yr</strong> against your own sales') : 'a figure we can put on your sales once they are synced'; countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average, and a 3.1% sales lift: '+_lift+'. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span>'; }
+    // The industry claims that rode on this line ("35% higher return
+    // rates", "a 3.1% sales lift: $Nk/yr against your own sales") had no
+    // source the product could show, and the tooltip credited HBS with a
+    // figure the milestone modal credited elsewhere (confidence audit CA4
+    // F5, J7) - the line now says only what was counted.
+    // Candidate for future cleanup after additional verification: none of
+    // .review-rate-bar / -label / -pct / -count or #rate-card exist in the
+    // markup (rg over templates/, static/, ios/, tests/ on 9/24/26 finds only
+    // these querySelector calls and two dark-mode CSS rules), so this block
+    // renders nothing today; maybeShowCongrats(rrate) below is still live,
+    // and gSalesLiftYr is still passed by hosted_dashboard.py:556/588.
+    // Not deleted: the full ten-point trace has not been run.
+    if(countEl){ countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to.'; }
     // Shift card background red→neutral→green as response rate improves
     var rateCard = document.getElementById('rate-card');
     maybeShowCongrats(rrate);
@@ -12179,8 +12556,12 @@ function renderDiagnosis(id,dg){
   if(!dg||!dg.available||!dg.cause){el.hidden=true;return;}
   var ev=dg.operational_evidence||[],evh='';
   for(var i=0;i<ev.length;i++)evh+='<span class="diag-ev">'+esc(ev[i].metric||'')+' <b class="hb-num">'+esc(ev[i].value||'')+'</b></span>';
-  el.innerHTML='<div class="diag-h"><span>Most likely cause</span><span class="diag-conf '+esc(dg.confidence||'low')+'">'+esc(dg.confidence||'low')+' confidence</span></div>'
+  // The confidence is the shared .cf line (K1) - a band string from an
+  // older server still reads as its band.
+  var dsurf=DIAG_SURFACE[id]||'labor';
+  el.innerHTML='<div class="diag-h"><span>Most likely cause</span></div>'
     +'<div class="diag-cause">'+esc(dg.cause)+'</div>'
+    +cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:dsurf,module:dsurf,cls:'diag-cf'})
     +(dg.alternative_cause?'<div class="diag-alt"><b>Also fits:</b> '+esc(dg.alternative_cause)+'</div>':'')
     +(dg.what_would_confirm?'<div class="diag-alt"><b>What would tell them apart:</b> '+esc(dg.what_would_confirm)+'</div>':'')
     +(evh?'<div class="diag-evs">'+evh+'</div>':'')
@@ -12268,6 +12649,20 @@ function lb2ImportCovers(btn){
     if(d&&d.ok)lb2LoadCovers();
   }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
 }
+// labor.py appends "UNVERIFIED: 12%, $400" to a read whose figures didn't
+// trace (CA1 L6); the web printed it raw. It becomes the same caveat every
+// other module shows, and the line leaves the prose.
+function laborSplitUnverified(html){
+  var m=/(?:\n|<br\s*\/?>)*\s*UNVERIFIED:\s*([^\n<]*)\s*$/i.exec(String(html||''));
+  if(!m)return {html:html,figs:null};
+  return {html:String(html).slice(0,m.index),figs:m[1].split(/\s*,\s*/).filter(function(x){return x;})};
+}
+function laborApplyCaveats(el,figs,d){
+  if(!el)return;
+  if(figs)applyFigureCaveat(el,{figures_verified:false,unsupported_figures:figs});
+  // A cached read served because a new one failed says how old it is (H15).
+  if(d&&d.stale)el.insertBefore(aiCaveat('Older read','This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.'),el.firstChild);
+}
 function loadLaborInsight(){
   laborLoaded=true;
   lb2LoadTimeOff();lb2LoadCovers();
@@ -12279,9 +12674,11 @@ function loadLaborInsight(){
     var cachedAt=parseInt(sessionStorage.getItem('labor_insight_at')||'0',10);
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       el.classList.remove('insight-loading');
-      _laborInsightFull=cached;
+      var cs=laborSplitUnverified(cached);
+      _laborInsightFull=cs.html;
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
-      el.innerHTML=cached;
+      el.innerHTML=cs.html;
+      laborApplyCaveats(el,cs.figs,null);
       return;
     }
   }catch(e){}
@@ -12289,11 +12686,13 @@ function loadLaborInsight(){
     var elLaborInsight=document.getElementById('labor-insight');
     if(elLaborInsight){
       var html=d.insight||'Analysis unavailable.';
-      _laborInsightFull=html;
+      var ls=laborSplitUnverified(html);
+      _laborInsightFull=ls.html;
       renderDiagnosis('lb2-diag',d.diagnosis);
       try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));}catch(e){}
       elLaborInsight.classList.remove('insight-loading');
-      typewriterEffect(elLaborInsight,html);
+      typewriterEffect(elLaborInsight,ls.html);
+      laborApplyCaveats(elLaborInsight,ls.figs,d);
     }
   }).catch(function(){
     var elLaborErr=document.getElementById('labor-insight');
@@ -13079,9 +13478,13 @@ function renderQualityConfidence(confidence) {
   // Low confidence makes the number provisional, and says why first.
   var low = confidence.level === 'low', top = (confidence.reasons || [])[0];
   if (prov && low) prov.innerHTML = '<span class="sq-prov" title="' + _escAttr(confidence.summary || '') + '">provisional</span>';
-  var tone = confidence.level === 'high' ? '#6fcf97'
-           : (confidence.level === 'moderate' ? '#f2994a' : '#eb5757');
-  var label = confidence.level.charAt(0).toUpperCase() + confidence.level.slice(1);
+  // One confidence colour map on every surface (J15): high green, medium
+  // (this engine's "moderate") neutral, low amber - low means unsure, not
+  // bad, so it is never red. Colours from tokens, not raw hex (CA4 F10).
+  var tone = confidence.level === 'high' ? 'var(--green)'
+           : (confidence.level === 'moderate' || confidence.level === 'medium' ? 'var(--ink3)' : 'var(--amber)');
+  var lvl = confidence.level === 'moderate' ? 'medium' : String(confidence.level || '');
+  var label = lvl.charAt(0).toUpperCase() + lvl.slice(1);
   el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
     + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:13.5px;font-weight:600;color:rgba(255,255,255,.75)">'
     + '<span style="width:6px;height:6px;border-radius:50%;background:' + tone + '"></span>'
@@ -13152,11 +13555,15 @@ function renderQualityWarnings(quality) {
   }
   // Each recommendation gets ✓ (did it) / ✕ (not for us). The ledger
   // behind that decides which kinds keep being shown.
+  // A recommendation is a sentence, or (K1) an object carrying its text
+  // and its confidence - the line then says how sure, like every other
+  // surface, on this panel's dark ground.
   for (i = 0; i < Math.min(recs.length, 5); i++) {
-    var rec = String(recs[i] || ''), st = _recState[rec];
+    var recObj = recs[i], recConf = (recObj && typeof recObj === 'object') ? recObj.confidence : null;
+    var rec = (recObj && typeof recObj === 'object') ? String(recObj.text || recObj.title || '') : String(recObj || ''), st = _recState[rec];
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
-      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:#f2994a;margin-top:8px"></span>'
-      + '<span class="tx">' + _escHtml(rec) + '</span>'
+      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
+      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule', module: 'labor', cls: 'on-dark'}) : '') + '</span>'
       + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'not for us') + '</span>'
             : '<span class="acts"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
               + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Not for us" aria-label="Not for us" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
@@ -15217,9 +15624,8 @@ function fc2LoadCfo(){
       if(!d||!d.ok){host.hidden=true;return;}
       var b=d.brief||{},dg=d.diagnosis,drv=(d.drivers&&d.drivers.drivers)||[];
       if(!drv.length&&!(dg&&dg.cause)){host.hidden=true;return;}
-      var conf=(dg&&dg.confidence)||'low';
       var h='<div class="fc2-cfo"><div class="fc2-cfo-hd"><span class="t">Where the money is going</span>';
-      if(dg&&dg.cause){h+='<span class="fc2-conf '+conf+'">'+conf+' confidence</span>';}
+      if(dg&&dg.cause&&window.cavConf)h+=cavConf.claimTag('',true);
       var at=(b.money_involved&&b.money_involved.monthly_at_stake);
       if(at){h+='<span class="m">'+fc2Money(at)+'/month across '+drv.length+' driver'+(drv.length===1?'':'s')+'</span>';}
       if(dg&&dg.stale){h+='<span class="m">· older read</span>';}
@@ -15228,7 +15634,7 @@ function fc2LoadCfo(){
       // The month-end projection, always labelled a projection.
       var p=b.profitability;
       if(p&&p.available){
-        h+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span></span>'
+        h+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(p.claim_kind||'forecast'):'')+'</span>'
           +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%). '
           +'At this run rate the month lands near '+fc2Money(p.projected_prime_cost)
           +' on '+fc2Money(p.projected_sales)+' of sales';
@@ -15239,6 +15645,8 @@ function fc2LoadCfo(){
         h+='. Projection, not a measurement. '+wtEsc(p.basis||'')+'</span></div>';
       }
       if(dg&&dg.cause){
+        var fcl=cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'food',module:'food'});
+        if(fcl)h+='<div class="fc2-row"><div class="k">How sure</div>'+fcl+'</div>';
         h+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
         if(dg.alternative_cause){h+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
         if(dg.what_would_confirm){h+='<div class="fc2-row"><div class="k">What would tell them apart</div><div class="v">'+wtEsc(dg.what_would_confirm)+'</div></div>';}
@@ -15247,7 +15655,7 @@ function fc2LoadCfo(){
         if(dg.expected_outcome){h+='<div class="fc2-row alt"><div class="k">What should change</div><div class="v">'+wtEsc(dg.expected_outcome)+'</div></div>';}
         var oe=dg.operational_evidence||[];
         if(oe.length){
-          var ol=[];for(var k=0;k<oe.length;k++){ol.push(wtEsc(oe[k].module)+': '+wtEsc(oe[k].metric)+' '+wtEsc(oe[k].value));}
+          var ol=[];for(var k=0;k<oe.length;k++){ol.push(wtEsc(oe[k].module)+': '+wtEsc(oe[k].metric)+' '+wtEsc(oe[k].value)+(oe[k].verified?' <span class="ck-tag" title="Checked against the stored figure">checked</span>':''));}
           h+='<div class="fc2-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
         }
       }
@@ -15258,18 +15666,27 @@ function fc2LoadCfo(){
           h+='<div class="fc2-drv"><div class="n"><span class="hb-num">'+fc2Money(x.dollars_monthly)+'</span></div>'
             +'<div class="bd"><div class="lbl">'+wtEsc(x.label)+'</div>'
             +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
-            +'<div class="tags"><span class="tag">'+wtEsc(x.confidence)+' confidence</span>'
-            +'<span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
+            +cavConfLine(x.confidence,{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
+            +'<div class="tags"><span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
             +'<span class="tag">if ignored: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
         }
         h+='</div></div>';
+        // What the ranking could not read (fci degraded_sources): a ranking
+        // missing a source is said to be missing it, never passed off as
+        // complete (CA1 F7).
+        var dgs=(d.drivers&&d.drivers.degraded_sources)||[];
+        if(dgs.length){h+='<div class="fc2-row alt"><div class="k">Not in this ranking</div><div class="v">'+dgs.map(function(z){return wtEsc(typeof z==='string'?z.replace(/_/g,' '):(z&&(z.label||z.source||z.key))||'');}).join(' · ')+' — couldn’t be read this time, so the ranking may be missing a driver.</div></div>';}
       }
       // How far any of this can be trusted. Never buried.
       var t=b.trust||{};
       var tl=[];
       if(t.recipe_coverage_pct!=null){tl.push('recipes cover '+t.recipe_coverage_pct+'% of what sold');}
       if(t.inferred_waste_pct!=null){tl.push(t.inferred_waste_pct+'% of waste is an unexplained count gap, not observed spoilage');}
-      if(t.forecast_accuracy&&t.forecast_accuracy.available){tl.push('past forecasts here have been '+wtEsc(t.forecast_accuracy.reading)+' ('+t.forecast_accuracy.mean_error_pct+'% mean error over '+t.forecast_accuracy.scored+')');}
+      // K8: forecast_accuracy {reading, mean_error_pct, n_weeks, withheld}
+      // on the brief; an older server nests it in trust with "scored".
+      var fa=b.forecast_accuracy||t.forecast_accuracy;
+      if(fa&&!fa.withheld&&fa.available!==false&&fa.reading){var fn=fa.n_weeks!=null?fa.n_weeks:fa.scored;tl.push('past forecasts here have been '+wtEsc(fa.reading)+(fa.mean_error_pct!=null?' ('+fa.mean_error_pct+'% mean error'+(fn!=null?' over '+fn+(fa.n_weeks!=null?' week'+(fa.n_weeks===1?'':'s'):''):'')+')':''));}
+      else if(fa&&fa.withheld){tl.push('the waste forecast is held back: past forecasts here have been too far off to show');}
       if(tl.length){h+='<div class="fc2-row alt"><div class="k">How far to trust this</div><div class="v">'+tl.join(' · ')+'</div></div>';}
       h+='</div></div>';
       host.innerHTML=h;host.hidden=false;
@@ -15340,7 +15757,7 @@ function fc2LoadRecipeDrafts(note){
     if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
     for(var i=0;i<ds.length;i++){var dr=ds[i];
       h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
-      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];h+='<span class="fc2-recipe-ln'+(ln.confidence==='low'?' low':'')+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.confidence==='low'?' <i>?</i>':'')+'</span>';}
+      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];var lc=String(ln.confidence||'').toLowerCase();if(lc==='moderate')lc='medium';h+='<span class="fc2-recipe-ln'+(lc==='low'?' low':(lc==='medium'?' med':''))+'" title="'+esc(lc==='low'?'Low confidence — check this line':(lc==='medium'?'Medium confidence — worth a glance':(lc==='high'?'High confidence':'')))+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(lc==='low'?' <i>?</i>':(lc==='medium'?' <i class="m" aria-label="medium confidence">·</i>':''))+'</span>';}
       h+='</div><div class="fc2-recipe-ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
     // The menu, pasted. Nobody photographs a recipe card, and a
     // restaurant without a POS has no dishes for the Tuesday job to draft
@@ -17278,6 +17695,18 @@ function runAIVisibility(btn) {
     toast('Request failed — try again','error');
   });
 }
+// The AI-visibility reading from its 90% range (J10): the band words only
+// when the whole interval sits inside one band; otherwise the range is too
+// wide to call. Without a range, the point decides, as before.
+function aivRangeReading(ai, lo, hi) {
+  var BANDS = [[67, 'comes up often', 'good'], [34, 'comes up sometimes', 'warn'], [0, "doesn't come up yet", 'bad']];
+  function band(v) { for (var i = 0; i < BANDS.length; i++) { if (v >= BANDS[i][0]) return i; } return BANDS.length - 1; }
+  var hasRange = (lo != null && hi != null && hi > lo);
+  if (!hasRange) { var b0 = band(ai == null ? 0 : ai); return {label: BANDS[b0][1], tone: BANDS[b0][2], range: false}; }
+  var bl = band(lo), bh = band(hi);
+  if (bl === bh) return {label: BANDS[bl][1], tone: BANDS[bl][2], range: true};
+  return {label: 'range too wide to call', tone: '', range: true};
+}
 function renderAIVisibility(d) {
   document.getElementById('aiv-loading').style.display = 'none';
   document.getElementById('aiv-idle').style.display = 'none';
@@ -17303,6 +17732,17 @@ function renderAIVisibility(d) {
   var gbpHas = (gbpRaw !== null && gbpRaw !== undefined);
   var gbp = gbpHas ? Math.round(gbpRaw) : null;
   var gbpPartial = !!d.presence_unmeasured;
+  // The chip and its words come from the RANGE when there is one (CA4 F4,
+  // J10): a point estimate from about seven questions moves 15 points when
+  // one answer flips, so "comes up sometimes" is said only when the whole
+  // interval sits in that band, and a range that straddles two bands says
+  // so instead of picking one.
+  var aivRng = aivRangeReading(ai, d.ai_score_low, d.ai_score_high);
+  // Listing strength: one threshold table for the words AND the colour (the
+  // label ran 80/60/40 while the colour ran 70/40, so 75 read "a few gaps"
+  // in green). A server that sends presence_tone / presence_label wins.
+  var presLabel = d.presence_label || (gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps')));
+  var presTone = d.presence_tone || (gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad'));
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
   if (scoreEl) {
@@ -17318,16 +17758,14 @@ function renderAIVisibility(d) {
     // of one — the system asked is named in the caption line below
     // instead now, not stuffed into this flag (which only has room for a
     // couple words before it wraps the "Visibility orbit" label above it).
-    scoreLbl.textContent = !measured ? 'not measured'
-      : (ai >= 67 ? 'comes up often' : (ai >= 34 ? 'comes up sometimes' : "doesn't come up yet"));
-    scoreLbl.className = !measured ? 'bad' : (ai >= 67 ? 'good' : (ai >= 34 ? 'warn' : 'bad'));
+    scoreLbl.textContent = !measured ? 'not measured' : aivRng.label;
+    scoreLbl.className = !measured ? 'bad' : aivRng.tone;
   }
-  var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
   var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
-  if(chipAi){chipAi.className='hb-chip '+(measured?tone(ai,67,34):'');}
-  if(chipAiN)chipAiN.textContent = hasScore ? (ai+'%') : '—';
+  if(chipAi){chipAi.className='hb-chip '+(measured?aivRng.tone:'');}
+  if(chipAiN)chipAiN.textContent = !hasScore ? '—' : (aivRng.range ? '~'+d.ai_score_low+'–'+d.ai_score_high+'%' : (ai+'%'));
   var chipG=document.getElementById('in2-chip-gbp'), chipGN=document.getElementById('in2-chip-gbp-n');
-  if(chipG){chipG.className='hb-chip '+(gbpHas?tone(gbp,70,40):'');}if(chipGN)chipGN.textContent=gbpHas?(gbp+'%'):'\u2014';
+  if(chipG){chipG.className='hb-chip '+(gbpHas?presTone:'');}if(chipGN)chipGN.textContent=gbpHas?(gbp+'%'):'\u2014';
   var aivNote = document.getElementById('aiv-disclaimer');
   if (aivNote) {
     var note = '';
@@ -17351,14 +17789,14 @@ function renderAIVisibility(d) {
   var gbpLbl = document.getElementById('aiv-gbp-label');
   if (gbpEl) {
     if (!gbpHas) { gbpEl.textContent = '\u2014'; gbpEl.style.color = 'var(--ink3)'; }
-    else { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = gbp >= 70 ? 'var(--hb-good)' : (gbp >= 40 ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
+    else { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = presTone === 'good' ? 'var(--hb-good)' : (presTone === 'warn' ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
   }
   if (gbpLbl) {
     if (!gbpHas) { gbpLbl.textContent = 'not measured'; gbpLbl.className = ''; }
     else {
-      gbpLbl.textContent = (gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps')))
+      gbpLbl.textContent = presLabel
         + (gbpPartial ? ' \u00b7 of ' + (d.presence_measured||0) + ' items read' : '');
-      gbpLbl.className = gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad');
+      gbpLbl.className = presTone;
     }
   }
   try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
@@ -18151,9 +18589,13 @@ function revokeOtherSessions(btn){
       var h='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
       var ACT={urgent:'Protect',fix:'Fix',cut:'Cut',reprice:'Reprice',promote:'Promote',review:'Review'};
       for(var i=0;i<rows.length;i++){var x=rows[i],pm=x.positive_mentions||0,nm=x.negative_mentions||0;
-        h+='<tr><td><b>'+_fcEsc(x.name)+'</b>'+(x.why?'<div class="why">'+_fcEsc(x.why)+'</div>':'')+'</td>'
+        // A plate cost far outside any real food cost is flagged as a
+        // likely unit mismatch (inventory_ledger._unit_sanity); the % is
+        // marked, not trusted, and the dish's move waits on the check.
+        var uw=x.unit_warning;
+        h+='<tr><td><b>'+_fcEsc(x.name)+'</b>'+(x.why?'<div class="why">'+_fcEsc(x.why)+'</div>':'')+(uw?'<div class="why fc2-unit-warn">'+_fcEsc(uw)+'</div>':'')+'</td>'
           +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td>'
-          +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%':'—')+'</td>'
+          +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%'+(uw?' <span class="fc2-unit-q" title="Check the units">?</span>':''):'—')+'</td>'
           +'<td class="r hb-num">'+(x.units_sold!=null?x.units_sold:'—')+'</td>'
           +'<td class="r hb-num">'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
           +'<td>'+(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':'')+'</td></tr>';}
@@ -18215,7 +18657,10 @@ function revokeOtherSessions(btn){
     for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
       if(l.applied){h+='<tr><td><span class="ok">✓</span></td><td><b>'+_fcEsc(l.description)+'</b><div class="why">Applied automatically</div></td><td>'+_fcEsc(l.ingredient_name||'')+'</td><td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td><td class="r hb-num">'+_fcMoney(l.proposed_cost,4)+'</td></tr>';continue;}
       h+='<tr><td><input type="checkbox" data-inv-line="'+i+'"'+(l.selected?' checked':'')+'></td>'
-        +'<td><b>'+_fcEsc(l.description)+'</b><div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'+(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
+        // Whether the reading passed both checks (invoices.py "verified":
+        // its arithmetic agreed and there was a cost to compare against) -
+        // computed server-side and never shown before (CA1 F26, J5).
+        +'<td><b>'+_fcEsc(l.description)+'</b>'+(l.verified===true?' <span class="ck-tag" title="The line adds up and the move is plausible against the current cost">checked</span>':(l.verified===false?' <span class="ck-tag" title="Not every check could run on this line — look before applying">unchecked</span>':''))+'<div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'+(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
         +'<td><select class="fc2-inv-sel" data-inv-ing="'+i+'">'+opts.replace('value="'+l.ingredient_id+'"','value="'+l.ingredient_id+'" selected')+'</select></td>'
         +'<td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td>'
         +'<td class="r"><input class="fc2-inv-in" type="number" step="0.0001" min="0" data-inv-cost="'+i+'" value="'+(l.proposed_cost!=null?l.proposed_cost:'')+'"></td></tr>';}
@@ -20015,7 +20460,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // generator: roster & settings, scheduling rules, events & reservations,
   // shift requests. Every figure here is the server's; nothing is invented
   // on the client. ES5 only.
-  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],likely:[],gen:null,chunked:false};
+  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],moves:[],standby:[],likely:[],gen:null,chunked:false,likelyNote:'',standbyNote:'',demand:null};
   var _RV_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   function _rvRow(i){return (window._schedRows||[])[i]||{};}
   function _rvWhen(r){var d=r.day||(r.date?mdy(r.date):'');return d+(r.shift_start?' '+r.shift_start:'');}
@@ -20030,6 +20475,23 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(d.likely_edits!==undefined)_rv.likely=d.likely_edits||[];
     if(d.generation_seconds!==undefined)_rv.gen=d.generation_seconds;
     if(d.chunked!==undefined)_rv.chunked=!!d.chunked;
+    // The calibration the percentages carry (I9): the edit predictor's own
+    // backtest beside its %, and the standby % said as the estimate it is.
+    // Optional - an older server sends neither and the static caveat stands.
+    if(d.likely_edits_note!==undefined)_rv.likelyNote=d.likely_edits_note||'';
+    if(d.standby_note!==undefined)_rv.standbyNote=d.standby_note||'';
+    if(d.demand_accuracy!==undefined)_rv.demand=d.demand_accuracy||null;
+  }
+  // K8: how far this restaurant's demand forecasts have been off, on the
+  // nights actually measured. Nothing below a handful of nights.
+  function _rvDemandLine(a){
+    if(!a||typeof a!=='object'||!(+a.n_nights>0))return '';
+    var bits=[];
+    if(a.inside_range_pct!=null)bits.push('inside the forecast range on <span class="hb-num">'+Math.round(+a.inside_range_pct)+'%</span> of <span class="hb-num">'+(+a.n_nights)+'</span> nights');
+    else bits.push('<span class="hb-num">'+(+a.n_nights)+'</span> nights measured');
+    if(a.mean_error_pct!=null)bits.push('<span class="hb-num">'+Math.round(+a.mean_error_pct)+'%</span> mean error');
+    if(a.bias_pct!=null&&Math.abs(+a.bias_pct)>=1)bits.push('running <span class="hb-num">'+Math.abs(Math.round(+a.bias_pct))+'%</span> '+(+a.bias_pct>0?'high':'low'));
+    return '<div class="sr-note"><span class="ck-tag">Forecast</span> Demand forecasts here: '+bits.join(' · ')+'.</div>';
   }
   // The table and the panel must agree on which rows break a hard rule.
   // On the generated payload the rows already carry needs_review from the
@@ -20087,9 +20549,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           +(mv.rec_key&&mv.answerable!==false&&typeof recNotForUsHtml==='function'?recNotForUsHtml(mv.rec_key,'schedule_review','schedule'):'')+'</div>';}
       h+='</div>';
     }
+    h+=_rvDemandLine(_rv.demand);
     var sbAsk=[];for(i=0;i<_rv.standby.length;i++)if(_rv.standby[i]&&_rv.standby[i].standby&&_rv.standby[i].standby.employee)sbAsk.push(i);
     if(sbAsk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Standby</div>';
+      h+='<div class="sr-grp"><div class="sr-k">Standby</div><div class="sr-note" style="margin:0 0 4px">'+esc(_rv.standbyNote||'An estimate from each person’s own attendance record, assuming one no-show doesn’t make another likelier.')+'</div>';
       for(i=0;i<sbAsk.length;i++){var sd=_rv.standby[sbAsk[i]],sp=sd.standby;
         h+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedAskStandby('+sbAsk[i]+',this)">Ask '+esc(sp.employee)+'</button></div>';}
@@ -20100,7 +20563,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
        edit they keep making are already lines above. */
     var lk=[];for(i=0;i<_rv.likely.length;i++)if(_rv.likely[i]&&_rv.likely[i].kind==='predicted')lk.push(_rv.likely[i]);
     if(lk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.</div>';
+      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.'+(_rv.likelyNote?' '+num(_rv.likelyNote):'')+'</div>';
       for(i=0;i<lk.length;i++){var le=lk[i],rs=String(le.reason||'');
         h+='<div class="sr-line"><span class="d"></span><span><span class="hb-num">'+Math.round((+le.likelihood||0)*100)+'%</span> <b>'+esc(le.employee)+'</b>, '+esc(mdy(le.date))+' '+esc(le.shift_start||'')+' '+esc(le.role||'')
           +(rs?' &mdash; '+esc(rs.charAt(0).toUpperCase()+rs.slice(1))+'.':'')+'</span></div>';}
@@ -20324,7 +20787,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function _rstRel(r){
     if(!r||!r.shifts)return '<span class="rst-rel" style="color:var(--ink3)" title="No shift records yet">—</span>';
     var pct=Math.round((+r.no_show_rate||0)*100);
-    return '<span class="rst-rel '+(pct>=10?'bad':(pct===0?'good':''))+'" title="'+r.shifts+' shift'+(r.shifts===1?'':'s')+' on record'+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+'">'+pct+'% no-show</span>';
+    // Red where the engine flags the person (shift_quality.UNRELIABLE_RATE,
+    // 20%), not at a client-side 10% the scorer never used (CA1 L14): the
+    // server's own flag or threshold wins when it sends one.
+    var thr=(_roster&&_roster.no_show_threshold!=null)?+_roster.no_show_threshold:0.2;
+    var bad=r.unreliable===true||(r.unreliable!==false&&(+r.no_show_rate||0)>=thr);
+    return '<span class="rst-rel '+(bad?'bad':(pct===0?'good':''))+'" title="'+r.shifts+' shift'+(r.shifts===1?'':'s')+' on record'+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+'">'+pct+'% no-show</span>';
   }
   window.renderRoster=function(){
     var d=_roster,el=document.getElementById('roster-body');if(!d||!el)return;

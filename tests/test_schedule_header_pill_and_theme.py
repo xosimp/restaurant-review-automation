@@ -316,7 +316,10 @@ def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
     assert "#panel-inventory .hb-kicker{font-size:12.5px}" in s
     assert "#panel-reviews .hb-kicker,#panel-reviews .hb-sh .k{font-size:12.5px}" in s
     panel = _reviews_panel()
-    assert '<div class="hb-kicker">Rating · last 8 weeks</div>' in panel
+    # The kicker names what the big number is (confidence audit J7): Google's
+    # all-time rating when there is one, never "last 8 weeks" over it.
+    assert ("<div class=\"hb-kicker\">{{ 'Google rating (all time)' if restaurant.gbp_rating"
+            " else 'Average rating · all reviews' }}</div>") in panel
     assert '<div class="k">Inbox</div>' in panel
 
 

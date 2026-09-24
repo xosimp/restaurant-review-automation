@@ -96,6 +96,16 @@ td.r,th.r{text-align:right}
 .b.ok{background:var(--green-bg);color:var(--green)}.b.warn{background:var(--amber-bg);color:var(--amber)}.b.bad{background:var(--red-bg);color:var(--red)}
 .b.off{background:var(--paper3);color:var(--ink4)}.b.info{background:var(--blue-bg);color:var(--blue)}.b.ember{background:var(--ember-bg);color:var(--ember2)}
 .b.nodot:before{display:none}
+/* Reliability bar (confidence calibration): 0-100% track, the 90% range as a
+   translucent band, the observed rate as a glowing dot, what was shown as a
+   tick. Green when the shown figure sits inside the range, amber when not. */
+.calbar{position:relative;display:inline-block;width:140px;height:10px;border-radius:5px;background:var(--paper3);vertical-align:middle}
+.calbar .rg{position:absolute;top:0;bottom:0;border-radius:5px;background:var(--ink4);opacity:.55}
+.calbar.ok .rg{background:linear-gradient(90deg,var(--green-bg),var(--green));opacity:.7}
+.calbar.warn .rg{background:linear-gradient(90deg,var(--amber-bg),var(--amber));opacity:.7}
+.calbar .ob{position:absolute;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--ink);box-shadow:0 0 6px var(--ink3)}
+.calbar .pr{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;border-radius:1px;background:var(--ember2)}
+.calbar.off{opacity:.45}
 .chip{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--paper3);color:var(--ink3);margin-right:3px}
 .chip.ok{background:var(--green-bg);color:var(--green)}.chip.warn{background:var(--amber-bg);color:var(--amber)}.chip.bad{background:var(--red-bg);color:var(--red)}.chip.off{opacity:.5}
 /* filters */
@@ -265,6 +275,10 @@ function parseTs(s){ if(!s) return null; s=String(s).trim(); const utc = /Z$/.te
 // at an on-site audit (CLIENT-44). These two helpers stand in for them.
 function tsMs(v){ const d = parseTs(v); return d ? (d.getTime() || 0) : 0; }
 function orDefault(v, d){ return v == null ? d : v; }
+// Setup completeness (G14): what is connected and configured - renamed from
+// "data completeness", which collided with the intelligence layer's feature
+// completeness. Either key, so this reads an older payload too.
+function setupDone(r){ return (r && (r.setup_completeness || r.data_completeness)) || {}; }
 function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
 function fmtD(s){ const d = parseTs(s); return d ? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + (d.getFullYear()!==new Date().getFullYear()?' '+d.getFullYear():'') : '—'; }
 function fmtDT(s){ const d = parseTs(s); return d ? d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—'; }
@@ -410,7 +424,7 @@ const CF = [
   ['onboarding','Onboarding', r=>!r.onboarding.complete && !r.onboarding.dismissed], ['integration','Integration issue', r=>r.integration_health==='error'],
   ['ai','AI issue', r=>r.issues.some(i=>/ai_/.test(i.key))], ['email','Email issue', r=>r.email.failed_7d>0], ['push','Notification issue', r=>r.push.failed_7d>0||r.push.disabled>0],
   ['stale','Data stale', r=>r.modules.some(m=>m.state==='stale'||m.state==='no_data')], ['usage','High usage', r=>r.ai.cost_30d>10||r.ai.calls_30d>150],
-  ['churn','Churn risk: high', r=>(r.churn_risk||{}).level==='high'], ['thin','Data < 50% complete', r=>orDefault((r.data_completeness||{}).score,100)<50],
+  ['churn','Churn risk: high', r=>(r.churn_risk||{}).level==='high'], ['thin','Setup < 50% complete', r=>orDefault(setupDone(r).score,100)<50],
   ['inactive','Inactive 14d+', r=>{const d=parseTs(r.last_active); return !d || (Date.now()-d)>14*864e5;}], ['new','Joined 30d', r=>{const d=parseTs(r.created_at); return d && (Date.now()-d)<30*864e5;}]
 ];
 async function clientsView(){
@@ -428,7 +442,7 @@ async function clientsView(){
       {h:'Locs', key:'locs', r:true, val:r=>_clients.filter(x=>x.brand===r.brand).length, cell:r=>`<span class="num">${_clients.filter(x=>x.brand===r.brand).length}</span>`},
       {h:'Billing', key:'billing', val:r=>r.billing.status, cell:r=>`${bill(r.billing.status)}${r.billing.monthly?'<div class="dim num">'+fmtUSD(r.billing.monthly)+'/mo</div>':''}`},
       {h:'Onboarding', key:'onb', val:r=>r.onboarding.done/(r.onboarding.total||1), cell:r=>r.onboarding.complete?'<span class="b ok nodot">done</span>':`<span class="num">${r.onboarding.done}/${r.onboarding.total}</span>${r.onboarding.dismissed?' <span class="dim">hidden</span>':''}`},
-      {h:'Complete', key:'complete', r:true, val:r=>orDefault((r.data_completeness||{}).score,-1), cell:r=>{const sc=(r.data_completeness||{}).score; return sc==null?'<span class="dim">—</span>':`<span class="chip ${sc>=75?'ok':sc>=50?'':'warn'}"><span class="num">${sc}%</span></span>`;}},
+      {h:'Setup', key:'complete', r:true, val:r=>orDefault(setupDone(r).score,-1), cell:r=>{const sc=setupDone(r).score; return sc==null?'<span class="dim">—</span>':`<span class="chip ${sc>=75?'ok':sc>=50?'':'warn'}"><span class="num">${sc}%</span></span>`;}},
       {h:'Churn risk', key:'churn', val:r=>({high:3,medium:2,low:1}[(r.churn_risk||{}).level]||0), cell:r=>{const c=r.churn_risk||{}; return c.level==='n/a'||!c.level?'<span class="dim">—</span>':`<span class="chip ${c.level==='high'?'warn':c.level==='medium'?'':'ok'}" title="${esc((c.reasons||[]).join(' · '))}">${esc(c.level)}</span>`;}},
       {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
       {h:'Modules', cell:r=>r.modules.filter(m=>m.enabled).map(modchip).join('')||'<span class="dim">none</span>'},
@@ -572,10 +586,11 @@ function recDays(n){ _recDays = n; route(); }
 async function recommendations(arg){
   const rid = arg ? parseInt(arg, 10) : null;
   const q = rid ? '&restaurant_id=' + rid : '';
-  const [d, cal, miss] = await Promise.all([
+  const [d, cal, miss, conf] = await Promise.all([
     api('/admin/api/recommendations?days=' + _recDays + q),
     api('/admin/api/recommendations/calibration?days=365' + q).catch(() => ({ok:false})),
-    api('/admin/api/recommendations/missed?days=' + _recDays + q).catch(() => ({ok:false}))]);
+    api('/admin/api/recommendations/missed?days=' + _recDays + q).catch(() => ({ok:false})),
+    api('/admin/api/calibration?days=365' + q).catch(() => null)]);
   if(!d.ok) throw new Error('recommendations failed');
   const T = d.total, pct = v => v==null ? '—' : Math.round(v*100)+'%';
   const ci = T.accept_ci90 ? `90%: ${pct(T.accept_ci90[0])}–${pct(T.accept_ci90[1])}` : '';
@@ -629,6 +644,7 @@ async function recommendations(arg){
           {h:'Ratio',key:'ratio',r:true,cell:r=>r.enough && r.ratio!=null ? `<span class="num">${r.ratio}×</span>` : `<span class="dim">n&lt;${cal.min_n}</span>`},
           {h:'Within ±50%',key:'within_half',r:true,cell:r=>`<span class="num">${pct(r.within_half)}</span>`}], cal.by_kind, {id:'rec-cal', sort:'n'}) : '<div class="empty">No measured recommendation carried a predicted figure yet.</div>'}
       </div></div>
+      ${confidenceCalibration(conf)}
       <div class="card"><div class="ch"><h2>Missed detections · ${d.days}d</h2><span class="sub">An alert, issue or close-out 86 with no recommendation about it shown in the ${miss.ok ? miss.lookback_days : 14} days before.</span></div><div class="cb">
         ${miss.ok && miss.total ? `<div style="margin-bottom:8px">${miss.by_source.map(s=>`<span class="chip">${esc(s.source)} ${fmtN(s.n)}</span>`).join(' ')}</div>` + table([
           {h:'When',key:'detected_at',cell:r=>`<span class="num">${fmtD(r.detected_at)}</span>`},
@@ -637,6 +653,47 @@ async function recommendations(arg){
           {h:'Detail',key:'detail',wrap:true,cell:r=>esc(r.detail||'')}], miss.rows, {id:'rec-miss', sort:'detected_at'}) : '<div class="empty">Every problem that surfaced had a recommendation before it.</div>'}
       </div></div>
     </div>`;
+}
+
+// ── Confidence calibration (K7, J14) ───────────────────────────────────────
+// Does "72% confidence" come true about 72% of the time? GET
+// /admin/api/calibration buckets every measured recommendation by the
+// confidence it was SHOWN with (the rec_instances snapshot, never a
+// recomputed one) and sets the share that improved (learned_verdict,
+// improved ÷ measured) beside it, with its 90% range. A row under floor_n
+// is shown dimmed, not read. The same by kind and per dimension.
+function _calPct(v){ if(v==null || !isFinite(+v)) return null; v = +v; return v <= 1 ? v*100 : v; }
+function _calBar(r, floor){
+  const p = _calPct(r.predicted_mean), o = _calPct(r.observed_rate), lo = _calPct(r.low), hi = _calPct(r.high);
+  if(p==null && o==null) return '<span class="dim">—</span>';
+  const inside = p!=null && lo!=null && hi!=null && p >= lo && p <= hi;
+  const tone = (r.n||0) < floor ? 'off' : (lo==null ? '' : (inside ? 'ok' : 'warn'));
+  return `<span class="calbar ${tone}" title="Predicted ${p==null?'—':Math.round(p)+'%'} · observed ${o==null?'—':Math.round(o)+'%'}${lo!=null?' (90%: '+Math.round(lo)+'–'+Math.round(hi)+'%)':''}">`
+    + (lo!=null && hi!=null ? `<i class="rg" style="left:${lo}%;width:${Math.max(1,hi-lo)}%"></i>` : '')
+    + (o!=null ? `<i class="ob" style="left:${o}%"></i>` : '')
+    + (p!=null ? `<i class="pr" style="left:${p}%"></i>` : '') + '</span>';
+}
+function _calTable(rows, floor, id, first){
+  if(!rows || !rows.length) return '<div class="empty">Nothing measured yet.</div>';
+  const f = v => { const x = _calPct(v); return x==null ? '—' : Math.round(x)+'%'; };
+  return table([
+    first || {h:'Confidence', key:'range', cell:r=>`<span class="num">${esc(r.range||'')}</span>`},
+    {h:'n', key:'n', r:true, cell:r=>`<span class="num${(r.n||0)<floor?' dim':''}">${fmtN(r.n)}</span>`},
+    {h:'Shown', key:'predicted_mean', r:true, cell:r=>`<span class="num">${f(r.predicted_mean)}</span>`},
+    {h:'Improved', key:'observed_rate', r:true, cell:r=>(r.n||0)<floor ? `<span class="dim">n&lt;${floor}</span>` : `<span class="num">${f(r.observed_rate)}</span>${r.low!=null?` <span class="dim num">${f(r.low)}–${f(r.high)}</span>`:''}`},
+    {h:'Reliability', key:'bar', cell:r=>_calBar(r, floor)}], rows, {id, sort:'range'});
+}
+function confidenceCalibration(k){
+  if(!k || k.ok === false || !Array.isArray(k.bands)) return `<div class="card"><div class="ch"><h2>Confidence calibration</h2></div><div class="cb"><div class="empty">No calibration yet — it needs recommendations shown with a confidence percentage and measured since.</div></div></div>`;
+  const floor = k.floor_n || 20, dims = k.by_dimension || {};
+  const brier = (k.brier==null || !isFinite(+k.brier)) ? '—' : (+k.brier).toFixed(3);
+  const dimBlock = (key, label) => (dims[key] && dims[key].length) ? `<div class="k" style="margin:12px 0 6px">${esc(label)}</div>${_calTable(dims[key], floor, 'cal-dim-'+key)}` : '';
+  return `<div class="card"><div class="ch"><h2>Confidence calibration</h2><span class="sub">Shown confidence against the share that improved, measured. The tick is what was shown, the dot what happened, the band its 90% range — green when the tick sits inside it. Rows under ${floor} are dimmed.</span></div><div class="cb">
+    <div class="grid g3" style="margin-bottom:12px">${kpi(brier,'Brier score', '', 'lower is better · 0.25 is a coin flip')}${kpi(fmtN((k.bands||[]).reduce((a,b)=>a+(b.n||0),0)),'Measured')}${kpi(fmtN(floor),'Floor per row')}</div>
+    ${_calTable(k.bands, floor, 'cal-bands')}
+    ${(k.by_kind && k.by_kind.length) ? `<div class="k" style="margin:12px 0 6px">By kind</div>${_calTable(k.by_kind, floor, 'cal-kind', {h:'Kind', key:'kind', cell:r=>esc(r.kind||r.range||'')})}` : ''}
+    ${dimBlock('evidence','Evidence strength')}${dimBlock('accuracy','Historical accuracy')}${dimBlock('freshness','Data freshness')}
+  </div></div>`;
 }
 
 // ── Schedule experiments (internal only) ───────────────────────────────────
@@ -894,7 +951,7 @@ async function clientView(id, qs){
     <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(c.reviews.total),'Reviews','',c.reviews.awaiting+' awaiting')}${kpi(fmtN(c.ai.calls_30d),'AI calls · 30d','',fmtUSD(c.ai.cost_30d,2))}${kpi(fmtN(c.email.sent_7d),'Emails · 7d',c.email.failed_7d?'bad':'',c.email.failed_7d?c.email.failed_7d+' failed':'')}${kpi(fmtN(c.push.devices),'Devices',c.push.disabled?'bad':'',c.push.disabled?c.push.disabled+' dead':'')}${kpi(fmtN(c.alerts_7d),'Alerts · 7d')}${kpi(fmtN(c.guests),'Text club guests')}</div>
     <div class="grid g2">
       <div>${issuesTable(c.issues.map(i=>({...i, restaurant:c.name})), {id:'ci-t'})}
-        <div class="card" style="margin-top:12px"><div class="ch"><h2>Data completeness</h2><span class="num">${(c.data_completeness||{}).score==null?'—':(c.data_completeness.score+'%')}</span></div><div class="cb"><div class="steps">${((c.data_completeness||{}).checks||[]).map(k=>`<div><span class="${k.ok?'ok':'no'}">${k.ok?'✓':'○'}</span><span style="${k.ok?'color:var(--ink4)':''}">${esc(k.label)}</span> <span class="dim">${esc(k.detail||'')}</span></div>`).join('')}</div></div></div>
+        <div class="card" style="margin-top:12px"><div class="ch"><h2>Setup completeness</h2><span class="num">${setupDone(c).score==null?'—':(setupDone(c).score+'%')}</span></div><div class="cb"><div class="steps">${(setupDone(c).checks||[]).map(k=>`<div><span class="${k.ok?'ok':'no'}">${k.ok?'✓':'○'}</span><span style="${k.ok?'color:var(--ink4)':''}">${esc(k.label)}</span> <span class="dim">${esc(k.detail||'')}</span></div>`).join('')}</div></div></div>
         <div class="card" style="margin-top:12px"><div class="ch"><h2>Churn risk</h2><span class="chip ${(c.churn_risk||{}).level==='high'?'warn':''}">${esc((c.churn_risk||{}).level||'—')}</span></div><div class="cb">${((c.churn_risk||{}).reasons||[]).length?`<div class="steps">${c.churn_risk.reasons.map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('')}</div>`:'<span class="dim">No risk signals.</span>'}</div></div>
         <div class="card" style="margin-top:12px"><div class="ch"><h2>Onboarding</h2><span class="num">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="cb"><div class="steps">${c.onboarding.steps.map(s=>`<div><span class="${s.done?'ok':'no'}">${s.done?'✓':'○'}</span><span style="${s.done?'color:var(--ink4)':''}">${esc(s.label)}</span></div>`).join('')}</div></div></div></div>
       <div class="card"><div class="ch"><h2>Profile</h2><a class="sub" href="/admin/client-settings/${c.id}">edit in settings →</a></div><div class="cb"><div class="kv">
