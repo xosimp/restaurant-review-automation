@@ -25,7 +25,7 @@ token IS the credential, there is no session and no CSRF cookie to carry.
 """
 from datetime import date
 
-from flask import Blueprint, jsonify, request, render_template, abort
+from flask import Blueprint, Response, jsonify, request, render_template, abort
 
 from auth import login_required, mobile_login_required
 
@@ -2399,7 +2399,13 @@ def _do_dsr_list(u):
         return {"ok": False, "error": "limit must be a number"}, 400
     before = _dsr_day(request.args.get("before")) if request.args.get("before") else None
     rows = store.list_reports(_rid(u), limit=limit, before=before)
-    return {"ok": True, "view": _dsr_view(u), "reports": [access.summary(r, u) for r in rows]}, 200
+    import closeout
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    tonight = closeout.business_date_for(r) if r else None
+    return {"ok": True, "view": _dsr_view(u), "enabled": bool(getattr(r, "dsr_enabled", 1)) if r else False,
+            "tonight": tonight.isoformat() if tonight else None,
+            "reports": [access.summary(row, u) for row in rows]}, 200
 
 
 def _do_dsr_get(u, day):
@@ -2440,11 +2446,16 @@ def _do_dsr_status(u, day):
             **access.checklist(report, u, restaurant=get_restaurant(_rid(u)))}, 200
 
 
+DSR_OWNER_DAYS = 7      # an owner may run or re-run any of the last seven business dates
+
+
 def _do_dsr_close(u):
     """Close day, now: the night runs on a background thread and the app
-    follows /dsr/<date>/status. Tonight's business date, or the one before
-    (a close pressed after the late-close window rolled over). `rerun`
-    re-runs a finished night as a new version — the owner's call only."""
+    follows /dsr/<date>/status. A manager: tonight's business date, or the
+    one before (a close pressed after the late-close window rolled over).
+    An owner: any of the last DSR_OWNER_DAYS business dates — the "generate
+    one if the automation failed" path. `rerun` re-runs a finished night as
+    a new version — the owner's call only."""
     from datetime import timedelta
     from dsr import pipeline
     from models import get_restaurant
@@ -2460,11 +2471,16 @@ def _do_dsr_close(u):
     body = _body()
     raw = body.get("date")
     d = _dsr_day(raw) if raw else today
-    if d is None or d not in (today, today - timedelta(days=1)):
-        return {"ok": False, "error": f"Only tonight ({mdy(today)}) or the night before can be closed here."}, 400
     rerun = bool(body.get("rerun"))
-    if rerun and _dsr_view(u) != access.OWNER:
+    owner = _dsr_view(u) == access.OWNER
+    if rerun and not owner:
         return {"ok": False, "error": "Only the owner can re-run a finished night."}, 403
+    earliest = today - timedelta(days=(DSR_OWNER_DAYS - 1) if owner else 1)
+    if d is None or not (earliest <= d <= today):
+        if owner:
+            return {"ok": False, "error": f"Only the last {DSR_OWNER_DAYS} nights ({mdy(earliest)} – {mdy(today)}) "
+                                          "can be run here."}, 400
+        return {"ok": False, "error": f"Only tonight ({mdy(today)}) or the night before can be closed here."}, 400
     if _limited(u, "dsr_close", 6, 600):
         return _SLOW_DOWN
     out = pipeline.start_manual(r, d, rerun=rerun)
@@ -2510,6 +2526,219 @@ def _dsr_grid_day(u):
     import closeout
     from models import get_restaurant
     return closeout.business_date_for(get_restaurant(_rid(u)))
+
+
+def _do_dsr_week_xlsx(u):
+    """The week's grid as an .xlsx in Erik's layout, from the same payload
+    the screen renders (so the manager's file has no budget columns)."""
+    from dsr import access, rollup, xlsx
+    from models import get_restaurant
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    d = _dsr_grid_day(u)
+    if d is None:
+        return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+    r = get_restaurant(_rid(u))
+    name = getattr(r, "name", "") or ""
+    grid = access.redact_grid(rollup.week(r, d), u)
+    resp = Response(xlsx.week_workbook(grid, name),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{xlsx.filename(grid, name)}"'
+    return resp, 200
+
+
+_NOT_OWNER_DSR = ({"ok": False, "error": "Only the owner can change the daily report's settings."}, 403)
+
+
+def _dsr_owner_only(u):
+    """None when this login is the owner view; else the refusal to return."""
+    from dsr import access
+    view = _dsr_view(u)
+    if view == access.OWNER:
+        return None
+    return _NOT_OWNER_DSR if view else _NO_DSR
+
+
+def _dsr_money(v, label):
+    """(figure, error): a non-negative number, or None to clear it."""
+    if v is None or v == "":
+        return None, None
+    if isinstance(v, bool):
+        return None, f"{label} must be a number."
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None, f"{label} must be a number."
+    if f != f or f < 0 or f > 10_000_000:
+        return None, f"{label} must be between $0 and $10,000,000."
+    return round(f, 2), None
+
+
+def _do_dsr_budget(u):
+    """The owner's budget for a night — {date, gross, net}, or {days: [...]}
+    for a week at once. A blank figure clears it; nothing is carried into a
+    night the owner didn't enter."""
+    from dsr import store
+    from time_utils import mdy
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    body = _body()
+    days = body.get("days") if isinstance(body.get("days"), list) else [body]
+    if not days or len(days) > 14:
+        return {"ok": False, "error": "Send one night, or up to 14 in days."}, 400
+    clean = []
+    for row in days:
+        if not isinstance(row, dict):
+            return {"ok": False, "error": "Each night must be {date, gross, net}."}, 400
+        d = _dsr_day(row.get("date"))
+        if d is None:
+            return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+        gross, err = _dsr_money(row.get("gross"), "Gross")
+        if err:
+            return {"ok": False, "error": err}, 400
+        net, err = _dsr_money(row.get("net"), "Net")
+        if err:
+            return {"ok": False, "error": err}, 400
+        clean.append((d, gross, net))
+    for d, gross, net in clean:
+        store.set_budget(_rid(u), d, gross=gross, net=net, updated_by=u.get("id"))
+    return {"ok": True, "saved": [{"date": d.isoformat(), "label": mdy(d), "gross": g, "net": n}
+                                  for d, g, n in clean]}, 200
+
+
+def _do_dsr_category(u):
+    """Map a POS department to a DSR category — {pos_name, category}. One of
+    Erik's six (matched case-insensitively) or the owner's own label; never
+    "Unmapped", which is what no mapping means."""
+    import dsr as _dsr
+    from dsr import store
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    body = _body()
+    name = body.get("pos_name") if isinstance(body.get("pos_name"), str) else ""
+    cat = body.get("category") if isinstance(body.get("category"), str) else ""
+    name, cat = name.strip(), " ".join(cat.split())
+    if not name or not cat:
+        return {"ok": False, "error": "Pick a POS department and a category."}, 400
+    if len(name) > 120 or len(cat) > 60:
+        return {"ok": False, "error": "That name is too long."}, 400
+    if cat.lower() == _dsr.UNMAPPED.lower():
+        return {"ok": False, "error": "Pick one of your categories."}, 400
+    cat = {c.lower(): c for c in _dsr.DEFAULT_CATEGORIES}.get(cat.lower(), cat)
+    store.set_category(_rid(u), name, cat)
+    return {"ok": True, "pos_name": name, "category": cat,
+            "note": f"Nights already reported keep their split; from the next report on, {name} counts as {cat}."}, 200
+
+
+def _dsr_unmapped(rid):
+    """(departments, business_date): what the latest report couldn't place,
+    with its dollars — straight from that night's Sales detail."""
+    from dsr import store
+    latest = store.list_reports(rid, limit=1)
+    if not latest:
+        return [], None
+    sales = ((latest[0].get("facts") or {}).get("blocks") or {}).get("sales") or {}
+    rows = (sales.get("detail") or {}).get("unmapped") or []
+    return ([{"department": x.get("department"), "net": x.get("net")} for x in rows
+             if isinstance(x, dict) and x.get("department")], latest[0]["business_date"])
+
+
+def _dsr_settings_payload(r):
+    import closeout
+    from dsr import fiscal
+    hour = getattr(r, "dsr_deadline_hour", None)
+    return {"fiscal_week_start_dow": getattr(r, "fiscal_week_start_dow", None),
+            "fiscal_year_start": getattr(r, "fiscal_year_start", None) or None,
+            "fiscal_period_scheme": getattr(r, "fiscal_period_scheme", None) or "4x13",
+            "dsr_enabled": bool(getattr(r, "dsr_enabled", 1)),
+            "dsr_deadline_hour": 4 if hour is None else int(hour),
+            "calendar_label": fiscal.label(r, closeout.business_date_for(r))}
+
+
+def _do_dsr_settings_get(u):
+    """The owner's DSR settings: the fiscal calendar, the switch and the
+    deadline, the category map and what the latest night left unmapped."""
+    import dsr as _dsr
+    from dsr import store
+    from models import get_restaurant
+    from time_utils import mdy
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    r = get_restaurant(_rid(u))
+    unmapped, as_of = _dsr_unmapped(_rid(u))
+    mapping = store.category_map(_rid(u))
+    return {"ok": True, "can_edit": True, "settings": _dsr_settings_payload(r),
+            "categories": list(_dsr.DEFAULT_CATEGORIES),
+            "category_map": [{"pos_name": k, "category": v} for k, v in sorted(mapping.items())],
+            "unmapped": unmapped, "unmapped_as_of": mdy(as_of) if as_of else None}, 200
+
+
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _do_dsr_settings_set(u):
+    """Any of fiscal_week_start_dow (0=Mon … 6=Sun, or null), fiscal_year_start
+    (YYYY-MM-DD, or "" to clear), fiscal_period_scheme ("4x13" | "445"),
+    dsr_enabled, dsr_deadline_hour (0–11, local). The four columns are
+    already in update_restaurant's whitelist."""
+    from dsr import fiscal
+    from models import get_restaurant, update_restaurant
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    body = _body()
+    fields = {}
+    if "fiscal_week_start_dow" in body:
+        v = body.get("fiscal_week_start_dow")
+        if v is None or v == "":
+            fields["fiscal_week_start_dow"] = None
+        else:
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                v = -1
+            if isinstance(body.get("fiscal_week_start_dow"), bool) or not 0 <= v <= 6:
+                return {"ok": False, "error": "Pick a day for your week to start."}, 400
+            fields["fiscal_week_start_dow"] = v
+    if "fiscal_year_start" in body:
+        raw = body.get("fiscal_year_start")
+        if raw in (None, ""):
+            fields["fiscal_year_start"] = None
+        else:
+            d = _dsr_day(raw)
+            if d is None:
+                return {"ok": False, "error": "The year start must be a date."}, 400
+            fields["fiscal_year_start"] = d.isoformat()
+    if "fiscal_period_scheme" in body:
+        if body.get("fiscal_period_scheme") not in fiscal.SCHEMES:
+            return {"ok": False, "error": "Pick 13 four-week periods or 4-4-5."}, 400
+        fields["fiscal_period_scheme"] = body["fiscal_period_scheme"]
+    if "dsr_enabled" in body:
+        fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
+    if "dsr_deadline_hour" in body:
+        try:
+            h = int(body.get("dsr_deadline_hour"))
+        except (TypeError, ValueError):
+            h = -1
+        if not 0 <= h <= 11:
+            return {"ok": False, "error": "Pick an hour between midnight and 11am."}, 400
+        fields["dsr_deadline_hour"] = h
+    if not fields:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    # Periods are whole weeks: a year start that isn't the week's first day
+    # would split a week across two periods.
+    r = get_restaurant(_rid(u))
+    dow = fields["fiscal_week_start_dow"] if "fiscal_week_start_dow" in fields else getattr(r, "fiscal_week_start_dow", None)
+    ys = fields["fiscal_year_start"] if "fiscal_year_start" in fields else getattr(r, "fiscal_year_start", None)
+    if ys:
+        want = 0 if dow is None else int(dow)
+        if date.fromisoformat(str(ys)[:10]).weekday() != want:
+            return {"ok": False, "error": f"Period 1 has to start on a {_WEEKDAYS[want]}, the first day of your week."}, 400
+    update_restaurant(_rid(u), fields)
+    return {"ok": True, "settings": _dsr_settings_payload(get_restaurant(_rid(u)))}, 200
 
 
 def _forget(rid, route, key):
@@ -2624,6 +2853,11 @@ _ROUTES = [
     ("/dsr/close", ["POST"], _do_dsr_close, "dsr_close"),
     ("/dsr/week", ["GET"], _do_dsr_week, "dsr_week"),
     ("/dsr/period", ["GET"], _do_dsr_period, "dsr_period"),
+    ("/dsr/week.xlsx", ["GET"], _do_dsr_week_xlsx, "dsr_week_xlsx"),
+    ("/dsr/budget", ["POST"], _do_dsr_budget, "dsr_budget"),
+    ("/dsr/category", ["POST"], _do_dsr_category, "dsr_category"),
+    ("/dsr/settings", ["GET"], _do_dsr_settings_get, "dsr_settings_get"),
+    ("/dsr/settings", ["POST"], _do_dsr_settings_set, "dsr_settings_set"),
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
 ]
@@ -2632,7 +2866,9 @@ _ROUTES = [
 def _wrap(body, decorator):
     def view(current_user, **kw):
         payload, status = body(current_user, **kw)
-        resp = jsonify(**payload)
+        # A body that builds its own response (a file download) is passed
+        # through; every other body returns a dict.
+        resp = payload if isinstance(payload, Response) else jsonify(**payload)
         resp.headers["Cache-Control"] = "no-store"
         return resp, status
     view.__name__ = body.__name__
