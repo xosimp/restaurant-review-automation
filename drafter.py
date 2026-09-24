@@ -56,6 +56,17 @@ def _format_examples(rows) -> str:
     return "\n".join(lines)
 
 
+def get_owner_edit_note(restaurant_id: int) -> str:
+    """reply_edits.style_note over this owner's recent approvals, or "".
+    Never raises: a draft is never lost to the note."""
+    try:
+        import reply_edits
+        from models import get_reply_edit_summaries
+        return reply_edits.style_note(get_reply_edit_summaries(restaurant_id))
+    except Exception:
+        return ""
+
+
 RECURRING_WINDOW_DAYS = 90
 RECURRING_MIN_MENTIONS = 3
 
@@ -189,6 +200,11 @@ def draft_response(review_id: int, rating: int, text: str,
     else:
         style_block = get_approved_examples(restaurant_id) if restaurant_id else ""
 
+    # What this owner does to drafts before approving them, measured from
+    # original_draft against the approved reply (reply_edits; audit #40):
+    # a short, deterministic note, or "" until they have edited enough.
+    edit_note = get_owner_edit_note(restaurant_id) if restaurant_id else ""
+
     # Recurring negative themes
     theme_note = get_recurring_themes(restaurant_id) if (restaurant_id and sentiment == "negative") else ""
 
@@ -217,7 +233,7 @@ Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
-Length: {length_note}{never_note}{style_block}{theme_note}{health_note}
+Length: {length_note}{never_note}{style_block}{edit_note}{theme_note}{health_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 FACTS: State only what the restaurant has told you above (Voice). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"), never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.

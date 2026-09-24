@@ -6593,6 +6593,17 @@ def mobile_capability_changes(current_user):
         return jsonify(ok=False, error=_safe_err(e), changes=[]), 500
 
 
+def _ask_feedback_tally(rid):
+    """{"rated", "helpful"} for the Ask opening — the notes stay out of it
+    (they are for the assistant's context, not the opening screen)."""
+    try:
+        from models import ask_feedback_summary
+        fb = ask_feedback_summary(rid)
+        return {"rated": fb["rated"], "helpful": fb["helpful"], "days": fb.get("days", 90)}
+    except Exception:
+        return {"rated": 0, "helpful": 0, "days": 90}
+
+
 @mobile_bp.route("/ask-cavnar/opening")
 @mobile_login_required
 def mobile_ask_opening(current_user):
@@ -6632,6 +6643,9 @@ def mobile_ask_opening(current_user):
             _tone = {"bad": "critical", "action": "important", "good": "good", "neutral": "watch"}
             return jsonify(
                 ok=True,
+                # How the owner has rated answers so far (ask_feedback) —
+                # aggregate only, read with no model call (#48).
+                feedback=_ask_feedback_tally(rid),
                 briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
                            "detail": None, "module": None, "ask": l.get("ask")}
                           for l in _lines[:5]],
@@ -6673,6 +6687,7 @@ def mobile_ask_opening(current_user):
         changes = payload.get("changes") or {}
         return jsonify(
             ok=True,
+            feedback=_ask_feedback_tally(rid),
             briefing=briefing,
             suggestions=suggestions[:5],
             headline=_opening_headline(payload, briefing),

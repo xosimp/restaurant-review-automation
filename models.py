@@ -899,6 +899,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # Suggested vs chosen (audit #41): the model's draft as it stood when
         # the owner first edited it — kept, never overwritten by the edit.
         ("reviews", "original_draft", "TEXT"),
+        # What the owner's edit did to that draft, measured at approval
+        # (reply_edits.compare; ROI audit #40): a word edit distance, its
+        # category and the closed-vocabulary signals. Read by the drafter's
+        # few-shot selection and its OWNER'S EDITS note.
+        ("reviews", "edit_distance", "REAL"),
+        ("reviews", "edit_category", "TEXT"),
+        ("reviews", "edit_signals", "TEXT"),
         # When a drafted reply was skipped: a skip is the owner declining the
         # draft, so it counts against auto-approve trust (audit #15).
         ("reviews", "skipped_at", "TEXT"),
@@ -2127,6 +2134,23 @@ def init_db(db_path: str = DB_PATH):
         "ON ask_cavnar_conversations(restaurant_id, updated_at)",
         "ALTER TABLE ask_cavnar_messages ADD COLUMN conversation_id INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_conversation ON ask_cavnar_messages(conversation_id, id)",
+        # "Was this useful?" on an Ask answer (ROI audit #48): one row per
+        # answer and login, changed in place if they change their mind. The
+        # message can be trimmed from the transcript later; the rating is
+        # the record, so it keeps the conversation id beside the message id.
+        """CREATE TABLE IF NOT EXISTS ask_feedback (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id         INTEGER,
+            message_id      INTEGER NOT NULL,
+            conversation_id INTEGER,
+            helpful         INTEGER NOT NULL CHECK(helpful IN (0, 1)),
+            note            TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, message_id, user_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_feedback_restaurant ON ask_feedback(restaurant_id, created_at)",
         """CREATE TABLE IF NOT EXISTS ask_cavnar_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -5711,6 +5735,9 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     bulk publish (response_action='bulk_approved') posted drafts nobody read
     one by one — the model's text again, not the owner's choice (M-3)."""
     conn = get_conn(db_path)
+    # A reply the owner EDITED before approving comes first: it is their
+    # own words, where one approved as written is the model's (audit #40).
+    # Most recent within each group; deterministic for a fixed table.
     rows = conn.execute("""
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
@@ -5718,11 +5745,75 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
           AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
           AND draft_response IS NOT NULL
           AND draft_response != ''
-        ORDER BY id DESC
+        ORDER BY CASE WHEN edit_category IN ('light', 'heavy', 'rewrite') THEN 0 ELSE 1 END, id DESC
         LIMIT ?
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [{"rating": r["rating"], "review": r["text"][:120], "response": r["draft_response"]} for r in rows]
+
+
+def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """At approval: compare the model's draft (original_draft, kept from the
+    first edit) with the reply the owner approved and store the summary on
+    the review (reply_edits.compare). A reply approved as drafted records
+    "unchanged" — a signal too, that the drafter got it right. A reply with
+    no model draft behind it (typed from blank) records nothing. Returns
+    the summary or None; never raises."""
+    import json as _json
+    import reply_edits
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT original_draft, draft_response, COALESCE(draft_edited, 0) AS edited "
+                               "FROM reviews WHERE id=? AND restaurant_id=?", (review_id, restaurant_id)).fetchone()
+            if not row or not (row["draft_response"] or "").strip():
+                return None
+            original = row["original_draft"]
+            if original is None and not row["edited"]:
+                original = row["draft_response"]          # approved exactly as drafted
+            if not (original or "").strip():
+                return None
+            summary = reply_edits.compare(original, row["draft_response"])
+            conn.execute("UPDATE reviews SET edit_distance=?, edit_category=?, edit_signals=? "
+                         "WHERE id=? AND restaurant_id=?",
+                         (summary["distance"], summary["category"], _json.dumps(summary["signals"]),
+                          review_id, restaurant_id))
+            conn.commit()
+            return summary
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] not recorded for review {review_id}: {e}")
+        return None
+
+
+def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH) -> list:
+    """The most recent approved replies' edit summaries, newest first —
+    what drafter.draft_response turns into its OWNER'S EDITS note. Only a
+    person's approvals (not the auto-approve rule's or a bulk publish's)."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
+            "WHERE restaurant_id=? AND edit_category IS NOT NULL AND response_status IN ('approved','posted') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            signals = _json.loads(r["edit_signals"] or "[]")
+        except Exception:
+            signals = []
+        words = len((r["draft_response"] or "").split())
+        before = len((r["original_draft"] or r["draft_response"] or "").split())
+        out.append({"distance": r["edit_distance"], "category": r["edit_category"], "signals": signals,
+                    "words_after": words, "words_before": before})
+    return out
 
 
 def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
@@ -9363,6 +9454,73 @@ def delete_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PA
         return bool(cur.rowcount)
     finally:
         conn.close()
+
+
+def latest_ask_answer_id(restaurant_id, conversation_id, user_id=None, db_path: str = DB_PATH):
+    """The id of the newest assistant turn in this conversation for this
+    login (the answer just saved) — what a client rates with
+    POST /ask-cavnar/feedback. None when there is none."""
+    if conversation_id is None:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT MAX(id) FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? AND role='assistant' "
+            "AND (user_id IS NULL OR ? IS NULL OR user_id=?)", (restaurant_id, conversation_id, user_id, user_id)).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row and row[0] else None
+
+
+def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH):
+    """Rate one Ask answer: `helpful` true/false, an optional note. The
+    message must be an ASSISTANT turn of THIS restaurant, given to this
+    login (or to nobody in particular) — a rating of another restaurant's,
+    or another login's, answer is refused (None), never written. Rating the
+    same answer again replaces the rating. Returns the stored row."""
+    conn = get_conn(db_path)
+    try:
+        msg = conn.execute(
+            "SELECT id, conversation_id, user_id FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
+            "AND role='assistant'", (int(message_id), restaurant_id)).fetchone()
+        if not msg or (msg["user_id"] is not None and user_id is not None and msg["user_id"] != user_id):
+            return None
+        note = (str(note).strip()[:500] or None) if note else None
+        conn.execute(
+            "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
+            "helpful=excluded.helpful, note=excluded.note, updated_at=datetime('now')",
+            (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note))
+        conn.commit()
+        row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at FROM ask_feedback "
+                           "WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
+                           (restaurant_id, int(message_id), user_id)).fetchone()
+    finally:
+        conn.close()
+    return ({"message_id": row["message_id"], "conversation_id": row["conversation_id"],
+             "helpful": bool(row["helpful"]), "note": row["note"], "rated_at": row["updated_at"]} if row else None)
+
+
+def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH) -> dict:
+    """How this restaurant has rated Ask's answers: {"rated", "helpful",
+    "not_helpful", "notes"} over the last `days` — notes are the most recent
+    "not helpful" notes (at most two), for the assistant's context. Pure
+    SQL; read by the Ask opening and the context snapshot, never a model."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
+                           "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)",
+                           (restaurant_id, f"-{int(days)} days")).fetchone()
+        notes = [r["note"] for r in conn.execute(
+            "SELECT note FROM ask_feedback WHERE restaurant_id=? AND helpful=0 AND note IS NOT NULL "
+            "AND updated_at >= datetime('now', ?) ORDER BY updated_at DESC, id DESC LIMIT 2",
+            (restaurant_id, f"-{int(days)} days")).fetchall()]
+    except Exception:
+        return {"rated": 0, "helpful": 0, "not_helpful": 0, "notes": []}
+    finally:
+        conn.close()
+    n, yes = int(row["n"] or 0), int(row["yes"] or 0)
+    return {"rated": n, "helpful": yes, "not_helpful": n - yes, "notes": notes, "days": int(days)}
 
 
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,

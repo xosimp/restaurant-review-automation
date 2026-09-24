@@ -73,7 +73,7 @@ Modules sit in one of five layers. **At module scope, a module may import only i
 
 | Layer | What lives there | May import at module scope |
 |---|---|---|
-| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories` | stdlib, third-party, L0 |
+| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `reply_edits`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories` | stdlib, third-party, L0 |
 | **L1 data** | `models`, `auth`, `ops`, `ai_utils`, `security`, `guest_links` | L0, L1 |
 | **L2 domain** | every module that computes something for one restaurant (the services in §2), the `intelligence/` package, `emails`, `notify`, `push`, `webhooks`, `admin_ops`, `admin_events`, `status_manager`, `sales_audit_engine/cheatsheet/notes_ai`, `sales_audits` | L0, L1, L2 |
 | **L3 HTTP** | `client_api`, `mobile_api`, `strategy_routes`, every `*_routes.py` | L0–L3 |
@@ -164,7 +164,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `insight_store` | 2 | one stored AI read per restaurant and prompt fingerprint (Reviews, Food Cost, Marketing), shared by web and iOS; the recommendation lines inside a read, keyed and presented through rec_ledger |
 | `dsr.__init__` | 2 | the DSR contract: block statuses (ready / awaiting / unavailable / not_connected), stages, block names, `block()` which refuses non-numeric metrics and gives every non-ready block an owner-facing reason |
 | `dsr.store` | 2 | DSR reports (one row per restaurant, business date and version; stage times as provenance), `dsr_metrics` (the searchable per-night history: `metric_series`, `find_days`), budgets, the POS-department → DSR-category map (unmapped is shown, never guessed) |
-| `dsr.narrative` | 2 | the night's one AI call (`narrative.write(ctx, facts)` → `{ok, narrative, reason}`, never raises): refuses without a call unless sales and one more measured block are ready, fences the closeout and every other outside text, holds the answer to a strict JSON shape, drops any line whose figures don't trace to the facts it cites (a failing lead refuses the whole narrative), and ranks actions with `home_brief`'s urgency × dollars × ease rule before presenting them to `rec_ledger` as `dsr_action:<kind>:<block>[/<entity>]` on the `dsr` surface |
+| `dsr.narrative` | 2 | the night's one AI call (`narrative.write(ctx, facts)` → `{ok, narrative, reason}`, never raises): refuses without a call unless sales and one more measured block are ready, fences the closeout and every other outside text, holds the answer to a strict JSON shape, drops any line whose figures don't trace to the facts it cites (a failing lead refuses the whole narrative), and ranks actions with `home_brief`'s urgency × dollars × ease rule, keyed `dsr_action:<kind>:<block>[/<entity>]` — presented to `rec_ledger` only where a reader is shown them (the view on `dsr`, a delivered email on `dsr_email`: `ledger_items`), never at generation |
 | `dsr.fiscal` | 0 | the restaurant's own fiscal calendar: week start day, Period/Week from a year start, 4x13 or 4-4-5; no year start means no period number, never a guessed one |
 | `dsr.pipeline` | 2 | the nightly stage machine: `run_night` (never before close; POS closeday poll; block retries 10/20/40 until the local deadline; only Sales is required — provisional only without it, late sales make a new version, any other late block goes out labelled; the closeout never holds; failed after bounded retries; one claim per restaurant/night/version), `run_sweep` (the scheduler entry, bounded, cursor in `job_cursors`), `start_manual` (Close day). Reaches blocks and the narrative lazily by name |
 | `dsr.block_sales` | 2 | the Sales block from `pos.fetch_day_sales`: gross/net/transactions, every comparison None without its baseline, the hourly curve, categories through the owner's map (unmapped listed), top/bottom items |
@@ -217,7 +217,8 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `push` | 2 | APNs delivery and token lifecycle |
 | `recipes` | 2 | recipe drafts and scan |
 | `reporter` | 2 | the weekly digest |
-| `review_common` | 0 | sentences the weekly and monthly reviews share |
+| `review_common` | 0 | sentences the weekly and monthly reviews share, and `impressions()` — the ledger items for what a periodic email rendered (the email stages them; nothing here writes) |
+| `reply_edits` | 0 | what the owner changes in a drafted reply, measured: `compare(original, final)` (word edit distance, category, closed-vocabulary signals) and `style_note()` — the drafter's OWNER'S EDITS block; pure |
 | `review_intelligence` | 2 | the reviews consultant layer and diagnosis |
 | `rpower` / `rpower_routes` | 2 / 3 | RPOWER provider / bootstrap and status routes |
 | `sales_audit_cheatsheet` | 2 | the in-person pitch cheat-sheet (deterministic) |

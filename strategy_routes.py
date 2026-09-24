@@ -2101,6 +2101,39 @@ def _present_cross_module(u, fix_first, links):
         return fix_first, links
 
 
+def _do_ask_feedback(u):
+    """POST /ask-cavnar/feedback {message_id | turn_id, helpful: bool,
+    note?} — "Was this useful?" on one Ask answer (ROI audit #48). The
+    answer must be this restaurant's and this login's (models.
+    record_ask_feedback refuses anything else with a 404, never a write);
+    rating it again replaces the rating. Returns the rating and the
+    restaurant's running tally."""
+    b = _body()
+    raw = b.get("message_id", b.get("turn_id"))
+    if isinstance(raw, bool):
+        raw = None
+    try:
+        mid = int(raw)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which answer? Send its message_id."}, 400
+    helpful = b.get("helpful")
+    if not isinstance(helpful, bool):
+        return {"ok": False, "error": "helpful must be true or false"}, 400
+    note = b.get("note")
+    if note is not None and not isinstance(note, str):
+        return {"ok": False, "error": "note must be text"}, 400
+    from models import record_ask_feedback, ask_feedback_summary
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"))
+    if row is None:
+        return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
+    try:
+        import ask_cavnar
+        ask_cavnar.invalidate_context(_rid(u))
+    except Exception as e:
+        print(f"[ask] context not refreshed after feedback rid={_rid(u)}: {e}")
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u))}, 200
+
+
 def _do_good_news(u):
     """Records, streaks and complaints that stopped.
 
@@ -3028,6 +3061,7 @@ _ROUTES = [
     ("/dsr/category", ["POST"], _do_dsr_category, "dsr_category"),
     ("/dsr/settings", ["GET"], _do_dsr_settings_get, "dsr_settings_get"),
     ("/dsr/settings", ["POST"], _do_dsr_settings_set, "dsr_settings_set"),
+    ("/ask-cavnar/feedback", ["POST"], _do_ask_feedback, "ask_feedback"),
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
 ]

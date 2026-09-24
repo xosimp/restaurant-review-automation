@@ -204,6 +204,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
             _ac2 = get_conn()
             _ac2.execute("UPDATE reviews SET response_action=? WHERE id=? AND restaurant_id=?", (_action, rid, restaurant_id))
             _ac2.commit(); _ac2.close()
+            # What the owner did to the draft, measured (audit #40) — only a
+            # person's approval: the rule's and a bulk publish's are the
+            # model's own text.
+            if _action not in ("auto_approved", "bulk_approved"):
+                from models import record_reply_edit
+                record_reply_edit(rid, restaurant_id)
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
     try:
@@ -1830,6 +1836,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         answer, truncated, proposals, meta = ask_with_tools(
             restaurant, question, history=history, user=user, **({'brief': True} if brief else {}))
 
+        message_id = None
         try:
             # Logged FIRST, so each card carries its own proposal_id — in the
             # response and in the stored transcript — and a confirm answers
@@ -1841,10 +1848,16 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             save_ask_message(restaurant_id, "assistant", answer,
                              proposals=proposals or None, user_id=user_id,
                              conversation_id=conversation_id)
+            from models import latest_ask_answer_id
+            message_id = latest_ask_answer_id(restaurant_id, conversation_id, user_id=user_id)
         except Exception as e:
             # Never fail a good answer because the transcript couldn't be written.
             import ops
             ops.capture(e, job="ask_cavnar_persist", context=f"restaurant_id={restaurant_id}")
+        # The answer's own concrete suggestions, keyed and presented on "ask"
+        # (#48) — read from its text, no second model call.
+        import ask_cavnar as _ac_sug
+        suggestions = _ac_sug.record_suggestions(restaurant_id, answer, meta, user_id=user_id)
 
         # `truncated` tells the client the answer stopped at max_tokens rather
         # than finishing, so it can say so instead of presenting a half
@@ -1855,8 +1868,11 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # `confidence` are what the answer rests on — without them on the wire
         # no client could ever render an evidence panel or a confidence chip,
         # however good the answer was.
+        # `message_id` is the answer's id — what POST /ask-cavnar/feedback
+        # rates; `suggestions` its keyed advice ({text, rec_key, answerable}).
         return {"ok": True, "answer": answer, "truncated": truncated,
                 "proposals": proposals or [], "conversation_id": conversation_id,
+                "message_id": message_id, "suggestions": suggestions,
                 **_ask_meta(meta)}, 200
     except Exception as e:
         from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
@@ -1932,17 +1948,23 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
                 **({"brief": True} if brief else {}))
+            mid = None
             try:
                 import ask_cavnar as _ac_props
                 _ac_props.record_proposals(rid, proposals, user_id=uid)
                 cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
                                  user_id=uid, conversation_id=cid)
+                from models import latest_ask_answer_id
+                mid = latest_ask_answer_id(rid, cid, user_id=uid)
             except Exception as _pe:
                 print(f"[ask] transcript/proposal persist failed rid={rid}: {_pe}")
+            import ask_cavnar as _ac_sug
             events.put({"type": "answer", "answer": answer,
                         "truncated": truncated, "proposals": proposals or [],
-                        "conversation_id": cid, **_ask_meta(meta)})
+                        "conversation_id": cid, "message_id": mid,
+                        "suggestions": _ac_sug.record_suggestions(rid, answer, meta, user_id=uid),
+                        **_ask_meta(meta)})
         except Exception as e:
             from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
