@@ -1,6 +1,7 @@
 # End-of-Day Closeout & Daily Sales Report (DSR) Engine — the plan
 
-Status: plan, no code yet (Sep 23 2026). First customer: Simple EJ's
+Status: phases 1–4 built (Sep 23 2026) — `dsr/` runs every night on its own,
+with no screen yet; phases 5–6 not started. First customer: Simple EJ's
 (Erik and Jim), on their **official** account, not the test account.
 
 ## 0. What Erik actually runs today
