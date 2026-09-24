@@ -1289,6 +1289,9 @@ def _do_compliance_get(u):
             "cross_training_defaults": _cross_training_defaults(_rid(u)),
             "cross_training_default": int(round(__import__("shift_quality").CROSS_TRAINING_DEFAULT * 100)),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
+            # "Never cut a role below N people": the cut floor for a role
+            # with no floor of its own (schedule_rules.cut_floor), 1..10.
+            "cut_floor_default": _sr.cut_floor_default(r), "cut_floor_max": _sr.CUT_FLOOR_MAX,
             "closures": _sr.closures(r),
             "certifications": list(__import__("staff_settings").CERTIFICATIONS),
             "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available()}, 200
@@ -1301,6 +1304,18 @@ def _do_compliance_set(u):
     from client_api import log_account_event
     b = _body()
     out = {}
+    # Checked before anything is saved, so a bad value changes nothing.
+    cut_floor = None
+    if "cut_floor_default" in b:
+        raw = b.get("cut_floor_default")
+        cut_floor = _sr.clean_cut_floor_default(raw)
+        try:
+            in_range = cut_floor is not None and 1 <= float(raw) <= _sr.CUT_FLOOR_MAX
+        except (TypeError, ValueError):
+            in_range = False
+        if not in_range:
+            return {"ok": False, "error": f"Never cut below must be a whole number of people from 1 to "
+                                          f"{_sr.CUT_FLOOR_MAX}."}, 400
     if isinstance(b.get("rules"), dict):
         out["rules"] = _sr.save_compliance(_rid(u), b["rules"])
     if "role_floors" in b:
@@ -1363,6 +1378,9 @@ def _do_compliance_set(u):
                 return {"ok": False, "error": f"The cross-training target for {str(k)[:60]} must be a percent from 0 to 100."}, 400
         settings["role_cross_training_json"] = _j.dumps(clean) if clean else None
         out["role_cross_training"] = clean
+    if cut_floor is not None:
+        settings["cut_floor_default"] = cut_floor
+        out["cut_floor_default"] = cut_floor
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))

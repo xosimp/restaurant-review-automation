@@ -278,7 +278,12 @@ visible focus outline).
 `CavnarDropdown` for choices. For a setting that hits the network, use a
 tappable `AccountPill` or `AccountActionChip` row — **not** a native `Toggle`,
 whose height breaks the kit's row rhythm. Device-local settings (Face ID) may
-use a real `Toggle`.
+use a real `Toggle`. A small bounded count saved with a sheet's one Save
+button (Schedule rules' "Never cut a role below N people", 1–10) is a
+native `Stepper` with its label hidden, beside the value in the number
+face ("2 people" via `HomeMixedText`), in a row laid out like the sheet's
+other rows (label + detail left, `AccountKVRow.rowHeight`); web is an
+`.ac-input.ac-num.n` inline in an `.rul-sw` sentence.
 
 Validation reads as a plain sentence under the control in `--red` /
 `.cavnarRed`: what went wrong and how to fix it.

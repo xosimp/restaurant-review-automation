@@ -24,6 +24,7 @@ struct ScheduleRulesSheet: View {
     @State private var patioRoles: [String] = []
     @State private var crossTraining: [String: String] = [:]
     @State private var trimToBudget = true
+    @State private var cutFloor = 2
     @State private var reservationProvider: String = ""
     @State private var reservationKey: String = ""
 
@@ -59,6 +60,7 @@ struct ScheduleRulesSheet: View {
                         rulesSection
                         managerSection
                         floorsSection
+                        cutFloorSection
                         arrivalsSection
                         crossTrainingSection
                         certificationsSection
@@ -524,6 +526,38 @@ struct ScheduleRulesSheet: View {
         .animation(.easeOut(duration: 0.22), value: expandedRole)
     }
 
+    // MARK: Cut floor
+
+    /// "Never cut a role below N people" — the floor a send-home
+    /// suggestion keeps for any role without one of its own above. Cuts
+    /// only: it never adds a shift or flags a week.
+    private var cutFloorSection: some View {
+        AccountSection(kicker: "Cuts") {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Never cut a role below").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Text("Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.")
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                HomeMixedText.make("\(cutFloor) \(cutFloor == 1 ? "person" : "people")", size: 15, color: .cavnarInk,
+                                   numberWeight: 700)
+                    .monospacedDigit()
+                    .fixedSize()
+                Stepper("Never cut a role below", value: $cutFloor, in: 1...max(1, viewModel.cutFloorMax))
+                    .labelsHidden()
+                    .fixedSize()
+                    .tint(Color.cavnarEmber)
+                    .disabled(!viewModel.canEditRules)
+                    .accessibilityValue("\(cutFloor) \(cutFloor == 1 ? "person" : "people")")
+            }
+            .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+            .padding(.vertical, 9)
+        }
+    }
+
     private func floorRow(_ role: String) -> some View {
         let open = expandedRole == role
         return VStack(alignment: .leading, spacing: 8) {
@@ -664,6 +698,7 @@ struct ScheduleRulesSheet: View {
         patioRoles = viewModel.patioRoles
         crossTraining = viewModel.roleCrossTraining.mapValues(String.init)
         trimToBudget = viewModel.trimToBudget
+        cutFloor = viewModel.cutFloorDefault
         reservationProvider = viewModel.reservationFeed?.provider ?? ""
         reservationKey = ""
     }
@@ -691,6 +726,7 @@ struct ScheduleRulesSheet: View {
         }
         p.roleCrossTraining = crossPercents
         p.trimToBudget = trimToBudget
+        p.cutFloorDefault = cutFloor
         if reservationProvider != (viewModel.reservationFeed?.provider ?? "") || !reservationKey.isEmpty {
             p.reservationProvider = .some(reservationProvider.isEmpty ? nil : reservationProvider)
             if !reservationKey.isEmpty { p.reservationApiKey = .some(reservationKey) }

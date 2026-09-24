@@ -510,12 +510,17 @@ def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None):
         except Exception:
             denied = set()
     conf = meta.get("confidence_detail")
+    # A plan item that cuts staff is held to the restaurant's floors and its
+    # "never cut below" default (A2; schedule_rules.cut_floor).
+    import schedule_rules as _sr
+    cut = _sr.cut_policy(restaurant_id) if restaurant_id else {}
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="weekly_plan", facts=list(meta.get("facts") or []),
         context_text=str(meta.get("context_text") or ""),
         cause_anchors=[a if isinstance(a, dict) else {"text": a, "strength": "likely"} for a in anchors or ()],
         untrusted=[t for t in guest_texts or () if t], tenant_names_denied=denied,
-        confidence=conf if isinstance(conf, dict) else None, policy={"action": "weekly_plan"})
+        confidence=conf if isinstance(conf, dict) else None,
+        policy={"action": "weekly_plan", **cut})
 
 
 def _plan_item_problem(item, unverified, ctx=None, unsupported_names=()):
@@ -1203,8 +1208,11 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
 
     Only when today is at least PULSE_MOVE_MIN_BEHIND_PCT behind, not a
     holiday or a day with reservations or an event on the book, and only
-    in a role with more people on at PULSE_CUT_HOUR than its dinner floor
-    (schedule_rules role floors; with no floor set, one person is the floor).
+    in a role with more people on at PULSE_CUT_HOUR than its dinner cut
+    floor (schedule_rules.cut_floor: the owner's night floor for the role,
+    else Will's admin role minimum, else the restaurant's "never cut below"
+    cut_floor_default, 2 unless the owner changed it — never one person
+    because nobody set a floor).
     The person suggested is that role's latest starter whose cut leaves
     the day inside every rule (_cut_is_legal) — never the only keyholder,
     never the closer a "stays after close" rule keeps. The saving is the
@@ -1244,9 +1252,10 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         if start <= cut < end:
             on_by_role.setdefault((x["role"] or "Staff").strip(), []).append({**x, "_start": start, "_end": end})
     floors = _sr.role_floors(restaurant)
+    minimums = _sr.role_minimums(restaurant)
     choices = []
     for role, people in on_by_role.items():
-        floor = max(1, _sr.floor_for(floors, role, weekday, "night"))
+        floor = _sr.cut_floor(restaurant, role, weekday, "night", floors=floors, minimums=minimums)
         spare = len(people) - floor
         if spare <= 0:
             continue

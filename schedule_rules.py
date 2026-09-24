@@ -421,6 +421,93 @@ def floor_for(floors: dict, role: str, day: str, daypart: str) -> int:
     return 0
 
 
+# ── the floor a cut suggestion never goes below ────────────────────────────
+# A cut (the pre-dinner pulse's "let X go", a model's "cut to one cook")
+# needs a floor for EVERY role, not only the ones the owner set: with none
+# set, the pulse used to treat one person as the floor and suggested sending
+# home one of two cooks. restaurants.cut_floor_default is the restaurant's
+# own answer for a role with no floor; the engine's CUT_FLOOR_DEFAULT (2)
+# stands in when it is missing or unreadable. This is a floor for CUTS
+# only — schedule building and the coverage_floor violation read the
+# owner's role floors alone, so a published week with one bartender does
+# not start raising violations.
+CUT_FLOOR_MAX = 10
+
+
+def clean_cut_floor_default(value):
+    """An owner's "never cut below N" as an int 1..CUT_FLOOR_MAX, or None
+    when it is not a whole number (the route answers 400 on None)."""
+    if isinstance(value, bool):
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    if n != n or n != int(n):
+        return None
+    return min(max(int(n), 1), CUT_FLOOR_MAX)
+
+
+def cut_floor_default(restaurant) -> int:
+    """restaurants.cut_floor_default clamped to 1..CUT_FLOOR_MAX; the
+    engine's CUT_FLOOR_DEFAULT (2) when it is missing or unreadable."""
+    from response_validation import CUT_FLOOR_DEFAULT
+    n = clean_cut_floor_default(getattr(restaurant, "cut_floor_default", None) if restaurant else None)
+    return n if n is not None else CUT_FLOOR_DEFAULT
+
+
+def role_minimums(restaurant) -> dict:
+    """restaurants.role_minimums_json (Will's admin whole-day override) as
+    {role: people}, or {} when it is empty or junk."""
+    from labor import _role_minimums_dict
+    return _role_minimums_dict(getattr(restaurant, "role_minimums_json", None) if restaurant else None)
+
+
+def cut_floor(restaurant, role: str, day: str, daypart: str, floors: dict = None, minimums: dict = None) -> int:
+    """The fewest people a cut suggestion may leave in `role` on `day`'s
+    `daypart`: the first non-zero of the owner's role floor for that slot
+    (role_floors / floor_for), the admin role_minimums_json entry for the
+    role (case-insensitive, as floor_for matches), then the restaurant's
+    cut_floor_default. Never less than 1. For cuts only — see above."""
+    if floors is None:
+        floors = role_floors(restaurant) if restaurant is not None else {}
+    n = floor_for(floors, role, day, daypart)
+    if n > 0:
+        return n
+    key = (role or "").strip().lower()
+    mins = role_minimums(restaurant) if minimums is None else minimums
+    for r, v in (mins or {}).items():
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            continue
+        if v > 0 and str(r).strip().lower() == key:
+            return v
+    return max(1, cut_floor_default(restaurant))
+
+
+def cut_policy(restaurant, text: str = "") -> dict:
+    """The Response Validation Layer's A2 inputs for one restaurant, as
+    ValidationContext.policy keys: {"role_floors": {role: floor},
+    "cut_floor_default": n}. The floors are the ones the text's day and
+    daypart could mean (labor.note_floors: the smallest over those slots,
+    owner floor before admin minimum); a role in neither gets the default.
+    Takes a Restaurant or an id. {} when there is no restaurant or it cannot
+    be read, so the engine's own CUT_FLOOR_DEFAULT stands — a validation
+    context is never lost to this."""
+    try:
+        if restaurant is not None and not hasattr(restaurant, "role_floors_json"):
+            from models import get_restaurant
+            restaurant = get_restaurant(restaurant)
+        if restaurant is None:
+            return {}
+        from labor import note_floors
+        return {"role_floors": note_floors(text, role_floors(restaurant), role_minimums(restaurant)),
+                "cut_floor_default": cut_floor_default(restaurant)}
+    except Exception:
+        return {}
+
+
 # ── time helpers ───────────────────────────────────────────────────────────
 
 def parse_minutes(t: str):

@@ -366,7 +366,10 @@ def test_two_ignored_weeks_stop_the_drafting_and_stale_drafts_expire(db_path):
 def test_a_slow_night_with_spare_servers_names_the_latest_starter_and_the_saving(db_path):
     import strategy_jobs
     rid = _rid(db_path)
-    update_restaurant(rid, {"role_rates_json": json.dumps({"Server": 15.0})}, db_path=db_path)
+    # "Never cut below" one: this is about who is named and what it saves;
+    # the default of two keeps both servers on (test_cut_floor_default.py).
+    update_restaurant(rid, {"role_rates_json": json.dumps({"Server": 15.0}), "cut_floor_default": 1},
+                      db_path=db_path)
     _week(db_path, rid, DAY, [("Ana", "Server", "4:00pm", "10:00pm"), ("Bo", "Server", "5:00pm", "11:00pm"),
                               ("Cy", "Server", "11:00am", "5:00pm"), ("Di", "Cook", "4:00pm", "11:00pm")])
     r = models.get_restaurant(rid, db_path)

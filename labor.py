@@ -1814,11 +1814,15 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
         denied = _m.other_tenant_names(restaurant_id)
     except Exception:
         denied = set()
+    # A cut the insight names is held to the restaurant's floors and its
+    # "never cut below" default (A2; schedule_rules.cut_floor).
+    import schedule_rules as _sr
+    cut = _sr.cut_policy(restaurant_id) if restaurant_id else {}
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="labor_insight", facts=facts, context_text=prompt,
         cause_anchors=anchors, tenant_names_denied=denied,
         untrusted=[str(n.get("notes") or "") for n in (staff_notes or []) if isinstance(n, dict)],
-        data_state=data_state, policy={"action": "labor_insight", "max_data_age_days": LABOR_FRESH_DAYS})
+        data_state=data_state, policy={"action": "labor_insight", "max_data_age_days": LABOR_FRESH_DAYS, **cut})
 
 
 # Sentences that tell the model what to do are not data: "heavy rain
@@ -1859,7 +1863,10 @@ def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
     daypart, per-day overrides) and whole-day role minimums — the engine's
     A2 reads {role: n}. A bullet naming no day or daypart gets the smallest
     floor over the slots it could mean, so only a cut that is below every
-    one of them is called unsafe."""
+    one of them is called unsafe. The order is schedule_rules.cut_floor's:
+    the owner's floor first, the admin minimum only for a role the owner
+    set none for. A role in neither is left out — the engine holds it to
+    policy["cut_floor_default"], the restaurant's own default."""
     from schedule_requirements import floor_for
     text = str(bullet or "")
     days = [d for d in _NOTE_DAYS if re.search(r"\b" + d + r"s?\b", text, re.I)] or list(_NOTE_DAYS)
@@ -1878,8 +1885,8 @@ def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
             n = int(n)
         except (TypeError, ValueError):
             continue
-        if n > 0:
-            out[str(role)] = max(n, out.get(str(role), 0))
+        if n > 0 and not any(r.strip().lower() == str(role).strip().lower() for r in out):
+            out[str(role)] = n
     return out
 
 
@@ -1891,7 +1898,8 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
     counts (check_counts); a name must be in it; a cause needs a data
     block that states it; a missing weather forecast or demand history
     (the prompt's markers) makes that topic a claim about nothing; a cut
-    below the owner's role floor or sending home a keyholder is unsafe."""
+    below the owner's role floor (or, for a role with none, below the
+    restaurant's cut_floor_default) or sending home a keyholder is unsafe."""
     missing = []
     if NO_WEATHER_MARKER in (prompt or ""):
         missing.append("weather")
@@ -1902,12 +1910,20 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
         denied = _m.other_tenant_names(restaurant_id)
     except Exception:
         denied = set()
+    # A role with no floor of its own is held to the restaurant's "never
+    # cut below" default, not to one person (schedule_rules.cut_floor).
+    import schedule_rules as _sr
+    try:
+        import models as _m
+        default = _sr.cut_floor_default(_m.get_restaurant(restaurant_id) if restaurant_id else None)
+    except Exception:
+        default = _sr.cut_floor_default(None)
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="schedule_note", delivery="unattended", context_text=prompt or "",
         cause_anchors=_note_anchors(prompt, data_blocks), tenant_names_denied=denied,
         data_state={"missing_inputs": missing},
         policy={"action": "labor_schedule_note", "check_counts": True,
-                "role_floors": dict(floors or {}),
+                "role_floors": dict(floors or {}), "cut_floor_default": default,
                 "keyholders": [k for k in (keyholders or []) if k]})
 
 

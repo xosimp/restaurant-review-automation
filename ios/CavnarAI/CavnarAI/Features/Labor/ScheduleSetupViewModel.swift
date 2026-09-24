@@ -919,6 +919,13 @@ final class ScheduleSetupViewModel {
     var crossTrainingDefaults: [String: Int] = [:]
     var crossTrainingDefault = 34
     var trimToBudget = true
+    /// "Never cut a role below N people": the fewest people a send-home
+    /// suggestion may leave in a role with no floor of its own
+    /// (schedule_rules.cut_floor on the server). Cuts only, 1...cutFloorMax.
+    var cutFloorDefault = 2
+    var cutFloorMax = 10
+    /// Whether this login may change the rules (the account owner).
+    var canEditRules = true
     var ruleCertifications: [String] = []
     var reservationFeed: ReservationFeedStatus?
     var reservationProviders: [CodeLabel] = []
@@ -944,6 +951,9 @@ final class ScheduleSetupViewModel {
         let crossTrainingDefaults: [String: Int]?
         let crossTrainingDefault: Int?
         let trimToBudget: Bool?
+        let cutFloorDefault: Int?
+        let cutFloorMax: Int?
+        let canEdit: Bool?
         let certifications: [String]?
         let reservationFeed: ReservationFeedStatus?
         let reservationProviders: [CodeLabel]?
@@ -958,6 +968,9 @@ final class ScheduleSetupViewModel {
             case crossTrainingDefaults = "cross_training_defaults"
             case crossTrainingDefault = "cross_training_default"
             case trimToBudget = "trim_to_budget"
+            case cutFloorDefault = "cut_floor_default"
+            case cutFloorMax = "cut_floor_max"
+            case canEdit = "can_edit"
             case reservationFeed = "reservation_feed"
             case reservationProviders = "reservation_providers"
         }
@@ -975,6 +988,7 @@ final class ScheduleSetupViewModel {
         var patioRoles: [String]? = nil
         var roleCrossTraining: [String: Int]? = nil
         var trimToBudget: Bool? = nil
+        var cutFloorDefault: Int? = nil
         var reservationProvider: String?? = nil
         var reservationApiKey: String?? = nil
 
@@ -987,6 +1001,7 @@ final class ScheduleSetupViewModel {
             case patioRoles = "patio_roles"
             case roleCrossTraining = "role_cross_training"
             case trimToBudget = "trim_to_budget"
+            case cutFloorDefault = "cut_floor_default"
             case reservationProvider = "reservation_provider"
             case reservationApiKey = "reservation_api_key"
         }
@@ -1004,6 +1019,7 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(patioRoles, forKey: .patioRoles)
             try c.encodeIfPresent(roleCrossTraining, forKey: .roleCrossTraining)
             try c.encodeIfPresent(trimToBudget, forKey: .trimToBudget)
+            try c.encodeIfPresent(cutFloorDefault, forKey: .cutFloorDefault)
             if let p = reservationProvider { try c.encode(p, forKey: .reservationProvider) }
             if let k = reservationApiKey { try c.encode(k, forKey: .reservationApiKey) }
         }
@@ -1030,6 +1046,9 @@ final class ScheduleSetupViewModel {
             crossTrainingDefaults = r.crossTrainingDefaults ?? [:]
             crossTrainingDefault = r.crossTrainingDefault ?? 34
             trimToBudget = r.trimToBudget ?? true
+            cutFloorMax = max(1, r.cutFloorMax ?? 10)
+            cutFloorDefault = min(max(r.cutFloorDefault ?? 2, 1), cutFloorMax)
+            canEditRules = r.canEdit ?? true
             ruleCertifications = r.certifications ?? []
             reservationFeed = r.reservationFeed
             reservationProviders = r.reservationProviders ?? []
@@ -1066,6 +1085,7 @@ final class ScheduleSetupViewModel {
             if let v = r.patioRoles { patioRoles = v }
             if let v = r.roleCrossTraining { roleCrossTraining = v }
             if let v = r.trimToBudget { trimToBudget = v }
+            if let v = r.cutFloorDefault { cutFloorDefault = v }
             if let v = r.reservationFeed { reservationFeed = v }
             // The pack and its applied values only come from a GET.
             await loadRules()

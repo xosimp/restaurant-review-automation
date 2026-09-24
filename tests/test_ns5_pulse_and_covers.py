@@ -50,6 +50,12 @@ def _published(db, rid, csv_text, start=DAY, end=None):
     conn.close()
 
 
+# These probes are about WHICH of two people the pulse picks, so they run at
+# a "never cut below" of one; the default of two (schedule_rules.cut_floor)
+# keeps both on, which test_cut_floor_default.py covers.
+ONE = {"cut_floor_default": 1}
+
+
 def _rest(db, name, **cols):
     rid = create_restaurant(Restaurant(name=name, owner_email=f"{name.lower()}@x.com"), db_path=db)
     update_restaurant(rid, dict({"hourly_rate": 15, "module_labor": 1}, **cols), db_path=db)
@@ -64,7 +70,7 @@ def _row(day, name, role, start, end, hours):
 
 def test_the_only_keyholder_is_never_the_one_sent_home(db):
     """Probe A: Ana is the only keyholder and the latest starter."""
-    rid = _rest(db, "A")
+    rid = _rest(db, "A", **ONE)
     for n in ("Bob", "Ana"):
         models.add_manual_team_member(rid, n, role="Server", db_path=db)
     ss.upsert(rid, "Ana", certifications=["keyholder", "food_handler"], db_path=db)
@@ -98,7 +104,7 @@ def test_no_cut_is_suggested_on_a_holiday(db):
 
 def test_no_cut_is_suggested_with_reservations_on_the_book(db):
     import demand_signals
-    rid = _rest(db, "R")
+    rid = _rest(db, "R", **ONE)
     _published(db, rid, HEADER + _row(DAY, "Ana", "Server", "4:00pm", "10:00pm", 6.0)
                + _row(DAY, "Bo", "Server", "5:00pm", "11:00pm", 6.0))
     assert strategy_jobs.staffing_move(get_restaurant(rid, db), LOCAL, PULSE, db_path=db)   # a move, before
@@ -107,7 +113,7 @@ def test_no_cut_is_suggested_with_reservations_on_the_book(db):
 
 
 def test_the_saving_is_hedged_when_a_notice_rule_is_set(db):
-    rid = _rest(db, "N")
+    rid = _rest(db, "N", **ONE)
     _published(db, rid, HEADER + _row(DAY, "Ana", "Server", "4:00pm", "10:00pm", 6.0)
                + _row(DAY, "Bo", "Server", "5:00pm", "11:00pm", 6.0))
     plain = strategy_jobs.staffing_move(get_restaurant(rid, db), LOCAL, PULSE, db_path=db)

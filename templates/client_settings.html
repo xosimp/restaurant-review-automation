@@ -326,6 +326,11 @@ textarea{resize:vertical;min-height:60px}
           <textarea id="role_minimums_json" rows="3" placeholder='e.g. {"Server": 2, "Cook": 3, "Bartender": 1}'>{{ restaurant.role_minimums_json or '' }}</textarea>
           <div class="hint">Override the default minimum floor per role. Must be valid JSON. Leave blank to use defaults.</div>
         </div>
+        <div class="form-group">
+          <label>Never cut a role below (people)</label>
+          <input type="number" id="cut_floor_default" value="{{ restaurant.cut_floor_default if restaurant.cut_floor_default is not none else 2 }}" min="1" max="10" step="1">
+          <div class="hint">Used for any role without its own floor (the owner's role floors, then the role minimums above). Cavnar AI never suggests sending someone home if it would leave fewer than this on. Cuts only; not a staffing requirement. The owner can change it under Labor, Schedule rules.</div>
+        </div>
         <div class="form-group full">
           <label>Per-role hourly rates (JSON)</label>
           <textarea id="role_rates_json" rows="3" placeholder='e.g. {"Server": 9, "Host": 15, "Cook": 22, "Bartender": 9}'>{{ restaurant.role_rates_json or '' }}</textarea>
@@ -892,6 +897,7 @@ async function saveSettings() {
     delivery_pct:            parseInt(document.getElementById('delivery_pct').value) || null,
     daypart_split:           document.getElementById('daypart_split').value,
     role_minimums_json:      document.getElementById('role_minimums_json').value,
+    cut_floor_default:       document.getElementById('cut_floor_default').value,
     role_rates_json:         document.getElementById('role_rates_json').value,
     close_times_json:        document.getElementById('close_times_json').value,
     role_close_buffer_json:  document.getElementById('role_close_buffer_json').value,

@@ -72,8 +72,10 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
   A1 "I've sent / posted / ordered / texted …" → "queued … for your OK"
                                                                rewrite
   A2 unsafe actions: discipline of staff, food-safety shortcuts, a cut
-     below a role floor or of a keyholder, a flat "that's legal / you're
-     compliant"                              drop (legal: caveat / drop)
+     below a role floor (policy role_floors; a role with none is held to
+     policy cut_floor_default, else CUT_FLOOR_DEFAULT = 2) or of a
+     keyholder, a flat "that's legal / you're compliant"
+                                             drop (legal: caveat / drop)
   P1 public text: allergen / free-from / "safe for", fault and
      responsibility, inspection and compliance claims, comps ("on me",
      "% off", "free"), "fixed / won't happen again / make it right /
@@ -919,6 +921,10 @@ _LEGAL_FLAT_RE = re.compile(
     r"(?:(?:fully|perfectly|totally|completely|100%)\s+)?(?:legal|compliant|lawful)\b"
     r"|\bno\s+law\s+against\b|\bcompl(?:y|ies)\s+with\s+(?:the\s+|all\s+)?(?:law|laws|rules|regulations|ordinance)\b"
     r"|\bfully\s+compliant\b", re.I)
+# The fewest people a cut may leave in a role with no floor set, when the
+# caller's policy carries no cut_floor_default of its own. Mirrors the
+# restaurants.cut_floor_default column default (schedule_rules.cut_floor).
+CUT_FLOOR_DEFAULT = 2
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "a single": 1, "a lone": 1, "just one": 1,
               "only one": 1, "zero": 0, "no": 0}
 
@@ -1478,12 +1484,28 @@ class _Run:
 
     def staffing_cut(self, s):
         pol = self.ctx.policy
-        floors = {str(k).lower().rstrip("s"): v for k, v in (pol.get("role_floors") or {}).items()}
+        floors = {str(k).strip().lower().rstrip("s"): v for k, v in (pol.get("role_floors") or {}).items()}
+        # A role with no floor of its own is held to the restaurant's "never
+        # cut below" default (policy cut_floor_default, from
+        # schedule_rules.cut_policy), and to CUT_FLOOR_DEFAULT when the
+        # caller supplied none: never to one person.
+        try:
+            default = max(1, int(pol.get("cut_floor_default") or CUT_FLOOR_DEFAULT))
+        except (TypeError, ValueError):
+            default = CUT_FLOOR_DEFAULT
         for m in _CUT_TO_RE.finditer(s):
             raw = m.group("n").lower()
             n = _NUM_WORDS.get(raw, int(raw) if raw.isdigit() else None)
             role = m.group("role").lower().rstrip("s")
-            floor = floors.get(role, 1)
+            # "cook" in the text is the owner's "Line Cook" or "Pizza Cook":
+            # an exact role first, else the smallest floor of the roles it
+            # could mean (the owner set those), else the default.
+            hits = [floors[role]] if role in floors else \
+                [v for k, v in floors.items() if k.split()[-1:] == [role]]
+            try:
+                floor = max(1, min(int(v) for v in hits)) if hits else default
+            except (TypeError, ValueError):
+                floor = default
             if n is not None and n < floor:
                 self.emit("A2", "drop", "drop", m.group(0), f"cuts {role} below its floor of {floor}")
         keyholders = {_norm_name(k) for k in (pol.get("keyholders") or [])}

@@ -5957,6 +5957,7 @@ svg:hover .hb-xh{opacity:1}
 .rul-sw{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--hb-line2)}
 .rul-sw .t{flex:1;font-size:14.5px;color:var(--ink)}
 .rul-sw .t small{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
+.rul-sw .t .ac-input.n{display:inline-block;width:64px;padding:5px 8px;margin:0 6px;font-size:13.5px;text-align:center}
 .rul-res{margin-top:6px}
 .rul-res .msg{font-size:13px;color:var(--ink3);margin-top:8px;line-height:1.5}
 .rul-res .msg.live{color:var(--hb-good)}
@@ -21575,6 +21576,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
     h+='</div>';
     if(!ro)h+='<div class="lb2-form"><div class="ac-field"><label>Another role</label><input class="ac-input" id="rul-new-role" maxlength="40" placeholder="e.g. Host"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addRuleRole()">Add role</button></div>';
+    // The cut floor for a role with no floor above (schedule_rules.cut_floor):
+    // the fewest people a send-home suggestion may leave on. Cuts only.
+    var cutMax=d.cut_floor_max||10,cutN=d.cut_floor_default==null?2:d.cut_floor_default;
+    h+='<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="rul-cut-floor">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="rul-cut-floor" min="1" max="'+cutMax+'" step="1" value="'+esc(cutN)+'" aria-label="Never cut a role below this many people"'+(ro?' disabled':'')+'>people<small>Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.</small></div></div>';
     // Arrivals: minutes before or after open, per role.
     var arr=d.role_arrivals||{},reqs=d.role_requirements||{},certs=d.certifications||[];
     h+='<div class="lb2-sub">Arrivals<small>when each role clocks in against the open</small></div><div id="rul-arrivals">';
@@ -21665,6 +21670,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var body={rules:rules,role_floors:floors};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
+    var cutIn=document.getElementById('rul-cut-floor');
+    if(cutIn&&!cutIn.disabled){
+      var cutV=cutIn.value.trim(),cutNum=+cutV,cutMx=+(cutIn.getAttribute('max')||10);
+      if(cutV===''||cutNum!==Math.floor(cutNum)||cutNum<1||cutNum>cutMx){toast('Never cut below must be a whole number from 1 to '+cutMx,'error');cutIn.focus();return;}
+      body.cut_floor_default=cutNum;
+    }
     var arrs=document.querySelectorAll('#rules-body [data-arr-role]'),arrivals={};
     for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value,ad=arrs[i].querySelector('[data-arr-dir]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=ad==='before'?-Math.abs(+an):Math.abs(+an);}
     body.role_arrivals=arrivals;

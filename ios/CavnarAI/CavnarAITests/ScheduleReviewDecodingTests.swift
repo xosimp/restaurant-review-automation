@@ -414,6 +414,16 @@ final class ScheduleReviewDecodingTests: XCTestCase {
         XCTAssertFalse(json.contains("role_floors"))
         XCTAssertFalse(json.contains("reservation_provider"))
         XCTAssertFalse(json.contains("foh_roles"))
+        XCTAssertFalse(json.contains("cut_floor_default"))
+    }
+
+    /// "Never cut a role below N people" goes over as `cut_floor_default`,
+    /// the key the rules route validates (1...10) and returns.
+    func testRulesPatchCarriesTheCutFloorDefault() throws {
+        var p = ScheduleSetupViewModel.RulesPatch(rules: nil, roleFloors: nil)
+        p.cutFloorDefault = 3
+        let json = try XCTUnwrap(String(data: JSONEncoder().encode(p), encoding: .utf8))
+        XCTAssertEqual(json, "{\"cut_floor_default\":3}")
     }
 
     func testIntelPayloadDecodes() throws {

@@ -971,6 +971,10 @@ def _read_schedule_rules(restaurant_id):
         "jurisdiction_pack": ({"label": pack.get("label"), "starting_values": pack.get("applied"),
                                "notes": pack.get("notes")} if pack else None),
         "role_floors": _sr.role_floors(r) if r else {},
+        # A cut or send-home suggestion never leaves a role below its floor
+        # above, or — for a role with none — below this many people
+        # (schedule_rules.cut_floor). Not a staffing requirement.
+        "never_cut_below": _sr.cut_floor_default(r),
         "minors": minors,
         "note": ("These are the values set in Cavnar, which the schedule is checked against. They are starting "
                  "values, not legal advice: say them as 'the rule set in Cavnar', never as what the law requires, "

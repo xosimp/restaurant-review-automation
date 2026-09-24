@@ -269,13 +269,17 @@ def digest_context(restaurant_id, prompt, facts=(), diagnosis=None, signals=(), 
     except Exception:
         denied = set()
     conf = (diagnosis or {}).get("confidence_detail")
+    # A digest line that cuts staff is held to the restaurant's floors and
+    # its "never cut below" default (A2; schedule_rules.cut_floor).
+    import schedule_rules as _sr
+    cut = _sr.cut_policy(restaurant_id) if restaurant_id else {}
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="digest", facts=list(facts or ()), context_text=prompt or "",
         cause_anchors=anchors, untrusted=[u for u in untrusted or () if u],
         names_allowed={n for n in names_allowed or () if n}, tenant_names_denied=denied,
         confidence=conf if isinstance(conf, dict) else None,
         data_state={"missing_inputs": list(missing_inputs or ())},
-        policy={"action": "weekly_digest"})
+        policy={"action": "weekly_digest", **cut})
 
 
 def digest_line_check(key, line, ctx, directions, diagnosis=None, labor_stale=None):

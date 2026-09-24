@@ -208,7 +208,7 @@ v.text, v.verdict, v.findings, v.actions   # pass | caveat | withhold | refuse
 | N1 | a name the input never held | caveat / drop; a diagnosis refuses |
 | T1 | another tenant's name; "a restaurant like yours runs X" | drop / refuse |
 | A1 | "I've sent / posted / ordered / texted …" → "I've queued … for your OK" | rewrite |
-| A2 | firing or disciplining staff, food-safety shortcuts, a cut below a role floor or of the only keyholder / closer, a flat "that's legal / you're compliant" | drop (legal: caveat / drop) |
+| A2 | firing or disciplining staff, food-safety shortcuts, a cut below a role floor (`policy.role_floors`; a role with none is held to `policy.cut_floor_default`, the restaurant's "never cut below", else `CUT_FLOOR_DEFAULT` = 2 — never to one person) or of the only keyholder / closer, a flat "that's legal / you're compliant" | drop (legal: caveat / drop) |
 | P1 | public text: allergen / free-from / "safe for", fault and responsibility, inspection / compliance, comps and discounts, "fixed / won't happen again / make it right / guarantee", awards and rankings, preparation or sourcing claims, private guest details, absolutes in a reply, the never-say list, links and contact details — unless the owner's own `offer_source` says it | refuse |
 | I1 | injection residue, a model-written "UNVERIFIED:", a six-word echo of untrusted text on an unattended owner surface | drop (public: refuse) |
 

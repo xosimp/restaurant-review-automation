@@ -716,6 +716,22 @@ def save_client_settings(restaurant_id, current_user):
         if _labor_target is None or _labor_target != _labor_target or not 5.0 <= _labor_target <= 60.0:
             return jsonify(ok=False, error="Labor target must be a percentage between 5 and 60.")
 
+    # "Never cut a role below N people" (schedule_rules.cut_floor): the cut
+    # floor for a role with no floor of its own, 1..CUT_FLOOR_MAX. Refused,
+    # not clamped, so a typo is seen rather than silently saved as 10.
+    _cut_floor = None
+    if "cut_floor_default" in data:
+        import schedule_rules as _sr_cut
+        _cf_raw = data.get("cut_floor_default")
+        _cut_floor = _sr_cut.clean_cut_floor_default(_cf_raw)
+        try:
+            _cf_ok = _cut_floor is not None and 1 <= float(_cf_raw) <= _sr_cut.CUT_FLOOR_MAX
+        except (TypeError, ValueError):
+            _cf_ok = False
+        if not _cf_ok:
+            return jsonify(ok=False, error=f"Never cut below must be a whole number of people from 1 to "
+                                           f"{_sr_cut.CUT_FLOOR_MAX}.")
+
     try:
         tier = data.get("service_tier","trial")
         # Same tenancy guard as create-client: a group name in use by another
@@ -784,6 +800,7 @@ def save_client_settings(restaurant_id, current_user):
             "daypart_split":         data.get("daypart_split","").strip() or None,
             "delivery_pct":          int(data["delivery_pct"]) if data.get("delivery_pct") is not None and str(data.get("delivery_pct","")) != "" else None,
             "role_minimums_json":    data.get("role_minimums_json","") or None,
+            "cut_floor_default":     _cut_floor,
             "sched_notes":           sanitize(data.get("sched_notes",""), max_len=2000),
             "monthly_revenue_target": float(data.get("monthly_revenue_target") or 0),
             "food_cost_target":      float(data.get("food_cost_target", 30) or 30),

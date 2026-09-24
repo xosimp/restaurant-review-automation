@@ -502,6 +502,7 @@ class Restaurant:
     open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
     compliance_json: Optional[str]   = None  # schedule_rules.DEFAULTS overrides: min_rest_hours, max_shift_hours, minors, days off
     role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
+    cut_floor_default: int           = 2     # the fewest people a cut suggestion leaves in a role with no floor set (1..10; schedule_rules.cut_floor)
     jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
     role_arrival_json: Optional[str] = None  # {"Line Cook": -60} minutes relative to open a role may start (negative = before)
     role_close_min_json: Optional[str] = None  # {"Bartender": 60} the last of a role stays until N minutes after close
@@ -709,6 +710,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # per-daypart staffing floors that replace the one hardcoded rule.
         ("restaurants", "compliance_json", "TEXT"),
         ("restaurants", "role_floors_json", "TEXT"),
+        # The fewest people a cut suggestion leaves in a role with no floor
+        # of its own (schedule_rules.cut_floor). Cuts only, never a
+        # staffing requirement.
+        ("restaurants", "cut_floor_default", "INTEGER DEFAULT 2"),
         ("restaurants", "jurisdiction", "TEXT"),
         ("restaurants", "role_arrival_json", "TEXT"),
         ("restaurants", "role_close_min_json", "TEXT"),
@@ -3041,7 +3046,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json",
+        "compliance_json","role_floors_json","cut_floor_default",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
@@ -3418,6 +3423,7 @@ def _restaurant_from_row(row) -> Restaurant:
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
         compliance_json=row["compliance_json"] if "compliance_json" in row.keys() else None,
         role_floors_json=row["role_floors_json"] if "role_floors_json" in row.keys() else None,
+        cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
         role_close_min_json=row["role_close_min_json"] if "role_close_min_json" in row.keys() else None,
