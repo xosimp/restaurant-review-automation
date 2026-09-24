@@ -10760,7 +10760,10 @@ function renderInsightRecs(el,recs,surface){
     // directly under the read's own "Do today:" row; a separate labelled
     // row at the foot of the box read as controls for the whole read.
     var row=r.kind==='do_today'?insightRowStartingWith(el,'Do today'):null;
-    if(row){var ex=row.querySelector('.rec-line.inrow');if(ex)ex.parentNode.removeChild(ex);var a=document.createElement('div');a.className='rec-line inrow';a.innerHTML=recControlsHtml(r.key,surface,surface);row.appendChild(a);continue;}
+    // The Do-today line carries its OWN measured confidence (K1 in
+    // recs[].confidence_detail, E13) - drawn with the line's answers.
+    var rcf=(r.confidence_detail&&window.cavConfLine)?cavConfLine(r.confidence_detail,{key:r.key,surface:surface,module:surface}):'';
+    if(row){var ex=row.querySelector('.rec-line.inrow');if(ex)ex.parentNode.removeChild(ex);var a=document.createElement('div');a.className='rec-line inrow';a.innerHTML=rcf+recControlsHtml(r.key,surface,surface);row.appendChild(a);continue;}
     h+='<div class="rec-line"><span class="k">Suggestion</span>'+recControlsHtml(r.key,surface,surface)+'</div>';}
   if(!h)return;
   box.innerHTML=h;
