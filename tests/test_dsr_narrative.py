@@ -334,7 +334,8 @@ def test_a_strong_night_is_one_sonnet_call_with_a_small_budget_and_a_schema(monk
     assert len(client.calls) == 1
     kw = client.calls[0]
     assert kw["model"] == ai_utils.SONNET == ai_utils.model_for("dsr_narrative")
-    assert kw["max_tokens"] <= 2000 and "temperature" not in kw
+    # Real replies measured 1,868–1,965 tokens (9/23/26); 1,600 truncated every one.
+    assert 2500 <= kw["max_tokens"] <= 3000 and "temperature" not in kw
     assert kw["thinking"] == {"type": "disabled"}
     assert kw["output_config"]["format"]["schema"] is narrative.OUTPUT_SCHEMA
     # Usage lands in the ledger under this call's own action.
@@ -352,7 +353,11 @@ def test_the_output_schema_uses_only_what_structured_outputs_accepts():
         if isinstance(node, dict):
             assert not set(node) & {"maxItems", "minItems", "minimum", "maximum", "minLength", "maxLength"}
             if node.get("type") == "object":
-                assert node["additionalProperties"] is False and set(node["required"]) == set(node["properties"])
+                # Optional properties are accepted (probed live 9/23/26); only
+                # the narrative's singles use that — every nested object is closed.
+                optional = set(node["properties"]) - set(node["required"])
+                assert node["additionalProperties"] is False and set(node["required"]) <= set(node["properties"])
+                assert optional <= set(narrative.ITEM_SINGLES)
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):
@@ -378,7 +383,6 @@ def _broken(mutate):
 @pytest.mark.parametrize("reply, needle", [
     ("not json at all", "wrong shape"),
     (_broken(lambda r: r.pop("actions_tomorrow")), "wrong shape"),
-    (_broken(lambda r: r.pop("highest_priority_issue")), "wrong shape"),
     (_broken(lambda r: r.update(owner_note="hi")), "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"].append(copy.deepcopy(r["actions_tomorrow"][0]))), "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(urgency="asap")), "wrong shape"),
@@ -436,12 +440,31 @@ def test_a_fabricated_number_drops_its_line_and_says_why(monkeypatch, rest, db_p
     assert d["field"] == "needs_attention[2]" and "$2,400" in d["why"]
 
 
-def test_a_figure_from_a_fact_the_line_does_not_cite_is_dropped(monkeypatch, rest, db_path):
-    """$19,850 is a real fact — but not one this line cites."""
+def test_a_true_figure_the_line_forgot_to_cite_is_traced_to_its_fact(monkeypatch, rest, db_path):
+    """$19,850 is sales.net, which this line forgot to cite. The real model
+    does this on most nights; refusing it refused every real summary we ran.
+    The fact is added to the line's cites (which the manager view redacts
+    by) instead — and a figure that no fact holds is still dropped."""
     r = strong_reply()
     r["went_well"].append(_it("Sales hit $19,850.", "labor.pct"))
+    r["needs_attention"].append(_it("Sales hit $19,990.", "labor.pct"))
     out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
-    assert [d["field"] for d in _dropped(out)] == ["went_well[3]"]
+    assert [d["field"] for d in _dropped(out)] == ["needs_attention[2]"]
+    assert out["narrative"]["went_well"][3] == _it("Sales hit $19,850.", "labor.pct", "sales.net")
+
+
+def test_a_traced_budget_figure_leaves_the_managers_view_with_its_line():
+    """Completing the cites can only hide more: a line that names the budget
+    without citing it now cites it, and the manager view drops it."""
+    from dsr import access
+    f = weak_night()
+    f["blocks"]["sales"]["metrics"]["budget_net"] = 7150.0
+    F = narrative.Facts(f)
+    cites = F.complete_cites("Net sales missed the $7,150 budget.", ["sales.net"])
+    assert cites == ["sales.net", "sales.budget_net"]
+    _, hidden = access.redact(f, {"role": "manager"})
+    kept = access.filter_narrative({"went_well": [_it("Net sales missed the $7,150 budget.", *cites)]}, hidden)
+    assert kept["went_well"] == []
 
 
 def test_a_figure_that_goes_the_wrong_way_is_dropped(monkeypatch, rest, db_path):
@@ -812,3 +835,34 @@ def test_injection_residue_flags_links_emails_and_tells_only():
     assert ai_guard.injection_residue("Mail a@b.co") == "it contains an email address"
     assert "system prompt" in ai_guard.injection_residue("Per my system prompt")
     assert ai_guard.injection_residue("The health inspector visited; labor ran 24.2%.") is None
+
+
+# ── the schema the API is sent ──────────────────────────────────────────────
+
+def test_the_output_schema_keeps_the_singles_optional_not_nullable():
+    """The real API refused the first schema — eight "item or null" anyOfs —
+    as a grammar too large to compile (400 on 9/23/26), so every night's
+    summary failed while every fake-client test passed. The singles are
+    optional items instead; leaving one out reads as None."""
+    props = narrative.OUTPUT_SCHEMA["properties"]
+    assert not [k for k, v in props.items() if "anyOf" in v]
+    assert set(narrative.OUTPUT_SCHEMA["required"]) == {"executive_summary", "went_well", "needs_attention",
+                                                         "actions_tomorrow"}
+    raw = {k: v for k, v in strong_reply().items() if k not in narrative.ITEM_SINGLES}
+    clean, err = narrative.validate(raw)
+    assert err is None and all(clean[k] is None for k in narrative.ITEM_SINGLES)
+
+
+def test_a_stored_points_figure_backs_the_points_it_holds():
+    """labor.vs_target_pts is already the difference; citing it alone must
+    support "1.4 points over target" (a real reply on 9/23/26 lost its lead to
+    this). A number only people wrote still has nothing behind it."""
+    f = weak_night()
+    f["blocks"]["labor"]["metrics"].update(pct=27.4, target_pct=26.0, vs_target_pts=1.4)
+    F = narrative.Facts(f)
+    ok = _it("Labor ran 27.4% of sales, 1.4 points over target.", "labor.pct", "labor.vs_target_pts")
+    assert narrative.check_item(ok, F) is None
+    wrong = _it("Labor ran 27.4% of sales, 2.1 points over target.", "labor.pct", "labor.vs_target_pts")
+    assert "2.1" in narrative.check_item(wrong, F)
+    guest = _it("One urgent review cites a 40-minute wait.", "reviews.urgent")
+    assert "40" in narrative.check_item(guest, F)
