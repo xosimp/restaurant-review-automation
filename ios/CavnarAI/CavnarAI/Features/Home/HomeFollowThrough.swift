@@ -246,6 +246,19 @@ final class HomeFollowThroughViewModel {
             /// rise): real, counted, never priced. Optional — an older
             /// server sends none.
             let unpricedWins: [UnpricedWin]?
+            /// A measured sales rise: revenue, not profit — kept apart from
+            /// the savings and never added to them (re-audit A6).
+            let salesLift: SalesLift?
+            struct SalesLift: Decodable {
+                let monthly: Double?
+                let wins: Int?
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    monthly = try? c.decodeIfPresent(Double.self, forKey: .monthly)
+                    wins = try? c.decodeIfPresent(Int.self, forKey: .wins)
+                }
+                enum CodingKeys: String, CodingKey { case monthly, wins }
+            }
             struct Biggest: Decodable { let title: String?; let monthly: Double?; let summary: String? }
             /// `count` is every result that got worse; `priced_count` the
             /// ones carrying dollars — the only ones `monthly` covers.
@@ -286,6 +299,7 @@ final class HomeFollowThroughViewModel {
                 case netNote = "net_note"
                 case validatedMonthly = "validated_monthly"
                 case unpricedWins = "unpriced_wins"
+                case salesLift = "sales_lift"
             }
         }
         /// A SUM of measured days, net of what got worse — never a monthly
@@ -1159,6 +1173,10 @@ struct HomeFollowThrough: View {
                 // still a measured win — listed, never priced.
                 ForEach(Array(unpriced.enumerated()), id: \.offset) { _, line in
                     lineRow(line, tone: .cavnarGreen, showsDivider: true)
+                }
+                if let lift = d.salesLift?.monthly, lift > 0 {
+                    lineRow("Sales measured up about \(Self.money(lift))/month \u{2014} revenue, not profit, "
+                            + "so it isn\u{2019}t added to the savings.", tone: .cavnarGreen, showsDivider: true)
                 }
                 // What got worse sits BESIDE the improvements, never folded
                 // into them (rec-ROI #1); the server's own sentence says so

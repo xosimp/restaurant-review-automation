@@ -52,7 +52,10 @@ final class EdgeAskCavnarTests: XCTestCase {
         let vm = AskCavnarViewModel(client: client)
         let ok = await vm.confirm(try proposal())
         XCTAssertTrue(ok)
-        XCTAssertEqual(sent.value, ["POST /mobile/api/guest-campaign/send", "POST /mobile/api/ask-cavnar/action"],
+        // Only the writes, in order: the view model may also refresh the chat
+        // list (a GET) at any moment, which made this test fail at random.
+        XCTAssertEqual(sent.value.filter { $0.hasPrefix("POST ") },
+                       ["POST /mobile/api/guest-campaign/send", "POST /mobile/api/ask-cavnar/action"],
                        "the action runs first; the audit line is written only after it did")
     }
 

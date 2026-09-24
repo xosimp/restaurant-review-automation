@@ -257,7 +257,11 @@ def test_home_toasts_format_result_dates():
     panel = s[a:b]
     assert "result on '+d.outcome.evaluate_on" not in panel
     assert "mdy(d.outcome.evaluate_on)" in panel
-    assert "rec=" in panel and "'opened'" in panel
+    # The link's open is recorded by the server on page load (re-audit C14);
+    # the page no longer posts it too, which counted a tap twice.
+    assert "rec_delivery.record_link_open" in panel
+    import rec_delivery
+    assert callable(rec_delivery.record_link_open)
     swift = open("ios/CavnarAI/CavnarAI/Features/Home/HomeFollowThrough.swift").read()
     assert "result on \\(on)" not in swift and "CavnarDate.mdy(on)" in swift
 

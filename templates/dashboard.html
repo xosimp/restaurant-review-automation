@@ -2893,6 +2893,10 @@ svg:hover .hb-xh{opacity:1}
     for(var ui=0;ui<Math.min(uw.length,3);ui++){var u=uw[ui]||{};
       vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap">'+num(u.line||'')+(u.title?' <span class="vm">— after “'+esc(u.title)+'” · not priced in dollars</span>':' <span class="vm">— not priced in dollars</span>')+'</span></div>';}
     if(uw.length>3)vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><span class="hb-num">'+(uw.length-3)+'</span> more improved with no dollar figure</span></div>';
+    // A measured sales rise is revenue, not a saving: kept apart from the
+    // figure above and never added to it (re-audit A6).
+    var sl=d.sales_lift||{};
+    if(+sl.monthly>0)vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap">Sales measured up about <span class="hb-num">$'+Math.round(+sl.monthly).toLocaleString()+'</span>/month'+(sl.wins?' across <span class="hb-num">'+sl.wins+'</span> change'+(sl.wins===1?'':'s'):'')+' — revenue, not profit, so it is not added to the savings.</span></div>';
     if(d.faded>0)vr+='<div class="hb-row watch"><span class="d"></span><span class="t wrap"><span class="hb-num">'+d.faded+'</span> earlier '+(d.faded===1?'win':'wins')+' no longer held at re-check, so '+(d.faded===1?'it no longer counts':'they no longer count')+'</span></div>';
     if(wz.count>0&&net<0&&d.net_note)vr+='<div class="hb-row critical"><span class="d"></span><span class="t wrap">'+num(d.net_note)+'</span></div>';
     if(vr)h+='<div class="hb-vrows">'+vr+'</div>';
