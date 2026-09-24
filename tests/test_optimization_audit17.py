@@ -559,23 +559,28 @@ def test_a_window_the_archive_does_not_span_falls_back_to_the_pos(db_path, monke
 
     called = {"n": 0}
 
+    # The POS answers for every day — the live path is held to the same
+    # coverage rule as the archive (CA3 F14), so a two-day answer for a
+    # 30-day window is refused, not summed.
+    live = {f"2026-09-{d:02d}": 100.0 for d in range(1, 31)}
+
     def _live(restaurant_id, start, end):
         called["n"] += 1
-        return {"2026-09-01": 100.0, "2026-09-10": 900.0}, "rpower"
+        return dict(live), "rpower"
     monkeypatch.setattr(pos, "fetch_business_days", _live)
 
     total, why = cogs.net_sales_in_window(rid, "2026-09-01", "2026-09-30")
     assert called["n"] == 1, "a window the archive does not span must reach the POS"
-    assert total == 1000.0
+    assert total == 3000.0
 
 
 def test_an_empty_archive_still_reaches_the_pos(db_path, monkeypatch):
     import cogs, pos
     rid = create_restaurant(Restaurant(name="Fresh Co", owner_email="n@x.com"), db_path=db_path)
     monkeypatch.setattr(pos, "fetch_business_days",
-                        lambda r, s, e: ({"2026-09-02": 250.0}, "toast"))
+                        lambda r, s, e: ({f"2026-09-{d:02d}": 250.0 for d in range(1, 31)}, "toast"))
     total, why = cogs.net_sales_in_window(rid, "2026-09-01", "2026-09-30")
-    assert total == 250.0
+    assert total == 7500.0
 
 
 def test_a_closed_day_does_not_break_archive_coverage(db_path, monkeypatch):

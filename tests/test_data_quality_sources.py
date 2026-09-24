@@ -623,6 +623,26 @@ def test_the_morning_brief_running_low_line_honours_count_stale():
     assert "count_stale" in src and "count_discrepancy" in src
 
 
+def test_a_failed_metrics_sync_is_stamped_per_restaurant(db_path, monkeypatch):
+    """CA3 F15: a metrics-sync failure was only logged, so marketing figures
+    read current after the Meta token died."""
+    import scheduler
+    import social_routes
+    rid = _rid(db_path, module_marketing=1)
+    update_restaurant(rid, {"ig_token": "t", "ig_user_id": "u"}, db_path=db_path)
+    monkeypatch.setattr(social_routes, "refresh_post_metrics", lambda r: {"ok": False, "error": "token expired"})
+    scheduler.run_marketing_metrics_sync()
+    st = scheduler.metrics_sync_state(rid)
+    assert st["error"] == "token expired" and st["last_attempt_at"] and not st.get("last_ok_at")
+    monkeypatch.setattr(social_routes, "refresh_post_metrics", lambda r: {"ok": True, "posts": []})
+    c = get_conn(db_path)
+    c.execute("DELETE FROM job_cursors WHERE key LIKE 'marketing_metrics_sync%'")
+    c.commit(); c.close()
+    scheduler.run_marketing_metrics_sync()
+    st = scheduler.metrics_sync_state(rid)
+    assert st["last_ok_at"] and st["error"] is None
+
+
 # ── G14: "setup completeness", not "data completeness" ──────────────────────
 
 def test_admin_completeness_is_named_setup_completeness(db_path):

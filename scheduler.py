@@ -1294,12 +1294,12 @@ def run_marketing_metrics_sync():
                 record_metrics_sync(rid, True)
             else:
                 # Was only logged, so marketing figures read current after
-                # the Meta token died (CA3 F15). Captured for the operator and
-                # stamped per restaurant for the freshness registry.
+                # the Meta token died (CA3 F15). Stamped per restaurant for
+                # the freshness registry. Not captured again here: the insights
+                # call already raised one operator signal for this restaurant
+                # (MOD-MKT-15 — one per restaurant, not one per call).
                 log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
                 record_metrics_sync(rid, False, result.get("error"))
-                _ops.capture(RuntimeError(f"metrics sync failed: {result.get('error')}"),
-                             job="marketing_metrics_sync", context=f"restaurant_id={rid}")
 
         done, hit_bound = resumable_sweep("marketing_metrics_sync", list(candidates), _one,
                                           METRICS_SYNC_SECONDS, workers=1, job="marketing_metrics_sync")
