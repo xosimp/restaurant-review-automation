@@ -1,7 +1,13 @@
 # End-of-Day Closeout & Daily Sales Report (DSR) Engine — the plan
 
-Status: phases 1–4 built (Sep 23 2026) — `dsr/` runs every night on its own,
-with no screen yet; phases 5–6 not started. First customer: Simple EJ's
+Status: phases 1–4 built (Sep 23 2026) — `dsr/` runs every night on its own.
+Phase 5's core (week/period rollups and routes) and phase 6's backend
+(`dsr/memory.py`: Ask's read_dsr / find_days / read_week / read_period and
+last night in Ask's context; the morning brief's "yesterday" from the DSR;
+`dsr/history_import.py` + `POST /dsr/history/import` for the template
+layout — Erik's weekly-grid layout waits for his file; the narrative's
+manager-safe `operations_summary`) are built; the screens, email, push and
+iOS are in progress. First customer: Simple EJ's
 (Erik and Jim), on their **official** account, not the test account.
 
 ## 0. What Erik actually runs today

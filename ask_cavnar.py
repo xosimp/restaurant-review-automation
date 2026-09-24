@@ -522,6 +522,19 @@ def _decisions_context(restaurant_id, viewer=None):
         return ""
 
 
+def _dsr_context(viewer):
+    """Last night's DSR (dsr.memory.context_block): the facts plus the
+    narrative, redacted through dsr.access for the viewer the snapshot is
+    built for — never the owner's copy for a manager."""
+    if not getattr(viewer, "dsr_enabled", 1):
+        return ""
+    import ask_cavnar_tools as tools
+    from dsr import memory
+    from time_utils import restaurant_now_by_id
+    today = restaurant_now_by_id(viewer.id, naive=True).date()
+    return memory.context_block(viewer.id, tools.dsr_user(viewer), today)
+
+
 def _intelligence_context(restaurant_id):
     """What this restaurant's own history says, and — only when enough
     similar restaurants exist — where it stands among them and what held
@@ -717,8 +730,11 @@ def build_context(restaurant):
     # Keyed by what the viewer may see as well as by restaurant: an owner's
     # snapshot served from cache to a manager a minute later would carry
     # every figure the manager's copy leaves out.
+    # The DSR view (owner / manager) is part of it too: last night's report
+    # below is redacted per view, and an owner's copy carries the budget.
+    import ask_cavnar_tools as _tools
     key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))),
-           bool(getattr(restaurant, "_ask_sees_loss", False)))
+           bool(getattr(restaurant, "_ask_sees_loss", False)), _tools.dsr_view_key(restaurant))
     cached = _CONTEXT_CACHE.get(key)
     if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
         return cached[1]
@@ -736,6 +752,14 @@ def build_context(restaurant):
                 parts.append(section)
         except Exception:
             pass
+    # Last night's Daily Sales Report, as this viewer may read it — the
+    # report's own figures and verified summary, never a recomputation.
+    try:
+        section = _dsr_context(restaurant)
+        if section:
+            parts.append(section)
+    except Exception as e:
+        print(f"[ask_cavnar] dsr context failed rid={restaurant.id}: {e}")
     for attr, builder in _CONTEXT_BUILDERS:
         if not getattr(restaurant, attr, 0):
             continue
@@ -1343,6 +1367,8 @@ _UNTAGGED_MODULE = {
     "read_alerts": "alerts", "read_email_history": "account",
     "read_competitors": "intel", "read_ai_visibility": "visibility",
     "change_setting": "account", "remember": "memory", "forget": "memory",
+    "read_dsr": "daily report", "find_days": "daily report", "read_week": "daily report",
+    "read_period": "daily report",
     # A stand-in only: replaced by the real list as soon as the snapshot
     # reports which modules it actually read.
     "read_business_snapshot": _ACROSS_LABEL,

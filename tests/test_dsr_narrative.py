@@ -354,10 +354,11 @@ def test_the_output_schema_uses_only_what_structured_outputs_accepts():
             assert not set(node) & {"maxItems", "minItems", "minimum", "maximum", "minLength", "maxLength"}
             if node.get("type") == "object":
                 # Optional properties are accepted (probed live 9/23/26); only
-                # the narrative's singles use that — every nested object is closed.
+                # the narrative's singles and operations_summary use that (both
+                # probed live) — every nested object is closed.
                 optional = set(node["properties"]) - set(node["required"])
                 assert node["additionalProperties"] is False and set(node["required"]) <= set(node["properties"])
-                assert optional <= set(narrative.ITEM_SINGLES)
+                assert optional <= set(narrative.OPTIONAL)
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):
@@ -850,7 +851,97 @@ def test_the_output_schema_keeps_the_singles_optional_not_nullable():
                                                          "actions_tomorrow"}
     raw = {k: v for k, v in strong_reply().items() if k not in narrative.ITEM_SINGLES}
     clean, err = narrative.validate(raw)
-    assert err is None and all(clean[k] is None for k in narrative.ITEM_SINGLES)
+    assert err is None and all(clean[k] is None for k in narrative.OPTIONAL)
+    # operations_summary is one more optional item, never nullable: the
+    # schema with it was probed against the real API on 9/23/26 (accepted —
+    # stop_reason max_tokens on a 16-token cap, not a 400).
+    assert set(props) - set(narrative.OUTPUT_SCHEMA["required"]) == set(narrative.OPTIONAL)
+    assert props["operations_summary"] == props["executive_summary"]
+
+
+# ── the manager's opening ───────────────────────────────────────────────────
+
+def ops_night():
+    """The weak Tuesday with its budget under the collectors' real name
+    (block_sales: budget_gross), which is the name dsr.access redacts by."""
+    f = weak_night()
+    m = f["blocks"]["sales"]["metrics"]
+    m["budget_gross"] = m.pop("gross_budget")
+    return f
+
+
+def ops_reply():
+    return json.loads(json.dumps(weak_reply()).replace("sales.gross_budget", "sales.budget_gross"))
+
+
+OPS = _it("Tuesday did $5,211 net on 171 checks, down 14.9% from last Tuesday, and labor ran 34.8% of sales. "
+          "Two no-shows left the floor short, so tomorrow's schedule is the first fix.",
+          "sales.net", "sales.transactions", "sales.net_last_week", "labor.pct", "labor.no_shows")
+
+
+def test_an_operations_summary_is_written_verified_and_kept(monkeypatch, rest, db_path):
+    r = ops_reply()
+    r["operations_summary"] = OPS
+    out, client = _run(monkeypatch, rest, db_path, ops_night(), r)
+    n = out["narrative"]
+    assert out["ok"] and n["operations_summary"] == OPS and _dropped(out) == []
+    assert n["verification"]["checked"] == n["verification"]["kept"]
+    system, _user = _prompt(client)
+    assert "operations_summary" in system and "never sees the budget" in system
+
+
+def test_a_night_without_one_still_writes(monkeypatch, rest, db_path):
+    out, _ = _run(monkeypatch, rest, db_path, ops_night(), ops_reply())
+    assert out["ok"] and out["narrative"]["operations_summary"] is None
+
+
+@pytest.mark.parametrize("item, needle", [
+    # Cites the budget: the manager's view never shows it.
+    (_it("Gross sales of $5,640 fell $1,360 short of plan, and labor ran 34.8%. Fix the schedule first.",
+         "sales.gross", "sales.budget_gross", "labor.pct"), "budget_gross"),
+    # Names the budget figure without citing it: completed cites catch it.
+    (_it("Gross sales were $5,640 against $7,000, and labor ran 34.8%. Fix the schedule first.",
+         "sales.gross", "labor.pct"), "budget_gross"),
+    # Food cost is the owner's unless granted.
+    (_it("Food ran 32.6% of sales and labor 34.8%. Fix the schedule first.", "food.est_cost_pct", "labor.pct"),
+     "food.est_cost_pct"),
+    # The topic in words, no figure.
+    (_it("Labor ran 34.8% and we missed budget. Fix the schedule first.", "labor.pct"), "budget"),
+    (_it("Labor ran 34.8% and comps were heavy. Fix the schedule first.", "labor.pct"), "comps"),
+    # A figure nothing supports.
+    (_it("Labor ran 41.2% of sales. Fix the schedule first.", "labor.pct"), "41.2"),
+])
+def test_an_operations_summary_that_is_not_manager_safe_is_dropped_not_the_narrative(
+        monkeypatch, rest, db_path, item, needle):
+    r = ops_reply()
+    r["operations_summary"] = item
+    out, _ = _run(monkeypatch, rest, db_path, ops_night(), r)
+    assert out["ok"] and out["narrative"]["operations_summary"] is None
+    (d,) = [d for d in _dropped(out) if d["field"] == "operations_summary"]
+    assert needle in d["why"], d["why"]
+
+
+def test_a_malformed_operations_summary_refuses_like_any_other_shape_error(monkeypatch, rest, db_path):
+    r = ops_reply()
+    r["operations_summary"] = {"text": "Labor ran 34.8%."}          # no cites
+    out, _ = _run(monkeypatch, rest, db_path, ops_night(), r)
+    assert not out["ok"]
+
+
+def test_the_manager_view_leads_with_the_operations_summary_when_the_lead_cites_the_budget():
+    from dsr import access
+    f = ops_night()
+    lead = _it("Gross sales of $5,640 fell $1,360 short of the $7,000 budget. Labor ran 34.8%.",
+               "sales.gross", "sales.budget_gross", "labor.pct")
+    stored = {"executive_summary": lead, "operations_summary": OPS, "went_well": [], "needs_attention": []}
+    report = {"business_date": "2026-09-22", "facts": f, "narrative": stored, "status": "final", "stages": {}}
+    manager = access.render(report, {"role": "manager"})["narrative"]
+    assert manager["executive_summary"] == OPS and manager["lead_from"] == "operations_summary"
+    owner = access.render(report, {"role": "client"})["narrative"]
+    assert owner["executive_summary"] == lead and "lead_from" not in owner
+    # A manager lead that survives on its own is left alone.
+    stored["executive_summary"] = OPS
+    assert "lead_from" not in access.render(report, {"role": "manager"})["narrative"]
 
 
 def test_a_stored_points_figure_backs_the_points_it_holds():

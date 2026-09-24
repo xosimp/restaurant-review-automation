@@ -35,7 +35,10 @@ The narrative is filtered by what it cites. Each prose item is
 older "facts" name is read too); an item citing anything the
 view withholds is dropped, and when a view withholds anything at all, prose
 that cites nothing is dropped too — an uncited sentence cannot be shown to
-be safe. `meta` passes through untouched.
+be safe. `meta` passes through untouched. Where the executive summary is
+withheld (it usually cites the budget) the narrative's manager-safe
+operations_summary becomes the lead (narrative_for), so the Manager DSR is
+never without an opening when one could be written.
 """
 import copy
 
@@ -167,6 +170,34 @@ def filter_narrative(narrative, hidden):
     return keep(narrative) or {}
 
 
+def narrative_for(narrative, hidden):
+    """The narrative this view reads: filter_narrative, then the lead. The
+    executive summary usually cites the budget, so a manager's copy lost its
+    opening entirely; where it is gone and the narrative's operations_summary
+    (dsr.narrative — operations only, manager-safe by construction) survived,
+    that is the lead. `executive_summary` is therefore always the lead to
+    show, and `lead_from` says when it was substituted."""
+    n = filter_narrative(narrative, hidden)
+    if isinstance(n, dict) and not n.get("executive_summary") and n.get("operations_summary"):
+        n["executive_summary"] = n["operations_summary"]
+        n["lead_from"] = "operations_summary"
+    return n
+
+
+def metric_allowed(user, metric):
+    """Whether a "<block>.<key>" metric (a dsr_metrics row) may be read by
+    this login — the same block and line rules redact() applies, for the
+    surfaces that read metrics outside a report (Ask's find_days)."""
+    view = view_for(user)
+    if view is None:
+        return False
+    block, _, key = str(metric).partition(".")
+    need = _block_permissions().get(block)
+    if need and not _sees(user, need):
+        return False
+    return line_allowed(user, view, key)
+
+
 def _stamp_local(stamp, restaurant):
     """A stored UTC stamp as local wall clock ("YYYY-MM-DDTHH:MM"), or None."""
     if not stamp or restaurant is None:
@@ -229,7 +260,7 @@ def render(report, user, restaurant=None, versions=None):
         "trigger": report.get("trigger"),
         "finalized_at": report.get("finalized_at"),
         "facts": facts,
-        "narrative": filter_narrative(report.get("narrative"), hidden),
+        "narrative": narrative_for(report.get("narrative"), hidden),
         "checklist": checklist(report, user, restaurant),
         "versions": versions or [],
     }
@@ -248,15 +279,18 @@ def summary(report, user):
 def redact_grid(grid, user):
     """A week or period from dsr.rollup, as this login may read it: the
     budget columns (and their comparisons) are the owner's, as on the
-    nightly report. Returns a copy; None passes through."""
+    nightly report — and the labor columns go too for a login without
+    LABOR_VIEW, as the nightly report drops its Labor block. Returns a copy;
+    None passes through."""
+    from permissions import LABOR_VIEW
     if grid is None:
         return None
     if view_for(user) == OWNER:
         return grid
-    import copy
+    gone = OWNER_ONLY_PREFIXES + (() if _sees(user, LABOR_VIEW) else ("labor",))
 
     def strip(d):
-        return {k: v for k, v in d.items() if not str(k).startswith(OWNER_ONLY_PREFIXES)}
+        return {k: v for k, v in d.items() if not str(k).startswith(gone)}
 
     g = copy.deepcopy(grid)
     for key in ("days",):
@@ -266,5 +300,5 @@ def redact_grid(grid, user):
     for key in ("totals", "period_to_date"):
         if g.get(key):
             g[key] = strip(g[key])
-    g["withheld"] = ["budget"]
+    g["withheld"] = ["budget"] + (["labor"] if "labor" in gone else [])
     return g

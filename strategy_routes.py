@@ -25,7 +25,7 @@ token IS the credential, there is no session and no CSRF cookie to carry.
 """
 from datetime import date
 
-from flask import Blueprint, jsonify, request, render_template, abort
+from flask import Blueprint, Response, jsonify, request, render_template, abort
 
 from auth import login_required, mobile_login_required
 
@@ -2499,6 +2499,39 @@ def _do_dsr_period(u):
     return {"ok": True, "view": _dsr_view(u), "period": access.redact_grid(grid, u)}, 200
 
 
+def _do_dsr_history_import(u):
+    """Last Year from the owner's old DSR workbooks (dsr.history_import):
+    multipart field "file", .xlsx or .csv. Owner view only — it writes the
+    figures every Last Year column reads. Always this session's restaurant."""
+    import os
+    from dsr import access, history_import, store
+    if _dsr_view(u) != access.OWNER:
+        return {"ok": False, "error": "Only the owner can import last year's reports."}, 403
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return {"ok": False, "error": "Attach a .xlsx or .csv file.", "imported": 0, "skipped": 0, "errors": []}, 400
+    if _limited(u, "dsr_history_import", 10, 600):
+        return _SLOW_DOWN
+    data = f.read(history_import.MAX_BYTES + 1)
+    name = os.path.basename(f.filename.replace("\\", "/"))[:200]
+    try:
+        parsed = history_import.parse(name, data, today=_local_today(u))
+    except history_import.HistoryImportError as e:
+        return {"ok": False, "error": str(e), "imported": 0, "skipped": 0, "errors": [str(e)]}, 400
+    imported = store.import_history(_rid(u), parsed["rows"], source_file=name, imported_by=u.get("id"))
+    return {"ok": True, "imported": imported, "skipped": parsed["skipped"], "errors": parsed["errors"]}, 200
+
+
+def _do_dsr_history_template(u):
+    """The import template: its header row only."""
+    from dsr import history_import
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    resp = Response(history_import.template_csv(), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = 'attachment; filename="dsr-last-year-template.csv"'
+    return resp, 200
+
+
 def _dsr_grid_day(u):
     from dsr import store
     raw = request.args.get("date")
@@ -2624,6 +2657,8 @@ _ROUTES = [
     ("/dsr/close", ["POST"], _do_dsr_close, "dsr_close"),
     ("/dsr/week", ["GET"], _do_dsr_week, "dsr_week"),
     ("/dsr/period", ["GET"], _do_dsr_period, "dsr_period"),
+    ("/dsr/history/import", ["POST"], _do_dsr_history_import, "dsr_history_import"),
+    ("/dsr/history/template.csv", ["GET"], _do_dsr_history_template, "dsr_history_template"),
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
 ]
@@ -2632,7 +2667,8 @@ _ROUTES = [
 def _wrap(body, decorator):
     def view(current_user, **kw):
         payload, status = body(current_user, **kw)
-        resp = jsonify(**payload)
+        # A body may answer with a file (the DSR import template) instead of JSON.
+        resp = payload if isinstance(payload, Response) else jsonify(**payload)
         resp.headers["Cache-Control"] = "no-store"
         return resp, status
     view.__name__ = body.__name__

@@ -122,6 +122,35 @@ def _day_context(restaurant, day):
     return (" — " + " · ".join(bits)) if bits else ""
 
 
+def _dsr_yesterday_line(night):
+    """The "yesterday" line from last night's DSR (dsr.memory.last_night):
+    its net sales, its own comparison against the forecast, its labor % when
+    this viewer may read labor — every figure the report's, as stored. A
+    provisional report says so."""
+    from demand import OFF_DAY_PCT
+    weekday = night["weekday"]
+    text = f"Last night: {_money(night['net'])} net sales"
+    tone, ask = "neutral", f"How did last night compare to a normal {weekday}?"
+    pct, typical = night.get("vs_forecast_pct"), night.get("forecast_net")
+    if pct is not None and typical is not None:
+        if abs(pct) >= OFF_DAY_PCT:
+            direction = "above" if pct > 0 else "below"
+            tone = "good" if pct > 0 else "bad"
+            text += f", {abs(pct):.0f}% {direction} a typical {weekday} ({_money(typical)})"
+            ask = f"Why was last night {direction} a normal {weekday}?"
+        else:
+            text += f", a normal {weekday}"
+    if night.get("labor_pct") is not None:
+        text += f"; labor {night['labor_pct']:.1f}%"
+        if night.get("labor_target_pct") is not None:
+            text += f" against a {night['labor_target_pct']:g}% target"
+    text += "."
+    if night.get("provisional"):
+        text += " Provisional — some data was still syncing."
+    return {"key": "yesterday", "text": text, "tone": tone, "ask": ask,
+            "source": "dsr", "dsr_date": night["date"]}
+
+
 def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
     """The brief as structured lines. Each line: {"key", "text", "tone", "ask"}.
     tone is good | bad | neutral | action.
@@ -143,9 +172,19 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     today = today or date.today()
     lines = []
 
-    # ── yesterday ── (daily sales live in the Labor module's history)
-    y = (_safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
-         if "labor" not in denied else None)
+    # ── yesterday ── from last night's Daily Sales Report when it finished
+    # (final or provisional): the brief reads the report, never recomputes
+    # it, so the two can't disagree (plan §8). Without one, the Labor
+    # module's daily history as before.
+    from dsr import memory as dsr_memory
+    night = (_safe(dsr_memory.last_night, restaurant_id, today, viewer, db_path)
+             if getattr(restaurant, "dsr_enabled", 1) else None)
+    y = None
+    if night:
+        lines.append(_dsr_yesterday_line(night))
+    else:
+        y = (_safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
+             if "labor" not in denied else None)
     if y and y.get("available"):
         if y["off"]:
             tone = "good" if y["direction"] == "above" else "bad"
@@ -672,8 +711,10 @@ def recipients(restaurant_id, db_path=DB_PATH):
 def _view_key(user):
     """Two logins with the same view get the same brief — built once."""
     from permissions import has_permission, LOSS_VIEW, MODULE_VIEW_PERMISSIONS
+    from dsr import access
+    # The DSR view too: last night's line reads the report through it.
     return (frozenset(k for k, p in MODULE_VIEW_PERMISSIONS.items() if has_permission(user, p)),
-            has_permission(user, LOSS_VIEW))
+            has_permission(user, LOSS_VIEW), access.view_for(user))
 
 
 def _only_all_clear(brief):

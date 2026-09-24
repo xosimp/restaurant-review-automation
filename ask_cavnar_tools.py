@@ -34,6 +34,9 @@ _UNTRUSTED_CONTENT_TOOLS = {
     # Complaint clusters quote each guest's own specific_complaint phrase;
     # they reached the model unfenced (AI-16).
     "read_review_diagnosis", "read_review_brief",
+    # The DSR carries the manager's close-out verbatim ("notes"), and the
+    # week grid the closer's Influence/Result line — staff-written text.
+    "read_dsr", "read_week",
 }
 
 _UNTRUSTED_NOTE = (
@@ -1147,6 +1150,170 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
     return {"ok": True, "outcome": o}
 
 
+# ── The nightly Daily Sales Report (dsr/) ──────────────────────────────────
+# Every DSR read goes through dsr.access for the login asking, exactly as the
+# screen does: the Manager DSR never carries the budget, prime cost, the loss
+# lines (without LOSS_VIEW) or food cost (without FOOD_COST_VIEW), so Ask
+# cannot either. viewer_restaurant stamps the asker on the viewer; a caller
+# with no login behind it reads the owner's view (dsr.memory.OWNER_USER).
+
+_DSR_TOOLS = {"read_dsr", "find_days", "read_week", "read_period"}
+_NO_DSR = {"error": "The daily report isn't part of this login's access."}
+_FIND_DAYS_MAX = 60
+
+
+def dsr_user(viewer):
+    """The login a DSR read is for: the one viewer_restaurant stamped, or
+    the owner's view for an unrestricted caller."""
+    from dsr import memory
+    user = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+    return user if user is not None else memory.OWNER_USER
+
+
+def _dsr_date(value):
+    from datetime import date as _date
+    try:
+        return _date.fromisoformat(str(value).strip()[:10]) if value else None
+    except ValueError:
+        raise ValueError("date must be YYYY-MM-DD")
+
+
+def _dsr_restaurant(restaurant_id, viewer):
+    if viewer is not None and getattr(viewer, "id", None) == restaurant_id:
+        return viewer
+    from models import get_restaurant
+    return get_restaurant(restaurant_id)
+
+
+def _dsr_default_day(restaurant_id, viewer):
+    """No date given: the latest night with a report, else tonight's
+    business date."""
+    from dsr import store
+    latest = store.list_reports(restaurant_id, limit=1)
+    if latest:
+        return _dsr_date(latest[0]["business_date"])
+    import closeout
+    return closeout.business_date_for(_dsr_restaurant(restaurant_id, viewer))
+
+
+def _read_dsr(restaurant_id, date=None, _viewer=None):
+    """One night's Daily Sales Report as this login may read it."""
+    from dsr import access, memory, store
+    user = dsr_user(_viewer)
+    if access.view_for(user) is None:
+        return dict(_NO_DSR)
+    try:
+        day = _dsr_date(date) or _dsr_default_day(restaurant_id, _viewer)
+    except ValueError as e:
+        return {"error": str(e)}
+    report = memory.finished(restaurant_id, day)
+    if not report:
+        nearby = [memory.day_label(r["business_date"]) + f" ({r['business_date']})"
+                  for r in store.list_reports(restaurant_id, limit=5)]
+        return {"exists": False, "date": day.isoformat(), "label": memory.day_label(day),
+                "note": "There is no daily report for that night. Say so; never estimate one.",
+                "nights_with_reports": nearby}
+    return memory.compact(report, user)
+
+
+def _find_days(restaurant_id, metric=None, op=None, value=None, start=None, end=None, limit=None, _viewer=None):
+    """Nights where one report metric passes a threshold — indexed SQL over
+    dsr_metrics, never a model reading old reports."""
+    from dsr import access, memory, store
+    user = dsr_user(_viewer)
+    if access.view_for(user) is None:
+        return dict(_NO_DSR)
+    metric = str(metric or "").strip()
+    if op not in store._OPS:
+        return {"error": f"op must be one of {sorted(store._OPS)}"}
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        return {"error": "value must be a number"}
+    # Permission before existence: a refused metric reads the same whether or
+    # not this restaurant has ever recorded it.
+    if not metric or not access.metric_allowed(user, metric):
+        return {"refused": True,
+                "error": (f"{metric or 'That metric'} isn't part of this login's daily report "
+                          "(the budget, prime cost, comps/voids and food cost are the owner's unless granted). "
+                          "Say so plainly; do not work it out another way.")}
+    names = store.metric_names(restaurant_id)
+    if metric not in names:
+        return {"error": f"No report has recorded {metric}.",
+                "metrics": [m for m in names if access.metric_allowed(user, m)][:80]}
+    try:
+        lo, hi = _dsr_date(start), _dsr_date(end)
+    except ValueError as e:
+        return {"error": str(e)}
+    rows = store.find_days(restaurant_id, metric, op, threshold, start=lo, end=hi)
+    measured = store.metric_series(restaurant_id, metric, lo or "0001-01-01", hi or "9999-12-31")
+    cap = _days(limit, default=20, ceiling=_FIND_DAYS_MAX)
+    return {"metric": metric, "op": op, "value": threshold,
+            "start": lo.isoformat() if lo else None, "end": hi.isoformat() if hi else None,
+            "count": len(rows), "measured_nights": len(measured),
+            "nights": [{"date": d, "label": memory.day_label(d), "value": v} for d, v in rows[:cap]],
+            "truncated": len(rows) > cap,
+            "note": "Newest first. Only nights with a measured figure can match; a night with no figure is not counted."}
+
+
+_GRID_ROW_KEYS = ("date", "label", "status", "provisional", "gross", "net", "cats", "transactions", "guests",
+                  "budget_gross", "budget_net", "vs_budget_net", "vs_budget_net_pct", "last_year_net",
+                  "last_year_source", "vs_last_year_net", "vs_last_year_net_pct", "labor_cost", "labor_pct",
+                  "weather", "event")
+
+
+def _grid_row(row):
+    out = {k: row[k] for k in _GRID_ROW_KEYS if row.get(k) is not None and row.get(k) is not False
+           and row.get(k) != {}}
+    if row.get("influence"):
+        out["notes"] = row["influence"]          # the closer's own words: fenced as untrusted
+    return out
+
+
+def _grid_totals(t):
+    return {k: v for k, v in (t or {}).items() if v not in (None, {}) and not k.endswith("_days")}
+
+
+def _read_week(restaurant_id, date=None, _viewer=None):
+    """Erik's weekly grid for the week holding `date`, as this login may read it."""
+    from dsr import access, rollup
+    user = dsr_user(_viewer)
+    if access.view_for(user) is None:
+        return dict(_NO_DSR)
+    try:
+        day = _dsr_date(date) or _dsr_default_day(restaurant_id, _viewer)
+    except ValueError as e:
+        return {"error": str(e)}
+    g = access.redact_grid(rollup.week(_dsr_restaurant(restaurant_id, _viewer), day), user)
+    return {"label": g["label"], "start": g["start"], "end": g["end"], "categories": g["categories"],
+            "days": [_grid_row(r) for r in g["days"]], "totals": _grid_totals(g["totals"]),
+            "period_to_date": _grid_totals(g.get("period_to_date")) or None,
+            "withheld": g.get("withheld") or [],
+            "note": ("A day with no figure was not measured — never a zero. Totals sum only measured days "
+                     "(days_measured); a comparison uses only days with both sides.")}
+
+
+def _read_period(restaurant_id, date=None, _viewer=None):
+    """The fiscal period holding `date`, one row per week."""
+    from dsr import access, rollup
+    user = dsr_user(_viewer)
+    if access.view_for(user) is None:
+        return dict(_NO_DSR)
+    try:
+        day = _dsr_date(date) or _dsr_default_day(restaurant_id, _viewer)
+    except ValueError as e:
+        return {"error": str(e)}
+    g = rollup.period(_dsr_restaurant(restaurant_id, _viewer), day)
+    if g is None:
+        return {"error": "This restaurant has no fiscal calendar set, so there are no periods — only weeks."}
+    g = access.redact_grid(g, user)
+    return {"label": g["label"], "start": g["start"], "end": g["end"], "categories": g["categories"],
+            "weeks": [{"label": w["label"], "start": w["start"], "end": w["end"],
+                       "totals": _grid_totals(w["totals"])} for w in g["weeks"]],
+            "totals": _grid_totals(g["totals"]), "withheld": g.get("withheld") or [],
+            "note": "Totals sum only measured days (days_measured); an unmeasured day is never a zero."}
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
 
@@ -1757,6 +1924,84 @@ TOOLS = [
                 "additionalProperties": False},
         },
     },
+    # ── The nightly Daily Sales Report ──────────────────────────────────────
+    {
+        "kind": "read",
+        "fn": _read_dsr,
+        "wants_viewer": True,
+        "module": None,
+        "spec": {
+            "name": "read_dsr",
+            "description": (
+                "ONE NIGHT'S DAILY SALES REPORT, as this login may read it: every measured figure by "
+                "block (sales, labor, food, reviews, marketing, intel), what was missing and why, the "
+                "night's verified summary and actions, and the manager's close-out notes. Use for any "
+                "question about a specific night ('how did last Tuesday go', 'what did we do on 9/19'). "
+                "The report's figures are final — quote them, never recompute them. Says when a night "
+                "is provisional or has no report."
+            ),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "The business date, YYYY-MM-DD. Default: the latest report."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _find_days,
+        "wants_viewer": True,
+        "module": None,
+        "spec": {
+            "name": "find_days",
+            "description": (
+                "SEARCH THE NIGHTLY REPORTS' HISTORY: every night where one metric passes a threshold, "
+                "e.g. every night labor ran over 25% (metric 'labor.pct', op '>', value 25), nights net "
+                "sales topped $10,000 ('sales.net', '>', 10000). Metrics are '<block>.<key>' as read_dsr "
+                "shows them (sales.net, sales.gross, sales.transactions, labor.pct, labor.cost, "
+                "reviews.avg_rating, sales.cat:Liquor …); an unknown name returns the list this login "
+                "may search. Counts only measured nights and says how many there were."
+            ),
+            "input_schema": {"type": "object", "additionalProperties": False,
+                             "required": ["metric", "op", "value"], "properties": {
+                "metric": {"type": "string"},
+                "op": {"type": "string", "enum": [">", ">=", "<", "<=", "="]},
+                "value": {"type": "number"},
+                "start": {"type": "string", "description": "YYYY-MM-DD, optional."},
+                "end": {"type": "string", "description": "YYYY-MM-DD, optional."},
+                "limit": {"type": "integer", "description": "Max nights listed (default 20, max 60)."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_week,
+        "wants_viewer": True,
+        "module": None,
+        "spec": {
+            "name": "read_week",
+            "description": (
+                "THE WEEKLY SALES GRID for the restaurant's own week holding a date (its fiscal week, "
+                "e.g. Wed-Tue, 'Period 9 · Week 4'): each day's categories, gross, net, last year, "
+                "labor, weather, event and notes, the week's totals, and period to date. Use for 'how "
+                "did this week go', 'are we ahead of last year', week-over-week questions."
+            ),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "Any day in the week, YYYY-MM-DD. Default: the latest report's week."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_period,
+        "wants_viewer": True,
+        "module": None,
+        "spec": {
+            "name": "read_period",
+            "description": (
+                "THE FISCAL PERIOD holding a date, one row of totals per week, and the period's totals. "
+                "Use for 'how is this period going' or period-over-period questions. Only for a "
+                "restaurant with a fiscal calendar set."
+            ),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "Any day in the period, YYYY-MM-DD. Default: the latest report's."}}},
+        },
+    },
     # ── Write tools: proposal only ──────────────────────────────────────────
     # Each carries the route the client calls on confirm. Nothing here runs
     # server-side from a model decision.
@@ -2066,7 +2311,17 @@ def viewer_restaurant(restaurant, user):
     # not a module flag (re-audit A-8).
     import issues as _issues
     view._ask_sees_loss = _issues.viewer_sees_loss(user)
+    # The DSR's own view (dsr.access: owner or manager, and what each may
+    # read) is decided from the login itself, so it rides along; None is an
+    # unrestricted caller (dsr_user reads it as the owner's view).
+    view._ask_dsr_user = dict(user) if user is not None else None
     return view
+
+
+def dsr_view_key(viewer):
+    """The DSR view a viewer reads — part of any cache key over DSR text."""
+    from dsr import access
+    return access.view_for(dsr_user(viewer))
 
 
 def _denied(restaurant):
@@ -2090,6 +2345,8 @@ def tool_allowed(name, restaurant):
     if t.get("module") and not getattr(restaurant, t["module"], 0):
         return False
     if name in _INTEL_TOOLS and "intel" in _denied(restaurant):
+        return False
+    if name in _DSR_TOOLS and not getattr(restaurant, "dsr_enabled", 1):
         return False
     return True
 

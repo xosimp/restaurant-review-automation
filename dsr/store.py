@@ -149,6 +149,40 @@ def get_report_by_id(report_id, restaurant_id=None, db_path=DB_PATH):
     return _row(r)
 
 
+FINISHED = ("final", "provisional")
+
+
+def get_finished_report(restaurant_id, business_date, db_path=DB_PATH):
+    """The latest version of a night that FINISHED (final or provisional) —
+    what every reader after the night shows. A v2 still collecting does not
+    hide the v1 the owner already has."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT * FROM dsr_reports WHERE restaurant_id=? AND business_date=? AND status IN (?,?) "
+                         "ORDER BY version DESC LIMIT 1",
+                         (restaurant_id, str(business_date)[:10], *FINISHED)).fetchone()
+    finally:
+        conn.close()
+    return _row(r)
+
+
+def latest_finished_report(restaurant_id, on_or_before, since=None, db_path=DB_PATH):
+    """The most recent finished night on or before `on_or_before` (and on or
+    after `since`, when given), its latest finished version; None if none."""
+    args = [restaurant_id, str(on_or_before)[:10], *FINISHED]
+    where = "restaurant_id=? AND business_date<=? AND status IN (?,?)"
+    if since:
+        where += " AND business_date>=?"
+        args.append(str(since)[:10])
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute(f"SELECT * FROM dsr_reports WHERE {where} ORDER BY business_date DESC, version DESC LIMIT 1",
+                         args).fetchone()
+    finally:
+        conn.close()
+    return _row(r)
+
+
 def create_report(restaurant_id, business_date, trigger=None, db_path=DB_PATH):
     """A new version for the night: 1 for the first, one more than the
     latest otherwise. Returns the report."""
@@ -338,6 +372,18 @@ def metric_series(restaurant_id, metric, start, end, db_path=DB_PATH):
     finally:
         conn.close()
     return [(r["business_date"], r["value"]) for r in rows]
+
+
+def metric_names(restaurant_id, db_path=DB_PATH):
+    """Every metric this restaurant's reports have recorded, sorted — the
+    vocabulary find_days accepts."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT DISTINCT metric FROM dsr_metrics WHERE restaurant_id=? ORDER BY metric",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return [r["metric"] for r in rows]
 
 
 _OPS = {">": ">", ">=": ">=", "<": "<", "<=": "<=", "=": "="}

@@ -43,6 +43,13 @@ WHAT IS CHECKED, deterministically, on what comes back:
     A failing item is DROPPED, never repaired, and recorded in
     narrative["verification"]. A failing executive summary refuses the
     whole narrative, because it is the lead.
+  * the operations summary (optional): the manager's opening, because the
+    executive summary usually cites the budget and so the Manager DSR lost
+    its lead. The lead's checks plus manager-safety — no cite the manager
+    view hides (food.*, budget*, prime cost, comps/voids/refunds/loss*) and
+    no such topic in words. A failing one is dropped, never the narrative;
+    dsr.access shows it as the lead only where the executive summary is
+    hidden.
   * actions: an action's dollars_monthly must equal a cited monthly figure
     (a night is never multiplied into a month); an action the owner already
     silenced or said "not for us" to is dropped; the rest are ranked by
@@ -110,9 +117,16 @@ ACTION_KINDS = {
 ITEM_LISTS = ("went_well", "needs_attention")
 ITEM_SINGLES = ("biggest_risk", "biggest_win", "biggest_financial_opportunity", "biggest_staffing_concern",
                 "highest_priority_issue", "largest_money_saving", "largest_guest_experience", "largest_staffing")
-# The singles are optional: left out means none tonight (see OUTPUT_SCHEMA).
+# The manager's opening (check_operations_summary): the executive summary
+# usually cites the budget, which a manager never reads, so without this the
+# Manager DSR had no lead at all. Operations only — sales volume, labor,
+# service, reviews, actions — citing nothing a manager's view hides.
+OPS_SUMMARY = "operations_summary"
+# The singles and the operations summary are optional: left out means none
+# tonight (see OUTPUT_SCHEMA).
+OPTIONAL = ITEM_SINGLES + (OPS_SUMMARY,)
 REQUIRED = ("executive_summary", "went_well", "needs_attention", "actions_tomorrow")
-TOP_KEYS = ("executive_summary",) + ITEM_LISTS + ITEM_SINGLES + ("actions_tomorrow",)
+TOP_KEYS = ("executive_summary", OPS_SUMMARY) + ITEM_LISTS + ITEM_SINGLES + ("actions_tomorrow",)
 ACTION_KEYS = ("text", "why", "dollars_monthly", "urgency", "effort", "kind", "subject", "cites")
 # rec_ledger.MODULES for a block.
 _MODULE = {"sales": "ops", "labor": "labor", "food": "food", "reviews": "reviews",
@@ -141,11 +155,14 @@ _ACTION_SCHEMA = {
 # compiled grammar is too large", 400 — found on the first real call,
 # 9/23/26), so every night's summary failed. Left out reads as None, the same
 # as the null it replaced; validate() fills it in. Keep anyOf out of this
-# schema's objects — tests/test_dsr_narrative.py pins it.
+# schema's objects — tests/test_dsr_narrative.py pins it. operations_summary
+# is one more optional item on the same footing (the schema was probed
+# against the real API when it was added, 9/23/26: accepted).
 OUTPUT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": list(REQUIRED),
     "properties": dict(
         {"executive_summary": _ITEM_SCHEMA,
+         OPS_SUMMARY: _ITEM_SCHEMA,
          "went_well": {"type": "array", "items": _ITEM_SCHEMA},
          "needs_attention": {"type": "array", "items": _ITEM_SCHEMA},
          "actions_tomorrow": {"type": "array", "items": _ACTION_SCHEMA}},
@@ -633,6 +650,11 @@ def validate(raw):
     if not 2 <= n <= 3:
         return None, f"the executive summary is {n} sentence{'s' if n != 1 else ''}, not 2–3"
     out["executive_summary"] = lead
+    out[OPS_SUMMARY] = None
+    if raw.get(OPS_SUMMARY) is not None:
+        out[OPS_SUMMARY], err = _item(raw[OPS_SUMMARY], OPS_SUMMARY, MAX_LEAD, MAX_LEAD_CITES)
+        if err:
+            return None, err
     for field in ITEM_LISTS:
         v = raw[field]
         if not isinstance(v, list) or len(v) > MAX_LIST_ITEMS:
@@ -697,6 +719,46 @@ def check_item(item, F, action=False, lead=False):
     return None
 
 
+# Words that put an owner-only subject in the operations summary even with
+# no figure: the manager view hides budget, prime cost, food cost and comps,
+# voids and refunds (dsr.access), so the manager's opening may not raise them.
+_OWNER_TOPIC_RE = re.compile(r"\b(budget\w*|prime[\s-]+cost|food[\s-]+cost|comps?|comped|voids?|voided|"
+                             r"refunds?|refunded|loss(?:es)?|shrink)\b", re.I)
+
+
+def owner_only_cite(cite):
+    """Whether a fact key is one the Manager DSR never shows, whatever the
+    manager was granted: the Food block (FOOD_COST_VIEW), the owner-only
+    financials (budget*, vs_budget*, prime_cost*, source_checks) and the loss
+    lines (comps, voids, refunds, loss*) — dsr.access's own name rules."""
+    from dsr.access import LOSS_KEYS, OWNER_ONLY_PREFIXES
+    block, _, key = str(cite).partition(".")
+    k = key.lower()
+    return block == "food" or k.startswith(OWNER_ONLY_PREFIXES) or k in LOSS_KEYS or k.startswith("loss")
+
+
+def check_operations_summary(item, F):
+    """None when the operations summary stands, else why it is dropped: the
+    lead's rules (a measured figure outside the closeout, every number
+    traced) plus manager-safety — no owner-only cite (after the cites are
+    completed, so a budget figure it forgot to cite still counts) and no
+    owner-only topic in words. Dropped, never repaired: the Manager DSR then
+    has no opening, as before, rather than a wrong one."""
+    n = _sentences(item["text"])
+    if not 1 <= n <= 3:
+        return f"is {n} sentences, not 2"
+    why = check_item(item, F, lead=True)
+    if why:
+        return why
+    hidden = [c for c in item["cites"] if owner_only_cite(c)]
+    if hidden:
+        return f"cites {', '.join(hidden)}, which the manager's view never shows"
+    m = _OWNER_TOPIC_RE.search(item["text"])
+    if m:
+        return f"talks about {m.group(0).lower()}, which the manager's view never shows"
+    return None
+
+
 def verify(clean, F):
     """(narrative body, dropped, lead_problem). Drops, never repairs."""
     dropped = []
@@ -705,10 +767,16 @@ def verify(clean, F):
     def traced(it):
         return dict(it, cites=F.complete_cites(it["text"], it["cites"])) if it else it
     clean = dict(clean, executive_summary=traced(clean["executive_summary"]),
+                 **{OPS_SUMMARY: traced(clean.get(OPS_SUMMARY))},
                  **{f: [traced(it) for it in clean[f]] for f in ITEM_LISTS},
                  **{f: traced(clean[f]) for f in ITEM_SINGLES})
     lead_why = check_item(clean["executive_summary"], F, lead=True)
     body["executive_summary"] = clean["executive_summary"]
+    ops = clean.get(OPS_SUMMARY)
+    ops_why = check_operations_summary(ops, F) if ops else None
+    if ops_why:
+        dropped.append({"field": OPS_SUMMARY, "text": ops["text"], "why": ops_why})
+    body[OPS_SUMMARY] = None if ops_why else ops
     for field in ITEM_LISTS:
         body[field] = []
         for i, it in enumerate(clean[field]):
@@ -860,6 +928,7 @@ EVIDENCE RULES. A line that breaks one is deleted before the owner reads it; an 
 
 WHAT TO WRITE
 - executive_summary: 2 to 3 sentences. Lead with the result that mattered most and why, then what to watch. Measured figures only.
+- operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, or comps, voids and refunds. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Leave it out when the operations figures cannot carry it.
 - went_well, needs_attention: up to 4 each, one sentence each, most important first. An empty list is fine.
 - biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_money_saving, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch.
 - actions_tomorrow: at most 3, each something the manager or owner can start tomorrow with the staff and suppliers they already have.
@@ -874,6 +943,7 @@ WHAT TO WRITE
 
 Return only this JSON object:
 {{"executive_summary": {{"text": "...", "cites": ["..."]}},
+ "operations_summary": {{"text": "...", "cites": ["..."]}} (or left out),
  "went_well": [{{"text": "...", "cites": ["..."]}}], "needs_attention": [...],
  "biggest_risk": {{"text": "...", "cites": [...]}} (or left out), "biggest_win": ..., "biggest_financial_opportunity": ..., "biggest_staffing_concern": ...,
  "actions_tomorrow": [{{"text": "...", "why": "...", "dollars_monthly": null, "urgency": "before_service", "effort": "low", "kind": "control_hours", "subject": null, "cites": ["..."]}}],
@@ -1143,7 +1213,8 @@ def _write(ctx, facts):
         # failure digest, not as one owner's complaint (ai_guard.verify_figures).
         _capture(RuntimeError(f"dsr narrative dropped {len(dropped)} item(s): "
                               + "; ".join(f"{d['field']}: {d['why']}" for d in dropped)[:900]), rid, "dropped")
-    checked = (1 + sum(len(clean[f]) for f in ITEM_LISTS) + sum(1 for f in ITEM_SINGLES if clean[f])
+    checked = (1 + (1 if clean.get(OPS_SUMMARY) else 0) + sum(len(clean[f]) for f in ITEM_LISTS)
+               + sum(1 for f in ITEM_SINGLES if clean[f])
                + len(clean["actions_tomorrow"]))
     narrative = {
         "schema": SCHEMA_VERSION,
