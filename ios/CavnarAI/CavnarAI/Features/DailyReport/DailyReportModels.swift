@@ -334,11 +334,45 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     let kind: String?
     let dollarsMonthly: Double?
     let key: String?
+    /// The contract fields the report view adds (strategy_routes
+    /// `_dsr_present_view`): the action's rec_ledger key, whether Done /
+    /// Not for us / Track apply, and whether the owner already answered it
+    /// — the report is a record, so an answered line stays and loses its
+    /// controls. All optional: an older server sends only `key`.
+    var recKey: String? = nil
+    var answered: Bool? = nil
+    var answerable: Bool? = nil
     var id: String { key ?? text }
 
     enum CodingKeys: String, CodingKey {
-        case text, why, urgency, effort, kind, key
+        case text, why, urgency, effort, kind, key, answered, answerable
         case dollarsMonthly = "dollars_monthly"
+        case recKey = "rec_key"
+    }
+
+    /// The key the answer row posts — rec_key, else the action's own key.
+    var answerKey: String? {
+        let k = recKey ?? key
+        return (k?.isEmpty == false) ? k : nil
+    }
+
+    /// Done / Not for us / Track under the action: only for a keyed action
+    /// the owner has not answered and the server calls answerable (an older
+    /// server that sends no flag: any keyed, unanswered action).
+    var showsAnswers: Bool {
+        answerKey != nil && answered != true && answerable != false
+    }
+
+    /// The module the answer is credited to — the block in the key
+    /// (`dsr_action:<kind>:<block>[/<entity>]`), in the web's vocabulary
+    /// (dashboard.html's DSR MODULE map): sales and the close-out are ops.
+    var answerModule: String {
+        let parts = (answerKey ?? "").split(separator: ":", omittingEmptySubsequences: false)
+        let block = parts.count > 2 ? String(parts[2].split(separator: "/").first ?? "") : ""
+        switch block {
+        case "labor", "food", "reviews", "marketing", "intel": return block
+        default: return "ops"
+        }
     }
 
     /// "This week", "Next schedule", "Tonight" — the server's own words,

@@ -450,10 +450,13 @@ pulse, AI activity) → value delivered → **the day** (last night's Daily
 Sales Report, then the morning brief with open issues; the close-out takes
 the slot after 8pm local, the weekly receipts lead it on Monday. iOS:
 `HomeLastNightCard`, which renders nothing for a login or location with no
-report — web: the Last night card on Home) → needs attention → the one cross-module thing → what
+report — web: the Last night card on Home) → needs attention → the one cross-module thing (iOS:
+`HomeOneThingCard`) → what
 Cavnar AI recommends → readiness (leads the page instead when nothing is
 connected yet, hides once complete) → measured (goals, what your changes
-did, what got better) → what connects, comps and voids → worth. The
+did with its check-ins, what got better, what worked for you) → what
+connects, comps and voids → worth (net of what got worse, the measured
+total since its first day only when one exists). The
 close-out sits last before 8pm. Every block keeps its empty state; a quiet
 day is a short page.
 
@@ -544,7 +547,16 @@ day is a short page.
 | Sheet anatomy | `AccountHero` → `AccountSection` → `AccountKVRow` |
 | Pill / chip / tile | `AccountPill`, `AccountChip`, `AccountStatTile` |
 | Button | `CavnarPrimaryButtonStyle`, `CavnarSecondaryButtonStyle` |
-| Recommendation answer row | `RecAnswerRow` (`DesignSystem/RecAnswerRow.swift`) — Done / Not for us / Track as small text buttons, POSTs `/mobile/api/recs/event`, then a muted confirmation line. The same row under every module recommendation (Reviews, Food Cost, Marketing, Intel) |
+| Recommendation answer row | `RecAnswerRow` (`DesignSystem/RecAnswerRow.swift`) — Done / Not for us / Track as small text buttons, POSTs `/mobile/api/recs/event`, then a muted confirmation line (the server's `message`) and, when a tracker started or could not, a `RecTrackerLine` under it. Track only where `RecAnswer.trackableModules` (reviews, food, labor — never marketing or intel). The same row under every recommendation the phone shows: module reads (Reviews, Food Cost, Marketing, Intel, Labor), diagnoses, the Daily Report's Tomorrow actions (surface `dsr`), Home's one thing, What connects and loss flags (surface `home`), content-calendar ideas, the AI-visibility roadmap, Ask's suggestions |
+| Why not (reason picker) | `.recReasonDialog(isPresented:title:message:skipLabel:onSkip:onPick:)` (`RecReasonDialog`) — a confirmation dialog of the six `RecReason`s in owner wording ("Already doing this", "Doesn't fit us", "Too costly", "Bad timing", "Don't trust the numbers", "Other"), sent as `reason_code`. Every Not for us asks it; a second hide asks it with "Just hide it for two weeks" as the skip; Ask's "Not now" with "Just not now". Never a text field on the floor. Hold the target in its own `@State`, apart from the dialog's flag |
+| Tracker line | `RecTrackerLine(text:)` — gauge glyph in ember2 + "Measuring labor % until 10/21/26" (the server's `label_text`) or the refusal's own `reason`, mixed text. `RecTrackerNote.extraLine` drops it when the message already says it |
+| Answer pill | `RecAnswerPillStyle(selected:)` — capsule, ember hairline on a faint ember wash, 13.5 bold ember2; the chosen one fills. For one-tap answers to a question Cavnar asks (Yes / Partly / No, Was this useful? Yes / No), never for navigation |
+| Check-in | `RecCheckInCard(outcome:surface:onAnswered:)` — "CHECK IN" kicker, the result line, "Did you make this change?" as three answer pills and a "Something else changed these weeks too" check row; one tap posts `/recs/checkin` and the result reloads (its attribution changes). Shown when `RecCheckIn.isDue`: evaluated, clear verdict, no `owner_checkin`, not informational, a recommendation's key. Home shows at most two under What your changes did; the rest wait in the record |
+| What worked for you | `WhatWorkedCard(whatWorked:)` — `HomeSectionHeader("Your record", "What worked for you")` over the server's sentences, verbatim, green dots, `.cavnarCard()`. Renders nothing unless `enough` and a sentence exists |
+| Recommendation record | `RecommendationHistoryView` (`Features/Recommendations/`) — the Account identity-card kit: `AccountHero` → 30/90/180 `CavnarSegmentedControl` → "What you followed" (per module: shown · followed · said no · ignored, the rate in the number face with its likely range only when `enough`, "Not enough yet" otherwise) → "Most effective for you" → the timeline (title, module · shown date, answer chip + `AccountPill("Validated")`, the why, then its tracker: `RecTrackerLine`, an amber `PARTIAL` capsule before the interim reading, "Stop measuring" in red behind a confirmation dialog; or the result line, attribution sentence, other changes those weeks, the re-check, and a `RecCheckInCard`), paged with "Show older ones". Opened from Account → Recommendations and Home's "What you followed →" |
+| The one thing | `HomeOneThingCard` — `.cavnarCard(.hero)`: module names joined by `EmberThread` (two or more only), the action at 18, why, "To confirm:", up to three evidence lines, $/month in the number face, "Could also be…" (an alert; records `evidence_viewed`), an Ask link, and its `RecAnswerRow`. After Needs attention, before the recommendations (§11b) |
+| Labor diagnosis | `LaborDiagnosisCard` — `.cavnarCard(.ai)`: "WHY LABOR RAN OVER" + confidence capsule, summary, most likely cause, it could also be, "Check this" (the action) with its `RecAnswerRow`, cross-checked against. Nothing when there is no cause |
+| Evidence viewed | `RecEvidenceLog.viewed(key:surface:module:)` — call when the owner opens a keyed recommendation's reasoning ("Could also be…", "Why this matters"); once per key per launch, fire and forget |
 | Field | `AccountField`, `CavnarFloatingField`, `CavnarDropdown` |
 | Switch with its record | `AccountSwitchRow(label:detail:isOn:busy:)` — the `detail` is the owner's own record behind the switch (Automation & trust) |
 | Score movement | `ScoreDeltaChip(delta:)` — "+3" green / "−2" red capsule in the number face (`ShiftQualityPanel.swift`) |

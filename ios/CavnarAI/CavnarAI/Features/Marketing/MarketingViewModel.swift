@@ -83,10 +83,18 @@ struct ContentCalendarIdea: Codable, Identifiable {
     /// it back out of the content log, so the green tick on the week rail
     /// survives a relaunch instead of living in view state.
     var written: Bool
+    /// `content_idea:<hash of the angle>` — an open idea is a recommendation
+    /// presented on `marketing` (rec-ROI #41). Writing from it records it
+    /// accepted server-side; Done / Not for us answer it without writing.
+    /// Optional: absent on an older server and in a cached calendar.
+    var recKey: String?
+    var answered: Bool?
+    var answerable: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case day, date, platform, angle, type, written
+        case day, date, platform, angle, type, written, answered, answerable
         case isoDate = "iso_date"
+        case recKey = "rec_key"
     }
 
     init(from decoder: Decoder) throws {
@@ -98,6 +106,14 @@ struct ContentCalendarIdea: Codable, Identifiable {
         type = try c.decode(String.self, forKey: .type)
         isoDate = try c.decodeIfPresent(String.self, forKey: .isoDate)
         written = try c.decodeIfPresent(Bool.self, forKey: .written) ?? false
+        recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+        answered = try? c.decodeIfPresent(Bool.self, forKey: .answered)
+        answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+    }
+
+    /// Done / Not for us under the idea: keyed, open, not yet written or answered.
+    var showsAnswers: Bool {
+        (recKey?.isEmpty == false) && answerable == true && answered != true && !written
     }
 
     var id: String { "\(day)-\(type)" }

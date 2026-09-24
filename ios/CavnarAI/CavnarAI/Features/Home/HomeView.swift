@@ -43,6 +43,11 @@ struct HomeView: View {
     // (drives the confirmation dialog), then the "Published N" check.
     @State private var pendingPublish: NeedsAttentionItem?
     @State private var postedLabel: String?
+    // A second hide on a needs-attention item asks why (#42): the item,
+    // held apart from the dialog's own flag so the answer still has it
+    // after the dialog has closed itself.
+    @State private var attentionAskingWhy: NeedsAttentionItem?
+    @State private var showingAttentionWhy = false
     // Drives the hero's one-time landing reveal (opacity + upward offset),
     // and everything below it rises in off the same flip, a beat later.
     // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
@@ -187,6 +192,15 @@ struct HomeView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.7)
+
+                            // The one cross-module thing (§11b), with its
+                            // answers. Renders nothing when there is none.
+                            if followThrough.fixFirst != nil {
+                                HomeOneThingCard(viewModel: followThrough)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.73)
+                            }
 
                             // What Cavnar recommends, each with the button
                             // that starts measuring it.
@@ -553,8 +567,14 @@ struct HomeView: View {
                 },
                 // Not today / hide, recorded server-side so the same item is
                 // quiet in the brief and the queue too. Never offered for a
-                // critical item (the server sends dismissable=false).
+                // critical item (the server sends dismissable=false). A
+                // second hide asks why first, as the web does (#42).
                 onDismiss: { item, kind in
+                    if kind == "recommendation", (item.timesHidden ?? 0) >= 1 {
+                        attentionAskingWhy = item
+                        showingAttentionWhy = true
+                        return
+                    }
                     Task {
                         if await followThrough.answerAttention(item, kind: kind) {
                             await viewModel.load()
@@ -562,6 +582,24 @@ struct HomeView: View {
                     }
                 }
             )
+            .recReasonDialog(isPresented: $showingAttentionWhy,
+                             title: "You\u{2019}ve hidden this before \u{2014} why?",
+                             message: "Tell Cavnar AI why, so it stops raising it.",
+                             skipLabel: "Just hide it for two weeks",
+                             onSkip: { answerAttentionWhy(kind: "recommendation", reason: nil) },
+                             onPick: { reason in answerAttentionWhy(kind: "not_for_us", reason: reason) })
+        }
+    }
+
+    /// The second hide's answer: a reason (sent as not_for_us with its
+    /// code) or "just hide it" (the ordinary two-week hide).
+    private func answerAttentionWhy(kind: String, reason: RecReason?) {
+        guard let item = attentionAskingWhy else { return }
+        attentionAskingWhy = nil
+        Task {
+            if await followThrough.answerAttention(item, kind: kind, reasonCode: reason?.code) {
+                await viewModel.load()
+            }
         }
     }
 

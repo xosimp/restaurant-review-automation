@@ -35,9 +35,12 @@ struct HomeRecommendations: View {
     /// Keys answered in this session, so the card drops out without a
     /// reload.
     @State private var answered: Set<String> = []
-    /// The card whose hide is asking why (it was hidden before).
+    /// The card whose answer is asking why — its "Not for us", or a hide
+    /// on a card that was hidden before. Held apart from the dialog's own
+    /// flag so the answer still has the card after the dialog closes.
     @State private var askingWhy: HomeRecommendation?
-    @State private var reason = ""
+    @State private var askingWhyIsHide = false
+    @State private var showingWhy = false
     @State private var explaining: HomeRecommendation?
 
     var body: some View {
@@ -61,19 +64,15 @@ struct HomeRecommendations: View {
                     .transition(.opacity)
             }
         }
-        .alert("You\u{2019}ve hidden this before", isPresented: Binding(
-            get: { askingWhy != nil }, set: { if !$0 { askingWhy = nil } })) {
-            TextField("Why doesn\u{2019}t it fit?", text: $reason)
-            Button("Not for us") {
-                if let rec = askingWhy { submit(rec, kind: "not_for_us", reason: reason) }
-            }
-            Button("Just hide it") {
-                if let rec = askingWhy { submit(rec, kind: "recommendation", reason: nil) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Tell Cavnar AI why, so it stops suggesting it.")
-        }
+        // "Not for us" asks why — the six reasons, one tap. A hide on a
+        // card hidden before asks the same, with "Just hide it" beside them.
+        .recReasonDialog(isPresented: $showingWhy,
+                         title: askingWhyIsHide ? "You\u{2019}ve hidden this before \u{2014} why?"
+                                                : "Why isn\u{2019}t it for you?",
+                         message: "Tell Cavnar AI why, so it stops suggesting it.",
+                         skipLabel: askingWhyIsHide ? "Just hide it for two weeks" : nil,
+                         onSkip: askingWhyIsHide ? { answerWhy(kind: "recommendation", reason: nil) } : nil,
+                         onPick: { reason in answerWhy(kind: "not_for_us", reason: reason) })
         .alert("What else could explain it", isPresented: Binding(
             get: { explaining != nil }, set: { if !$0 { explaining = nil } })) {
             Button("OK", role: .cancel) {}
@@ -82,11 +81,21 @@ struct HomeRecommendations: View {
         }
     }
 
-    private func submit(_ rec: HomeRecommendation, kind: String, reason: String?) {
-        let why = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func askWhy(_ rec: HomeRecommendation, isHide: Bool) {
+        askingWhy = rec
+        askingWhyIsHide = isHide
+        showingWhy = true
+    }
+
+    private func answerWhy(kind: String, reason: RecReason?) {
+        guard let rec = askingWhy else { return }
+        askingWhy = nil
+        submit(rec, kind: kind, reasonCode: reason?.code)
+    }
+
+    private func submit(_ rec: HomeRecommendation, kind: String, reasonCode: String? = nil) {
         Task {
-            if let message = await viewModel.answer(rec, kind: kind,
-                                                    reason: (why?.isEmpty == false) ? why : nil) {
+            if let message = await viewModel.answer(rec, kind: kind, reasonCode: reasonCode) {
                 withAnimation { answered.insert(rec.key); toast = message }
             }
         }
@@ -244,6 +253,8 @@ struct HomeRecommendations: View {
                 Button {
                     Haptic.light()
                     explaining = rec
+                    // The owner opened the reasoning (#38).
+                    RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home")
                 } label: {
                     Text("Could also be…")
                         .font(.cavnarBody(13, weight: 600))
@@ -280,7 +291,11 @@ struct HomeRecommendations: View {
             ForEach(["done", "not_for_us"], id: \.self) { kind in
                 Button {
                     Haptic.light()
-                    submit(rec, kind: kind, reason: nil)
+                    if kind == "not_for_us" {
+                        askWhy(rec, isHide: false)
+                    } else {
+                        submit(rec, kind: kind)
+                    }
                 } label: {
                     Text(kind == "done" ? "Done" : "Not for us")
                         .font(.cavnarBody(12.5, weight: 600))
@@ -291,10 +306,9 @@ struct HomeRecommendations: View {
             Button {
                 Haptic.light()
                 if (rec.timesHidden ?? 0) >= 1 {
-                    reason = ""
-                    askingWhy = rec
+                    askWhy(rec, isHide: true)
                 } else {
-                    submit(rec, kind: "recommendation", reason: nil)
+                    submit(rec, kind: "recommendation")
                 }
             } label: {
                 Text("Hide")

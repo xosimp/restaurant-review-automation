@@ -9,10 +9,11 @@ import SwiftUI
 /// for every restaurant regardless of where they actually stood, which is
 /// exactly what read as "generic SEO advice" rather than a real roadmap.
 ///
-/// NOTE: dashboard.html's own renderAIVisibility (aiv-roadmap-cards) still
-/// shows the old static copy — this personalization is iOS-only so far.
-/// An owner comparing web and mobile side by side will see different text
-/// for the same restaurant until web gets the same treatment.
+/// The server now builds these cards (`roadmap` on the payload,
+/// client_api.ai_visibility_roadmap — same copy, order and done rules as
+/// the web) and keys each one, so the phone renders the server's cards
+/// with Done / Not for us under the open ones. The local builder below is
+/// only the fallback for an older server that sends no `roadmap`.
 private struct RoadmapCard: Identifiable {
     let id: String
     let color: Color
@@ -23,6 +24,9 @@ private struct RoadmapCard: Identifiable {
     let impact: String
     let done: Bool
     let action: () -> Void
+    /// The server card's rec_ledger key, and whether it can be answered.
+    var recKey: String? = nil
+    var answerable: Bool = false
 }
 
 struct AIVisibilitySection: View {
@@ -535,7 +539,7 @@ struct AIVisibilitySection: View {
         // roughly matches this card's own "2–3x per week" claim.
         let socialDone = (result.socialPosts30d ?? 0) >= 8
 
-        let cards: [RoadmapCard] = [
+        let localCards: [RoadmapCard] = [
             RoadmapCard(
                 id: "reviews", color: .cavnarAmber,
                 title: "Get more Google reviews",
@@ -581,10 +585,14 @@ struct AIVisibilitySection: View {
         // done ones, and within each group by impact tier — an actual
         // ranking driven by this restaurant's own computed state instead
         // of a static list order.
-        let sortedCards = cards.sorted { a, b in
+        // The server's cards when it sends them (already in its order); the
+        // local ones only for an older server.
+        let serverCards = (result.roadmap ?? []).map { serverCard($0, checklist: checklist) }
+        let cards = serverCards.isEmpty ? localCards : serverCards
+        let sortedCards = serverCards.isEmpty ? cards.sorted { a, b in
             if a.done != b.done { return !a.done }
             return impactRank(a.impact) < impactRank(b.impact)
-        }
+        } : serverCards
 
         let pointsLeft = cards.filter { !$0.done }.count
 
@@ -608,6 +616,36 @@ struct AIVisibilitySection: View {
                 }
             }
         }
+    }
+
+    /// One of the server's roadmap cards, drawn the way the local ones are:
+    /// its colour and its button are the phone's (where "Open GBP settings"
+    /// goes is a client decision), its words are the server's.
+    private func serverCard(_ card: AIVisibilityRoadmapCard, checklist: [AIVisibilityChecklistItem]) -> RoadmapCard {
+        let kind = card.key.split(separator: ":").last.map(String.init) ?? card.key
+        let color: Color
+        let action: () -> Void
+        switch kind {
+        case "reviews":
+            color = .cavnarAmber
+            action = { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "reviews" }
+        case "responses", "respond":
+            color = .cavnarGreen
+            action = { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "reviews" }
+        case "gbp":
+            color = .cavnarBlue
+            action = { withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist = true } }
+        default:
+            color = .cavnarEmber
+            action = { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = card.module ?? "marketing" }
+        }
+        // The GBP card's button opens the checklist on this screen, so its
+        // label says that rather than naming a settings page.
+        let label = kind == "gbp" ? "See what's missing" : (card.action ?? "Open")
+        return RoadmapCard(id: card.key, color: color, title: card.title, detail: card.detail ?? "",
+                           why: card.why ?? "", actionLabel: label, impact: card.impact ?? "",
+                           done: card.done, action: action,
+                           recKey: card.recKey ?? card.key, answerable: card.showsAnswers)
     }
 
     /// Ordinal for sorting the roadmap by urgency/payoff — matches the
@@ -748,6 +786,11 @@ struct AIVisibilitySection: View {
                         withTransaction(transaction) {
                             if isExpanded { expandedWhy.remove(card.id) } else { expandedWhy.insert(card.id) }
                         }
+                        // Opening a keyed card's reasoning is evidence
+                        // viewed (#38) — once per card per launch.
+                        if !isExpanded, card.recKey != nil {
+                            RecEvidenceLog.viewed(key: card.recKey, surface: "intel", module: "intel")
+                        }
                     } label: {
                         HStack(spacing: 3) {
                             Text("Why this matters")
@@ -757,6 +800,11 @@ struct AIVisibilitySection: View {
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                     }
+                }
+                // The server's open cards are recommendations like any
+                // other: Done / Not for us (Intel has nothing to Track).
+                if card.answerable, let key = card.recKey {
+                    RecAnswerRow(key: key, surface: "intel", module: "intel")
                 }
             }
             .animation(nil, value: isExpanded)

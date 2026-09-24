@@ -59,11 +59,10 @@ struct GoalRow: Decodable, Identifiable {
     }
 }
 
-struct ResultRow: Decodable, Identifiable {
-    let id: Int
-    let summary: String?
-    let verdict: String?
-
+/// "What your changes did" reads the full tracker row (RecOutcome) now —
+/// the result line, its attribution sentence and whether the owner has
+/// checked in on it — rather than the old summary-and-verdict pair.
+extension RecOutcome {
     var tone: Color {
         switch verdict {
         case "improved": return .cavnarGreen
@@ -161,7 +160,14 @@ struct CloseOutDraft: Encodable {
 final class HomeFollowThroughViewModel {
     var actions: [ActionItem] = []
     var goals: [GoalRow] = []
-    var results: [ResultRow] = []
+    /// The finished trackers with a sentence to show ("What your changes did").
+    var results: [RecOutcome] = []
+    /// Every tracker row /outcomes returned — the check-ins read these.
+    var outcomes: [RecOutcome] = []
+    /// Home's "one thing" (GET /cross-module → fix_first), when there is one.
+    var fixFirst: CrossModule.FixFirst?
+    /// GET /recs/what-worked?days=180 — nil until loaded or on an older server.
+    var whatWorked: WhatWorked?
     var closeOut: CloseOutEntry?
     var closeOutDate: String?
     var caveat: String?
@@ -190,13 +196,12 @@ final class HomeFollowThroughViewModel {
         self.client = client
     }
 
+    /// Results that have landed and wait on the owner's check-in (#21) —
+    /// at most two on Home; the rest wait in the recommendation record.
+    var checkInsDue: [RecOutcome] { Array(outcomes.filter(RecCheckIn.isDue).prefix(2)) }
+
     private struct ActionsResponse: Decodable { let ok: Bool; let items: [ActionItem] }
     private struct GoalsResponse: Decodable { let ok: Bool; let goals: [GoalRow] }
-    private struct OutcomesResponse: Decodable {
-        let ok: Bool
-        let outcomes: [ResultRow]
-        let caveat: String?
-    }
     private struct CloseOutResponse: Decodable {
         let ok: Bool
         let closeout: CloseOutEntry?
@@ -223,12 +228,45 @@ final class HomeFollowThroughViewModel {
             let noClearChange: Int?
             let biggest: Biggest?
             let caveat: String?
+            // Rec-ROI #1 / #14 / #34. `monthly` stays the improvements
+            // alone; the changes that got worse sit BESIDE it and
+            // `netMonthly` is the one less the other. All optional: an
+            // older server sends none of them.
+            let worsened: Worsened?
+            let netMonthly: Double?
+            let netNote: String?
+            let validatedMonthly: Double?
+            let validated: Int?
+            let faded: Int?
+            let cumulative: Cumulative?
             struct Biggest: Decodable { let title: String?; let monthly: Double?; let summary: String? }
+            struct Worsened: Decodable { let count: Int?; let monthly: Double? }
             enum CodingKeys: String, CodingKey {
                 case monthly, annual, wins, evaluated, biggest, caveat
                 case inFlight = "in_flight"
                 case unmeasurable
                 case noClearChange = "no_clear_change"
+                case worsened, validated, faded, cumulative
+                case netMonthly = "net_monthly"
+                case netNote = "net_note"
+                case validatedMonthly = "validated_monthly"
+            }
+        }
+        /// A SUM of measured days, net of what got worse — never a monthly
+        /// figure times months. `total` is null when no day has been
+        /// measured: nothing measured is not $0, and nothing is drawn.
+        struct Cumulative: Decodable {
+            let total: Double?
+            let gained: Double?
+            let lost: Double?
+            let since: String?
+            let until: String?
+            let days: Int?
+            let measuredDays: Int?
+            let basis: String?
+            enum CodingKeys: String, CodingKey {
+                case total, gained, lost, since, until, days, basis
+                case measuredDays = "measured_days"
             }
         }
         struct Avoided: Decodable {
@@ -309,15 +347,70 @@ final class HomeFollowThroughViewModel {
             let alternative: String?
             let notACause: String?
             let ask: String?
+            /// `link:<kind>:<subject>` — what Done / Not for us answer
+            /// (rec-ROI #26). Absent on an older server.
+            let recKey: String?
+            let answerable: Bool?
             var id: String { headline }
             enum CodingKeys: String, CodingKey {
-                case kind, headline, modules, evidence, alternative, ask
+                case kind, headline, modules, evidence, alternative, ask, answerable
                 case confirmBy = "confirm_by"
                 case notACause = "not_a_cause"
+                case recKey = "rec_key"
             }
+        }
+        /// "If you only do one thing" — business_intelligence.pick_one_thing:
+        /// always an action (the top driver's fix, a diagnosis's action, or
+        /// the replies that are owed), presented on `home` with its key.
+        struct FixFirst: Decodable, Equatable {
+            let key: String?
+            let what: String?
+            let why: String?
+            let modules: [String]?
+            let evidence: [String]?
+            let dollarsMonthly: Double?
+            let alternative: String?
+            let confirmBy: String?
+            let linkHeadline: String?
+            let recKey: String?
+            let answerable: Bool?
+            enum CodingKeys: String, CodingKey {
+                case key, what, why, modules, evidence, alternative, answerable
+                case dollarsMonthly = "dollars_monthly"
+                case confirmBy = "confirm_by"
+                case linkHeadline = "link_headline"
+                case recKey = "rec_key"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                key = try? c.decodeIfPresent(String.self, forKey: .key)
+                what = try? c.decodeIfPresent(String.self, forKey: .what)
+                why = try? c.decodeIfPresent(String.self, forKey: .why)
+                modules = try? c.decodeIfPresent([String].self, forKey: .modules)
+                evidence = try? c.decodeIfPresent([String].self, forKey: .evidence)
+                dollarsMonthly = try? c.decodeIfPresent(Double.self, forKey: .dollarsMonthly)
+                alternative = try? c.decodeIfPresent(String.self, forKey: .alternative)
+                confirmBy = try? c.decodeIfPresent(String.self, forKey: .confirmBy)
+                linkHeadline = try? c.decodeIfPresent(String.self, forKey: .linkHeadline)
+                recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+                answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+            }
+            /// The key its answer row posts — rec_key, else the pick's own key.
+            var answerKey: String? { recKey ?? key }
         }
         let ok: Bool
         let links: [Link]?
+        let fixFirst: FixFirst?
+        enum CodingKeys: String, CodingKey {
+            case ok, links
+            case fixFirst = "fix_first"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            links = try? c.decodeIfPresent([Link].self, forKey: .links)
+            fixFirst = try? c.decodeIfPresent(FixFirst.self, forKey: .fixFirst)
+        }
     }
 
     /// GET /mobile/api/good-news — records, streaks and complaints that
@@ -353,7 +446,16 @@ final class HomeFollowThroughViewModel {
             let type: String?
             let headline: String
             let alternative: String?
+            /// `loss:<week start>:<kind>:spike` (or `…:<approver>`) — the key
+            /// the concentration issue is filed under; presented on `home`.
+            let key: String?
+            let recKey: String?
+            let answerable: Bool?
             var id: String { headline }
+            enum CodingKeys: String, CodingKey {
+                case type, headline, alternative, key, answerable
+                case recKey = "rec_key"
+            }
         }
         let ok: Bool
         let available: Bool?
@@ -385,7 +487,11 @@ final class HomeFollowThroughViewModel {
         defer { isLoading = false }
         async let a: ActionsResponse? = try? client.send("/mobile/api/actions", hapticOnError: false)
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
-        async let o: OutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
+        async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
+        // 180 days: the server's default window and the monthly email's,
+        // so Home says the same sentences the owner was emailed.
+        async let ww: WhatWorked? = try? client.send("/mobile/api/recs/what-worked", query: ["days": "180"],
+                                                     hapticOnError: false)
         async let c: CloseOutResponse? = try? client.send("/mobile/api/closeout", hapticOnError: false)
         async let v: ValueSummary? = try? client.send("/mobile/api/value", hapticOnError: false)
         async let x: CrossModule? = try? client.send("/mobile/api/cross-module", hapticOnError: false)
@@ -395,14 +501,21 @@ final class HomeFollowThroughViewModel {
         async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
         actions = (await a)?.items ?? []
         goals = (await g)?.goals ?? []
-        let outcomes = await o
-        results = (outcomes?.outcomes ?? []).filter { $0.summary?.isEmpty == false }
-        caveat = outcomes?.caveat
+        let fetchedOutcomes = await o
+        outcomes = fetchedOutcomes?.outcomes ?? []
+        results = outcomes.filter { $0.summary?.isEmpty == false }
+        caveat = fetchedOutcomes?.caveat
+        whatWorked = await ww
         let close = await c
         closeOut = close?.closeout
         closeOutDate = close?.businessDate
         value = await v
-        links = (await x)?.links ?? []
+        let cross = await x
+        fixFirst = cross?.fixFirst.flatMap { ($0.what ?? "").isEmpty ? nil : $0 }
+        // The one thing owns a link it leads with — the same finding is
+        // never on the page twice (the web's renderConnections rule).
+        let owned = fixFirst.flatMap { $0.linkHeadline ?? $0.what }
+        links = (cross?.links ?? []).filter { $0.headline != owned }
         let news = await n
         goodNews = news?.items ?? []
         goodNewsCaveat = news?.caveat
@@ -435,12 +548,24 @@ final class HomeFollowThroughViewModel {
         let outcome: Outcome?
         let warning: String?
         let error: String?
+        /// Exactly one of these (API_REFERENCE → Tracker-start replies).
+        let tracker: RecTracker?
+        let trackerRefused: RecTrackerRefused?
+        enum CodingKeys: String, CodingKey {
+            case ok, outcome, warning, error, tracker
+            case trackerRefused = "tracker_refused"
+        }
     }
 
     /// Start measuring a recommendation. The baseline is taken server-side
     /// at the moment this posts — nothing about the card's own numbers is
     /// sent, so the measurement cannot inherit a stale figure off the
     /// screen. Same contract as the web's hbTrack.
+    ///
+    /// The line it returns says what is measured until when ("Measuring
+    /// labor % until 10/21/26"), or — when another change is already being
+    /// measured on the same number — the server's reason nothing started.
+    /// Either way the answer was recorded as taken.
     @discardableResult
     func track(_ rec: HomeRecommendation) async -> String? {
         guard let metric = rec.metric else { return nil }
@@ -457,7 +582,10 @@ final class HomeFollowThroughViewModel {
             tracked.insert(rec.key)
             await Haptic.success()
             await load()
-            if let warning = r.warning { return warning }
+            if let refused = RecTrackerNote.line(tracker: nil, refused: r.trackerRefused) { return refused }
+            let line = RecTrackerNote.line(tracker: r.tracker, refused: nil)
+            if let warning = r.warning { return [line, warning].compactMap { $0 }.joined(separator: ". ") }
+            if let line { return line }
             if let on = r.outcome?.evaluateOn { return "Measuring from today — result on \(CavnarDate.mdy(on))" }
             return "Measuring from today"
         } catch let error as APIClient.APIError {
@@ -475,6 +603,13 @@ final class HomeFollowThroughViewModel {
         let title: String?
         let metric: String?
         var reason: String? = nil
+        /// The one-tap why (RecReason) — rec_ledger.REASON_CODES.
+        var reasonCode: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case key, kind, title, metric, reason
+            case reasonCode = "reason_code"
+        }
     }
 
     /// "Done", "Not for us" or "Hide" (kind "recommendation") on a
@@ -483,26 +618,40 @@ final class HomeFollowThroughViewModel {
     /// Every answer reaches rec_ledger server-side, so it holds on the
     /// brief, the emails and the queue too. Returns a line for the
     /// confirmation.
-    func answer(_ rec: HomeRecommendation, kind: String, reason: String? = nil) async -> String? {
+    func answer(_ rec: HomeRecommendation, kind: String, reason: String? = nil,
+                reasonCode: String? = nil) async -> String? {
         struct Resp: Decodable {
             struct Outcome: Decodable {
                 let evaluateOn: String?
                 enum CodingKeys: String, CodingKey { case evaluateOn = "evaluate_on" }
             }
             let ok: Bool; let outcome: Outcome?; let error: String?
+            let tracker: RecTracker?
+            let trackerRefused: RecTrackerRefused?
+            enum CodingKeys: String, CodingKey {
+                case ok, outcome, error, tracker
+                case trackerRefused = "tracker_refused"
+            }
         }
         do {
             let r: Resp = try await client.send(
                 "/mobile/api/home/dismiss", method: .post,
                 body: DismissBody(key: rec.key, kind: kind,
-                                  title: (kind == "done" || reason != nil) ? rec.title : nil,
+                                  title: (kind == "done" || reason != nil || reasonCode != nil) ? rec.title : nil,
                                   metric: kind == "done" ? rec.metric : nil,
-                                  reason: reason),
+                                  reason: reason, reasonCode: reasonCode),
                 retryTransient: false)
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
             await Haptic.success()
-            if kind == "done", let on = r.outcome?.evaluateOn {
-                return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
+            if kind == "done" {
+                // What Done started measuring, or why nothing did (another
+                // change already on the same number).
+                if let line = RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused) {
+                    return "Marked done \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
+                }
+                if let on = r.outcome?.evaluateOn {
+                    return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
+                }
             }
             switch kind {
             case "done": return "Marked done"
@@ -514,13 +663,16 @@ final class HomeFollowThroughViewModel {
 
     /// Not today (kind "snooze") or hide (kind "recommendation") on a
     /// Needs-attention item — the same answer, through the same route, as a
-    /// recommendation. Never offered for a critical item.
+    /// recommendation. Never offered for a critical item. A second hide
+    /// asks why, and that answer arrives as not_for_us with its reason code.
     @discardableResult
-    func answerAttention(_ item: NeedsAttentionItem, kind: String, reason: String? = nil) async -> Bool {
+    func answerAttention(_ item: NeedsAttentionItem, kind: String, reason: String? = nil,
+                         reasonCode: String? = nil) async -> Bool {
         let r: OKResponse? = try? await client.send(
             "/mobile/api/home/dismiss", method: .post,
             body: DismissBody(key: item.recKey ?? item.type, kind: kind,
-                              title: reason != nil ? item.title : nil, metric: nil, reason: reason),
+                              title: (reason != nil || reasonCode != nil) ? item.title : nil, metric: nil,
+                              reason: reason, reasonCode: reasonCode),
             retryTransient: false)
         if r?.ok == true { await Haptic.success() }
         return r?.ok == true
@@ -565,14 +717,18 @@ final class HomeFollowThroughViewModel {
     /// then the recommendation is recorded as completed.
     func reprice(_ rec: HomeRecommendation) async -> String? {
         guard let a = rec.action, a.kind == "reprice", let dish = a.dish, let price = a.price else { return nil }
-        let r: OKResponse? = try? await client.send(
+        let r: RepriceApplyResult? = try? await client.send(
             "/mobile/api/food-cost/reprice/apply", method: .post,
             body: RepriceBody(dish: dish, price: price), retryTransient: false)
-        guard r?.ok == true else { errorMessage = "Couldn\u{2019}t reprice that."; return nil }
+        guard let r, r.ok else { errorMessage = "Couldn\u{2019}t reprice that."; return nil }
         _ = try? await client.send("/mobile/api/recs/event", method: .post,
                                    body: RecEventBody(key: rec.key, event: "completed", surface: "home"),
                                    hapticOnError: false) as OKResponse
         await Haptic.success()
+        // What the new price is measured on until when, or why nothing is.
+        if let line = RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused) {
+            return "\(dish) repriced \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
+        }
         return "\(dish) repriced"
     }
 
@@ -658,6 +814,10 @@ struct HomeFollowThrough: View {
     var homeLoadedAt: Date? = nil
     var onOpenModule: (String) -> Void
 
+    /// The recommendation record (RecommendationHistoryView), opened from
+    /// "What your changes did" and from the worth card.
+    @State private var showingRecord = false
+
     private var hasAnything: Bool {
         !viewModel.actions.isEmpty || !viewModel.goals.isEmpty || !viewModel.results.isEmpty
     }
@@ -686,21 +846,33 @@ struct HomeFollowThrough: View {
                 .cavnarCard()
             }
 
-            if !viewModel.results.isEmpty {
+            if !viewModel.results.isEmpty || !viewModel.checkInsDue.isEmpty {
                 HomeSectionHeader(kicker: "Measured", title: "What your changes did")
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, r in
-                        lineRow(r.summary ?? "", tone: r.tone, showsDivider: index < viewModel.results.count - 1)
+                if !viewModel.results.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, r in
+                            resultRow(r, showsDivider: index < viewModel.results.count - 1)
+                        }
+                        if let caveat = viewModel.caveat {
+                            CavnarCaveat(title: "Before and after, not proof", detail: caveat)
+                                .padding(.top, 10)
+                        }
+                        recordLink.padding(.top, 10)
                     }
-                    if let caveat = viewModel.caveat {
-                        CavnarCaveat(title: "Before and after, not proof", detail: caveat)
-                            .padding(.top, 10)
-                    }
+                    .cavnarCard()
                 }
-                .cavnarCard()
+                // A result that landed asks whether the owner made the
+                // change — the answer changes how the result reads.
+                ForEach(viewModel.checkInsDue) { outcome in
+                    RecCheckInCard(outcome: outcome, surface: "home") { await viewModel.load() }
+                }
             }
 
             goodNewsCard
+
+            if let worked = viewModel.whatWorked {
+                WhatWorkedCard(whatWorked: worked)
+            }
 
             valueCard
 
@@ -721,6 +893,46 @@ struct HomeFollowThrough: View {
         .task(id: homeLoadedAt) {
             guard homeLoadedAt != nil else { return }
             await viewModel.load()
+        }
+        .sheet(isPresented: $showingRecord, onDismiss: { Task { await viewModel.load() } }) {
+            RecommendationHistoryView()
+        }
+    }
+
+    /// "What you followed →" — the owner's recommendation record.
+    private var recordLink: some View {
+        Button {
+            Haptic.light()
+            showingRecord = true
+        } label: {
+            Text("What you followed \u{2192}")
+                .font(.cavnarBody(13, weight: 700))
+                .foregroundStyle(Color.cavnarEmber2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens every recommendation, what you did about it, and what it did")
+    }
+
+    /// One result: its line, and under it what the result can honestly be
+    /// credited with (the attribution sentence) — never a claim of cause.
+    private func resultRow(_ r: RecOutcome, showsDivider: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                Circle().fill(r.tone).frame(width: 8, height: 8).padding(.top, 6)
+                VStack(alignment: .leading, spacing: 3) {
+                    HomeMixedText.make(r.summary ?? r.resultLine ?? "", size: 14.5, weight: 500, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let label = r.attributionLabel, !label.isEmpty {
+                        HomeMixedText.make(label, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 11)
+            if showsDivider {
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+            }
         }
     }
 
@@ -793,6 +1005,12 @@ struct HomeFollowThrough: View {
                                                color: .cavnarInk3)
                                 .padding(.leading, 20)
                         }
+                        // Done / Not for us — the key the concentration
+                        // issue is filed under, presented on Home.
+                        if flag.answerable == true, let key = flag.recKey ?? flag.key {
+                            RecAnswerRow(key: key, surface: "home", module: "ops")
+                                .padding(.leading, 20)
+                        }
                         if index < viewModel.lossFlags.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                         }
@@ -858,6 +1076,10 @@ struct HomeFollowThrough: View {
                         }
                         HomeAskLink(question: link.ask ?? "Tell me more about this: \(link.headline)")
                             .padding(.leading, 20)
+                        if link.answerable == true, let key = link.recKey {
+                            RecAnswerRow(key: key, surface: "home", module: "home")
+                                .padding(.leading, 20)
+                        }
                         if index < viewModel.links.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                         }
@@ -875,7 +1097,8 @@ struct HomeFollowThrough: View {
     @ViewBuilder
     private var valueCard: some View {
         if let v = viewModel.value, let d = v.delivered,
-           (d.wins ?? 0) > 0 || (d.inFlight ?? 0) > 0
+           (d.wins ?? 0) > 0 || (d.inFlight ?? 0) > 0 || (d.worsened?.count ?? 0) > 0
+            || d.cumulative?.total != nil
             || (v.avoided?.hours ?? 0) > 0 || (v.opportunity?.monthly ?? 0) > 0 {
             HomeSectionHeader(kicker: "Worth", title: "What Cavnar AI has been worth")
             VStack(alignment: .leading, spacing: 0) {
@@ -886,6 +1109,24 @@ struct HomeFollowThrough: View {
                     }
                 } else {
                     lineRow(Self.nothingMeasuredLine(d), tone: .cavnarInk3, showsDivider: true)
+                }
+                // What got worse sits BESIDE the improvements, never folded
+                // into them (rec-ROI #1); the server's own sentence says so
+                // when the net is below zero.
+                if let net = RecValueFormat.netLine(d) {
+                    lineRow(net, tone: (d.netMonthly ?? 0) < 0 ? .cavnarRed : .cavnarInk3, showsDivider: true)
+                }
+                if let note = RecValueFormat.netNote(d) {
+                    lineRow(note, tone: .cavnarRed, showsDivider: true)
+                }
+                if let counts = RecValueFormat.countsLine(d) {
+                    lineRow(counts, tone: .cavnarInk3, showsDivider: true)
+                }
+                // A sum of measured days — drawn only when a day has been
+                // measured (total null is "nothing yet", never $0).
+                if let cumulative = RecValueFormat.cumulativeLine(d.cumulative) {
+                    lineRow(cumulative, tone: (d.cumulative?.total ?? 0) < 0 ? .cavnarRed : .cavnarGreen,
+                            showsDivider: true)
                 }
                 if let denom = Self.denominatorLine(d) {
                     lineRow(denom, tone: .cavnarInk3, showsDivider: true)
@@ -919,6 +1160,7 @@ struct HomeFollowThrough: View {
                         }
                     }
                 }
+                recordLink.padding(.top, 12)
             }
             .cavnarCard()
         }

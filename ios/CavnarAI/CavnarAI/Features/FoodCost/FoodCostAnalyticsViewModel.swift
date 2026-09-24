@@ -17,6 +17,8 @@ final class FoodCostAnalyticsViewModel {
     /// Dish → the price the server confirmed it set. Replaces the card's
     /// buttons with "Set to $X.XX"; the next load leaves the dish out.
     var repriceApplied: [String: Double] = [:]
+    /// Dish → "Measuring food cost % until 10/21/26", or why nothing is.
+    var repriceTracking: [String: String] = [:]
     /// Dishes the owner said "Not for us" to (the row confirms in place).
     var repriceDismissed: Set<String> = []
     var repriceBusy: Set<String> = []
@@ -102,6 +104,7 @@ final class FoodCostAnalyticsViewModel {
         // dish starts clean.
         let live = Set(repriceSuggestions.map(\.dish))
         repriceApplied = repriceApplied.filter { live.contains($0.key) }
+        repriceTracking = repriceTracking.filter { live.contains($0.key) }
         repriceDismissed = repriceDismissed.intersection(live)
         repriceErrors = [:]
     }
@@ -137,6 +140,7 @@ final class FoodCostAnalyticsViewModel {
             if r.ok {
                 Haptic.success()
                 repriceApplied[s.dish] = r.price ?? price
+                repriceTracking[s.dish] = RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused)
             } else {
                 repriceErrors[s.dish] = r.error ?? "Couldn\u{2019}t set that price."
             }

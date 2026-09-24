@@ -65,8 +65,54 @@ struct AIVisibilityChecklistItem: Decodable, Identifiable {
     }
 }
 
+/// One card of the server-built AI-visibility roadmap
+/// (`client_api.ai_visibility_roadmap`): the same four cards, order and done
+/// rules as the web, each keyed (`aiv_roadmap:<kind>`) and presented on
+/// `intel` while open — so the phone answers the same recommendation the
+/// web does instead of drawing its own copy of it (rec-ROI #41).
+struct AIVisibilityRoadmapCard: Decodable, Identifiable, Equatable {
+    let key: String
+    let recKey: String?
+    let title: String
+    let why: String?
+    let detail: String?
+    let action: String?
+    let impact: String?
+    let module: String?
+    let done: Bool
+    let answered: Bool?
+    let answerable: Bool?
+    var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, title, why, detail, action, impact, module, done, answered, answerable
+        case recKey = "rec_key"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+        title = try c.decode(String.self, forKey: .title)
+        why = try? c.decodeIfPresent(String.self, forKey: .why)
+        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+        action = try? c.decodeIfPresent(String.self, forKey: .action)
+        impact = try? c.decodeIfPresent(String.self, forKey: .impact)
+        module = try? c.decodeIfPresent(String.self, forKey: .module)
+        done = (try? c.decodeIfPresent(Bool.self, forKey: .done)) ?? false
+        answered = try? c.decodeIfPresent(Bool.self, forKey: .answered)
+        answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+    }
+
+    /// Done / Not for us under an open card the owner hasn't answered.
+    var showsAnswers: Bool { !done && answerable == true && answered != true }
+}
+
 struct AIVisibilityResult: Decodable {
     let ok: Bool
+    /// The server's roadmap (newer servers). Nil on an older one, which
+    /// keeps the locally built cards.
+    var roadmap: [AIVisibilityRoadmapCard]? = nil
     let restaurantName: String?
     let queries: [AIVisibilityQuery]?
     let appearedCount: Int?
@@ -150,7 +196,7 @@ struct AIVisibilityResult: Decodable {
     let error: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, queries, checklist, partial, city
+        case ok, error, queries, checklist, partial, city, roadmap
         case restaurantName = "restaurant_name"
         case appearedCount = "appeared_count"
         case totalQueries = "total_queries"

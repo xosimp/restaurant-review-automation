@@ -13,6 +13,9 @@ struct ScheduleReviewPanel: View {
     let result: GeneratedSchedule
 
     @State private var showingAllLines = false
+    /// The overtime move whose "Not for us" is asking why.
+    @State private var decliningMove: OvertimeMove?
+    @State private var showingDeclineWhy = false
 
     private var review: ScheduleReview? { result.review }
     private var pending: [(String, [String])] {
@@ -212,13 +215,34 @@ struct ScheduleReviewPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HomeMixedText.make(moveLine(move), size: 13.5, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Move to \(move.candidate.employee)") {
-                        Task { await viewModel.applyOvertimeMove(move) }
+                    HStack(spacing: 16) {
+                        Button("Move to \(move.candidate.employee)") {
+                            Task { await viewModel.applyOvertimeMove(move) }
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .disabled(viewModel.isRescoringQuality)
+                        // The move is a recommendation: the tap above is
+                        // its yes, this is its no (with the one-tap why).
+                        if move.showsNotForUs {
+                            Button {
+                                Haptic.light()
+                                decliningMove = move
+                                showingDeclineWhy = true
+                            } label: {
+                                Text("Not for us")
+                                    .font(.cavnarBody(12.5, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    .disabled(viewModel.isRescoringQuality)
                 }
             }
+        }
+        .recReasonDialog(isPresented: $showingDeclineWhy) { reason in
+            guard let move = decliningMove else { return }
+            decliningMove = nil
+            Task { await viewModel.declineOvertimeMove(move, reason: reason) }
         }
     }
 

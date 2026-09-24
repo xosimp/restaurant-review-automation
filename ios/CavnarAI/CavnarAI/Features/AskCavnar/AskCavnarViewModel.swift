@@ -17,6 +17,14 @@ struct ChatMessage: Identifiable {
     /// model was handed. Nil on the owner's own turns and on older stored
     /// messages, which predate the backend sending it.
     var evidence: AskEvidence?
+    /// The answer's server id — what "Was this useful?" rates (POST
+    /// /ask-cavnar/feedback). Nil on the owner's turns and older servers.
+    var messageId: Int? = nil
+    /// The answer's concrete suggestions, each a keyed recommendation the
+    /// owner can answer (Done / Not for us). Live answers only.
+    var suggestions: [AskSuggestion] = []
+    /// The owner's rating of this answer, once given (true = useful).
+    var rating: Bool? = nil
     /// Set once this message's typewriter reveal has actually played. The
     /// view model (not the view) owns this because the view's own @State is
     /// torn down every time the screen goes away — without a model-level
@@ -40,6 +48,25 @@ struct ChatMessage: Identifiable {
         if label.hasSuffix("]") { label.removeLast() }
         return (verb, label)
     }
+}
+
+/// One of an answer's own suggestions — a list item that starts with an
+/// imperative verb and carries no untraced figure (ask_cavnar
+/// .extract_suggestions, no second model call), keyed and presented on
+/// `ask` (rec-ROI #48). An answered one is left out server-side.
+struct AskSuggestion: Decodable, Hashable, Identifiable, Sendable {
+    let text: String
+    let recKey: String
+    let answerable: Bool?
+    var id: String { recKey }
+
+    enum CodingKeys: String, CodingKey {
+        case text, answerable
+        case recKey = "rec_key"
+    }
+
+    /// Done / Not for us apply (the server sends answerable: true).
+    var showsAnswers: Bool { answerable != false && !recKey.isEmpty }
 }
 
 /// The provenance of one answer.
@@ -275,12 +302,15 @@ final class AskCavnarViewModel {
         let modulesConsulted: [String]?
         let confidence: String?
         let unverifiedFigures: [String]?
+        let messageId: Int?
+        let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
-            case ok, answer, error, truncated, proposals, confidence
+            case ok, answer, error, truncated, proposals, confidence, suggestions
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
+            case messageId = "message_id"
         }
 
         var evidence: AskEvidence {
@@ -297,6 +327,9 @@ final class AskCavnarViewModel {
         let conversation_id: Int?
         let proposal_id: Int?
         let reason: String?
+        /// The one-tap why on "Not now" (RecReason) — same six codes as
+        /// every other Not for us.
+        var reason_code: String? = nil
     }
 
     private typealias PlainOK = APIClient.OKResponse
@@ -327,6 +360,7 @@ final class AskCavnarViewModel {
     }
 
     private struct StoredMessage: Decodable {
+        let id: Int?
         let role: String
         let content: String
         let proposals: [AskProposal]?
@@ -404,7 +438,10 @@ final class AskCavnarViewModel {
             guard response.ok else { return }
             let stored = response.messages ?? []
             messages = stored.map { m in
-                ChatMessage(text: m.content, isUser: m.role == "user", hasRevealed: true)
+                // A reopened answer can still be rated ("Was this useful?");
+                // its suggestions are not re-offered, like its proposals.
+                ChatMessage(text: m.content, isUser: m.role == "user",
+                            messageId: m.role == "assistant" ? m.id : nil, hasRevealed: true)
             }
             conversationId = conversation.id
             wantsNewConversation = false
@@ -536,25 +573,54 @@ final class AskCavnarViewModel {
         return false
     }
 
-    /// "Not now", with the owner's optional reason — Ask reads it before
-    /// proposing the same thing again.
-    func dismiss(_ proposal: AskProposal, reason: String? = nil) async {
-        await record(proposal, outcome: "dismissed", reason: reason)
+    /// "Not now", with the owner's one-tap reason — Ask reads it before
+    /// proposing the same thing again. The reason's owner wording also rides
+    /// as the free-text `reason`, so the transcript line the model reads
+    /// says why ("[Dismissed: Email Fresh Co — Too costly]").
+    func dismiss(_ proposal: AskProposal, reason: String? = nil, reasonCode: RecReason? = nil) async {
+        await record(proposal, outcome: "dismissed", reason: reason ?? reasonCode?.label,
+                     reasonCode: reasonCode?.code)
     }
 
-    private func record(_ proposal: AskProposal, outcome: String, reason: String? = nil) async {
+    private func record(_ proposal: AskProposal, outcome: String, reason: String? = nil,
+                        reasonCode: String? = nil) async {
         let why = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanReason = (why?.isEmpty ?? true) ? nil : String(why!.prefix(300))
         let _: PlainOK? = try? await client.send(
             "/mobile/api/ask-cavnar/action", method: .post,
             body: ActionOutcomeBody(action: proposal.action, outcome: outcome,
                                     summary: proposal.summary, conversation_id: conversationId,
-                                    proposal_id: proposal.proposalId, reason: cleanReason))
+                                    proposal_id: proposal.proposalId, reason: cleanReason,
+                                    reason_code: outcome == "dismissed" ? reasonCode : nil))
         // The status line the backend just wrote — mirrored locally so the
         // transcript on screen matches what a reopen would show.
         let verb = outcome == "confirmed" ? "Confirmed" : "Dismissed"
         let tail = cleanReason.map { " — \($0)" } ?? ""
         messages.append(ChatMessage(text: "[\(verb): \(proposal.summary)\(tail)]", isUser: true, hasRevealed: true))
+    }
+
+    struct FeedbackBody: Encodable, Equatable {
+        let message_id: Int
+        let helpful: Bool
+    }
+
+    /// "Was this useful?" — POST /ask-cavnar/feedback {message_id, helpful}.
+    /// Rating the same answer again replaces the rating server-side. The
+    /// rating is shown once the server has it; a failure leaves the
+    /// question up to be asked again.
+    @discardableResult
+    func rate(_ message: ChatMessage, helpful: Bool) async -> Bool {
+        guard let messageId = message.messageId else { return false }
+        let r: PlainOK? = try? await client.send(
+            "/mobile/api/ask-cavnar/feedback", method: .post,
+            body: FeedbackBody(message_id: messageId, helpful: helpful),
+            hapticOnError: false, retryTransient: false)
+        guard r?.ok == true else { return false }
+        if let idx = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[idx].rating = helpful
+        }
+        Haptic.success()
+        return true
     }
 
     /// Marks an answer as having already played its typewriter reveal, so
@@ -627,7 +693,9 @@ final class AskCavnarViewModel {
                 if response.ok { adopt(conversationId: response.conversationId) }
                 appendAnswer(from: response.ok ? (response.answer ?? "") : (response.error ?? "Something went wrong."),
                             truncated: response.truncated == true, proposals: response.proposals ?? [],
-                            evidence: response.ok ? response.evidence : nil)
+                            evidence: response.ok ? response.evidence : nil,
+                            messageId: response.ok ? response.messageId : nil,
+                            suggestions: response.ok ? (response.suggestions ?? []) : [])
             } catch is CancellationError {
                 if messages.last?.isUser == true { messages.removeLast() }
                 question = asked
@@ -691,7 +759,8 @@ final class AskCavnarViewModel {
                 gotAnswer = true
                 adopt(conversationId: event.conversationId)
                 appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,
-                            proposals: event.proposals ?? [], evidence: event.evidence)
+                            proposals: event.proposals ?? [], evidence: event.evidence,
+                            messageId: event.messageId, suggestions: event.suggestions ?? [])
             case "error":
                 gotAnswer = true
                 appendAnswer(from: event.error ?? "Something went wrong.", truncated: false,
@@ -711,7 +780,8 @@ final class AskCavnarViewModel {
     }
 
     private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal],
-                              evidence: AskEvidence?) {
+                              evidence: AskEvidence?, messageId: Int? = nil,
+                              suggestions: [AskSuggestion] = []) {
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
             ? "I didn't get an answer back that time — mind asking again?"
@@ -720,7 +790,8 @@ final class AskCavnarViewModel {
         // rather than reaching into the struct to decide whether to draw.
         let ev = (evidence?.isEmpty == false) ? evidence : nil
         messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated,
-                                    proposals: proposals, evidence: ev))
+                                    proposals: proposals, evidence: ev, messageId: messageId,
+                                    suggestions: suggestions.filter(\.showsAnswers)))
     }
 }
 

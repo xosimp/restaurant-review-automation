@@ -316,6 +316,14 @@ struct DailyReportView: View {
                                         }
                                     }
                                 }
+                                // Done / Not for us / Track, as on the web
+                                // (rec-ROI #9). An answered action keeps its
+                                // line — the report is a record — and drops
+                                // the controls.
+                                if action.showsAnswers, let key = action.answerKey {
+                                    RecAnswerRow(key: key, surface: "dsr", module: action.answerModule)
+                                        .padding(.top, 2)
+                                }
                             }
                             Spacer(minLength: 0)
                         }

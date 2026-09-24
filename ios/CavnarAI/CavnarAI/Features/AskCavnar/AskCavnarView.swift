@@ -594,6 +594,16 @@ private struct ChatBubble: View {
                         ProposalCard(proposal: proposal, viewModel: viewModel)
                             .padding(.top, 10)
                     }
+                    // The answer's own concrete advice, keyed — each one
+                    // answerable like any recommendation (#48).
+                    if !message.suggestions.isEmpty {
+                        AskSuggestionsBlock(suggestions: message.suggestions)
+                            .padding(.top, 10)
+                    }
+                    if message.messageId != nil {
+                        AskFeedbackRow(message: message, viewModel: viewModel)
+                            .padding(.top, 8)
+                    }
                 }
             }
             .padding(.horizontal, 15)
@@ -757,6 +767,72 @@ private struct LoadingBubble: View {
 }
 
 
+/// "Worth doing" — the answer's own list items that start with a verb and
+/// carry no untraced figure, each with Done / Not for us (surface `ask`).
+private struct AskSuggestionsBlock: View {
+    let suggestions: [AskSuggestion]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WORTH DOING")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            ForEach(suggestions) { s in
+                VStack(alignment: .leading, spacing: 4) {
+                    HomeMixedText.make(s.text, size: 14, weight: 600, color: .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    RecAnswerRow(key: s.recKey, surface: "ask", module: "ask")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.cavnarEmber.opacity(0.06), in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+            .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1))
+    }
+}
+
+/// "Was this useful?" Yes / No under an answer — POST /ask-cavnar/feedback
+/// with its message_id. Once rated, a quiet line says so; rating again
+/// isn't offered on the phone (the server would replace it).
+private struct AskFeedbackRow: View {
+    let message: ChatMessage
+    var viewModel: AskCavnarViewModel?
+    @State private var busy = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let rating = message.rating {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+                Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} Cavnar AI will do better")
+                    .font(.cavnarBody(12.5, weight: 500))
+            } else {
+                Text("Was this useful?")
+                    .font(.cavnarBody(12.5, weight: 600))
+                ForEach([true, false], id: \.self) { helpful in
+                    Button {
+                        Haptic.light()
+                        busy = true
+                        Task {
+                            _ = await viewModel?.rate(message, helpful: helpful)
+                            busy = false
+                        }
+                    } label: {
+                        Text(helpful ? "Yes" : "No")
+                    }
+                    .buttonStyle(RecAnswerPillStyle())
+                    .disabled(busy)
+                }
+            }
+        }
+        .foregroundStyle(Color.cavnarInk3)
+        .opacity(busy ? 0.6 : 1)
+        .animation(.easeOut(duration: 0.2), value: message.rating)
+    }
+}
+
 /// A proposed action, awaiting the owner's tap.
 ///
 /// The assistant can compose and explain an action but never perform one
@@ -772,9 +848,9 @@ private struct ProposalCard: View {
     private enum Phase { case pending, working, done, failed, uncertain }
     /// Why the last Confirm didn't go through, in the server's words.
     @State private var failure: String?
-    /// "Not now" opens an optional reason field before it dismisses.
+    /// "Not now" asks why first — the six one-tap reasons every Not for us
+    /// uses, or "Just not now" — before it dismisses.
     @State private var askingWhy = false
-    @State private var reason = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -859,28 +935,6 @@ private struct ProposalCard: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if askingWhy {
-                    HStack(spacing: 8) {
-                        TextField("Why not? (optional)", text: $reason)
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk)
-                            .padding(.horizontal, 10).padding(.vertical, 7)
-                            .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
-                            .submitLabel(.done)
-                            .onSubmit { dismissNow() }
-                        Button { dismissNow() } label: {
-                            Text("Dismiss")
-                                .font(.cavnarBody(14, weight: 600))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .padding(.horizontal, 14).padding(.vertical, 8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: CavnarRadius.control)
-                                        .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
                 if phase == .failed || phase == .uncertain {
                     Text(failure ?? "That didn't go through — try again.")
                         .font(.cavnarBody(13))
@@ -897,12 +951,15 @@ private struct ProposalCard: View {
                 .strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        .recReasonDialog(isPresented: $askingWhy, title: "Why not now?",
+                         message: "Cavnar AI reads this before proposing it again.",
+                         skipLabel: "Just not now",
+                         onSkip: { dismissNow(nil) },
+                         onPick: { reason in dismissNow(reason) })
     }
 
-    private func dismissNow() {
-        let why = reason
-        askingWhy = false
+    private func dismissNow(_ reason: RecReason?) {
         phase = .done
-        Task { await viewModel?.dismiss(proposal, reason: why) }
+        Task { await viewModel?.dismiss(proposal, reasonCode: reason) }
     }
 }

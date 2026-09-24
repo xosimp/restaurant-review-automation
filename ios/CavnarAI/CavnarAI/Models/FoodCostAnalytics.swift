@@ -569,12 +569,17 @@ struct RepriceApplyResult: Decodable {
     /// True when an outcome tracker started for this change.
     let tracked: Bool?
     let error: String?
+    /// What the new price is measured on until when, or why nothing is
+    /// (API_REFERENCE → Tracker-start replies). Optional: older servers.
+    var tracker: RecTracker? = nil
+    var trackerRefused: RecTrackerRefused? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, dish, price, tracked, error
+        case ok, dish, price, tracked, error, tracker
         case menuItemId = "menu_item_id"
         case oldPrice = "old_price"
         case suggestedPrice = "suggested_price"
         case recKey = "rec_key"
+        case trackerRefused = "tracker_refused"
     }
 }

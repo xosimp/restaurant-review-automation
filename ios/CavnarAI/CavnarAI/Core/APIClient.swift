@@ -410,12 +410,17 @@ actor APIClient {
         let modulesConsulted: [String]?
         let confidence: String?
         let unverifiedFigures: [String]?
+        /// The answer's id — what "Was this useful?" rates.
+        let messageId: Int?
+        /// The answer's own concrete suggestions, keyed (`ask_tip:<hash>`).
+        let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
-            case type, label, state, answer, truncated, proposals, error, confidence
+            case type, label, state, answer, truncated, proposals, error, confidence, suggestions
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
+            case messageId = "message_id"
         }
 
         var evidence: AskEvidence {

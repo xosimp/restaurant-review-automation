@@ -785,17 +785,59 @@ struct StandbyDay: Codable, Identifiable, Equatable {
     let day: String?
     let chanceOfANoShow: Double?
     let standby: Person?
+    /// `standby:<date>:<name>` — presented on `schedule_review` when the
+    /// draft is delivered. `answerable` is false: "Ask <name>" is its answer
+    /// (standby/ask records it), so no Done / Not for us is drawn.
+    var recKey: String? = nil
+    var answerable: Bool? = nil
     var id: String { date }
     enum CodingKeys: String, CodingKey {
-        case date, day, standby
+        case date, day, standby, answerable
         case chanceOfANoShow = "chance_of_a_no_show"
+        case recKey = "rec_key"
+    }
+}
+
+/// One `overtime_forecast[]` item of a delivered draft — decoded leniently
+/// (every field optional) because an item without a named candidate is
+/// valid and must never fail the whole schedule. The ones with a candidate
+/// carry `rec_key` (`overtime_move:<employee>:<date>`) and `answerable`.
+struct OvertimeForecastItem: Codable, Equatable {
+    let employee: String?
+    let hours: Double?
+    let over: Double?
+    let text: String?
+    let candidate: OvertimeMove.Candidate?
+    let recKey: String?
+    let answerable: Bool?
+    enum CodingKeys: String, CodingKey {
+        case employee, hours, over, text, candidate, answerable
+        case recKey = "rec_key"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        employee = try? c.decodeIfPresent(String.self, forKey: .employee)
+        hours = try? c.decodeIfPresent(Double.self, forKey: .hours)
+        over = try? c.decodeIfPresent(Double.self, forKey: .over)
+        text = try? c.decodeIfPresent(String.self, forKey: .text)
+        candidate = try? c.decodeIfPresent(OvertimeMove.Candidate.self, forKey: .candidate)
+        recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+        answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+    }
+
+    /// The same move the violations check returns, when this item names one.
+    var move: OvertimeMove? {
+        guard let employee, let candidate else { return nil }
+        return OvertimeMove(employee: employee, hours: hours, over: over, text: text,
+                            candidate: candidate, recKey: recKey, answerable: answerable)
     }
 }
 
 /// Somebody the week pushes past the weekly ceiling, and the same-role
 /// person with room who could take one of their shifts.
-struct OvertimeMove: Decodable, Identifiable, Equatable {
-    struct Candidate: Decodable, Equatable {
+struct OvertimeMove: Codable, Identifiable, Equatable {
+    struct Candidate: Codable, Equatable {
         let employee: String
         let role: String?
         let date: String?
@@ -815,11 +857,17 @@ struct OvertimeMove: Decodable, Identifiable, Equatable {
     let text: String?
     let candidate: Candidate
     let recKey: String?
+    /// False once answered / for a key nothing can answer; nil from the
+    /// violations check, which presents only open moves.
+    var answerable: Bool? = nil
     var id: String { "\(employee)-\(candidate.date ?? "")-\(candidate.shiftStart ?? "")" }
     enum CodingKeys: String, CodingKey {
-        case employee, hours, over, text, candidate
+        case employee, hours, over, text, candidate, answerable
         case recKey = "rec_key"
     }
+
+    /// "Not for us" beside the move: a keyed move the server hasn't closed.
+    var showsNotForUs: Bool { (recKey?.isEmpty == false) && answerable != false }
 }
 
 struct EditCostDelta: Codable, Equatable {
@@ -1178,10 +1226,16 @@ struct GeneratedSchedule: Codable {
     // Rows the manager is likely to change before they see the draft.
     // Absent on an older server.
     var likelyEdits: [LikelyEdit]? = nil
+    // Who the first pass put past the weekly ceiling, with a same-role
+    // person who could take a shift — keyed when delivered (#41). The
+    // violations check re-reads the same moves live; this is what the
+    // draft itself said, and the fallback when that check can't be read.
+    var overtimeForecast: [OvertimeForecastItem]? = nil
 
     enum CodingKeys: String, CodingKey {
         case standbyDays = "standby_days"
         case likelyEdits = "likely_edits"
+        case overtimeForecast = "overtime_forecast"
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
         case trimmed, staggered, departments, optimizer, gate
         case whatIf = "what_if"
@@ -1784,9 +1838,24 @@ final class LaborViewModel {
                 "/mobile/api/labor/schedule/violations", method: .post,
                 body: ViolationsBody(rows: rows, baselineRows: nil), hapticOnError: false)
             if r.ok { overtimeMoves = r.overtimeMoves ?? [] }
+        } catch is CancellationError {
+            return
         } catch {
-            // A courtesy, like the cost readout.
+            // A courtesy, like the cost readout — but the draft already
+            // said who it puts into overtime, so show that rather than nothing.
+            if overtimeMoves.isEmpty {
+                overtimeMoves = (scheduleResult?.overtimeForecast ?? []).compactMap(\.move)
+            }
         }
+    }
+
+    /// "Not for us" on an overtime move — the ledger answer for a move the
+    /// manager won't make (the one-tap move is the accepting answer).
+    func declineOvertimeMove(_ move: OvertimeMove, reason: RecReason?) async {
+        guard let key = move.recKey else { return }
+        overtimeMoves.removeAll { $0.id == move.id }
+        _ = try? await client.answerRecommendation(key: key, answer: .notForUs, surface: "schedule_review",
+                                                   module: "schedule", reasonCode: reason?.code)
     }
 
     private struct RecEventBody: Encodable {
@@ -1906,11 +1975,20 @@ final class LaborViewModel {
         let ok: Bool
         let suppressedKinds: [String]?
         let error: String?
+        /// An accepted hours recommendation starts a labor % tracker — or
+        /// says why it couldn't (API_REFERENCE → Tracker-start replies).
+        let tracker: RecTracker?
+        let trackerRefused: RecTrackerRefused?
         enum CodingKeys: String, CodingKey {
-            case ok, error
+            case ok, error, tracker
             case suppressedKinds = "suppressed_kinds"
+            case trackerRefused = "tracker_refused"
         }
     }
+
+    /// Recommendation text → "Measuring labor % until 10/21/26" (or why
+    /// nothing is), after a ✓ on a schedule recommendation.
+    var recommendationTracking: [String: String] = [:]
 
     /// Record "did it" or "not for us" — the ledger that decides which
     /// kinds keep being shown.
@@ -1926,6 +2004,8 @@ final class LaborViewModel {
                 hapticOnError: false)
             if r.ok {
                 suppressedRecommendationKinds = r.suppressedKinds ?? suppressedRecommendationKinds
+                recommendationTracking[text] = accepted
+                    ? RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused) : nil
                 Haptic.light()
             } else {
                 recommendationDecisions[text] = previous

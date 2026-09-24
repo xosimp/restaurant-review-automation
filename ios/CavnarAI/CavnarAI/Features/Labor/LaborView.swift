@@ -40,6 +40,11 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
+                                // Why labor ran over, and the check that
+                                // would confirm it — answerable (#25).
+                                if let diagnosis = analyticsViewModel.diagnosis {
+                                    LaborDiagnosisCard(diagnosis: diagnosis)
+                                }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }
@@ -359,7 +364,10 @@ struct LaborView: View {
             AIConsultantEmbeddedStrip(
                 title: "Cavnar AI Labor Consultant",
                 insight: analyticsViewModel.insight,
-                isLoading: analyticsViewModel.isLoadingInsight
+                isLoading: analyticsViewModel.isLoadingInsight,
+                // The read's lines are keyed (insight_rec_keys) and
+                // presented on `labor` — Done / Not for us / Track (#25).
+                recSurface: "labor"
             )
             // The forecast ribbon straddles this card's bottom edge (see
             // cavnarRibbonHeroAnchor below) — cavnarGlassCard's own 16pt

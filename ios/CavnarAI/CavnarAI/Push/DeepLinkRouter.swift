@@ -39,28 +39,31 @@ final class DeepLinkRouter {
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil,
                                alertId: Int? = nil, recKey: String? = nil,
                                module: String? = nil, restaurantId: Int? = nil,
-                               businessDate: String? = nil) {
+                               businessDate: String? = nil, surface: String? = nil) {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
                 if await switchLocation(target) { locationSwitches += 1 }
                 route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-                      alertId: alertId, recKey: recKey, module: module, businessDate: businessDate)
+                      alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
+                      surface: surface)
             }
             return
         }
         route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-              alertId: alertId, recKey: recKey, module: module, businessDate: businessDate)
+              alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
+              surface: surface)
     }
 
     private func route(alertType: String, reviewId: Int?, askPrompt: String?,
-                       alertId: Int?, recKey: String?, module: String?, businessDate: String?) {
+                       alertId: Int?, recKey: String?, module: String?, businessDate: String?,
+                       surface: String?) {
         // What the product knew was how many notifications it SENT. Whether
         // any of them were worth sending had no answer anywhere — not for
         // the owner, not for Will. Best effort: a failure here must never
         // interfere with actually opening the thing.
         if !alertType.isEmpty {
-            Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey) }
+            Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey, surface: surface) }
         }
         // The nightly Daily Sales Report opens on Home's stack: that night
         // when the push names it, the list of nights when it doesn't (a row
@@ -125,16 +128,22 @@ final class DeepLinkRouter {
     /// `alert_id` is the notification's own history row and `rec_key` the
     /// recommendation it carried — both from the push payload, both optional
     /// (a tap from the in-app history list has neither).
-    private struct OpenedBody: Encodable {
+    /// `surface` is the push payload's own (`alert_push` / `brief_push`),
+    /// forwarded as sent; omitted when the payload had none (a tap from the
+    /// in-app history list), and the server falls back to the type.
+    struct OpenedBody: Encodable, Equatable {
         let type: String
         let alert_id: Int?
         let rec_key: String?
+        var surface: String? = nil
     }
 
-    private static func recordOpen(_ alertType: String, alertId: Int? = nil, recKey: String? = nil) async {
+    private static func recordOpen(_ alertType: String, alertId: Int? = nil, recKey: String? = nil,
+                                   surface: String? = nil) async {
         let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
             "/mobile/api/notifications/opened", method: .post,
-            body: OpenedBody(type: alertType, alert_id: alertId, rec_key: recKey), hapticOnError: false)
+            body: OpenedBody(type: alertType, alert_id: alertId, rec_key: recKey, surface: surface),
+            hapticOnError: false)
     }
 
     func consumePendingReviewID() -> Int? {

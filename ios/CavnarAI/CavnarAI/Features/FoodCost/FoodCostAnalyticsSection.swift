@@ -965,6 +965,9 @@ struct FoodCostAnalyticsSection: View {
                     }
                     .foregroundStyle(Color.cavnarInk3)
                     .padding(.top, 4)
+                    if let tracking = viewModel.repriceTracking[s.dish] {
+                        RecTrackerLine(text: tracking)
+                    }
                 } else {
                     HStack(alignment: .center, spacing: 16) {
                         if let suggested = s.suggestedPrice, !dismissed {

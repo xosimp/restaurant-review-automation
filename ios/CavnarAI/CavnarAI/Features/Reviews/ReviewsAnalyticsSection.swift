@@ -358,7 +358,7 @@ struct ReviewsAnalyticsSection: View {
                         // Each cited review opens — the web's jumpToReview.
                         AccountFlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(d.evidenceReviewIds, id: \.self) { id in
-                                evidenceChip(id, category: d.category)
+                                evidenceChip(id, category: d.category, recKey: d.recKey)
                             }
                         }
                     }
@@ -377,10 +377,12 @@ struct ReviewsAnalyticsSection: View {
 
     /// "Review #412" as a tappable chip — AccountChip's muted look, with the
     /// id in the number face. Opens that review (ReviewByIdView).
-    private func evidenceChip(_ id: Int, category: String) -> some View {
+    private func evidenceChip(_ id: Int, category: String, recKey: String? = nil) -> some View {
         Button {
             Haptic.light()
             evidenceTarget = EvidenceTarget(reviewID: id, category: category)
+            // Opening a review the diagnosis rests on is evidence viewed (#38).
+            RecEvidenceLog.viewed(key: recKey, surface: "reviews", module: "reviews")
         } label: {
             (Text("Review ") + Text("#\(id)").font(.cavnarNumber(13, weight: 600)))
                 .font(.cavnarBody(13, weight: 600))

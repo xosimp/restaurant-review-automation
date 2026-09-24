@@ -422,6 +422,11 @@ struct ShiftQualityPanel: View {
                                        label: "Not for us") { onRecommendation?(rec, false) }
                     }
                 }
+                // An accepted hours change is measured — say on what, until when.
+                if decision == "accepted", let tracking = viewModel?.recommendationTracking[rec] {
+                    RecTrackerLine(text: tracking)
+                        .padding(.leading, 13)
+                }
             }
         }
         .padding(12)

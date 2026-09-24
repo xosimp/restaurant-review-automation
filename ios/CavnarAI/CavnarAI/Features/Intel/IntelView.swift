@@ -512,7 +512,7 @@ struct IntelView: View {
                                 .lineSpacing(3)
                                 .fixedSize(horizontal: false, vertical: true)
                             if let cites = rec.cites, !cites.isEmpty {
-                                citesDisclosure(rec.id, cites)
+                                citesDisclosure(rec.id, cites, recKey: rec.key)
                             }
                             if let key = rec.key {
                                 RecAnswerRow(key: key, surface: "intel")
@@ -532,7 +532,8 @@ struct IntelView: View {
     /// "Reviews this rests on (n)" — tap to open the competitor reviews the
     /// recommendation cites, so the owner can judge the evidence rather than
     /// take the line on trust. The same kicker the Reviews diagnosis uses.
-    private func citesDisclosure(_ id: String, _ cites: [IntelRecommendation.Cite]) -> some View {
+    private func citesDisclosure(_ id: String, _ cites: [IntelRecommendation.Cite],
+                                 recKey: String? = nil) -> some View {
         let open = expandedCites.contains(id)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -540,6 +541,8 @@ struct IntelView: View {
                 withAnimation(.easeOut(duration: 0.2)) {
                     if open { expandedCites.remove(id) } else { expandedCites.insert(id) }
                 }
+                // Reading the reviews it rests on is evidence viewed (#38).
+                if !open { RecEvidenceLog.viewed(key: recKey, surface: "intel", module: "intel") }
             } label: {
                 HStack(spacing: 5) {
                     (Text("Reviews this rests on (") + Text("\(cites.count)").font(.cavnarNumber(11, weight: 700)) + Text(")"))

@@ -759,6 +759,13 @@ struct MarketingView: View {
                 .accessibilityLabel("Next day")
             }
 
+            // The idea is a recommendation: Done / Not for us answer it
+            // without writing (Marketing has no metric to Track).
+            if idea.showsAnswers, let key = idea.recKey {
+                RecAnswerRow(key: key, surface: "marketing", module: "marketing")
+                    .padding(.top, 10)
+            }
+
             HStack(spacing: 5) {
                 ForEach(viewModel.calendar.indices, id: \.self) { i in
                     Capsule()
