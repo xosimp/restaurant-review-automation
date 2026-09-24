@@ -86,14 +86,62 @@ _SLOW_DOWN = ({"ok": False, "error": "That's a lot in a short time — wait a fe
 
 # ── issues ────────────────────────────────────────────────────────────────────
 
+# Home's open-issues list (web hbCoverButtons, iOS HomeDay) shows the first
+# four unresolved issues, and on a coverage issue up to two suggested covers
+# nobody has been asked yet.
+HOME_ISSUES_SHOWN = 4
+COVERS_SHOWN = 2
+
+
+def askable_covers(issue) -> list:
+    """The suggested covers a client shows on a coverage issue: not yet
+    asked, at most COVERS_SHOWN — the same rule both Home clients apply."""
+    if not issue or issue.get("kind") != "coverage" or issue.get("status") == "resolved":
+        return []
+    meta = issue.get("meta") or {}
+    asked = {str(a.get("name") or "").strip().lower() for a in (meta.get("asked") or []) if isinstance(a, dict)}
+    return [c for c in (meta.get("covers") or [])
+            if isinstance(c, dict) and c.get("name") and str(c["name"]).strip().lower() not in asked][:COVERS_SHOWN]
+
+
+def present_covers(rid, issue_rows, surface, user_id=None) -> dict:
+    """A coverage issue's suggested covers are a recommendation ("cover:
+    <date>:<person>", intraday.cover_key) — presented where they are
+    RENDERED, never when the issue is filed (re-audit C3). Each issue shown
+    with covers gains `cover_rec_key` and `cover_answerable` (asking one of
+    them is the yes, intraday.ask_to_cover). Never raises."""
+    try:
+        import intraday
+        import rec_delivery
+        items = []
+        for i, issue in enumerate(issue_rows or []):
+            covers = askable_covers(issue)
+            if not covers:
+                continue
+            key = intraday.cover_key(issue)
+            issue["cover_rec_key"] = key
+            issue["cover_answerable"] = rec_delivery.answerable(key)
+            who = " or ".join(str(c["name"]) for c in covers)
+            missing = (issue.get("meta") or {}).get("missing") or "the missing shift"
+            items.append({"key": key, "module": "labor", "kind": "cover", "position": i,
+                          "title": f"Ask {who} to cover {missing}"[:200]})
+        return rec_delivery.present_now(rid, surface, items, user_id=user_id)
+    except Exception as e:
+        print(f"[issues] covers not presented rid={rid}: {e}")
+        return {}
+
+
 def _do_issues_list(u):
     import issues
     status = request.args.get("status") or "unresolved"
     # A loss issue names the manager who approved the comps; only a login
     # with LOSS_VIEW reads it (re-audit A-8). Web and mobile share this body.
     loss = issues.viewer_sees_loss(u)
-    return {"ok": True, "issues": issues.list_issues(_rid(u), status=status, sees_loss=loss),
-            "summary": issues.summary(_rid(u), sees_loss=loss)}, 200
+    rows = issues.list_issues(_rid(u), status=status, sees_loss=loss)
+    if status == "unresolved":
+        # What Home renders from this list: its covers are shown there.
+        present_covers(_rid(u), rows[:HOME_ISSUES_SHOWN], "home", user_id=u.get("id"))
+    return {"ok": True, "issues": rows, "summary": issues.summary(_rid(u), sees_loss=loss)}, 200
 
 
 def _do_issue_create(u):
@@ -1316,6 +1364,8 @@ def _do_schedule_apply_fixes(u):
     fixed_rows = out["rows"]
     after = _sr.violations(fixed_rows, c)
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
+    from schedule_engine import present_quality
+    present_quality(_rid(u), quality, user_id=u.get("id"))
     return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
@@ -1380,6 +1430,8 @@ def _do_schedule_optimize(u):
                         max_server_overlap=getattr(_r_opt, "section_count", None),
                         hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
+    from schedule_engine import present_quality
+    present_quality(_rid(u), quality, user_id=u.get("id"))
     summary = _opt.summary(res, signals)
     # A proposal with changes is a recommendation: kept on Save, set aside
     # on Discard (the page reports which to /recs/event).
@@ -2580,8 +2632,15 @@ def _do_morning_brief(u):
     import morning_brief
     from models import get_restaurant
     r = get_restaurant(_rid(u))
+    brief = morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u)
+    # K6: Home's "Before service" card renders these lines, so a load that
+    # names itself a Home view (?view=home, web and iOS Home) records them on
+    # "home" — once a day per key. Every other reader (the settings screens)
+    # records nothing: they show no lines.
+    if request.args.get("view") == "home":
+        morning_brief.present_on_home(_rid(u), brief, user_id=u.get("id"))
     return {"ok": True,
-            "brief": morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u),
+            "brief": brief,
             "settings": {"enabled": bool(getattr(r, "morning_brief_enabled", 1)),
                          "hour": int(getattr(r, "morning_brief_hour", 7) or 7),
                          "hold_alerts": bool(getattr(r, "alert_hold_during_service", 1)),
@@ -3345,6 +3404,13 @@ def issue_page(token):
     done = None
     if request.method == "POST":
         action = request.form.get("action")
+        # The page is presented only when a PERSON acted on it: its GET
+        # stays free of side effects (a messaging app's link preview fetches
+        # it), so the covers it showed are recorded on the post that proves
+        # someone had it open — once a day, like every showing.
+        seen = issues.by_token(token)
+        if seen:
+            present_covers(seen["restaurant_id"], [seen], "issue_sms")
         if action == "ack":
             issue = issues.acknowledge(token)
             done = "ack"

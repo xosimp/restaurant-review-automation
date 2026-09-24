@@ -932,9 +932,10 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     for gap in (ai_summary.get("_data_gaps") or []):
         sections.append(report_paragraph(_html.escape(gap)))
 
-    from time_utils import restaurant_now_by_id as _rnbi_html
-    week_label = (_rnbi_html(restaurant_id or report.restaurant_id)
-                  .strftime("Week of %B %-d, %Y"))
+    # M/D/YY like every date an owner reads (DESIGN_SYSTEM.md → Dates and
+    # times); the header read "Week of September 14, 2026" (re-audit C12).
+    from time_utils import restaurant_now_by_id as _rnbi_html, mdy as _mdy_html
+    week_label = "Week of " + _mdy_html(_rnbi_html(restaurant_id or report.restaurant_id).date())
 
     return {"sections": sections, "week_label": week_label, "location_label": location_label,
             "rating": report.avg_rating, "total": report.total_reviews}

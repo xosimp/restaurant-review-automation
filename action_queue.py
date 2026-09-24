@@ -63,6 +63,24 @@ def _local_midnight_utc(restaurant_id, day_iso, db_path=DB_PATH) -> str:
     return local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Queue items that are TASKS, not recommendations: an issue someone filed,
+# a teammate's shift or time-off request, invoices waiting to be applied.
+# Each is finished at its source (resolved, approved or declined, applied);
+# nothing about them is advice an owner takes or turns down, and no surface
+# offers Done / Not for us on one. Presenting them put a recommendation in
+# every acceptance figure that could only ever expire "ignored" — a shift
+# request answered in Labor left its episode open (re-audit C7). They are
+# listed, snoozable, and never enter the ledger.
+TASK_KEY_PREFIXES = ("issue:", "shift_request:", "time_off:", "invoice:")
+
+
+def is_task(key) -> bool:
+    """Whether a queue key is a task (TASK_KEY_PREFIXES), not a
+    recommendation. The answer routes use it too: snoozing a task is not an
+    answer to a recommendation and has no episode behind it."""
+    return str(key or "").startswith(TASK_KEY_PREFIXES)
+
+
 def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, today=None):
     """Put one item back tomorrow (or up to MAX_SNOOZE_DAYS out).
 
@@ -83,6 +101,10 @@ def snooze(restaurant_id, key, days=SNOOZE_DAYS, user_id=None, db_path=DB_PATH, 
         conn.commit()
     finally:
         conn.close()
+    if is_task(key):
+        # A task is not a recommendation: its snooze lives in action_snoozes
+        # alone (TASK_KEY_PREFIXES).
+        return {"key": key, "until": until}
     try:
         import rec_ledger
         rec_ledger.record(restaurant_id, str(key)[:160], "snoozed", surface="queue", user_id=user_id,
@@ -329,14 +351,21 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     shown = [i for i in live if i["key"] in seen and i["severity"] != "critical"]
     live = [i for i in live if i not in shown]
     live.sort(key=lambda i: rank.get(i["severity"], 3))
-    try:
-        import rec_ledger
-        rec_ledger.present_many(restaurant_id, [
-            {"key": i["key"], "module": _LEDGER_MODULE.get(i["module"], "ops"), "title": i["title"],
-             "position": n} for n, i in enumerate(live) if i["kind"] != "issue"],
-            "queue", user_id=(viewer or {}).get("id"), db_path=db_path)
-    except Exception as e:
-        print(f"[action_queue] present failed: {e}")
+    # The contract fields every payload carrying a recommendation shares
+    # (API_REFERENCE.md → Recommendation fields): a task carries no key and
+    # `answerable` false; a recommendation its key and whether Done / Not
+    # for us apply. Only recommendations are presented.
+    import rec_delivery
+    for i in live:
+        if is_task(i["key"]):
+            i["answerable"] = False
+        else:
+            i["rec_key"] = i["key"]
+            i["answerable"] = rec_delivery.answerable(i["key"])
+    rec_delivery.present_now(restaurant_id, "queue", [
+        {"key": i["key"], "module": _LEDGER_MODULE.get(i["module"], "ops"), "title": i["title"],
+         "position": n} for n, i in enumerate(live) if not is_task(i["key"])],
+        user_id=(viewer or {}).get("id"), db_path=db_path)
     return {"items": live, "snoozed": len(out) - len(live) - len(shown) - len(answered),
             "shown_elsewhere": len(shown),
             "note": ("Everything still open, across every module. Snoozing puts an item back "

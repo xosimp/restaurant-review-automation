@@ -303,6 +303,8 @@ def test_a_monday_with_no_quiet_night_does_not_spend_the_week(db_path, monkeypat
     fired = []
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append(a[1]))
     monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 1}])
+    # A push-only heads-up goes to someone whose phone can take it.
+    monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 1}])
     monkeypatch.setattr(strategy_jobs, "_draft_quiet_night_fill", lambda *a, **k: {})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 10, 30))
     monkeypatch.setattr(demand, "quiet_night_ahead", lambda *a, **k: {"available": False, "reason": "Wednesday is fine"})
@@ -335,6 +337,7 @@ def test_the_run_stops_drafting_after_two_ignored_weeks(db_path, monkeypatch):
     monkeypatch.setattr(strategy_jobs, "_draft_quiet_night_fill", lambda *a, **k: drafted.append(1) or {})
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: None)
     monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 1}])
+    monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 1}])
     monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime.utcnow().replace(hour=10))
     monkeypatch.setattr(demand, "quiet_night_ahead", lambda *a, **k: {
         "available": True, "date": "2026-09-24", "weekday": "Thursday", "typical_sales": 2100.0,

@@ -194,7 +194,8 @@ def test_the_queue_counts_only_recent_reviews(db_path):
     import action_queue
     rid = _rid(db_path)
     _review(db_path, rid, 5, days_ago=90)
-    assert action_queue.items(rid, db_path=db_path)["items"] == []
+    # A Tuesday: from Thursday on, "next week's schedule" joins the list.
+    assert action_queue.items(rid, db_path=db_path, today=date(2026, 9, 22))["items"] == []
 
 
 # ── #7 the second hide asks why ─────────────────────────────────────────────

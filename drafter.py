@@ -41,18 +41,33 @@ def get_approved_examples(restaurant_id: int, limit: int = 4) -> str:
         return ""
 
 
+# The approved-examples block is bounded (re-audit C11): one owner who
+# approved a 1,500-word reply put ~10k characters into every later draft's
+# prompt, four times over. A reply's voice is in its first few sentences.
+EXAMPLE_REPLY_CHARS = 600
+EXAMPLES_BLOCK_CHARS = 2400
+
+
 def _format_examples(rows) -> str:
     """Approved examples as prompt text. The guest's review is fenced like
     every other piece of guest text (AI-15): an approved example's review is
     still something a stranger wrote, and it used to be quoted raw into the
     drafter's instructions — for every draft this restaurant ever made. The
     response is the owner's own approved reply and is left as the style
-    sample it is."""
-    lines = []
+    sample it is — cut to EXAMPLE_REPLY_CHARS, and the block stops before
+    EXAMPLES_BLOCK_CHARS."""
+    lines, total = [], 0
     for i, e in enumerate(rows, 1):
-        lines.append(f'Example {i} ({e["rating"]}★):\n'
-                     f'Review:\n{wrap_untrusted((e.get("review") or "")[:100])}\n'
-                     f'Owner\'s approved response: "{e.get("response") or ""}"')
+        resp = str(e.get("response") or "")
+        if len(resp) > EXAMPLE_REPLY_CHARS:
+            resp = resp[:EXAMPLE_REPLY_CHARS].rsplit(" ", 1)[0].rstrip() + "…"
+        block = (f'Example {i} ({e["rating"]}★):\n'
+                 f'Review:\n{wrap_untrusted((e.get("review") or "")[:100])}\n'
+                 f'Owner\'s approved response: "{resp}"')
+        if lines and total + len(block) > EXAMPLES_BLOCK_CHARS:
+            break
+        lines.append(block)
+        total += len(block) + 1
     return "\n".join(lines)
 
 

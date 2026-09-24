@@ -140,7 +140,7 @@ def test_every_push_carries_its_module_and_location(db_path, monkeypatch):
     got = []
 
     class _Now:
-        def submit(self, fn, token_row, alert_type, title, body, data, db):
+        def submit(self, fn, token_row, alert_type, title, body, data, db, *rest):
             got.append((alert_type, data))
     monkeypatch.setattr(push, "_push_executor", lambda: _Now())
     monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 1, "restaurant_id": 99}])
@@ -257,7 +257,8 @@ def test_a_food_cost_win_reaches_only_people_who_can_open_food_cost(db_path, mon
     monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [dict(owner, grants=[]), dict(manager, grants=[])])
     monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": owner["id"]}, {"user_id": manager["id"]}])
     pushed = []
-    monkeypatch.setattr(push, "fire_push", lambda rid_, t, title, body, data=None, db_path=None, user_ids=None:
+    monkeypatch.setattr(push, "fire_push", lambda rid_, t, title, body, data=None, db_path=None, user_ids=None,
+                        on_delivered=None:
                         pushed.append(set(user_ids)))
     strategy_jobs._tell_owners_what_worked([
         {"restaurant_id": rid, "verdict": "improved", "dollars_monthly": 1200.0, "metric": "food_cost_pct",

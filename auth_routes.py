@@ -958,11 +958,37 @@ def google_sso_start():
     })
     resp = make_response(redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params))
     resp.set_cookie("g_sso_state", state, httponly=True, samesite="Lax", max_age=300)
+    # Where the sign-in was headed — a keyed link from an email (?rec=,
+    # ?src=, ?ask=) — carried across Google's round trip the way the
+    # password form carries ?next=. It was dropped, so a link opened through
+    # Google landed on the bare dashboard and its open was never recorded
+    # (re-audit C10). Only a path on this site (safe_next_url).
+    nxt = safe_next_url(request.args.get("next"), "")
+    if nxt:
+        resp.set_cookie("g_sso_next", nxt, httponly=True, samesite="Lax", max_age=300)
     if request.args.get("mobile") == "1":
         resp.set_cookie("g_sso_mobile", "1", httponly=True, samesite="Lax", max_age=300)
         device_id = (request.args.get("device_id") or "").strip()
         if device_id:
             resp.set_cookie("g_sso_device_id", device_id, httponly=True, samesite="Lax", max_age=300)
+    return resp
+
+
+def _sso_web_finish(token=None, error=None):
+    """The web half of Google sign-in's finish: the session cookie and a
+    redirect to where the sign-in was headed (g_sso_next, set by
+    google_sso_start — re-audit C10), or back to /login with the error and
+    that same destination."""
+    from urllib.parse import quote
+    nxt = safe_next_url(request.cookies.get("g_sso_next"), "")
+    if error:
+        resp = make_response(redirect(f"/login?error={error}" + (f"&next={quote(nxt, safe='')}" if nxt else "")))
+    else:
+        resp = make_response(redirect(nxt or "/"))
+        resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
+                        secure=True, max_age=30*24*3600)
+        resp.delete_cookie("g_sso_state")
+    resp.delete_cookie("g_sso_next")
     return resp
 
 
@@ -991,13 +1017,7 @@ def google_sso_callback():
             resp.delete_cookie("g_sso_mobile")
             resp.delete_cookie("g_sso_device_id")
             return resp
-        if error:
-            return redirect(f"/login?error={error}")
-        resp = make_response(redirect("/"))
-        resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
-                        secure=True, max_age=30*24*3600)
-        resp.delete_cookie("g_sso_state")
-        return resp
+        return _sso_web_finish(token, error)
 
     error = request.args.get("error")
     if error:

@@ -58,7 +58,8 @@ def sent(monkeypatch):
     monkeypatch.setattr(notify, "_email_alert",
                         lambda rid, to, subject, html, alert_type, db_path=None, **k: out["email"].append((rid, alert_type)))
     monkeypatch.setattr(push, "fire_push",
-                        lambda rid, at, title, body, data=None, db_path=None, user_ids=None: out["push"].append((rid, at)))
+                        lambda rid, at, title, body, data=None, db_path=None, user_ids=None, on_delivered=None:
+                        out["push"].append((rid, at)))
     monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
     return out
 

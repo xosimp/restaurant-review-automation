@@ -351,17 +351,34 @@ def _location_signal(conn, r, now):
 
 # ── the brief ────────────────────────────────────────────────────────────────
 
-def build_home_brief(current_user, fresh=False):
+def build_home_brief(current_user, fresh=False, present=True):
+    """Home's payload for this login. `present=False` builds it for a
+    screen that does not render Home — Ask's opening fallback — and records
+    nothing: what the owner has answered is still left out, but no card is
+    logged as shown (re-audit C5 / K5). Such a build is never cached, so
+    the next real Home load still presents what it shows."""
     rid = current_user["restaurant_id"]
     key = (rid, current_user.get("id"))
     if not fresh:
         hit = _CACHE.get(key)
         if hit and (datetime.now(timezone.utc) - hit[0]).total_seconds() < _CACHE_TTL:
             return hit[1], 200
-    payload, status = _build(current_user)
-    if status == 200:
+    payload, status = _build(current_user) if present else _build(current_user, present=False)
+    if status == 200 and present:
         _cache_put(key, payload)
     return payload, status
+
+
+def _answered_only(restaurant_id, items, surface, user_id=None, db_path=None) -> dict:
+    """present_many's answer without its write: {key: None} for a key an
+    answer is silencing, a truthy placeholder otherwise. For a build that
+    must filter what the owner answered and record nothing."""
+    try:
+        import rec_ledger
+        silenced = rec_ledger.silenced_keys(restaurant_id)
+    except Exception:
+        silenced = set()
+    return {it["key"]: (None if it["key"] in silenced else 0) for it in (items or []) if it.get("key")}
 
 
 def invalidate(rid=None):
@@ -636,7 +653,11 @@ def assign(rid, key, title, contact_id, detail=None, user_id=None, role=None, su
                                   "status": issue.get("status")}}, 200
 
 
-def _build(current_user):
+# How many critically-low items the attention card names.
+CRITICAL_LOW_NAMED = 4
+
+
+def _build(current_user, present=True):
     from models import get_review_stats, get_active_modules, get_sentiment_trend, get_top_issues, get_labor_history, is_in_quiet_hours
     from time_utils import restaurant_now
     import mobile_api as _mob
@@ -1189,10 +1210,13 @@ def _build(current_user):
                 crit = [c for c in crit if stock_key(c.get("item")) not in _sq]
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
-                         ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
+                         ", ".join(str(c.get("item", ""))[:22] for c in crit[:CRITICAL_LOW_NAMED]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon",
                          rec_key=stock_key(crit[0].get("item")))
-                attention[-1]["rec_keys"] = [stock_key(c.get("item")) for c in crit[:10]]
+                # Only the items the card NAMES (its detail lists the
+                # first four) are shown on it: presenting ten logged items
+                # nobody read (re-audit C4). A count, not a ranking.
+                attention[-1]["rec_keys"] = [stock_key(c.get("item")) for c in crit[:CRITICAL_LOW_NAMED]]
             # The CFO read. The module's morning headline was
             # "$X recoverable/month" — a waste-recovery estimate, when the
             # question an operator opens with is where their margin is. Food
@@ -1615,7 +1639,7 @@ def _build(current_user):
     # ledger (#37) — one episode per key, one `shown` per surface per day.
     # A key the ledger says is answered comes back None and is not shown.
     try:
-        shown = rec_ledger.present_many(rid, [
+        shown = (rec_ledger.present_many if present else _answered_only)(rid, [
             *({"key": a["rec_key"], "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"],
                "position": i} for i, a in enumerate(rendered_attention)),
             # A card that stands for several (critically low: one key per

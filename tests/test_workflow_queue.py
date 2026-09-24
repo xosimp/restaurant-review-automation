@@ -242,7 +242,8 @@ def test_an_answer_to_one_proposal_does_not_settle_another(db_path):
                               outcome="proposed", db_path=db_path)
     models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
                           outcome="confirmed", proposal_id=a, db_path=db_path)
-    items = {i["key"]: i for i in action_queue.items(rid, db_path=db_path)["items"]}
+    # A Tuesday: from Thursday on, "next week's schedule" joins the list.
+    items = {i["key"]: i for i in action_queue.items(rid, db_path=db_path, today=date(2026, 9, 22))["items"]}
     assert list(items) == [f"ask:{b}"]
     assert items[f"ask:{b}"]["action"]["proposal_id"] == b
 
@@ -278,8 +279,9 @@ def test_two_proposals_of_one_kind_are_two_items(db_path):
     # the same sentence proposed again is one item, the newest
     c = models.log_ask_action(rid, "send_supplier_order", summary="Order from Sysco",
                               outcome="proposed", db_path=db_path)
-    action_queue.snooze(rid, f"ask:{a}", db_path=db_path)
-    keys = [i["key"] for i in action_queue.items(rid, db_path=db_path)["items"]]
+    action_queue.snooze(rid, f"ask:{a}", db_path=db_path, today=date(2026, 9, 22))
+    # A Tuesday: from Thursday on, "next week's schedule" joins the list.
+    keys = [i["key"] for i in action_queue.items(rid, db_path=db_path, today=date(2026, 9, 22))["items"]]
     assert keys == [f"ask:{c}"]
 
 

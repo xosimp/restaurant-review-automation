@@ -81,6 +81,14 @@ def compare(original, final) -> dict:
         category = "heavy"
     else:
         category = "rewrite"
+    # Punctuation is voice too. The distance counts words only, so an owner
+    # who took every "!" out of every draft — the same words, a different
+    # tone — read as "unchanged" and the pattern never reached the note
+    # (re-audit C11). A punctuation-only change is a light edit.
+    ea, eb = str(original or "").count("!"), str(final or "").count("!")
+    punct = "removed_exclamations" if (ea and not eb) else ("added_exclamations" if (eb and not ea) else None)
+    if category == "unchanged" and punct:
+        category = "light"
     signals = []
     if category != "unchanged":
         before, after = len(a), len(b)
@@ -88,11 +96,8 @@ def compare(original, final) -> dict:
             signals.append("shortened")
         elif before and after >= before * 1.2 and after - before >= 5:
             signals.append("lengthened")
-        ea, eb = str(original or "").count("!"), str(final or "").count("!")
-        if ea and not eb:
-            signals.append("removed_exclamations")
-        elif eb and not ea:
-            signals.append("added_exclamations")
+        if punct:
+            signals.append(punct)
         pa, pb = bool(_APOLOGY.search(str(original or ""))), bool(_APOLOGY.search(str(final or "")))
         if pa and not pb:
             signals.append("removed_apology")

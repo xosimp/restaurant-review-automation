@@ -959,14 +959,15 @@ def report_paragraph(text: str) -> str:
             f'margin:0">{text}</p>')
 
 
-def report_ask_link(prompt: str, rec: str = None, src: str = None, label: str = "Ask about this") -> str:
+def report_ask_link(prompt: str, rec: str = None, src: str = None, label: str = "Ask about this",
+                    rid: int = None) -> str:
     """"Ask about this →" under a recommendation: opens the dashboard with
     the question asked (dashboard.html reads ?ask=) and names the
-    recommendation (rec=) and the email it was read in (src=), so the click
-    lands on the ledger as `opened` for that key — the morning brief's
-    pattern (rec_delivery.ask_url)."""
+    recommendation (rec=), the email it was read in (src=) and the location
+    it is about (rid=), so the click lands on the ledger as `opened` for
+    that key — the morning brief's pattern (rec_delivery.ask_url)."""
     import rec_delivery
-    url = rec_delivery.ask_url(prompt, rec, src)
+    url = rec_delivery.ask_url(prompt, rec, src, rid)
     return (f'<div style="margin-top:8px"><a href="{esc(url)}" style="font-family:{_SANS};font-size:13px;'
             f'color:{BRAND["ember"]};text-decoration:none">{esc(label)} &rarr;</a></div>')
 
@@ -2035,7 +2036,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         print(f"send_reactivation_email failed: {e}")
 
 
-def _one_thing_block(out, fix_first, src, when):
+def _one_thing_block(out, fix_first, src, when, rid=None):
     """"If you only do one thing" — the cross-module one thing
     (business_intelligence.pick_one_thing) with a keyed "Ask about this"
     link. Appends to `out` and returns the fix_first it rendered, or None.
@@ -2053,12 +2054,39 @@ def _one_thing_block(out, fix_first, src, when):
             block += report_paragraph(_html.escape(why[:1].upper() + why[1:]))
         import rec_delivery
         key = fix_first.get("key") if rec_delivery.presentable(fix_first.get("key")) else None
-        block += report_ask_link(f"Walk me through this: {fix_first['what']}", key, src)
+        block += report_ask_link(f"Walk me through this: {fix_first['what']}", key, src, rid=rid)
         out.append(block)
         return fix_first
     except Exception as e:
         print(f"[review email] one-thing block failed: {e}")
         return None
+
+
+def _uncovered_priorities(priorities, shown_first) -> list:
+    """The money priorities an email lists under "Worth your time": every
+    one but the priority the one thing above already covers — "Cut the
+    salmon order — about $312/month" is the food-cost priority's action
+    (fix_first.same_as), and listing "Food cost drivers — $742/month"
+    under it said the same news twice (re-audit C12)."""
+    covered = {k for k in ((shown_first or {}).get("same_as"), (shown_first or {}).get("key")) if k}
+    return [p for p in (priorities or []) if p and p.get("key") not in covered]
+
+
+def _priority_line(p) -> str:
+    """"Scheduling against target — $1,864/month". A range with an end
+    missing reads as the end it has; no figure reads as the label alone —
+    a None used to raise inside the format and drop the whole block."""
+    def _usd(v):
+        try:
+            return f"${float(v):,.0f}"
+        except (TypeError, ValueError):
+            return None
+    if p.get("is_range"):
+        lo, hi = _usd(p.get("monthly_low")), _usd(p.get("monthly_high"))
+        money = f"{lo}-{hi}/month" if (lo and hi) else (f"{lo or hi}/month" if (lo or hi) else "")
+    else:
+        money = f"{_usd(p.get('monthly'))}/month" if p.get("monthly") and _usd(p.get("monthly")) else ""
+    return f"{p.get('label') or ''} — {money}" if money else str(p.get("label") or "")
 
 
 def _weekly_review_sections(restaurant_id):
@@ -2111,16 +2139,13 @@ def _weekly_review_sections(restaurant_id):
     # The one thing, rendered — it used to be logged as shown in this email
     # without ever appearing in it. Staged, with the priorities below, and
     # presented only once the digest is delivered (rec_delivery).
-    shown_first = _one_thing_block(out, review.get("fix_first"), "weekly_email", "this week")
+    shown_first = _one_thing_block(out, review.get("fix_first"), "weekly_email", "this week",
+                                   rid=restaurant_id)
+    priorities = _uncovered_priorities(review.get("priorities"), shown_first)
     try:
-        if review.get("priorities"):
-            def _money(p):
-                if p.get("is_range"):
-                    return f"${p['monthly_low']:,.0f}-${p['monthly_high']:,.0f}/month"
-                return f"${p['monthly']:,.0f}/month" if p.get("monthly") else ""
+        if priorities:
             out.append(report_eyebrow("Worth your time this week")
-                       + report_paragraph(_list(
-                           f"{p['label']} — {_money(p)}" for p in review["priorities"])))
+                       + report_paragraph(_list(_priority_line(p) for p in priorities)))
     except Exception as e:
         print(f"[weekly] priorities block failed: {e}")
     # What two modules saw that neither could see alone. The digest is the
@@ -2139,6 +2164,10 @@ def _weekly_review_sections(restaurant_id):
         # One "no" everywhere: a link the owner answered on Home is not this
         # week's finding here.
         links = [l for l in (_bi.correlations(restaurant_id) or []) if _bi.link_key(l) not in silenced]
+        # The one thing above can BE this week's link: said once, not twice
+        # (re-audit C13).
+        if links and shown_first and shown_first.get("key") == _bi.link_key(links[0]):
+            links = []
         if links:
             link = links[0]
             lkey = _bi.link_key(link)
@@ -2153,19 +2182,17 @@ def _weekly_review_sections(restaurant_id):
             if caution:
                 block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'{_html.escape(caution)}</span>')
-            block += report_ask_link(f"Tell me more about this: {link['headline']}", lkey, "weekly_email")
+            block += report_ask_link(f"Tell me more about this: {link['headline']}", lkey, "weekly_email",
+                                     rid=restaurant_id)
             out.append(block)
-            # The same link can also be the one thing above: shown twice,
-            # staged once.
-            if not (shown_first and shown_first.get("key") == lkey):
-                shown_link = dict(link, key=lkey)
+            shown_link = dict(link, key=lkey)
     except Exception as e:
         print(f"[weekly] cross-module block failed: {e}")
     try:
         import rec_delivery
         import review_common as _rc
         rec_delivery.stage(restaurant_id, "weekly_email",
-                           _rc.impressions(review.get("priorities"), shown_first, shown_link))
+                           _rc.impressions(priorities, shown_first, shown_link))
     except Exception as e:
         print(f"[weekly] impressions not staged: {e}")
     # Records, streaks, and complaints that stopped. Everything else in this
@@ -2249,23 +2276,20 @@ def _monthly_review_sections(restaurant_id, months=1):
                        + report_paragraph(_list(_g.summarise(x) for x in review["goals"][:4])))
     except Exception as e:
         print(f"[monthly] goals block failed: {e}")
-    shown_first = _one_thing_block(out, review.get("fix_first"), "monthly_email",
-                                   "next quarter" if review.get("months", 1) > 1 else "next month")
+    span = "next quarter" if review.get("months", 1) > 1 else "next month"
+    shown_first = _one_thing_block(out, review.get("fix_first"), "monthly_email", span, rid=restaurant_id)
+    priorities = _uncovered_priorities(review.get("priorities"), shown_first)
     try:
         import rec_delivery
         import review_common as _rc
-        rec_delivery.stage(restaurant_id, "monthly_email", _rc.impressions(review.get("priorities"), shown_first))
+        rec_delivery.stage(restaurant_id, "monthly_email", _rc.impressions(priorities, shown_first))
     except Exception as e:
         print(f"[monthly] impressions not staged: {e}")
     try:
-        if review.get("priorities"):
-            def _money(p):
-                if p.get("is_range"):
-                    return f"${p['monthly_low']:,.0f}-${p['monthly_high']:,.0f}/month"
-                return f"${p['monthly']:,.0f}/month" if p.get("monthly") else ""
-            out.append(report_eyebrow("Worth your time next month")
-                       + report_paragraph(_list(
-                           f"{p['label']} — {_money(p)}" for p in review["priorities"]))
+        if priorities:
+            # A quarterly said "next month" here (re-audit C12).
+            out.append(report_eyebrow(f"Worth your time {span}")
+                       + report_paragraph(_list(_priority_line(p) for p in priorities))
                        + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'These come from different measurements and are not '
                                           f'added together.</span>'))
@@ -2487,9 +2511,11 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
                 "preheader": _monthly_preheader(restaurant_id),
                 "html": report_shell(
                     kicker="Monthly Review",
-                    title=restaurant_name,
-                    subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
-                    sections=([report_paragraph(summary_paragraph)]
+                    # Text, not markup: "Rosa & Sons <Trattoria>" opened a
+                    # tag the email never closed (re-audit C12).
+                    title=_html_esc(restaurant_name),
+                    subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {_html_esc(first)}",
+                    sections=([report_paragraph(_html_esc(summary_paragraph))]
                               + sections
                               + [stats_section, lines_section, action_section]),
                     cta_label="Open your dashboard →",
@@ -2501,6 +2527,33 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             shown.flush()
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
+
+
+def _html_esc(text) -> str:
+    import html as _h
+    return _h.escape(str(text or ""))
+
+
+def location_labels(restaurants) -> dict:
+    """{restaurant id: what a group email calls that location}. The
+    location's own name ("Lincoln Park") when it has one, else the
+    restaurant's; two that would still read alike are told apart by their
+    position ("Gia Mia (2)"). Every location of a group usually shares the
+    restaurant name, so headings of r.name alone read "Gia Mia" twice and
+    nobody could tell which month was which (re-audit C12)."""
+    base = {r.id: (getattr(r, "location_name", None) or getattr(r, "name", None) or "Location").strip()
+            for r in restaurants}
+    counts = {}
+    for label in base.values():
+        counts[label.lower()] = counts.get(label.lower(), 0) + 1
+    seen, out = {}, {}
+    for r in restaurants:
+        label = base[r.id]
+        if counts[label.lower()] > 1:
+            seen[label.lower()] = seen.get(label.lower(), 0) + 1
+            label = f"{label} ({seen[label.lower()]})"
+        out[r.id] = label
+    return out
 
 
 def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants: list):
@@ -2520,11 +2573,12 @@ def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants
         sections = [report_paragraph(
             f"Here is {month_name} across your {len(restaurants)} locations, each read against its own "
             f"month before. Nothing is added up across them — a location's number is its own.")]
+        labels = location_labels(restaurants)
         import rec_delivery
         with rec_delivery.collect() as shown:
             for r in restaurants:
                 body = _monthly_review_sections(r.id)
-                sections.append(report_eyebrow(r.name))
+                sections.append(report_eyebrow(_html_esc(labels[r.id])))
                 if body:
                     sections.extend(body)
                 else:
@@ -2532,9 +2586,9 @@ def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants
             html = report_shell(
                 kicker="Monthly Review",
                 title=f"{len(restaurants)} locations",
-                subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
+                subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {_html_esc(first)}",
                 sections=sections, cta_label="Open your dashboard →")
-            names = ", ".join(r.name for r in restaurants[:3]) + ("…" if len(restaurants) > 3 else "")
+            names = ", ".join(labels[r.id] for r in restaurants[:3]) + ("…" if len(restaurants) > 3 else "")
             result = deliver(email_type="send_monthly_summary_email", restaurant_id=restaurants[0].id, payload={
                 "from": sender("will"), "to": [to_email],
                 "subject": f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary",

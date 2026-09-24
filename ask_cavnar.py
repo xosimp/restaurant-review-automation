@@ -1125,12 +1125,12 @@ MAX_SUGGESTIONS = 3
 _LIST_ITEM = re.compile(r"^\s*(?:[-*\u2022]|\d{1,2}[.)])\s+(.+?)\s*$")
 
 
-def extract_suggestions(answer, unverified=None) -> list:
+def extract_suggestions(answer, unverified=None, limit=MAX_SUGGESTIONS) -> list:
     """The concrete suggestions in an answer: its bulleted or numbered lines
     that start with an imperative verb (SUGGESTION_VERBS), 12-240
     characters, carrying no figure the answer's own check could not trace
-    (`unverified` — meta["unverified_figures"]). At most MAX_SUGGESTIONS, in
-    the answer's order, each once. [{"text"}]. Pure."""
+    (`unverified` — meta["unverified_figures"]). At most `limit` (None: all
+    of them), in the answer's order, each once. [{"text"}]. Pure."""
     out, seen = [], set()
     bad = [str(u) for u in (unverified or []) if str(u).strip()]
     for line in str(answer or "").splitlines():
@@ -1149,7 +1149,7 @@ def extract_suggestions(answer, unverified=None) -> list:
             continue
         seen.add(norm)
         out.append({"text": text})
-        if len(out) >= MAX_SUGGESTIONS:
+        if limit is not None and len(out) >= limit:
             break
     return out
 
@@ -1167,12 +1167,20 @@ def record_suggestions(restaurant_id, answer, meta=None, user_id=None) -> list:
     answered (Done / Not for us on any surface) is left out of the list.
     Never raises; [] when the answer has none."""
     try:
-        items = extract_suggestions(answer, (meta or {}).get("unverified_figures"))
+        # Every suggestion first, THEN the answered ones out, THEN the cap:
+        # capping first meant an answer whose first three lines the owner
+        # had already answered offered nothing, while its fourth — never
+        # answered — was never offered at all (re-audit C14).
+        items = extract_suggestions(answer, (meta or {}).get("unverified_figures"), limit=None)
         if not items:
             return []
         for it in items:
             it["rec_key"] = suggestion_key(it["text"])
         import rec_ledger
+        silenced = rec_ledger.silenced_keys(restaurant_id)
+        items = [it for it in items if it["rec_key"] not in silenced][:MAX_SUGGESTIONS]
+        if not items:
+            return []
         ids = rec_ledger.present_many(restaurant_id, [{"key": it["rec_key"], "module": "ask", "kind": "ask_tip",
                                                        "title": it["text"][:200], "model_written": True,
                                                        "evidence_sources": [m for m in (meta or {}).get("modules_consulted") or []
