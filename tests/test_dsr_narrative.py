@@ -157,15 +157,22 @@ def strong_reply():
         "actions_tomorrow": [
             _act("Order extra brioche buns before service.", "Brioche buns are one of 2 items low on stock.",
                  "reorder", ["food.low_stock", "food.low_stock_count"], subject="Brioche buns"),
-            _act("Tighten prep on the fish tacos to cut waste.",
-                 "Waste was $84.50 and food cost drivers carry $640 a month.", "reduce_waste",
+            # NS3 food #1: the restaurant-wide $640/month is never one dish's
+            # (this fixture put it on the fish tacos), and it is an
+            # opportunity, so it says "could".
+            _act("Tighten prep and portioning across the line to cut waste.",
+                 "Waste was $84.50, and about $640 a month of food cost could be recovered.", "reduce_waste",
                  ["food.waste_dollars", "food.recoverable_monthly", "sales.top_items"],
-                 urgency="this_week", effort="medium", dollars=640, subject="Fish Tacos"),
+                 urgency="this_week", effort="medium", dollars=640),
             _act("Keep Saturday's staffing pattern for next Saturday.", "Labor ran 24.2% on $19,850 of net sales.",
                  "adjust_staffing", ["labor.pct", "sales.net"], urgency="next_schedule"),
         ],
         "highest_priority_issue": _it("Brioche buns are low again.", "food.low_stock", "food.low_stock_count"),
-        "largest_money_saving": _it("The $640 a month in recoverable food cost.", "food.recoverable_monthly"),
+        # NS3 C2/R13: this fixture used to put the opportunity under
+        # "largest_money_saving" as the right answer. The slot is now
+        # largest_opportunity, and the line says it COULD be recovered.
+        "largest_opportunity": _it("About $640 a month of food cost could be recovered.",
+                                   "food.recoverable_monthly"),
         "largest_guest_experience": None,
         "largest_staffing": None,
     }
@@ -199,7 +206,7 @@ def weak_reply():
                  ["reviews.urgent"]),
         ],
         "highest_priority_issue": _it("Labor at 34.8% is the night's biggest miss.", "labor.pct"),
-        "largest_money_saving": None,
+        "largest_opportunity": None,
         "largest_guest_experience": _it("The urgent review needs a reply.", "reviews.urgent"),
         "largest_staffing": None,
     }
@@ -680,7 +687,7 @@ def test_actions_are_ranked_by_urgency_times_dollars_times_ease(monkeypatch, res
 def test_keys_carry_a_named_thing_only_when_the_facts_name_it(monkeypatch, rest, db_path):
     out, _ = _run(monkeypatch, rest, db_path, strong_night(), strong_reply())
     keys = [a["key"] for a in out["narrative"]["actions_tomorrow"]]
-    assert keys == ["dsr_action:reduce_waste:food/fish-tacos", "dsr_action:reorder:food/brioche-buns",
+    assert keys == ["dsr_action:reduce_waste:food", "dsr_action:reorder:food/brioche-buns",
                     "dsr_action:adjust_staffing:labor"]
 
 
@@ -919,9 +926,11 @@ def test_a_night_without_one_still_writes(monkeypatch, rest, db_path):
     # Cites the budget: the manager's view never shows it.
     (_it("Gross sales of $5,640 fell $1,360 short of plan, and labor ran 34.8%. Fix the schedule first.",
          "sales.gross", "sales.budget_gross", "labor.pct"), "budget_gross"),
-    # Names the budget figure without citing it: completed cites catch it.
+    # Names the budget figure without citing it or calling it a budget:
+    # completion never adds a plan the words do not name (NS3 R14), so the
+    # $7,000 is untraced and the line is dropped all the same.
     (_it("Gross sales were $5,640 against $7,000, and labor ran 34.8%. Fix the schedule first.",
-         "sales.gross", "labor.pct"), "budget_gross"),
+         "sales.gross", "labor.pct"), "7,000"),
     # Food cost is the owner's unless granted.
     (_it("Food ran 32.6% of sales and labor 34.8%. Fix the schedule first.", "food.est_cost_pct", "labor.pct"),
      "food.est_cost_pct"),
@@ -977,3 +986,156 @@ def test_a_stored_points_figure_backs_the_points_it_holds():
     assert "2.1" in narrative.check_item(wrong, F)
     guest = _it("One urgent review cites a 40-minute wait.", "reviews.urgent")
     assert "40" in narrative.check_item(guest, F)
+
+
+
+# ── money kinds (NS3 C2, R1-R7, R13, R14; NS2 C2) ───────────────────────────
+# The check traced the NUMBER and never the claim around it: an opportunity,
+# a budget miss or one night's figure could be called "saved", "on pace" or
+# "a month", and complete_cites attached the opportunity itself to back it.
+# These replay scratchpad ns3/dsr/probe_guard.py, probe_saving.py and
+# probe_write.py, every line of which was kept before.
+
+def _probe_facts():
+    fiscal = {"week_start": "2026-09-16", "week_end": "2026-09-22", "fiscal_year": 2026, "period": 9, "week": 4}
+    blocks = {
+        "sales": dsr.block(dsr.READY, source="rpower", metrics={
+            "net": 19850.40, "gross": 21430.00, "budget_gross": 20000, "budget_net": 18500.0,
+            "vs_budget_net": 1350.40, "last_week_net": 17210.15, "vs_last_week": 2640.25, "transactions": 612,
+            "avg_ticket": 32.43, "comps": 185.0, "forecast_net": 18900.0}, detail={}, block_name="sales"),
+        "labor": dsr.block(dsr.READY, source="rpower", metrics={
+            "cost": 4812.30, "pct": 24.2, "target_pct": 26.0, "vs_target_pts": -1.8, "hours": 312.5,
+            "overtime_hours": 6.5}, detail={}, block_name="labor"),
+        "food": dsr.block(dsr.READY, source="cavnar", metrics={
+            "est_food_cost": 5900.0, "est_food_cost_pct": 29.8, "waste_logged": 84.5, "low_stock": 2,
+            "recoverable_monthly": 1200.0}, detail={}, block_name="food"),
+    }
+    return {"schema": dsr.SCHEMA_VERSION, "restaurant_id": 1, "business_date": "2026-09-19", "fiscal": fiscal,
+            "blocks": blocks, "missing": dsr.missing_reasons(blocks)}
+
+
+@pytest.mark.parametrize("text, cites", [
+    ("Labor savings of $1,200 this week.", ["labor.cost"]),
+    ("Labor savings of $1,200 this week.", ["food.recoverable_monthly", "labor.cost"]),
+    ("You saved $1,200 on food cost this month.", ["food.recoverable_monthly"]),
+    ("Sales are on pace for $19,850 this month.", ["sales.net"]),
+    ("Waste and overtime together add up to $1,200/month.",
+     ["food.recoverable_monthly", "food.waste_logged", "labor.overtime_hours"]),
+    ("Waste is costing $84.50 a month.", ["food.waste_logged"]),
+    ("Net sales came in at $18,500 tonight.", ["sales.budget_net", "labor.pct"]),
+    ("Labor ran 1.8 points under target, saving $1,350.", ["labor.vs_target_pts", "sales.vs_budget_net"]),
+    ("Cavnar recovered $1,200 in food cost for you.", ["food.recoverable_monthly"]),
+    ("Food cost was $5,900, a saving against target.", ["food.est_food_cost", "sales.net"]),
+    ("Food cost drivers are costing $1,200 a month, measured.", ["food.recoverable_monthly"]),
+])
+def test_a_money_claim_the_facts_do_not_hold_is_dropped(text, cites):
+    F = narrative.Facts(_probe_facts())
+    item = {"text": text, "cites": F.complete_cites(text, cites)}
+    assert narrative.check_item(item, F) is not None, item
+
+
+def test_an_opportunity_worded_as_one_stands():
+    F = narrative.Facts(_probe_facts())
+    for text in ("About $1,200 a month of food cost could be recovered.",
+                 "$1,200 a month in food cost is at stake."):
+        assert narrative.check_item({"text": text, "cites": ["food.recoverable_monthly"]}, F) is None, text
+
+
+def test_a_budget_miss_is_never_the_largest_saving():
+    """probe_saving: a $420 budget SHORTFALL passed as "Trimming Tuesday's
+    close saved $420 this week." whatever the model cited."""
+    f = weak_night()
+    f["blocks"]["sales"]["metrics"].update({"budget_net": 5630.60, "vs_budget_net": -420.0})
+    f["blocks"]["food"]["metrics"]["recoverable_monthly"] = 420.0
+    F = narrative.Facts(f)
+    t = "Trimming Tuesday's close saved $420 this week."
+    for cites in (["labor.dollars"], ["sales.vs_budget_net"], ["food.recoverable_monthly"],
+                  ["labor.pct", "labor.target_pct"]):
+        assert narrative.check_item({"text": t, "cites": F.complete_cites(t, cites)}, F) is not None, cites
+    assert "largest_money_saving" not in narrative.ITEM_SINGLES
+    assert "largest_opportunity" in narrative.ITEM_SINGLES
+
+
+def test_cite_completion_never_adds_a_fact_of_another_kind():
+    """R14: complete_cites added food.recoverable_monthly by itself to back
+    "Labor savings of $1,200"."""
+    F = narrative.Facts(_probe_facts())
+    assert "food.recoverable_monthly" not in F.complete_cites("Labor savings of $1,200 this week.", ["labor.cost"])
+    # a plan the words name is still completed (the manager view redacts by it)
+    assert "sales.budget_net" in F.complete_cites("Net beat the $18,500 budget.", ["sales.net"])
+
+
+def test_the_kind_table():
+    k = narrative.kind_of
+    assert k("food.recoverable_monthly") == k("food.drivers_at_stake_monthly") == "opportunity"
+    assert k("sales.budget_net") == k("labor.target_pct") == k("sales.gross_budget") == "plan"
+    assert k("sales.forecast_net") == "projection" and k("food.est_food_cost_pct") == "estimate"
+    assert k("sales.vs_budget_net") == k("sales.net") == k("sales.net_last_week") == "measured"
+    assert not narrative.is_measured("food.recoverable_monthly")
+
+
+def test_a_cause_across_blocks_is_dropped():
+    """NS2 C2: "Net sales fell short because labor ran 34.8%" runs backwards
+    (labor % is high because sales were low) and was kept."""
+    F = narrative.Facts(weak_night())
+    for text, cites in (
+            ("Net sales of $5,210.60 fell short because labor ran 34.8%.", ["sales.net", "labor.pct"]),
+            ("Reviews averaged 3.3 stars because labor ran 34.8%.", ["reviews.rating_avg", "labor.pct"])):
+        why = narrative.check_item({"text": text, "cites": cites}, F)
+        assert why and "cause between" in why, (text, why)
+    # a cause inside one block, beside another block's figure in another
+    # sentence, stands (the lead's own shape)
+    lead = weak_reply()["executive_summary"]
+    assert narrative.check_item(lead, F, lead=True) is None
+
+
+def test_an_opportunity_line_is_not_counted_measured_and_the_retired_slot_is_null(monkeypatch, rest, db_path):
+    """probe_write: seven lines, four of them savings claims, went out under
+    "7 of 7 lines kept · 7 measured"."""
+    r = strong_reply()
+    r["went_well"].append(_it("Labor savings of $1,200 this week.", "labor.dollars"))
+    r["needs_attention"].append(_it("Sales are on pace for $19,850 this month.", "sales.net"))
+    r["needs_attention"].append(_it("Waste is costing $84.50 a month.", "food.waste_dollars"))
+    out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
+    n = out["narrative"]
+    kept = [i["text"] for i in n["went_well"] + n["needs_attention"]]
+    assert not [t for t in kept if "savings" in t or "on pace" in t or "$84.50 a month" in t]
+    v = n["verification"]
+    assert v["by_kind"]["opportunity"] >= 2                   # the two "could be recovered" lines
+    assert v["measured"] == v["by_kind"]["measured"] < v["kept"]
+    assert n["largest_money_saving"] is None and n["largest_opportunity"]
+
+
+def test_a_stored_largest_saving_is_never_shown_again():
+    from dsr import access
+    n = access.narrative_for({"executive_summary": _it("x", "sales.net"),
+                              "largest_money_saving": _it("You saved $1,200.", "food.recoverable_monthly")}, set())
+    assert n["largest_money_saving"] is None
+
+
+def test_a_restaurant_wide_monthly_is_never_one_dishs():
+    """NS3 food #1 probe3: dollars_monthly=640 (the whole restaurant's
+    figure) on the fish tacos."""
+    F = narrative.Facts(strong_night())
+    act = {"text": "Tighten prep on the fish tacos.", "why": "About $640 a month of food cost could be recovered.",
+           "dollars_monthly": 640.0, "urgency": "this_week", "effort": "medium", "kind": "reduce_waste",
+           "subject": "Fish Tacos", "cites": ["food.waste_dollars", "food.recoverable_monthly"]}
+    why = narrative.check_item(act, F, action=True)
+    assert why and "restaurant-wide" in why
+
+
+def test_a_week_total_compares_the_same_days():
+    """probe_rollup / NS3 H6: 3 of 7 days in read Net $30,000, Budget $66,500,
+    vs Budget +$1,500."""
+    from dsr import rollup
+    rows = []
+    for i in range(7):
+        m = i < 3
+        rows.append({"date": f"2026-09-{16 + i}", "cats": {}, "gross": 10500.0 if m else None,
+                     "net": 10000.0 if m else None, "gross_basis": "items" if m else None,
+                     "budget_gross": 10000.0, "budget_net": 9500.0, "last_year_net": 9000.0,
+                     "labor_cost": 2600.0 if m else None})
+    t = rollup._totals(rows, [])
+    assert t["net"] - t["budget_net"] == t["vs_budget_net"] == 1500.0
+    assert t["net"] - t["last_year_net"] == t["vs_last_year_net"]
+    assert t["budget_gross"] == 30000.0 and t["budget_net_full_range"] == 66500.0

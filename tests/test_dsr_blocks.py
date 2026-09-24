@@ -177,7 +177,13 @@ def test_food_recoverable_is_the_deduplicated_total_not_the_plain_sum(db, monkey
         "total_monthly_deduplicated": food_cost_intelligence.deduplicated_total(drivers)["total"],
         "complete": True, "degraded_sources": [], "total_basis": "the largest driver per ingredient"})
     b = block_food.collect(_ctx(db, rid))
-    assert b["metrics"]["recoverable_monthly"] == 100.0
+    # NS3 H3: the driver total is published as what it is — at stake across
+    # the drivers — and "recoverable" is inventory's figure, one meaning on
+    # every surface.
+    assert b["metrics"]["drivers_at_stake_monthly"] == 100.0
+    import inventory
+    assert b["metrics"]["recoverable_monthly"] == inventory.analysis_for(rid)[2]["recoverable_monthly"]
+    assert b["detail"]["recoverable"]["kind"] == "opportunity"
 
 
 def test_food_waits_for_the_nights_item_sales_and_says_so(db):

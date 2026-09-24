@@ -178,6 +178,11 @@ def narrative_for(narrative, hidden):
     that is the lead. `executive_summary` is therefore always the lead to
     show, and `lead_from` says when it was substituted."""
     n = filter_narrative(narrative, hidden)
+    if isinstance(n, dict) and n.get("largest_money_saving"):
+        # Retired (dsr.narrative.RETIRED_SINGLES, NS3 C2): a stored night's
+        # "Largest saving" line named an opportunity or a budget miss as
+        # money saved. Never shown again, on any stored report.
+        n["largest_money_saving"] = None
     if isinstance(n, dict) and not n.get("executive_summary") and n.get("operations_summary"):
         n["executive_summary"] = n["operations_summary"]
         n["lead_from"] = "operations_summary"
