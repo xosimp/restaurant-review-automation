@@ -283,7 +283,7 @@ Validation reads as a plain sentence under the control in `--red` /
 
 ## 8. Tables
 
-Web only (iOS uses rows/cards). `.hb-tbl` is the reference: uppercase 10px
+Web, and one iOS exception. `.hb-tbl` is the reference: uppercase 10px
 kicker headers with a `--hb-line` underline, 12px cells, hairline row
 borders, right-aligned numerics (`th.r` / `td.r`), `.nm` name cell with a
 status dot, hover tint, and a clickable row when the row has a destination.
@@ -291,6 +291,18 @@ status dot, hover tint, and a clickable row when the row has a destination.
 
 Wrap wide tables in an overflow container (`.fc2-table-scroll`) so the page
 never scrolls sideways.
+
+**iOS uses rows and cards — except the Daily Report's week**
+(`DSRWeekGrid`, `Features/DailyReport/DailyReportWeekView.swift`): the
+owner's own weekly sheet is a grid, and read any other way it loses the
+columns he compares down. Same anatomy as `.hb-tbl`: a pinned first column
+(the day, tappable when that night has a report, an amber dot when it is
+provisional), the figures scrolling sideways inside the card (never the
+page), uppercase 10.5pt ink3 headers, numbers right-aligned in the number
+face, changes green/red, an unmeasured cell a muted "—", and the totals
+rows on a faint ember wash under a heavier rule. The cells come from
+`DSRWeekTable` (plain strings, unit-tested), not from the view. Don't
+reach for it for anything that reads fine as rows.
 
 ---
 
@@ -386,7 +398,7 @@ iOS (`CavnarSurface` on `cavnarCard(_:)`):
 |---|---|---|---|
 | hero | the module's focal point near the top | `.rv2-hero`, `.lb2-hero`, `.hb-hero`, `.hb-card.hero` — ambient ember light (`:before`), deep shadow; the graph heroes (`.hb-hero`, `.rv2-hero`, `.lb2-hero`) also carry the cursor light | `.cavnarCard(.hero)` |
 | card | informational | `.hb-card`, `.ac-card`, `.data-card` — hairline, lift on hover | `.cavnarCard()` |
-| recessed | supporting stats inside a card | `.hb-sg`, `.rv2-sg`, `.lb2-sg` — no border, no hover tone | — |
+| recessed | supporting stats inside a card | `.hb-sg`, `.rv2-sg`, `.lb2-sg` — no border, no hover tone | `DSRStatTile` (Paper3 at 35%, radius 12, no border) |
 | floating | above the page | `.ask-panel`, `.ai-feed`, modals — glass, long shadow | `.cavnarCard(.floating)` |
 | ai | written by Cavnar AI | `.lb2-ai`, `.hb-rec`, `.ask-b.ai`, `.fc2-recipe` — warm surface, ember hairline, glow | `.cavnarCard(.ai)` |
 
@@ -434,9 +446,11 @@ Rules:
 ## 11b. Home order (web and iOS, identical)
 
 Fixed by role so the owner learns where things live: header strip (module
-pulse, AI activity) → value delivered → **the day** (morning brief with open
-issues; the close-out takes the slot after 8pm local, the weekly receipts
-lead it on Monday) → needs attention → the one cross-module thing → what
+pulse, AI activity) → value delivered → **the day** (last night's Daily
+Sales Report, then the morning brief with open issues; the close-out takes
+the slot after 8pm local, the weekly receipts lead it on Monday. iOS:
+`HomeLastNightCard`, which renders nothing for a login or location with no
+report — the web Home has no twin yet) → needs attention → the one cross-module thing → what
 Cavnar AI recommends → readiness (leads the page instead when nothing is
 connected yet, hides once complete) → measured (goals, what your changes
 did, what got better) → what connects, comps and voids → worth. The
@@ -527,6 +541,12 @@ day is a short page.
 | Caveat | `CavnarCaveat` |
 | Background | `.cavnarModuleBackground()` |
 | Radius | `CavnarRadius.control / .card / .sheet / .pill` |
+| Night status | `DSRStatusPill(phase:)` — Final green / Provisional amber / Running ember with a `BreathingDot` / Couldn't finish red; the word always, never colour alone |
+| Expandable block card | `DSRBlockCard` (Daily Report) — `.cavnarCard()` whose header is always the Clash title, the source, a `DSRBlockStatus` capsule (Ready / Waiting / Unavailable / Not connected, from `dsr.STATUSES`) and ONE headline line (`DSRHeadline`, numbers in the number face) so a page of them reads collapsed in under two minutes; the detail opens on tap (the `CavnarDropdown` transition). A block that isn't ready shows the server's `reason` in amber instead, and doesn't open |
+| Recessed stat tile | `DSRStatTile` in a `DSRTileRow` (three across, wrapping) — kicker, one number, optional mixed-text detail; "—" in ink3 for a null. For supporting figures inside a card; `AccountStatTile` stays the sheet-strip tile |
+| Stage checklist | `DSRProgressChecklist` — a run's stages on a thin rail: green tick + local time when done, the breathing ember on the one running now, a hollow ring for what is to come; then each block's state with its reason. Lines are the server's own stages in its order, never a scripted sequence (same rule as the Ask trail) |
+| Bars | `DSRHourlyBars` (vertical, ember gradient, peak hour glowing, bar grow-in; a missing hour is a hairline gap) and `DSRCategoryBars` (horizontal against the largest) |
+| Weekly grid | `DSRWeekGrid` — see §8 |
 
 ---
 

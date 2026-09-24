@@ -165,6 +165,13 @@ struct HomeView: View {
                                     .padding(.top, 30)
                                     .belowFold(heroAppeared, delay: 0.6)
                             }
+                            // Last night's Daily Sales Report leads the
+                            // day's read; it renders nothing for a login or
+                            // location without one.
+                            // (It pads itself, so a hidden card leaves no gap.)
+                            HomeLastNightCard(open: { path.append($0) },
+                                              homeLoadedAt: viewModel.lastLoadedAt)
+                                .belowFold(heroAppeared, delay: 0.61)
                             HomeDayCard(dateLabel: dayLabel(summary))
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
@@ -259,6 +266,25 @@ struct HomeView: View {
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
+            .navigationDestination(for: DailyReportRoute.self) { route in
+                switch route {
+                case .report(let date, let follow):
+                    DailyReportView(date: date, follow: follow)
+                case .list:
+                    DailyReportListView(open: { path.append($0) })
+                case .week(let date):
+                    DailyReportWeekView(date: date, open: { path.append($0) })
+                }
+            }
+            // A tapped `dsr` push (or its row in the notification list)
+            // opens that night's report on Home's stack — on a fresh
+            // stack, so Back lands on Home rather than wherever it was.
+            // One hop later, so RootView's own observer (which switches to
+            // this tab) sees the route before it is consumed here.
+            .onChange(of: deepLinkRouter.pendingDailyReport) { _, route in
+                if route != nil { Task { @MainActor in openPendingDailyReport() } }
+            }
+            .onAppear { openPendingDailyReport() }
             .sensoryFeedback(.impact(weight: .medium), trigger: navHapticTrigger)
             // The base colour behind everything — where the field's own
             // bottom fade ends, and for any content below it.
@@ -746,6 +772,13 @@ struct HomeView: View {
     // resolve the FIRST tile's tap late, landing a stale extra navigation
     // moments after the real one. Ignore any tap within 350ms of the last
     // accepted one.
+    private func openPendingDailyReport() {
+        guard let route = deepLinkRouter.consumePendingDailyReport() else { return }
+        var fresh = NavigationPath()
+        fresh.append(route)
+        path = fresh
+    }
+
     private func navigate(to route: ModuleRoute) {
         let now = Date()
         guard now.timeIntervalSince(lastNavigationAt) > 0.35 else { return }
