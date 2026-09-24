@@ -375,25 +375,32 @@ def _do_approve_all(restaurant_id, limit=25):
     from models import BULK_PUBLISHABLE_SQL, bulk_publish_window, reply_queue_counts
     conn = get_conn()
     rows = conn.execute(
-        f"SELECT id, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
+        f"SELECT id, author, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
         "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
         (restaurant_id, bulk_publish_window(), limit)).fetchall()
     conn.close()
 
-    # Nobody reads these one by one, so each gets the checks auto-approve
-    # runs (NS5 M10): injection residue, the never-say list, commitments,
-    # and the public-reply claims. A reply that fails is held for the owner
-    # with the reason on it, and counted — never posted.
-    from ai_guard import check_review_reply
+    # Nobody reads these one by one, so each gets the check auto-approve
+    # runs (NS5 M10): the Response Validation Layer on reply_public
+    # (drafter.check_reply) — injection residue, the never-say list,
+    # commitments, the public-reply claims, awards and sourcing the owner
+    # never wrote down, a staff member named in public, another tenant's
+    # name. untrusted: the guest's review; names_allowed: the guest's name;
+    # offer_source: the owner's voice and menu notes. A reply that fails —
+    # or one the engine would reword, since what publishes is the stored
+    # draft — is held for the owner with the reason on it, and counted;
+    # never posted.
+    from drafter import check_reply as _check_reply
     r_obj = get_restaurant(restaurant_id)
-    never_say = (getattr(r_obj, "never_say", "") or "") if r_obj else ""
-    owner_said = " ".join(x for x in ((getattr(r_obj, "voice_notes", "") or "") if r_obj else "",
-                                      (getattr(r_obj, "menu_notes", "") or "") if r_obj else "") if x)
     held_now = 0
     checked = []
     for row in rows:
-        refusal = check_review_reply(row["draft_response"], never_say=never_say,
-                                     allowed_source=owner_said + " " + (row["text"] or ""))
+        draft_text = row["draft_response"] or ""
+        refusal, _checked_reply = _check_reply(draft_text, r_obj, restaurant_id=restaurant_id, review_id=row["id"],
+                                               review_text=row["text"] or "", author=row["author"] or "",
+                                               action="bulk_approve")
+        if not refusal and " ".join(str(_checked_reply).split()) != " ".join(draft_text.split()):
+            refusal = "Cavnar would reword part of this reply before it goes out"
         if refusal:
             held_now += 1
             conn = get_conn()
@@ -1247,6 +1254,116 @@ def _verify_named_entities(generated: str, context: str) -> list:
     return unsupported_names(generated, context)
 
 
+# ── The Response Validation Layer on the client paths (workstream A) ─────────
+#
+# The Reviews and Marketing reads kept structured flags (figures_verified,
+# causes_verified, names_verified) that both clients render as caveat boxes;
+# they are now read off the engine's verdict instead of the hand-rolled
+# verify_figures / unsupported_causes / unsupported_names sequence it
+# replaces. Only a finding that stays on screen (caveat / withhold) flags:
+# a dropped sentence is no longer there to caveat.
+_RV_FIGURE_CODES = ("F1", "F2", "F3", "F5", "F7", "F8", "X1")
+
+
+def rv_flags(verdict, text="") -> dict:
+    """The legacy verification flags from a Response Validation verdict:
+    figures (F1/F2/F3/F5/F7/F8/X1), causes (K1 — the whole sentence, so the
+    card can quote it) and names (N1/T1). All verified when there is no
+    verdict."""
+    figs, causes, names = [], [], []
+    if verdict is not None:
+        from ai_guard import sentences as _sents
+        shown = _sents(str(getattr(verdict, "text", "") or text or ""))
+        for f in verdict.findings:
+            if f.get("severity") not in ("caveat", "withhold"):
+                continue
+            span = str(f.get("span") or "").strip()
+            rule = f.get("rule")
+            if rule in _RV_FIGURE_CODES and span:
+                figs.append(span)
+            elif rule == "K1":
+                causes.append(str(f.get("sentence") or "").strip()
+                              or next((s.strip() for s in shown if span and span.lower() in s.lower()), span))
+            elif rule in ("N1", "T1") and span:
+                names.append(span)
+    figs, causes, names = (list(dict.fromkeys(x for x in lst if x)) for lst in (figs, causes, names))
+    return {"figures_verified": not figs, "unsupported_figures": figs,
+            "causes_verified": not causes, "unsupported_causes": causes,
+            "names_verified": not names, "unsupported_names": names}
+
+
+def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_rows, this_week, last_week,
+                               trend, money, bench, diags, op_lines, urgent_rows, low_count):
+    """The ValidationContext for the Reviews read (surface review_insight).
+
+    Facts: the MEASURED block typed from the figures the prompt is built from
+    — ratings (★), review counts (count), shares and the response rate (%) —
+    and the revenue-at-risk range as a projection a month; the prompt itself
+    backs anything else it states (hybrid). Anchors: the stored diagnosis's
+    cause (likely), its alternative and its theme, and the other modules'
+    co-movement lines (association). Untrusted: the fenced review excerpts.
+    Disclosures: low_review_count when no week in the window clears the
+    per-week trend floor (the read runs on the four-week floor alone), and a
+    stale source for a stale diagnosis, or a stale competitor median the
+    text quotes."""
+    import re as _re_rvc
+    import response_validation as _rvm
+    F = _rvm.Fact
+    rs = rstats or {}
+    facts = [F("reviews.total", rs.get("total"), "count", "measured"),
+             F("reviews.avg_rating", rs.get("avg_rating"), "★", "measured"),
+             F("reviews.response_rate_pct", rs.get("response_rate"), "%", "measured")]
+    for k in ("positive", "negative", "neutral", "classified", "urgent", "unanalysed"):
+        facts.append(F(f"reviews.{k}", rs.get(k), "count", "measured"))
+    for i in top_issues or []:
+        facts.append(F("topics." + _re_rvc.sub(r"\W+", "_", str(i.get("label") or "topic").lower()),
+                       i.get("count"), "count", "measured"))
+    for w in weekly_rows or []:
+        facts += [F(f"week.{w['week']}.reviews", w["cnt"], "count", "measured"),
+                  F(f"week.{w['week']}.avg_rating", w["avg_r"], "★", "measured"),
+                  F(f"week.{w['week']}.negative_pct", w["neg_pct"], "%", "measured")]
+    for label, row in (("this_week", this_week), ("last_week", last_week)):
+        if row is not None:
+            facts += [F(f"{label}.reviews", row["cnt"], "count", "measured"),
+                      F(f"{label}.avg_rating", row["avg_r"], "★", "measured")]
+    for k in ("first", "latest"):
+        facts.append(F(f"rating_trend.{k}", (trend or {}).get(k), "★", "measured"))
+    if (money or {}).get("available"):
+        facts += [F("revenue_at_risk.monthly_low", abs(money.get("monthly_low") or 0) or None, "$", "projection",
+                    "month"),
+                  F("revenue_at_risk.monthly_high", abs(money.get("monthly_high") or 0) or None, "$", "projection",
+                    "month")]
+    if (bench or {}).get("available"):
+        facts += [F("competitors.our_google_rating", bench.get("our_google_rating"), "★", "measured"),
+                  F("competitors.median_rating", bench.get("competitor_median"), "★", "measured"),
+                  F("competitors.count", bench.get("competitor_count"), "count", "measured")]
+    anchors = []
+    if diags:
+        d = diags[0]
+        anchors += _rvm.anchor(d.get("cause"), "likely")
+        anchors += _rvm.anchor(d.get("alternative_cause"), "association")
+        anchors += _rvm.anchor(str(d.get("category") or "").replace("_", " "), "association")
+    for line in (op_lines or {}).values() if isinstance(op_lines, dict) else (op_lines or []):
+        anchors += _rvm.anchor(line, "association")
+    stale = []
+    if diags and diags[0].get("stale"):
+        stale.append("the stored diagnosis")
+    if (bench or {}).get("stale") and _re_rvc.search(r"\b(?:competitor|median|intel)", text or "", _re_rvc.I):
+        stale.append("competitor ratings")
+    try:
+        tenants = _models_mod.other_tenant_names(rid)
+    except Exception:
+        tenants = set()
+    return _rvm.ValidationContext(
+        restaurant_id=rid, surface="review_insight", facts=facts, context_text=prompt,
+        cause_anchors=anchors, tenant_names_denied=tenants,
+        untrusted=[str(r["text"] or "") for r in urgent_rows or [] if r["text"]],
+        confidence=None,
+        data_state={"required_disclosures": ["low_review_count"] if low_count else [],
+                    "stale_sources": stale},
+        policy={"action": "review_insight", "check_counts": True})
+
+
 def _do_today_confidence(rid, payload):
     """The K1 confidence of the Reviews read's "Do today" line: a
     model-written suggestion over the reviews of the last 30 days, flagged
@@ -1315,8 +1432,11 @@ def _review_insight_recs(rid, payload):
     text = payload.get("insight") or ""
     payload["recs"] = []
     m = _re_dt.search(r"(?m)^.*Do today:\s*(.+)$", text)
+    # A verdict that withholds controls (the Response Validation Layer) offers
+    # no Done / Not for us, whatever the flags say.
     promote = bool(payload.get("figures_verified", True) and payload.get("names_verified", True)
-                   and payload.get("causes_verified", True) and not payload.get("error"))
+                   and payload.get("causes_verified", True) and not payload.get("error")
+                   and (payload.get("validation") or {}).get("controls", True) is not False)
     if m and promote:
         line = m.group(1).strip()
         # Keyed on what the advice is about, not a hash of its words (H16):
@@ -1744,13 +1864,97 @@ def _do_review_insight(rid):
             f"{forecast_line}"
         )
 
+        # The Response Validation Layer (workstream A) is the one check between
+        # the model's text and the owner. It replaces the confidence rewrite,
+        # verify_figures(check_counts), unsupported_causes against the
+        # diagnosis and unsupported_names this read ran by hand; the flags
+        # both clients render are read off its verdict (rv_flags), and the
+        # verdict itself travels as `validation`. It runs on a fresh read and
+        # again on a stored one whose engine version moved on — from the
+        # model's own text, with no model call.
+        import response_validation as _rv
+        from ai_guard import CLAIM_KINDS
+        import re as _re_ri
+        _ri_ctx_parts = dict(rstats=rstats, top_issues=top_issues, weekly_rows=weekly_rows, this_week=this_week,
+                             last_week=last_week, trend=_trend, money=_money, bench=_bench, diags=_diags,
+                             op_lines=_ri._operational_lines(_ops_ctx), urgent_rows=urgent_rows,
+                             low_count=not trend_weeks)
+
+        # What kind of claim each part of this payload is making.
+        # ai_guard.CLAIM_KINDS was written for exactly this and is already
+        # shipped by Intel and Food Cost; Reviews sent a measured figure, an
+        # inference and a projection as three identical lines of prose.
+        _kinds = {"this_week": "measured", "watch": "inferred",
+                  "do_today": "suggestion", "rating_trend": "computed",
+                  "severity_breakdown": "measured", "dayparts": "measured"}
+        if has_diag:
+            _kinds["why"] = "inferred"
+        if has_trend:
+            _kinds["next_week"] = "forecast"
+        if _money.get("available"):
+            _kinds["revenue_at_risk"] = "forecast"
+        if _bench.get("available"):
+            _kinds["benchmark"] = "measured"
+        _kinds = {k: v for k, v in _kinds.items() if v in CLAIM_KINDS}
+
+        def _ri_payload(raw_text):
+            """The read's payload from the model's text, or None when the
+            engine refuses it (the caller's fallback)."""
+            body = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), str(raw_text or ""))
+            body = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), body)
+            checked = _rv.enforce(body, _review_insight_rv_context(rid, body, prompt, **_ri_ctx_parts),
+                                   marker=False)
+            if not str(checked).strip():
+                return None
+            flags = rv_flags(checked.verdict, checked)
+            insight = str(checked)
+            # "Next week" is computed, never the model's (H8): added after the
+            # check, which has nothing to say about a figure Python wrote.
+            if _rating_next is not None:
+                insight = (insight.rstrip() + f"\n\U0001f52e Next week: if nothing changes, the weekly rating heads "
+                           f"toward about {_rating_next}★ — a projection from {_trend['weeks_above_floor']} weeks "
+                           f"of the trend, not a measurement.")
+            if flags["unsupported_names"]:
+                # A name the model wrote that was never in its input — the most
+                # damaging thing this passage can get wrong, because the whole
+                # premise of the panel is that Cavnar has read the reviews.
+                try:
+                    import ops as _ops_ri
+                    _ops_ri.capture(
+                        RuntimeError(f"review_insight named {flags['unsupported_names'][:3]} — not in its input"),
+                        job="review_insight", context=f"restaurant_id={rid}")
+                except Exception:
+                    pass
+            return {
+                "insight": insight,
+                **flags,
+                "validation": checked.validation,
+                "forecast": ({"kind": "review_rating_week", "predicted": _rating_next, "computed": True}
+                             if _rating_next is not None else None),
+                "claim_kinds": _kinds,
+                "confidence": _trend.get("confidence"),
+                "trend": {k: _trend[k] for k in
+                          ("direction", "confidence", "change", "first", "latest",
+                           "weeks_above_floor", "reason", "anomalies", "trend_strength_pct")},
+                "diagnosis": _diags[0] if _diags else None,
+                "diagnoses": _diags[:3],
+                "revenue_at_risk": _money,
+                "benchmark": _bench,
+                "severity": _sev,
+                "dayparts": _parts,
+                "locations": _locs,
+                "operational_context": _ops_ctx,
+                "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "stale": False,
+            }
+
         # One stored read per restaurant and prompt (audit #22): the prompt is
         # every figure, the diagnosis and today's date, so the same evidence
         # gives the same words on the web and the phone, and a new read is
         # written only when something in it changed.
         import insight_store as _ist_ri
         _fp_ri = _ist_ri.fingerprint(prompt)
-        _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri)
+        _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri, revalidate=_ri_payload)
         if isinstance(_stored_ri, dict) and _stored_ri.get("insight"):
             # The diagnoses' age, stale flag and "as of" are the current
             # ones, not those frozen when the read was stored (M-7): the
@@ -1774,35 +1978,33 @@ def _do_review_insight(rid):
             restaurant_id=rid,
             action="review_insight",
         )
-        insight = extract_text(msg).strip()
-        # A confidence the model claims for itself ("I'm fairly sure") is
-        # taken out (R9, B5 #9); a computed trend's band quoted from the
-        # DERIVED block stays.
-        from ai_guard import rewrite_confidence_claims as _rcc
-        insight, _ = _rcc(insight, None, bands=False)
-        # Strip any markdown
-        import re as _re_ri
-        insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
-        insight = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), insight)
-        # Figures the model states have to be figures it was handed. Kept
-        # rather than dropped — this is on-screen text the owner is reading
-        # now, so it carries a flag instead of a hole — but the flag is what
-        # lets the UI stop presenting an unverified number as a fact.
-        from ai_guard import verify_figures, CLAIM_KINDS, unsupported_causes
-        # The prompt forbids an invented count as much as an invented dollar
-        # figure, so counts are checked too (H3).
-        _unsupported = verify_figures(insight, prompt, "review_insight", rid, check_counts=True)
-        # "Never assert a cause that is not in the DIAGNOSIS block" was the
-        # prompt's word only. A causal sentence must carry the stored cause
-        # (or its alternative); anything else is flagged like an unverified
-        # figure and withholds the Do today controls (H2).
-        _cause_anchors = ([_diags[0].get("cause"), _diags[0].get("alternative_cause"),
-                           str(_diags[0].get("category") or "").replace("_", " ")] if _diags else [])
-        _unsupported_causes = unsupported_causes(insight, _cause_anchors, job="review_insight", restaurant_id=rid)
+        _raw_ri = extract_text(msg).strip()
+        payload = _ri_payload(_raw_ri)
+        if payload is None:
+            # Refused whole: the last read Cavnar stood behind, marked stale,
+            # else fixed copy — never the refused text. Held in memory for the
+            # cache window only, so the next open tries again.
+            try:
+                import ops as _ops_rf
+                _ops_rf.capture(RuntimeError("review_insight refused by the response validation layer"),
+                                job="review_insight", context=f"restaurant_id={rid}")
+            except Exception:
+                pass
+            _prev_ri, _prev_at = _ist_ri.latest(rid, "reviews")
+            if isinstance(_prev_ri, dict) and _prev_ri.get("insight"):
+                from ai_guard import freshness as _fresh_rf
+                held = dict(_prev_ri)
+                held.update(_fresh_rf(str(_prev_at).replace(" ", "T")[:19], stale_after_days=0))
+                held["stale"] = True
+            else:
+                held = {"insight": "Cavnar held today's read back: it said things your reviews don't support. "
+                                   "Your reviews are below.",
+                        "withheld": True, **rv_flags(None), "diagnoses": _diags[:3],
+                        "diagnosis": _diags[0] if _diags else None, "stale": False,
+                        "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
+            _cache_set("review-insight:" + str(rid), held)
+            return _review_insight_recs(rid, dict(held)), 200
         if _rating_next is not None:
-            insight = (insight.rstrip() + f"\n\U0001f52e Next week: if nothing changes, the weekly rating heads "
-                       f"toward about {_rating_next}★ — a projection from {_trend['weeks_above_floor']} weeks of "
-                       f"the trend, not a measurement.")
             try:
                 import insight_store as _ist_fc
                 _ist_fc.record_weekly_forecast(
@@ -1811,70 +2013,15 @@ def _do_review_insight(rid):
                            f"{_trend['weeks_above_floor']} weeks at {_trend['min_reviews_per_week']}+ reviews"))
             except Exception as _fce:
                 print(f"[review-insight] forecast not logged: {_fce}")
-        # A name the model wrote that was never in its input. verify_figures
-        # cannot see this — a fabricated guest is not a figure — and it is the
-        # most damaging thing this passage can get wrong, because the whole
-        # premise of the panel is that Cavnar has read the reviews.
-        _invented_names = _verify_named_entities(insight, prompt)
-        if _invented_names:
-            try:
-                import ops as _ops_ri
-                _ops_ri.capture(
-                    RuntimeError(f"review_insight named {_invented_names[:3]} — not in its input"),
-                    job="review_insight", context=f"restaurant_id={rid}")
-            except Exception:
-                pass
-
-        # What kind of claim each part of this payload is making.
-        # ai_guard.CLAIM_KINDS was written for exactly this and is already
-        # shipped by Intel and Food Cost; Reviews sent a measured figure, an
-        # inference and a projection as three identical lines of prose.
-        _kinds = {"this_week": "measured", "watch": "inferred",
-                  "do_today": "suggestion", "rating_trend": "computed",
-                  "severity_breakdown": "measured", "dayparts": "measured"}
-        if has_diag:
-            _kinds["why"] = "inferred"
-        if has_trend:
-            _kinds["next_week"] = "forecast"
-        if _money.get("available"):
-            _kinds["revenue_at_risk"] = "forecast"
-        if _bench.get("available"):
-            _kinds["benchmark"] = "measured"
-        _kinds = {k: v for k, v in _kinds.items() if v in CLAIM_KINDS}
-
-        payload = {
-            "insight": insight,
-            "figures_verified": not _unsupported,
-            "unsupported_figures": _unsupported,
-            "names_verified": not _invented_names,
-            "unsupported_names": _invented_names,
-            "causes_verified": not _unsupported_causes,
-            "unsupported_causes": _unsupported_causes,
-            "forecast": ({"kind": "review_rating_week", "predicted": _rating_next, "computed": True}
-                         if _rating_next is not None else None),
-            "claim_kinds": _kinds,
-            "confidence": _trend.get("confidence"),
-            "trend": {k: _trend[k] for k in
-                      ("direction", "confidence", "change", "first", "latest",
-                       "weeks_above_floor", "reason", "anomalies", "trend_strength_pct")},
-            "diagnosis": _diags[0] if _diags else None,
-            "diagnoses": _diags[:3],
-            "revenue_at_risk": _money,
-            "benchmark": _bench,
-            "severity": _sev,
-            "dayparts": _parts,
-            "locations": _locs,
-            "operational_context": _ops_ctx,
-            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
-            "stale": False,
-        }
         # The WHOLE payload is cached now, not just the insight string.
         # Caching the string meant every caveat — unverified figures,
         # unverified names, the trend's confidence, the diagnosis's own age —
         # was computed, rendered once, and then silently dropped for the next
         # five minutes while the text it qualified kept being shown.
         _cache_set("review-insight:" + str(rid), payload)
-        _ist_ri.put(rid, "reviews", _fp_ri, payload)
+        # Stored with the model's own text, so a later engine version
+        # re-validates it rather than serving this verdict (insight_store.get).
+        _ist_ri.put(rid, "reviews", _fp_ri, payload, raw=_raw_ri)
         return _review_insight_recs(rid, dict(payload)), 200
     except Exception as _re:
         import traceback
@@ -2108,6 +2255,13 @@ def _ask_meta(meta):
         # iOS builds decode it as a String.
         "confidence_detail": meta.get("confidence_detail"),
         "unverified_figures": meta.get("unverified_figures") or [],
+        # The Response Validation Layer's findings (workstream A): the
+        # sentences whose cause nothing it read states and the names nothing
+        # it read holds — both clients mark them in place — and the
+        # structured verdict {verdict, caveats, controls, codes, version}.
+        "unsupported_causes": meta.get("unsupported_causes") or [],
+        "unsupported_names": meta.get("unsupported_names") or [],
+        "validation": meta.get("validation"),
         "depth": meta.get("depth") or "standard",
     }
 
@@ -2568,7 +2722,8 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     # marker, so checking for one promoted every line.
     extra = dict(extra or {})
     promote = (bool(extra.get("figures_verified", True)) and bool(extra.get("causes_verified", True))
-               and "UNVERIFIED:" not in (text or ""))
+               and "UNVERIFIED:" not in (text or "")
+               and (extra.get("validation") or {}).get("controls", True) is not False)
     import data_freshness as _df_mkt
     recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote,
                              evidence=marketing_read_evidence(rid), sources=_df_mkt.sources_for(["marketing"]))
@@ -2579,6 +2734,7 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     # recommendation shares (API_REFERENCE.md → Recommendation fields);
     # `confidence` is each line's K1 (T1).
     out["recs"] = flat_recs(recs)
+    out.setdefault("validation", None)
     if raw:
         out["rec_items"] = recs
     return out
@@ -2605,7 +2761,10 @@ def _mkt_checks(stored):
             "unsupported_figures": stored.get("unsupported_figures") or [],
             "causes_verified": stored.get("causes_verified", True),
             "unsupported_causes": stored.get("unsupported_causes") or [],
-            "forecast": stored.get("forecast")}
+            "forecast": stored.get("forecast"),
+            # The Response Validation Layer's verdict (workstream A); None on
+            # a read written before it.
+            "validation": stored.get("validation")}
 
 
 def _mkt_forecast(reach_vals, diff_pct):
@@ -2663,6 +2822,9 @@ def _do_mkt_insight(rid, raw=False):
         _mkt_reach_vals, _mkt_diff = [], None
         _mkt_week_sums = []
         _mkt_topics = []
+        # The measured rows the prompt's figures come from, typed as facts for
+        # the Response Validation Layer below.
+        _mkt_perf_seen, _mkt_weekly_seen = [], []
         try:
             from models import get_conn as _gc
             _conn = _gc()
@@ -2687,6 +2849,8 @@ def _do_mkt_insight(rid, raw=False):
                 (rid,)
             ).fetchall()
             _conn.close()
+            _mkt_perf_seen = [dict(r) for r in _perf_rows]
+            _mkt_weekly_seen = [dict(w) for w in _weekly]
             _perf_lines = []
             if _perf_rows:
                 _mkt_topics = [r["topic"] for r in _perf_rows if r["topic"]]
@@ -2804,9 +2968,61 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # The shared, bounded client (timeout, no hidden SDK retries): an
         # unbounded one here was invisible to the timeout lint behind its
         # `import anthropic as _anth` alias (MOD-MKT-2).
+        # The Response Validation Layer (workstream A), surface
+        # marketing_insight. It replaces verify_figures and unsupported_causes
+        # here. Facts: the measured post and weekly figures the prompt was
+        # built from (counts) and the reach change (%, with its direction);
+        # the prompt backs anything else it states. No cause anchors: a topic
+        # that was posted, or a holiday coming up, is not evidence of what
+        # moved reach. Guests and sales were never inputs (M2).
+        import response_validation as _rv
+        _fc_line, _fc_pred = _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        _F = _rv.Fact
+        _mkt_facts = [_F("posts.measured", len(_mkt_perf_seen), "count", "measured")]
+        for _i, _r in enumerate(_mkt_perf_seen):
+            for _k in ("reach", "impressions", "engaged", "likes", "comments"):
+                _mkt_facts.append(_F(f"posts.{_i}.{_k}", _r.get(_k), "count", "measured"))
+        for _w in _mkt_weekly_seen:
+            _mkt_facts += [_F(f"week.{_w['week']}.avg_reach", _w.get("avg_reach"), "count", "measured"),
+                           _F(f"week.{_w['week']}.avg_impressions", _w.get("avg_imp"), "count", "measured"),
+                           _F(f"week.{_w['week']}.posts", _w.get("posts"), "count", "measured")]
+        if _mkt_diff is not None:
+            _mkt_facts.append(_F("reach.change_pct", _mkt_diff, "%", "computed",
+                                 direction="up" if _mkt_diff > 0 else "down" if _mkt_diff < 0 else None))
+        try:
+            _mkt_tenants = _models_mod.other_tenant_names(rid)
+        except Exception:
+            _mkt_tenants = set()
+        _mkt_ctx = _rv.ValidationContext(
+            restaurant_id=rid, surface="marketing_insight", facts=_mkt_facts, context_text=prompt,
+            tenant_names_denied=_mkt_tenants, confidence=None,
+            data_state={"missing_inputs": ["guests", "sales"]}, policy={"action": "marketing_insight"})
+
+        def _mkt_read(raw_text):
+            """(the read's checks + text, the Validated text) from the model's
+            text; the first is None when the engine refuses it."""
+            import re as _re_mf
+            # A FORECAST line the model wrote anyway is not the forecast: it is
+            # removed and the computed one stands in its place (H8).
+            body = _re_mf.sub(r"(?im)^\s*forecast:.*$\n?", "", str(raw_text or "")).strip()
+            checked = _rv.enforce(body, _mkt_ctx, marker=False)
+            if not str(checked).strip():
+                return None, checked
+            flags = rv_flags(checked.verdict, checked)
+            text = str(checked)
+            if _fc_line:
+                text = text.rstrip() + "\n" + _fc_line
+            return {"figures_verified": flags["figures_verified"],
+                    "unsupported_figures": flags["unsupported_figures"],
+                    "causes_verified": flags["causes_verified"],
+                    "unsupported_causes": flags["unsupported_causes"],
+                    "forecast": ({"kind": "marketing_reach_week", "predicted": _fc_pred, "computed": True}
+                                 if _fc_line else None),
+                    "validation": checked.validation, "insight": text}, checked
+
         import insight_store as _ist_m
         _fp_m = _ist_m.fingerprint(prompt)
-        _stored_m = _ist_m.get(rid, "marketing", _fp_m)
+        _stored_m = _ist_m.get(rid, "marketing", _fp_m, revalidate=lambda raw_m: _mkt_read(raw_m)[0])
         if isinstance(_stored_m, dict) and _stored_m.get("insight"):
             _cache_set(cache_key, dict(_mkt_checks(_stored_m), insight=_stored_m["insight"]))
             return _mkt_insight_out(rid, _stored_m["insight"], raw, _mkt_checks(_stored_m)), 200
@@ -2820,20 +3036,27 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             restaurant_id=rid,
             action="marketing_insight",
         )
-        insight = extract_text(msg).strip()
-        from ai_guard import verify_figures, unsupported_causes
-        # A FORECAST line the model wrote anyway is not the forecast: it is
-        # removed and the computed one stands in its place (H8).
-        import re as _re_mf
-        insight = _re_mf.sub(r"(?im)^\s*forecast:.*$\n?", "", insight).strip()
-        _unsupported = verify_figures(insight, prompt, "marketing_insight", rid)
-        # A cause is allowed only where it carries something measured here —
-        # a topic that was posted, a named holiday (H2).
-        _causes = unsupported_causes(insight, list(_mkt_topics) + [h.strip() for h in (upcoming or "").split(",")],
-                                     job="marketing_insight", restaurant_id=rid)
-        _fc_line, _fc_pred = _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        _raw_m = extract_text(msg).strip()
+        _read_m, _checked_m = _mkt_read(_raw_m)
+        if _read_m is None:
+            # Refused whole: fixed copy, never the refused text, held for the
+            # cache window only so the next open tries again.
+            try:
+                import ops as _ops_mf
+                _ops_mf.capture(RuntimeError("marketing_insight refused by the response validation layer"),
+                                job="marketing_insight", context=f"restaurant_id={rid}")
+            except Exception:
+                pass
+            _held_m = {"insight": "Cavnar held this week's marketing brief back: it said things your data doesn't "
+                                  "support. It tries again the next time this opens.",
+                       "withheld": True, "figures_verified": True, "unsupported_figures": [],
+                       "causes_verified": True, "unsupported_causes": [], "forecast": None,
+                       "validation": _checked_m.validation}
+            _cache_set(cache_key, _held_m)
+            return _mkt_insight_out(rid, _held_m["insight"], raw, _mkt_checks(_held_m)), 200
+        insight = _read_m.pop("insight")
+        _checks = _read_m
         if _fc_line:
-            insight = insight.rstrip() + "\n" + _fc_line
             try:
                 # Logged in the scorer's unit — the week's SUMMED reach
                 # (last week's, carried forward) — never the per-post
@@ -2845,12 +3068,10 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
                                                         f"{MKT_TREND_MIN_POSTS}+ posts")
             except Exception as _fce:
                 print(f"[MktInsight] forecast not logged: {_fce}")
-        _checks = {"figures_verified": not _unsupported, "unsupported_figures": _unsupported,
-                   "causes_verified": not _causes, "unsupported_causes": _causes,
-                   "forecast": ({"kind": "marketing_reach_week", "predicted": _fc_pred, "computed": True}
-                                if _fc_line else None)}
         _cache_set(cache_key, dict(_checks, insight=insight))
-        _ist_m.put(rid, "marketing", _fp_m, dict(_checks, insight=insight))
+        # Stored with the model's own text, so a later engine version
+        # re-validates it rather than serving this verdict (insight_store.get).
+        _ist_m.put(rid, "marketing", _fp_m, dict(_checks, insight=insight), raw=_raw_m)
         return _mkt_insight_out(rid, insight, raw, _checks), 200
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -3145,9 +3366,14 @@ def _labor_insight_out(rid, text, user_id=None, analysis=None):
     each remaining line with Done / Not for us / Track), `rec_items` and
     the flat `recs` Food Cost's payload carries."""
     recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis)
+    import response_validation as _rv_lab
     return {"insight": format_insight_html(text, rec_items=recs, surface="labor", module="labor"),
             "rec_items": recs,
-            "recs": flat_recs(recs)}
+            "recs": flat_recs(recs),
+            # The Response Validation verdict the read carries (workstream
+            # A) — labor.labor_note's text, cached or fresh; None until it is
+            # a Validated str.
+            "validation": _rv_lab.validation_of(text)}
 
 
 def labor_analysis_safe(rid):
@@ -3262,9 +3488,13 @@ def inv_insight_api(current_user):
                 if is_live else [])
         # is_live travels with the insight so the UI can say whose numbers
         # these are instead of presenting example data as the owner's own.
+        import response_validation as _rv_food
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
-                       recs=flat_recs(recs))
+                       recs=flat_recs(recs),
+                       # The Response Validation verdict the read carries
+                       # (workstream A); None until the text is a Validated str.
+                       validation=_rv_food.validation_of(insight))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -3650,18 +3880,24 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
     # (audit #14). The flag now follows the edited text.
     # The flag follows the public-reply claims as well (NS5 H5): an owner
     # typing "next round's on me" into a clean draft makes it one to read.
-    from ai_guard import reply_review_reason
+    # The check is the Response Validation Layer on reply_public
+    # (drafter.check_reply, workstream A): untrusted is the guest's review,
+    # names_allowed the guest's name, offer_source the owner's voice and menu
+    # notes, never_say the restaurant's list. The owner's own words are
+    # stored as typed — the engine only decides whether they need a person
+    # to read them before any bulk or auto publish (a refusal, with its
+    # reason built from the findings).
+    from drafter import check_reply as _check_reply
     _r_said = get_restaurant(restaurant_id)
     conn = get_conn()
     try:
-        _rev = conn.execute("SELECT text FROM reviews WHERE id=? AND restaurant_id=?",
+        _rev = conn.execute("SELECT text, author FROM reviews WHERE id=? AND restaurant_id=?",
                             (review_id, restaurant_id)).fetchone()
     finally:
         conn.close()
-    _said = " ".join(x for x in ((getattr(_r_said, "voice_notes", "") or "") if _r_said else "",
-                                 (getattr(_r_said, "menu_notes", "") or "") if _r_said else "",
-                                 (_rev["text"] if _rev else "") or "") if x)
-    reason = reply_review_reason(draft, _said)
+    reason, _ = _check_reply(draft, _r_said, restaurant_id=restaurant_id, review_id=review_id,
+                             review_text=(_rev["text"] if _rev else "") or "",
+                             author=(_rev["author"] if _rev else "") or "", action="save_draft")
     claims = bool(reason)
     conn = get_conn()
     try:
@@ -8514,6 +8750,10 @@ def intel_open_recs(rid, restaurant=None) -> dict:
         blob = {"insight": raw} if isinstance(raw, str) else {}
     if not isinstance(blob, dict):
         blob = {}
+    # A read shown under an older Response Validation engine is re-validated
+    # here (no model call) before any line of it is counted.
+    import competitor as _comp_io
+    blob = _comp_io.current_intel(rid, blob)
     insight = blob.get("insight") or ""
     parsed = parse_competitor_intel(insight) if insight else {
         "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False}
@@ -8541,6 +8781,12 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
         blob = _json_ir.loads(getattr(r, "competitor_intel", None) or "{}") if r else {}
     except (TypeError, ValueError):
         blob = {}
+    # A read shown under an older Response Validation engine (or before it)
+    # is re-validated and written back first — no model call — so the lines
+    # keyed here are the ones every other reader of the row now shows.
+    if isinstance(blob, dict):
+        import competitor as _comp_ir
+        blob = _comp_ir.current_intel(rid, blob)
     insight = (blob.get("insight") or "") if isinstance(blob, dict) else ""
     parsed = parse_competitor_intel(insight) if insight else {
         "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False, "unverified": None}
@@ -8579,6 +8825,9 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
             "withheld_recommendations": parsed.get("withheld_recommendations", 0),
             "unverified": parsed.get("unverified"),
             "nothing_to_act_on": bool(parsed.get("nothing_to_act_on")),
+            # The Response Validation verdict the read was shown under
+            # (workstream A); None on a blob with no read.
+            "validation": blob.get("validation") if isinstance(blob, dict) else None,
             "generated_at": blob.get("generated_at") if isinstance(blob, dict) else None}
 
 

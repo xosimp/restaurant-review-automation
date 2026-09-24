@@ -54,6 +54,9 @@ _json_object_guard(mobile_bp)
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.
 from ai_guard import safe_error as _safe_err
+# The `validation` object a Validated insight text carries (Response
+# Validation Layer, workstream A), or None for a plain string.
+from response_validation import validation_of as _rv_of
 
 
 from emails import _resend_key, _from_email  # one definition each
@@ -2190,6 +2193,9 @@ def mobile_food_cost_analytics(current_user):
             insight=insight,
             # Example data must never read as the owner's own numbers.
             is_live=bool(is_live),
+            # The Response Validation verdict the read carries (workstream
+            # A); None until inventory returns a Validated str.
+            validation=_rv_of(insight),
             **_insight_json(insight, _recs),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
@@ -2710,8 +2716,11 @@ def mobile_labor_insight(current_user):
     if cached:
         _an = _capi.labor_analysis_safe(rid)
         _recs = _capi.labor_insight_items(rid, cached, user_id=uid, analysis=_an)
+        # `validation`: the Response Validation verdict the read carries
+        # (workstream A); None until labor.labor_note returns a Validated str.
         return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
-                       rec_items=_recs, **_capi.labor_read_state(rid), **_insight_json(cached, _recs))
+                       rec_items=_recs, validation=_rv_of(cached),
+                       **_capi.labor_read_state(rid), **_insight_json(cached, _recs))
     try:
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
@@ -2724,7 +2733,8 @@ def mobile_labor_insight(current_user):
         _capi._cache_set(LABOR_INSIGHT_CACHE + str(rid), insight)
         _recs = _capi.labor_insight_items(rid, insight, user_id=uid, analysis=analysis)
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
-                       rec_items=_recs, **_capi.labor_read_state(rid), **_insight_json(insight, _recs))
+                       rec_items=_recs, validation=_rv_of(insight),
+                       **_capi.labor_read_state(rid), **_insight_json(insight, _recs))
     except Exception as e:
         # The web twin's stale fallback (H15, CA1 L6): serve the last read
         # with its age rather than an error, and say how old it is.
@@ -2733,7 +2743,8 @@ def mobile_labor_insight(current_user):
             _an = _capi.labor_analysis_safe(rid)
             _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
             return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
-                           rec_items=_recs, **stale["state"], **_insight_json(stale["text"], _recs))
+                           rec_items=_recs, validation=_rv_of(stale["text"]),
+                           **stale["state"], **_insight_json(stale["text"], _recs))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e)
         return jsonify(ok=False, insight=_msg_lab,
@@ -3783,6 +3794,10 @@ def _do_mobile_intel(restaurant_id):
         import json as _json
         from competitor_intel_format import parse_competitor_intel, extract_recs
         blob = _json.loads(restaurant.competitor_intel)
+        # A read shown under an older Response Validation engine (or before
+        # it) is re-validated and written back first — no model call.
+        import competitor as _comp_mi
+        blob = _comp_mi.current_intel(restaurant_id, blob)
         insight = blob.get("insight", "")
         parsed = parse_competitor_intel(insight)
 
@@ -3819,6 +3834,9 @@ def _do_mobile_intel(restaurant_id):
             "restaurant_name": restaurant.name,
             "owner_name": restaurant.owner_name,
             "intro": parsed.get("intro"),
+            # The Response Validation verdict the read was shown under
+            # ({verdict, caveats, controls, codes, version}; workstream A).
+            "validation": blob.get("validation"),
             # The one parser's lines, less any the owner already answered;
             # `recommendation_items` carries each line's rec_ledger key and
             # the competitor reviews it cites (audit #21 / #31).
