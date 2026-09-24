@@ -180,8 +180,12 @@ def test_the_list_and_the_status_checklist(client, db, monkeypatch):
     _as(monkeypatch, rid, "manager")
     rows = client.get("/api/dsr").get_json()
     assert rows["view"] == "manager"
+    # The lead cites the budget, withheld from a manager, so it goes; the
+    # summary never falls back to an unfiltered sentence.
     assert rows["reports"] == [{"business_date": "2026-09-22", "label": "9/22/26", "version": 1, "status": "final",
-                                "provisional": False, "missing": [], "finalized_at": rows["reports"][0]["finalized_at"]}]
+                                "provisional": False, "missing": [], "finalized_at": rows["reports"][0]["finalized_at"],
+                                "net": 2000.0, "lead": None, "lead_missing": None}]
+    assert rows["enabled"] is True and len(rows["tonight"]) == 10
     st = client.get("/api/dsr/2026-09-22/status").get_json()
     assert st["exists"] is True and st["status"] == "final"
     keys = [s["key"] for s in st["stages"]]
@@ -250,13 +254,16 @@ def test_only_the_owner_can_rerun_a_finished_night(client, db, monkeypatch, fake
 
 
 def test_close_day_only_for_tonight_or_the_night_before(client, db, monkeypatch, fake_night):
+    """A manager closes tonight or last night; the owner's seven-night window
+    is tested in test_dsr_views."""
     import closeout
     rid = _rid(db)
-    _as(monkeypatch, rid, "client")
+    _as(monkeypatch, rid, "manager")
     today = closeout.business_date_for(get_restaurant(rid, db_path=db))
     old = (today - timedelta(days=3)).isoformat()
     assert client.post("/api/dsr/close", json={"date": old}).status_code == 400
     assert client.post("/api/dsr/close", json={"date": (today - timedelta(days=1)).isoformat()}).status_code == 202
+    _as(monkeypatch, rid, "client")
     update_restaurant(rid, {"dsr_enabled": 0}, db_path=db)
     assert client.post("/api/dsr/close", json={}).status_code == 409
 

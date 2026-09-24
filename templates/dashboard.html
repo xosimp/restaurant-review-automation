@@ -1411,8 +1411,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 /* ── Home (hb-*) — one hero chart, a row of signals, three lines of action.
    Same visual language as the iOS Home: glow strokes, ember gradients,
    breathing pulse chips, a hot endpoint dot. Little copy. */
-#panel-home{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-home{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-home,#panel-dsr{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 .hb-wrap{max-width:1120px;margin:0 auto;padding:30px 32px 56px;position:relative;z-index:1}
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
 .hb-kicker{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -1585,8 +1585,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    row (.hb-row) stays for what is genuinely a list. DESIGN_SYSTEM.md §4:
    a page of identical cards flattens the hierarchy — so .hero is spent
    twice per page (today's focus, what connects) and nowhere else. */
-#panel-home{--hb-inner:rgba(14,12,10,.035)}
-[data-theme="dark"] #panel-home{--hb-inner:rgba(255,255,255,.04)}
+#panel-home,#panel-dsr{--hb-inner:rgba(14,12,10,.035)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr{--hb-inner:rgba(255,255,255,.04)}
 .hb-card{position:relative;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);transition:box-shadow .18s ease,transform .18s ease,border-color .18s ease}
 [data-theme="dark"] .hb-card{background:var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
 .hb-card.lift{cursor:pointer}
@@ -1754,8 +1754,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    recede (still open, close-out). Only the big graphs carry the cursor
    light (.lit); cards lift on hover and nothing else. Warm secondaries (copper, amber) so the ember reads
    as chosen rather than the only orange the palette has. */
-#panel-home{--hb-copper:#b8643c;--hb-amber:#c9843f;--hb-good2:#2f7f5a;--hb-glow:rgba(200,75,47,.20);--hb-sheen:rgba(255,255,255,.7);--hb-halo:rgba(200,75,47,.18)}
-[data-theme="dark"] #panel-home{--hb-copper:#c9784f;--hb-amber:#e6a862;--hb-good2:#5ec38a;--hb-glow:rgba(224,100,68,.30);--hb-sheen:rgba(255,255,255,.07);--hb-halo:rgba(224,100,68,.24)}
+#panel-home,#panel-dsr{--hb-copper:#b8643c;--hb-amber:#c9843f;--hb-good2:#2f7f5a;--hb-glow:rgba(200,75,47,.20);--hb-sheen:rgba(255,255,255,.7);--hb-halo:rgba(200,75,47,.18)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr{--hb-copper:#c9784f;--hb-amber:#e6a862;--hb-good2:#5ec38a;--hb-glow:rgba(224,100,68,.30);--hb-sheen:rgba(255,255,255,.07);--hb-halo:rgba(224,100,68,.24)}
 .hb-card{will-change:transform}
 .hb-card>*{position:relative;z-index:1}
 .hb-card:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 24px 44px -22px rgba(14,12,10,.24)}
@@ -2529,13 +2529,13 @@ svg:hover .hb-xh{opacity:1}
   var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
   var RESULTTONE={improved:'good',worsened:'critical'};
   function hbFollow(){
-    var got={},left=12;
+    var got={},left=13;
     function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
     get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
     get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
     get('cross','/api/cross-module');get('news','/api/good-news');get('miles','/api/milestones');
-    get('loss','/api/loss-signals');get('month','/api/monthly-review');
+    get('loss','/api/loss-signals');get('month','/api/monthly-review');get('dsr','/api/dsr?limit=1');
   }
   // ── last month, in the app ────────────────────────────────────────────────
   // The monthly review only ever went out as an email on the 1st. An owner
@@ -2811,6 +2811,7 @@ svg:hover .hb-xh{opacity:1}
     if(monday)day+=receipts;
     if(evening)day+=renderCloseout();
     var h='<div class="hb-sh first"><div><div class="k">The day</div><h2>This morning’s brief <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
+    h+=renderLastNight(g.dsr);
     hbAttnSetIssues(iss);
     h+='<div class="hb-grid" style="margin-top:14px">';
     // The brief as a timeline - a rail with a tone dot per line - rather
@@ -2875,6 +2876,36 @@ svg:hover .hb-xh{opacity:1}
       for(var m=0;m<Math.min(res.length,4);m++){var r=res[m];h+='<div class="hb-row '+(r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch'))+'"><span class="d"></span><span class="t wrap">'+num(r.summary||r.title||'')+'</span></div>';}
       h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div></div>';}
     return h+'</div>';
+  }
+  // ── last night's daily report ─────────────────────────────────────────────
+  // The nightly DSR's front door: its status, net sales (only when Sales was
+  // measured — a dash is never a zero), the summary's opening sentence as
+  // this login may read it or why there is none, and the report one tap
+  // away (#dsr/<date>, the same link the email carries). A login with no
+  // DSR access gets a 403 and no card; a location with it switched off, too.
+  function hbDayGap(a,b){var x=new Date(+a.slice(0,4),+a.slice(5,7)-1,+a.slice(8,10)),y=new Date(+b.slice(0,4),+b.slice(5,7)-1,+b.slice(8,10));return Math.round((y-x)/86400000);}
+  function renderLastNight(x){
+    if(!x||!x.ok)return '';
+    var r=(x.reports||[])[0];
+    if(!r){
+      if(!x.enabled)return '';
+      return '<section class="hb-card quiet hb-rise dr-home" style="margin-bottom:16px" aria-label="Daily report"><div class="hb-h3"><span>Daily report</span></div>'
+        +'<div class="hb-empty">The first daily report builds itself after tonight’s close. Closing early? Start it now.</div>'
+        +'<div class="ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="close">Close day</button></div><div class="dr-err" hidden></div></section>';
+    }
+    var gap=x.tonight?hbDayGap(r.business_date,x.tonight):null;
+    var when=gap===0?'Tonight':(gap===1?'Last night':'Latest report');
+    var running=!(r.status==='final'||r.status==='provisional'||r.status==='failed');
+    var pill=running?'<span class="dr-pill running"><i></i>Running</span>':'<span class="dr-pill '+esc(r.status)+'">'+(r.status==='final'?'Final':(r.status==='provisional'?'Provisional':'Couldn’t finish'))+'</span>';
+    var net=(typeof r.net==='number'&&isFinite(r.net))
+      ?'<div class="n hb-num">$'+Math.round(r.net).toLocaleString('en-US')+'<small>net sales</small></div>'
+      :'<div class="n none">'+esc((r.missing||[])[0]||(running?'Sales are still coming in':'Sales weren’t measured'))+'</div>';
+    var lead=r.lead?'<div class="ld">'+num(r.lead)+'</div>'
+      :'<div class="ld miss">'+esc(r.lead_missing||(running?'The summary is written once the night is in.':'No summary for this night.'))+'</div>';
+    return '<section class="hb-card hb-rise dr-home" style="margin-bottom:16px" aria-label="'+esc(when)+'"><div class="hb-h3"><span>'+esc(when)+' · <span class="hb-num">'+esc(mdy(r.business_date))+'</span></span>'+pill+'</div>'
+      +'<div class="dr-home-b">'+net+lead+'</div>'
+      +'<div class="ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Open report')+'</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="week" data-date="'+esc(r.business_date)+'">The week’s grid</button></div></section>';
   }
   // The 60 seconds at the end of the night the numbers can't see: the POS
   // syncs at 3am, so the closer's own words are the only account of tonight
@@ -3032,6 +3063,823 @@ svg:hover .hb-xh{opacity:1}
 })();
 </script>
 </div><!-- /panel-home -->
+
+<!-- DAILY REPORT (the nightly DSR, dsr/) — a Home sub-page, no tab of its own.
+     Reached from Home's "Last night" card and by hash: #dsr/YYYY-MM-DD is the
+     link every DSR email's "View full report" carries — keep it. -->
+<div class="panel" id="panel-dsr" style="max-width:100%;padding:0;min-height:100%;position:relative">
+<style>
+/* ── Daily report (dr-*) — the night, the week and the period, in the Home
+   language (hb-*): Clash headings, Space Grotesk figures, ember spent on the
+   kicker, the peak hour and the one primary action. The sales hero is the
+   page's one big graph and the only place the cursor light shows. */
+.dr-wrap{max-width:1120px;margin:0 auto;padding:24px 32px 64px;position:relative;z-index:1}
+.dr-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.dr-views{display:inline-flex;gap:6px;flex-wrap:wrap}
+.dr-views .cbtn[aria-pressed="true"]{border-color:var(--ember);color:var(--ember);background:var(--hb-tint)}
+.dr-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap}
+.dr-head>div:first-child{flex:1 1 420px;min-width:0}
+.dr-head .hb-h1{margin:8px 0 6px}
+.dr-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.dr-meta{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:14px;font-size:13.5px;color:var(--ink3)}
+.dr-meta .ac-select{padding:6px 10px;font-size:13px;width:auto}
+.dr-pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:999px;border:1px solid var(--hb-line);color:var(--ink2);white-space:nowrap;line-height:1.3}
+.dr-pill.final{color:var(--hb-good);background:var(--green-bg);border-color:transparent}
+.dr-pill.provisional,.dr-pill.awaiting{color:var(--hb-warn);background:var(--amber-bg);border-color:transparent}
+.dr-pill.failed{color:var(--hb-bad);background:var(--red-bg);border-color:transparent}
+.dr-pill.running{color:var(--ember);background:var(--hb-tint);border-color:transparent}
+.dr-pill.running i{width:7px;height:7px;border-radius:50%;background:var(--ember);animation:drBreath 1.8s ease-in-out infinite}
+.dr-pill.est{color:var(--ink3)}
+@keyframes drBreath{0%,100%{opacity:1}50%{opacity:.3}}
+/* The sliding ember pulse — quick loading, never a spinner. */
+.dr-pulse{position:relative;height:3px;width:180px;border-radius:2px;background:var(--hb-tint2);overflow:hidden}
+.dr-pulse.wide{width:100%;margin:-4px 0 16px}
+.dr-pulse i{position:absolute;top:0;left:-30%;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
+.dr-loading{display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:48px 0;font-size:14px;color:var(--ink3)}
+.dr-old{margin-top:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:14.5px;color:var(--ink2)}
+.dr-old .sp{flex:1}
+.dr-miss{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;color:var(--ink3)}
+.dr-miss span.m{color:var(--hb-warn);background:var(--amber-bg);border-radius:999px;padding:4px 11px;font-weight:600}
+.dr-read{margin-top:24px}
+.dr-read.hb-focus .lead{font-size:clamp(19px,1.8vw,23px);line-height:1.42;max-width:none;margin-bottom:4px}
+.dr-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:16px}
+.dr-two .hb-row .t{font-size:15px;font-weight:500;color:var(--ink2)}
+.dr-calls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px}
+.dr-call{padding:15px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
+.dr-call .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.dr-call .t{font-size:14.5px;line-height:1.5;color:var(--ink2);margin-top:7px}
+.dr-foot{font-size:12.5px;color:var(--ink3);margin-top:12px}
+.dr-sec{margin-top:16px;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;box-shadow:var(--elev-card)}
+[data-theme="dark"] .dr-sec{background:var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
+.dr-sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:18px 22px;border-radius:16px}
+.dr-sec>summary::-webkit-details-marker{display:none}
+.dr-sec>summary:before{content:'';width:0;height:0;border-left:6px solid var(--ember);border-top:5px solid transparent;border-bottom:5px solid transparent;transition:transform .2s}
+.dr-sec[open]>summary:before{transform:rotate(90deg)}
+.dr-sec>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.dr-sec>summary .ttl{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink)}
+.dr-sec>summary .src{font-size:12.5px;color:var(--ink3)}
+.dr-sec>summary .sp{flex:1}
+.dr-sec>summary .sum{font-size:14px;color:var(--ink3)}
+.dr-sec-b{padding:0 22px 22px}
+.dr-why{font-size:15px;color:var(--ink2);padding:4px 0 2px}
+.dr-note{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:12px}
+.dr-note b{color:var(--ink2);font-weight:600}
+#panel-dsr .hb-stat.bad .v{color:var(--hb-bad)}
+#panel-dsr .hb-stat.good .v{color:var(--hb-good)}
+#panel-dsr .hb-stats{margin-top:0}
+.dr-hero{margin-bottom:18px}
+.dr-hero-top{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.dr-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(44px,5vw,62px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);margin-top:10px}
+.dr-hero .subl{font-size:14px;color:var(--ink3);margin-top:10px;line-height:1.6}
+.dr-hero .subl .hb-num{color:var(--ink2);font-weight:600}
+.dr-cmp{min-width:280px;flex:0 1 340px;align-self:center}
+.dr-cmp-r{display:grid;grid-template-columns:1fr auto 84px;gap:12px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hb-line2);font-size:14px;color:var(--ink2)}
+.dr-cmp-r:first-child{border-top:none}
+.dr-cmp-r .p{font-family:'Space Grotesk',sans-serif;font-weight:700;text-align:right}
+.dr-cmp-r .b{text-align:right;color:var(--ink3);font-size:13px}
+.dr-cmp-r .up,.dr-grid .up{color:var(--hb-good)}.dr-cmp-r .down,.dr-grid .down{color:var(--hb-bad)}
+.dr-dim{color:var(--ink3)}
+/* the night by hour: HTML bars (crisp at any width), ember gradient, the
+   peak hour lit and labelled */
+.dr-hours{display:flex;align-items:flex-end;gap:5px;height:170px;margin-top:22px;padding-top:22px}
+.dr-hours .c{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;position:relative;min-width:0}
+.dr-hours .c i{display:block;width:100%;max-width:44px;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--ember2),var(--ember));opacity:.62;transform-origin:bottom;animation:drGrow .6s cubic-bezier(.2,.9,.3,1) both;animation-delay:calc(var(--i,0)*45ms)}
+.dr-hours .c.peak i{opacity:1;box-shadow:0 0 18px var(--ambient),0 0 0 1px var(--hb-tint2)}
+.dr-hours .c b{position:absolute;top:-20px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:var(--ember);white-space:nowrap}
+.dr-hours .c span{font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);margin-top:6px}
+@keyframes drGrow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.dr-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;margin-top:6px}
+.dr-bar{display:grid;grid-template-columns:minmax(90px,130px) 1fr 76px 48px;gap:10px;align-items:center;padding:6px 0;font-size:14px;color:var(--ink2)}
+.dr-bar .t{height:8px;border-radius:999px;background:var(--hb-inner);overflow:hidden}
+.dr-bar .t i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));transform-origin:left;animation:cmBar .7s cubic-bezier(.2,.9,.3,1) both;transform:scaleX(0)}
+.dr-bar .v,.dr-bar .s{text-align:right;font-family:'Space Grotesk',sans-serif}
+.dr-bar .s{color:var(--ink3);font-size:12.5px}
+.dr-bar.un .n{color:var(--ink3)}
+.dr-bar.un .t i{background:var(--ink3);opacity:.5}
+.dr-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.dr-tbl th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:0 8px 7px 0;border-bottom:1px solid var(--hb-line)}
+.dr-tbl td{padding:8px 8px 8px 0;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:top}
+.dr-tbl th.r{width:64px}.dr-tbl th.r+th.r{width:86px}
+.dr-tbl .r{text-align:right;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
+.dr-list{margin-top:14px}
+.dr-list .hb-row .t{font-size:14.5px;font-weight:500;color:var(--ink2);white-space:normal;line-height:1.45}
+.dr-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.dr-chips span{font-size:12.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 10px}
+.dr-chips span.neg{color:var(--hb-bad)}
+.dr-co-r{display:grid;grid-template-columns:200px 1fr;gap:16px;padding:11px 0;border-top:1px solid var(--hb-line2)}
+.dr-co-r:first-of-type{border-top:none}
+.dr-co-r .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding-top:3px}
+.dr-co-r .v{font-size:15px;line-height:1.55;color:var(--ink);white-space:pre-wrap}
+.ac-row .l i.dr-n{font-style:normal;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
+.dr-withheld{font-size:13px;color:var(--ink3);margin-top:18px}
+/* progress: the stage checklist ticking, each line the server's own time */
+.dr-prog{margin-top:24px}
+.dr-step{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--hb-line2);font-size:15px;color:var(--ink2)}
+.dr-step:first-of-type{border-top:none}
+.dr-step .ic{width:20px;height:20px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--hb-line);color:var(--ink3);font-size:12px;font-weight:700}
+.dr-step.done .ic{background:var(--green-bg);border-color:transparent;color:var(--hb-good)}
+.dr-step.now .ic{border-color:var(--ember)}
+.dr-step.now .ic:after{content:'';width:8px;height:8px;border-radius:50%;background:var(--ember);animation:drBreath 1.8s ease-in-out infinite}
+.dr-step.gap .ic{background:var(--amber-bg);border-color:transparent;color:var(--hb-warn)}
+.dr-step.todo{color:var(--ink3)}
+.dr-step .t{flex:1;min-width:0}
+.dr-step .t small{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
+.dr-step .at{font-family:'Space Grotesk',sans-serif;font-size:13px;color:var(--ink3);white-space:nowrap}
+.dr-err{font-size:13.5px;color:var(--red);margin-top:10px}
+/* the week grid: his layout, one scroll box of its own, the day column pinned */
+.dr-gridbox{margin-top:20px;border:1px solid var(--hb-line);border-radius:14px;background:var(--surface)}
+[data-theme="dark"] .dr-gridbox{border-color:var(--line-hi)}
+.dr-grid{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:100%;font-variant-numeric:tabular-nums}
+.dr-grid th,.dr-grid td{padding:10px 12px;border-bottom:1px solid var(--hb-line2);white-space:nowrap;text-align:right;color:var(--ink2)}
+.dr-grid thead th{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);border-bottom:1px solid var(--hb-line);background:var(--surface)}
+.dr-grid thead tr.grp th{font-size:10px;color:var(--ember2);border-bottom:none;padding-bottom:0;text-align:left}
+.dr-grid td.n{font-family:'Space Grotesk',sans-serif}
+.dr-grid td.n.strong{color:var(--ink);font-weight:600}
+.dr-grid td.n small{display:block;font-size:11px;color:var(--ink3);font-weight:400}
+.dr-grid td.tx{white-space:normal;min-width:130px;max-width:260px;text-align:left;font-size:13px;line-height:1.4}
+.dr-grid th.l,.dr-grid td.l{text-align:left}
+.dr-grid .day{position:sticky;left:0;z-index:1;background:var(--surface);text-align:left;border-right:1px solid var(--hb-line2)}
+.dr-grid .day .cbtn-text{color:var(--ink);font-weight:600}.dr-grid .day .cbtn-text:hover{color:var(--ember)}
+.dr-grid .day .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;background:var(--hb-line);vertical-align:middle}
+.dr-grid .day .dot.final{background:var(--hb-good)}.dr-grid .day .dot.provisional{background:var(--hb-warn)}.dr-grid .day .dot.failed{background:var(--hb-bad)}.dr-grid .day .dot.running{background:var(--ember)}
+.dr-grid tbody tr:hover td{background:var(--hb-tint)}
+.dr-grid tfoot td{font-weight:600;color:var(--ink);border-bottom:none;border-top:1px solid var(--hb-line)}
+.dr-grid tfoot tr+tr td{border-top:1px solid var(--hb-line2);font-weight:500;color:var(--ink2)}
+.dr-grid tfoot td.day small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
+.dr-bud{margin-top:16px}
+.dr-bud-grid{display:grid;grid-template-columns:130px minmax(0,160px) minmax(0,160px);gap:8px 12px;align-items:center;margin-top:12px}
+.dr-bud-grid .h{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.dr-bud-grid .d{font-size:14px;color:var(--ink2)}
+.dr-bud-ft,.dr-imp-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.dr-imp{margin-top:16px}
+.dr-imp-err{margin:10px 0 0;padding-left:18px;font-size:13px;color:var(--red);line-height:1.5}
+/* Home's "Last night" card */
+.dr-home .dr-home-b{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}
+.dr-home .n{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
+.dr-home .n small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-top:6px}
+.dr-home .n.none{font-size:15px;font-family:'Apfel Grotezk',sans-serif;letter-spacing:0;color:var(--ink3);max-width:200px;line-height:1.4}
+.dr-home .ld{flex:1 1 320px;min-width:0;font-size:15px;line-height:1.55;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dr-home .ld.miss{color:var(--ink3)}
+.dr-home .ft{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+@media (max-width:860px){.dr-wrap{padding:18px 16px 56px}.dr-two,.dr-cols{grid-template-columns:1fr}.dr-co-r{grid-template-columns:1fr;gap:4px}.dr-cmp{flex:1 1 100%}.dr-hours .c span{font-size:9.5px}.dr-hours .c b{font-size:11px}}
+@media (prefers-reduced-motion:reduce){.dr-hours .c i,.dr-bar .t i{animation:none;transform:none}.dr-pulse i,.dr-pill.running i,.dr-step.now .ic:after{animation:none}.dr-pulse i{left:35%}}
+</style>
+<div class="dr-wrap" id="dr-root">
+  <div class="dr-nav">
+    <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="home">&larr; Home</button>
+    <div class="dr-views" role="group" aria-label="Report view">
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="night" aria-pressed="false">Night</button>
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="week" aria-pressed="false">Week</button>
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="period" aria-pressed="false">Period</button>
+    </div>
+  </div>
+  <div id="dr-body" aria-live="polite"></div>
+</div>
+</div>
+<script>
+/* ── The daily report: one night, the week grid, the period ──────────────
+   Hash routes: #dsr (the latest night), #dsr/YYYY-MM-DD (the email's "View
+   full report" link — keep it), #dsr/week/YYYY-MM-DD, #dsr/period/YYYY-MM-DD.
+   Everything is drawn from the payload this login was given: the manager
+   payload has no budget, loss or food lines, and nothing here re-derives
+   them. A block that isn't ready shows its reason; a missing figure is a
+   dash, never a zero. ES5 only. */
+(function(){
+  var TERMINAL={final:1,provisional:1,failed:1};
+  var STATUS={final:'Final',provisional:'Provisional',failed:'Couldn’t finish'};
+  var BLOCKS=['sales','labor','food','reviews','marketing','intel','closeout'];
+  var BLOCK={sales:'Sales',labor:'Labor',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
+  var BSTATUS={awaiting:'Awaiting',unavailable:'Unavailable',not_connected:'Not connected'};
+  var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
+  var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
+  var URGENCY={before_service:'Today',this_week:'This week',next_schedule:'Next schedule',next_order:'Next order'};
+  var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand'};
+  var CALLS=[['highest_priority_issue','Highest priority'],['biggest_risk','Biggest risk'],['biggest_win','Biggest win'],
+             ['biggest_financial_opportunity','Money on the table'],['largest_money_saving','Largest saving'],
+             ['biggest_staffing_concern','Staffing concern'],['largest_staffing','Staffing'],['largest_guest_experience','Guest experience']];
+  var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var st={kind:null,date:null,version:null,poll:null,tick:null,token:0,view:null,grid:null,expect:null,waits:0};
+
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function hn(s){return '<span class="hb-num">'+s+'</span>';}
+  function prose(s){return window.num?window.num(s):esc(s);}
+  function isNum(v){return typeof v==='number'&&isFinite(v);}
+  function has(o,k){return !!o&&Object.prototype.hasOwnProperty.call(o,k);}
+  function money(v,cents){if(!isNum(v))return '—';var a=Math.abs(v);
+    var s=cents?a.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):Math.round(a).toLocaleString('en-US');
+    return (v<0?'−':'')+'$'+s;}
+  function smoney(v){if(!isNum(v))return '—';return (v>0?'+':(v<0?'−':''))+'$'+Math.round(Math.abs(v)).toLocaleString('en-US');}
+  function pct(v,d){return isNum(v)?v.toFixed(d==null?1:d)+'%':'—';}
+  function spct(v){if(!isNum(v))return '—';return (v>0?'+':(v<0?'−':''))+Math.abs(v).toFixed(1)+'%';}
+  function cnt(v){return isNum(v)?(Math.round(v*10)/10).toLocaleString('en-US'):'—';}
+  function tone(v){return isNum(v)&&v!==0?(v>0?'up':'down'):'';}
+  function pad(n){return (n<10?'0':'')+n;}
+  function day(iso){return new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10));}
+  function iso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
+  function addDays(s,n){var d=day(s);d.setDate(d.getDate()+n);return iso(d);}
+  function weekday(s){return DAYS[day(s).getDay()];}
+  function md(s){return window.mdy?window.mdy(s):s;}
+  function clock(l){if(!l||l.length<16)return '';var h=+l.slice(11,13);return ((h%12)||12)+':'+l.slice(14,16)+(h<12?'am':'pm');}
+  function stamp(l){return l?md(l.slice(0,10))+' · '+clock(l):'';}
+  function hourLabel(hr,full){var h=(+hr)%24;return ((h%12)||12)+(full?(h<12?'am':'pm'):(h<12?'a':'p'));}
+  function get(url){return fetch(url,{credentials:'same-origin'}).then(apiJson);}
+  function post(url,b){return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(apiJson);}
+  function el(id){return document.getElementById(id);}
+  function body(){return el('dr-body');}
+  function loading(label){return '<div class="dr-loading"><div class="dr-pulse" aria-hidden="true"><i></i></div><span>'+esc(label||'Loading the report')+'</span></div>';}
+  function pill(status){if(!status)return '';if(TERMINAL[status])return '<span class="dr-pill '+status+'">'+esc(STATUS[status])+'</span>';
+    return '<span class="dr-pill running"><i></i>Running</span>';}
+  function tile(k,v,s,cls){return '<div class="hb-stat'+(cls?' '+cls:'')+'"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';}
+  function note(html){return html?'<div class="dr-note">'+html+'</div>':'';}
+  function cap(t){t=String(t||'');return t.charAt(0).toUpperCase()+t.slice(1);}
+  function row(t,cls,m){return '<div class="hb-row '+(cls||'watch')+'"><span class="d"></span><span class="t wrap">'+t+'</span>'+(m?'<span class="m">'+m+'</span>':'')+'</div>';}
+
+  // ── showing the page ─────────────────────────────────────────────────────
+  function show(){
+    var ps=document.querySelectorAll('.panel');for(var i=0;i<ps.length;i++)ps[i].classList.remove('active');
+    var p=el('panel-dsr');if(p)p.classList.add('active');
+    var ts=document.querySelectorAll('.tab');for(var j=0;j<ts.length;j++){ts[j].classList.remove('active');ts[j].setAttribute('aria-selected','false');}
+    var home=el('tab-home');if(home){home.classList.add('active');home.setAttribute('aria-selected','true');if(typeof _moveTabIndicator==='function')_moveTabIndicator(home);}
+    if(typeof stopMetricsPoller==='function')stopMetricsPoller();
+  }
+  function active(){var p=el('panel-dsr');return !!(p&&p.classList.contains('active'));}
+  function hashFor(kind,date){return '#dsr'+(kind==='night'?'':'/'+kind)+(date?'/'+date:'');}
+  function setViews(kind){var bs=document.querySelectorAll('#panel-dsr [data-dr="view"]');
+    for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-kind')===kind?'true':'false');}
+  function stopPoll(){if(st.poll){clearInterval(st.poll);st.poll=null;}st.tick=null;}
+  window.dsrOpen=function(kind,date,opts){
+    opts=opts||{};kind=kind||'night';stopPoll();st.token++;
+    st.kind=kind;st.date=date||null;st.version=opts.version||null;
+    if(!opts.keepExpect){st.expect=null;st.waits=0;}
+    var h=hashFor(kind,date);
+    if(window.location.hash!==h&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,h);else history.pushState(null,null,h);}
+    show();setViews(kind);window.scrollTo(0,0);
+    if(kind==='week'||kind==='period')return loadGrid(kind,date);
+    return loadNight(date,st.version);
+  };
+  function route(){
+    var m=/^#dsr(?:\/(week|period))?(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(window.location.hash||'');
+    if(!m)return false;
+    var kind=m[1]||'night',date=m[2]||null;
+    if(active()&&st.kind===kind&&st.date===date)return true;
+    window.dsrOpen(kind,date,{replace:true});return true;
+  }
+  window.dsrRoute=route;
+  window.addEventListener('popstate',function(){
+    if(route())return;
+    if(!active())return;
+    stopPoll();
+    var n=(window.location.hash||'').replace('#','')||'home',b=el('tab-'+n)||el('tab-home');
+    if(b&&typeof switchTab==='function')switchTab(b.id.replace('tab-',''),b);
+  });
+  window.addEventListener('hashchange',function(){route();});
+  document.addEventListener('DOMContentLoaded',function(){route();});
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&st.tick)st.tick();});
+
+  // ── one night ────────────────────────────────────────────────────────────
+  function loadNight(date,version){
+    var tk=st.token,b=body();if(!b)return;b.innerHTML=loading();
+    if(!date){
+      return get('/api/dsr?limit=1').then(function(d){
+        if(tk!==st.token)return;
+        if(!d||!d.ok){loadFailed(b,d);return;}
+        var r=(d.reports||[])[0];
+        if(!r){b.innerHTML=noneYet(d);return;}
+        st.date=r.business_date;
+        if(window.history&&history.replaceState)history.replaceState(null,null,hashFor('night',r.business_date));
+        loadNight(r.business_date,null);
+      }).catch(function(){if(tk===st.token)loadFailed(b,null);});
+    }
+    return get('/api/dsr/'+date+(version?'?version='+encodeURIComponent(version):'')).then(function(d){
+      if(tk!==st.token)return;
+      if(d&&d.ok){st.view=d.view;
+        var waiting=st.expect&&(d.version||0)<st.expect&&st.waits<6;
+        if(TERMINAL[d.status]&&!waiting){st.expect=null;renderNight(d);}else follow(date);
+        return;}
+      if(d&&d.http_status===404){
+        return get('/api/dsr/'+date+'/status').then(function(s){
+          if(tk!==st.token)return;
+          if(s&&s.ok&&s.exists)follow(date);else if(st.expect&&st.waits<6)follow(date);else b.innerHTML=missingNight(date,s);
+        });
+      }
+      loadFailed(b,d);
+    }).catch(function(){if(tk===st.token)loadFailed(b,null);});
+  }
+
+  function follow(date){
+    var tk=st.token;stopPoll();
+    function tick(){
+      if(tk!==st.token)return;
+      if(!active()){stopPoll();return;}
+      if(document.hidden)return;
+      get('/api/dsr/'+date+'/status').then(function(s){
+        if(tk!==st.token)return;
+        if(!s||!s.ok){renderProgress(date,null,s);return;}
+        var behind=st.expect&&(!s.exists||((s.version||0)<st.expect&&TERMINAL[s.status]));
+        if(behind){st.waits++;if(st.waits>6){st.expect=null;behind=false;}}
+        if(s.exists&&TERMINAL[s.status]&&!behind){stopPoll();st.expect=null;loadNight(date,null);return;}
+        renderProgress(date,behind?null:s);
+      }).catch(function(){});
+    }
+    st.tick=tick;tick();st.poll=setInterval(tick,5000);
+  }
+
+  function headHtml(date,kicker,extra){
+    return '<div class="dr-head"><div><div class="hb-kicker">'+esc(kicker||'Daily report')+'</div>'
+      +'<h1 class="hb-h1">'+esc(weekday(date))+' '+hn(esc(md(date)))+'</h1>'+(extra||'')+'</div>'
+      +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+addDays(date,-1)+'" aria-label="The night before">&larr; '+esc(md(addDays(date,-1)))+'</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+addDays(date,1)+'" aria-label="The night after">'+esc(md(addDays(date,1)))+' &rarr;</button></div></div>';
+  }
+
+  function renderProgress(date,s,err){
+    var b=body();if(!b)return;
+    var h=headHtml(date,'Daily report · in progress');
+    h+='<div class="dr-meta"><span class="dr-pill running"><i></i>Running</span><span>Checks every 5 seconds</span></div>';
+    h+='<section class="hb-card dr-prog" aria-label="Progress"><div class="dr-pulse wide" aria-hidden="true"><i></i></div>';
+    if(!s){
+      h+='<div class="hb-h3"><span>Starting the night</span></div><div class="hb-empty">'+esc((err&&err.error)||'Cavnar is opening the night — the checklist appears in a moment.')+'</div></section>';
+      b.innerHTML=h;return;
+    }
+    if(!s.exists){h+='<div class="hb-h3"><span>Not started yet</span></div><div class="hb-empty">Nothing has run for this night yet.</div></section>';b.innerHTML=h;return;}
+    h+='<div class="hb-h3"><span>'+esc(s.status_label||'Running')+'</span>'+(s.version>1?'<span class="cnt">version '+hn(s.version)+'</span>':'')+'</div>';
+    var stages=s.stages||[],seenNow=false;
+    for(var i=0;i<stages.length;i++){var g=stages[i];
+      if(g.key==='awaiting_close'&&!g.at&&!g.current)continue;
+      var cls=g.current&&!TERMINAL[g.key]?'now':(g.done||g.at?'done':'todo');
+      if(g.current)seenNow=true;else if(seenNow)cls='todo';
+      h+='<div class="dr-step '+cls+'"><span class="ic">'+(cls==='done'?'✓':'')+'</span><span class="t">'+esc(g.label)+'</span><span class="at">'+esc(clock(g.at_local))+'</span></div>';}
+    var bl=s.blocks||[];
+    if(bl.length){h+='<div class="hb-h3" style="margin-top:18px"><span>Blocks</span></div>';
+      for(var j=0;j<bl.length;j++){var x=bl[j];
+        var c=x.status==='ready'?'done':(x.status?'gap':'todo');
+        h+='<div class="dr-step '+c+'"><span class="ic">'+(c==='done'?'✓':(c==='gap'?'!':''))+'</span><span class="t">'+esc(x.label)
+          +(x.status&&x.status!=='ready'?'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>':(x.status?'':'<small>Not collected yet</small>'))
+          +'</span><span class="at">'+esc(clock(x.at_local))+'</span></div>';}}
+    if(s.narrative&&s.narrative.reason)h+=note(esc(s.narrative.reason));
+    b.innerHTML=h+'</section>';
+  }
+
+  function missingNight(date,s){
+    return headHtml(date)+'<section class="hb-card dr-prog" aria-label="No report"><div class="hb-h3"><span>No report for this night</span></div>'
+      +'<div class="hb-empty">The daily report builds itself after close. If this night was missed, run it now — it reads the night from the POS as it stands.</div>'
+      +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close" data-date="'+esc(date)+'">Run this night</button></div><div class="dr-err" hidden></div></section>';
+  }
+  function noneYet(d){
+    if(d&&d.enabled===false)return '<div class="dr-head"><div><div class="hb-kicker">Daily report</div><h1 class="hb-h1">Switched off</h1></div></div><section class="hb-card dr-prog"><div class="hb-empty">The daily report is off for this location. The owner can switch it on in Account → Restaurant.</div></section>';
+    return '<div class="dr-head"><div><div class="hb-kicker">Daily report</div><h1 class="hb-h1">No report yet</h1></div></div>'
+      +'<section class="hb-card dr-prog"><div class="hb-empty">The first daily report builds itself after tonight’s close. Closing early? Start it now.</div>'
+      +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close">Close day</button></div><div class="dr-err" hidden></div></section>';
+  }
+
+  function renderNight(p){
+    var b=body();if(!b)return;
+    var f=p.facts||{},B=f.blocks||{},ck=p.checklist||{},vs=p.versions||[],date=p.business_date;
+    var latest=vs.length?vs[vs.length-1]:null,isOld=latest&&p.version<latest.version,mine=null;
+    for(var i=0;i<vs.length;i++)if(vs[i].version===p.version)mine=vs[i];
+    var fis=p.fiscal||f.fiscal||{},kick='Daily report'+(fis.label?' · '+fis.label:(fis.period?' · Period '+fis.period+' · Week '+fis.week:''));
+    var sub=[];
+    if(fis.week_start&&fis.week_end)sub.push('Week of '+hn(esc(md(fis.week_start)))+' – '+hn(esc(md(fis.week_end))));
+    var src=(B.sales&&B.sales.source)?(SOURCE[B.sales.source]||B.sales.source):'';
+    if(src)sub.push(esc(src));
+    var h=headHtml(date,kick,sub.length?'<div class="hb-sub">'+sub.join(' <span class="sep">·</span> ')+'</div>':'');
+    // status, version, provenance, the one action
+    h+='<div class="dr-meta">'+pill(p.status);
+    if(vs.length>1){h+='<select class="ac-select" data-dr="version" aria-label="Version">';
+      for(var v=vs.length-1;v>=0;v--){var x=vs[v];h+='<option value="'+x.version+'"'+(x.version===p.version?' selected':'')+'>Version '+x.version+' · '+esc(STATUS[x.status]||'Running')+(x.finalized_at_local?' · '+esc(stamp(x.finalized_at_local)):'')+'</option>';}
+      h+='</select>';}
+    if(ck.closed_by&&CLOSED[ck.closed_by])h+='<span>'+esc(CLOSED[ck.closed_by])+'</span>';
+    if(mine&&mine.finalized_at_local)h+='<span>Went out '+hn(esc(stamp(mine.finalized_at_local)))+'</span>';
+    if(p.trigger==='late_data')h+='<span>Updated when late data landed</span>';
+    h+='<span class="sp" style="flex:1"></span>';
+    if(!isOld){
+      if(p.status!=='final')h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="close" data-date="'+esc(date)+'">Try again now</button>';
+      else if(p.view==='owner')h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="rerun-ask" data-date="'+esc(date)+'" data-version="'+(p.version||1)+'">Re-run this night</button>';
+    }
+    h+='</div><div class="dr-err" hidden></div><div id="dr-rerun"></div>';
+    if(isOld)h+='<section class="hb-card rail dr-old"><span>You’re reading version '+hn(p.version)+' of '+hn(latest.version)+', as it went out'+(mine&&mine.finalized_at_local?' at '+hn(esc(stamp(mine.finalized_at_local))):'')+'.</span><span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(date)+'">Read the latest</button></section>';
+    if((f.missing||[]).length){h+='<div class="dr-miss"><span>Still missing:</span>';for(var m=0;m<f.missing.length;m++)h+='<span class="m">'+esc(f.missing[m])+'</span>';h+='</div>';}
+    h+=narrativeHtml(p.narrative,ck,p);
+    h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>each with its source; nothing estimated to fill a gap</small></h2></div></div>';
+    var withheld=f.withheld||[];
+    for(var k=0;k<BLOCKS.length;k++){var n=BLOCKS[k];
+      if(B[n])h+=section(n,B[n],p);
+      else if(withheld.indexOf(n)<0)h+=section(n,{status:'unavailable',reason:'Not collected for this night'},p);}
+    h+=builtHtml(ck);
+    if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
+      h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
+    b.innerHTML=h;
+  }
+
+  // How the night was built: the stage and block times kept as provenance,
+  // folded away under the report.
+  function builtHtml(ck){
+    var rows='',sg=ck.stages||[],bl=ck.blocks||[],i;
+    for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic">\u2713</span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
+    for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;var ok=x.status==='ready';
+      rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'\u2713':'!')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
+    if(!rows)return '';
+    return '<details class="dr-sec"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'+rows+'</div></details>';
+  }
+  function narrativeHtml(n,ck,p){
+    var why=(ck.narrative&&ck.narrative.reason)||null,h='';
+    var lead=n&&n.executive_summary&&n.executive_summary.text;
+    if(!n||(!lead&&!(n.went_well||[]).length&&!(n.needs_attention||[]).length&&!(n.actions_tomorrow||[]).length)){
+      return '<section class="hb-card quiet dr-read" aria-label="The morning read"><div class="hb-h3"><span>The morning read</span></div><div class="hb-empty">'
+        +esc(why||(n&&p.view==='manager'?'The summary rests on figures outside your view, so it isn’t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>';
+    }
+    if(lead)h+='<section class="hb-card hero hb-focus dr-read" aria-label="The morning read"><div class="hb-kicker">The morning read</div><div class="lead">'+prose(lead)+'</div></section>';
+    else h+='<div class="dr-note" style="margin-top:22px">The opening summary rests on figures outside your view, so it isn’t shown.</div>';
+    var ww=n.went_well||[],na=n.needs_attention||[];
+    if(ww.length||na.length){h+='<div class="dr-two">';
+      h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
+      h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}
+    var calls='',seen={};
+    for(var i=0;i<CALLS.length;i++){var c=n[CALLS[i][0]],t=c&&c.text;if(!t||seen[t])continue;seen[t]=1;
+      calls+='<div class="dr-call"><div class="k">'+esc(CALLS[i][1])+'</div><div class="t">'+prose(t)+'</div></div>';}
+    if(calls)h+='<div class="dr-calls">'+calls+'</div>';
+    var acts=n.actions_tomorrow||[];
+    if(acts.length){
+      h+='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>What to do about it <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
+      for(var a=0;a<acts.length;a++){var x=acts[a],blk=String(x.key||'').split(':')[2]||'';blk=blk.split('/')[0];
+        var meta='';if(isNum(x.dollars_monthly))meta+='<span class="usd">'+hn(money(x.dollars_monthly))+'/mo at stake</span>';
+        if(URGENCY[x.urgency])meta+='<span>'+esc(URGENCY[x.urgency])+'</span>';if(x.effort)meta+='<span>'+esc(x.effort)+' effort</span>';
+        h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
+          +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')
+          +(x.key&&typeof recControlsHtml==='function'?'<div class="ft">'+recControlsHtml(x.key,'dsr',MODULE[blk]||'ops')+'</div>':'')+'</div>';}
+      h+='</div>';}
+    var vf=n.verification;
+    if(vf&&isNum(vf.checked)){var dropped=(vf.dropped||[]).length;
+      h+='<div class="dr-foot">Every figure above traced to a measured fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'+(dropped?' · '+hn(dropped)+' dropped because a figure didn’t trace':'')+' · written by Cavnar AI</div>';}
+    return h;
+  }
+  function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
+
+  // ── the blocks ───────────────────────────────────────────────────────────
+  function section(name,b,p){
+    var ready=b.status==='ready',src=b.source?(SOURCE[b.source]||b.source):'';
+    var h='<details class="dr-sec" id="dr-sec-'+name+'" open><summary><span class="ttl">'+esc(BLOCK[name])+'</span>'
+      +(src?'<span class="src">'+esc(src)+'</span>':'')
+      +(ready?'':'<span class="dr-pill '+(b.status==='awaiting'?'awaiting':'')+'">'+esc(BSTATUS[b.status]||b.status)+'</span>')
+      +(ready&&name==='food'?'<span class="dr-pill est">Estimated</span>':'')+'<span class="sp"></span>'
+      +(ready?'<span class="sum">'+summaryLine(name,b)+'</span>':'')+'</summary><div class="dr-sec-b">';
+    if(!ready)h+='<div class="dr-why">'+esc(b.reason||'Not measured for this night.')+'</div>';
+    else{try{h+=RENDER[name](b,p);}catch(e){h+='<div class="dr-why">This block couldn’t be drawn.</div>';}}
+    return h+'</div></details>';
+  }
+  function summaryLine(name,b){var m=b.metrics||{};
+    if(name==='sales'&&isNum(m.net))return hn(money(m.net))+' net';
+    if(name==='labor'&&isNum(m.pct))return hn(pct(m.pct))+' of sales';
+    if(name==='reviews'&&isNum(m.received))return hn(cnt(m.received))+' new'+(isNum(m.avg_rating)?' · '+hn(m.avg_rating.toFixed(1)+'★'):'');
+    if(name==='closeout'&&b.detail&&b.detail.submitted_by)return 'Filed by '+esc(b.detail.submitted_by);
+    return '';}
+
+  var RENDER={
+    sales:function(b,p){
+      var m=b.metrics||{},d=b.detail||{},bl=d.baselines||{},h='';
+      var sub=[];
+      if(isNum(m.gross))sub.push('Gross '+hn(money(m.gross)));
+      if(isNum(m.transactions))sub.push(hn(cnt(m.transactions))+' checks');
+      if(isNum(m.guests))sub.push(hn(cnt(m.guests))+' guests');
+      if(isNum(m.avg_ticket))sub.push(hn(money(m.avg_ticket,true))+' avg check');
+      if(isNum(m.per_guest))sub.push(hn(money(m.per_guest,true))+' per guest');
+      var bud=[];if(isNum(m.budget_net))bud.push(hn(money(m.budget_net))+' net');if(isNum(m.budget_gross))bud.push(hn(money(m.budget_gross))+' gross');
+      var rows='';
+      function cmp(label,pk,bk,none){if(!has(m,pk)&&!has(m,bk))return;var v=m[pk],base=m[bk];
+        rows+='<div class="dr-cmp-r"><span class="l">'+esc(label)+'</span><span class="p '+tone(v)+'">'+esc(spct(v))+'</span><span class="b">'+(isNum(base)?hn(money(base)):'<span class="dr-dim">'+esc(none||'not measured')+'</span>')+'</span></div>';}
+      cmp('vs yesterday','vs_yesterday_pct','yesterday_net');
+      cmp('vs last '+(bl.last_week&&bl.last_week.date?weekday(bl.last_week.date):'week'),'vs_last_week_pct','last_week_net');
+      cmp('vs last year','vs_last_year_pct','last_year_net');
+      if(has(m,'budget_net'))cmp('vs budget','vs_budget_net_pct','budget_net','no budget set');
+      if(isNum(m.forecast_net))cmp('vs forecast','vs_forecast_pct','forecast_net');
+      h+='<div class="lb2-hero dr-hero"><div class="dr-hero-top"><div><div class="hb-kicker">Net sales</div><div class="big">'+hn(esc(money(m.net)))+'</div>'
+        +(sub.length?'<div class="subl">'+sub.join(' · ')+'</div>':'')
+        +(bud.length?'<div class="subl">Budget '+bud.join(' · ')+'</div>':'')+'</div>'
+        +(rows?'<div class="dr-cmp">'+rows+'</div>':'')+'</div>'+hours(d.hourly)+'</div>';
+      h+='<div class="dr-cols"><div><div class="hb-h3"><span>By category</span></div>'+cats(d,p)+'</div>';
+      h+='<div><div class="hb-h3"><span>Top items</span></div>'+itemsTable(d.top_items,'Nothing sold with a name on it.')
+        +((d.bottom_items||[]).length?'<div class="hb-h3" style="margin-top:16px"><span>Slowest</span></div>'+itemsTable(d.bottom_items):'')+'</div></div>';
+      var loss='',L=[['discounts','Discounts'],['comps','Comps'],['voids','Voids'],['refunds','Refunds']];
+      for(var i=0;i<L.length;i++)if(isNum(m[L[i][0]]))loss+=tile(L[i][1],esc(money(m[L[i][0]])));
+      if(isNum(m.tax))loss+=tile('Tax collected',esc(money(m.tax)),'not in gross or net');
+      if(loss)h+='<div class="hb-stats" style="margin-top:20px">'+loss+'</div>';
+      var def=d.definition||{};
+      if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':''));
+      var ly=bl.last_year;if(ly&&ly.source==='pos_sync')h+=note('Last year is the nightly POS sync’s figure for '+esc(md(ly.date))+' — the same weekday a year back.');
+      return h;},
+    labor:function(b){
+      var m=b.metrics||{},d=b.detail||{},t='';
+      if(has(m,'pct')){var s='of net sales';if(isNum(m.target_pct))s+=' · target '+hn(pct(m.target_pct,0));if(isNum(m.vs_target_pts))s+=' · '+hn((m.vs_target_pts>0?'+':(m.vs_target_pts<0?'−':''))+Math.abs(m.vs_target_pts).toFixed(1)+' pts');
+        t+=tile('Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?'bad':'good'):'');}
+      if(has(m,'cost'))t+=tile('Labor cost',esc(money(m.cost)));
+      if(has(m,'hours'))t+=tile('Hours',esc(cnt(m.hours)));
+      if(isNum(m.overtime_hours))t+=tile('Overtime',esc(cnt(m.overtime_hours))+'<small>hrs</small>','',m.overtime_hours>0?'bad':'');
+      if(isNum(m.hours_after_6pm_share_pct)&&isNum(m.sales_after_6pm_share_pct))t+=tile('After 6pm',esc(pct(m.hours_after_6pm_share_pct,0))+'<small>of hours</small>','against '+hn(pct(m.sales_after_6pm_share_pct,0))+' of sales');
+      if(isNum(m.no_shows))t+=tile('No-shows',esc(cnt(m.no_shows)),'',m.no_shows>0?'bad':'');
+      if(isNum(m.late_arrivals))t+=tile('Late clock-ins',esc(cnt(m.late_arrivals)));
+      if(isNum(m.shift_quality))t+=tile('Shift quality',esc(cnt(m.shift_quality)),'the published day’s score');
+      var h=t?'<div class="hb-stats">'+t+'</div>':'';
+      var ob=d.observations||[],l='';for(var i=0;i<ob.length;i++)if(ob[i]&&ob[i].text)l+=row(prose(ob[i].text),'watch');
+      if(l)h+='<div class="dr-list">'+l+'</div>';
+      var cv=d.coverage||{};if(cv.measured===false&&cv.reason)h+=note('No-shows and late clock-ins: '+esc(cv.reason)+'.');
+      else if(cv.measured){var nm=[];for(var j=0;j<(cv.no_shows||[]).length;j++)nm.push(esc(cv.no_shows[j].name||cv.no_shows[j]));if(nm.length)h+=note('<b>No-shows:</b> '+nm.join(', '));}
+      return h;},
+    food:function(b){
+      var m=b.metrics||{},d=b.detail||{},t='',est=d.estimate||{};
+      if(has(m,'est_food_cost_pct'))t+=tile('Est. food cost',esc(pct(m.est_food_cost_pct)),(isNum(m.est_food_cost)?hn(money(m.est_food_cost,true))+' by recipe':'')+(isNum(m.recipe_coverage_pct)&&m.recipe_coverage_pct<100?' · '+hn(pct(m.recipe_coverage_pct,0))+' of dishes costed':''));
+      if(has(m,'waste_logged'))t+=tile('Waste logged',esc(money(m.waste_logged,true)),isNum(m.waste_inferred)?hn(money(m.waste_counted,true))+' counted · '+hn(money(m.waste_inferred,true))+' inferred':'');
+      if(isNum(m.variance_cost))t+=tile('Variance',esc(money(m.variance_cost,true)),isNum(m.variance_items)?hn(cnt(m.variance_items))+' item'+(m.variance_items===1?'':'s')+' over recipe':'');
+      if(isNum(m.recoverable_monthly))t+=tile('Recoverable',esc(money(m.recoverable_monthly))+'<small>/mo</small>');
+      if(isNum(m.critical_low))t+=tile('Running low',esc(cnt(m.critical_low))+'<small>critical</small>',isNum(m.low_stock)?hn(cnt(m.low_stock))+' more low':'',m.critical_low>0?'bad':'');
+      var h=t?'<div class="hb-stats">'+t+'</div>':'';
+      if(est.label)h+=note(esc(est.label));
+      var l='',sk=(d.stock||{}).critical||[];
+      for(var i=0;i<sk.length;i++){var s=sk[i];l+=row('<b>'+esc(s.item)+'</b> — '+hn(cnt(s.current_stock))+' '+esc(s.unit||'')+' left'+(isNum(s.days_remaining)?' · '+hn(cnt(s.days_remaining))+' days':''),'critical');}
+      var vi=(d.variance||{}).items||[];
+      for(var j=0;j<vi.length;j++){var v=vi[j];l+=row('<b>'+esc(v.ingredient)+'</b> used '+hn(pct(v.variance_pct,0))+' over recipe'+(v.dish?' ('+esc(v.dish)+')':'')+' — '+hn(money(v.cost,true)),'important');}
+      if(l)h+='<div class="dr-list">'+l+'</div>';
+      if((d.variance||{}).basis)h+=note(esc(d.variance.basis));
+      if((d.stock||{}).basis)h+=note(esc(d.stock.basis));
+      if((d.unavailable_parts||[]).length)h+=note('Not measured this night: '+esc(d.unavailable_parts.join(', '))+'.');
+      return h;},
+    reviews:function(b){
+      var m=b.metrics||{},d=b.detail||{},t='';
+      if(has(m,'received'))t+=tile('Received',esc(cnt(m.received)));
+      if(has(m,'avg_rating'))t+=tile('Average',isNum(m.avg_rating)?esc(m.avg_rating.toFixed(1))+'★':'—');
+      if(isNum(m.urgent))t+=tile('Urgent',esc(cnt(m.urgent)),'',m.urgent>0?'bad':'');
+      if(isNum(m.drafts_awaiting))t+=tile('Drafts waiting',esc(cnt(m.drafts_awaiting)));
+      if(isNum(m.replies_posted))t+=tile('Replies posted',esc(cnt(m.replies_posted)));
+      var h=t?'<div class="hb-stats">'+t+'</div>':'';
+      var rs=d.reviews||[],l='';
+      for(var i=0;i<rs.length;i++){var r=rs[i];var cls=r.urgent?'critical':(r.sentiment==='negative'?'important':(r.sentiment==='positive'?'good':'watch'));
+        l+=row((isNum(r.rating)?hn(r.rating+'★')+' ':'')+esc(r.summary||'')+(r.urgent?' <b>· urgent</b>':''),cls,esc(SOURCE[r.platform]||r.platform||''));}
+      if(l)h+='<div class="dr-list">'+l+'</div>';
+      var th=d.themes||{},ch='';
+      for(var p=0;p<(th.positive||[]).length;p++)ch+='<span>'+esc(th.positive[p].theme)+' · '+hn(th.positive[p].reviews)+'</span>';
+      for(var n=0;n<(th.negative||[]).length;n++)ch+='<span class="neg">'+esc(th.negative[n].theme)+' · '+hn(th.negative[n].reviews)+'</span>';
+      if(ch)h+='<div class="dr-chips">'+ch+'</div>';
+      var w=d.window||{};if(w.start&&w.end)h+=note('Reviews that arrived '+esc(w.start)+' – '+esc(w.end)+'.'+((d.sync||{}).note?' '+esc(d.sync.note):''));
+      return h;},
+    marketing:function(b){
+      var m=b.metrics||{},d=b.detail||{},t='';
+      if(has(m,'posts_published'))t+=tile('Posts',esc(cnt(m.posts_published)),isNum(m.reach)?hn(cnt(m.reach))+' reach':'');
+      if(isNum(m.engagement_rate))t+=tile('Engagement',esc(pct(m.engagement_rate)),isNum(m.engagement)?hn(cnt(m.engagement))+' interactions':'');
+      if(isNum(m.texts_sent))t+=tile('Texts sent',esc(cnt(m.texts_sent)));
+      if(isNum(m.campaign_clicks))t+=tile('Clicks',esc(cnt(m.campaign_clicks)));
+      if(isNum(m.campaign_visits))t+=tile('Matched visits',esc(cnt(m.campaign_visits)));
+      if(isNum(m.scheduled_next_7d))t+=tile('Scheduled',esc(cnt(m.scheduled_next_7d)),'next 7 days');
+      var h=t?'<div class="hb-stats">'+t+'</div>':'';
+      var l='',ps=(d.posts||{}).items||[],tx=(d.campaigns||{}).texts||[],up=(d.upcoming||{}).scheduled||[];
+      for(var i=0;i<ps.length;i++){var x=ps[i];l+=row(esc(x.topic||'A post')+(x.platform?' · '+esc(SOURCE[x.platform]||cap(x.platform)):''),'good',esc(x.at||''));}
+      for(var j=0;j<tx.length;j++){var c=tx[j];l+=row('Text: “'+esc(c.message||'')+'” — '+hn(cnt(c.sent))+' sent'+(isNum(c.failed)&&c.failed?', '+hn(cnt(c.failed))+' failed':''),'watch',esc(c.sent_at||''));}
+      for(var k=0;k<up.length;k++){var u=up[k];l+=row('Scheduled: '+esc(u.topic||u.title||'a post'),'watch',esc(u.at||u.scheduled_for||''));}
+      if(l)h+='<div class="dr-list">'+l+'</div>';
+      if((d.posts||{}).basis)h+=note(esc(cap(d.posts.basis)));
+      if((d.campaigns||{}).basis&&tx.length)h+=note(esc(cap(d.campaigns.basis)));
+      return h;},
+    intel:function(b){
+      var m=b.metrics||{},d=b.detail||{},w=d.weather||{},t='';
+      if(isNum(m.weather_high_f))t+=tile('High / low',esc(Math.round(m.weather_high_f)+'°')+(isNum(m.weather_low_f)?' / '+esc(Math.round(m.weather_low_f)+'°'):''),esc(w.short_forecast||''));
+      if(isNum(m.weather_precip_pct))t+=tile('Rain',esc(pct(m.weather_precip_pct,0)),'chance');
+      if(isNum(m.events_listed))t+=tile('Events',esc(cnt(m.events_listed)),'listed for the night');
+      if(isNum(m.reservations_covers))t+=tile('Covers booked',esc(cnt(m.reservations_covers)));
+      if(isNum(m.competitor_moves))t+=tile('Competitor moves',esc(cnt(m.competitor_moves)));
+      var h=t?'<div class="hb-stats">'+t+'</div>':'';
+      var l='',ev=(d.events||{}).items||[];
+      for(var i=0;i<ev.length;i++)l+=row(esc(ev[i].label||''),'watch',ev[i].source==='manual'?'you entered it':'');
+      if(l)h+='<div class="dr-list">'+l+'</div>';
+      if(w.note)h+=note(esc(w.note));
+      if((d.competitors||{}).note)h+=note(esc(d.competitors.note));
+      return h;},
+    closeout:function(b){
+      var d=b.detail||{},f=d.fields||{},lb=d.labels||{},order=d.order||[],h='',any=false;
+      h+='<div class="dr-note" style="margin:0 0 10px">Filed by '+esc(d.submitted_by||'the manager')+(d.filed_at_label?' · '+hn(esc(d.filed_at_label)):'')+' · in their own words, never edited</div>';
+      for(var i=0;i<order.length;i++){var k=order[i],v=f[k];if(!v)continue;any=true;
+        h+='<div class="dr-co-r"><div class="k">'+esc(lb[k]||k)+'</div><div class="v">'+esc(v)+'</div></div>';}
+      if(!any)h+='<div class="dr-why">The close-out was filed with every line blank.</div>';
+      return h;}
+  };
+  function hours(list){
+    if(!list||list.length<2)return '';
+    var max=0,peak=-1,i;for(i=0;i<list.length;i++){if(isNum(list[i].net)&&list[i].net>max){max=list[i].net;peak=i;}}
+    if(!max)return '';
+    var h='<div class="dr-hours" role="img" aria-label="Net sales by hour; the busiest hour was '+esc(hourLabel(list[peak].hour,true))+' at '+esc(money(max))+'">';
+    for(i=0;i<list.length;i++){var v=isNum(list[i].net)?Math.max(0,list[i].net):0,ht=Math.max(2,Math.round(v/max*100));
+      h+='<div class="c'+(i===peak?' peak':'')+'" title="'+esc(money(list[i].net)+' at '+hourLabel(list[i].hour,true))+'">'+(i===peak?'<b>'+esc(money(max))+'</b>':'')+'<i style="height:'+ht+'%;--i:'+i+'"></i><span>'+esc(hourLabel(list[i].hour))+'</span></div>';}
+    return h+'</div>';
+  }
+  function cats(d,p){
+    var cs=d.categories||[],un=d.unmapped||[],max=0,i,h='';
+    if(!cs.length&&!un.length)return '<div class="hb-empty">The POS sent no department split for this night.</div>';
+    for(i=0;i<cs.length;i++)if(cs[i].net>max)max=cs[i].net;for(i=0;i<un.length;i++)if(un[i].net>max)max=un[i].net;
+    for(i=0;i<cs.length;i++){var c=cs[i];h+='<div class="dr-bar"><span class="n">'+esc(c.category)+'</span><span class="t"><i style="width:'+(max>0?Math.max(1,Math.round(c.net/max*100)):0)+'%;animation-delay:'+(i*60)+'ms"></i></span><span class="v">'+esc(money(c.net))+'</span><span class="s">'+(isNum(c.share_pct)?esc(pct(c.share_pct)):'')+'</span></div>';}
+    for(i=0;i<un.length;i++){var u=un[i];h+='<div class="dr-bar un" title="Not mapped to a category"><span class="n">'+esc(u.department)+'</span><span class="t"><i style="width:'+(max>0?Math.max(1,Math.round(u.net/max*100)):0)+'%"></i></span><span class="v">'+esc(money(u.net))+'</span><span class="s">unmapped</span></div>';}
+    if(un.length)h+=note(hn(un.length)+' POS department'+(un.length===1?' isn’t':'s aren’t')+' mapped to a category yet, so '+(un.length===1?'it shows':'they show')+' on its own — never guessed.'
+      +(p.view==='owner'?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="settings">Map departments</button>':''));
+    if(isNum(d.unallocated))h+=note(hn(money(d.unallocated))+' of net isn’t in any department on the POS.');
+    return h;
+  }
+  function itemsTable(list,empty){
+    if(!list||!list.length)return empty?'<div class="hb-empty">'+esc(empty)+'</div>':'';
+    var h='<table class="dr-tbl"><thead><tr><th>Item</th><th class="r">Sold</th><th class="r">Net</th></tr></thead><tbody>';
+    for(var i=0;i<list.length;i++){var x=list[i];h+='<tr><td>'+esc(x.name||'')+'</td><td class="r">'+esc(cnt(x.qty))+'</td><td class="r">'+esc(money(x.net))+'</td></tr>';}
+    return h+'</tbody></table>';
+  }
+
+  // ── Close day, re-run, versions ──────────────────────────────────────────
+  function errNear(btn,msg){var box=btn&&btn.closest?btn.closest('section,.dr-meta,.hb-card'):null,e=null;
+    if(box){e=box.nextElementSibling&&box.nextElementSibling.classList.contains('dr-err')?box.nextElementSibling:box.querySelector('.dr-err');}
+    if(e){e.textContent=msg;e.hidden=false;}if(typeof toast==='function')toast(msg,'error');}
+  function closeDay(btn){
+    var date=btn.getAttribute('data-date')||null,rerun=btn.getAttribute('data-rerun')==='1';
+    var ver=+(btn.getAttribute('data-version')||0);
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,rerun?'Starting the re-run':'Starting'):function(){};
+    var b={};if(date)b.date=date;if(rerun)b.rerun=true;
+    post('/api/dsr/close',b).then(function(d){
+      if(!d||!d.ok){done();errNear(btn,(d&&d.error)||'Couldn’t start it.');return;}
+      if(d.started===false&&d.status==='final'){done();if(typeof toast==='function')toast('That night is already final','success');window.dsrOpen('night',d.business_date);return;}
+      // The run starts on a thread: until its version shows, the last one
+      // (already finished) must not be mistaken for the answer.
+      st.expect=rerun?ver+1:(d.version?d.version+1:1);st.waits=0;
+      window.dsrOpen('night',d.business_date,{keepExpect:true});
+    }).catch(function(){done();btn.disabled=true;errNear(btn,'The answer didn’t arrive. Open the night again before pressing a second time.');});
+  }
+  function rerunAsk(btn){
+    var box=el('dr-rerun');if(!box)return;
+    var v=+(btn.getAttribute('data-version')||1);
+    box.innerHTML='<section class="hb-card rail dr-old"><span>Re-running builds version '+hn(v+1)+' from the POS as it stands now. Version '+hn(v)+' stays readable, exactly as it went out.</span><span class="sp"></span>'
+      +'<button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close" data-rerun="1" data-date="'+esc(btn.getAttribute('data-date'))+'" data-version="'+v+'">Re-run it</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="rerun-cancel">Cancel</button></section><div class="dr-err" hidden></div>';
+  }
+
+  // ── the week grid and the period ────────────────────────────────────────
+  function loadGrid(kind,date){
+    var tk=st.token,b=body();if(!b)return;b.innerHTML=loading(kind==='week'?'Loading the week':'Loading the period');
+    return get('/api/dsr/'+kind+(date?'?date='+date:'')).then(function(d){
+      if(tk!==st.token)return;
+      if(d&&d.http_status===409){b.innerHTML='<div class="dr-head"><div><div class="hb-kicker">Period</div><h1 class="hb-h1">No periods yet</h1></div></div><section class="hb-card dr-prog"><div class="hb-empty">'+esc(d.error||'Set your fiscal calendar to see periods.')+'</div>'
+        +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="settings">Set the calendar</button></div></section>';return;}
+      if(!d||!d.ok){loadFailed(b,d);return;}
+      st.view=d.view;st.grid=d[kind];
+      b.innerHTML=kind==='week'?weekHtml(d.week,d.view):periodHtml(d.period,d.view);
+    }).catch(function(){if(tk===st.token)loadFailed(b,null);});
+  }
+  function isOwnerGrid(g,view){return view==='owner'&&(g.withheld||[]).indexOf('budget')<0;}
+  function gridCols(g,owner){
+    var c=[],cs=g.categories||[];
+    for(var i=0;i<cs.length;i++)c.push({h:cs[i],k:'cat:'+cs[i],t:'money',g:'cat'});
+    c.push({h:'Gross',k:'gross',t:'money',g:'tot'},{h:'Net',k:'net',t:'money',g:'tot',strong:1});
+    if(owner)c.push({h:'Budget gross',k:'budget_gross',t:'money',g:'bud'},{h:'Budget net',k:'budget_net',t:'money',g:'bud'},{h:'vs Budget',k:'vs_budget_net',t:'delta',g:'bud',pk:'vs_budget_net_pct'});
+    c.push({h:'Last year',k:'last_year_net',t:'money',g:'ly'},{h:'vs LY',k:'vs_last_year_net',t:'delta',g:'ly',pk:'vs_last_year_net_pct'},{h:'Labor %',k:'labor_pct',t:'pct',g:'lab'});
+    return c;
+  }
+  var GROUP={cat:'Sales by category',tot:'Sales',bud:'Budget',ly:'Last year',lab:'Labor',note:'The day'};
+  function groupRow(cols,lead,notes){
+    var h='<tr class="grp"><th class="day"></th>',cur=null,span=0;
+    function flush(){if(cur!==null)h+='<th colspan="'+span+'">'+esc(GROUP[cur])+'</th>';}
+    for(var i=0;i<cols.length;i++){if(cols[i].g!==cur){flush();cur=cols[i].g;span=0;}span++;}
+    flush();if(notes)h+='<th colspan="3">'+esc(GROUP.note)+'</th>';
+    return h+'</tr>';
+  }
+  function val(r,k){return k.indexOf('cat:')===0?(r.cats||{})[k.slice(4)]:r[k];}
+  function cell(r,c){
+    var v=val(r,c.k);
+    if(!isNum(v))return '<td class="n dr-dim">—</td>';
+    if(c.t==='money')return '<td class="n'+(c.strong?' strong':'')+'">'+esc(money(v))+'</td>';
+    if(c.t==='pct')return '<td class="n">'+esc(pct(v))+'</td>';
+    return '<td class="n '+tone(v)+'">'+esc(smoney(v))+(isNum(r[c.pk])?'<small>'+esc(spct(r[c.pk]))+'</small>':'')+'</td>';
+  }
+  function weekHtml(g,view){
+    var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
+    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+'</h1>'
+      +'<div class="hb-sub">'+esc(weekday(g.start).slice(0,3))+' '+hn(esc(md(g.start)))+' – '+esc(weekday(g.end).slice(0,3))+' '+hn(esc(md(g.end)))+' <span class="sep">·</span> '+hn(t.days_measured||0)+' of '+hn(days.length)+' nights measured</div></div>'
+      +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,-7)+'">&larr; Week before</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
+      +'<a class="cbtn cbtn-secondary cbtn-sm" href="/api/dsr/week.xlsx?date='+esc(g.start)+'" download>Export to Excel</a>'
+      +(owner?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-dr="bud-open">Edit budget</button>':'')+'</div></div>';
+    h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid"><thead>'+groupRow(cols,true,true)+'<tr><th class="day l">Day</th>';
+    for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
+    h+='<th class="l">Weather</th><th class="l">Event</th><th class="l">Influence</th></tr></thead><tbody>';
+    for(var r=0;r<days.length;r++){var d=days[r],lbl=esc(d.weekday||weekday(d.date).slice(0,3))+' '+hn(esc(md(d.date)));
+      var st2=d.status?(TERMINAL[d.status]?d.status:'running'):'';
+      h+='<tr><td class="day l"><span class="dot '+st2+'"></span>'+(d.status?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(d.date)+'">'+lbl+'</button>':'<span class="dr-dim">'+lbl+'</span>')+'</td>';
+      for(var c=0;c<cols.length;c++)h+=cell(d,cols[c]);
+      h+='<td class="tx">'+(d.weather?esc(d.weather):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.event?esc(d.event):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.influence?esc(d.influence):'<span class="dr-dim">—</span>')+'</td></tr>';}
+    h+='</tbody><tfoot>'+totalRow('Week',hn(t.days_measured||0)+' of '+hn(days.length)+' measured',t,cols,3);
+    var p=g.period_to_date;if(p)h+=totalRow('Period to date',hn(esc(md(p.start)))+' – '+hn(esc(md(p.end))),p,cols,3);
+    h+='</tfoot></table></div>';
+    h+=note('Totals add only the nights that were measured; a comparison uses only the nights that have both sides. A dash was not measured — it is not $0. Last year is the same weekday 52 weeks back: that night’s report, then your imported workbook, then the POS sync.');
+    if(owner)h+=budgetEditor(days)+importCard();
+    else h+=note('Budget columns are the owner’s and aren’t part of your view.');
+    return h;
+  }
+  function totalRow(label,small,t,cols,blanks){
+    var h='<tr><td class="day l">'+esc(label)+'<small>'+small+'</small></td>';
+    for(var i=0;i<cols.length;i++)h+=cell(t,cols[i]);
+    for(var j=0;j<(blanks||0);j++)h+='<td class="tx"></td>';
+    return h+'</tr>';
+  }
+  function periodHtml(g,view){
+    var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),ws=g.weeks||[],t=g.totals||{};
+    var h='<div class="dr-head"><div><div class="hb-kicker">Period</div><h1 class="hb-h1">'+esc(g.label||'Period')+'</h1>'
+      +'<div class="hb-sub">'+hn(esc(md(g.start)))+' – '+hn(esc(md(g.end)))+' <span class="sep">·</span> '+hn(t.days_measured||0)+' nights measured</div></div>'
+      +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.start,-1)+'">&larr; Period before</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.end,1)+'">Period after &rarr;</button></div></div>';
+    h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid"><thead>'+groupRow(cols,true,false)+'<tr><th class="day l">Week</th>';
+    for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
+    h+='</tr></thead><tbody>';
+    for(var r=0;r<ws.length;r++){var w=ws[r],wt=w.totals||{};
+      h+='<tr><td class="day l"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="week" data-date="'+esc(w.start)+'">'+esc(w.label||'')+'</button><small class="dr-dim" style="display:block;font-size:11px">'+hn(esc(md(w.start)))+' – '+hn(esc(md(w.end)))+'</small></td>';
+      for(var c=0;c<cols.length;c++)h+=cell(wt,cols[c]);
+      h+='</tr>';}
+    h+='</tbody><tfoot>'+totalRow('Period',hn(t.days_measured||0)+' nights measured',t,cols,0)+'</tfoot></table></div>';
+    h+=note('Each week adds only its measured nights. A dash was not measured — it is not $0.');
+    if(!owner)h+=note('Budget columns are the owner’s and aren’t part of your view.');
+    return h;
+  }
+  function budgetEditor(days){
+    var h='<section class="hb-card dr-bud" id="dr-bud" hidden aria-label="Budget"><div class="hb-h3"><span>Budget for the week</span></div>'
+      +'<div class="hb-empty">Gross and net for each night, the way your sheet has them. Leave a night blank for no budget — nothing carries over on its own.</div>'
+      +'<div class="dr-bud-grid"><span class="h">Night</span><span class="h">Gross</span><span class="h">Net</span>';
+    for(var i=0;i<days.length;i++){var d=days[i];
+      h+='<span class="d">'+esc((d.weekday||'')+' '+md(d.date))+'</span>'
+        +'<input class="ac-input" type="number" min="0" step="1" inputmode="decimal" aria-label="Gross budget '+esc(md(d.date))+'" data-bd="gross" data-date="'+esc(d.date)+'" value="'+(isNum(d.budget_gross)?d.budget_gross:'')+'">'
+        +'<input class="ac-input" type="number" min="0" step="1" inputmode="decimal" aria-label="Net budget '+esc(md(d.date))+'" data-bd="net" data-date="'+esc(d.date)+'" value="'+(isNum(d.budget_net)?d.budget_net:'')+'">';}
+    return h+'</div><div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="bud-save">Save budget</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-close">Cancel</button><span class="ac-status" id="dr-bud-status"></span></div></section>';
+  }
+  function importCard(){
+    return '<section class="hb-card quiet dr-imp" aria-label="Import last year"><div class="hb-h3"><span>Last year, from your old workbooks</span></div>'
+      +'<div class="hb-empty">Your POS keeps about a month. Upload past nights — one row per night with gross, net and your categories — and Last year fills in from them. '
+      +'<a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="/api/dsr/history/template.csv" download>Download the template</a></div>'
+      +'<div class="dr-imp-row"><input class="ac-input" type="file" id="dr-imp-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Workbook to import" style="max-width:360px">'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="import">Import last year</button><span class="ac-status" id="dr-imp-status"></span></div><ul class="dr-imp-err" id="dr-imp-err" hidden></ul></section>';
+  }
+  function saveBudget(btn){
+    var ins=document.querySelectorAll('#dr-bud input[data-bd]'),byDate={},order=[],bad=null;
+    for(var i=0;i<ins.length;i++){var x=ins[i],d=x.getAttribute('data-date'),v=String(x.value||'').replace(/[$,\s]/g,'');
+      if(!byDate[d]){byDate[d]={date:d,gross:null,net:null};order.push(d);}
+      if(v!==''){var n=Number(v);if(!isFinite(n)||n<0){bad=x;break;}byDate[d][x.getAttribute('data-bd')]=n;}}
+    var s=el('dr-bud-status');
+    if(bad){if(s)s.textContent='Budgets are dollar amounts, $0 or more.';bad.focus();return;}
+    var days=[];for(var j=0;j<order.length;j++)days.push(byDate[order[j]]);
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Saving'):function(){};
+    post('/api/dsr/budget',{days:days}).then(function(d){done();
+      if(!d||!d.ok){if(s)s.textContent=(d&&d.error)||'Couldn’t save the budget.';return;}
+      if(typeof toast==='function')toast('Budget saved','success');loadGrid('week',st.date||(st.grid&&st.grid.start));
+    }).catch(function(){done();if(s)s.textContent='The answer didn’t arrive — reload the week to see what saved.';});
+  }
+  function importFile(btn){
+    var inp=el('dr-imp-file'),s=el('dr-imp-status'),ul=el('dr-imp-err'),f=inp&&inp.files&&inp.files[0];
+    if(ul){ul.hidden=true;ul.innerHTML='';}
+    if(!f){if(s)s.textContent='Pick a file first.';return;}
+    var fd=new FormData();fd.append('file',f);
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Importing'):function(){};
+    fetch('/api/dsr/history/import',{method:'POST',credentials:'same-origin',body:fd}).then(apiJson).then(function(d){done();
+      var errs=(d&&d.errors)||[];
+      if(errs.length&&ul){var h='';for(var i=0;i<Math.min(errs.length,8);i++){var e=errs[i];h+='<li>'+esc(typeof e==='string'?e:((e.row||e.line?'Row '+(e.row||e.line)+': ':'')+(e.error||e.message||'')))+'</li>';}
+        if(errs.length>8)h+='<li>and '+(errs.length-8)+' more</li>';ul.innerHTML=h;ul.hidden=false;}
+      if(!d||!d.ok){if(s)s.textContent=(d&&d.error)||'Couldn’t import that file.';return;}
+      var n=+d.imported||0,k=+d.skipped||0;
+      if(s)s.textContent='Imported '+n+' night'+(n===1?'':'s')+(k?', skipped '+k:'')+'.';
+      if(n)loadGrid('week',st.date||(st.grid&&st.grid.start));
+    }).catch(function(){done();if(s)s.textContent='The upload didn’t get an answer. Reload the week before trying again.';});
+  }
+  function goSettings(){
+    var t=el('tab-account');if(t&&typeof switchTab==='function')switchTab('account',t);
+    setTimeout(function(){if(window.acctGo)window.acctGo('restaurant');var c=el('as-dsr-card');if(c&&c.scrollIntoView)c.scrollIntoView({behavior:'smooth',block:'start'});},250);
+  }
+
+  // Switching views keeps the reader on the same stretch of time: from a
+  // grid to a night, the grid's latest measured night; from a night to a
+  // grid, the grid holding that night.
+  function viewDate(kind){
+    if(kind!=='night')return st.date||(st.grid&&st.grid.end)||null;
+    var g=st.grid;
+    if(st.kind!=='night'&&g&&g.days){for(var i=g.days.length-1;i>=0;i--)if(g.days[i].status)return g.days[i].date;return null;}
+    return st.kind==='night'?st.date:null;
+  }
+  // One delegated listener for every [data-dr] control, Home's card included.
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-dr]'):null;if(!t||t.disabled||t.tagName==='SELECT')return;
+    var a=t.getAttribute('data-dr');
+    if(a==='open'||a==='view'){e.preventDefault();var k=t.getAttribute('data-kind')||'night';
+      window.dsrOpen(k,t.getAttribute('data-date')||(a==='view'?viewDate(k):null));}
+    else if(a==='home'){e.preventDefault();stopPoll();var hb=el('tab-home');if(hb&&typeof switchTab==='function')switchTab('home',hb);}
+    else if(a==='close'){e.preventDefault();closeDay(t);}
+    else if(a==='rerun-ask'){e.preventDefault();rerunAsk(t);}
+    else if(a==='rerun-cancel'){e.preventDefault();var rb=el('dr-rerun');if(rb)rb.innerHTML='';}
+    else if(a==='bud-open'){e.preventDefault();var bx=el('dr-bud');if(bx){bx.hidden=false;var f1=bx.querySelector('input');if(f1)f1.focus();bx.scrollIntoView({behavior:'smooth',block:'nearest'});}}
+    else if(a==='bud-close'){e.preventDefault();var bc=el('dr-bud');if(bc)bc.hidden=true;}
+    else if(a==='bud-save'){e.preventDefault();saveBudget(t);}
+    else if(a==='import'){e.preventDefault();importFile(t);}
+    else if(a==='settings'){e.preventDefault();goSettings();}
+  });
+  document.addEventListener('change',function(e){
+    var t=e.target;if(!t||t.getAttribute('data-dr')!=='version')return;
+    window.dsrOpen('night',st.date,{version:+t.value});
+  });
+})();
+</script>
+
 
 <!-- REVIEWS -->
 <div class="panel" id="panel-reviews" style="max-width:100%;padding:0;min-height:100%;position:relative">
@@ -6725,6 +7573,25 @@ svg:hover .hb-xh{opacity:1}
           <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
         <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
         <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="12/25/2026, 1/1/2027"></div>
+      </div>
+
+      <div class="ac-card" id="as-dsr-card" style="margin-top:14px" hidden>
+        <div class="ac-card-h"><div><h3>Daily report</h3><p>The nightly sales report and the weekly grid: your week, your periods, and which of your categories each POS department counts toward. Owner only.</p></div>
+          <div class="r"><span class="ac-status" id="as-dsr-status"></span></div></div>
+        <div class="ac-rows">
+          <div class="ac-row"><div class="l"><b>Build the daily report every night</b><span>After close, from the POS. Owner logins get the owner report; manager logins get the manager report.</span></div>
+            <div class="c"><label class="ac-switch"><input type="checkbox" id="as-dsr-enabled" onchange="saveDsrSetting('dsr_enabled')" aria-label="Build the daily report every night"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          <div class="ac-row"><div class="l"><b>If data is still missing, send it anyway at</b><span>Marked provisional, then updated on its own when the rest lands.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-deadline" onchange="saveDsrSetting('dsr_deadline_hour')" aria-label="Provisional deadline"></select></div></div>
+          <div class="ac-row"><div class="l"><b>Your week starts on</b><span>The weekly grid runs from this day through the six after it.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-dow" onchange="saveDsrSetting('fiscal_week_start_dow')" aria-label="Week starts on"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
+          <div class="ac-row"><div class="l"><b>Period 1, Week 1 starts</b><span id="as-dsr-cal">Leave it blank for weeks only, with no period numbers.</span></div>
+            <div class="c"><input class="ac-input" type="date" id="as-dsr-year" onchange="saveDsrSetting('fiscal_year_start')" aria-label="Period 1 starts" style="width:170px"></div></div>
+          <div class="ac-row"><div class="l"><b>Periods</b><span>Thirteen periods of four weeks, or quarters of 4-4-5 weeks.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-scheme" onchange="saveDsrSetting('fiscal_period_scheme')" aria-label="Period scheme"><option value="4x13">13 &times; 4 weeks</option><option value="445">4-4-5</option></select></div></div>
+        </div>
+        <div class="ac-card-h" style="margin-top:20px"><div><h3>POS departments</h3><p>Nothing is guessed: a department you haven&rsquo;t placed shows as Unmapped, with its dollars, until you do. A change counts from the next report on.</p></div></div>
+        <div class="ac-rows" id="as-dsr-cats"><div class="ac-note">Loading&hellip;</div></div>
       </div>
     </section>
 
@@ -14510,6 +15377,7 @@ function loadAccountSettings() {
 // routing are owner-only; the server answers 403 and the card never shows).
 function loadOpsSettings() {
   loadPause();
+  loadDsrSettings();
   fetch('/api/morning-brief', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok || !d.can_edit) return;
     var card = document.getElementById('as-ops-card');
@@ -14577,6 +15445,94 @@ function sendTestPush(btn) {
       toast('Could not send', 'error');
     });
 }
+
+// ── Daily report settings (owner only) ──────────────────────────────────────
+// GET /api/dsr/settings answers 403 for anyone but the owner, and the card
+// stays hidden. Each control saves on change, like the morning brief's.
+var _dsrCats = [];
+function loadDsrSettings() {
+  fetch('/api/dsr/settings', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (!d || !d.ok || !d.can_edit) return;
+    var card = document.getElementById('as-dsr-card');
+    if (card) card.hidden = false;
+    var s = d.settings || {};
+    document.getElementById('as-dsr-enabled').checked = !!s.dsr_enabled;
+    var sel = document.getElementById('as-dsr-deadline'), h = '';
+    for (var i = 1; i <= 10; i++) {
+      h += '<option value="' + i + '"' + (s.dsr_deadline_hour === i ? ' selected' : '') + '>' + (i < 12 ? i + ' am' : '12 pm') + '</option>';
+    }
+    sel.innerHTML = h;
+    document.getElementById('as-dsr-dow').value = String(s.fiscal_week_start_dow == null ? 0 : s.fiscal_week_start_dow);
+    document.getElementById('as-dsr-year').value = s.fiscal_year_start || '';
+    document.getElementById('as-dsr-scheme').value = s.fiscal_period_scheme || '4x13';
+    _dsrCalLabel(s.calendar_label);
+    _dsrCats = d.categories || [];
+    _dsrRenderCats(d);
+  }).catch(function() {});
+}
+function _dsrCalLabel(label) {
+  var el = document.getElementById('as-dsr-cal');
+  if (el && label) el.textContent = 'Today falls in ' + label + '. Leave it blank for weeks only, with no period numbers.';
+}
+function _dsrOptions(current) {
+  var h = current ? '' : '<option value="" selected>Pick a category</option>', seen = {};
+  for (var i = 0; i < _dsrCats.length; i++) {
+    seen[_dsrCats[i]] = 1;
+    h += '<option value="' + _ehEsc(_dsrCats[i]) + '"' + (current === _dsrCats[i] ? ' selected' : '') + '>' + _ehEsc(_dsrCats[i]) + '</option>';
+  }
+  if (current && !seen[current]) h += '<option value="' + _ehEsc(current) + '" selected>' + _ehEsc(current) + '</option>';
+  return h + '<option value="__other">Another category&hellip;</option>';
+}
+function _dsrRenderCats(d) {
+  var box = document.getElementById('as-dsr-cats'); if (!box) return;
+  var un = d.unmapped || [], mp = d.category_map || [], h = '';
+  for (var i = 0; i < un.length; i++) {
+    var u = un[i];
+    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(u.department) + '</b><span>Unmapped' + (typeof u.net === 'number' ? ' &middot; <i class="dr-n">$' + Math.round(u.net).toLocaleString('en-US') + '</i>' : '') + ' on ' + _ehEsc(d.unmapped_as_of || 'the latest night') + '</span></div>'
+       + '<div class="c"><select class="ac-select" data-dsr-dept="' + _ehEsc(u.department) + '" aria-label="Category for ' + _ehEsc(u.department) + '">' + _dsrOptions('') + '</select></div></div>';
+  }
+  for (var j = 0; j < mp.length; j++) {
+    var m = mp[j];
+    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(m.pos_name) + '</b><span>Counts toward ' + _ehEsc(m.category) + '</span></div>'
+       + '<div class="c"><select class="ac-select" data-dsr-dept="' + _ehEsc(m.pos_name) + '" aria-label="Category for ' + _ehEsc(m.pos_name) + '">' + _dsrOptions(m.category) + '</select></div></div>';
+  }
+  if (!h) h = '<div class="ac-note">No POS departments yet. They appear here after the first night the POS reports its departments.</div>';
+  box.innerHTML = h;
+}
+function saveDsrSetting(field) {
+  var v;
+  if (field === 'dsr_enabled') v = document.getElementById('as-dsr-enabled').checked;
+  else if (field === 'dsr_deadline_hour') v = parseInt(document.getElementById('as-dsr-deadline').value, 10);
+  else if (field === 'fiscal_week_start_dow') v = parseInt(document.getElementById('as-dsr-dow').value, 10);
+  else if (field === 'fiscal_year_start') v = document.getElementById('as-dsr-year').value || '';
+  else if (field === 'fiscal_period_scheme') v = document.getElementById('as-dsr-scheme').value;
+  else return;
+  var b = {}; b[field] = v;
+  asPost('/api/dsr/settings', b, 'as-dsr-status', 'Saved').then(function(d) {
+    if (d && d.ok) _dsrCalLabel(d.settings && d.settings.calendar_label);
+    else loadDsrSettings();
+  });
+}
+function _dsrSaveCategory(dept, cat) {
+  asPost('/api/dsr/category', {pos_name: dept, category: cat}, 'as-dsr-status', 'Saved — counts from the next report on').then(function(d) {
+    loadDsrSettings();
+  });
+}
+document.addEventListener('change', function(e) {
+  var t = e.target; if (!t || !t.getAttribute || !t.getAttribute('data-dsr-dept')) return;
+  var dept = t.getAttribute('data-dsr-dept'), cat = t.value;
+  if (!cat) return;
+  if (cat === '__other') {
+    var row = t.parentNode;
+    row.innerHTML = '<input class="ac-input" type="text" maxlength="60" placeholder="Your category" aria-label="New category for ' + _ehEsc(dept) + '" style="width:150px">'
+      + ' <button type="button" class="cbtn cbtn-secondary cbtn-sm">Save</button>';
+    var inp = row.querySelector('input'), btn = row.querySelector('button');
+    inp.focus();
+    btn.onclick = function() { var c = (inp.value || '').replace(/^\s+|\s+$/g, ''); if (c) _dsrSaveCategory(dept, c); };
+    return;
+  }
+  _dsrSaveCategory(dept, cat);
+});
 
 function saveMorningBrief() {
   asPost('/api/morning-brief/settings', {

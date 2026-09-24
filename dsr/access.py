@@ -262,18 +262,30 @@ def render(report, user, restaurant=None, versions=None):
         "facts": facts,
         "narrative": narrative_for(report.get("narrative"), hidden),
         "checklist": checklist(report, user, restaurant),
-        "versions": versions or [],
+        "versions": [dict(v, finalized_at_local=_stamp_local(v.get("finalized_at"), restaurant),
+                          created_at_local=_stamp_local(v.get("created_at"), restaurant))
+                     for v in (versions or [])],
     }
 
 
 def summary(report, user):
-    """One row of the report list."""
+    """One row of the report list — with what Home's "Last night" card
+    shows: the night's net sales when the Sales block is ready (None
+    otherwise, never 0), the narrative's lead as this login may read it, and
+    when there is no lead, the reason the summary wasn't written."""
     from time_utils import mdy
-    facts, _hidden = redact(report.get("facts") or {}, user)
+    facts, hidden = redact(report.get("facts") or {}, user)
+    sales = (facts.get("blocks") or {}).get("sales") or {}
+    net = (sales.get("metrics") or {}).get("net") if sales.get("status") == dsr.READY else None
+    narrative = filter_narrative(report.get("narrative"), hidden) or {}
+    lead = narrative.get("executive_summary") if isinstance(narrative, dict) else None
+    lead_text = lead.get("text") if isinstance(lead, dict) else None
+    note = (report.get("stages") or {}).get("narrative") or {}
     return {"business_date": report.get("business_date"), "label": mdy(report.get("business_date")),
             "version": report.get("version"), "status": report.get("status"),
             "provisional": bool(report.get("provisional")), "missing": facts.get("missing") or [],
-            "finalized_at": report.get("finalized_at")}
+            "finalized_at": report.get("finalized_at"), "net": net, "lead": lead_text,
+            "lead_missing": None if lead_text else (note.get("reason") if isinstance(note, dict) else None)}
 
 
 def redact_grid(grid, user):
