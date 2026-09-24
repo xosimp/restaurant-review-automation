@@ -1531,6 +1531,14 @@ def run_demand_opportunity(db_path=DB_PATH):
             out = demand.quiet_night_ahead(r.id, today=local.date(), db_path=db_path)
             if not out.get("available"):
                 continue
+            # "Not for us" to the same advice on any surface (T2, B4 H6):
+            # Home's slow_day:Wednesday declined is this push's Wednesday.
+            # Checked before the week is claimed — a declined night spends
+            # nothing.
+            qn_key = f"quiet_night:{out.get('date') or out['weekday']}"
+            qn_title = f"{out['weekday']} is usually your quietest night"
+            if quiet_night_declined(r.id, qn_key, qn_title, db_path=db_path):
+                continue
             import morning_brief, notify
             # Push only: only the people whose phone can take it, checked
             # before the week is claimed — a week "sent" to nobody's phone
@@ -1561,9 +1569,15 @@ def run_demand_opportunity(db_path=DB_PATH):
                     f"typical day across {out['samples']} of them. ")
             body += ("A post and a guest text are drafted — approve them from Marketing."
                      if drafted else "Two days to do something about it.")
-            rec = {"key": f"quiet_night:{out.get('date') or out['weekday']}", "module": "marketing",
-                   "title": f"{out['weekday']} is usually your quietest night",
-                   "model_written": bool(drafted)}
+            # Its measured confidence and the date the sales run through,
+            # on the push itself (T1).
+            conf = quiet_night_confidence(r.id, qn_key, out, db_path=db_path)
+            import rec_trust
+            _label = rec_trust.outbound_label(conf)
+            if _label:
+                body += f" {_label}."
+            rec = {"key": qn_key, "module": "marketing", "title": qn_title,
+                   "model_written": bool(drafted), "confidence": conf}
             # The heads-up is shown on the push and nowhere else, and nothing
             # answers it there — so it is not presented (rec_delivery.
             # NOT_PRESENTED_PREFIXES, re-audit C8) and says so. The hook
@@ -1582,6 +1596,34 @@ def run_demand_opportunity(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")
     return {"sent": sent}
+
+
+def quiet_night_declined(restaurant_id, key, title, db_path=DB_PATH) -> bool:
+    """True when the owner said "not for us" to the same advice (its
+    insight_store.advice_signature) on any surface. Never raises (False)."""
+    try:
+        import insight_store
+        sig = insight_store.advice_signature(key, title)
+        return bool(sig) and sig in insight_store.declined_signatures(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[quiet_night] declined signatures unavailable rid={restaurant_id}: {e}")
+        return False
+
+
+def quiet_night_confidence(restaurant_id, key, out, db_path=DB_PATH) -> dict:
+    """The quiet-night heads-up's K1 confidence: the weekday's average is
+    over `samples` of that weekday (N_FULL "weekdays"), the sales' freshness,
+    this restaurant's record of the kind. Never raises."""
+    try:
+        import rec_trust
+        n = out.get("samples")
+        return rec_trust.assess(restaurant_id, key, sources=("sales",), db_path=db_path, evidence={
+            "n": n, "kind": "weekdays",
+            "basis": f"{n} past {out.get('weekday')}s against a typical day" if n is not None else "the weekday's history"})
+    except Exception as e:
+        print(f"[quiet_night] confidence unavailable rid={restaurant_id}: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()
 
 
 # Drafted-and-ignored weeks in a row after which the fill is no longer drafted.

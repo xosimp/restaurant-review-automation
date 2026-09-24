@@ -199,6 +199,18 @@ def band_of(conf) -> str:
     return (conf or {}).get("band") or "low"
 
 
+def outbound_label(conf) -> str:
+    """The one line an email, push or SMS carries beside a recommendation
+    (confidence round 2, T1): the K1 `label` and the date its stalest
+    source's data runs through — "72% confidence · data through 9/23/26".
+    "" when there is no K1 object; a figure below the floor reads
+    "Confidence not yet measurable". Never a band word."""
+    if not isinstance(conf, dict) or not conf.get("label"):
+        return ""
+    as_of = (((conf.get("dimensions") or {}).get("freshness") or {}).get("as_of"))
+    return str(conf["label"]) + (f" · data through {as_of}" if as_of else "")
+
+
 
 def attach_schedule_confidence(restaurant_id, quality, items, db_path=None, ctx=None) -> list:
     """Put K1 `confidence` on each Shift Quality recommendation item

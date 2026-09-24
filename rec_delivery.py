@@ -309,7 +309,7 @@ def record_link_open(user, args) -> bool:
                 return False
         import rec_ledger
         src = str((args or {}).get("src") or "").strip()
-        surface = src if src in rec_ledger.SURFACES else "unknown"
+        surface = rec_ledger.known_surface(src)
         uid = user.get("id")
         return rec_ledger.record(rid, rec, "opened", surface=surface, user_id=uid,
                                  role=user.get("role"), meta={"via": "link"},

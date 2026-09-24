@@ -313,6 +313,10 @@ _SIG_TEXT_TOPICS = (
     ("training", r"\b(?:train\w*|coach\w*|huddle\w*|pre-shift)\b"),
 )
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+# Kinds whose advice is about the whole schedule, never one weekday
+# (business_intelligence's schedule_to_target — its own key so it is not
+# Home's trim_day:<day>; the Improve-with-Cavnar optimizer proposal).
+_WHOLE_SCHEDULE_KINDS = ("schedule_to_target", "optimizer")
 # Keys whose kind is a model-written line rather than a lever (besides insight_*).
 _MODEL_LINE_KINDS = ("digest_move", "monthly_move", "ask_tip")
 # How long a "not for us" silences (rec_ledger.SILENCE_DAYS: ten years) against
@@ -369,6 +373,12 @@ def advice_signature(key, text=None):
         family = _text_topic(text) or family
     family = family or _text_topic(text)
     subject = next((t for t in tags if t.startswith(("day:", "item:", "dish:", "category:"))), None)
+    # A whole-schedule recommendation names a weekday only as where to
+    # START ("…to your 30% target, starting with Tuesday"): it is not that
+    # day's trim. Its subject is the whole schedule, so declining Tuesday's
+    # trim never suppresses it, nor it Tuesday's (T2, B4 L4).
+    if kind in _WHOLE_SCHEDULE_KINDS:
+        subject = "schedule:whole"
     subject = subject or _text_subject(text)
     if not family or not subject:
         return None

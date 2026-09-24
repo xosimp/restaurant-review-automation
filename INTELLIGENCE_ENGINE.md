@@ -410,6 +410,37 @@ what worked by tag, the timeline, the check-in — is `rec_learning.summary`,
 `timeline` and the `/recs/*` routes (`API_REFERENCE.md`), redacted per
 viewer.
 
+### Every recommendation surface (round 2, Group T)
+
+One K1 object, assessed through `rec_trust.assess`, reaches every surface
+that carries advice — never a band word a model wrote, never a figure
+re-derived on the client:
+
+- **A model-written line** (the Labor / Food / Marketing reads' numbered
+  lines, Intel's "how to improve", an Ask suggestion, the digest's "This
+  week's move") takes its Evidence Strength from the data the model was
+  handed — `client_api.labor_read_evidence` (days of shifts with sales,
+  the labor diagnosis's input), `food_read_evidence` (ISO weeks of counts
+  in the last 8), `marketing_read_evidence` (posts with measured
+  performance in 8 weeks), the competitors compared, the Ask answer's own
+  live reads, the week's reviews — flagged `inferred` (the PARTIAL cap:
+  never high on the data alone) and capped low when the read carried a
+  figure that did not check out (`client_api.read_line_confidence`).
+- **A cross-module link** uses one input on the one-thing card and the
+  What connects card (`business_intelligence.link_evidence_input`).
+- **A fact** — reviews waiting, a failing sync, the schedule not built,
+  unacknowledged issues — carries no confidence (B4 H5).
+- **Outbound** (emails, pushes): one line, `rec_trust.outbound_label` —
+  "72% confidence · data through 9/23/26" — the K1 label and the stalest
+  source's date.
+
+"Not for us" is read by advice signature (`insight_store.advice_signature`)
+on the AI-read lines, Shift Quality items, Ask suggestions, the digest's
+move and the quiet-night push, as it already was on Home, the one thing,
+the DSR and Reviews' Do today. A whole-schedule recommendation
+(`schedule_to_target`, `optimizer`) has the subject `schedule:whole`, so
+declining one weekday's trim no longer silences it (B4 L4).
+
 ## What a measured result is allowed to say (confidence audit, 9/24/26)
 
 Every rate the engine learns rests on `recommendation_outcomes`, so the

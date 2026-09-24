@@ -211,6 +211,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             vs = (f", {abs(delta):.1f} points {'above' if delta > 0 else 'below'} last month"
                   if delta not in (None, 0) else "")
             lines.append({"key": "prime_cost", "tone": "bad" if (delta or 0) > 1 else "neutral",
+                          # A run rate with a labor share carried over from
+                          # another period: the footer never calls it
+                          # measured (T3, B4 M8).
+                          "claim_kind": pp.get("claim_kind") or "forecast",
                           "text": f"Prime cost month to date: {pp['prime_cost_pct']:.1f}% of sales{vs}.",
                           "ask": "What's driving my prime cost this month?"})
 
@@ -225,6 +229,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         money_bit = (f" — about {_money(f['dollars_monthly'])}/month" if f.get("dollars_monthly") else "")
         lines.append({"key": "fix_first", "tone": "action", "rec": f.get("key"),
                       "critical": f.get("urgency") == "critical",
+                      # The one thing's own measured confidence (K4) and
+                      # what kind of claim it is (T1, T3).
+                      "confidence": f.get("confidence") if isinstance(f.get("confidence"), dict) else None,
+                      "claim_kind": f.get("claim_kind") or "measured",
                       "same": [f["same_as"]] if f.get("same_as") else [],
                       "text": f"If you only do one thing: {f.get('what')}{money_bit}.",
                       "ask": f"Walk me through this: {f.get('what')}"})
@@ -240,6 +248,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         lo_m = t.get("monthly_low") if t.get("is_range") else t.get("monthly")
         hi_m = t.get("monthly_high") if t.get("is_range") else t.get("monthly")
         lines.append({"key": "money", "tone": "neutral", "rec": t.get("key"),
+                      "claim_kind": t.get("claim_kind") or "opportunity",
                       "money": {"low": lo_m, "high": hi_m, "per": "month",
                                 "label": f"{t['label']} — opportunity, {amount}/month",
                                 "claim_kind": t.get("claim_kind"), "basis": t.get("basis")},
@@ -372,6 +381,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         if slow:
             d = slow[0]
             lines.append({"key": "slow_day", "tone": "neutral", "rec": f"slow_day:{d['day']}",
+                          "_samples": d.get("samples"),
                           "text": f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day.",
                           "ask": f"How do I fill {d['day']}s?"})
 
@@ -419,6 +429,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # is not said again here (rec_ledger.silenced_keys).
     lines = _drop_answered(restaurant_id, lines, db_path)
     lines = _one_line_per_news(lines)
+    _attach_confidence(restaurant_id, lines, db_path)
 
     # ── what another module would let me say ──
     # Mondays only, and only when something real is off: the brief already
@@ -482,6 +493,41 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
 
 # How many items the running-low line names; only those are its keys.
 STOCK_NAMED = 3
+
+
+def _attach_confidence(restaurant_id, lines, db_path=DB_PATH):
+    """Each recommendation line's K1 `confidence` (confidence round 2, T1),
+    from what the line itself rests on: the running-low items it names (a
+    direct count of items below par, the inventory's freshness) and the
+    slow weekday (how many of that weekday the average is over, the sales'
+    freshness). The one thing carries the pick's own (set where it is
+    built). A fact — reviews waiting, the schedule not built, a result, a
+    goal — carries none: it is not advice with a probability. Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.warning("morning_brief: confidence unavailable: %s", e)
+        return lines
+    for l in lines:
+        try:
+            if l.get("key") == "stock" and l.get("rec"):
+                n = len(l.get("recs") or [l["rec"]])
+                l["confidence"] = rec_trust.assess(
+                    restaurant_id, l["rec"], sources=data_freshness.sources_for(["inventory"]), ctx=ctx,
+                    evidence={"n": n, "kind": "count",
+                              "basis": f"{n} item{'s' if n != 1 else ''} below par on the last counts"})
+            elif l.get("key") == "slow_day" and l.get("rec"):
+                n = l.pop("_samples", None)
+                l["confidence"] = rec_trust.assess(
+                    restaurant_id, l["rec"], sources=("sales",), ctx=ctx,
+                    evidence={"n": n, "kind": "weekdays",
+                              "basis": (f"{n} of that weekday's nights against a normal day"
+                                        if n is not None else "the weekday's history")})
+        except Exception as e:
+            log.warning("morning_brief: line confidence failed for %s: %s", l.get("key"), e)
+    return lines
 
 
 def line_keys(line) -> list:
@@ -557,7 +603,8 @@ def line_items(lines) -> list:
     not a recommendation anyone can answer (rec_delivery.presentable)."""
     import rec_delivery
     items = [{"key": k, "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
-              "position": i}
+              "position": i,
+              "confidence": l.get("confidence") if isinstance(l.get("confidence"), dict) else None}
              for i, l in enumerate(lines or []) for k in line_keys(l)]
     return rec_delivery.only_presentable(items)
 
@@ -721,8 +768,25 @@ def push_text(brief, restaurant_name):
     lines = push_lines(brief)
     if not lines:
         return None
-    body = " ".join(l["text"] for l in lines)
+    body = " ".join(l["text"] + _conf_suffix(l) for l in lines)
     return {"title": f"Good morning — {restaurant_name}", "body": body[:230]}
+
+
+def _conf_label(line) -> str:
+    """"72% confidence · data through 9/23/26" for a recommendation line
+    that carries a K1 confidence (T1, rec_trust.outbound_label); "" for a
+    fact."""
+    try:
+        import rec_trust
+        return rec_trust.outbound_label(line.get("confidence"))
+    except Exception:
+        return ""
+
+
+def _conf_suffix(line) -> str:
+    """" (72% confidence · data through 9/23/26)" after a line in the push."""
+    label = _conf_label(line)
+    return f" ({label})" if label else ""
 
 
 def _ask_url(prompt, rec=None, rid=None):
@@ -736,15 +800,53 @@ def _ask_url(prompt, rec=None, rid=None):
     return rec_delivery.ask_url(prompt, rec if rec_delivery.presentable(rec) else None, "brief_email", rid)
 
 
+# What each non-measured line is called in the email footer (T3, B4 M8):
+# every claim kind a brief line can carry that is not a measurement.
+_NOT_MEASURED = {"forecast": "a projection", "opportunity": "an estimate", "computed": "an estimate",
+                 "estimate": "an estimate", "inferred": "an inference"}
+_FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost projection",
+                 "money": "the dollar opportunity", "fix_first": "the one thing"}
+
+
+def footer_source(lines) -> str:
+    """The brief email's provenance sentence. It says "measured" only when
+    every line is: today's forecast, the prime-cost projection, the dollar
+    opportunity and an inferred or computed one thing are each named as the
+    kind of claim they are (the footer used to check only the forecast and
+    the weather, so a projection read as measured — B4 M8). The weather and
+    the calendar are public facts, not the restaurant's data."""
+    lines = lines or []
+    outside = any(l.get("outside") for l in lines)
+    exceptions = []
+    for l in lines:
+        kind = l.get("claim_kind") or ("forecast" if l.get("forecast") else "measured")
+        if kind in _NOT_MEASURED:
+            name = _FOOTER_NAMES.get(l.get("key"), "one line")
+            bit = f"{name} ({_NOT_MEASURED[kind]})"
+            if bit not in exceptions:
+                exceptions.append(bit)
+    if outside:
+        exceptions.append("the weather and the calendar")
+    if not exceptions:
+        return "Every figure above is measured from your own data."
+    if exceptions == ["the weather and the calendar"]:
+        return "Every figure above is measured from your own data, except the weather and the calendar."
+    listed = exceptions[0] if len(exceptions) == 1 else ", ".join(exceptions[:-1]) + " and " + exceptions[-1]
+    return f"Every figure above is from your own data — measured, except {listed}."
+
+
 def _email_html(brief, restaurant_name):
     import html
     from time_utils import mdy
+    from emails import BRAND as _BRAND
     dot = {"good": "#2d6a4f", "bad": "#c0392b", "action": "#c84b2f", "neutral": "#7a736a"}
     rows = "".join(
         f'<tr><td style="padding:10px 0;border-top:1px solid #ece7dd;vertical-align:top;width:14px">'
         f'<div style="width:8px;height:8px;border-radius:4px;background:{dot.get(l["tone"], "#7a736a")};'
         f'margin-top:6px"></div></td><td style="padding:10px 0 10px 8px;border-top:1px solid #ece7dd;'
         f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
+        + (f'<br><span style="font-size:12px;color:{_BRAND["muted"]}">{html.escape(_conf_label(l))}</span>'
+           if _conf_label(l) else "")
         # Every line is a question you can ask about it — the email's
         # equivalent of tapping the push, which opens Ask on that line.
         + (f'<br><a href="{html.escape(_ask_url(l.get("ask"), l.get("rec"), brief.get("restaurant_id")), quote=True)}" '
@@ -757,17 +859,7 @@ def _email_html(brief, restaurant_name):
     # And honest about forecasts: today's expected sales and the projected
     # prime cost are FROM the restaurant's data but are not measurements, and
     # the footer used to cover them with "measured" (CA1 H9 / red flag 18).
-    outside = any(l.get("outside") for l in brief["lines"])
-    forecast = any(l.get("forecast") for l in brief["lines"])
-    source = "Every figure above is from your own data"
-    if forecast and outside:
-        source += " — measured, except today's forecast (a projection), the weather and the calendar."
-    elif forecast:
-        source += " — measured, except today's forecast, which is a projection."
-    elif outside:
-        source = "Every figure above is measured from your own data, except the weather and the calendar."
-    else:
-        source = "Every figure above is measured from your own data."
+    source = footer_source(brief["lines"])
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
             f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}</p>'
             f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'

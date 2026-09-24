@@ -184,7 +184,7 @@ def test_the_projection_is_frozen_once_mid_month_never_on_render(db_path, monkey
     import food_cost_intelligence as fci
     rid = _rid(db_path, module_inventory=1)
     calls = []
-    monkeypatch.setattr(fci, "profitability_projection", lambda r, db_path=None: (calls.append(1) or {
+    monkeypatch.setattr(fci, "profitability_projection", lambda r, db_path=None, **k: (calls.append(1) or {
         "available": True, "prime_cost_pct": 61.5, "days_elapsed": 15}))
     assert fci.record_profitability_forecast(rid, db_path=db_path, today=date(2026, 9, 10)) == {
         "recorded": False, "reason": "before the 15th"}
@@ -192,7 +192,7 @@ def test_the_projection_is_frozen_once_mid_month_never_on_render(db_path, monkey
     out = fci.record_profitability_forecast(rid, db_path=db_path, today=date(2026, 9, 15))
     assert out["recorded"] and out["horizon_end"] == "2026-09-30" and out["predicted"] == 61.5
     # the next night: already frozen — the later, more accurate reading never replaces it
-    monkeypatch.setattr(fci, "profitability_projection", lambda r, db_path=None: {
+    monkeypatch.setattr(fci, "profitability_projection", lambda r, db_path=None, **k: {
         "available": True, "prime_cost_pct": 58.0, "days_elapsed": 28})
     assert fci.record_profitability_forecast(rid, db_path=db_path, today=date(2026, 9, 28))["reason"] == "already frozen this month"
     conn = get_conn(db_path)

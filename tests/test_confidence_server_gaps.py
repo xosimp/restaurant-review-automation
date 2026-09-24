@@ -14,8 +14,12 @@ def test_mobile_food_cost_carries_the_waste_state_and_recoverable_basis():
 
 
 def test_mobile_labor_insight_serves_the_stale_read_with_its_age():
+    # One helper for both twins now (T9): client_api.labor_stale_read.
     src = inspect.getsource(mobile_api.mobile_labor_insight)
-    assert "stale=True" in src and "stale_note" in src and "age_days" in src
+    assert "labor_stale_read(rid)" in src and '**stale["state"]' in src
+    import client_api
+    helper = inspect.getsource(client_api._labor_read_age)
+    assert "stale_note" in helper and "age_days" in helper
 
 
 def test_admin_fleet_integrations_carry_the_pos_sync_state():

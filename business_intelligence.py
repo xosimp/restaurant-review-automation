@@ -871,12 +871,7 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             top.get("headline"), top.get("modules") or [], urgency="important",
             evidence=top.get("evidence"), claim_kind="inferred",
             confirm_by=top.get("confirm_by"), link_headline=top.get("headline"),
-            # Two modules moving together is an inference, never a measured
-            # cause: its evidence is the figures it cites, flagged inferred.
-            evidence_input={"n": len([e for e in (top.get("evidence") or []) if e]), "kind": "evidence_items",
-                            "flags": ("inferred",),
-                            "basis": f"{len(top.get('modules') or [])} modules moving together — an inference, "
-                                     "not a measured cause"})
+            evidence_input=link_evidence_input(top))
 
     fx = food_brief.get("fix_first")
     if fx and (fx.get("what") or fx.get("label")):
@@ -963,6 +958,28 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         c["score"] = URGENCY_WEIGHT.get(c["urgency"], 1.0) * max(c["dollars_monthly"] or 0.0, UNPRICED_FLOOR)
     out.sort(key=lambda c: -c["score"])
     return out
+
+
+def link_evidence_input(link) -> dict:
+    """A cross-module link's Evidence Strength input — the one input for the
+    same link as the one-thing candidate and as a "What connects" card (T1),
+    so both surfaces show one figure. Two modules moving together is an
+    inference, never a measured cause: its evidence is the figures it cites,
+    flagged inferred."""
+    link = link or {}
+    return {"n": len([e for e in (link.get("evidence") or []) if e]), "kind": "evidence_items",
+            "flags": ("inferred",),
+            "basis": f"{len(link.get('modules') or [])} modules moving together — an inference, "
+                     "not a measured cause"}
+
+
+def link_confidence(restaurant_id, link, key=None, db_path=DB_PATH, ctx=None) -> dict:
+    """The K1 confidence of a "What connects" link (T1): link_evidence_input,
+    this restaurant's record of the link kind, the freshness of the modules
+    it joins. Never raises."""
+    return one_thing_confidence(restaurant_id, {"key": key or link_key(link), "modules": (link or {}).get("modules"),
+                                                "evidence_input": link_evidence_input(link)},
+                                db_path=db_path, ctx=ctx)
 
 
 def _driver_evidence_input(fx):

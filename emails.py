@@ -972,6 +972,21 @@ def report_ask_link(prompt: str, rec: str = None, src: str = None, label: str = 
             f'color:{BRAND["ember"]};text-decoration:none">{esc(label)} &rarr;</a></div>')
 
 
+def report_confidence(conf) -> str:
+    """The measured confidence under a recommendation in an email —
+    rec_trust.outbound_label: "72% confidence · data through 9/23/26".
+    "" when the recommendation carries none."""
+    try:
+        import rec_trust
+        label = rec_trust.outbound_label(conf)
+    except Exception:
+        label = ""
+    if not label:
+        return ""
+    return (f'<div style="font-family:{_SANS};font-size:12px;color:{BRAND["muted"]};margin-top:6px">'
+            f'{esc(label)}</div>')
+
+
 def report_bullets(items, accent: str = None) -> str:
     """One sentence per line on a thin rule — report_lines without the
     label, for a list whose eyebrow already says what it is (the DSR's went
@@ -1085,8 +1100,11 @@ def dsr_email(d: dict):
             if actions[0].get("why"):
                 first += (f'<div style="font-family:{_SANS};font-size:12.5px;font-weight:400;'
                           f'color:{BRAND["body"]};margin-top:6px">{esc(actions[0]["why"])}</div>')
+            # Each action's measured confidence, as the app shows it (T1).
+            first += report_confidence(actions[0].get("confidence"))
             first += _ask(actions[0])
-            rest = report_bullets([esc(a["text"]) + _ask(a) for a in actions[1:]])
+            rest = report_bullets([esc(a["text"]) + report_confidence(a.get("confidence")) + _ask(a)
+                                   for a in actions[1:]])
             sections.append(report_action("Tomorrow", first)
                             + (f'<div style="margin-top:14px">{rest}</div>' if rest else ""))
         missing = list(d.get("missing") or [])
@@ -2052,6 +2070,9 @@ def _one_thing_block(out, fix_first, src, when, rid=None):
                  + report_paragraph(f"<strong>{_html.escape(str(fix_first['what']))}</strong>{_html.escape(money)}"))
         if why:
             block += report_paragraph(_html.escape(why[:1].upper() + why[1:]))
+        # The pick's measured confidence and the date its data runs through,
+        # as Home shows it (T1).
+        block += report_confidence(fix_first.get("confidence"))
         import rec_delivery
         key = fix_first.get("key") if rec_delivery.presentable(fix_first.get("key")) else None
         block += report_ask_link(f"Walk me through this: {fix_first['what']}", key, src, rid=rid)
@@ -2303,32 +2324,38 @@ def _monthly_review_sections(restaurant_id, months=1):
         import value_delivered as _vd
         v = _vd.breakdown(restaurant_id)
         d, av = v["delivered"], v["avoided"]
-        bits = []
+        # Two headings, value_delivered.VALUE_SECTIONS' own (T3, B4 M9):
+        # what was measured, and what Cavnar surfaced or is still
+        # available. The opportunity and surfaced figures sat under "What
+        # Cavnar AI has been worth" — a gap against target read as value.
+        by_section = {"measured": [], "surfaced": []}
         # Net of what got worse, the ×12 figure called a projection, the
         # sum over measured days, and the sales lift kept apart from the
         # savings (re-audit A29, A6) — value_delivered.value_lines.
         measured = _vd.value_lines(d)
         if measured:
-            bits.extend(measured)
+            by_section["measured"].extend(measured)
             if d.get("biggest"):
-                bits.append(f"Biggest so far: {d['biggest']['summary']}")
+                by_section["measured"].append(f"Biggest so far: {d['biggest']['summary']}")
         elif d["in_flight"]:
-            bits.append(f"{d['in_flight']} change{'' if d['in_flight'] == 1 else 's'} "
-                        f"still being measured — results land here when their windows close.")
+            by_section["measured"].append(f"{d['in_flight']} change{'' if d['in_flight'] == 1 else 's'} "
+                                          f"still being measured — results land here when their windows close.")
         if av["hours"]:
-            bits.append(f"About {av['hours']:,.0f} hours of work done for you, at stated rates.")
+            by_section["surfaced"].append(f"About {av['hours']:,.0f} hours of work done for you, at stated rates.")
         if v["surfaced"]["dollars"]:
-            bits.append(f"${v['surfaced']['dollars']:,.0f} of problems put in front of you "
-                        f"across {v['surfaced']['alerts']} alerts in the last 30 days.")
+            by_section["surfaced"].append(f"${v['surfaced']['dollars']:,.0f} of problems put in front of you "
+                                          f"across {v['surfaced']['alerts']} alerts in the last 30 days.")
         if v["opportunity"]["monthly"]:
-            bits.append(f"${v['opportunity']['monthly']:,.0f}/month still on the table — "
-                        f"available, not captured.")
-        if bits:
-            out.append(report_eyebrow("What Cavnar AI has been worth")
-                       + report_paragraph(_list(bits))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+            by_section["surfaced"].append(f"${v['opportunity']['monthly']:,.0f}/month still on the table — "
+                                          f"available, not captured.")
+        shown = [sec for sec in _vd.VALUE_SECTIONS if by_section.get(sec["key"])]
+        for i, sec in enumerate(shown):
+            block = report_eyebrow(sec["heading"]) + report_paragraph(_list(by_section[sec["key"]]))
+            if i == len(shown) - 1:
+                block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'These are four different measurements and are not '
-                                          f'added together. {_html.escape(d["caveat"])}</span>'))
+                                          f'added together. {_html.escape(d["caveat"])}</span>')
+            out.append(block)
     except Exception as e:
         print(f"[monthly] value block failed: {e}")
     # The audit, measured. Only where one is linked — see promise.py.

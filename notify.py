@@ -836,8 +836,28 @@ def _negative_trend(restaurant_id: int, db_path: str = DB_PATH):
     if t.get("first") is None or t.get("latest") is None:
         return None
     solid = [w for w in (t.get("series") or []) if (w.get("count") or 0) >= MIN_TREND_REVIEWS_PER_WEEK]
+    # The measured figure the alert states instead of a band word (T1, B4
+    # H1): how many of the week-to-week moves across the solid weeks went
+    # down — the consistency rating_trend's scorer reads — and, when the
+    # scorer publishes one, its trend_strength_pct.
+    vals = [float(w.get("avg_rating") or 0) for w in solid]
+    moves = len(vals) - 1 if len(vals) > 1 else 0
+    down = sum(1 for a, b in zip(vals, vals[1:]) if b < a)
     return {"weeks": len(solid), "reviews": sum(int(w.get("count") or 0) for w in solid),
-            "first": float(t["first"]), "latest": float(t["latest"]), "confidence": t["confidence"]}
+            "first": float(t["first"]), "latest": float(t["latest"]), "confidence": t["confidence"],
+            "moves": moves, "moves_down": down, "trend_strength_pct": t.get("trend_strength_pct")}
+
+
+def trend_measure_text(neg) -> str:
+    """"5 of 7 week-to-week moves down" (plus the scorer's trend strength
+    when it publishes one) — what the rating-decline alert says about how
+    steady the decline is. Never "medium confidence"."""
+    bits = []
+    if (neg or {}).get("moves"):
+        bits.append(f"{neg['moves_down']} of {neg['moves']} week-to-week moves down")
+    if isinstance((neg or {}).get("trend_strength_pct"), (int, float)):
+        bits.append(f"trend strength {int(round(neg['trend_strength_pct']))}%")
+    return ", ".join(bits)
 
 
 def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
@@ -2639,10 +2659,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                     f"({neg['first']:.1f} → {neg['latest']:.1f}★, {neg['reviews']} reviews).\n"
                     f"dashboard.cavnar.ai"
                 )
+                _measure = trend_measure_text(neg)
                 _fire(sms, f"Rating declining — {name}", [
                     f"Weekly average ratings have been declining over {neg['weeks']} weeks: "
                     f"<strong>{neg['first']:.1f} → {neg['latest']:.1f}★</strong>, across "
-                    f"{neg['reviews']} reviews ({neg['confidence']} confidence).",
+                    f"{neg['reviews']} reviews" + (f" ({_measure})." if _measure else "."),
                     "This trend warrants a closer look at what guests are saying.",
                 ], "negative_trend")
 

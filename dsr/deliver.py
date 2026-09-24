@@ -319,8 +319,14 @@ def digest(payload, restaurant, kind=FIRST):
     needs = [t for t in (_text(x) for x in narrative.get("needs_attention") or []) if t]
     # `key` is the action's rec_ledger key (dsr_action:…): the email's
     # "Ask about this" link names it, and a delivered email presents it.
+    # Each action keeps its measured confidence (K1, dsr.narrative.
+    # action_confidence) and the one line the email prints for it (T1):
+    # the app showed "72%" and the email the same advice with nothing.
+    import rec_trust
     actions = [{"text": _text(a), "why": (a.get("why") or "").strip() or None,
-                "key": a.get("key") if isinstance(a.get("key"), str) else None}
+                "key": a.get("key") if isinstance(a.get("key"), str) else None,
+                "confidence": a.get("confidence") if isinstance(a.get("confidence"), dict) else None,
+                "confidence_label": rec_trust.outbound_label(a.get("confidence")) or None}
                for a in narrative.get("actions_tomorrow") or [] if _text(a)]
     withheld = [access.BLOCK_LABELS.get(n, n) for n in facts.get("withheld") or []]
     fiscal = (payload.get("fiscal") or {}).get("label")
