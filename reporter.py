@@ -358,7 +358,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 _d0 = _dg[0]
                 diagnosis_context = (
                     f"\n\nROOT-CAUSE DIAGNOSIS for the '{_d0['category'].replace('_',' ')}' cluster "
-                    f"({_d0['mention_count']} negative reviews, {_d0['confidence']} confidence):\n"
+                    f"({_d0['mention_count']} negative reviews, {digest_confidence_text(_d0)}):\n"
                     f"- Most likely cause: {_d0['cause']}\n"
                     + (f"- Alternative: {_d0['alternative_cause']}\n" if _d0.get("alternative_cause") else "")
                     + (f"- What would confirm it: {_d0['what_would_confirm']}\n" if _d0.get("what_would_confirm") else "")
@@ -457,7 +457,9 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
         from time_utils import restaurant_now_by_id as _rnbi_rpt
-        today_rpt = _rnbi_rpt(restaurant_id or report.restaurant_id).strftime('%B %d, %Y')
+        # M/D/YY (T7, B4 L8): the model echoes the date it is handed, and
+        # "September 24, 2026" reached the owner's email.
+        today_rpt = _mdy(_rnbi_rpt(restaurant_id or report.restaurant_id))
 
         # Build module context for full system clients
         module_lines = []
@@ -774,6 +776,96 @@ def _digest_impressions(restaurant_id, items):
         log.warning("digest impressions not staged: %s", e)
 
 
+def digest_confidence_text(diagnosis) -> str:
+    """How sure the digest's diagnosis is, as the prompt states it: the
+    measured K1 label (review_intelligence.get_diagnoses' confidence_detail),
+    never the model's own band word (T1, B4 H1). "confidence not yet
+    measurable" when the diagnosis carries none."""
+    cd = (diagnosis or {}).get("confidence_detail")
+    if isinstance(cd, dict) and cd.get("label"):
+        return str(cd["label"])
+    return "confidence not yet measurable"
+
+
+def rating_tag(report, brand):
+    """(value, colour, label) for the digest's rating stat. A week with no
+    reviews has no average — it reads "—", "No reviews this week", never
+    "0.0★ — Needs work" (T3, B4 L10)."""
+    if not getattr(report, "total_reviews", 0) or not report.avg_rating:
+        return "&mdash;", brand["muted"], "No reviews this week"
+    rating = report.avg_rating
+    if rating >= 4.5:
+        return f"{rating}&#9733;", brand["good"], "Excellent"
+    if rating >= 4.0:
+        return f"{rating}&#9733;", brand["good"], "Good"
+    if rating >= 3.5:
+        return f"{rating}&#9733;", brand["warn"], "Fair"
+    return f"{rating}&#9733;", brand["bad"], "Needs work"
+
+
+# The digest's labor tag: "On target" at or under the owner's own target,
+# "Watch closely" within this many points over it, "Over budget" past that
+# (T3, B4 M10 — it was a hard-coded 32/36 whatever the owner set).
+LABOR_WATCH_PTS = 4.0
+
+
+def labor_tag(labor_pct, target, brand):
+    """(colour, label) for the digest's labor section against the owner's
+    target (notify.labor_target_for)."""
+    lp = float(labor_pct or 0)
+    t = float(target)
+    if lp <= t:
+        return brand["good"], "On target"
+    if lp <= t + LABOR_WATCH_PTS:
+        return brand["warn"], "Watch closely"
+    return brand["bad"], "Over budget"
+
+
+def waste_tag(waste, brand):
+    """(value, colour, label) for the digest's waste stat. $0 of waste on
+    file is not "Low waste" — it is nothing logged, which inventory reads as
+    not measured (T3, B4 M10)."""
+    w = float(waste or 0)
+    if w <= 0:
+        return "&mdash;", brand["muted"], "Not measured"
+    if w < 200:
+        return f"${w:,.0f}", brand["good"], "Low waste"
+    if w < 500:
+        return f"${w:,.0f}", brand["warn"], "Moderate"
+    return f"${w:,.0f}", brand["bad"], "High waste"
+
+
+def move_confidence(restaurant_id, key, report) -> dict:
+    """The K1 confidence of the digest's "This week's move" (T1): a
+    model-written action over this week's reviews (N_FULL "reviews"),
+    flagged inferred, its figures already checked against the input (a line
+    that failed is dropped before it gets here); this restaurant's record of
+    digest_move; the reviews' freshness. Never raises."""
+    try:
+        import rec_trust
+        n = int(getattr(report, "total_reviews", 0) or 0)
+        return rec_trust.assess(restaurant_id, key, sources=("reviews",), evidence={
+            "n": n, "kind": "reviews", "flags": ("inferred",),
+            "basis": f"a model-written move from {n} review{'s' if n != 1 else ''} this week"})
+    except Exception as e:
+        print(f"[digest] move confidence unavailable: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()
+
+
+def move_declined(restaurant_id, key, text) -> bool:
+    """True when the owner said "not for us" to the same advice on any
+    surface (insight_store.advice_signature, T2): the digest's "cut a server
+    Tuesday" is Home's trim_day:Tuesday. Never raises (False)."""
+    try:
+        import insight_store
+        sig = insight_store.advice_signature(key, text)
+        return bool(sig) and sig in insight_store.declined_signatures(restaurant_id)
+    except Exception as e:
+        print(f"[digest] declined signatures unavailable: {e}")
+        return False
+
+
 def digest_move_key(text) -> str:
     """The digest's "This week's move" — a model-written action — as a
     recommendation key. The same words (ignoring case and punctuation) are
@@ -839,15 +931,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     neg_count = report.sentiment.get("negative", 0)
     first_name = (owner_name or "").split()[0] if owner_name else "there"
 
-    rating = report.avg_rating or 0
-    if rating >= 4.5:
-        rating_color, rating_label = BRAND["good"], "Excellent"
-    elif rating >= 4.0:
-        rating_color, rating_label = BRAND["good"], "Good"
-    elif rating >= 3.5:
-        rating_color, rating_label = BRAND["warn"], "Fair"
-    else:
-        rating_color, rating_label = BRAND["bad"], "Needs work"
+    rating_value, rating_color, rating_label = rating_tag(report, BRAND)
 
     _rest = None
     try:
@@ -909,7 +993,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     sections.append(
         report_eyebrow("Review Intelligence", tag=rating_label, tag_color=rating_color) +
         report_stats([
-            (f"{rating}&#9733;", "avg rating", rating_color),
+            (rating_value, "avg rating", rating_color),
             (report.total_reviews, "reviews"),
             (pos_count, "positive", BRAND["good"] if pos_count else None),
             (neg_count, "negative", BRAND["bad"] if neg_count else None),
@@ -926,8 +1010,8 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
                 lp = labor_data.get("overall_labor_pct", 0)
                 ls = labor_data.get("total_sales", 0)
                 lc = labor_data.get("total_labor_cost", 0)
-                l_color = BRAND["good"] if lp <= 32 else (BRAND["warn"] if lp <= 36 else BRAND["bad"])
-                l_label = "On target" if lp <= 32 else ("Watch closely" if lp <= 36 else "Over budget")
+                from notify import labor_target_for as _ltf_d
+                l_color, l_label = labor_tag(lp, _ltf_d(_rest), BRAND)
                 sections.append(
                     report_eyebrow("Labor Optimizer", tag=l_label, tag_color=l_color) +
                     report_stats([
@@ -950,8 +1034,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
             waste = inv.get("total_waste_cost_week", 0)
             recoverable = inv.get("recoverable_monthly", 0)
             top_waste = inv.get("waste_items", [])
-            i_color = BRAND["good"] if waste < 200 else (BRAND["warn"] if waste < 500 else BRAND["bad"])
-            i_label = "Low waste" if waste < 200 else ("Moderate" if waste < 500 else "High waste")
+            w_value, i_color, i_label = waste_tag(waste, BRAND)
             top_line = ""
             if top_waste:
                 top_line = (f'<div style="font-family:{_SANS};font-size:12px;color:{BRAND["muted"]};'
@@ -961,7 +1044,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
             sections.append(
                 report_eyebrow("Food Cost Control", tag=i_label, tag_color=i_color) +
                 report_stats([
-                    (f"${waste:,.0f}", "waste this week", i_color),
+                    (w_value, "waste this week", i_color),
                     (f"${recoverable:,.0f}", "recoverable / mo"),
                 ]) + top_line + note(ai_summary.get("inventory"))
             )
@@ -1002,15 +1085,20 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
         _rid_mv = restaurant_id or report.restaurant_id
         move_key = digest_move_key(ai_summary["action"])
         import review_common as _rc_mv
-        if move_key not in _rc_mv.silenced(_rid_mv):
+        from emails import report_confidence
+        # "Not for us" to the same advice anywhere is a no here too (T2).
+        if (move_key not in _rc_mv.silenced(_rid_mv)
+                and not move_declined(_rid_mv, move_key, ai_summary["action"])):
+            _mv_conf = move_confidence(_rid_mv, move_key, report)
             sections.append(report_action("This week's move", _html.escape(ai_summary["action"])
+                                          + report_confidence(_mv_conf)
                                           + report_ask_link(f"Walk me through this: {ai_summary['action']}",
                                                             move_key, "digest")))
             try:
                 import rec_delivery
                 rec_delivery.stage(_rid_mv, "digest",
                                    [{"key": move_key, "module": "home", "title": ai_summary["action"][:200],
-                                     "model_written": True, "kind": "digest_move"}])
+                                     "model_written": True, "kind": "digest_move", "confidence": _mv_conf}])
             except Exception as e:
                 print(f"[digest] move not staged: {e}")
 

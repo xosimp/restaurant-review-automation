@@ -460,11 +460,21 @@ def _driver_confidence(restaurant_id, drivers, db_path=DB_PATH):
     for d in drivers:
         ev = driver_evidence(d)
         d["evidence_input"] = ev
+        # The driver's recommendation key (business_intelligence.driver_key —
+        # the key its confidence is assessed under and the one-thing card
+        # uses), so a client's Why? on a driver is logged against it (T8,
+        # B4 L5).
+        try:
+            import business_intelligence as _bi_k
+            d["rec_key"] = _bi_k.driver_key(d)
+        except Exception:
+            d["rec_key"] = None
         if ctx is None:
             import confidence_engine as _ce
             conf = _ce.unknown()
         else:
-            conf = rec_trust.assess(restaurant_id, _bi.driver_key(d), evidence=ev, sources=srcs, ctx=ctx)
+            conf = rec_trust.assess(restaurant_id, d.get("rec_key") or _bi.driver_key(d), evidence=ev,
+                                    sources=srcs, ctx=ctx)
         d["confidence_detail"] = conf
         d["confidence"] = conf.get("band") or "low"
 
@@ -793,7 +803,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── The number an owner actually asks for ───────────────────────────────────
 
-def profitability_projection(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
     """Month-to-date prime cost, projected to month end.
 
     "Food cost rose 2.1%" is a ratio. "Profitability is tracking about $3,800
@@ -808,9 +818,27 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH) -> dict
     utilities and everything else below the line are not in this system, and
     the payload says so rather than letting the figure be read as the bottom
     line.
+
+    Withheld server-side when this restaurant's own record of the
+    projection reads "often wide" (forecast_log.accuracy's `withheld`, T6,
+    B6#4): {"available": False, "withheld": True, "reason",
+    "prime_cost_accuracy"} — the web drew the figure and then printed "so
+    the next one is not shown" under it. `withhold=False` is only for the
+    nightly job that freezes the month's forecast for scoring
+    (record_profitability_forecast): a record that stops being scored can
+    never recover.
     """
     import cogs as _cogs
     today = date.today()
+    if withhold:
+        try:
+            acc = forecast_accuracy(restaurant_id, "profitability_month", db_path=db_path)
+        except Exception:
+            acc = None
+        if acc and acc.get("withheld"):
+            return {"available": False, "withheld": True, "claim_kind": "forecast",
+                    "forecast_kind": "profitability_month", "prime_cost_accuracy": acc,
+                    "reason": acc.get("reason") or "past projections here have often been wide, so this one is not shown"}
     month_start = today.replace(day=1)
     days_elapsed = (today - month_start).days + 1
     if days_elapsed < MIN_DAYS_FOR_PROJECTION:
@@ -829,13 +857,19 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH) -> dict
             missing.append(m)
 
     labor_cost, labor_pct, labor_why, labor_period = None, None, None, None
+    labor_period_start = labor_period_end = None
     try:
         from labor import analyse_shifts_for_restaurant
         la = analyse_shifts_for_restaurant(restaurant_id)
         if la and la.get("is_live") and _f(la.get("total_sales")) > 0:
             labor_pct = _f(la.get("overall_labor_pct"))
             rng = la.get("date_range") or {}
-            labor_period = f"{rng.get('start')} to {rng.get('end')}" if rng.get("end") else None
+            # M/D/YY, never ISO, in owner-facing text (T7, B6#13); the
+            # ISO bounds travel apart as labor_period_start / _end.
+            from time_utils import mdy as _mdy_lp
+            labor_period = (f"{_mdy_lp(rng.get('start')) or rng.get('start')} to "
+                            f"{_mdy_lp(rng.get('end')) or rng.get('end')}") if rng.get("end") else None
+            labor_period_start, labor_period_end = rng.get("start"), rng.get("end")
         else:
             labor_why = "no shift data synced — labor cannot be measured"
     except Exception as e:
@@ -919,6 +953,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH) -> dict
         "comparison_basis": ("Both months use the same labor share, so this movement is the "
                              "food cost component only." if prev_pct is not None else None),
         "labor_period": labor_period,
+        "labor_period_start": labor_period_start, "labor_period_end": labor_period_end,
         "basis": basis,
     }
 
@@ -1067,7 +1102,7 @@ def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, to
         return {"recorded": False, "reason": "before the 15th"}
     if forecast_log.frozen(restaurant_id, "profitability_month", today, db_path=db_path):
         return {"recorded": False, "reason": "already frozen this month"}
-    proj = profitability_projection(restaurant_id, db_path=db_path)
+    proj = profitability_projection(restaurant_id, db_path=db_path, withhold=False)
     if not proj.get("available") or proj.get("prime_cost_pct") is None:
         return {"recorded": False, "reason": proj.get("reason") or "no projection"}
     out = forecast_log.record(restaurant_id, "profitability_month", proj["prime_cost_pct"], period_of=today,

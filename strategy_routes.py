@@ -367,7 +367,7 @@ def _do_outcome_record(u):
     if (b.get("source") or "") == "recommendation" and given_key:
         try:
             import rec_ledger as _rl
-            surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "home"
+            surface = _rl.known_surface(b.get("surface"), "home")
             refused_id = ((res.get("tracker_refused") or {}).get("in_flight") or {}).get("id")
             meta = ({"tracking": o.get("id"), "metric": o.get("metric")} if o else
                     {"metric": metric, "tracker_refused": refused_id})
@@ -1719,7 +1719,7 @@ def _do_rec_event(u):
     code = b.get("reason_code")
     if code not in (None, "") and code not in _rl.REASON_CODES:
         return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl.REASON_CODES)}, 400
-    surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
+    surface = _rl.known_surface(b.get("surface"))
     meta = {}
     silence = None
     until = None
@@ -1886,7 +1886,7 @@ def _do_recs_checkin(u):
     # simply not found — its existence is not confirmed either way.
     if ep is None or not rec_learning.viewer_sees(u, ep):
         return {"ok": False, "error": "No such recommendation."}, 404
-    surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
+    surface = _rl.known_surface(b.get("surface"))
     out = _rl.checkin(_rid(u), ep["key"], did_it, conditions_changed=changed, note=note, user_id=u.get("id"),
                       role=u.get("role"), surface=surface, rec_id=ep["rec_id"])
     if out is None:
@@ -2514,14 +2514,22 @@ def _present_cross_module(u, fix_first, links):
                           "model_written": bool(ff.get("model_written"))})
             seen.add(ff["key"])
         out_links = []
+        _ctx = None
         for l in links or []:
             key = bi.link_key(l)
-            l = dict(l, rec_key=key, answerable=rec_delivery.answerable(key))
+            # Each link's measured confidence (T1) — the same input the
+            # one-thing card uses for the same link (bi.link_evidence_input).
+            if _ctx is None:
+                import rec_trust
+                _ctx = rec_trust.Context(_rid(u))
+            conf = bi.link_confidence(_rid(u), l, key=key, ctx=_ctx)
+            l = dict(l, rec_key=key, answerable=rec_delivery.answerable(key), confidence=conf)
             out_links.append(l)
             if key not in seen:
                 seen.add(key)
                 items.append({"key": key, "module": "home", "title": l.get("headline"), "position": len(items),
-                              "evidence_sources": l.get("modules") or None, "cross_module": True})
+                              "evidence_sources": l.get("modules") or None, "cross_module": True,
+                              "confidence": conf})
         items = rec_delivery.only_presentable(items)
         ids = {}
         if items:

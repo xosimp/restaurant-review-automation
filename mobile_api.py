@@ -2167,9 +2167,12 @@ def mobile_food_cost_analytics(current_user):
         # One read for web and phone (audit #22): the same cache key and
         # stored read the web route uses.
         insight = _capi.food_insight_text(rid, restaurant, items, is_live, analysis)
+        import data_freshness as _df_mfood
         _recs = (_capi.insight_rec_items(rid, insight, "insight_food", "food", "food",
                                          user_id=current_user.get("id"),
-                                         promote="UNVERIFIED:" not in insight) if is_live else [])
+                                         promote="UNVERIFIED:" not in insight,
+                                         evidence=_capi.food_read_evidence(rid, is_live),
+                                         sources=_df_mfood.sources_for(["food"])) if is_live else [])
         return jsonify(
             ok=True,
             insight=insight,
@@ -2617,15 +2620,17 @@ def _insight_json(insight_text, rec_items=None):
     where it carries no controls — for Done / Not for us / Track."""
     intro, recs, forecast, unverified = _capi.parse_insight_sections(insight_text)
     keys = [None] * len(recs)
+    confs = [None] * len(recs)
     if rec_items:
         by_index = {it["index"]: it for it in rec_items}
-        kept, keys = [], []
+        kept, keys, confs = [], [], []
         for i, r in enumerate(recs):
             it = by_index.get(i)
             if it and it.get("answered"):
                 continue
             kept.append(r)
             keys.append(it["key"] if it and it.get("controls") else None)
+            confs.append(it.get("confidence") if it and isinstance(it.get("confidence"), dict) else None)
         recs = kept
     # What KIND of claim each part is. A measured fact, the model's read of
     # it, a guess about next week and a suggestion all rendered as the same
@@ -2639,6 +2644,9 @@ def _insight_json(insight_text, rec_items=None):
         "insight_forecast": forecast,
         "insight_unverified": unverified,
         "insight_rec_keys": keys,
+        # Each line's measured confidence (K1, T1), parallel to
+        # insight_recommendations; null where a line carries none.
+        "insight_rec_confidence": confs,
         "claim_kinds": {
             "insight_intro": "inferred",
             "insight_recommendations": "suggestion",
@@ -2649,7 +2657,7 @@ def _insight_json(insight_text, rec_items=None):
 
 
 # The Labor read's cache key, shared with the web route (client_api.labor_insight_api).
-LABOR_INSIGHT_CACHE = "labor-insight:"
+LABOR_INSIGHT_CACHE = _capi.LABOR_INSIGHT_CACHE
 
 
 @mobile_bp.route("/labor/insight")
@@ -2673,9 +2681,10 @@ def mobile_labor_insight(current_user):
     # between two sets of words (re-audit C6).
     cached = _capi._cache_get(LABOR_INSIGHT_CACHE + str(rid))
     if cached:
-        _recs = _capi.labor_insight_items(rid, cached, user_id=uid)
-        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, user_id=uid),
-                       rec_items=_recs, **_insight_json(cached, _recs))
+        _an = _capi.labor_analysis_safe(rid)
+        _recs = _capi.labor_insight_items(rid, cached, user_id=uid, analysis=_an)
+        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
+                       rec_items=_recs, **_capi.labor_read_state(rid), **_insight_json(cached, _recs))
     try:
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
@@ -2686,23 +2695,18 @@ def mobile_labor_insight(current_user):
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=staff_notes if staff_notes else None)
         _capi._cache_set(LABOR_INSIGHT_CACHE + str(rid), insight)
-        _recs = _capi.labor_insight_items(rid, insight, user_id=uid)
+        _recs = _capi.labor_insight_items(rid, insight, user_id=uid, analysis=analysis)
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
-                       rec_items=_recs, **_insight_json(insight, _recs))
+                       rec_items=_recs, **_capi.labor_read_state(rid), **_insight_json(insight, _recs))
     except Exception as e:
         # The web twin's stale fallback (H15, CA1 L6): serve the last read
         # with its age rather than an error, and say how old it is.
-        stale = _capi._insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
+        stale = _capi.labor_stale_read(rid)
         if stale:
-            from ai_guard import freshness as _fresh_lab
-            _age = _fresh_lab(stale[0].isoformat(timespec="seconds"), stale_after_days=0)
-            _recs = _capi.labor_insight_items(rid, stale[1], user_id=uid)
-            return jsonify(ok=True, insight=stale[1], diagnosis=_capi._labor_diagnosis_safe(rid, user_id=uid),
-                           rec_items=_recs, stale=True, as_of=_age.get("as_of"), as_of_iso=_age.get("as_of_iso"),
-                           age_days=_age.get("age_days"),
-                           stale_note=(f"From a read on {_age['as_of']} — the latest one couldn't be written."
-                                       if _age.get("as_of") else "From an earlier read — the latest one couldn't be written."),
-                           **_insight_json(stale[1], _recs))
+            _an = _capi.labor_analysis_safe(rid)
+            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
+            return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
+                           rec_items=_recs, **stale["state"], **_insight_json(stale["text"], _recs))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e)
         return jsonify(ok=False, insight=_msg_lab,

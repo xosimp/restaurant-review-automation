@@ -1226,7 +1226,11 @@ def _build(current_user, present=True):
                     # the line says nothing about a theme (CA4 F15 — it
                     # used to say "Service").
                     _theme = (f" {top_issues[0]['label']} is the most-mentioned theme." if top_issues else "")
-                    add_attn("negative_trend", "important", f"Negative reviews up to {lshare:.0%} of the last two weeks",
+                    # Its own key (T4, B4 M11): "negative_trend" is the
+                    # 8-week rating-slope ALERT (notify), a different
+                    # finding — under one key a "Not for us" on either
+                    # silenced both for ten years.
+                    add_attn("negative_share", "important", f"Negative reviews up to {lshare:.0%} of the last two weeks",
                              f"Up from {pshare:.0%} the two weeks before.{_theme}", "reviews", "See what changed",
                              since="2 weeks", evidence=f"{ln} of {lt} negative vs {pn} of {pt}",
                              ev={"n": min(lt, pt), "kind": "reviews", "flags": _rv_flags,
@@ -2179,6 +2183,7 @@ def _location_record(conn, r, now):
     rate = round(100.0 * int(rs.get("responded") or 0) / total) if total else None
     last_active = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM login_history WHERE restaurant_id=?", (rid,)) or {}).get("t")
     labor = None
+    _lab_ev = None
     cd = _one_dict(conn, "SELECT shifts_csv IS NOT NULL AND shifts_csv != '' AS live FROM client_data WHERE restaurant_id=?", (rid,)) or {}
     if r.get("module_labor") and cd.get("live"):
         try:
@@ -2197,6 +2202,11 @@ def _location_record(conn, r, now):
                 labor = {"pct": float(la.get("overall_labor_pct") or 0), "target": target,
                          "over": round(float(la.get("overall_labor_pct") or 0) - target, 1),
                          "overtime": (_ot_loc or {}).get("people", 0)}
+                try:
+                    from labor import diagnosis_evidence_input as _dei_loc
+                    _lab_ev = _dei_loc(la)
+                except Exception:
+                    _lab_ev = None
         except Exception:
             labor = None
     inv = None
@@ -2213,14 +2223,18 @@ def _location_record(conn, r, now):
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
     from thresholds import LABOR_OVER_TARGET_PTS
     if labor and labor["over"] >= LABOR_OVER_TARGET_PTS:
-        issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor"})
+        issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor",
+                       "kind": "labor_over"})
     if labor and labor["overtime"]:
-        issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor"})
+        issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor",
+                       "kind": "overtime"})
     if inv and inv["critical_low"]:
-        issues.append({"severity": "important", "text": f"{_plural(inv['critical_low'], 'item')} critically low", "module": "inventory"})
+        issues.append({"severity": "important", "text": f"{_plural(inv['critical_low'], 'item')} critically low", "module": "inventory",
+                       "kind": "critical_low"})
     avg30 = rs.get("avg30"); prev = rs.get("avg_prev")
     if avg30 and prev and (rs.get("n30") or 0) >= 3 and avg30 - prev <= -0.3:
-        issues.append({"severity": "important", "text": f"Rating slipped to {avg30:.1f}★ (from {prev:.1f}★)", "module": "reviews"})
+        issues.append({"severity": "important", "text": f"Rating slipped to {avg30:.1f}★ (from {prev:.1f}★)", "module": "reviews",
+                       "kind": "rating_drop"})
     # Accountability: issues nobody has picked up. Counted, not listed — the
     # portfolio row says WHERE follow-through is slipping; the issue list at
     # that location says what.
@@ -2236,6 +2250,7 @@ def _location_record(conn, r, now):
     if open_issues and open_issues["stale"]:
         issues.append({"severity": "important", "module": "issues",
                        "text": f"{_plural(open_issues['stale'], 'issue')} unacknowledged for 2h+"})
+    _group_issue_confidence(rid, issues, labor, inv, rs, _lab_ev)
     rank = {"critical": 3, "important": 2, "watch": 1}
     worst = max((rank[i["severity"]] for i in issues), default=0)
     health = {3: "critical", 2: "important", 1: "watch", 0: "healthy"}[worst]
@@ -2247,6 +2262,47 @@ def _location_record(conn, r, now):
             "labor": labor, "inventory": inv,
             "google_connected": bool(r.get("gmb_refresh_token") or r.get("reviews_live")),
             "last_active": last_active, "last_fetched_at": r.get("last_fetched_at")}
+
+
+def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
+    """Each group-view attention item that is advice carries its K1
+    `confidence` (confidence round 2, T1) from the same evidence the
+    location's own Home reads for it: labor over target from the days of
+    shifts with sales (labor.diagnosis_evidence_input), overtime and
+    critically-low items as direct counts, a rating slip from the smaller of
+    the two 30-day samples. A fact about the location's state — urgent
+    reviews unanswered, a failing sync, unacknowledged issues — carries
+    none (B4 H5: facts carry no confidence). Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        ctx = rec_trust.Context(rid)
+    except Exception as e:
+        print(f"[group] confidence unavailable for {rid}: {e}")
+        return issues
+    for i in issues:
+        kind = i.get("kind")
+        try:
+            if kind == "labor_over" and lab_ev:
+                ev, srcs = dict(lab_ev), data_freshness.sources_for(["labor"])
+            elif kind == "overtime" and labor:
+                n = int(labor.get("overtime") or 0)
+                ev, srcs = ({"n": n, "kind": "count", "basis": f"{n} people's hours this payroll week"},
+                            data_freshness.sources_for(["labor"]))
+            elif kind == "critical_low" and inv:
+                n = int(inv.get("critical_low") or 0)
+                ev, srcs = ({"n": n, "kind": "count", "basis": f"{n} items below par on the last counts"},
+                            data_freshness.sources_for(["inventory"]))
+            elif kind == "rating_drop":
+                n = min(int(rs.get("n30") or 0), int(rs.get("n_prev") or rs.get("n30") or 0))
+                ev, srcs = ({"n": n, "kind": "reviews", "basis": f"{int(rs.get('n30') or 0)} reviews in the last 30 days"},
+                            ("reviews",))
+            else:
+                continue
+            i["confidence"] = rec_trust.assess(rid, kind, evidence=ev, sources=srcs, ctx=ctx)
+        except Exception as e:
+            print(f"[group] confidence failed for {rid}/{kind}: {e}")
+    return issues
 
 
 def build_group_brief(current_user, fresh=False):

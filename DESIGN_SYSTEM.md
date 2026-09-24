@@ -683,6 +683,10 @@ Three exist. Pick by what the email *is*, not by which is nearest:
    `report_lines` without a label — a list whose eyebrow already names it
    (the DSR's *Went well* on a `good` rule, *Needs attention* on `warn`,
    *Not in this report* on the quiet border).
+   `report_confidence(conf)` is the one line under a recommendation that
+   carries a measured confidence — "72% confidence · data through 9/23/26"
+   (`rec_trust.outbound_label`), 12px, `muted` — never a band word; "" for
+   a fact, which carries none.
 2. **`_branded_email(inner_html)`** — short transactional mail: a code, a
    confirmation, a link. Wordmark, one white card, seal footer.
 3. **Bespoke** — legacy. 14 emails still are. Not a starting point; migrate

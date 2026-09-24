@@ -671,16 +671,105 @@ def parse_insight_sections(text):
     return intro, clean_recs, forecast, unverified
 
 
-def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=True):
+def read_line_confidence(rid, key, evidence, sources, promote=True, ctx=None):
+    """The K1 confidence of one numbered line of a model read (confidence
+    round 2, T1): Evidence Strength from the module data the read was
+    written over (`evidence`, confidence_engine.evidence's input — the
+    caller's measured count), flagged `inferred` because a model wrote the
+    line from that data (the PARTIAL cap: never high on the data alone), and
+    capped low when the read carried a figure that did not check out
+    (promote False); this restaurant's record of the kind; the freshness of
+    the module's sources. Never raises."""
+    try:
+        import rec_trust
+        ev = dict(evidence or {})
+        if not ev:
+            ev = {"n": None, "basis": "the data behind this read wasn't measured"}
+        ev["flags"] = tuple(ev.get("flags") or ()) + ("inferred",)
+        if not promote:
+            ev["unverified"] = max(1, int(ev.get("unverified") or 0))
+        ev["basis"] = "a model-written line from " + str(ev.get("basis") or "the module's data")
+        return rec_trust.assess(rid, key, evidence=ev, sources=tuple(sources or ()), ctx=ctx)
+    except Exception as e:
+        print(f"[insight] line confidence unavailable rid={rid}: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()
+
+
+def labor_read_evidence(rid, analysis=None) -> dict:
+    """The Labor read's Evidence Strength input — what its lines were
+    written over: the days of shifts with sales in the analysis window,
+    their coverage and its partial-data flags (labor.diagnosis_evidence_input,
+    the labor diagnosis's own input). Sample shifts score 0 and say so."""
+    try:
+        if analysis is None:
+            from labor import analyse_shifts_for_restaurant
+            analysis = analyse_shifts_for_restaurant(rid)
+        if not analysis or analysis.get("is_live") is False:
+            return {"sample": True, "basis": "sample shifts"}
+        from labor import diagnosis_evidence_input
+        return diagnosis_evidence_input(analysis)
+    except Exception as e:
+        print(f"[labor] read evidence unavailable rid={rid}: {e}")
+        return {"n": None, "basis": "the shifts could not be read"}
+
+
+def food_read_evidence(rid, is_live=True) -> dict:
+    """The Food read's Evidence Strength input: the ISO weeks of inventory
+    counts on file in the last eight (waste_trend.load_waste_history — the
+    series every food figure here is read from; N_FULL "weeks"). A sample
+    pantry scores 0."""
+    if not is_live:
+        return {"sample": True, "basis": "a sample pantry"}
+    try:
+        from waste_trend import load_waste_history
+        weeks, _total = load_waste_history(rid, 8)
+        n = len(weeks or [])
+        return {"n": n, "kind": "weeks", "basis": f"{n} week{'s' if n != 1 else ''} of inventory counts"}
+    except Exception as e:
+        print(f"[food] read evidence unavailable rid={rid}: {e}")
+        return {"n": None, "basis": "the counts could not be read"}
+
+
+def marketing_read_evidence(rid) -> dict:
+    """The Marketing read's Evidence Strength input: published posts with
+    measured performance (reach, impressions or likes) in the last 8 weeks
+    — the rows its performance lines are written from (N_FULL "posts")."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL "
+                "AND (reach > 0 OR impressions > 0 OR likes > 0) AND created_at >= datetime('now', '-56 days')",
+                (rid,)).fetchone()
+        finally:
+            conn.close()
+        n = int((row["n"] if row else 0) or 0)
+        return {"n": n, "kind": "posts",
+                "basis": f"{n} post{'s' if n != 1 else ''} with measured performance in the last 8 weeks"}
+    except Exception as e:
+        print(f"[marketing] read evidence unavailable rid={rid}: {e}")
+        return {"n": None, "basis": "the posts could not be read"}
+
+
+def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=True, evidence=None,
+                      sources=None):
     """The numbered recommendations of a model read, each with a stable
     rec_ledger key ("<prefix>:<hash of the line>") — audit #21.
 
     Returns one entry per recommendation parse_insight_sections finds, in
-    order: {index, key, text, rec_id, answered}. Every unanswered line is
-    present()ed (logged as shown); a line the owner already answered comes
-    back with answered=True so the renderers leave it out. promote=False
-    (an insight carrying an UNVERIFIED flag) logs nothing and offers no
-    controls: an unverified line is not a recommendation to act on."""
+    order: {index, key, text, rec_id, answered, confidence,
+    advice_signature}. Every unanswered line is present()ed (logged as
+    shown) with its measured confidence (K1, read_line_confidence — the
+    ledger snapshots it, K3); a line the owner already answered comes back
+    with answered=True so the renderers leave it out — and so does a line
+    whose advice signature the owner said "not for us" to on ANY surface
+    (Home's trim_day:Tuesday declined is this read's "cut a server Tuesday"
+    declined, T2). promote=False (an insight carrying an UNVERIFIED flag)
+    logs nothing and offers no controls: an unverified line is not a
+    recommendation to act on. `evidence` / `sources` are the read's own
+    data count and freshness sources; without them a line's evidence is
+    not measurable (never a guess)."""
     import insight_store
     try:
         _intro, recs, _fc, _unv = parse_insight_sections(text or "")
@@ -690,11 +779,35 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
     # recommendation shares (API_REFERENCE.md → Recommendation fields);
     # `key` / `controls` stay for the clients that read them already.
     items = [{"index": i, "key": insight_store.line_key(prefix, r), "text": r} for i, r in enumerate(recs)]
-    if not items or not promote:
+    if not items:
+        return []
+    try:
+        import rec_trust
+        _ctx = rec_trust.Context(rid)
+    except Exception:
+        _ctx = None
+    srcs = tuple(sources) if sources is not None else ()
+    for it in items:
+        it["confidence"] = read_line_confidence(rid, it["key"], evidence, srcs, promote=promote, ctx=_ctx)
+        try:
+            it["advice_signature"] = insight_store.advice_signature(it["key"], it["text"])
+        except Exception:
+            it["advice_signature"] = None
+    if not promote:
         return [dict(it, rec_id=None, answered=False, controls=False, rec_key=it["key"], answerable=False)
                 for it in items]
+    declined_sigs = set()
+    if any(it.get("advice_signature") for it in items):
+        try:
+            declined_sigs = insight_store.declined_signatures(rid)
+        except Exception as e:
+            print(f"[insight] declined signatures unavailable rid={rid}: {e}")
+    declined = {it["key"] for it in items if it.get("advice_signature") and it["advice_signature"] in declined_sigs}
     kept = {k["key"]: k for k in insight_store.present_recs(
-        rid, module, surface, [dict(it, title=it["text"], model_written=True) for it in items], user_id=user_id)}
+        rid, module, surface,
+        [dict(it, title=it["text"], model_written=True, confidence_band=(it.get("confidence") or {}).get("band"))
+         for it in items if it["key"] not in declined],
+        user_id=user_id)} if len(declined) < len(items) else {}
     return [dict(it, rec_id=(kept.get(it["key"]) or {}).get("rec_id"), answered=it["key"] not in kept,
                  controls=True, rec_key=it["key"], answerable=it["key"] in kept) for it in items]
 
@@ -828,11 +941,20 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
             continue          # the owner already answered it, on any surface
         _ctl = (rec_controls_html(_it["key"], surface or module or "unknown", module or "")
                 if _it and _it.get("controls") else '')
+        # The line's measured confidence (T1): the K1 label, the same
+        # figure `rec_items[].confidence` carries for the clients' Why?.
+        _conf = (_it or {}).get("confidence") if isinstance((_it or {}).get("confidence"), dict) else None
+        _conf_html = ''
+        if _conf and _conf.get("label"):
+            from markupsafe import escape as _esc_cf
+            _conf_html = ('<span class="rec-conf" data-rec-conf-key="' + str(_esc_cf(_it["key"]))
+                          + '" style="display:block;font-size:12px;font-weight:400;color:var(--ink3)">'
+                          + str(_esc_cf(_conf["label"])) + '</span>')
         html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
             '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
             + str(num) +
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean
-            + (('<br>' + _ctl) if _ctl else '') + '</span></div>')
+            + _conf_html + (('<br>' + _ctl) if _ctl else '') + '</span></div>')
         num += 1
     return html + forecast_html + unverified_html
 
@@ -2343,14 +2465,16 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     extra = dict(extra or {})
     promote = (bool(extra.get("figures_verified", True)) and bool(extra.get("causes_verified", True))
                and "UNVERIFIED:" not in (text or ""))
-    recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote)
+    import data_freshness as _df_mkt
+    recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote,
+                             evidence=marketing_read_evidence(rid), sources=_df_mkt.sources_for(["marketing"]))
     out = dict(extra)
     out["insight"] = text if raw else format_insight_html(text, rec_items=recs, surface="marketing",
                                                           module="marketing")
     # `rec_key` / `answerable` are the contract every payload carrying a
-    # recommendation shares (API_REFERENCE.md → Recommendation fields).
-    out["recs"] = [{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
-                   for r in recs if r.get("controls") and not r.get("answered")]
+    # recommendation shares (API_REFERENCE.md → Recommendation fields);
+    # `confidence` is each line's K1 (T1).
+    out["recs"] = flat_recs(recs)
     if raw:
         out["rec_items"] = recs
     return out
@@ -2669,13 +2793,25 @@ def present_labor_diagnosis(rid, diag, user_id=None):
         return diag
 
 
-def labor_insight_items(rid, text, user_id=None):
+def labor_insight_items(rid, text, user_id=None, analysis=None):
     """The Labor read's numbered recommendations, keyed and presented on the
     "labor" surface exactly like Food's and Marketing's (insight_rec_items,
     "insight_labor:<hash>") — the read's three lines never reached the
-    ledger (#25). An UNVERIFIED read offers no controls and logs nothing."""
+    ledger (#25). An UNVERIFIED read offers no controls and logs nothing.
+    Each line carries its K1 `confidence` over the shifts the read was
+    written from (labor_read_evidence; T1)."""
+    import data_freshness as _df_lab
     return insight_rec_items(rid, text or "", "insight_labor", "labor", "labor", user_id=user_id,
-                             promote="UNVERIFIED:" not in (text or ""))
+                             promote="UNVERIFIED:" not in (text or ""),
+                             evidence=labor_read_evidence(rid, analysis), sources=_df_lab.sources_for(["labor"]))
+
+
+def flat_recs(recs) -> list:
+    """The flat `recs` list a read's payload carries: the lines still open,
+    each with the contract fields and its K1 `confidence` (T1)."""
+    return [{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True,
+             "confidence": r.get("confidence"), "advice_signature": r.get("advice_signature")}
+            for r in recs or [] if r.get("controls") and not r.get("answered")]
 
 
 def focused_calendar_index(rid, ideas) -> int:
@@ -2871,15 +3007,61 @@ def present_schedule_result(rid, result, user_id=None):
     return result
 
 
-def _labor_insight_out(rid, text, user_id=None):
+def _labor_insight_out(rid, text, user_id=None, analysis=None):
     """The web route's insight fields: the HTML (answered lines left out,
     each remaining line with Done / Not for us / Track), `rec_items` and
     the flat `recs` Food Cost's payload carries."""
-    recs = labor_insight_items(rid, text, user_id=user_id)
+    recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis)
     return {"insight": format_insight_html(text, rec_items=recs, surface="labor", module="labor"),
             "rec_items": recs,
-            "recs": [{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
-                     for r in recs if r.get("controls") and not r.get("answered")]}
+            "recs": flat_recs(recs)}
+
+
+def labor_analysis_safe(rid):
+    """analyse_shifts_for_restaurant, or None — read once per request and
+    handed to both the diagnosis and the read's line confidence."""
+    try:
+        from labor import analyse_shifts_for_restaurant
+        return analyse_shifts_for_restaurant(rid)
+    except Exception as e:
+        print(f"[labor] analysis unavailable rid={rid}: {e}")
+        return None
+
+
+def _labor_read_age(entry, stale):
+    """{stale, as_of, as_of_iso, age_days[, stale_note]} for a Labor read
+    cache entry (at, text) — ai_guard.freshness over the time it was
+    written, M/D/YY."""
+    from ai_guard import freshness as _fresh_lab
+    _age = _fresh_lab(entry[0].isoformat(timespec="seconds"), stale_after_days=0) if entry else {}
+    out = {"stale": bool(stale), "as_of": _age.get("as_of"), "as_of_iso": _age.get("as_of_iso"),
+           "age_days": _age.get("age_days")}
+    if stale:
+        out["stale_note"] = (f"From a read on {_age['as_of']} — the latest one couldn't be written."
+                             if _age.get("as_of") else "From an earlier read — the latest one couldn't be written.")
+    return out
+
+
+def labor_read_state(rid) -> dict:
+    """The Labor read's age on the fresh and cached paths (T9): the same
+    `stale` / `as_of` / `as_of_iso` / `age_days` fields the stale fallback
+    carries, so every path — first load, cache hit, fallback — has one
+    shape and a client caching the response keeps whether it was stale."""
+    return _labor_read_age(_insight_cache.get(LABOR_INSIGHT_CACHE + str(rid)), False)
+
+
+def labor_stale_read(rid):
+    """The last Labor read past its window, for the fallback when a new one
+    can't be written: {"text", "state"} with state stale=True and its
+    stale_note (H15, CA1 L6), or None. One helper for both twins."""
+    entry = _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
+    if not entry:
+        return None
+    return {"text": entry[1], "state": _labor_read_age(entry, True)}
+
+
+# The Labor read's cache key, shared by the web route and mobile_api.
+LABOR_INSIGHT_CACHE = "labor-insight:"
 
 
 @client_bp.route("/api/labor-insight")
@@ -2892,7 +3074,9 @@ def labor_insight_api(current_user):
     # its line from the next load rather than after the cache expires.
     cached = _cache_get("labor-insight:" + str(rid))
     if cached:
-        return jsonify(diagnosis=_labor_diagnosis_safe(rid, user_id=uid), **_labor_insight_out(rid, cached, uid))
+        _an = labor_analysis_safe(rid)
+        return jsonify(diagnosis=_labor_diagnosis_safe(rid, _an, user_id=uid), **labor_read_state(rid),
+                       **_labor_insight_out(rid, cached, uid, analysis=_an))
     try:
         from labor import analyse_shifts_for_restaurant, get_claude_insights
         from models import get_restaurant
@@ -2906,22 +3090,16 @@ def labor_insight_api(current_user):
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=_staff_notes_labor if _staff_notes_labor else None)
         _cache_set("labor-insight:" + str(rid), insight)
-        return jsonify(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid),
-                       **_labor_insight_out(rid, insight, uid))
+        return jsonify(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid), **labor_read_state(rid),
+                       **_labor_insight_out(rid, insight, uid, analysis=analysis))
     except Exception as e:
         import traceback; traceback.print_exc()
-        stale = _insight_cache.get("labor-insight:" + str(rid))
+        stale = labor_stale_read(rid)
         if stale:
             # Past its window by definition (the TTL is bypassed here), so it
             # says how old it is — the Reviews fallback's rule (H15, CA1 L6):
             # a read from hours ago read exactly like one from this minute.
-            from ai_guard import freshness as _fresh_lab
-            _age = _fresh_lab(stale[0].isoformat(timespec="seconds"), stale_after_days=0)
-            return jsonify(stale=True, as_of=_age.get("as_of"), as_of_iso=_age.get("as_of_iso"),
-                           age_days=_age.get("age_days"),
-                           stale_note=(f"From a read on {_age['as_of']} — the latest one couldn't be written."
-                                       if _age.get("as_of") else "From an earlier read — the latest one couldn't be written."),
-                           **_labor_insight_out(rid, stale[1], uid))
+            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its
@@ -2944,15 +3122,16 @@ def inv_insight_api(current_user):
         # construction, rather than leaving a five-minute-old story beside
         # figures that have already moved.
         insight = food_insight_text(rid, restaurant, items, is_live, analysis)
+        import data_freshness as _df_food
         recs = (insight_rec_items(rid, insight, "insight_food", "food", "food", user_id=current_user.get("id"),
-                                  promote="UNVERIFIED:" not in insight)
+                                  promote="UNVERIFIED:" not in insight,
+                                  evidence=food_read_evidence(rid, is_live), sources=_df_food.sources_for(["food"]))
                 if is_live else [])
         # is_live travels with the insight so the UI can say whose numbers
         # these are instead of presenting example data as the owner's own.
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
-                       recs=[{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
-                             for r in recs if r.get("controls") and not r.get("answered")])
+                       recs=flat_recs(recs))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -8131,10 +8310,27 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
     items = [{"key": insight_store.line_key("insight_intel", it["text"]), "text": it["text"],
               "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True}
              for it in parsed.get("recommendation_items") or []]
+    # Each line's measured confidence (T1): a model-written line over the
+    # competitors the read compared (N_FULL "competitors"), freshness from
+    # the competitor data's own date. Snapshotted by the ledger (K3).
+    if items:
+        import data_freshness as _df_intel
+        try:
+            import rec_trust as _rt_intel
+            _ctx_intel = _rt_intel.Context(rid, restaurant=r)
+        except Exception:
+            _ctx_intel = None
+        _n_comp = len([c for c in ((blob.get("competitors") or []) if isinstance(blob, dict) else [])
+                       if isinstance(c, dict)])
+        _ev_intel = {"n": _n_comp, "kind": "competitors",
+                     "basis": f"{_n_comp} nearby competitor{'s' if _n_comp != 1 else ''} compared"}
+        for it in items:
+            it["confidence"] = read_line_confidence(rid, it["key"], _ev_intel, _df_intel.sources_for(["intel"]),
+                                                    ctx=_ctx_intel)
     kept = insight_store.present_recs(rid, "intel", surface, items, user_id=user_id) if items else []
     return {"ok": True,
             "recs": [{"key": k["key"], "text": k["text"], "cites": k["cites"], "rec_key": k["key"],
-                      "answerable": True} for k in kept],
+                      "answerable": True, "confidence": k.get("confidence")} for k in kept],
             "answered": len(items) - len(kept),
             "withheld_recommendations": parsed.get("withheld_recommendations", 0),
             "unverified": parsed.get("unverified"),

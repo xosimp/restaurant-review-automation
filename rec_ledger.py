@@ -106,6 +106,19 @@ SURFACE_LABELS = {
 def surface_label(surface) -> str:
     return SURFACE_LABELS.get(surface, str(surface or "unknown"))
 
+
+# Names a client posts for a surface the ledger files under another: the
+# web's Shift Quality panel posts "schedule" for the items present_quality
+# presented on "schedule_review", and every answer / Why? opened there was
+# logged "unknown" (T8, B4 L6).
+SURFACE_ALIASES = {"schedule": "schedule_review"}
+
+
+def known_surface(surface, default="unknown") -> str:
+    """`surface` when the ledger knows it (or its alias), else `default`."""
+    s = SURFACE_ALIASES.get(surface, surface)
+    return s if s in SURFACES else default
+
 # How long each answer silences the same key everywhere.
 SILENCE_DAYS = {"hide": 14, "not_for_us": 3650, "done": 3650}
 # An accepted or completed recommendation is not re-asked while its outcome
@@ -324,6 +337,7 @@ KIND_TOPIC = {
     "stock": "ordering", "diag_food": "food_cost", "food_diagnosis": "food_cost", "insight_food": "food_cost",
     "top_issue": "guest_experience", "diag_review": "guest_experience", "insight_review": "guest_experience",
     "rating": "guest_experience", "neg_spike": "guest_experience", "negative_trend": "guest_experience",
+    "negative_share": "guest_experience",
     "rating_threshold": "guest_experience", "rating_drop": "guest_experience",
     "publish_drafts": "replies", "urgent_reviews": "replies", "no_response": "replies",
     "stale_low_reviews": "replies", "review": "replies", "review_edit": "replies",

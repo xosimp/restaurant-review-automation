@@ -791,7 +791,9 @@ def test_the_projection_says_the_labor_share_came_from_another_period(db_path, m
     out = fci.profitability_projection(rid, db_path=db_path)
     assert "not a labor measurement of these specific days" in out["basis"]
     assert "not net profit" in out["basis"]
-    assert out["labor_period"] == "2026-08-01 to 2026-08-28"
+    # M/D/YY in owner-facing text (T7, B6#13); the ISO bounds travel apart.
+    assert out["labor_period"] == "8/1/26 to 8/28/26"
+    assert (out["labor_period_start"], out["labor_period_end"]) == ("2026-08-01", "2026-08-28")
     # And the month-over-month comparison says which half of prime cost moved.
     if out.get("dollars_vs_last_month") is not None:
         assert "food cost component only" in out["comparison_basis"]

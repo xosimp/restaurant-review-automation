@@ -120,14 +120,18 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
     demand forecast whose error nobody had measured (CA2 #6).
 
     {"available", "n_nights", "mean_error_pct" (mean |actual vs forecast|),
-     "bias_pct" (mean signed: + means nights ran ABOVE the forecast),
+     "actual_vs_forecast_pct" (mean signed: + means nights ran ABOVE the
+     forecast, i.e. the forecast ran LOW), "bias_pct" (the same value, kept
+     for shipped clients — NOT forecast_log's bias_pct, whose sign is the
+     opposite), "bias_direction" (above_forecast | below_forecast |
+     on_forecast), "bias_reading" (the sentence),
      "inside_range_pct" (share of nights inside the stated 10th-90th
      range, over the nights that had one), "n_ranged", "window_days",
      "reason"}. Nothing below ACCURACY_MIN_NIGHTS scored nights."""
     today = today or date.today()
     start = (today - timedelta(days=days)).isoformat()
     end = (today - timedelta(days=1)).isoformat()
-    base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None,
+    base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None, "actual_vs_forecast_pct": None,
             "inside_range_pct": None, "n_ranged": 0, "window_days": days, "claim_kind": "measured"}
     conn = get_conn(db_path)
     try:
@@ -152,10 +156,22 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
                           f"— needs {ACCURACY_MIN_NIGHTS}")
         return base
     inside = [n for n in ranged if n["sales.forecast_low"] <= n["sales.net"] <= n["sales.forecast_high"]]
+    avf = round(sum(pcts) / len(pcts), 1)
     base.update({
         "available": True,
         "mean_error_pct": round(sum(abs(p) for p in pcts) / len(pcts), 1),
-        "bias_pct": round(sum(pcts) / len(pcts), 1),
+        # actual ÷ forecast − 1, averaged: + means the nights ran ABOVE the
+        # forecast (the forecast ran LOW). Named for what it is (T5, B6#2):
+        # the web read `bias_pct` as "running X% high" — backwards — and
+        # forecast_log's `bias_pct` is the opposite sign under the same
+        # name. `bias_pct` stays, the same value, for shipped clients.
+        "actual_vs_forecast_pct": avf,
+        "bias_pct": avf,
+        "bias_direction": ("above_forecast" if avf >= 1 else "below_forecast" if avf <= -1 else "on_forecast"),
+        "bias_reading": (f"nights ran {abs(avf):.0f}% above the forecast on average — the forecast runs low"
+                         if avf >= 1 else
+                         f"nights ran {abs(avf):.0f}% below the forecast on average — the forecast runs high"
+                         if avf <= -1 else "no consistent lean either way"),
         "n_ranged": len(ranged),
         "inside_range_pct": round(len(inside) / len(ranged) * 100) if ranged else None,
         "basis": (f"{len(pcts)} nights in the last {days} days, each forecast from the nights before it"),

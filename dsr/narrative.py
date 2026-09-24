@@ -1391,6 +1391,7 @@ def _write(ctx, facts):
         _capture(RuntimeError(f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:200]}"),
                  rid, "lead")
         return _refused("The summary was held back — its opening stated something tonight's figures don't support.")
+    n_failed_check = len(dropped)          # verify's drops: a line that failed its check
     body["actions_tomorrow"] = settle_actions(body["actions_tomorrow"], F, ctx, declined, dropped)
     if dropped:
         # A model that starts inventing figures shows up as a rate in the
@@ -1410,6 +1411,11 @@ def _write(ctx, facts):
             "rule": ("every figure traces to a fact the line cites; a line that fails is dropped, never repaired; "
                      "a line resting on an estimate says so and is counted apart"),
             "checked": checked, "kept": checked - len(dropped), "dropped": dropped,
+            # Why lines were dropped, counted apart (T8): a line that failed
+            # its check against the facts is not an action the owner
+            # already answered or one that repeated the line above it — the
+            # footer said every dropped line failed its figure check.
+            "failed_check": n_failed_check, "withheld_answered": len(dropped) - n_failed_check,
             # The footer's "traced to a measured fact" never covers an
             # estimate (H13): the kept lines that cite one are counted here
             # so the clients can say "k measured, e estimated".

@@ -2407,6 +2407,8 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         schedule_rec_key = _si.schedule_rec_key
         hidden = _si.suppressed_kinds(restaurant_id)
         silenced = _rl.silenced_keys(restaurant_id)
+        import insight_store as _ist_sq
+        declined_sigs = None
         kept, items = [], []
         for rec in quality.get("recommendations") or []:
             kind = _sq.recommendation_kind(rec)
@@ -2418,10 +2420,19 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
             # safe to run: never hidden, by kind OR by key (re-audit A-9).
             if kind in hidden or (key in silenced and kind not in _sq.PROTECTED_REC_KINDS):
                 continue
+            # "Not for us" to the same advice on ANY surface (T2, B4 H6):
+            # "Trim about 6h from Tuesday night" is Home's trim_day:Tuesday
+            # (both labor:day:tuesday). The protected kinds still never hide.
+            sig = _ist_sq.advice_signature(key, rec)
+            if sig and kind not in _sq.PROTECTED_REC_KINDS:
+                if declined_sigs is None:
+                    declined_sigs = _ist_sq.declined_signatures(restaurant_id)
+                if sig in declined_sigs:
+                    continue
             kept.append(rec)
             # The kind travels with the text, so web and iOS never classify
             # a sentence themselves (their copies of the prefix list drifted).
-            items.append({"text": rec, "kind": kind, "key": key, "rec_key": key})
+            items.append({"text": rec, "kind": kind, "key": key, "rec_key": key, "advice_signature": sig})
         # Both clients show at most SHOWN_RECOMMENDATIONS (the web panel's
         # loop, iOS's block); the list is cut here so what is served is what
         # is shown, on every client.

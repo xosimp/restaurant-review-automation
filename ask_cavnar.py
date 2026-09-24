@@ -1253,6 +1253,30 @@ def suggestion_key(text) -> str:
     return insight_store.line_key("ask_tip", text or "")
 
 
+def suggestion_confidence(restaurant_id, key, meta=None) -> dict:
+    """The K1 confidence of one suggestion in an Ask answer (T1): the
+    answer's own Evidence Strength input — the live reads behind it
+    (meta["confidence_detail"]'s evidence dimension, never re-counted here)
+    — flagged `inferred`, since the model wrote the suggestion from those
+    reads; this restaurant's record of ask_tip; the freshness of the modules
+    the answer read. Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        m = meta or {}
+        ev_dim = (((m.get("confidence_detail") or {}).get("dimensions") or {}).get("evidence") or {})
+        n = ev_dim.get("n")
+        ev = {"n": n, "kind": ev_dim.get("kind") or "evidence_items", "flags": ("inferred",),
+              "sample": n == 0 and ev_dim.get("pct") == 0,
+              "basis": "a suggestion written from " + (str(ev_dim.get("basis") or "the answer's reads"))}
+        return rec_trust.assess(restaurant_id, key, evidence=ev,
+                                sources=data_freshness.sources_for(m.get("modules_consulted") or []))
+    except Exception as e:
+        print(f"[ask_cavnar] suggestion confidence unavailable: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()
+
+
 def record_suggestions(restaurant_id, answer, meta=None, user_id=None) -> list:
     """The answer's suggestions as recommendations on the "ask" surface:
     each carries `rec_key`, `answerable` and `text`; one the owner already
@@ -1269,12 +1293,30 @@ def record_suggestions(restaurant_id, answer, meta=None, user_id=None) -> list:
         for it in items:
             it["rec_key"] = suggestion_key(it["text"])
         import rec_ledger
+        import insight_store
         silenced = rec_ledger.silenced_keys(restaurant_id)
-        items = [it for it in items if it["rec_key"] not in silenced][:MAX_SUGGESTIONS]
+        # "Not for us" to the same advice on any surface (H16, T2): Home's
+        # trim_day:Tuesday declined is this answer's "cut a server Tuesday".
+        declined = None
+        kept = []
+        for it in items:
+            if it["rec_key"] in silenced:
+                continue
+            it["advice_signature"] = insight_store.advice_signature(it["rec_key"], it["text"])
+            if it["advice_signature"]:
+                if declined is None:
+                    declined = insight_store.declined_signatures(restaurant_id)
+                if it["advice_signature"] in declined:
+                    continue
+            kept.append(it)
+        items = kept[:MAX_SUGGESTIONS]
         if not items:
             return []
+        for it in items:
+            it["confidence"] = suggestion_confidence(restaurant_id, it["rec_key"], meta)
         ids = rec_ledger.present_many(restaurant_id, [{"key": it["rec_key"], "module": "ask", "kind": "ask_tip",
                                                        "title": it["text"][:200], "model_written": True,
+                                                       "confidence": it["confidence"],
                                                        "evidence_sources": [m for m in (meta or {}).get("modules_consulted") or []
                                                                             if m in rec_ledger.MODULES] or None}
                                                       for it in items], "ask", user_id=user_id)
