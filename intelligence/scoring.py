@@ -15,10 +15,16 @@ recommendation taken.
                    denominator (ROI audit #2 — it used to count as one).
                    `no_clear_change` is reported on its own.
   measured         results with a clear verdict (the success denominator).
+                   Each verdict is rec_learning.learned_verdict's (feedback.
+                   sync writes it that way) — the one success definition.
+  success_enough   measured ≥ MIN_MEASURED_FOR_RATE; public() withholds the
+                   rate below it.
+  auto             delayed actions that ran unless cancelled: neither taken
+                   nor declined, in no acceptance rate (CA2 finding 15).
 
 Each recommendation lands in ONE bucket, the strongest thing that happened
-to it: taken > declined > hidden > ignored (a snooze only when nothing else
-did). An episode that expired and was answered later is the answer, not an
+to it: taken > declined > hidden > ignored (a snooze, then an auto, only
+when nothing else did). An episode that expired and was answered later is the answer, not an
 answer AND an ignore (re-audit B8).
 
 The privacy floor is per figure (re-audit B3): an acceptance rate is a
@@ -44,11 +50,21 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path)
 
 
-_ACCEPT = ("done", "confirmed", "tracking", "auto", "accepted", "implemented")
+# "auto" is NOT here (CA2 finding 15): a delayed action that runs unless
+# someone cancels it (delayed.py) is Cavnar acting, not the owner
+# accepting. It is its own bucket, reported beside the others and in no
+# acceptance rate.
+_ACCEPT = ("done", "confirmed", "tracking", "accepted", "implemented")
 _DECLINE = ("not_for_us", "dismissed")
+_AUTO = ("auto",)
 CLEAR = ("improved", "worsened", "no_clear_change")
 # The acceptance buckets, strongest first.
 BUCKETS = ("taken", "declined", "hidden", "ignored")
+# A success rate is SHOWN (public()) only over this many clear results —
+# rec_learning.MIN_MEASURED_FOR_RATE, the owner-facing floor (CA2 finding
+# 4). The raw and shrunk rates are still computed for the engine's own
+# weighting.
+MIN_MEASURED_FOR_RATE = 5
 
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
@@ -95,6 +111,8 @@ def _bucket(actions):
         return "ignored"
     if "snoozed" in actions:
         return "snoozed"
+    if actions & set(_AUTO):
+        return "auto"
     return None
 
 
@@ -104,9 +122,9 @@ def _summarise(rows, cross=True) -> dict:
     for r in rows:
         acts.setdefault(_rec(r), set()).add(r["action"])
     buckets = {rec: _bucket(a) for rec, a in acts.items()}
-    counts = {b: sum(1 for v in buckets.values() if v == b) for b in BUCKETS + ("snoozed",)}
+    counts = {b: sum(1 for v in buckets.values() if v == b) for b in BUCKETS + ("snoozed", "auto")}
     accepted, declined, hidden, ignored = (counts[b] for b in BUCKETS)
-    snoozed = counts["snoozed"]
+    snoozed, auto = counts["snoozed"], counts["auto"]
     answered = accepted + declined + hidden
     results = [r for r in rows if r["action"] == "measured"]
     clear = [r for r in results if r["outcome"] in CLEAR]
@@ -121,11 +139,12 @@ def _summarise(rows, cross=True) -> dict:
         "restaurants": len(restaurants), "answered_restaurants": len(answered_restaurants),
         "measured_restaurants": len(measured_restaurants),
         "answered": answered, "accepted": accepted, "declined": declined,
-        "hidden": hidden, "ignored": ignored, "snoozed": snoozed,
+        "hidden": hidden, "ignored": ignored, "snoozed": snoozed, "auto": auto,
         "acceptance_rate": round(accepted / denominator, 3) if denominator else None,
         "measured": len(clear), "improved": improved, "worsened": worsened, "no_clear_change": no_change,
         "unknown": len(results) - len(clear),
         "success_rate": round(improved / len(clear), 3) if clear else None,
+        "success_enough": len(clear) >= MIN_MEASURED_FOR_RATE,
         "median_days_to_improvement": percentile(days, 50) if days else None,
     }
     out["success_rate_shrunk"] = shrink(out["success_rate"], len(clear))
@@ -154,8 +173,12 @@ def public(s) -> dict:
         for k in ("measured", "improved", "worsened", "no_clear_change", "unknown", "success_rate",
                   "success_rate_shrunk", "median_days_to_improvement"):
             out[k] = None
+    elif not s.get("success_enough", True):
+        # The counts stay; a rate over fewer than MIN_MEASURED_FOR_RATE clear
+        # results is not shown as one (CA2 finding 4).
+        out["success_rate"] = None
     if not s.get("acceptance_available"):
-        for k in ("answered", "accepted", "declined", "hidden", "ignored", "snoozed", "acceptance_rate",
+        for k in ("answered", "accepted", "declined", "hidden", "ignored", "snoozed", "auto", "acceptance_rate",
                   "acceptance_rate_shrunk"):
             out[k] = None
     return out

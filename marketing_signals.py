@@ -34,26 +34,52 @@ BASELINE_WEEKS = 4
 # Fewer than this many comparable days and the number is noise wearing a
 # percentage sign, so nothing is reported at all.
 MIN_BASELINE_DAYS = 2
+# ...and the baseline must span at least this many different weeks (CA2 #3,
+# CA1 M1): two days of one week are one week's mood, not a weekday's spread.
+MIN_BASELINE_WEEKS = 2
 # The narrowest a post's noise band can be. A lift inside the band is "no
 # clear change": the same weekday moves this much on its own. Any lift at
 # or above zero used to read as a good result (audit), so +1% on a weekday
 # that swings 15% week to week was a win.
 MIN_NOISE_BAND_PCT = 5.0
+# The band is a multiple of the standard error of (window mean − baseline
+# mean), not one standard deviation (CA2 probe M: at 1σ a post that did
+# nothing read "lifted" 25% of the time and "dropped" 24%). The multiple is
+# the two-sided 10% point of Student's t with the baseline's degrees of
+# freedom — at least metrics.BAND_K (1.645) — so a do-nothing post reads
+# lifted or dropped about one time in ten, less with the floor.
+_T90 = {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943, 7: 1.895, 8: 1.860, 9: 1.833, 10: 1.812,
+        12: 1.782, 15: 1.753, 20: 1.725, 30: 1.697}
+BAND_FALSE_ALARM_RATE = 0.10
 
 
-def noise_band_pct(baseline_values) -> float:
-    """How much the same weekday moves on its own, as a percentage of its
-    mean: the spread (population standard deviation) of the baseline days,
-    floored at MIN_NOISE_BAND_PCT. With two baseline days the spread is
-    itself a rough figure, which is why the floor exists."""
+def _t90(df):
+    if df <= 0:
+        return _T90[1]
+    for k in sorted(_T90):
+        if df <= k:
+            return _T90[k]
+    return 1.645
+
+
+def noise_band_pct(baseline_values, window_n=None) -> float:
+    """How far the window's average must sit from the baseline's before it
+    is a move, as a percentage of the baseline mean: t(90%, n−1) × the
+    baseline days' sample spread × sqrt(1/window_n + 1/n) — the standard
+    error of the difference of the two means — floored at
+    MIN_NOISE_BAND_PCT. `window_n` defaults to the attribution window's
+    days. A false-alarm rate of about BAND_FALSE_ALARM_RATE (CA2 #3)."""
     vals = [float(v) for v in baseline_values or []]
     if len(vals) < 2:
         return MIN_NOISE_BAND_PCT
-    mean = sum(vals) / len(vals)
+    n = len(vals)
+    mean = sum(vals) / n
     if mean <= 0:
         return MIN_NOISE_BAND_PCT
-    var = sum((v - mean) ** 2 for v in vals) / len(vals)
-    return round(max(MIN_NOISE_BAND_PCT, (var ** 0.5) / mean * 100), 1)
+    w = int(window_n or max(1, ATTRIBUTION_WINDOW_HOURS // 24))
+    sd = (sum((v - mean) ** 2 for v in vals) / (n - 1)) ** 0.5
+    se = sd * (1.0 / w + 1.0 / n) ** 0.5
+    return round(max(MIN_NOISE_BAND_PCT, _t90(n - 1) * se / mean * 100), 1)
 
 
 def lift_verdict(lift_pct, band_pct) -> str:
@@ -177,13 +203,14 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
 
     # Same weekday, previous weeks — a Friday post measured against Fridays.
     first = _window_start(posted)
-    baseline_values = []
+    baseline_values, weeks_seen = [], set()
     for offset in range(1, BASELINE_WEEKS + 1):
         for i in range(days):
             d = (first + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
             if d in sales:
                 baseline_values.append(sales[d])
-    if len(baseline_values) < MIN_BASELINE_DAYS:
+                weeks_seen.add(offset)
+    if len(baseline_values) < MIN_BASELINE_DAYS or len(weeks_seen) < MIN_BASELINE_WEEKS:
         return {"ok": False, "reason": "not_enough_history"}
 
     window_avg = sum(window_values) / len(window_values)
@@ -192,15 +219,16 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
         return {"ok": False, "reason": "not_enough_history"}
 
     lift = round((window_avg - baseline_avg) / baseline_avg * 100, 1)
-    band = noise_band_pct(baseline_values)
+    band = noise_band_pct(baseline_values, window_n=len(window_values))
     result = {
         "ok": True, "id": row["id"], "topic": row["topic"], "platform": row["post_platform"],
         "posted_at": row["at"], "window_hours": ATTRIBUTION_WINDOW_HOURS,
         "window_sales": round(window_avg, 2), "baseline_sales": round(baseline_avg, 2),
-        "lift_pct": lift, "baseline_days": len(baseline_values),
+        "lift_pct": lift, "baseline_days": len(baseline_values), "baseline_weeks": len(weeks_seen),
         # Clients colour and word the result from `verdict`, not from the
         # sign of lift_pct: inside the band is "no clear change".
         "noise_band_pct": band, "verdict": lift_verdict(lift, band),
+        "false_alarm_rate": BAND_FALSE_ALARM_RATE,
     }
     # Two posts whose windows share a day are measured against the same
     # sales: one busy Friday cannot be credited in full to both of them.
@@ -229,6 +257,7 @@ def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first
            "menu_item_name": None, "occasion": row["occasion"] if "occasion" in row.keys() else None,
            "post_kind": row["post_kind"] if "post_kind" in row.keys() else None,
            "item_lift_pct": None, "item_window_qty": None, "item_baseline_qty": None,
+           "item_noise_band_pct": None, "item_verdict": None,
            "reviews_mentioning": None, "guest_list_delta": None, "engagement_rate": None}
     conn = get_conn(db_path)
     try:
@@ -239,17 +268,23 @@ def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first
                 "SELECT business_date, qty_sold FROM menu_item_sales WHERE restaurant_id=? AND menu_item_id=?",
                 (restaurant_id, out["menu_item_id"])).fetchall()}
             win = [qty[d] for d in window_dates if d in qty]
-            base = []
+            base, base_weeks = [], set()
             _first = first or _window_start(posted)
             for offset in range(1, BASELINE_WEEKS + 1):
                 for i in range(days):
                     d = (_first + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
                     if d in qty:
                         base.append(qty[d])
-            if win and len(base) >= MIN_BASELINE_DAYS and sum(base) > 0:
+                        base_weeks.add(offset)
+            if (win and len(base) >= MIN_BASELINE_DAYS and len(base_weeks) >= MIN_BASELINE_WEEKS
+                    and sum(base) > 0):
                 wa, ba = sum(win) / len(win), sum(base) / len(base)
                 out["item_window_qty"], out["item_baseline_qty"] = round(wa, 1), round(ba, 1)
                 out["item_lift_pct"] = round((wa - ba) / ba * 100, 1)
+                # The dish's own band (CA1 M2): shown beside the sales lift,
+                # which has one, a raw unit % had none.
+                out["item_noise_band_pct"] = noise_band_pct(base, window_n=len(win))
+                out["item_verdict"] = lift_verdict(out["item_lift_pct"], out["item_noise_band_pct"])
         # reviews in the 14 days after the post that name the dish or the topic
         needles = set()
         if out["menu_item_name"]:
@@ -353,16 +388,43 @@ def attribution_summary(restaurant_id, limit=5, db_path: str = DB_PATH) -> dict:
         "weakest": [p for p in reversed(scored) if p.get("verdict") == "dropped"][:3],
         "measured": len(scored),
         "median_lift_pct": round(sorted(lifts)[len(lifts) // 2], 1),
+        # What the posts' own verdicts say (CA1 M3): a median is only a
+        # "lift" when most of the posts behind it cleared their band.
+        "verdicts": _verdict_counts(scored),
+        "median_verdict": _group_verdict(scored),
         "by_kind": _group_lift(scored, "post_kind"),
         "by_occasion": _group_lift(scored, "occasion"),
         "by_dish": _group_lift(scored, "menu_item_name"),
     }
 
 
+def _verdict_counts(posts) -> dict:
+    out = {"lifted": 0, "dropped": 0, "no_clear_change": 0}
+    for p in posts:
+        v = p.get("verdict") or lift_verdict(p.get("lift_pct"), p.get("noise_band_pct") or MIN_NOISE_BAND_PCT)
+        out[v] = out.get(v, 0) + 1
+    return out
+
+
+def _group_verdict(posts) -> str:
+    """'lifted' | 'dropped' only when MORE THAN HALF the posts' own verdicts
+    say so; otherwise 'no_clear_change' — whatever the median's sign
+    (CA1 M3: a median read green at ≥0 while most posts sat inside their
+    band)."""
+    c = _verdict_counts(posts)
+    n = sum(c.values())
+    if n and c["lifted"] * 2 > n:
+        return "lifted"
+    if n and c["dropped"] * 2 > n:
+        return "dropped"
+    return "no_clear_change"
+
+
 def _group_lift(scored, key):
     """Median sales lift (and item lift where measured) per group, with the
     count — only groups with two or more measured posts, so one post never
-    becomes a rule."""
+    becomes a rule — and the group's verdict from its posts' own verdicts
+    (_group_verdict, CA1 M3)."""
     groups = {}
     for p in scored:
         g = p.get(key)
@@ -378,7 +440,8 @@ def _group_lift(scored, key):
         er = [x["engagement_rate"] for x in ps if x.get("engagement_rate") is not None]
         out.append({"group": g, "posts": len(ps), "median_lift_pct": ls[len(ls) // 2],
                     "median_item_lift_pct": il[len(il) // 2] if il else None,
-                    "avg_engagement_rate": round(sum(er) / len(er), 4) if er else None})
+                    "avg_engagement_rate": round(sum(er) / len(er), 4) if er else None,
+                    "verdicts": _verdict_counts(ps), "verdict": _group_verdict(ps)})
     out.sort(key=lambda x: x["median_lift_pct"], reverse=True)
     return out
 
@@ -528,6 +591,9 @@ def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:
 
 # ── Windowed performance ───────────────────────────────────────────────────
 
+# Posts each period must hold before a period-on-period change is a % (CA1 M5).
+MIN_POSTS_FOR_CHANGE = 3
+
 def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
     """Reach, engagement and rate for a period, against the period before it.
 
@@ -578,8 +644,13 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
         seen = row["seen"] or 0
         return round((row["engaged"] or 0) / seen * 100, 1) if seen else None
 
+    enough = ((current["posts"] or 0) >= MIN_POSTS_FOR_CHANGE
+              and (previous["posts"] or 0) >= MIN_POSTS_FOR_CHANGE)
+
     def change(now_v, then_v):
-        if not then_v:
+        # A period-on-period % only when BOTH periods hold MIN_POSTS_FOR_CHANGE
+        # posts (CA1 M5): one post against two read as "−50%".
+        if not then_v or not enough:
             return None
         return round((now_v - then_v) / then_v * 100, 1)
 
@@ -600,6 +671,8 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
             "reach": change(current["seen"] or 0, previous["seen"] or 0),
             "engagement": change(current["engaged"] or 0, previous["engaged"] or 0),
         },
+        "change_note": (None if enough else
+                        f"Too few posts to compare periods — {MIN_POSTS_FOR_CHANGE} each are needed"),
         "by_platform": [
             {"platform": r["platform"] or "unknown", "posts": r["posts"],
              "reach": r["seen"], "engagement": r["engaged"], "engagement_rate": rate(r)}

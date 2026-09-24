@@ -739,10 +739,24 @@ def test_a35_cumulative_is_summed_in_sql_by_module():
 def test_a31_the_improved_rate_is_over_clear_verdicts():
     from intelligence import features
     rid = _rid()
-    for v in ("improved", "improved", "worsened", "unknown", "no_clear_change", "unknown"):
-        _insert(rid, f"t {v}", "labor_pct", None, (TODAY - timedelta(days=40)).isoformat(), verdict=v)
+    # Updated for the ONE success definition (CA2 finding 4): the rate is
+    # read through rec_learning.learned_verdict over CLEAR_VERDICTS — a
+    # no-clear-change is measured (in the denominator), an unknown is not —
+    # one result per number per window, and None below
+    # MIN_MEASURED_FOR_RATE (5). Each result is on its own number here so
+    # none overlaps another.
+    metrics_ = ("labor_pct", "sales", "avg_rating", "weekly_waste", "response_hours", "overtime_hours",
+                "comp_rate")
+    verdicts = ("improved", "improved", "worsened", "unknown", "no_clear_change", "unknown", "improved")
+    for i, (m, v) in enumerate(zip(metrics_, verdicts)):
+        _insert(rid, f"t {i} {v}", m, None, (TODAY - timedelta(days=40)).isoformat(), verdict=v)
     f = features.compute(rid)
-    assert f["outcomes_evaluated_90d"] == 6 and f["outcomes_improved_rate_90d"] == round(2 / 3, 3)
+    assert f["outcomes_evaluated_90d"] == 7 and f["outcomes_improved_rate_90d"] == round(3 / 5, 3)
+    # Below the floor there is no rate at all.
+    rid2 = _rid(name="Group A Floor Co")
+    for i, m in enumerate(metrics_[:4]):
+        _insert(rid2, f"u {i}", m, None, (TODAY - timedelta(days=40)).isoformat(), verdict="improved")
+    assert features.compute(rid2)["outcomes_improved_rate_90d"] is None
 
 
 # ── A32 no direction from results that disagree ─────────────────────────────

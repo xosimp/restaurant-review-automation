@@ -62,15 +62,27 @@ PRIOR_MIN_MEASURED = 10       # cohort measured results before a cohort rate sta
 SUMMARY_WINDOWS = (30, 90, 180)
 _Z90 = 1.645
 CLEAR_VERDICTS = ("improved", "worsened", "no_clear_change")
-# outcomes.INFORMATIONAL_PREFIX (a test holds them in step): a tracker that
-# measured what followed an alert being READ, not a change.
+# outcomes.INFORMATIONAL_PREFIX / INFORMATIONAL_PREFIXES (a test holds them
+# in step): a tracker that measured what followed an alert being READ, a
+# routine supplier order, or advice NOT taken — not a change.
 INFORMATIONAL_PREFIX = "observed:alert_"
+INFORMATIONAL_PREFIXES = (INFORMATIONAL_PREFIX, "observed:supplier_order_sent:", "observed:untaken:")
 
 # The effectiveness model (see the module docstring).
 EFFECT_WINDOW_DAYS = 365
 SHRINK_K = 5                   # pseudo-observations pulling a rate to its prior
-W_ACCEPT, W_SUCCESS = 0.5, 1.0  # how much a point of each moves the weight
+# How much a point of each moves the weight. Acceptance is what the owner
+# LIKES, and rank decides exposure, which drives acceptance: a loop (CA2
+# #8). So acceptance weighs at most 0.2, and it can never lift a weight
+# above 1.0 on its own: the upward ceiling comes from measured success
+# alone (below).
+W_ACCEPT, W_SUCCESS = 0.2, 1.0
 MIN_WEIGHT, MAX_WEIGHT = 0.75, 1.25
+# The upward ceiling scales with the LOWER end of the 90% Wilson interval of
+# this restaurant's own measured success for the kind (or its best subject
+# tag) above the prior: 3 of 3 (lower bound 0.53) allows about 1.01, 30 of
+# 30 (0.92) about 1.21, so three results and thirty no longer rank alike
+# (CA2 probe E). No measured result, no lift above 1.0.
 FLOOR_WEIGHT = 0.6             # the lowest a worse result can take it
 WORSE_KEY_STEP, WORSE_KEY_CAP = 0.20, 0.30     # per worse result on this very key
 WORSE_KIND_STEP, WORSE_KIND_CAP = 0.08, 0.20   # per worse result on its kind
@@ -187,23 +199,31 @@ def viewer_sees(viewer, row) -> bool:
 
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
+# outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
+# against its own trigger window is never a win.
+_TRACKER_CALIBRATION_COLS = ", baseline_overlaps_trigger, attribution"
 
 
 def _tracker_rows(conn, rid, tids):
     out = {}
     for i in range(0, len(tids), 400):
         chunk = tids[i:i + 400]
-        try:
-            rows = conn.execute(f"SELECT {_TRACKER_COLS} FROM recommendation_outcomes WHERE restaurant_id=? AND id IN "
-                                f"({','.join('?' for _ in chunk)})", (rid, *chunk)).fetchall()
-        except Exception as e:
+        marks = ",".join("?" for _ in chunk)
+        rows = None
+        for cols in (_TRACKER_COLS + _TRACKER_CALIBRATION_COLS, _TRACKER_COLS):
+            try:
+                rows = conn.execute(f"SELECT {cols} FROM recommendation_outcomes WHERE restaurant_id=? AND id IN "
+                                    f"({marks})", (rid, *chunk)).fetchall()
+                break
+            except Exception as e:
+                print(f"[rec_learning] tracker columns missing ({e}); reading fewer")
+        if rows is None:
             # A database from before the re-check / check-in columns: the
             # verdict alone, and said so (a silent fallback here once hid
             # every re-check and check-in from the learning).
-            print(f"[rec_learning] tracker columns missing, reading verdicts only: {e}")
             rows = conn.execute(f"SELECT id, status, verdict, dollars_monthly, evaluate_on FROM "
-                                f"recommendation_outcomes WHERE restaurant_id=? AND id IN "
-                                f"({','.join('?' for _ in chunk)})", (rid, *chunk)).fetchall()
+                                f"recommendation_outcomes WHERE restaurant_id=? AND id IN ({marks})",
+                                (rid, *chunk)).fetchall()
         for o in rows:
             out[o["id"]] = dict(o)
     return out
@@ -311,9 +331,15 @@ def learned_verdict(verdict, tracker=None, checkin=None):
         nor failing;
       * a tracker that measured what followed a READ (informational) →
         `unknown`: it measured no change;
+      * a result read against a baseline that overlapped the window which
+        triggered the recommendation (outcomes baseline_overlaps_trigger,
+        CA2 #1) → `unknown`: a number coming back from a bad stretch on its
+        own is not the recommendation working;
       * a move that faded or reversed at its re-check → `no_clear_change`:
         not a win (and not a loss — the number went back);
       * anything that is not a clear verdict → `unknown`.
+    A result is improved or worsened here exactly when outcomes.
+    counts_in_delivered counts it (the learning == value rule, CA2 #7).
     `verdict` is the verdict as recorded; `tracker` the recommendation_
     outcomes row (dict) when there is one."""
     tr = tracker or {}
@@ -330,7 +356,13 @@ def learned_verdict(verdict, tracker=None, checkin=None):
     if isinstance(ck, dict) and (ck.get("did_it") == "no" or ck.get("conditions_changed")
                                  or (ck.get("attribution") or {}).get("discount")):
         return "unknown"
-    if str(tr.get("source_key") or "").startswith(INFORMATIONAL_PREFIX):
+    if str(tr.get("source_key") or "").startswith(INFORMATIONAL_PREFIXES):
+        return "unknown"
+    try:
+        overlaps = bool(int(tr.get("baseline_overlaps_trigger") or 0))
+    except (TypeError, ValueError):
+        overlaps = bool(tr.get("baseline_overlaps_trigger"))
+    if overlaps:
         return "unknown"
     if verdict in ("improved", "worsened") and tr.get("recheck_verdict") in ("faded", "reversed"):
         return "no_clear_change"
@@ -701,14 +733,11 @@ class Effectiveness:
             why.append(f"{kind}: taken {ks['taken']} of {ks['settled']}, {ks['improved']} of {ks['measured']} "
                        f"measured improved")
         w = 1.0 + (sum(deltas) / len(deltas) if deltas else 0.0)
-        cal = self.calibration.get(kind) or []
-        if len(cal) >= MIN_CALIBRATION_PAIRS:
-            ratio = sorted(cal)[len(cal) // 2]
-            ratio = (ratio * len(cal) + 1.0 * 3) / (len(cal) + 3)      # shrunk toward 1
-            ratio = min(CALIBRATION_BOUNDS[1], max(CALIBRATION_BOUNDS[0], ratio))
+        ratio, _n_cal = self.calibration_ratio(kind)
+        if ratio is not None:
             w *= ratio
             why.append(f"measured dollars run {ratio:.2f}× the estimate")
-        w = min(MAX_WEIGHT, max(MIN_WEIGHT, w))
+        w = min(self.ceiling(learned, kind), max(MIN_WEIGHT, w))
         key_pen = min(WORSE_KEY_CAP, sum(WORSE_KEY_STEP * 0.5 ** (a / WORSE_HALF_LIFE_DAYS)
                                          for a in self.worse_keys.get(key, [])))
         kind_pen = min(WORSE_KIND_CAP, sum(WORSE_KIND_STEP * 0.5 ** (a / WORSE_HALF_LIFE_DAYS)
@@ -718,6 +747,54 @@ class Effectiveness:
             why.append("a result got worse after it here" if key_pen else f"a {kind} result got worse here")
         w = round(max(FLOOR_WEIGHT, min(MAX_WEIGHT, w)), 3)
         return w, why
+
+    def ceiling(self, learned, kind=None):
+        """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
+        scaled by how far the Wilson lower bound of measured success (the
+        best of the kind's and its tags' own records) sits above the prior."""
+        best = 0.0
+        prior = self.prior(kind)[1] if (learned and kind) else 0.5
+        for s in learned or []:
+            if not s.get("measured"):
+                continue
+            lo, _ = wilson(s["improved"], s["measured"])
+            if lo is not None and prior < 1.0:
+                best = max(best, (lo - prior) / (1.0 - prior))
+        return 1.0 + (MAX_WEIGHT - 1.0) * min(1.0, max(0.0, best))
+
+    def calibration_ratio(self, kind):
+        """(ratio, n): measured dollars over the dollars the recommendation
+        was shown with, the median of this restaurant's pairs for the kind,
+        shrunk toward 1 by 3 pseudo-pairs and bounded to CALIBRATION_BOUNDS
+        — or (None, n) below MIN_CALIBRATION_PAIRS."""
+        cal = self.calibration.get(kind) or []
+        if len(cal) < MIN_CALIBRATION_PAIRS:
+            return None, len(cal)
+        ratio = sorted(cal)[len(cal) // 2]
+        ratio = (ratio * len(cal) + 1.0 * 3) / (len(cal) + 3)      # shrunk toward 1
+        return round(min(CALIBRATION_BOUNDS[1], max(CALIBRATION_BOUNDS[0], ratio)), 3), len(cal)
+
+    def adjusted_dollars(self, key, dollars, kind=None) -> dict:
+        """The dollars a recommendation is SHOWN with, corrected by what this
+        restaurant's measured results of its kind actually came to (CA2 #8:
+        the calibration used to move rank only, never the figure). Returns
+        {dollars, dollars_adjusted, calibration_n, calibration_ratio, note}:
+        `dollars_adjusted` is None (show `dollars` as it is) below
+        MIN_CALIBRATION_PAIRS measured results; otherwise the figure times
+        the ratio, and `note` reads "adjusted from N measured results"."""
+        kind = kind or rec_ledger.kind_of(str(key or ""))
+        ratio, n = self.calibration_ratio(kind)
+        out = {"dollars": dollars, "dollars_adjusted": None, "calibration_n": n, "calibration_ratio": ratio,
+               "note": None}
+        try:
+            d = float(dollars)
+        except (TypeError, ValueError):
+            return out
+        if ratio is None:
+            return out
+        out["dollars_adjusted"] = round(d * ratio, 2)
+        out["note"] = f"adjusted from {n} measured result{'s' if n != 1 else ''}"
+        return out
 
     def __call__(self, key, kind=None, tags=None):
         return self.weight(key, kind=kind, tags=tags)
@@ -786,6 +863,8 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     except Exception as e:
         print(f"[rec_learning] kind_record unavailable for {restaurant_id}/{kind}: {e}")
         return out
+    out["untaken"] = untaken_comparison(restaurant_id, kind, taken_measured=out["measured"],
+                                        taken_improved=out["improved"], db_path=db_path)
     if out["measured"] >= MIN_MEASURED_FOR_RATE:
         out["rate"] = out["improved"] / out["measured"]
         out["low"], out["high"] = wilson(out["improved"], out["measured"])
@@ -810,6 +889,54 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
                 out["low"], out["high"] = wilson(pi, pm)
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
+    return out
+
+
+def untaken_comparison(restaurant_id, kind, taken_measured=0, taken_improved=0, db_path=DB_PATH) -> dict:
+    """What the number did after this kind of recommendation was shown and
+    NOT taken (outcomes.observe_untaken's informational trackers, CA2 #11),
+    beside what it did when it was taken:
+      {measured, improved, rate, taken_measured, taken_improved, taken_rate,
+       enough, label}
+    `label` ("Compared with when you didn't: …") only when both sides have
+    MIN_MEASURED_FOR_RATE clear results. A comparison of what followed, not
+    a cause: the owner chose which ones to take. Never raises."""
+    out = {"measured": 0, "improved": 0, "rate": None, "taken_measured": int(taken_measured or 0),
+           "taken_improved": int(taken_improved or 0), "taken_rate": None, "enough": False, "label": None}
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT o.verdict, o.after_start, o.after_end, o.metric, i.kind, i.key FROM recommendation_outcomes o "
+                "JOIN rec_instances i ON i.rec_id = substr(o.source_key, ?) AND i.restaurant_id = o.restaurant_id "
+                "WHERE o.restaurant_id=? AND o.status='evaluated' AND o.source_key LIKE ?",
+                (len("observed:untaken:") + 1, restaurant_id, "observed:untaken:%")).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_learning] untaken comparison unavailable for {restaurant_id}/{kind}: {e}")
+        return out
+    mine = [r for r in rows if (r["kind"] or rec_ledger.kind_of(r["key"])) == kind
+            and r["verdict"] in CLEAR_VERDICTS]
+    # One result per window on a number, as the taken side is counted.
+    kept, last = [], {}
+    for r in sorted(mine, key=lambda x: (str(x["after_start"] or ""), str(x["after_end"] or ""))):
+        m = r["metric"]
+        if m in last and str(r["after_start"] or "") <= last[m]:
+            continue
+        kept.append(r)
+        last[m] = str(r["after_end"] or "")
+    out["measured"] = len(kept)
+    out["improved"] = sum(1 for r in kept if r["verdict"] == "improved")
+    if out["measured"]:
+        out["rate"] = round(out["improved"] / out["measured"], 3)
+    if out["taken_measured"]:
+        out["taken_rate"] = round(out["taken_improved"] / out["taken_measured"], 3)
+    out["enough"] = (out["measured"] >= MIN_MEASURED_FOR_RATE and out["taken_measured"] >= MIN_MEASURED_FOR_RATE)
+    if out["enough"]:
+        out["label"] = (f"Compared with when you didn't: {out['taken_improved']} of {out['taken_measured']} improved "
+                        f"after you took this kind of recommendation, {out['improved']} of {out['measured']} after "
+                        f"you didn't. What followed, not proof of cause.")
     return out
 
 

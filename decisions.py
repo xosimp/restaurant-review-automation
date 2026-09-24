@@ -193,11 +193,21 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
             pass
         # What happened after they acted (or after the product saw them act).
         try:
-            for row in conn.execute("SELECT source, source_key, title, metric, status, verdict, delta, dollars_monthly, "
-                                    "started_on, evaluate_on FROM recommendation_outcomes WHERE restaurant_id=? "
+            import outcomes as _oc
+            import rec_learning as _rlearn
+            for row in conn.execute("SELECT * FROM recommendation_outcomes WHERE restaurant_id=? "
                                     "ORDER BY created_at DESC LIMIT 200", (restaurant_id,)).fetchall():
+                if _oc.is_informational(dict(row)) and str(row["source_key"] or "").startswith(_oc.UNTAKEN_PREFIX):
+                    continue      # advice not taken: a comparison, not a decision
+                full = _oc._row(row)
                 r = rec(row["source_key"], title=row["title"], when=str(row["started_on"] or "")[:10])
+                # The verdict as learning reads it and the grade it carries
+                # (CA1 red flag 19): "improved $X" read the same for a result
+                # tied to other changes and one that held.
                 r["outcome"] = {"metric": row["metric"], "status": row["status"], "verdict": row["verdict"],
+                                "learned_verdict": _rlearn.learned_verdict(row["verdict"], full),
+                                "attribution": full.get("attribution"), "grade_phrase": full.get("grade_phrase"),
+                                "counts": full.get("counts"),
                                 "delta": row["delta"], "dollars_monthly": row["dollars_monthly"],
                                 "started_on": row["started_on"], "evaluate_on": row["evaluate_on"],
                                 "observed": row["source"] == "observed"}
@@ -299,8 +309,16 @@ def _fmt_outcome(o):
         from time_utils import mdy
         return f" — measuring until {mdy(str(o.get('evaluate_on') or '')[:10])}"
     v = o.get("verdict") or "unknown"
+    learned = o.get("learned_verdict", v)
+    if v in ("improved", "worsened") and learned not in ("improved", "worsened"):
+        # Learning does not count it (disowned, something else changed,
+        # measured against its own trigger window, faded or reversed): the
+        # move is said, never as the recommendation's result (CA2 #4).
+        return f" — measured: {v}, but not counted as this recommendation's result"
     money = f", about ${abs(float(o['dollars_monthly'])):,.0f}/month" if o.get("dollars_monthly") else ""
-    return f" — measured: {v}{money}"
+    # The attribution grade (CA1 red flag 19): "held" only for a held result.
+    grade = f" ({o['grade_phrase']}; before and after, not proven cause)" if o.get("grade_phrase") else ""
+    return f" — measured: {v}{money}{grade}"
 
 
 def context(restaurant_id, db_path=DB_PATH, sees_loss=True, viewer=None):

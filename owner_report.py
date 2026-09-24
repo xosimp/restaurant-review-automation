@@ -52,7 +52,10 @@ DEFAULT_DAYS = 180
 WINDOW_LABELS = {90: "the past 3 months", 180: "the past 6 months"}
 
 # Minimums. Below each, its clause is left out (never estimated).
-MIN_RESULTS_PER_METRIC = 2       # non-overlapping measured results on one number
+# Non-overlapping measured results on one number before an average change is
+# quoted — and the sentence states their range (CA4 F17): an "average
+# reduction" over two results was one result and a coin.
+MIN_RESULTS_PER_METRIC = 3
 MIN_MEASURED_DAYS = 14           # measured days before a dollar total is quoted
 MAX_MODULES_IN_SENTENCE = 3
 MAX_CHANGE_SENTENCES = 2
@@ -178,7 +181,10 @@ def _eligible_results(rid, since, until, viewer, db_path, denied, sees_loss):
         day = str(r.get("evaluate_on") or "")[:10]
         if not day or day < since or day > until:
             continue
-        if r.get("informational") or outcomes.disowned(r):
+        # The one admission rule value and learning share (outcomes.
+        # result_counts, CA2 #7): not informational, not disowned, no
+        # "something else changed", not measured against its trigger window.
+        if not outcomes.result_counts(r):
             continue
         v = r.get("verdict")
         if not ((v in ("improved", "worsened") and r.get("counts")) or v == "no_clear_change"):
@@ -230,6 +236,10 @@ def _changes(rows):
         n = len(kept)
         deltas = [float(r["delta"]) if r.get("delta") is not None
                   else float(r["after_value"]) - float(r["baseline_value"]) for r in kept]
+        # The per-result statistic the sentence quotes (points for a
+        # percentage, % change otherwise) — its range is said beside the
+        # average (CA4 F17).
+        stats = deltas if info["unit"] == "%" else [float(r["delta_pct"]) for r in kept]
         mean_delta = sum(deltas) / n
         mean_base = sum(float(r["baseline_value"]) for r in kept) / n
         # A direction is said only when the results agree on it AND the
@@ -247,6 +257,7 @@ def _changes(rows):
             "no_clear_change": sum(1 for r in kept if r.get("verdict") == "no_clear_change"),
             "mean_delta": round(mean_delta, 2),
             "mean_delta_pct": round(sum(float(r["delta_pct"]) for r in kept) / n, 1),
+            "range": [round(min(stats), 1), round(max(stats), 1)],
             "consistent_direction": not (mixed or within),
             "outcome_ids": [r["id"] for r in kept],
         })
@@ -274,8 +285,16 @@ def _change_sentence(c):
     if round(abs(stat), 1) == 0:
         return None
     mag = f"{abs(stat):.1f}-point" if c["unit"] == "%" else f"{abs(stat):.1f}%"
+    rng = ""
+    lo_hi = c.get("range")
+    if lo_hi and lo_hi[0] != lo_hi[1]:
+        # Every result moved the same way (consistent_direction), so the
+        # range is two sizes of the same move.
+        a, b = sorted((abs(lo_hi[0]), abs(lo_hi[1])))
+        unit = " points" if c["unit"] == "%" else "%"
+        rng = f" (individual results ranged from {a:.1f}{unit} to {b:.1f}{unit})"
     return (lead + f"the recommendations you took were associated with an average {mag} "
-            f"{'reduction' if stat < 0 else 'increase'} in {_lower_first(c['label'])}. {CAVEAT}")
+            f"{'reduction' if stat < 0 else 'increase'} in {_lower_first(c['label'])}{rng}. {CAVEAT}")
 
 
 # ── measured dollars over the window ────────────────────────────────────────
@@ -318,15 +337,27 @@ def _measured_sentence(cum):
         # It is the DOLLARS that went the wrong way — not a count of changes
         # (re-audit A33).
         return (f"Measured before and after, more dollars were lost than gained: your changes came to "
-                f"{_money(total)} less over {days} measured days, net.")
+                f"{_money(total)} less over {days} measured days, net. {CAVEAT}")
     s = (f"Measured before and after, your changes came to about {_money(total)} over {days} measured days, "
          f"net of any that got worse")
     if len(mods) == 1:
-        return s + f", all of it in {VALUE_MODULE_LABELS.get(mods[0][0], mods[0][0])}."
-    if mods:
-        return s + ": " + _join([f"{_money(v)}{' less' if v < 0 else ''} in {VALUE_MODULE_LABELS.get(m, m)}"
-                                 for m, v in mods[:MAX_MODULES_IN_SENTENCE]]) + "."
-    return s + "."
+        s += f", all of it in {VALUE_MODULE_LABELS.get(mods[0][0], mods[0][0])}."
+    elif mods:
+        s += ": " + _join([f"{_money(v)}{' less' if v < 0 else ''} in {VALUE_MODULE_LABELS.get(m, m)}"
+                           for m, v in mods[:MAX_MODULES_IN_SENTENCE]]) + "."
+    else:
+        s += "."
+    # The part tied to other changes in the same weeks is said apart from the
+    # part that was clear or held (CA2 #7) — two figures side by side, never
+    # one summed into the other.
+    g = cum.get("by_grade") or {}
+    clear, assoc = float(g.get("consistent_or_held") or 0), float(g.get("associated") or 0)
+    if round(assoc) != 0 and round(clear) != 0:
+        s += (f" Of that, {_money(clear)} was a clear move or held at its re-check; {_money(assoc)}"
+              f"{' less' if assoc < 0 else ''} came alongside other changes or crossed normal variation only once.")
+    elif round(assoc) != 0:
+        s += " All of it came alongside other changes or crossed normal variation only once."
+    return s + f" {CAVEAT}"
 
 
 # ── the most effective subject ─────────────────────────────────────────────

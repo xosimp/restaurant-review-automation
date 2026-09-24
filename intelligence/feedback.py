@@ -250,9 +250,21 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
             _cursor_set(conn, max(int(r["id"]) for r in dis), key=HOME_CURSOR)
 
         try:
+            # baseline_overlaps_trigger: learned_verdict never reads a result
+            # measured against its own trigger window as a win (CA2 #1).
             outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
-                                "created_at, recheck_verdict, owner_checkin FROM recommendation_outcomes").fetchall()
-        except Exception:                # a database from before the re-check / check-in columns
+                                "created_at, recheck_verdict, owner_checkin, baseline_overlaps_trigger "
+                                "FROM recommendation_outcomes").fetchall()
+        except Exception:
+            outs = None
+        if outs is None:
+            try:
+                outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, "
+                                    "evaluate_on, created_at, recheck_verdict, owner_checkin "
+                                    "FROM recommendation_outcomes").fetchall()
+            except Exception:
+                outs = None
+        if outs is None:                 # a database from before the re-check / check-in columns
             outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
                                 "created_at FROM recommendation_outcomes").fetchall()
         for r in outs:
@@ -261,6 +273,8 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
             # own key ("trim_day:Monday"), whose result belongs to trim_day —
             # not to a meaningless "observed:Monday". kind_of already gives a
             # genuine observed:<action>:<month> key its observed: kind.
+            if str(r["source_key"] or "").startswith("observed:untaken:"):
+                continue     # advice NOT taken (outcomes.observe_untaken): a comparison, never an answer
             kind = kind_of(r["source_key"])
             written += put(r["restaurant_id"], kind, r["source_key"], "tracking", event_at=r["created_at"],
                            synced_from="recommendation_outcomes")

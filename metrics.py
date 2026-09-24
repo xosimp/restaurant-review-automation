@@ -497,7 +497,16 @@ def trailing(restaurant_id, key, days=None, end=None, db_path=DB_PATH):
     return {"value": value, "detail": detail, "start": start.isoformat(), "end": end.isoformat()}
 
 
-def compare(key, before, after, band_scale=1.0):
+def fixed_band(key, before):
+    """The metric's stated noise band at `before` (_REGISTRY's `noise`, a
+    fraction of the baseline for a relative metric, never below its
+    _NOISE_FLOOR) — the FLOOR every estimated band is held above."""
+    info = describe(key)
+    threshold = info["noise"] * abs(before or 0) if info["relative_noise"] else info["noise"]
+    return max(threshold, info["noise_floor"])
+
+
+def compare(key, before, after, band_scale=1.0, band=None):
     """How a move from `before` to `after` reads, honestly.
 
     Returns {"verdict", "delta", "delta_pct", "band", "multiple"} where
@@ -509,14 +518,23 @@ def compare(key, before, after, band_scale=1.0):
     on it). `band_scale` widens the band for a comparison whose baseline
     carries noise of its own: a baseline adjusted by last year's same weeks
     adds last year's wobble to this year's (outcomes.SEASONAL_BAND_SCALE).
+
+    `band` (optional) is THIS restaurant's own band for the comparison, in
+    the metric's unit (noise_band()["band"]). The stated band is its floor:
+    the threshold is max(stated, own) — a restaurant whose weeks swing more
+    than the stated band gets a wider one, never a narrower one (CA2 #3).
     """
     if before is None or after is None:
         return {"verdict": "unknown", "delta": None, "delta_pct": None, "band": None, "multiple": None}
-    info = describe(key)
     delta = round(after - before, 2)
     delta_pct = round(delta / before * 100, 1) if before else None
-    threshold = info["noise"] * abs(before) if info["relative_noise"] else info["noise"]
-    threshold = max(threshold, info["noise_floor"]) * float(band_scale or 1.0)
+    threshold = fixed_band(key, before)
+    try:
+        own = float(band) if band is not None else 0.0
+    except (TypeError, ValueError):
+        own = 0.0
+    threshold = max(threshold, own) * float(band_scale or 1.0)
+    info = describe(key)
     # A move of nothing is never a move: with a relative band on a zero
     # baseline the band is zero too, and "$0 -> $0" read as "worsened"
     # (re-audit A9).
@@ -528,6 +546,140 @@ def compare(key, before, after, band_scale=1.0):
     multiple = round(abs(delta) / threshold, 2) if threshold else None
     return {"verdict": verdict, "delta": delta, "delta_pct": delta_pct,
             "band": round(threshold, 4), "multiple": multiple}
+
+
+# ── this restaurant's own noise band (CA2 #3, CA1 O10) ──────────────────────
+# The stated bands above are the same for every restaurant, so what a
+# verdict's false-alarm rate is depends on how much a restaurant's weeks
+# swing: with no real change, 8% of steady restaurants' 28-day labor windows
+# read "moved" and 66% of volatile ones' did (CA2 probe L). The band below is
+# estimated from the restaurant's OWN history: the spread (sample standard
+# deviation) of the metric over its non-overlapping historical windows of
+# the comparison's length, times BAND_K, widened for the comparison of two
+# noisy readings, and never below the stated band.
+#
+#   band = max(stated, BAND_K × sigma_L × sqrt(1 + L / B))
+#
+# L is the window compared, B the baseline's length (a baseline of the same
+# length doubles the variance of the difference). BAND_K = 1.645 is the
+# two-sided 10% point of the normal: with no real change a reading lands
+# outside the band about one time in ten, and the floor only makes that
+# rarer. `false_alarm_rate` states the rate the band actually gives.
+BAND_K = 1.645
+BAND_HISTORY_DAYS = 364        # a year of the restaurant's own windows, at most
+MIN_BAND_WINDOWS = 4           # same-length windows before their spread is used
+MIN_BAND_WEEKS = 6             # weekly windows before a scaled weekly spread is used
+
+
+def _phi(z):
+    import math
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def false_alarm_rate(threshold, sigma_diff):
+    """The two-sided chance that a move of nothing crosses `threshold` when
+    the difference being read has standard deviation `sigma_diff` — or None
+    when the spread is unknown (a stated band has no stated rate)."""
+    if not sigma_diff or threshold is None:
+        return None
+    return round(2.0 * (1.0 - _phi(float(threshold) / float(sigma_diff))), 3)
+
+
+def _sd(vals):
+    n = len(vals)
+    if n < 2:
+        return None
+    m = sum(vals) / n
+    return (sum((v - m) ** 2 for v in vals) / (n - 1)) ** 0.5
+
+
+def window_spread(restaurant_id, key, window_days, end, db_path=DB_PATH, history_days=BAND_HISTORY_DAYS):
+    """(sigma of the metric over one window of `window_days`, method, n) from
+    this restaurant's own non-overlapping windows ending on or before `end`
+    — or (None, "stated", 0) when there is too little history.
+
+    method "own windows": the spread of MIN_BAND_WINDOWS or more windows of
+    the same length. method "weekly, scaled": for a per-day metric with too
+    few whole windows, the spread of MIN_BAND_WEEKS or more whole weeks
+    scaled by sqrt(7 / window) — weeks read as independent, so it can
+    understate a slow drift; the stated band still floors it."""
+    e = date.fromisoformat(_d(end))
+    L = max(1, int(window_days))
+
+    def _windows(length):
+        out = []
+        n = max(0, int(history_days) // length)
+        for i in range(n):
+            we = e - timedelta(days=i * length)
+            ws = we - timedelta(days=length - 1)
+            v, _ = measure(restaurant_id, key, ws.isoformat(), we.isoformat(), db_path)
+            if v is None:
+                continue
+            cov = coverage(restaurant_id, key, ws.isoformat(), we.isoformat(), db_path)
+            if cov and cov["expected"] and cov["share"] < 0.7:
+                continue
+            out.append(float(v))
+        return out
+    vals = _windows(L)
+    if len(vals) >= MIN_BAND_WINDOWS:
+        return _sd(vals), "own windows", len(vals)
+    base, _ = parse(key)
+    if base in PER_DAY_METRICS and L > 7:
+        weeks = _windows(7)
+        if len(weeks) >= MIN_BAND_WEEKS:
+            sd7 = _sd(weeks)
+            return (sd7 * (7.0 / L) ** 0.5 if sd7 is not None else None), "weekly, scaled", len(weeks)
+    return None, "stated", len(vals)
+
+
+def band_from_sigma(sigma, window_days, baseline_days=None):
+    """(band, sigma of the difference) for comparing a `window_days`
+    reading with a `baseline_days` baseline, given the spread of one
+    window: BAND_K × sigma × sqrt(1 + L / B). Pure."""
+    L = float(window_days)
+    B = float(baseline_days or window_days)
+    sd_diff = float(sigma) * (1.0 + L / B) ** 0.5
+    return BAND_K * sd_diff, sd_diff
+
+
+def noise_band(restaurant_id, key, window_days=None, end=None, baseline_days=None, before=None,
+               db_path=DB_PATH) -> dict:
+    """This restaurant's noise band for comparing a `window_days` reading
+    with a `baseline_days` baseline (default the same length), from its own
+    history ending on `end` (default today). Returns
+      {band, sigma, sigma_diff, k, false_alarm_rate, method, n_windows,
+       stated, basis}
+    `band` is the estimated band (None when the history is too thin — then
+    the stated band is all there is and `false_alarm_rate` is None);
+    compare(..., band=...) holds the stated band as its floor. Never raises.
+
+    Callers with a 7-day window (the weekly review) pass window_days=7: the
+    band is estimated for THAT length, not the 28-day one (CA1 red flag 21)."""
+    info = describe(key)
+    L = int(window_days or info["default_window_days"])
+    B = int(baseline_days or L)
+    e = date.fromisoformat(_d(end)) if end else date.today()
+    out = {"band": None, "sigma": None, "sigma_diff": None, "k": BAND_K, "false_alarm_rate": None,
+           "method": "stated", "n_windows": 0, "window_days": L, "baseline_days": B,
+           "stated": round(fixed_band(key, before), 4) if before is not None else None}
+    try:
+        sigma, method, n = window_spread(restaurant_id, key, L, e.isoformat(), db_path=db_path)
+    except Exception as ex:
+        print(f"[metrics] noise band unavailable for {restaurant_id} {key}: {ex}")
+        sigma, method, n = None, "stated", 0
+    out["method"], out["n_windows"] = method, n
+    if sigma is None:
+        out["basis"] = (f"the stated band for {info['label'].lower()} — too little history here "
+                        f"({n} windows of {L} days) to measure this restaurant's own")
+        return out
+    band, sd_diff = band_from_sigma(sigma, L, B)
+    out.update(band=round(band, 4), sigma=round(sigma, 4), sigma_diff=round(sd_diff, 4))
+    threshold = max(band, out["stated"] or 0.0)
+    out["false_alarm_rate"] = false_alarm_rate(threshold, sd_diff)
+    out["basis"] = (f"this restaurant's own spread over {n} {'weeks' if method == 'weekly, scaled' else 'windows'} "
+                    f"of history; a move of nothing crosses it about "
+                    f"{round((out['false_alarm_rate'] or 0) * 100)}% of the time")
+    return out
 
 
 def _day_sql(base, param):

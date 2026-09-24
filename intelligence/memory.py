@@ -78,7 +78,16 @@ def seasonality(restaurant_id, db_path=DB_PATH) -> dict:
 
 def own_record(restaurant_id, db_path=DB_PATH) -> dict:
     """What this restaurant did with each kind of recommendation, and what
-    was measured after: {kind: stats}. Level 1 — no floor applies."""
+    was measured after: {kind: stats}. Level 1.
+
+    "worked" follows rec_learning.most_effective's floors (CA2 finding 9,
+    CA1 A10/E4): a kind is named only with MIN_MEASURED_FOR_RATE clear
+    results, success at least even, ranked by the lower end of its 90%
+    Wilson interval — one improvement beside four that got worse used to
+    read "measurably improved things here". `worked_detail` carries each
+    one's "k of n", and a kind's `success_rate` is None below the floor
+    (its counts stay), so nothing downstream can quote 100% from one."""
+    import rec_learning
     conn = get_conn(db_path)
     try:
         kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=?",
@@ -87,11 +96,38 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
         conn.close()
     out = {}
     for k in kinds:
-        out[k] = scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path)
-    worked = sorted([k for k, s in out.items() if (s["improved"] or 0) > 0], key=lambda k: -(out[k]["success_rate"] or 0))
+        s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path))
+        if (s.get("measured") or 0) < rec_learning.MIN_MEASURED_FOR_RATE:
+            s["success_rate"] = None
+        out[k] = s
+    ranked = []
+    for k, s in out.items():
+        n, imp = int(s.get("measured") or 0), int(s.get("improved") or 0)
+        if n < rec_learning.MIN_MEASURED_FOR_RATE or imp / n < 0.5:
+            continue
+        lo, _ = rec_learning.wilson(imp, n)
+        ranked.append((lo, n, k, imp))
+    ranked.sort(key=lambda x: (-x[0], -x[1], x[2]))
+    worked_detail = [{"kind": k, "improved": imp, "measured": n} for _lo, n, k, imp in ranked[:5]]
     ignored = sorted([k for k, s in out.items() if (s["declined"] or 0) + (s["hidden"] or 0) > (s["accepted"] or 0)],
                      key=lambda k: -((out[k]["declined"] or 0) + (out[k]["hidden"] or 0)))
-    return {"by_kind": out, "worked": worked[:5], "ignored": ignored[:5]}
+    return {"by_kind": out, "worked": [w["kind"] for w in worked_detail], "worked_detail": worked_detail,
+            "ignored": ignored[:5], "min_measured": rec_learning.MIN_MEASURED_FOR_RATE}
+
+
+# A slope is worth a line when the series moved, over the weeks read, by
+# more than the metric's own stated noise band (metrics._REGISTRY; CA1 E4):
+# a flat 0.05 a week was 0.6★ of rating over twelve weeks (never said) and
+# 0.6 of a labor point (said about noise). Units per week = band / span.
+SLOPE_BANDS = {"avg_rating_30d": 0.1, "labor_pct_28d": 0.5, "food_cost_pct_28d": 1.0,
+               "waste_sales_pct_28d": 0.25, "response_24h_rate_30d": 0.05}
+SLOPE_UNITS = {"avg_rating_30d": "★", "labor_pct_28d": " pts", "food_cost_pct_28d": " pts",
+               "waste_sales_pct_28d": " pts", "response_24h_rate_30d": ""}
+
+
+def slope_threshold(key, weeks) -> float:
+    """The smallest per-week slope of `key` worth saying over `weeks`."""
+    return SLOPE_BANDS.get(key, 0.05) / max(1, int(weeks or 1) - 1)
 
 
 def metric_slopes(restaurant_id, weeks=12, db_path=DB_PATH) -> dict:
@@ -130,11 +166,21 @@ def lines(mem: dict) -> list:
     if se.get("available"):
         out.append(f"Seasonal peak months: {', '.join(se['peak'])}; trough: {', '.join(se['trough'])} (index vs own annual mean).")
     rec = mem.get("record") or {}
-    if rec.get("worked"):
-        out.append("Recommendation kinds that measurably improved things here: " + ", ".join(rec["worked"]) + ".")
+    detail = rec.get("worked_detail")
+    if detail:
+        out.append("Recommendation kinds most often followed by a measured improvement here (before and after, "
+                   "not proven cause): "
+                   + ", ".join(f"{w['kind']} ({w['improved']} of {w['measured']} measured results improved)"
+                               for w in detail) + ".")
+    elif rec.get("worked"):
+        # A record built before worked_detail: names only, no rate claimed.
+        out.append("Recommendation kinds most often followed by a measured improvement here: "
+                   + ", ".join(rec["worked"]) + ".")
     if rec.get("ignored"):
         out.append("Kinds this owner has declined or hidden more than acted on: " + ", ".join(rec["ignored"]) + " — do not re-propose without new evidence.")
     for k, s in (mem.get("slopes") or {}).items():
-        if s["slope_per_week"] and abs(s["slope_per_week"]) >= 0.05:
-            out.append(f"{k} is moving {'up' if s['slope_per_week'] > 0 else 'down'} about {abs(s['slope_per_week']):.2f} per week over {s['weeks']} weeks.")
+        if s["slope_per_week"] and abs(s["slope_per_week"]) >= slope_threshold(k, s.get("weeks")):
+            unit = SLOPE_UNITS.get(k, "")
+            out.append(f"{k} is moving {'up' if s['slope_per_week'] > 0 else 'down'} about "
+                       f"{abs(s['slope_per_week']):.2f}{unit} per week over {s['weeks']} weeks.")
     return out

@@ -261,8 +261,11 @@ def test_a_manager_never_reads_food_cost_or_loss_in_what_worked(db):
         _taken(db, rid, f"cut_waste:Item {i}", module="food")
     f1 = _result(db, rid, "cut_waste:Salmon", "weekly_waste", "improved", 500.0, 400.0, 120, module="inventory")
     _result(db, rid, "cut_waste:Tuna", "weekly_waste", "improved", 500.0, 450.0, 60, module="inventory")
+    # Three results a number: MIN_RESULTS_PER_METRIC is 3 now (CA4 F17).
+    _result(db, rid, "cut_waste:Cod", "weekly_waste", "improved", 500.0, 430.0, 90, module="inventory")
     _result(db, rid, "loss:2026-W30:comps:spike", "comp_rate", "improved", 3.0, 2.0, 120, module="labor")
     _result(db, rid, "loss:2026-W36:comps:spike", "comp_rate", "improved", 3.0, 2.5, 60, module="labor")
+    _result(db, rid, "loss:2026-W33:comps:spike", "comp_rate", "improved", 3.0, 2.2, 90, module="labor")
     for n in range(20):
         _day(db, rid, f1, date.today() - timedelta(days=10 + n), 10.0, module="inventory", metric="weekly_waste")
     owner = owner_report.what_worked(rid, days=180, viewer=None)

@@ -10,6 +10,8 @@ uses, so "on track" means the same number everywhere.
 Status is conservative on purpose. "Achieved" needs the target to be met over
 a full trailing window, not on one good day, and "on track" is only claimed
 when the number is moving the right way by more than its own noise band.
+"Met" itself needs the reading past the target by the noise band
+(target_band, CA1 O15); a reading just across the line is "at_target".
 """
 from datetime import date
 
@@ -61,6 +63,22 @@ def _met(info, current, target):
     return current <= target if info["lower_is_better"] else current >= target
 
 
+def target_band(restaurant_id, metric, target, today=None, db_path=DB_PATH) -> dict:
+    """How far past its target a reading must be to count as MET, not a
+    wobble across the line (CA1 O15): the larger of the metric's stated
+    band at the target and BAND_K times the spread of this restaurant's own
+    windows of that length (metrics.noise_band's sigma — one reading against
+    a fixed number, so no second reading's noise is added). With the stated
+    band only, `false_alarm_rate` is None."""
+    nb = metrics.noise_band(restaurant_id, metric, end=today, db_path=db_path)
+    stated = metrics.fixed_band(metric, target)
+    own = metrics.BAND_K * nb["sigma"] if nb.get("sigma") else 0.0
+    band = max(stated, own)
+    return {"band": round(band, 4), "sigma": nb.get("sigma"), "baseline_band": nb.get("band"),
+            "false_alarm_rate": metrics.false_alarm_rate(band, nb.get("sigma")) if nb.get("sigma") else None,
+            "basis": nb.get("basis")}
+
+
 def progress(restaurant_id, db_path=DB_PATH, today=None):
     """Every active goal with where it stands now."""
     today = today or date.today()
@@ -83,14 +101,19 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
         g.update({"label": info["label"], "unit": info["unit"],
                   "lower_is_better": info["lower_is_better"],
                   "current": current, "current_detail": now["detail"]})
+        tb = (target_band(restaurant_id, g["metric"], g["target"], today=today, db_path=db_path)
+              if current is not None and g["status"] != "achieved" else {})
+        g["band"], g["false_alarm_rate"] = tb.get("band"), tb.get("false_alarm_rate")
         if g["status"] == "achieved":
             g["state"] = "met"
         elif current is None:
             g["state"] = "unknown"
         elif _met(info, current, g["target"]):
-            g["state"] = "met"
+            # Met only past the band (CA1 O15): a reading a hair over the
+            # line is inside the number's own week-to-week movement.
+            g["state"] = "met" if abs(current - g["target"]) >= (tb.get("band") or 0) else "at_target"
         else:
-            cmp = metrics.compare(g["metric"], g["baseline_value"], current)
+            cmp = metrics.compare(g["metric"], g["baseline_value"], current, band=tb.get("baseline_band"))
             g["state"] = {"improved": "moving_right_way",
                           "worsened": "moving_wrong_way"}.get(cmp["verdict"], "flat")
         if g.get("deadline"):
@@ -140,7 +163,9 @@ def summarise(g) -> str:
     # M/D/YY, never the stored ISO deadline (re-audit A34).
     from time_utils import mdy
     by = f" by {mdy(g['deadline'])}" if g.get("deadline") else ""
-    state = {"met": "met", "moving_right_way": "moving the right way",
+    state = {"met": "met", "at_target": "at the target, but within its normal week-to-week movement — not yet a "
+                                        "clear hit",
+             "moving_right_way": "moving the right way",
              "moving_wrong_way": "moving the wrong way", "flat": "no clear movement yet",
              "missed": "deadline passed without reaching it"}.get(g["state"], g["state"])
     return f"{g['label']}: {fmt(g['current'])} against a target of {target}{by} — {state}."

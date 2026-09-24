@@ -99,7 +99,49 @@ MIN_COVERAGE = 0.7
 # is being measured, not only the same metric (re-audit A18).
 AUTOMATIC_SOURCES = ("observed", "reprice", "slow_day_campaign", "schedule")
 
-BASELINE_KINDS = ("prior window", "matched weekdays", "same weeks last year")
+BASELINE_KINDS = ("prior window", "matched weekdays", "same weeks last year", "before the trigger")
+# ── regression to the mean (CA2 #1) ─────────────────────────────────────────
+# A recommendation fires because a number was BAD: labor over target, the
+# worst weekday of seven, a spike in waste. The window that fired it is the
+# window a number is most likely to come back from on its own. Measured
+# against that window, a change that did nothing read "improved" 54% of the
+# time and "worsened" 11% (CA2 probe R). So a tracker on a TRIGGERED
+# recommendation — one a surface showed before the owner took it, or an
+# alert — is never measured against the window that triggered it:
+#
+#   trigger window   the tracker's window length ending the day before the
+#                    recommendation was first shown (its chain's start) —
+#                    what the card was reading when it fired. Stored as
+#                    trigger_start / trigger_end with its reading,
+#                    trigger_value.
+#   baseline         the MIRROR of the after-window about the trigger: the
+#                    same length, as far before the trigger window as the
+#                    after-window starts after it. A number's pull back to
+#                    its usual level after a bad stretch is the same looking
+#                    back as looking forward, so a change that does nothing
+#                    reads improved as often as worsened (the probe-R
+#                    regression test). A longer trailing baseline (8–12
+#                    weeks) was tried and read "worsened" twice as often as
+#                    "improved" for a do-nothing change — the after-window
+#                    sits nearer the trigger than most of those weeks.
+#                    Adjusted by last year's same weeks where a year covers
+#                    both, as any seasonal baseline is.
+#   fallback         when that window cannot be read (too little history,
+#                    under MIN_COVERAGE), the old baseline is used and, if
+#                    it overlaps the trigger window, the result is flagged
+#                    `baseline_overlaps_trigger`: shown, never counted —
+#                    not as a win, not as a loss, not in learning, not in
+#                    delivered value.
+TRIGGER_BASELINE_KIND = "before the trigger"
+# A recommendation taken long after it fired is no longer measured from its
+# trigger: past this many days between the trigger window's end and the
+# start, the mirror would reach back across seasons, and the plain baseline
+# (which then cannot overlap the trigger window) is used.
+TRIGGER_MAX_GAP_DAYS = 56
+# Trackers whose key names a recommendation shown before it was taken are
+# triggered (the episode's first showing); an alert read is triggered by
+# the alert. A routine action (a schedule published) is not.
+_ALERT_TRIGGERED_PREFIX = "observed:alert_"
 ATTRIBUTION = ("none", "associated", "consistent", "held")
 RECHECK_VERDICTS = ("held", "faded", "reversed", "unknown")
 _MOVED = ("improved", "worsened")
@@ -232,13 +274,15 @@ def _row(r):
         # "associated" — never "consistent" on a check that did not happen.
         if not d.get("attribution"):
             d["attribution"] = grade(d.get("verdict"), None, conc, checked=conc is not None,
-                                     checkin=_checkin_of(d))
+                                     checkin=_checkin_of(d), overlaps=overlaps_trigger(d))
     else:
         d["attribution"] = None
     d["owner_checkin"] = _checkin_of(d)
+    d["baseline_overlaps_trigger"] = overlaps_trigger(d)
     d["attribution_label"] = attribution_label(d)
     d["validated"] = is_validated(d)
     d["counts"] = counts_in_delivered(d)
+    d["grade_phrase"] = grade_phrase(d) if d.get("status") == "evaluated" else None
     d["result_line"] = result_line(d) if d.get("status") == "evaluated" else None
     return d
 
@@ -468,6 +512,10 @@ ALERT_METRICS = {
 
 OBSERVED_ACTIONS = {
     "schedule_published": ("labor_pct", "Published a schedule"),
+    # Informational only (CA2 #7, INFORMATIONAL_PREFIXES): an order sent is
+    # routine buying, not a change aimed at food cost %, and its tracker
+    # accrued food-cost "savings" no recommendation stood behind. What the
+    # number did next is still shown; it never counts as value or learning.
     "supplier_order_sent": ("food_cost_pct", "Sent a supplier order from the draft"),
     # "post_published" used to be here, measured against SALES. Home says
     # in as many words that a post has no honest metric (home_brief's
@@ -481,11 +529,25 @@ OBSERVED_ACTIONS = {
 # what the metric did next — useful to see — but it is informational and
 # never counts as value delivered (realised() and total_value skip it).
 INFORMATIONAL_PREFIX = "observed:alert_"
+# Every key that measures what followed something other than a change the
+# owner made on Cavnar's advice (rec_learning holds the same tuple):
+#   observed:alert_…               an alert READ
+#   observed:supplier_order_sent:… a routine order (CA2 #7)
+#   observed:untaken:…             a recommendation shown and NOT taken — the
+#                                  comparison group for the ones that were
+#                                  (CA2 #11, observe_untaken)
+UNTAKEN_PREFIX = "observed:untaken:"
+INFORMATIONAL_PREFIXES = (INFORMATIONAL_PREFIX, "observed:supplier_order_sent:", UNTAKEN_PREFIX)
 
 
 def is_informational(r) -> bool:
-    """A tracker that measures what followed a READ, not a change."""
-    return str((r or {}).get("source_key") or "").startswith(INFORMATIONAL_PREFIX)
+    """A tracker that measures what followed a READ (or a routine order, or
+    advice not taken), not a change — shown, never counted."""
+    return str((r or {}).get("source_key") or "").startswith(INFORMATIONAL_PREFIXES)
+
+
+def _informational_key(key) -> bool:
+    return str(key or "").startswith(INFORMATIONAL_PREFIXES)
 
 
 # ── one tracker per number ──────────────────────────────────────────────────
@@ -552,7 +614,7 @@ def _live_on(conn, restaurant_id, metric, family=False, include_informational=Fa
     fam = metrics.family(metric)
     want = metrics.normalize(metric)
     for r in rows:
-        if not include_informational and str(r["source_key"] or "").startswith(INFORMATIONAL_PREFIX):
+        if not include_informational and _informational_key(r["source_key"]):
             continue
         # Normalised both sides: a row written before keys were normalised
         # still blocks its own number (re-audit A17).
@@ -597,11 +659,11 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
     # blocks a second informational one. Automatic, so the FAMILY gate
     # (re-audit A18): a schedule published while overtime is measured
     # would read the same labor dollars twice.
+    key = f"observed:{action}:{today.strftime('%Y-%m')}"
     live = in_flight_on(restaurant_id, metric, db_path=db_path, family=True,
-                        include_informational=action.startswith("alert_"))
+                        include_informational=_informational_key(key))
     if live:
         return None
-    key = f"observed:{action}:{today.strftime('%Y-%m')}"
     # Once per metric per calendar month, whatever became of the first:
     # the month's key was unique only while tracking, so a schedule
     # published on the 30th started a second August tracker the day after
@@ -621,6 +683,84 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
                       db_path=db_path, today=today, gate="family")
     except TrackerRefused:
         return None
+
+
+# ── advice not taken: the comparison group (CA2 #11) ────────────────────────
+# Only recommendations the owner TOOK were ever measured, so a success rate
+# had nothing to be compared with: a number that improves after most bad
+# stretches improves after the taken ones too. A recommendation that was
+# shown and then dismissed or left to expire now gets an informational
+# tracker on the number it carried, measured the same way (trigger, mirror
+# baseline, the restaurant's band) from the day it was settled. It never
+# counts as value or as learning (INFORMATIONAL_PREFIXES); rec_learning.
+# untaken_comparison sets taken beside not-taken, worded "compared with when
+# you didn't", never as cause.
+UNTAKEN_LOOKBACK_DAYS = 14        # episodes settled this recently get one
+# An owner who said "already doing it" did take it, just not through us.
+UNTAKEN_SKIP_REASONS = ("already_doing",)
+
+
+def observe_untaken(restaurant_id, db_path=DB_PATH, today=None) -> int:
+    """Start an informational tracker for each recommendation of this
+    restaurant shown and then dismissed or expired in the last
+    UNTAKEN_LOOKBACK_DAYS, that carried a measurable metric and has none
+    yet. Key: observed:untaken:<rec_id>. Returns how many started. Never
+    raises; refused starts (the number already being measured) are
+    skipped."""
+    today = today or local_today(restaurant_id, db_path)
+    since = (today - timedelta(days=UNTAKEN_LOOKBACK_DAYS)).isoformat()
+    try:
+        conn = get_conn(db_path)
+        try:
+            eps = [dict(r) for r in conn.execute(
+                "SELECT * FROM rec_instances i WHERE i.restaurant_id=? AND i.status IN ('dismissed','expired') "
+                "AND i.expected_metric IS NOT NULL AND i.tracker_id IS NULL "
+                "AND COALESCE(i.closed_at, i.created_at) >= ? "
+                "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=i.rec_id AND s.event='shown') "
+                "ORDER BY i.created_at", (restaurant_id, since)).fetchall()]
+            started = {r["source_key"] for r in conn.execute(
+                "SELECT source_key FROM recommendation_outcomes WHERE restaurant_id=? AND source_key LIKE ?",
+                (restaurant_id, UNTAKEN_PREFIX + "%")).fetchall()}
+            reasons = {}
+            for e in eps:
+                row = conn.execute("SELECT meta FROM rec_events WHERE rec_id=? AND event='dismissed' "
+                                   "ORDER BY at DESC, id DESC LIMIT 1", (e["rec_id"],)).fetchone()
+                try:
+                    reasons[e["rec_id"]] = (json.loads(row["meta"] or "{}") or {}).get("reason_code") if row else None
+                except (TypeError, ValueError):
+                    reasons[e["rec_id"]] = None
+        finally:
+            conn.close()
+    except Exception as ex:
+        print(f"[outcomes] untaken episodes unreadable for {restaurant_id}: {ex}")
+        return 0
+    n = 0
+    for e in eps:
+        key = f"{UNTAKEN_PREFIX}{e['rec_id']}"
+        metric = e.get("expected_metric")
+        if key in started or not metrics.known(metric) or reasons.get(e["rec_id"]) in UNTAKEN_SKIP_REASONS:
+            continue
+        metric = metrics.normalize(metric)
+        window = int(metrics.describe(metric)["default_window_days"])
+        if metrics.parse(metric)[0] in metrics.WEEKDAY_MIX_METRICS:
+            window = max(7, int(round(window / 7.0)) * 7)
+        stamps = [str(e.get(c) or "")[:10] for c in ("chain_started_at", "created_at")]
+        try:
+            first = min(date.fromisoformat(s) for s in stamps if len(s) == 10)
+        except ValueError:
+            continue
+        first = min(first, today)
+        trig = (first - timedelta(days=window), first - timedelta(days=1))
+        try:
+            record(restaurant_id, "observed", key, f"Not taken: {e.get('title') or e.get('key')}", metric,
+                   window_days=window, db_path=db_path, today=today, module=e.get("module"), gate="family",
+                   trigger=trig)
+            n += 1
+        except TrackerRefused:
+            continue
+        except Exception as ex:
+            print(f"[outcomes] untaken tracker not started for {restaurant_id} {key}: {ex}")
+    return n
 
 
 # ── baselines ───────────────────────────────────────────────────────────────
@@ -662,7 +802,76 @@ def _seasonal_shift(restaurant_id, metric, base_window, win_window, db_path):
     return out[0], out[1]
 
 
-def _baseline(restaurant_id, metric, today, window, db_path):
+def trigger_window_for(restaurant_id, source_key, window, today, db_path=DB_PATH):
+    """(start, end) dates of the window that triggered this tracker's
+    recommendation, or None for an untriggered one (see the regression-to-
+    the-mean note at TRIGGER_BASELINE_KIND): the `window` days ending the day
+    before the recommendation was first shown — its episode chain's start —
+    or before today for an alert read. Never raises."""
+    key = str(source_key or "")
+    first = None
+    if key.startswith(_ALERT_TRIGGERED_PREFIX):
+        first = today
+    elif key.startswith("observed:"):
+        return None
+    else:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND key=? "
+                               "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                               (restaurant_id, key)).fetchone()
+        except Exception as e:
+            print(f"[outcomes] trigger episode unreadable for {restaurant_id}: {e}")
+            row = None
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        row = dict(row)
+        stamps = [str(row.get(c) or "")[:10] for c in ("chain_started_at", "created_at")]
+        stamps = [s for s in stamps if len(s) == 10]
+        try:
+            first = min(date.fromisoformat(s) for s in stamps) if stamps else None
+        except ValueError:
+            first = None
+    if first is None:
+        return None
+    first = min(first, today)
+    end = first - timedelta(days=1)
+    return end - timedelta(days=int(window) - 1), end
+
+
+def mirror_window(trigger, today, window):
+    """(start, end) dates of a triggered tracker's baseline: the mirror of
+    the after-window [today, today + window − 1] about the trigger window —
+    `window` days, ending as many days before the trigger window starts as
+    the after-window starts after it ends (TRIGGER_BASELINE_KIND). Pure."""
+    ts, te = _day(trigger[0]), _day(trigger[1])
+    today = today if isinstance(today, date) else _day(today)
+    gap = max(0, (today - te).days - 1)
+    end = ts - timedelta(days=gap + 1)
+    return end - timedelta(days=int(window) - 1), end
+
+
+def _windows_overlap(a, b) -> bool:
+    return bool(a and b) and _iso(a[0]) <= _iso(b[1]) and _iso(b[0]) <= _iso(a[1])
+
+
+def _seasonal_adjust(restaurant_id, metric, raw, detail, b_start, b_end, today, window, db_path):
+    """(value, kind or None, detail): `raw` moved by what the same weeks did
+    last year, when a year of history covers the baseline and the after-
+    window; kind None when it could not be adjusted."""
+    a_end = today + timedelta(days=window - 1)
+    shift = _seasonal_shift(restaurant_id, metric, (b_start, b_end), (today, a_end), db_path)
+    adjusted = _apply_shift(metric, raw, *shift) if shift else None
+    if adjusted is None:
+        return raw, None, detail
+    return adjusted, "same weeks last year", (f"{detail}; {_fmt(metric, raw)} before, moved as the same weeks "
+                                              f"moved last year ({_fmt(metric, shift[0])} to "
+                                              f"{_fmt(metric, shift[1])})")
+
+
+def _baseline(restaurant_id, metric, today, window, db_path, trigger=None):
     """The reading the after-window is compared against (audit #30).
 
     prior window         the `window` days ending yesterday — every metric
@@ -673,9 +882,39 @@ def _baseline(restaurant_id, metric, today, window, db_path):
                          that IS the prior window).
     same weeks last year the matched window, moved by what the same weeks
                          did last year — when a year of history covers both.
+    before the trigger   a TRIGGERED recommendation (`trigger` is its
+                         trigger window, trigger_window_for): the mirror of
+                         the after-window about the trigger window (CA2 #1,
+                         TRIGGER_BASELINE_KIND), adjusted by last year where
+                         it can be. When it cannot be read the plain
+                         baseline above is used and `overlaps_trigger` says
+                         whether it overlaps the trigger window.
     """
     base, _ = metrics.parse(metric)
     seasonal = base in metrics.SEASONAL_METRICS
+    out = {"trigger": trigger, "overlaps_trigger": False, "trigger_value": None}
+    if trigger:
+        ts, te = _day(trigger[0]), _day(trigger[1])
+        tv, _ = _measure(restaurant_id, metric, ts.isoformat(), te.isoformat(), db_path)
+        out["trigger_value"] = tv
+        m_start, m_end = mirror_window(trigger, today, window)
+        if (today - te).days - 1 > TRIGGER_MAX_GAP_DAYS:
+            raw, detail = None, None        # taken long after it fired: the plain baseline below
+        else:
+            raw, detail = _measure(restaurant_id, metric, m_start.isoformat(), m_end.isoformat(), db_path)
+        if raw is not None:
+            from time_utils import mdy
+            detail = (f"{detail}; read before what prompted the recommendation ({mdy(ts.isoformat())}–"
+                      f"{mdy(te.isoformat())}), so a number coming back from a bad stretch on its own is not "
+                      f"counted as the change")
+            value, kind = raw, TRIGGER_BASELINE_KIND
+            if seasonal:
+                value, lk, detail = _seasonal_adjust(restaurant_id, metric, raw, detail, m_start, m_end, today,
+                                                     window, db_path)
+                kind = lk or kind
+            out.update(value=value, raw=raw, detail=detail, start=m_start.isoformat(), end=m_end.isoformat(),
+                       kind=kind)
+            return out
     if seasonal:
         weeks = -(-int(window) // 7)
         b_start = today - timedelta(days=weeks * 7)
@@ -688,15 +927,12 @@ def _baseline(restaurant_id, metric, today, window, db_path):
     raw, detail = _measure(restaurant_id, metric, b_start.isoformat(), b_end.isoformat(), db_path)
     value = raw
     if raw is not None and seasonal:
-        a_end = today + timedelta(days=window - 1)
-        shift = _seasonal_shift(restaurant_id, metric, (b_start, b_end), (today, a_end), db_path)
-        adjusted = _apply_shift(metric, raw, *shift) if shift else None
-        if adjusted is not None:
-            value, kind = adjusted, "same weeks last year"
-            detail = (f"{detail}; {_fmt(metric, raw)} before, moved as the same weeks moved last year "
-                      f"({_fmt(metric, shift[0])} to {_fmt(metric, shift[1])})")
-    return {"value": value, "raw": raw, "detail": detail, "start": b_start.isoformat(),
-            "end": b_end.isoformat(), "kind": kind}
+        value, lk, detail = _seasonal_adjust(restaurant_id, metric, raw, detail, b_start, b_end, today, window,
+                                             db_path)
+        kind = lk or kind
+    out.update(value=value, raw=raw, detail=detail, start=b_start.isoformat(), end=b_end.isoformat(), kind=kind,
+               overlaps_trigger=_windows_overlap((b_start, b_end), trigger) if trigger else False)
+    return out
 
 
 def expected_for(r, start, end, db_path=DB_PATH):
@@ -724,7 +960,7 @@ def expected_for(r, start, end, db_path=DB_PATH):
 # ── starting a tracker ──────────────────────────────────────────────────────
 
 def record(restaurant_id, source, source_key, title, metric, user_id=None,
-           window_days=None, db_path=DB_PATH, today=None, module=None, gate="metric"):
+           window_days=None, db_path=DB_PATH, today=None, module=None, gate="metric", trigger="auto"):
     """Start tracking one recommendation the owner has committed to.
 
     Idempotent on (restaurant, source_key) while tracking — committing to the
@@ -742,6 +978,13 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     500'd on the unique index (re-audit A16): the gate is checked again
     inside BEGIN IMMEDIATE, so the second waits for the first and is
     answered by it.
+
+    `trigger` is the window that fired the recommendation, (start, end):
+    "auto" resolves it from the recommendation's episode or alert
+    (trigger_window_for), None says the tracker was not triggered. A
+    triggered tracker's baseline is never its trigger window (CA2 #1). The
+    restaurant's own noise band for this comparison is stored with it
+    (noise_band, false_alarm_rate, band_basis — CA2 #3).
     """
     if not metrics.known(metric):
         raise ValueError(f"unknown metric {metric}")
@@ -757,7 +1000,7 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
         window = max(7, int(round(window / 7.0)) * 7)
     if gate == "metric" and source in AUTOMATIC_SOURCES:
         gate = "family"
-    informational = str(source_key or "").startswith(INFORMATIONAL_PREFIX)
+    informational = _informational_key(source_key)
 
     def _gate(conn):
         existing = conn.execute(
@@ -782,9 +1025,16 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
 
     # The baseline ends before today: today is part of the "after", and a
     # baseline that includes the day the change started is contaminated by it.
-    b = _baseline(restaurant_id, metric, today, window, db_path)
+    if trigger == "auto":
+        trigger = trigger_window_for(restaurant_id, source_key, window, today, db_path=db_path)
+    b = _baseline(restaurant_id, metric, today, window, db_path, trigger=trigger)
+    nb = {"band": None, "sigma": None, "false_alarm_rate": None, "basis": None}
+    if b["value"] is not None:
+        nb = metrics.noise_band(restaurant_id, metric, window_days=window, end=b["end"], before=b["raw"],
+                                db_path=db_path)
     evaluate_on = today + timedelta(days=window)
     mod = resolve_module(restaurant_id, source, source_key, metric, module=module, db_path=db_path)
+    trig = b.get("trigger")
 
     conn = get_conn(db_path)
     try:
@@ -801,11 +1051,15 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
             cur = conn.execute(
                 "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
                 "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
-                "started_on, evaluate_on, status, created_by, module) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?)",
+                "started_on, evaluate_on, status, created_by, module, trigger_value, trigger_start, trigger_end, "
+                "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?)",
                 (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
                  b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
-                 user_id, mod))
+                 user_id, mod, b.get("trigger_value"),
+                 _iso(trig[0]) if trig else None, _iso(trig[1]) if trig else None,
+                 1 if b.get("overlaps_trigger") else 0, nb.get("band"), nb.get("sigma"),
+                 nb.get("false_alarm_rate"), nb.get("basis")))
         except sqlite3.IntegrityError:
             # The same key started by another connection that got there
             # first (a database without the lock's guarantee): answered by it.
@@ -859,6 +1113,12 @@ _COST_FAMILIES = {"labor_cost", "food_cost", "comps", "voids"}
 _REC_MODULE_FAMILY = {"labor": "labor_cost", "schedule": "labor_cost", "food": "food_cost",
                       "reviews": "guest_rating", "marketing": "sales", "guests": "sales"}
 _DISOWNED_LIKE = '%"did_it": "no"%'
+_CHANGED_LIKE = '%"conditions_changed": true%'
+# The SQL twin of result_counts for a joined tracker `o` (cumulative and
+# _release_days): not disowned, no "something else changed" check-in, not
+# measured against its trigger window. Two ? — _DISOWNED_LIKE, _CHANGED_LIKE.
+_COUNTS_SQL = ("(o.owner_checkin IS NULL OR (o.owner_checkin NOT LIKE ? AND o.owner_checkin NOT LIKE ?)) "
+               "AND COALESCE(o.baseline_overlaps_trigger, 0) = 0")
 
 
 def _rec_family(key, module, expected_metric):
@@ -960,8 +1220,8 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                 "SELECT id, source_key, title, metric, started_on, evaluate_on, after_end, owner_checkin FROM "
                 "recommendation_outcomes WHERE restaurant_id=? AND id!=? AND status IN ('tracking','evaluated') "
                 "AND started_on<=?", (rid, r.get("id") or 0, e)).fetchall():
-            if str(o["source_key"] or "").startswith(INFORMATIONAL_PREFIX):
-                continue        # reading an alert is not a change
+            if _informational_key(o["source_key"]):
+                continue        # reading an alert (or advice not taken) is not a change
             ofam = metrics.family(o["metric"])
             if ofam != fam and not (cost and ofam == "sales"):
                 continue
@@ -1111,14 +1371,21 @@ def pre_trend(r, verdict, after_value, db_path=DB_PATH):
     lead = (after_mid - base_mid).total_seconds() / 86400.0
     projected = float(base) + (float(v2) - float(v1)) * (lead / step if step else 0.0)
     _exp, scale, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
-    if metrics.compare(r["metric"], projected, after_value, band_scale=scale)["verdict"] == verdict:
+    if _cmp(r, projected, after_value, scale)["verdict"] == verdict:
         return None             # past the band beyond the trend: not explained by it
     return {"kind": "trend", "label": TREND_LABEL, "date": _iso(r["baseline_start"])}
 
 
+def _cmp(r, expected, value, scale=1.0):
+    """metrics.compare for one tracker, with the restaurant's own noise band
+    stored on it at the start (CA2 #3); a row from before bands were stored
+    reads against the stated band alone."""
+    return metrics.compare(r["metric"], expected, value, band_scale=scale, band=r.get("noise_band"))
+
+
 # ── attribution: how strongly a move can be tied to the change (#23) ────────
 
-def grade(verdict, multiple, concurrent, recheck_verdict=None, checked=True, checkin=None) -> str:
+def grade(verdict, multiple, concurrent, recheck_verdict=None, checked=True, checkin=None, overlaps=False) -> str:
     """none | associated | consistent | held. Never a claim of cause.
 
     none        no clear change, or nothing could be measured.
@@ -1140,7 +1407,8 @@ def grade(verdict, multiple, concurrent, recheck_verdict=None, checked=True, che
     if verdict not in _MOVED:
         return "none"
     ck = checkin if isinstance(checkin, dict) else {}
-    if concurrent or not checked or ck.get("conditions_changed") or ck.get("did_it") == "no":
+    if (concurrent or not checked or overlaps or ck.get("conditions_changed")
+            or ck.get("did_it") == "no"):
         return "associated"
     if recheck_verdict == "held":
         return "held"
@@ -1158,10 +1426,10 @@ def regrade(r, db_path=DB_PATH):
     if r.get("verdict") not in _MOVED:
         return "none"
     first, scale, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
-    cmp = metrics.compare(r["metric"], first, r.get("after_value"), band_scale=scale)
+    cmp = _cmp(r, first, r.get("after_value"), scale)
     conc = _concurrent_list(r)
     return grade(r["verdict"], cmp["multiple"], conc, recheck_verdict=r.get("recheck_verdict"),
-                 checked=conc is not None, checkin=_checkin_of(r))
+                 checked=conc is not None, checkin=_checkin_of(r), overlaps=overlaps_trigger(r))
 
 
 def attribution_label(r) -> str:
@@ -1180,6 +1448,10 @@ def attribution_label(r) -> str:
     if ck.get("did_it") == "no":
         return (f"{moved} over these weeks, but you said this change wasn't made, so the result isn't "
                 f"credited to it.")
+    if overlaps_trigger(r):
+        return (f"{moved} over these weeks, but it could only be measured against the same weeks that prompted "
+                f"the recommendation. A number read right after an unusually bad stretch tends to come back on "
+                f"its own, so this result isn't counted either way.")
     a = r.get("attribution")
     conc = [c for c in (r.get("concurrent") or []) if isinstance(c, dict)]
     rechecked = mdy(r.get("rechecked_at") or r.get("recheck_on")) if r.get("recheck_verdict") else None
@@ -1221,16 +1493,70 @@ def is_validated(r) -> bool:
     """A measured win whose re-check held with nothing else changing on its
     family (audit #34)."""
     return (r.get("status") == "evaluated" and r.get("verdict") == "improved"
-            and r.get("attribution") == "held" and not is_informational(r) and not disowned(r))
+            and r.get("attribution") == "held" and result_counts(r))
+
+
+def overlaps_trigger(r) -> bool:
+    """The result was read against a baseline overlapping the window that
+    triggered its recommendation (CA2 #1): shown, never counted."""
+    try:
+        return bool(int((r or {}).get("baseline_overlaps_trigger") or 0))
+    except (TypeError, ValueError):
+        return bool((r or {}).get("baseline_overlaps_trigger"))
+
+
+def conditions_changed(r) -> bool:
+    """The owner's check-in said something else changed in those weeks."""
+    c = _checkin_of(r or {})
+    return bool(c and c.get("conditions_changed"))
+
+
+def result_counts(r) -> bool:
+    """Whether an evaluated result is admitted as a measurement of the
+    recommendation at all — THE rule learning (rec_learning.learned_verdict)
+    and value (counts_in_delivered) share (CA2 #7): not an alert read, a
+    routine order or advice not taken (informational), not a change the
+    owner said they never made or that something else changed alongside
+    (their check-in), and not one measured against the window that
+    triggered it (baseline_overlaps_trigger)."""
+    return ((r or {}).get("status") == "evaluated" and not is_informational(r) and not disowned(r)
+            and not conditions_changed(r) and not overlaps_trigger(r))
 
 
 def counts_in_delivered(r) -> bool:
-    """An evaluated move that still counts: a change the owner made (not an
-    alert read) that has not faded or reversed at its re-check (#33), and
-    that the owner has not said they never made (#21)."""
-    return (r.get("status") == "evaluated" and r.get("verdict") in _MOVED
-            and not is_informational(r) and r.get("recheck_verdict") not in _FAILED_RECHECK
-            and not disowned(r))
+    """An evaluated move that still counts: admitted as a measurement
+    (result_counts) and not faded or reversed at its re-check (#33). A result
+    counts here exactly when rec_learning counts it as improved or worsened
+    (the learning == value test)."""
+    return (result_counts(r) and r.get("verdict") in _MOVED
+            and r.get("recheck_verdict") not in _FAILED_RECHECK)
+
+
+# How a result's attribution grade reads in one clause, wherever a result is
+# quoted in words (outcomes.summarise, decisions, the emails — CA1 red flag
+# 19). "held" is the only grade that may say it held.
+GRADE_PHRASES = {
+    "held": "it held when re-checked, with nothing else changing on this number",
+    "consistent": "a clear move (more than twice normal variation), with nothing else changing on this number",
+    "associated_other": "other changes fell in the same weeks, so it can't be separated from them",
+    "associated_once": "past normal variation once — not yet a clear result",
+}
+
+
+def grade_phrase(r) -> str:
+    """The attribution grade of a moved result as one clause, or None."""
+    if r.get("status") != "evaluated" or r.get("verdict") not in _MOVED:
+        return None
+    a = r.get("attribution")
+    if a in ("held", "consistent"):
+        return GRADE_PHRASES[a]
+    if a == "associated":
+        other = [c for c in (r.get("concurrent") if isinstance(r.get("concurrent"), list)
+                             else (_concurrent_list(r) or [])) if isinstance(c, dict)]
+        if other or conditions_changed(r):
+            return GRADE_PHRASES["associated_other"]
+        return GRADE_PHRASES["associated_once"]
+    return None
 
 
 def _checkin_of(r):
@@ -1300,7 +1626,7 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
     after, after_detail = _measure(r["restaurant_id"], r["metric"], after_start.isoformat(),
                                    after_end.isoformat(), db_path)
     expected, scale, _kind = expected_for(r, after_start.isoformat(), after_end.isoformat(), db_path)
-    cmp = metrics.compare(r["metric"], expected, after, band_scale=scale)
+    cmp = _cmp(r, expected, after, scale)
     # Priced on the after-window's own sales and trading days (re-audit A1).
     dollars = (metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path,
                                        window=(after_start.isoformat(), after_end.isoformat()))
@@ -1309,7 +1635,8 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
     trend = pre_trend(r, cmp["verdict"], after, db_path)
     if trend:
         concurrent.append(trend)
-    attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r))
+    attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r),
+                        overlaps=overlaps_trigger(r))
     recheck_on = recheck_on_for(r) if (cmp["verdict"] in _MOVED and not is_informational(r)) else None
     conn = get_conn(db_path)
     try:
@@ -1337,9 +1664,18 @@ def evaluate_due(restaurant_id=None, db_path=DB_PATH, today=None, max_seconds=No
     (a day ahead of UTC at most) and each tracker is still only evaluated
     once ITS restaurant's date has reached evaluate_on. `max_seconds` bounds
     one pass by wall clock; oldest first, and an evaluated tracker leaves
-    the set, so the next pass carries on from where this one stopped."""
+    the set, so the next pass carries on from where this one stopped.
+
+    For one restaurant it first starts the informational trackers of
+    recently settled advice not taken (observe_untaken, CA2 #11) — the same
+    daily per-restaurant pass, so they need no job of their own."""
     local = today or (local_today(restaurant_id, db_path) if restaurant_id is not None
                       else date.today() + timedelta(days=1))
+    if restaurant_id is not None:
+        try:
+            observe_untaken(restaurant_id, db_path=db_path, today=local)
+        except Exception as e:
+            print(f"[outcomes] untaken trackers skipped for {restaurant_id}: {e}")
     conn = get_conn(db_path)
     try:
         sql = ("SELECT id, restaurant_id FROM recommendation_outcomes WHERE status='tracking' AND evaluate_on<=?")
@@ -1400,7 +1736,7 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     start, end = _aligned_window(r, _day(r["recheck_on"]) - timedelta(days=1))
     value, _detail = _measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(), db_path)
     expected, scale, _kind = expected_for(r, start.isoformat(), end.isoformat(), db_path)
-    cmp = metrics.compare(r["metric"], expected, value, band_scale=scale)
+    cmp = _cmp(r, expected, value, scale)
     if cmp["verdict"] == "unknown":
         rv = "unknown"
     elif cmp["verdict"] == r["verdict"]:
@@ -1419,9 +1755,9 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     if trend:
         concurrent.append(trend)
     first, _s, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
-    eval_cmp = metrics.compare(r["metric"], first, r.get("after_value"), band_scale=_s)
+    eval_cmp = _cmp(r, first, r.get("after_value"), _s)
     attribution = grade(r["verdict"], eval_cmp["multiple"], concurrent, recheck_verdict=rv,
-                        checkin=_checkin_of(r))
+                        checkin=_checkin_of(r), overlaps=overlaps_trigger(r))
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE recommendation_outcomes SET recheck_value=?, recheck_verdict=?, rechecked_at=?, "
@@ -1484,9 +1820,11 @@ def _unit_amount(r, monthly, per=None):
 
 
 def _accrues(r) -> bool:
-    return (r.get("status") == "evaluated" and r.get("verdict") in _MOVED
-            and r.get("dollars_monthly") not in (None, 0) and not is_informational(r)
-            and not disowned(r))
+    """A result accrues measured days only while it is admitted as a
+    measurement (result_counts): a check-in saying something else changed
+    stops it as a "no" does (CA2 #7). A failed re-check stops it at the
+    re-check (accrue_daily)."""
+    return (r.get("verdict") in _MOVED and r.get("dollars_monthly") not in (None, 0) and result_counts(r))
 
 
 def _breadth(metric) -> int:
@@ -1571,7 +1909,7 @@ def _read_day(r, d, db_path):
     start, end = s.isoformat(), e.isoformat()
     expected, scale, _k = expected_for(r, start, end, db_path)
     value, _ = _measure(r["restaurant_id"], r["metric"], start, end, db_path)
-    cmp = metrics.compare(r["metric"], expected, value, band_scale=scale)
+    cmp = _cmp(r, expected, value, scale)
     if cmp["verdict"] == "unknown":
         return None
     if cmp["verdict"] != r["verdict"]:
@@ -1681,7 +2019,11 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
 
     Summed in SQL (re-audit A35), electing at read time one reading per
     family and day — the broadest that held, then the largest (_put_day's
-    rule) — from trackers the owner has not disowned. Two more rules:
+    rule) — from trackers still admitted as measurements (_COUNTS_SQL, the
+    SQL twin of result_counts: not disowned, no "something else changed"
+    check-in, not measured against its trigger window). `by_grade` splits
+    the same counted days into consistent_or_held and associated (CA2 #7),
+    side by side. Two more rules:
       * SALES ARE NOT SAVINGS (re-audit A6). A sales lift is gross revenue;
         it is summed apart, in `sales_lift`, and never into `total`.
       * A SALES MOVE IS NOT A COST SAVING (re-audit A5). A labor, food-cost,
@@ -1691,8 +2033,8 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
     denied = set(denied_modules or ())
     excluded = {metrics.parse(m)[0] for m in (exclude_metrics or ())}
     denied_bases = {b for b, m in METRIC_MODULE.items() if m in denied}
-    where = ["v.restaurant_id=?", "(o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE ?)"]
-    args = [restaurant_id, _DISOWNED_LIKE]
+    where = ["v.restaurant_id=?", _COUNTS_SQL]
+    args = [restaurant_id, _DISOWNED_LIKE, _CHANGED_LIKE]
     if since:
         where.append("v.day >= ?")
         args.append(str(since)[:10])
@@ -1711,6 +2053,7 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
     cost = sorted(_COST_FAMILIES)
     cte = (
         "WITH v AS (SELECT v.day, COALESCE(v.module, 'other') AS module, v.family, v.dollars, v.held, "
+        "CASE WHEN o.attribution IN ('consistent','held') THEN 'consistent_or_held' ELSE 'associated' END AS grade, "
         f"v.outcome_id, CASE WHEN {_BASE_SQL} IN ({','.join('?' for _ in narrow)}) THEN 1 ELSE 0 END AS rk "
         "FROM outcome_value_days v JOIN recommendation_outcomes o ON o.id = v.outcome_id "
         f"WHERE {' AND '.join(where)}), "
@@ -1744,6 +2087,13 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
             counted_days.setdefault(bool(r["sl"]), set()).update((r.pop("ds") or "").split(","))
             sums.append(r)
         counted_days = {k: len(v - {""}) for k, v in counted_days.items()}
+        # The same counted days by attribution grade (CA2 #7): a result tied
+        # to other changes ("associated") is reported apart from one that
+        # was clear or held — never summed into it.
+        grades = {}
+        for r in conn.execute(cte + "SELECT family = 'sales' AS sl, grade, ROUND(SUM(dollars), 4) AS net "
+                                    "FROM final GROUP BY sl, grade", cargs).fetchall():
+            grades.setdefault(bool(r["sl"]), {})[r["grade"]] = round(float(r["net"] or 0), 2)
     finally:
         conn.close()
 
@@ -1763,6 +2113,8 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
             "days": int(counted_days.get(sl) or 0),
             "measured_days": int(m["n"]) if m else 0,
             "by_module": by_module,
+            "by_grade": {"consistent_or_held": (grades.get(sl) or {}).get("consistent_or_held", 0.0),
+                         "associated": (grades.get(sl) or {}).get("associated", 0.0)},
         }
     out = _part(False)
     lift = _part(True)
@@ -1783,8 +2135,12 @@ def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path
       measured days are released, so another change on the same family that
       day is counted instead (the one-per-family rule, #4).
     - conditions_changed: the grade is capped at "associated", like any other
-      change in the same weeks (#31).
-    - "yes"/"partly" after a "no": the days are re-accrued by the next pass.
+      change in the same weeks (#31), and — as learning already read it
+      (rec_learning.learned_verdict) — the result stops counting in Delivered
+      and its days are released, as for a "no" (CA2 #7: learning and value
+      count the same results).
+    - "yes"/"partly" with nothing else changed, after either: the days are
+      re-accrued by the next pass.
     The grade is recomputed from the stored result by the one grading rule
     (regrade -> grade, re-audit A4/A22): a "yes" after a "held" re-check is
     held again, and a check-in given while the tracker was still running is
@@ -1798,16 +2154,19 @@ def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path
             return None
         r = dict(row)
         before = _checkin_of(r) or {}
-        was_disowned = before.get("did_it") == "no"
+        # "No" and "something else changed" both take the result out of
+        # delivered value, as they take it out of learning (CA2 #7).
+        was_discounted = before.get("did_it") == "no" or bool(before.get("conditions_changed"))
         ck = {"did_it": did_it, "conditions_changed": bool(conditions_changed),
               "at": at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}
+        discounted = did_it == "no" or bool(conditions_changed)
         r["owner_checkin"] = ck
         grade_now = regrade(r, db_path) if r.get("status") == "evaluated" else r.get("attribution")
         conn.execute("UPDATE recommendation_outcomes SET owner_checkin=?, attribution=? WHERE id=?",
                      (json.dumps(ck), grade_now, r["id"]))
-        if did_it == "no" and not was_disowned:
+        if discounted and not was_discounted:
             _release_days(conn, r)
-        elif did_it != "no" and was_disowned:
+        elif not discounted and was_discounted:
             # Re-accrued from the start by the next accrual pass.
             conn.execute("DELETE FROM outcome_value_days WHERE outcome_id=?", (r["id"],))
             conn.execute("UPDATE recommendation_outcomes SET accrued_through=NULL WHERE id=?", (r["id"],))
@@ -1829,8 +2188,8 @@ def _release_days(conn, r):
             "SELECT v.outcome_id, v.metric, v.dollars FROM outcome_value_days v "
             "JOIN recommendation_outcomes o ON o.id=v.outcome_id "
             "WHERE v.restaurant_id=? AND v.family=? AND v.day=? AND v.held=1 AND v.dollars<>0 AND v.outcome_id<>? "
-            "AND (o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE ?)",
-            (r["restaurant_id"], d["family"], d["day"], r["id"], _DISOWNED_LIKE)).fetchall()
+            f"AND {_COUNTS_SQL}",
+            (r["restaurant_id"], d["family"], d["day"], r["id"], _DISOWNED_LIKE, _CHANGED_LIKE)).fetchall()
         if rows:
             nxt = min(rows, key=lambda x: (_breadth(x["metric"]), -abs(float(x["dollars"] or 0)), x["outcome_id"]))
             conn.execute("UPDATE outcome_value_days SET counted=1 WHERE outcome_id=? AND day=?",
@@ -1857,7 +2216,7 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
             days_in = (end - started).days + 1
             r["interim"] = {"value": value, "days": days_in, "days_in": days_in, "as_of": end.isoformat(),
                             "baseline": expected,
-                            **metrics.compare(r["metric"], expected, value, band_scale=scale)}
+                            **_cmp(r, expected, value, scale)}
         out.append(r)
     return out
 
@@ -1871,14 +2230,20 @@ def get_outcome(outcome_id, db_path=DB_PATH):
     return _row(row) if row else None
 
 
-def list_outcomes(restaurant_id, status=None, limit=50, db_path=DB_PATH, ids=None):
+def list_outcomes(restaurant_id, status=None, limit=50, db_path=DB_PATH, ids=None, include_untaken=False):
     """Newest first. `ids` narrows to those trackers (the timeline asks for
     the ones its page links to, however old — the newest 50 alone left an
-    older result unshown)."""
+    older result unshown). Advice NOT taken (observe_untaken's comparison
+    trackers) is left out unless `include_untaken`: it is a comparison the
+    learning reads (rec_learning.untaken_comparison), not a result of the
+    owner's to list, brief or email."""
     conn = get_conn(db_path)
     try:
         sql = "SELECT * FROM recommendation_outcomes WHERE restaurant_id=?"
         args = [restaurant_id]
+        if not include_untaken:
+            sql += " AND source_key NOT LIKE ?"
+            args.append(UNTAKEN_PREFIX + "%")
         if status:
             sql += " AND status=?"
             args.append(status)
@@ -2267,6 +2632,16 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None,
         "net_by_module": net_by_module,
         "validated_monthly": round(sum(abs(float(r["dollars_monthly"])) for r in validated), 2),
         "validated": len(validated),
+        # The improvements by attribution grade (CA2 #7), side by side and
+        # never summed into each other: a clear or held move against one
+        # other changes fell beside (or that crossed the band only once).
+        # Together they are `monthly`; a surface quotes them apart.
+        "consistent_monthly": round(sum(abs(float(r["dollars_monthly"])) for r in wins
+                                        if r.get("attribution") in ("consistent", "held")), 2),
+        "consistent": len([r for r in wins if r.get("attribution") in ("consistent", "held")]),
+        "associated_monthly": round(sum(abs(float(r["dollars_monthly"])) for r in wins
+                                        if r.get("attribution") not in ("consistent", "held")), 2),
+        "associated": len([r for r in wins if r.get("attribution") not in ("consistent", "held")]),
         "faded": len([r for r in evaluated if r.get("verdict") == "improved"
                       and r.get("recheck_verdict") in _FAILED_RECHECK]),
         "evaluated": len(evaluated),
@@ -2310,6 +2685,7 @@ _BASELINE_PHRASE = {
     "prior window": "the same length of time before",
     "matched weekdays": "the same weekdays in the weeks before",
     "same weeks last year": "the weeks before, adjusted by how the same weeks moved last year",
+    TRIGGER_BASELINE_KIND: "the same number of weeks before what prompted the recommendation",
 }
 
 
@@ -2347,6 +2723,13 @@ def summarise(r) -> str:
     word = "improved" if r["verdict"] == "improved" else "got worse"
     if disowned(r):
         return f"{r['title']}: {moved} — {word}, but it isn't counted: you said the change wasn't made."
+    if conditions_changed(r):
+        return (f"{r['title']}: {moved} — {word}, but it isn't counted: you said something else changed in "
+                f"the same weeks.")
+    if overlaps_trigger(r):
+        return (f"{r['title']}: {moved} — {word}, but it isn't counted: it could only be measured against the "
+                f"weeks that prompted the recommendation, and a number often comes back from a bad stretch on "
+                f"its own.")
     money = ""
     if r.get("dollars_monthly"):
         money = f", roughly ${abs(r['dollars_monthly']):,.0f}/month"
@@ -2357,10 +2740,31 @@ def summarise(r) -> str:
         when = mdy(r.get("rechecked_at") or r.get("recheck_on"))
         out += (f" It no longer held when re-checked on {when}, so it "
                 f"{'no longer counts' if r['verdict'] == 'improved' else 'is no longer subtracted'}.")
+        return out
+    # The attribution grade, in words (CA1 red flag 19): "held" only for a
+    # result whose re-check held, and every grade before-and-after only.
+    phrase = r.get("grade_phrase") or grade_phrase(r)
+    if phrase:
+        out += f" {phrase[:1].upper()}{phrase[1:]}. Measured, not proven cause."
     return out
 
 
 # ── boot ────────────────────────────────────────────────────────────────────
+
+# Columns added at boot by init_outcomes (DATABASE_SCHEMA.md,
+# recommendation_outcomes): the trigger a result is measured clear of (CA2
+# #1) and the restaurant's own noise band it was read against (CA2 #3).
+_ADDED_COLUMNS = (
+    ("trigger_value", "REAL"),                        # the metric over the trigger window
+    ("trigger_start", "TEXT"),                        # the window that fired the recommendation
+    ("trigger_end", "TEXT"),
+    ("baseline_overlaps_trigger", "INTEGER DEFAULT 0"),  # 1 = shown, never counted
+    ("noise_band", "REAL"),                           # this restaurant's band, metric units (NULL = stated band)
+    ("noise_sigma", "REAL"),                          # spread of one window, metric units
+    ("false_alarm_rate", "REAL"),                     # two-sided, with no real change
+    ("band_basis", "TEXT"),                           # how the band was estimated, in words
+)
+
 
 def init_outcomes(db_path=DB_PATH):
     """Boot (models.init_db, after the columns and rec_instances exist): fill
@@ -2368,14 +2772,26 @@ def init_outcomes(db_path=DB_PATH):
     recomputed is — the % change, the module (from the recommendation's own
     record where there is one), the baseline kind (every row before this
     used the prior window), the re-check date — and what cannot (the other
-    changes in an old window, until its re-check reads them) stays NULL."""
+    changes in an old window, until its re-check reads them) stays NULL.
+
+    First, the calibration columns (_ADDED_COLUMNS) on a database from
+    before them — boot only, never on a request path (CLAUDE.md)."""
     conn = get_conn(db_path)
     try:
+        try:
+            have = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
+            for col, decl in _ADDED_COLUMNS:
+                if have and col not in have:
+                    conn.execute(f"ALTER TABLE recommendation_outcomes ADD COLUMN {col} {decl}")
+            conn.commit()
+        except Exception as e:
+            print(f"[outcomes] calibration columns not added: {e}")
+        not_info = " AND ".join("source_key NOT LIKE ?" for _ in INFORMATIONAL_PREFIXES)
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM recommendation_outcomes WHERE module IS NULL OR baseline_kind IS NULL "
             "OR (delta_pct IS NULL AND delta IS NOT NULL AND baseline_value IS NOT NULL AND baseline_value != 0) "
             "OR (status='evaluated' AND verdict IN ('improved','worsened') AND recheck_on IS NULL "
-            "AND source_key NOT LIKE ?)", (INFORMATIONAL_PREFIX + "%",)).fetchall()]
+            f"AND {not_info})", tuple(p + "%" for p in INFORMATIONAL_PREFIXES)).fetchall()]
     finally:
         conn.close()
     if not rows:

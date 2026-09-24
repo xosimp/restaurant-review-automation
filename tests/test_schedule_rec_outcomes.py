@@ -32,27 +32,56 @@ def _events(db, rid):
     return [r["event"] for r in rows], rows
 
 
-def test_a_friday_after_acceptance_with_no_issues_is_improved_once(db, monkeypatch):
+def _fridays(db, rid, issues_by_offset):
+    """schedule_outcomes for Friday nights `offset` weeks from the next
+    Friday (negative = before acceptance), each in its own published week."""
+    import datetime as dt
+    fri = dt.date.today() + dt.timedelta(days=(4 - dt.date.today().weekday()) % 7 or 7)
+    c = models.get_conn(db)
+    for off, issues in issues_by_offset.items():
+        d = fri + dt.timedelta(weeks=off)
+        hid = c.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end) VALUES (?,?,?)",
+                        (rid, (d - dt.timedelta(days=4)).isoformat(), (d + dt.timedelta(days=2)).isoformat())).lastrowid
+        c.execute("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, issues) VALUES (?,?,?,?,?)",
+                  (rid, hid, d.isoformat(), "night", issues))
+    c.commit(); c.close()
+    return fri
+
+
+def test_a_friday_rec_is_judged_on_seven_watched_nights_against_its_baseline_once(db, monkeypatch):
+    """CA1 L22: one quiet Friday after accepting used to be "improved". The
+    verdict now needs REC_MIN_NIGHTS_AFTER watched Fridays after it, read
+    against the Fridays before it, past a band."""
     import datetime as dt
     # "No issue" is evidence only on a night the coverage check watched
     # (re-audit A-19); this restaurant's check was running.
-    monkeypatch.setattr(si, "watched_dates", lambda rid_, start, end, db_path=None: {str(start)[:10]})
+    monkeypatch.setattr(si, "watched_dates",
+                        lambda rid_, start, end, db_path=None: {(dt.date.fromisoformat(str(start)[:10])
+                                                                 + dt.timedelta(days=i)).isoformat()
+                                                                for i in range(400)})
     rid = create_restaurant(Restaurant(name="Gap Co", owner_email="g@x.com"), db_path=db)
     text = "Fill the gap on Friday night: nobody on Bartender."
     si.record_recommendation(rid, "coverage", text, "accepted")
     rec_ledger.record(rid, si.schedule_rec_key("coverage", text), "accepted")
-    fri = dt.date.today() + dt.timedelta(days=(4 - dt.date.today().weekday()) % 7 or 7)
-    c = models.get_conn(db)
-    hid = c.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end) VALUES (?,?,?)",
-                    (rid, (fri - dt.timedelta(days=4)).isoformat(), (fri + dt.timedelta(days=2)).isoformat())).lastrowid
-    c.execute("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, issues) VALUES (?,?,?,?,?)",
-              (rid, hid, fri.isoformat(), "night", 0))
-    c.commit(); c.close()
-    later = fri + dt.timedelta(days=5)
+    # Four Fridays before, three with a coverage issue; then one clean one.
+    fri = _fridays(db, rid, {-4: 1, -3: 1, -2: 0, -1: 1, 0: 0})
+    one_night = fri + dt.timedelta(days=5)
+    assert si.measure_accepted_recommendations(rid, db_path=db, today=one_night) == 0     # one night decides nothing
+    _fridays(db, rid, {k: 0 for k in range(1, 7)})                                         # seven clean Fridays
+    later = fri + dt.timedelta(weeks=6, days=5)
     assert si.measure_accepted_recommendations(rid, db_path=db, today=later) == 1
     assert si.measure_accepted_recommendations(rid, db_path=db, today=later) == 0      # idempotent
     events, rows = _events(db, rid)
     assert events[-1] == "outcome" and '"improved"' in rows[-1]["meta"]
+    assert '"after_nights": 7' in rows[-1]["meta"] and '"before_nights": 4' in rows[-1]["meta"]
+
+
+def test_night_rate_verdict_needs_the_floors_and_the_band():
+    assert si.night_rate_verdict(3, 4, 0, 6)["verdict"] == "unknown"          # six nights after: not yet
+    assert si.night_rate_verdict(3, 3, 0, 7)["verdict"] == "unknown"          # three before: not yet
+    assert si.night_rate_verdict(3, 4, 0, 7)["verdict"] == "improved"
+    assert si.night_rate_verdict(1, 4, 1, 7)["verdict"] == "no_clear_change"  # 25% vs 14%: inside the band
+    assert si.night_rate_verdict(0, 4, 4, 7)["verdict"] == "worsened"
 
 
 def test_a_week_not_over_yet_is_not_measured(db):
