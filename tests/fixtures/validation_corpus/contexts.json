@@ -1,0 +1,1709 @@
+{
+ "labor": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 62
+  },
+  "names_allowed": [
+   "Sam"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%",
+    "kind": "measured",
+    "direction": "up"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 29.0,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 867,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 14
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "sales.net",
+    "value": 13200,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "labor.wednesday_pct",
+    "value": 38,
+    "unit": "%",
+    "entity": "Wednesday"
+   },
+   {
+    "key": "labor.friday_pct",
+    "value": 27,
+    "unit": "%",
+    "entity": "Friday"
+   },
+   {
+    "key": "waste.week",
+    "value": 412.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "food.recoverable_weekly",
+    "value": 180,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "week"
+   },
+   {
+    "key": "food.est_waste_monthly",
+    "value": 2078.4,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "month"
+   }
+  ]
+ },
+ "ask": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 45
+  },
+  "cause_anchors": [
+   {
+    "text": "Slow service on Friday dinner when two servers covered the floor",
+    "strength": "likely"
+   }
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.2,
+    "unit": "%",
+    "direction": "down"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 34.0,
+    "unit": "%"
+   },
+   {
+    "key": "food.cost_pct",
+    "value": 29.5,
+    "unit": "%"
+   },
+   {
+    "key": "sales.net",
+    "value": 42310,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "reviews.rating",
+    "value": 4.3,
+    "unit": "★"
+   },
+   {
+    "key": "reviews.negative",
+    "value": 18,
+    "unit": "count"
+   },
+   {
+    "key": "labor.potential_savings_monthly",
+    "value": 850,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 28
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   }
+  ]
+ },
+ "ask_money": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 55
+  },
+  "facts": [
+   {
+    "key": "labor.potential_savings_monthly",
+    "value": 1240,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 28
+   },
+   {
+    "key": "food.weekly_waste_cost",
+    "value": 480,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "food.monthly_waste_projection",
+    "value": 2078.4,
+    "unit": "$",
+    "kind": "projection",
+    "period": "month",
+    "data_days": 7
+   }
+  ]
+ },
+ "ask_anchor": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 62
+  },
+  "cause_anchors": [
+   {
+    "text": "short staffing on Friday dinner",
+    "strength": "likely"
+   }
+  ],
+  "facts": [
+   {
+    "key": "labor.tuesday_pct",
+    "value": 38.1,
+    "unit": "%",
+    "entity": "Tuesday"
+   },
+   {
+    "key": "labor.other_pct",
+    "value": 30.2,
+    "unit": "%"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 420,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 28
+   }
+  ]
+ },
+ "anchor_weekend": {
+  "surface": "review_insight",
+  "confidence": {
+   "pct": 60
+  },
+  "cause_anchors": [
+   {
+    "text": "short staffing on weekends",
+    "strength": "likely"
+   }
+  ],
+  "facts": [
+   {
+    "key": "reviews.rating",
+    "value": 4.2,
+    "unit": "★",
+    "direction": "down"
+   }
+  ]
+ },
+ "anchor_assoc": {
+  "surface": "review_insight",
+  "confidence": {
+   "pct": 60
+  },
+  "cause_anchors": [
+   {
+    "text": "short staffing on weekends",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "reviews.rating",
+    "value": 4.2,
+    "unit": "★",
+    "direction": "down"
+   }
+  ]
+ },
+ "tenants": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 60
+  },
+  "tenant_names_denied": [
+   "Gia Mia",
+   "Simple EJ's",
+   "Lula Cafe"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%"
+   },
+   {
+    "key": "reviews.rating",
+    "value": 4.2,
+    "unit": "★"
+   }
+  ]
+ },
+ "dsr": {
+  "surface": "dsr",
+  "facts": [
+   {
+    "key": "sales.net",
+    "value": 19850.4,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.gross",
+    "value": 21430.0,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.budget_gross",
+    "value": 20000,
+    "unit": "$",
+    "kind": "plan",
+    "period": "night"
+   },
+   {
+    "key": "sales.budget_net",
+    "value": 18500.0,
+    "unit": "$",
+    "kind": "plan",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_budget_net",
+    "value": 1350.4,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "sales.last_week_net",
+    "value": 17210.15,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_last_week",
+    "value": 2640.25,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "sales.transactions",
+    "value": 612,
+    "unit": "count"
+   },
+   {
+    "key": "sales.avg_ticket",
+    "value": 32.43,
+    "unit": "$"
+   },
+   {
+    "key": "sales.comps",
+    "value": 185.0,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.forecast_net",
+    "value": 18900.0,
+    "unit": "$",
+    "kind": "projection",
+    "period": "night"
+   },
+   {
+    "key": "labor.cost",
+    "value": 4812.3,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "labor.pct",
+    "value": 24.2,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 26.0,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.vs_target_pts",
+    "value": -1.8,
+    "unit": "pts",
+    "kind": "computed"
+   },
+   {
+    "key": "labor.hours",
+    "value": 312.5,
+    "unit": "h"
+   },
+   {
+    "key": "labor.overtime_hours",
+    "value": 6.5,
+    "unit": "h"
+   },
+   {
+    "key": "labor.overtime_dollars",
+    "value": 146.25,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "food.est_food_cost",
+    "value": 5900.0,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "night"
+   },
+   {
+    "key": "food.est_food_cost_pct",
+    "value": 29.8,
+    "unit": "%",
+    "kind": "estimate"
+   },
+   {
+    "key": "food.waste_logged",
+    "value": 84.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "food.low_stock",
+    "value": 2,
+    "unit": "count"
+   },
+   {
+    "key": "food.recoverable_monthly",
+    "value": 1200.0,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   },
+   {
+    "key": "reviews.rating_avg",
+    "value": 4.6,
+    "unit": "★"
+   },
+   {
+    "key": "intel.temp_high_f",
+    "value": 84,
+    "unit": ""
+   }
+  ]
+ },
+ "dsr_strong": {
+  "surface": "dsr",
+  "facts": [
+   {
+    "key": "sales.net",
+    "value": 19850.4,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.gross",
+    "value": 21430.0,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.budget_gross",
+    "value": 20000,
+    "unit": "$",
+    "kind": "plan",
+    "period": "night"
+   },
+   {
+    "key": "sales.budget_net",
+    "value": 18500.0,
+    "unit": "$",
+    "kind": "plan",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_budget_net",
+    "value": 1350.4,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "sales.last_week_net",
+    "value": 17210.15,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_last_week",
+    "value": 2640.25,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "sales.transactions",
+    "value": 612,
+    "unit": "count"
+   },
+   {
+    "key": "sales.avg_ticket",
+    "value": 32.43,
+    "unit": "$"
+   },
+   {
+    "key": "sales.comps",
+    "value": 185.0,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.forecast_net",
+    "value": 18900.0,
+    "unit": "$",
+    "kind": "projection",
+    "period": "night"
+   },
+   {
+    "key": "labor.cost",
+    "value": 4812.3,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "labor.pct",
+    "value": 24.2,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 26.0,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.vs_target_pts",
+    "value": -1.8,
+    "unit": "pts",
+    "kind": "computed"
+   },
+   {
+    "key": "labor.hours",
+    "value": 312.5,
+    "unit": "h"
+   },
+   {
+    "key": "labor.overtime_hours",
+    "value": 6.5,
+    "unit": "h"
+   },
+   {
+    "key": "labor.overtime_dollars",
+    "value": 146.25,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "food.est_food_cost",
+    "value": 5900.0,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "night"
+   },
+   {
+    "key": "food.est_food_cost_pct",
+    "value": 29.8,
+    "unit": "%",
+    "kind": "estimate"
+   },
+   {
+    "key": "food.waste_logged",
+    "value": 84.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "food.low_stock",
+    "value": 2,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.rating_avg",
+    "value": 4.6,
+    "unit": "★"
+   },
+   {
+    "key": "intel.temp_high_f",
+    "value": 84,
+    "unit": ""
+   },
+   {
+    "key": "food.recoverable_monthly",
+    "value": 640.0,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   }
+  ]
+ },
+ "dsr_saving": {
+  "surface": "dsr",
+  "facts": [
+   {
+    "key": "sales.net",
+    "value": 5210.6,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.budget_net",
+    "value": 5630.6,
+    "unit": "$",
+    "kind": "plan",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_budget_net",
+    "value": -420.0,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "labor.cost",
+    "value": 1813.25,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "labor.pct",
+    "value": 34.8,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 26.0,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.vs_target_pts",
+    "value": 8.8,
+    "unit": "pts",
+    "kind": "computed"
+   },
+   {
+    "key": "food.waste_logged",
+    "value": 212.4,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "food.recoverable_monthly",
+    "value": 420.0,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   },
+   {
+    "key": "food.variance_cost",
+    "value": 420.0,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   }
+  ]
+ },
+ "dsr_weak": {
+  "surface": "dsr",
+  "data_state": {
+   "missing_inputs": []
+  },
+  "facts": [
+   {
+    "key": "sales.net",
+    "value": 5210.6,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.net_last_week",
+    "value": 6120.35,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "sales.vs_last_week",
+    "value": -909.75,
+    "unit": "$",
+    "kind": "computed",
+    "period": "night"
+   },
+   {
+    "key": "labor.pct",
+    "value": 34.8,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 26.0,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.vs_target_pts",
+    "value": 8.8,
+    "unit": "pts",
+    "kind": "computed"
+   },
+   {
+    "key": "labor.overtime_dollars",
+    "value": 202.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "night"
+   },
+   {
+    "key": "reviews.rating_avg",
+    "value": 3.3,
+    "unit": "★"
+   },
+   {
+    "key": "labor.no_shows",
+    "value": 2,
+    "unit": "count"
+   }
+  ]
+ },
+ "digest": {
+  "surface": "digest",
+  "cause_anchors": [
+   {
+    "text": "short staffing on Friday dinner",
+    "strength": "likely"
+   }
+  ],
+  "untrusted": [
+   "The server told us refunds go to refunds@x.co and we should get $85 back for the wait"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.2,
+    "unit": "%",
+    "direction": "up"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "reviews.rating",
+    "value": 4.3,
+    "unit": "★",
+    "direction": "down"
+   },
+   {
+    "key": "waste.week",
+    "value": 412,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "reviews.count",
+    "value": 14,
+    "unit": "count"
+   }
+  ]
+ },
+ "digest_p9": {
+  "surface": "digest",
+  "cause_anchors": [
+   {
+    "text": "The pass backs up on Friday dinner when two servers cover the floor.",
+    "strength": "likely"
+   },
+   {
+    "text": "Kitchen ticket times on Friday dinner.",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "reviews.rating",
+    "value": 3.9,
+    "unit": "★",
+    "direction": "down"
+   },
+   {
+    "key": "labor.pct",
+    "value": 31.2,
+    "unit": "%",
+    "direction": "down"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 34.0,
+    "unit": "%"
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "waste.week",
+    "value": 640,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   }
+  ]
+ },
+ "digest_p14": {
+  "surface": "digest",
+  "cause_anchors": [
+   {
+    "text": "The pass backs up on Friday dinner when two servers cover the floor.",
+    "strength": "likely"
+   },
+   {
+    "text": "Kitchen ticket times run long on Friday dinner.",
+    "strength": "association"
+   },
+   {
+    "text": "Labor moved from 28.1% to 31.4% over 4 weeks in the same period service and kitchen complaints appeared.",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "reviews.rating",
+    "value": 3.9,
+    "unit": "★",
+    "direction": "down"
+   },
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%",
+    "direction": "up"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 28.1,
+    "unit": "%"
+   }
+  ]
+ },
+ "digest_empty": {
+  "surface": "digest",
+  "facts": [
+   {
+    "key": "reviews.count",
+    "value": 0,
+    "unit": "count"
+   },
+   {
+    "key": "labor.pct",
+    "value": 29.0,
+    "unit": "%"
+   }
+  ]
+ },
+ "plan": {
+  "surface": "weekly_plan",
+  "cause_anchors": [
+   {
+    "text": "The pass backs up on Friday dinner when two servers cover the floor.",
+    "strength": "likely"
+   },
+   {
+    "text": "Kitchen ticket times on Friday dinner.",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "labor.tuesday_pct",
+    "value": 38,
+    "unit": "%",
+    "entity": "Tuesday"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 850,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   }
+  ]
+ },
+ "plan_new": {
+  "surface": "weekly_plan",
+  "context_text": "No labor data yet. Your next 30 days: connect your POS."
+ },
+ "diag_review": {
+  "surface": "review_diagnosis",
+  "cause_anchors": [
+   {
+    "text": "labor % fell from 31.4% to 27.9% over the window; Friday server hours down 22%",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 27.9,
+    "unit": "%",
+    "direction": "down"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 31.4,
+    "unit": "%"
+   },
+   {
+    "key": "labor.friday_server_hours_change_pct",
+    "value": 22,
+    "unit": "%",
+    "direction": "down"
+   },
+   {
+    "key": "reviews.negative",
+    "value": 18,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.cluster_rating",
+    "value": 2.1,
+    "unit": "★"
+   }
+  ]
+ },
+ "diag_food": {
+  "surface": "food_diagnosis",
+  "cause_anchors": [
+   {
+    "text": "Salmon portion drift",
+    "strength": "likely"
+   },
+   {
+    "text": "Produce waste",
+    "strength": "likely"
+   }
+  ],
+  "facts": [
+   {
+    "key": "food.driver_salmon_monthly",
+    "value": 1240,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "entity": "Salmon"
+   },
+   {
+    "key": "food.driver_produce_monthly",
+    "value": 610,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   },
+   {
+    "key": "food.cost_pct",
+    "value": 33.8,
+    "unit": "%"
+   },
+   {
+    "key": "food.target_pct",
+    "value": 30.0,
+    "unit": "%",
+    "kind": "plan"
+   }
+  ]
+ },
+ "ask_bi": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 48
+  },
+  "cause_anchors": [
+   {
+    "text": "9 slow service complaints concentrate on Friday, which runs 4.2 points leaner on labor than this restaurant's weekday average",
+    "strength": "association"
+   },
+   {
+    "text": "The same day may simply be the busiest, which raises both complaint volume and sales-per-labor-hour independently.",
+    "strength": "association"
+   },
+   {
+    "text": "NOT a cause: Running lean is not evidence of a service failure.",
+    "strength": "association"
+   },
+   {
+    "text": "Your AI-search visibility fell 18 points and your weekly rating has been slipping over the same stretch",
+    "strength": "association"
+   },
+   {
+    "text": "NOT a cause: AI assistants weight recent rating and review volume, so a slipping rating can lower visibility",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "reviews.slow_service_complaints",
+    "value": 9,
+    "unit": "count",
+    "entity": "Friday"
+   },
+   {
+    "key": "labor.friday_gap_pts",
+    "value": 4.2,
+    "unit": "pts"
+   },
+   {
+    "key": "intel.ai_visibility_change_pts",
+    "value": -18,
+    "unit": "pts"
+   },
+   {
+    "key": "marketing.posts",
+    "value": 6,
+    "unit": "count"
+   }
+  ]
+ },
+ "intel": {
+  "surface": "intel",
+  "names_allowed": [
+   "Rosa's Trattoria",
+   "Rival Bistro",
+   "Corner Cafe"
+  ],
+  "untrusted": [
+   "Lovely patio for brunch.",
+   "Service was slow, waited 40 minutes."
+  ],
+  "cause_anchors": [
+   {
+    "text": "Service was slow, waited 40 minutes.",
+    "strength": "association"
+   }
+  ],
+  "facts": [
+   {
+    "key": "competitor.rating",
+    "value": 4.2,
+    "unit": "★",
+    "entity": "Rosa's Trattoria"
+   },
+   {
+    "key": "competitor.reviews",
+    "value": 212,
+    "unit": "count",
+    "entity": "Rosa's Trattoria"
+   },
+   {
+    "key": "competitor.rival_rating",
+    "value": 4.6,
+    "unit": "★",
+    "entity": "Rival Bistro"
+   }
+  ]
+ },
+ "email": {
+  "surface": "email_personalise",
+  "facts": [
+   {
+    "key": "reviews.handled",
+    "value": 24,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.responses",
+    "value": 24,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.rating",
+    "value": 4.6,
+    "unit": "★"
+   }
+  ]
+ },
+ "email_zero": {
+  "surface": "email_personalise",
+  "facts": [
+   {
+    "key": "reviews.handled",
+    "value": 0,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.rating",
+    "value": null,
+    "unit": "★"
+   }
+  ]
+ },
+ "schedule": {
+  "surface": "schedule_note",
+  "data_state": {
+   "missing_inputs": [
+    "weather"
+   ]
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 33.1,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.monday_pct",
+    "value": 38.0,
+    "unit": "%",
+    "entity": "Monday"
+   },
+   {
+    "key": "labor.friday_pct",
+    "value": 29.0,
+    "unit": "%",
+    "entity": "Friday"
+   }
+  ]
+ },
+ "schedule_rules": {
+  "surface": "schedule_note",
+  "policy": {
+   "role_floors": {
+    "cook": 2,
+    "server": 3
+   },
+   "keyholders": [
+    "Ana"
+   ]
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 33.1,
+    "unit": "%"
+   }
+  ]
+ },
+ "marketing": {
+  "surface": "marketing_insight",
+  "data_state": {
+   "missing_inputs": [
+    "guests",
+    "sales"
+   ]
+  },
+  "facts": [
+   {
+    "key": "marketing.posts",
+    "value": 6,
+    "unit": "count"
+   },
+   {
+    "key": "marketing.brunch_likes",
+    "value": 212,
+    "unit": "count"
+   }
+  ]
+ },
+ "reviews_zero": {
+  "surface": "review_insight",
+  "data_state": {
+   "required_disclosures": [
+    "low_review_count"
+   ]
+  },
+  "facts": [
+   {
+    "key": "reviews.total",
+    "value": 0,
+    "unit": "count"
+   },
+   {
+    "key": "reviews.rating",
+    "value": null,
+    "unit": "★"
+   }
+  ]
+ },
+ "food_null": {
+  "surface": "food_insight",
+  "facts": [
+   {
+    "key": "food.waste_pct",
+    "value": null,
+    "unit": "%"
+   },
+   {
+    "key": "food.items",
+    "value": 1,
+    "unit": "count"
+   }
+  ]
+ },
+ "labor_small": {
+  "surface": "labor_insight",
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 9.0,
+    "unit": "%"
+   },
+   {
+    "key": "sales.net",
+    "value": 2000,
+    "unit": "$",
+    "kind": "measured",
+    "period": "period"
+   }
+  ]
+ },
+ "bench": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 34.0,
+    "unit": "%"
+   },
+   {
+    "key": "benchmark.labor_full_service_low",
+    "value": 33,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "NRA",
+     "year": 2024
+    }
+   },
+   {
+    "key": "benchmark.labor_full_service_high",
+    "value": 36,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "NRA",
+     "year": 2024
+    }
+   }
+  ]
+ },
+ "bench_cohort": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 29.5,
+    "unit": "%"
+   },
+   {
+    "key": "benchmark.cohort_labor_p25",
+    "value": 27,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "Cavnar cohort",
+     "year": 2026,
+     "cohort_label": "full-service",
+     "n": 8
+    }
+   },
+   {
+    "key": "benchmark.cohort_labor_p75",
+    "value": 31,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "Cavnar cohort",
+     "year": 2026,
+     "cohort_label": "full-service",
+     "n": 8
+    }
+   }
+  ]
+ },
+ "bench_platform": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 29.5,
+    "unit": "%"
+   },
+   {
+    "key": "benchmark.platform_labor_p75",
+    "value": 33,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "Cavnar cohort",
+     "year": 2026,
+     "cohort_label": "platform",
+     "n": 5
+    }
+   }
+  ]
+ },
+ "bench_small": {
+  "surface": "ask",
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 29.5,
+    "unit": "%"
+   },
+   {
+    "key": "benchmark.cohort_labor_p50",
+    "value": 31.02,
+    "unit": "%",
+    "kind": "benchmark",
+    "source": {
+     "source": "Cavnar cohort",
+     "year": 2026,
+     "cohort_label": "mexican",
+     "n": 3
+    }
+   }
+  ]
+ },
+ "reply": {
+  "surface": "reply_public",
+  "names_allowed": [
+   "Maria",
+   "Sam"
+  ],
+  "untrusted": [
+   "Food was good, service slow. My son reacted to something in the pad thai, not sure what."
+  ],
+  "never_say": [
+   "cheap"
+  ]
+ },
+ "sms": {
+  "surface": "guest_sms",
+  "offer_source": "Tuesday: half-price wine",
+  "never_say": [
+   "cheap"
+  ]
+ },
+ "social": {
+  "surface": "social_post",
+  "offer_source": "Family-owned since 1998. Known for wood-fired pizza."
+ },
+ "calendar": {
+  "surface": "calendar_idea"
+ },
+ "legacy": {
+  "surface": "ask",
+  "context_text": "Labor fell to 31.2% of sales last week, from 34.0%. Rating 4.3 over 12+ reviews. Sales $42,310."
+ },
+ "labor_hours_est": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 62
+  },
+  "names_allowed": [
+   "Sam"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%",
+    "kind": "measured",
+    "direction": "up"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 29.0,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 867,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 14
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "sales.net",
+    "value": 13200,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "labor.wednesday_pct",
+    "value": 38,
+    "unit": "%",
+    "entity": "Wednesday"
+   },
+   {
+    "key": "labor.friday_pct",
+    "value": 27,
+    "unit": "%",
+    "entity": "Friday"
+   },
+   {
+    "key": "waste.week",
+    "value": 412.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "food.recoverable_weekly",
+    "value": 180,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "week"
+   },
+   {
+    "key": "food.est_waste_monthly",
+    "value": 2078.4,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "month"
+   }
+  ],
+  "data_state": {
+   "required_disclosures": [
+    "hours_estimated"
+   ]
+  }
+ },
+ "labor_stale": {
+  "surface": "labor_insight",
+  "data_state": {
+   "data_age_days": 100,
+   "as_of": "6/14/26"
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 32.7,
+    "unit": "%"
+   }
+  ]
+ },
+ "labor_sample": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 62
+  },
+  "names_allowed": [
+   "Sam"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%",
+    "kind": "measured",
+    "direction": "up"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 29.0,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 867,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 14
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "sales.net",
+    "value": 13200,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "labor.wednesday_pct",
+    "value": 38,
+    "unit": "%",
+    "entity": "Wednesday"
+   },
+   {
+    "key": "labor.friday_pct",
+    "value": 27,
+    "unit": "%",
+    "entity": "Friday"
+   },
+   {
+    "key": "waste.week",
+    "value": 412.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "food.recoverable_weekly",
+    "value": 180,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "week"
+   },
+   {
+    "key": "food.est_waste_monthly",
+    "value": 2078.4,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "month"
+   }
+  ],
+  "data_state": {
+   "sample": true
+  }
+ },
+ "labor_stale_src": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 62
+  },
+  "names_allowed": [
+   "Sam"
+  ],
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.4,
+    "unit": "%",
+    "kind": "measured",
+    "direction": "up"
+   },
+   {
+    "key": "labor.prev_pct",
+    "value": 29.0,
+    "unit": "%"
+   },
+   {
+    "key": "labor.target_pct",
+    "value": 30,
+    "unit": "%",
+    "kind": "plan"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 867,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month",
+    "data_days": 14
+   },
+   {
+    "key": "labor.cost",
+    "value": 4120,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "sales.net",
+    "value": 13200,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "labor.wednesday_pct",
+    "value": 38,
+    "unit": "%",
+    "entity": "Wednesday"
+   },
+   {
+    "key": "labor.friday_pct",
+    "value": 27,
+    "unit": "%",
+    "entity": "Friday"
+   },
+   {
+    "key": "waste.week",
+    "value": 412.5,
+    "unit": "$",
+    "kind": "measured",
+    "period": "week"
+   },
+   {
+    "key": "food.recoverable_weekly",
+    "value": 180,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "week"
+   },
+   {
+    "key": "food.est_waste_monthly",
+    "value": 2078.4,
+    "unit": "$",
+    "kind": "estimate",
+    "period": "month"
+   }
+  ],
+  "data_state": {
+   "stale_sources": [
+    "POS"
+   ]
+  }
+ },
+ "ask_actions": {
+  "surface": "ask",
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 31.2,
+    "unit": "%"
+   }
+  ],
+  "names_allowed": [
+   "Maria",
+   "Sysco"
+  ]
+ },
+ "diag_forecast": {
+  "surface": "review_diagnosis",
+  "policy": {
+   "must_start_with_if": true
+  },
+  "facts": [
+   {
+    "key": "reviews.negative",
+    "value": 18,
+    "unit": "count"
+   }
+  ]
+ },
+ "delivered": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 80
+  },
+  "facts": [
+   {
+    "key": "value.delivered_monthly",
+    "value": 640,
+    "unit": "$",
+    "kind": "measured",
+    "period": "month",
+    "source": "outcomes"
+   },
+   {
+    "key": "labor.gap_monthly",
+    "value": 900,
+    "unit": "$",
+    "kind": "opportunity",
+    "period": "month"
+   }
+  ]
+ }
+}

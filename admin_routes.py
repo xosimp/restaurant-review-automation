@@ -2607,6 +2607,16 @@ def admin_api_ai(current_user):
     return jsonify(**admin_ops.ai_ops(days=days if days in (1, 7, 30, 90) else 30))
 
 
+@admin_bp.route("/admin/api/validation")
+@admin_required
+def admin_api_validation(current_user):
+    """Response Validation Layer catch rates by surface × rule (internal
+    only). ?days=1|7|30|90, default 30."""
+    import admin_ops
+    days = request.args.get("days", 30, type=int)
+    return jsonify(**admin_ops.validation_rates(days=days if days in (1, 7, 30, 90) else 30))
+
+
 @admin_bp.route("/admin/api/emails")
 @admin_required
 def admin_api_emails(current_user):

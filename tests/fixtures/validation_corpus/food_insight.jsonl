@@ -1,0 +1,2 @@
+{"src": "NS4 p_food 0% vs industry (null never 0)", "ctx": "food_null", "text": "Your waste is 0% of purchases — well under the 4-5% industry target, which puts you ahead of most restaurants.", "expect": {"verdict": "withhold", "rules": ["B1", "F1"]}, "id": "food_insight-000"}
+{"src": "NS4 p_food keep ordering", "ctx": "food_null", "text": "Keep ordering the way you are.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "food_insight-001"}

@@ -1,0 +1,8 @@
+{"src": "NS2 p7 bringing in guests", "ctx": "marketing", "text": "Hi, your brunch posts are bringing in more Sunday guests.", "expect": {"verdict": "caveat", "rules": ["K1", "M2"]}, "id": "marketing_insight-000"}
+{"src": "NS2 p7 will fill", "ctx": "marketing", "text": "Post the carbonara tonight; it will fill the dining room.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "marketing_insight-001"}
+{"src": "NS2 p7 instagram behind", "ctx": "marketing", "text": "Hi, Instagram is behind your stronger weekends.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "marketing_insight-002"}
+{"src": "NS2 p7 double reach", "ctx": "marketing", "text": "Post daily and you will double your reach.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "marketing_insight-003"}
+{"src": "NS2 p7 always respond", "ctx": "marketing", "text": "Guests always respond to pasta shots.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "marketing_insight-004"}
+{"src": "NS2 p7 lost guests", "ctx": "marketing", "text": "Hi, you lost weekend guests to the new place down the street.", "expect": {"verdict": "caveat", "rules": ["M2"]}, "id": "marketing_insight-005"}
+{"src": "NS4 multiplier", "ctx": "marketing", "text": "Brunch posts get 3x the engagement.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "marketing_insight-006"}
+{"src": "good: marketing measured", "ctx": "marketing", "text": "Your brunch posts drew 212 likes this month.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "marketing_insight-007"}

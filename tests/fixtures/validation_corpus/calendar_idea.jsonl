@@ -1,0 +1,2 @@
+{"src": "NS6 E11 calendar award", "ctx": "calendar", "text": "Post: our award-winning tiramisu, now 50% off.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "calendar_idea-000"}
+{"src": "good: calendar idea", "ctx": "calendar", "text": "Post a photo of the new patio lights on Thursday.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "calendar_idea-001"}

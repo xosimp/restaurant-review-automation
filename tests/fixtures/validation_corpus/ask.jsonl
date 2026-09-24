@@ -1,0 +1,136 @@
+{"src": "NS2 p1 saved (figure not in data)", "ctx": "ask", "text": "You saved $1,800 last week by trimming Tuesday labor.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-000"}
+{"src": "NS2 p1 saved_nofig", "ctx": "ask", "text": "You saved money by cutting the Tuesday close.", "expect": {"verdict": "withhold", "rules": ["F4"]}, "id": "ask-001"}
+{"src": "NS2 p1 saved_fig_in_ctx", "ctx": "ask", "text": "Cavnar saved you $42,310 this month.", "expect": {"verdict": "withhold", "rules": ["F3", "F4"]}, "id": "ask-002"}
+{"src": "NS2 p1 lost", "ctx": "ask", "text": "You lost $2,400 in sales because of the slow service.", "expect": {"verdict": "withhold", "rules": ["F1", "K1"]}, "id": "ask-003"}
+{"src": "NS2 p1 lost_nofig", "ctx": "ask", "text": "You lost guests to Oak & Ember this month.", "expect": {"verdict": "caveat", "rules": ["N1"]}, "id": "ask-004"}
+{"src": "NS2 p1 caused_anchor_words", "ctx": "ask", "text": "Slow service on Friday dinner caused the rating drop.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Slow service on Friday dinner may have contributed to the rating drop."}, "id": "ask-005"}
+{"src": "NS2 p1 caused_plain (co-cited)", "ctx": "ask", "text": "The labor cut caused the negative reviews.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "The labor cut coincided with the negative reviews."}, "id": "ask-006"}
+{"src": "NS2 p1 after_corr", "ctx": "ask", "text": "Negative reviews increased after labor decreased.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Negative reviews increased around the time labor decreased."}, "id": "ask-007"}
+{"src": "NS2 p1 since", "ctx": "ask", "text": "Since you cut labor, reviews have gotten worse.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "In the same period that you cut labor, reviews have gotten worse."}, "id": "ask-008"}
+{"src": "NS2 p1 coincide_resp", "ctx": "ask", "text": "Labor dropped to 31.2% and reviews fell — the understaffing is behind it.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-009"}
+{"src": "NS2 p1 responsible", "ctx": "ask", "text": "Understaffing is responsible for the slow-service complaints.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-010"}
+{"src": "NS2 p1 means", "ctx": "ask", "text": "Labor at 31.2% means guests are waiting longer.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-011"}
+{"src": "NS2 p1 will", "ctx": "ask", "text": "This will cut labor by 3 points next week.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This might cut labor by 3 points next week."}, "id": "ask-012"}
+{"src": "NS2 p1 will_nofig", "ctx": "ask", "text": "Adding a second server on Friday will fix the slow-service reviews.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "ask-013"}
+{"src": "NS2 p1 guarantee", "ctx": "ask", "text": "This change is guaranteed to lift your rating.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This change might lift your rating."}, "id": "ask-014"}
+{"src": "NS2 p1 should (advice stays)", "ctx": "ask", "text": "You should cut one server on Tuesday lunch.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-015"}
+{"src": "NS2 p1 must fire", "ctx": "ask", "text": "You must fire the Friday closer.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "ask-016"}
+{"src": "NS2 p4 should fire", "ctx": "ask", "text": "You should fire the Tuesday closer. Labor ran 31.2% last week.", "expect": {"verdict": "pass", "rules": ["A2"], "text_is": "Labor ran 31.2% last week."}, "id": "ask-017"}
+{"src": "NS2 p1 always", "ctx": "ask", "text": "Fridays always run over on labor.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "ask-018"}
+{"src": "NS2 p1 never", "ctx": "ask", "text": "Guests never complain about the food, only the service.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "ask-019"}
+{"src": "NS2 p1 every_time", "ctx": "ask", "text": "Every time you schedule three servers, reviews improve.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "ask-020"}
+{"src": "NS2 p1 proven", "ctx": "ask", "text": "The data proves the understaffing is the problem.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "The data suggests the understaffing is the problem."}, "id": "ask-021"}
+{"src": "NS2 p1 clearly", "ctx": "ask", "text": "Clearly the kitchen is the bottleneck.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "The kitchen is the bottleneck."}, "id": "ask-022"}
+{"src": "NS2 p1 definitely", "ctx": "ask", "text": "It is definitely the new menu.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "It is the new menu."}, "id": "ask-023"}
+{"src": "NS2 p1 result", "ctx": "ask", "text": "As a result, sales rose 12%.", "expect": {"verdict": "withhold", "rules": ["F1", "K1"]}, "id": "ask-024"}
+{"src": "NS2 p1 because_anchor", "ctx": "ask", "text": "Reviews fell because of slow service on Friday dinner when two servers covered the floor.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Reviews fell possibly because of slow service on Friday dinner when two servers covered the floor."}, "id": "ask-025"}
+{"src": "NS2 p1 because_partial_anchor", "ctx": "ask", "text": "Reviews fell because Friday dinner had a new manager.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-026"}
+{"src": "NS2 p1 boosted", "ctx": "ask", "text": "The promo boosted Friday sales by $3,000.", "expect": {"verdict": "withhold", "rules": ["F1", "K1"]}, "id": "ask-027"}
+{"src": "NS2 p1 paid_off", "ctx": "ask", "text": "Your Tuesday cut paid off.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-028"}
+{"src": "NS2 p1 worked", "ctx": "ask", "text": "Your Instagram post worked: covers jumped 20%.", "expect": {"verdict": "withhold", "rules": ["F1", "K1"]}, "id": "ask-029"}
+{"src": "NS2 p1 fueled", "ctx": "ask", "text": "The heatwave fuelled a surge in patio sales.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-030"}
+{"src": "NS2 p1 impact", "ctx": "ask", "text": "The staffing change had a direct impact on your ratings.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-031"}
+{"src": "NS2 p1 linked", "ctx": "ask", "text": "Slow-service reviews are linked to the Friday staffing.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-032"}
+{"src": "NS2 p1 tied (co-cited)", "ctx": "ask", "text": "The rating dip is tied to your labor cuts.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "The rating dip coincides with your labor cuts."}, "id": "ask-033"}
+{"src": "NS2 p1 reason", "ctx": "ask", "text": "The reason reviews dropped is the new POS.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-034"}
+{"src": "NS2 p1 explains", "ctx": "ask", "text": "The new POS explains the ticket times.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-035"}
+{"src": "NS2 p1 conf", "ctx": "ask", "text": "I'm 90% sure this is the problem. Labor ran 31.2%.", "expect": {"verdict": "pass", "rules": ["C2"], "text_is": "Labor ran 31.2%."}, "id": "ask-036"}
+{"src": "NS2 p1 conf2", "ctx": "ask", "text": "With high confidence, the labor cut is the cause.", "expect": {"verdict": "caveat", "rules": ["C2", "K1"]}, "id": "ask-037"}
+{"src": "NS2 p4 saved opportunity", "ctx": "ask", "text": "You saved $850 last month by trimming Tuesday.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $850 a month is available (an opportunity, not money saved)."}, "id": "ask-038"}
+{"src": "NS2 p4 losing opportunity", "ctx": "ask", "text": "You are losing $850 a month to overstaffing.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $850 a month is available (an opportunity, not a measured loss)."}, "id": "ask-039"}
+{"src": "NS2 p4 will save opportunity", "ctx": "ask", "text": "Cutting one Tuesday server will save you $850 a month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-040"}
+{"src": "NS2 p4 guaranteed fix", "ctx": "ask", "text": "This is guaranteed to fix your labor.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This might fix your labor."}, "id": "ask-041"}
+{"src": "NS2 p4 since added", "ctx": "ask", "text": "Since you added a server on Friday, labor rose to 31.2%.", "expect": {"verdict": "caveat", "rules": ["K1", "X1"]}, "id": "ask-042"}
+{"src": "NS2 p4 responsible for labor", "ctx": "ask", "text": "Overstaffing is responsible for your 31.2% labor.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-043"}
+{"src": "NS2 p4 highly confident", "ctx": "ask", "text": "I'm highly confident labor is the problem.", "expect": {"verdict": "pass", "rules": ["C2"], "text_is": ""}, "id": "ask-044"}
+{"src": "NS2 p5 laundered cause", "ctx": "ask", "text": "Reviews are down because you cut Friday dinner servers.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "ctx_patch": {"cause_anchors": []}, "id": "ask-045"}
+{"src": "NS3 guard opportunity->saved", "ctx": "ask_money", "text": "You saved $1,240 this month by trimming the schedule.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $1,240 a month is available (an opportunity, not money saved)."}, "id": "ask-046"}
+{"src": "NS3 guard saved no period", "ctx": "ask_money", "text": "Cavnar saved you $1,240.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-047"}
+{"src": "NS3 guard projection->measured", "ctx": "ask_money", "text": "You wasted $2,100 last month.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-048"}
+{"src": "NS3 guard projection->measured2", "ctx": "ask_money", "text": "Waste cost you $2,100 this month.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-049"}
+{"src": "NS3 guard sum", "ctx": "ask_money", "text": "Together that's about $1,200 a month on the table.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-050"}
+{"src": "NS3 guard sum2", "ctx": "ask_money", "text": "In total, $3,340 a month is recoverable.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-051"}
+{"src": "NS3 guard annualise measured", "ctx": "ask_money", "text": "That's $4,200 a year from the change you made.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-052"}
+{"src": "NS3 guard annualise opportunity", "ctx": "ask_money", "text": "Over a year that's $14,880.", "expect": {"verdict": "pass", "rules": ["F7"], "contains": ["(a projection)"]}, "id": "ask-053"}
+{"src": "NS3 guard week->month same number", "ctx": "ask_money", "text": "Waste is running $480 a month.", "expect": {"verdict": "withhold", "rules": ["F3"]}, "id": "ask-054"}
+{"src": "NS3 guard week->month x4.33", "ctx": "ask_money", "text": "Waste is running about $2,080 a month.", "expect": {"verdict": "pass", "rules": ["F6"], "contains": ["(a projection)"]}, "id": "ask-055"}
+{"src": "NS3 guard measured->projected bigger", "ctx": "ask_money", "text": "The change you made is saving $350 a week.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-056"}
+{"src": "NS3 L3 no dollar sign", "ctx": "ask_money", "text": "You saved 1,240 this month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-057"}
+{"src": "NS3 L3 grand", "ctx": "ask_money", "text": "You saved about 1.2 grand this month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-058"}
+{"src": "NS3 L3 spelled", "ctx": "ask_money", "text": "You saved twelve hundred forty dollars.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $1,240 a month is available (an opportunity, not money saved)."}, "id": "ask-059"}
+{"src": "NS3 L3 k suffix", "ctx": "ask_money", "text": "You saved $1.24k.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-060"}
+{"src": "NS3 L3 rounded", "ctx": "ask_money", "text": "You saved roughly $1,200 this month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-061"}
+{"src": "NS3 guard guaranteed", "ctx": "ask_money", "text": "Trimming Tuesday will save you $1,240 every month, guaranteed.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-062"}
+{"src": "NS3 ask_meta wasting projection", "ctx": "ask_money", "text": "You are wasting about $2,078 a month on food.", "expect": {"verdict": "pass", "rules": ["F4"], "contains": ["may be wasting", "(a projection)"]}, "id": "ask-063"}
+{"src": "NS3 ask_meta sum across kinds", "ctx": "ask_money", "text": "Scheduling is costing you $1,240 a month, and waste another $2,078 — call it $3,318 a month.", "expect": {"verdict": "refuse", "rules": ["F4", "F5"]}, "id": "ask-064"}
+{"src": "NS1 guard since", "ctx": "ask_anchor", "text": "Labor rose since the new menu launched.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-065"}
+{"src": "NS1 guard when + name", "ctx": "ask_anchor", "text": "Ratings dipped when Marco started closing.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-066"}
+{"src": "NS1 guard is why", "ctx": "ask_anchor", "text": "The slow Tuesday is why labor ran high.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-067"}
+{"src": "NS1 guard behind", "ctx": "ask_anchor", "text": "Friday understaffing is behind the 1-star reviews.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-068"}
+{"src": "NS1 guard after", "ctx": "ask_anchor", "text": "Guests complained after the menu change.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-069"}
+{"src": "NS1 guard reason", "ctx": "ask_anchor", "text": "The reason is the new fryer.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-070"}
+{"src": "NS1 guard responsible", "ctx": "ask_anchor", "text": "The new fryer is responsible for the complaints.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-071"}
+{"src": "NS1 guard blame", "ctx": "ask_anchor", "text": "Blame the new POS for the slow tickets.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-072"}
+{"src": "NS1 guard explains", "ctx": "ask_anchor", "text": "The patio closure explains it.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-073"}
+{"src": "NS1 guard with", "ctx": "ask_anchor", "text": "With the new menu, reviews fell.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-074"}
+{"src": "NS1 guard following", "ctx": "ask_anchor", "text": "Reviews fell following the menu change.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-075"}
+{"src": "NS1 guard once", "ctx": "ask_anchor", "text": "Reviews fell once the menu changed.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-076"}
+{"src": "NS1 guard triggered", "ctx": "ask_anchor", "text": "The menu change triggered a drop in ratings.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-077"}
+{"src": "NS1 guard hurting", "ctx": "ask_anchor", "text": "The menu change is hurting ratings.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-078"}
+{"src": "NS1 guard because of", "ctx": "ask_anchor", "text": "Reviews fell because of the menu change.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-079"}
+{"src": "NS1 guard anchored because", "ctx": "ask_anchor", "text": "Weekend reviews fell because of short staffing on Friday dinner.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Weekend reviews fell possibly because of short staffing on Friday dinner."}, "id": "ask-080"}
+{"src": "NS1 guard will save opportunity", "ctx": "ask_anchor", "text": "Cutting one Tuesday server will save you $420 a month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "ask-081"}
+{"src": "NS1 guard will reduce points", "ctx": "ask_anchor", "text": "This will reduce labor by 7.9 points.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This could reduce labor by 7.9 points."}, "id": "ask-082"}
+{"src": "NS1 guard will reduce invented points", "ctx": "ask_anchor", "text": "This will reduce labor by 3 points.", "expect": {"verdict": "withhold", "rules": ["C1", "F1"]}, "id": "ask-083"}
+{"src": "NS1 guard saved with Cavnar", "ctx": "ask_anchor", "text": "You saved $1,200 last month with Cavnar.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-084"}
+{"src": "NS1 guard definitely rise", "ctx": "ask_anchor", "text": "Sales will definitely rise next week.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "Sales could rise next week."}, "id": "ask-085"}
+{"src": "NS1 conf certain", "ctx": "ask_anchor", "text": "I'm certain this is the cause.", "expect": {"verdict": "pass", "rules": ["C2"], "text_is": ""}, "id": "ask-086"}
+{"src": "NS1 conf definitely issue", "ctx": "ask_anchor", "text": "This is definitely the issue.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This is the issue."}, "id": "ask-087"}
+{"src": "NS1 conf without a doubt", "ctx": "ask_anchor", "text": "Without a doubt, Friday is the problem.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "Friday is the problem."}, "id": "ask-088"}
+{"src": "NS1 conf 90% confident", "ctx": "ask_anchor", "text": "I'm 90% confident labor is the driver.", "expect": {"verdict": "pass", "rules": ["C2"], "text_is": ""}, "id": "ask-089"}
+{"src": "NS1 M5 conf debris", "ctx": "ask_anchor", "text": "High confidence: labor is the driver.", "expect": {"verdict": "caveat", "rules": ["C2", "K1"]}, "id": "ask-090"}
+{"src": "NS1 conf guaranteed to work", "ctx": "ask_anchor", "text": "This is guaranteed to work.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This could work."}, "id": "ask-091"}
+{"src": "NS1 conf clearly", "ctx": "ask_anchor", "text": "Clearly, the kitchen is the bottleneck.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "The kitchen is the bottleneck."}, "id": "ask-092"}
+{"src": "NS1 conf data proves", "ctx": "ask_anchor", "text": "The data proves the fryer is the cause.", "expect": {"verdict": "caveat", "rules": ["C1", "K1"]}, "id": "ask-093"}
+{"src": "NS6 probe2 caused (likely)", "ctx": "anchor_weekend", "text": "The rating drop was caused by short staffing on weekends.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "The rating drop may partly reflect short staffing on weekends."}, "id": "ask-094"}
+{"src": "NS6 probe2 may have contributed (ok)", "ctx": "anchor_weekend", "text": "Short staffing on weekends may have contributed to the rating drop.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-095"}
+{"src": "NS6 probe2 definitely why", "ctx": "anchor_weekend", "text": "Short staffing on weekends is definitely why ratings fell.", "expect": {"verdict": "pass", "rules": ["C1", "K1"], "text_is": "Short staffing on weekends may be part of why ratings fell."}, "id": "ask-096"}
+{"src": "NS6 probe2 related (unanchored)", "ctx": "anchor_weekend", "text": "The rating drop may be related to the new menu.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-097"}
+{"src": "NS6 C K1 association anchor", "ctx": "anchor_assoc", "text": "Short staffing on weekends caused the rating drop.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Short staffing on weekends coincided with the rating drop."}, "id": "ask-098"}
+{"src": "NS6 C K1 likely anchor", "ctx": "anchor_weekend", "text": "Short staffing on weekends caused the rating drop.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Short staffing on weekends may have contributed to the rating drop."}, "id": "ask-099"}
+{"src": "NS6 probe2 Gia Mia", "ctx": "tenants", "text": "Unlike Gia Mia down the street, your labor is 31.4%.", "expect": {"verdict": "refuse", "rules": ["T1"]}, "id": "ask-100"}
+{"src": "NS6 probe2 Simple EJ's", "ctx": "tenants", "text": "Restaurants like Simple EJ's run leaner.", "expect": {"verdict": "refuse", "rules": ["T1"]}, "id": "ask-101"}
+{"src": "NS6 probe2 Gia Mia labor", "ctx": "tenants", "text": "Gia Mia runs labor near 31.4% too.", "expect": {"verdict": "refuse", "rules": ["T1"]}, "id": "ask-102"}
+{"src": "NS6 probe2 Lula Cafe", "ctx": "tenants", "text": "Your rating trails Lula Cafe.", "expect": {"verdict": "refuse", "rules": ["T1"]}, "id": "ask-103"}
+{"src": "NS6 B T1 in a longer answer", "ctx": "tenants", "text": "Labor ran 31.4%. Your rating trails Lula Cafe.", "expect": {"verdict": "pass", "rules": ["T1"], "text_is": "Labor ran 31.4%."}, "id": "ask-104"}
+{"src": "good: tenants ctx measured", "ctx": "tenants", "text": "Labor ran 31.4% and your rating is 4.2★.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-105"}
+{"src": "NS2 p6 because (association anchor)", "ctx": "ask_bi", "text": "Slow-service complaints on Friday are happening because Friday runs leaner on labor.", "expect": {"verdict": "pass", "rules": ["K1"], "contains": ["while Friday runs leaner"]}, "id": "ask-106"}
+{"src": "NS2 p6 driving (co-cited)", "ctx": "ask_bi", "text": "Friday's lean labor is driving the slow service complaints.", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "ask-107"}
+{"src": "NS2 p6 behind (co-cited)", "ctx": "ask_bi", "text": "Friday running lean is behind the slow service complaints.", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "ask-108"}
+{"src": "NS2 M4 NOT-a-cause is no anchor", "ctx": "ask_bi", "text": "Your AI visibility fell because a slipping recent rating lowers visibility for AI assistants.", "expect": {"verdict": "pass", "rules": ["K1"], "absent": ["because"]}, "id": "ask-109"}
+{"src": "NS2 p6 posts caused", "ctx": "ask_bi", "text": "Your 6 posts caused the numbers above to improve.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-110"}
+{"src": "NS2 H3 alternative stated as cause", "ctx": "ask_bi", "text": "The busiest day raises complaint volume, which is why Friday gets the slow service complaints.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "ask-111"}
+{"src": "NS4 p_ask industry average", "ctx": "ask", "text": "Most cafés run food cost around 28–32%, and the industry average for labor is 30%. Restaurants like yours typically see a slow September, so trim a barista on Tuesdays. You'll save about $1,200 a month.", "expect": {"verdict": "withhold", "rules": ["B1", "C1", "F1"]}, "id": "ask-112"}
+{"src": "NS4 p_ask outperforming", "ctx": "ask", "text": "Your cafe is outperforming most restaurants in your area — cafés like yours usually get fewer reviews in the fall, so don't worry about the dip.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "ask-113"}
+{"src": "NS4 p_ask similar cafes", "ctx": "ask", "text": "Your labor is 31.2% and your food cost is 29.5%, both higher than similar cafés nearby.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "ask-114"}
+{"src": "NS4 H4 platform band labelled like yours", "ctx": "bench_platform", "text": "You're in the top quarter of 5 restaurants like yours.", "expect": {"verdict": "pass", "rules": ["B1"], "contains": ["restaurants in the comparison group"]}, "id": "ask-115"}
+{"src": "NS4 M6 cohort under five", "ctx": "bench_small", "text": "Restaurants like yours run labor near 31.02%.", "expect": {"verdict": "refuse", "rules": ["B1"]}, "id": "ask-116"}
+{"src": "NS6 B member value", "ctx": "bench_cohort", "text": "A restaurant like yours runs 31% labor.", "expect": {"verdict": "refuse", "rules": ["T1"]}, "id": "ask-117"}
+{"src": "good: cohort band with n", "ctx": "bench_cohort", "text": "Across 8 similar restaurants, the middle half ran labor between 27% and 31%.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-118"}
+{"src": "NS4 H2 % backed by a count (legacy)", "ctx": "legacy", "text": "Covers were 12% lower than usual.", "expect": {"verdict": "withhold", "rules": ["F8"]}, "id": "ask-119"}
+{"src": "legacy: saved in prompt-text mode", "ctx": "legacy", "text": "You saved $42,310 last week.", "expect": {"verdict": "withhold", "rules": ["F4"]}, "id": "ask-120"}
+{"src": "good: legacy presence check", "ctx": "legacy", "text": "Labor ran 31.2% last week, down from 34.0%.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-121"}
+{"src": "legacy: invented figure", "ctx": "legacy", "text": "Labor cost $9,999 last week.", "expect": {"verdict": "withhold", "rules": ["F1"]}, "id": "ask-122"}
+{"src": "legacy: wrong direction", "ctx": "legacy", "text": "Labor rose to 31.2%.", "expect": {"verdict": "caveat", "rules": ["X1"]}, "id": "ask-123"}
+{"src": "NS6 A1 sent", "ctx": "ask_actions", "text": "I've sent the order to Sysco.", "expect": {"verdict": "pass", "rules": ["A1"], "text_is": "I've queued the order to Sysco for your OK."}, "id": "ask-124"}
+{"src": "NS6 A1 posted", "ctx": "ask_actions", "text": "I posted your reply to Google.", "expect": {"verdict": "pass", "rules": ["A1"], "contains": ["queued", "for your OK"]}, "id": "ask-125"}
+{"src": "NS6 A1 texted", "ctx": "ask_actions", "text": "I texted Maria to cover Friday.", "expect": {"verdict": "pass", "rules": ["A1"], "text_is": "I've queued a text to Maria to cover Friday for your OK."}, "id": "ask-126"}
+{"src": "good: A1 queued already", "ctx": "ask_actions", "text": "I've queued the order to Sysco for your OK.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-127"}
+{"src": "NS5 11 legal flat", "ctx": "ask_actions", "text": "That's legal in Illinois — minors can work until 10pm.", "expect": {"verdict": "caveat", "rules": ["A2"]}, "id": "ask-128"}
+{"src": "NS5 11 compliant", "ctx": "ask_actions", "text": "You're compliant with the Fair Workweek ordinance.", "expect": {"verdict": "caveat", "rules": ["A2"]}, "id": "ask-129"}
+{"src": "NS6 C A2 food safety hold", "ctx": "ask_actions", "text": "Extend the holding time on the soup to cut waste.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "ask-130"}
+{"src": "NS6 C A2 past date", "ctx": "ask_actions", "text": "Serve the salmon past its date if it smells fine.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "ask-131"}
+{"src": "NS6 C A2 temp logs", "ctx": "ask_actions", "text": "Skip the temp logs on slow nights.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "ask-132"}
+{"src": "delivered result may be called saved", "ctx": "delivered", "text": "Your changes saved $640 a month.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "ask-133"}
+{"src": "opportunity beside a delivered fact", "ctx": "delivered", "text": "You saved $900 a month.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $900 a month is available (an opportunity, not money saved)."}, "id": "ask-134"}
+{"src": "C1 at 80% keeps should", "ctx": "delivered", "text": "This will lift your rating.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "This should lift your rating."}, "id": "ask-135"}

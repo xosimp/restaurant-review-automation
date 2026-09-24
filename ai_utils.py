@@ -8,6 +8,7 @@ one item (a review never got analyzed, a draft never got written), with no
 backoff and no second attempt. This wraps the call once so every caller gets
 the same retry behavior instead of each reimplementing it inconsistently.
 """
+import json
 import logging
 import os
 import sqlite3
@@ -889,6 +890,33 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
     # Fold this call into the cached totals so a burst inside one cache
     # window still trips the ceiling rather than sliding under it.
     note_ai_spend(cost, restaurant_id)
+
+
+# ── Response Validation Layer log ───────────────────────────────────────────
+# One row per validated model output (response_validation.log), beside
+# ai_usage so catch rates join on the same `action`. The table is created at
+# boot by models.init_db (never here). It holds NO answer and NO guest text:
+# rule codes, counts, a hash of the original and each finding's offending
+# token cut to 60 characters (an echo finding carries none).
+VALIDATION_TOKEN_MAX = 60
+
+
+def log_validation(restaurant_id, surface, action, verdict, rules=(), tokens=(), n_rewrites=0, n_drops=0,
+                   n_caveats=0, text_hash="", mode="enforce", version="", db_path=None) -> None:
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO ai_validation_log (restaurant_id, surface, action, verdict, rules, tokens, n_rewrites, "
+            "n_drops, n_caveats, text_hash, mode, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, str(surface or "")[:40], str(action or "")[:60], str(verdict or "")[:12],
+             json.dumps(sorted(set(str(r) for r in rules or ()))),
+             json.dumps([str(t)[:VALIDATION_TOKEN_MAX] for t in (tokens or ())][:20]),
+             int(n_rewrites or 0), int(n_drops or 0), int(n_caveats or 0), str(text_hash or "")[:32],
+             str(mode or "")[:10], str(version or "")[:16]))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def usage_summary(restaurant_id=None, since_days=30, db_path=None):

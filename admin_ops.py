@@ -990,6 +990,43 @@ def ai_ops(days=30):
             "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0}, "recent_failed": recent_failed}
 
 
+def validation_rates(days=30):
+    """Response Validation Layer catch rates (internal only): per surface
+    the outputs validated and their verdicts, and per surface × rule how
+    many outputs the rule fired on and that share of the surface's outputs.
+    Reads ai_validation_log only — no answer text is stored to read."""
+    import response_validation as _rv
+    conn = get_conn()
+    since = _stamp(datetime.now() - timedelta(days=days))
+    try:
+        rows = _rows_dict(conn, "SELECT surface, verdict, rules, mode FROM ai_validation_log WHERE created_at >= ?",
+                          (since,))
+    finally:
+        conn.close()
+    surfaces = {}
+    for r in rows:
+        s = surfaces.setdefault(r["surface"], {"surface": r["surface"], "n": 0,
+                                               "verdicts": {v: 0 for v in _rv.VERDICTS}, "rules": {}, "modes": {}})
+        s["n"] += 1
+        if r["verdict"] in s["verdicts"]:
+            s["verdicts"][r["verdict"]] += 1
+        s["modes"][r["mode"] or "?"] = s["modes"].get(r["mode"] or "?", 0) + 1
+        try:
+            codes = set(json.loads(r["rules"] or "[]"))
+        except (TypeError, ValueError):
+            codes = set()
+        for code in codes:
+            s["rules"][code] = s["rules"].get(code, 0) + 1
+    out = []
+    for s in sorted(surfaces.values(), key=lambda x: -x["n"]):
+        n = s["n"] or 1
+        out.append({**s, "caught_pct": round(100.0 * (s["n"] - s["verdicts"].get("pass", 0)) / n, 1),
+                    "rules": [{"rule": k, "label": _rv.RULES.get(k, k), "n": v, "pct": round(100.0 * v / n, 1)}
+                              for k, v in sorted(s["rules"].items(), key=lambda kv: -kv[1])],
+                    "mode_now": _rv.mode_for(s["surface"])})
+    return {"ok": True, "days": days, "total": len(rows), "surfaces": out, "version": _rv.VERSION}
+
+
 def emails(limit=200):
     conn = get_conn()
     now = datetime.now(); week = _stamp(now - timedelta(days=7)); today = now.strftime("%Y-%m-%d")

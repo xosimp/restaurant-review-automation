@@ -11,6 +11,7 @@ This module is that defence, plus the deterministic checks that run on what
 the model writes back, because a prompt instruction is a request and a
 publication is permanent.
 """
+import functools
 import re
 
 # Wrapped around any block of text a stranger wrote. The delimiter matters as
@@ -311,6 +312,7 @@ _NUM_WORD = r"(?:" + "|".join(sorted(list(_NUM_UNITS) + list(_NUM_TENS) + list(_
 _SPELLED_RE = re.compile(
     r"\b(?:(?:half\s+a|a|an)\s+(?=(?:hundred|thousand|million|dozen)\b))?" + _NUM_WORD
     + r"(?:(?:\s+and\s+|\s+|-)" + _NUM_WORD + r")*\b", re.I)
+_NUM_WORD_PRESENT_RE = re.compile(r"\b" + _NUM_WORD + r"\b", re.I)
 _UNIT_AFTER_RE = re.compile(r"\s*(?:%|percent\b|per\s+cent\b|dollars?\b|bucks\b|points?\b|pts?\b|stars?\b|★)",
                             re.I)
 
@@ -357,7 +359,10 @@ def normalise_numbers(text: str) -> str:
         if not (value >= 11 or scaled or unit) or (value == 0 and not unit):
             return phrase
         return str(int(value)) if float(value).is_integer() else str(value)
-    body = _SPELLED_RE.sub(_sub, body)
+    # Only text holding a number word can change (a 60 KB context with none
+    # skipped an 11 ms pass for nothing).
+    if _NUM_WORD_PRESENT_RE.search(body):
+        body = _SPELLED_RE.sub(_sub, body)
     body = re.sub(r"(\d)\s*(?:percent|per\s+cent)\b", r"\1%", body, flags=re.I)
     return body
 
@@ -398,7 +403,7 @@ def _period_after(text: str, end: int):
 
 def _money_periods(text: str) -> dict:
     """{value: {period or None}} for each money figure the context states."""
-    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    text = _prepared(text)
     out = {}
     for pat in (_MONEY_RE, _DOLLARS_RE):
         for m in pat.finditer(text):
@@ -435,7 +440,7 @@ def _direction_near(text: str, start: int, end: int):
 def _directions(text: str) -> dict:
     """{(kind, value): {+1/-1}} for the figures a context states with a
     direction."""
-    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    text = _prepared(text)
     out = {}
     for kind, pat in (("money", _MONEY_RE), ("pct", _PCT_RE)):
         for m in pat.finditer(text):
@@ -464,6 +469,19 @@ def _strip_untrusted(text: str) -> str:
                   text or "", flags=re.S)
 
 
+@functools.lru_cache(maxsize=16)
+def _prepared_cached(text: str) -> str:
+    return _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+
+
+def _prepared(text) -> str:
+    """A context as the figure readers read it: fences removed, spelled
+    figures turned to digits, dates and ids blanked. Pure in `text`, and
+    memoised for the last few inputs — one 60 KB Ask context was parsed
+    three times per check (_figures, _money_periods, _directions)."""
+    return _prepared_cached(str(text or ""))
+
+
 def _is_calendar_year(raw: str) -> bool:
     return len(raw) == 4 and raw.isdigit() and 1900 <= int(raw) <= 2100
 
@@ -475,8 +493,14 @@ def _figures(text: str) -> dict:
     31.4% labor figure (AI-5). Bare numerals — "labor 31.4", "covers 212" —
     can back either. Calendar years and the parts of dates and times are not
     figures: "2026" in "Today's date" verified any invented $1,990-$2,066.
+    Memoised for the last few inputs; each call gets its own sets.
     """
-    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    return {k: set(v) for k, v in _figures_cached(str(text or "")).items()}
+
+
+@functools.lru_cache(maxsize=16)
+def _figures_cached(text: str) -> dict:
+    text = _prepared(text)
     out = {"money": set(), "pct": set(), "bare": set()}
     spans = []
     for kind, pats in (("money", (_MONEY_RE, _DOLLARS_RE)), ("pct", (_PCT_RE,))):
@@ -489,11 +513,16 @@ def _figures(text: str) -> dict:
                 spans.append(m.span())
     # Blank what was already read as money or a percentage, so its digits are
     # not ALSO counted as a bare numeral that could back the other kind.
-    chars = list(text)
-    for a, b in spans:
-        for i in range(a, b):
-            chars[i] = " "
-    bare_text = "".join(chars)
+    pieces, last = [], 0
+    for a, b in sorted(spans):
+        a = max(a, last)
+        if b <= a:
+            continue
+        pieces.append(text[last:a])
+        pieces.append(" " * (b - a))
+        last = b
+    pieces.append(text[last:])
+    bare_text = "".join(pieces)
     for m in _BARE_RE.finditer(bare_text):
         raw = m.group(1)
         if _is_calendar_year(raw):
@@ -502,7 +531,7 @@ def _figures(text: str) -> dict:
             out["bare"].add(round(float(raw.replace(",", "")), 2))
         except ValueError:
             continue
-    return out
+    return {k: frozenset(v) for k, v in out.items()}
 
 
 def _numbers(text: str) -> set:
@@ -571,6 +600,99 @@ def figure_claims(text: str) -> list:
         if out and out[-1]["start"] == m.start() and _is_calendar_year(raw):
             out[-1]["year"] = True
     return sorted(out, key=lambda c: c["start"])
+
+
+# ── one tolerance, one direction reader, one estimate lexicon (NS6 A3) ─────
+#
+# The figure checks grew three of each: ai_guard's 2%-or-±0.5 tolerance, the
+# DSR's written-precision tolerance (dsr/narrative._tolerance), and three
+# direction detectors (_direction_near above, dsr/narrative._direction,
+# reporter.claimed_direction) with three word lists. "Waste came to $420"
+# against $412.50 passed one and failed another. These are the unified
+# versions the Response Validation Layer (response_validation.py) reads.
+# The existing callers keep their own copies for now — moving them onto these
+# is the adoption workstream's job, one call site at a time, each with its
+# tests — so nothing that ships today changes behaviour here.
+
+def precision_tolerance(claim: dict, hedged: bool = False) -> float:
+    """How far a stated figure may sit from the fact behind it: the rounding
+    its own written precision allows (the DSR's rule, standardised on by
+    NS6 A3). "$4,212" is ±0.5; "31.4%" is ±0.05; "$4,200" may round to its
+    trailing zeros but never by more than 0.5% ("$20,000" is not $19,850);
+    "$2.4k" likewise. `claim` is a figure_claims() entry. With `hedged`
+    ("about $1,200", "roughly $1,200") a round figure may round to its own
+    trailing zeros up to 5% — "roughly $1,200" for $1,240 is an honest
+    rounding, "$1,200" alone is a different figure."""
+    d, mult, v = claim.get("decimals") or 0, claim.get("mult") or 1.0, abs(float(claim.get("value") or 0))
+    if mult != 1.0:
+        tol = min(0.5 * 10 ** -d * mult, max(0.005 * v, 0.5))
+        if hedged:
+            tol = max(tol, min(0.5 * 10 ** -d * mult, 0.05 * v))
+        return tol + 1e-9
+    if d > 0:
+        return 0.5 * 10 ** -d + 1e-9
+    digits = str(int(round(v)))
+    zeros = len(digits) - len(digits.rstrip("0")) if v else 0
+    tol = max(0.5, min(0.5 * 10 ** zeros, 0.005 * v))
+    if hedged:
+        tol = max(tol, min(0.5 * 10 ** zeros, 0.05 * v))
+    return tol + 1e-9
+
+
+# The union of the three word lists. "before" words sit in front of a figure
+# ("fell to 31%", "down $400"); "after" words follow it ("$400 below
+# budget", "3 points over target").
+DIRECTION_BEFORE_DOWN = frozenset({"down", "fell", "dropped", "declined", "slipped", "decreased", "dipped", "sank",
+                                   "trailed", "lost", "shed", "eased", "shrank", "plunged", "tumbled", "lower",
+                                   "cut", "reduced", "lowered"})
+DIRECTION_BEFORE_UP = frozenset({"up", "rose", "grew", "climbed", "increased", "gained", "jumped", "beat", "topped",
+                                 "spiked", "higher", "surged", "soared", "raised", "lifted"})
+DIRECTION_AFTER_DOWN = frozenset({"below", "under", "lower", "less", "fewer", "behind", "short", "shy", "drop",
+                                  "decline", "decrease", "dip", "shortfall", "miss", "deficit", "down"})
+DIRECTION_AFTER_UP = frozenset({"above", "over", "higher", "more", "ahead", "increase", "gain", "jump", "rise",
+                                "lift", "surplus", "up"})
+_DIRECTION_FILLERS = frozenset({"by", "of", "nearly", "almost", "about", "roughly", "around", "approximately",
+                                "just", "only", "another", "a", "an", "some", "than", "to", "at"})
+_DIRECTION_UNITS = frozenset({"points", "point", "pts", "pt", "pp", "percent", "dollars", "hours", "hrs",
+                              "stars", "star"})
+
+
+def claimed_direction(text: str, start: int, end: int) -> int:
+    """+1 / -1 when the words right around the figure at text[start:end] say
+    which way it moved, else 0 — the one direction reader (NS6 A3): a sign
+    ("-$420", "+3 pts"), the nearest non-filler word before it ("fell to",
+    "down about"), or the first word after it, past a unit ("$420 below
+    budget", "3 points over target")."""
+    t = str(text or "")
+    if start > 0 and t[start - 1] in "-−":
+        return -1
+    if start > 0 and t[start - 1] == "+":
+        return 1
+    for w in reversed(re.findall(r"[a-z]+", t[max(0, start - 60):start].lower())[-4:]):
+        if w in _DIRECTION_FILLERS:
+            continue
+        if w in DIRECTION_BEFORE_DOWN:
+            return -1
+        if w in DIRECTION_BEFORE_UP:
+            return 1
+        break
+    m = re.match(r"\s*([A-Za-z]+)(?:\s+([A-Za-z]+))?", t[end:end + 40])
+    if m:
+        w = m.group(1).lower()
+        if w in _DIRECTION_UNITS and m.group(2):
+            w = m.group(2).lower()
+        if w in DIRECTION_AFTER_DOWN:
+            return -1
+        if w in DIRECTION_AFTER_UP:
+            return 1
+    return 0
+
+
+# A line quoting an estimate must say it is one (the DSR's H13 rule, now
+# shared): these words name an estimate, a forecast or a projection.
+ESTIMATE_WORDS_RE = re.compile(
+    r"\b(estimat\w*|est\.|forecast\w*|projected|projection|expected|if it holds|at this pace|"
+    r"if nothing changes)", re.I)
 
 
 # A count the prompts forbid inventing ("state no figure — a count — that
@@ -1027,14 +1149,23 @@ _PERSON_STATES = (r"(?:rude|late|slow|absent|sick|out|off|short|dismissive|unfri
                   r"missing|drunk|yelling|new|overwhelmed|understaffed|behind|on\s+(?:the\s+)?(?:phone|break))")
 
 
-def unsupported_names(generated: str, context: str) -> list:
+def name_context_words(context: str) -> set:
+    """The words unsupported_names treats as known in `context` — computed
+    once by a caller that checks many sentences against one large input
+    (the Response Validation Layer), and passed back as `known`."""
+    return {w.lower() for w in re.findall(r"[A-Za-z][\w'-]+", context or "")}
+
+
+def unsupported_names(generated: str, context: str, known: set = None) -> list:
     """Capitalised names in generated text that were never in its input —
     only where the prose treats a word as a person or a place: after a
     preposition, before a surname initial, or possessive. Ordinary
     sentence-initial capitals and platform names do not trip it. Shared by
     the Reviews insight (client_api._verify_named_entities) and the weekly
-    digest (H9)."""
-    known = {w.lower() for w in re.findall(r"[A-Za-z][\w'-]+", context or "")}
+    digest (H9). `known` is name_context_words(context), when the caller
+    already has it."""
+    if known is None:
+        known = name_context_words(context)
     out = []
     patterns = (
         r"\b(?:from|by|to|for|with)\s+([A-Z][a-z]{2,})\b",   # "respond to Amanda"
