@@ -106,13 +106,46 @@ def normalise_shift_rows(rows: list) -> list:
     return out
 
 
-def validate_shifts_csv(text: str) -> tuple:
+# A shift dated more than this many days after the restaurant's local today
+# is a typo, never a real shift: one 2027 row anchored the current window on
+# a single day (labor % 6.9 from one row) and read 100% fresh (re-audit
+# B3#4). The same bound data_freshness.FUTURE_DAYS reads.
+FUTURE_SHIFT_DAYS = 1
+
+
+def _latest_shift_date(today=None, restaurant_id=None) -> str:
+    """The latest ISO date a shift may carry: the restaurant's local today
+    (Chicago when none is named) plus FUTURE_SHIFT_DAYS."""
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = (restaurant_now_by_id(restaurant_id) if restaurant_id
+                     else datetime.now(ZoneInfo("America/Chicago"))).date()
+        except Exception:
+            today = datetime.now(ZoneInfo("America/Chicago")).date()
+    if isinstance(today, datetime):
+        today = today.date()
+    return (today + timedelta(days=FUTURE_SHIFT_DAYS)).isoformat()
+
+
+def drop_future_shifts(shifts, today=None, restaurant_id=None) -> list:
+    """The shifts dated no later than _latest_shift_date — what a sync stores
+    and what the analysis reads. A row with no date passes (totals rows are
+    handled downstream)."""
+    latest = _latest_shift_date(today, restaurant_id)
+    return [x for x in (shifts or []) if not x.get("date") or str(x.get("date"))[:10] <= latest]
+
+
+def validate_shifts_csv(text: str, today=None, restaurant_id=None) -> tuple:
     """(rows, errors) for an upload. Every row is read the way the analysis
     reads it, and anything the analysis would silently drop is refused with
-    its row named instead — a date that is not a date, hours that are not
-    0–24, sales that are not a non-negative figure, a cell that a
-    spreadsheet would run as a formula. A row with no date at all (a totals
-    row) is skipped, not refused."""
+    its row named instead — a date that is not a date, a date after the
+    restaurant's today (+ FUTURE_SHIFT_DAYS), hours that are not 0–24, sales
+    that are not a non-negative figure, a cell that a spreadsheet would run
+    as a formula. A row with no date at all (a totals row) is skipped, not
+    refused. `today` is the restaurant's local date (restaurant_id resolves
+    it when not given)."""
+    latest = _latest_shift_date(today, restaurant_id)
     import io
     raw_rows = list(csv.DictReader(io.StringIO((text or "").lstrip("\ufeff"))))
     errors = []
@@ -129,6 +162,10 @@ def validate_shifts_csv(text: str) -> tuple:
             continue
         if not _iso_date(date_raw):
             errors.append(f"Row {i}: “{date_raw[:20]}” is not a date.")
+            continue
+        if _iso_date(date_raw) > latest:
+            from time_utils import mdy as _mdy_v
+            errors.append(f"Row {i}: {_mdy_v(_iso_date(date_raw))} is after today — check the date.")
             continue
         for col in _SHIFT_HOURS:
             cell = str(clean.get(col) or "").strip()
@@ -347,6 +384,11 @@ def diagnosis_evidence_input(analysis: dict, margin=None) -> dict:
     ev = {"n": with_sales, "kind": "trading_days", "coverage": (with_sales / float(days)) if days else None,
           "flags": flags,
           "basis": f"{with_sales} days of shifts with sales" + (f" of {days}" if missing else "")}
+    if a.get("is_live") is False:
+        # The bundled sample week is not this restaurant's data: the engine
+        # scores it 0, "Sample data — not scored" (re-audit B3#1).
+        ev["sample"] = True
+        ev["basis"] = "the sample week, not your shifts"
     if margin is not None and margin <= DIAGNOSIS_MARGIN_PTS:
         ev["cap"] = 74
         ev["cap_reason"] = f"labor is {max(0.0, margin):.1f} pts over target — inside its normal swing"
@@ -378,6 +420,14 @@ def diagnose(analysis: dict) -> dict:
     nothing over target returns cause None rather than a manufactured
     problem."""
     a = analysis or {}
+    if a.get("is_live") is False:
+        # analyse_shifts_for_restaurant substitutes a bundled sample week
+        # when nothing is on file. A cause read from it is a fictional
+        # restaurant's: it was shown with a percentage and answer buttons,
+        # presented to the ledger as a real recommendation, and fed the
+        # weekly plan's cause anchors (re-audit B3#1, CRITICAL).
+        return {"available": False, "sample": True,
+                "reason": "no shifts of yours on file yet — the sample week is not read as your labor"}
     if not a.get("total_sales") or a.get("sales_data_missing"):
         return {"available": False, "reason": "no sales against the shifts, so there is no labor percentage to read"}
     target = float(a.get("labor_target") or 30)
@@ -488,9 +538,14 @@ def _covers_guidance(analysis: dict) -> str:
 CURRENT_WINDOW_DAYS = 28
 
 
-def current_window(shifts, window_days=CURRENT_WINDOW_DAYS):
+def current_window(shifts, window_days=CURRENT_WINDOW_DAYS, today=None):
     """The shifts inside the trailing `window_days` ending on the latest
-    dated shift; all of them when window_days is None."""
+    dated shift; all of them when window_days is None. With `today` (the
+    restaurant's local date), a shift dated after today + FUTURE_SHIFT_DAYS
+    is dropped first, so a typo row can never anchor the window (re-audit
+    B3#4)."""
+    if today is not None and shifts:
+        shifts = drop_future_shifts(shifts, today=today)
     if not window_days or not shifts:
         return shifts
     dates = sorted({str(x.get("date") or "")[:10] for x in shifts if x.get("date")})
@@ -531,8 +586,17 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
         client_data = get_client_data(restaurant_id)
     is_live = bool(client_data and client_data.get("shifts_csv"))
     # The labelled preview: is_live=False travels with the result.
+    # Rows dated after the restaurant's today are typos and never read —
+    # not by the current window, not by the per-day archive (B3#4).
+    _today = None
+    if is_live:
+        try:
+            from time_utils import restaurant_now_by_id
+            _today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            _today = None
     shifts = current_window(load_shifts_for_restaurant(restaurant_id, allow_sample=True,
-                                                       client_data=client_data), window_days)
+                                                       client_data=client_data), window_days, today=_today)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
     from models import get_role_rates, compute_blended_rate
@@ -2206,7 +2270,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         projected_revenue = round(monthly_revenue_target / 4.33, 0)  # monthly → weekly
     elif yoy_context:
         yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
-        if yoy_sales:
+        # Only a WHOLE prior-year week projects a week: four days of last
+        # year's sales summed as if they were seven understated the budget
+        # (re-audit B3#19). A partial week falls through to the recent
+        # period below.
+        if yoy_sales and len(yoy_sales) == len(yoy_context):
             projected_revenue = sum(yoy_sales)
     if not projected_revenue:
         # Scale the synced period up to a week by CALENDAR days covered, not

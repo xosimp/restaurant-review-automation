@@ -200,7 +200,7 @@ def _rpower(db_path, rid, days_ago, error=None):
 
 def test_admin_integrations_list_rpower_and_call_a_stopped_sync_an_error(db_path):
     rid = _rid(db_path, name="Simple EJ's")
-    _rpower(db_path, rid, days_ago=5)
+    _rpower(db_path, rid, days_ago=6)   # stale by the registry's pos row (50% at 5 days is aging)
     rec = admin_ops.client_detail(rid)["client"]
     ints = {i["key"]: i for i in rec["integrations"]}
     assert "rpower" in ints and ints["rpower"]["configured"]

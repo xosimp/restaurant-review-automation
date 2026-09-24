@@ -804,6 +804,10 @@ def sync_to_db(restaurant_id: int) -> dict:
     try:
         csv_str = build_shifts_csv(restaurant_id, days=60)
         if not csv_str:
+            # An empty pull is a failed sync, written like RPOWER's so the
+            # freshness registry and pos_health see it (re-audit B3#15).
+            update_restaurant(restaurant_id, {
+                "toast_sync_error": "No shift data returned for the last 60 days"})
             return {"ok": False, "error": "No shift data returned from Toast"}
 
         import pos

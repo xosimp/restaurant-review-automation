@@ -427,9 +427,10 @@ def test_marketing_freshness_reads_the_metrics_sync_state(db):
     _x(db, "UPDATE restaurants SET ig_token='t' WHERE id=?", (rid,))
     _x(db, "INSERT INTO marketing_content_log (restaurant_id, content_type, post_id, created_at) "
            "VALUES (?, 'post', 'p1', datetime('now'))", (rid,))
-    # never synced: no penalty is invented, but nothing claims a sync either
+    # never synced on a connected account is an error (re-audit B3#5 — it
+    # read 100%): under the stale threshold, and it says why
     s = dfr.source_state(_row(db, rid), "marketing", db_path=db, now=now)
-    assert s["state"] == "current" and s["metrics_synced_at"] is None
+    assert s["metrics_synced_at"] is None and s["pct"] < 50 and "never synced" in s["error"]
     scheduler.record_metrics_sync(rid, ok=True)
     s = dfr.source_state(_row(db, rid), "marketing", db_path=db, now=now)
     assert s["state"] == "current" and s["metrics_synced_at"] and "metrics synced" in s["basis"]

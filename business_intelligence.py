@@ -998,7 +998,15 @@ def one_thing_confidence(restaurant_id, c, db_path=DB_PATH, ctx=None):
         import rec_trust
         import data_freshness
         mods = ["inventory" if m == "food_cost" else m for m in (c.get("modules") or [])]
-        return rec_trust.assess(restaurant_id, c.get("key") or "", evidence=c.get("evidence_input"),
+        ev = c.get("evidence_input")
+        if ev and "reviews" in mods:
+            # The Places "sampled" flag, from the one helper every review
+            # surface reads (re-audit B3#7, B4 M1).
+            ctx = ctx or rec_trust.Context(restaurant_id, db_path=db_path)
+            fl = data_freshness.review_evidence_flags(ctx.row())
+            if fl:
+                ev = dict(ev, flags=tuple(dict.fromkeys(tuple(ev.get("flags") or ()) + fl)))
+        return rec_trust.assess(restaurant_id, c.get("key") or "", evidence=ev,
                                 sources=data_freshness.sources_for(mods), db_path=db_path, ctx=ctx)
     except Exception as e:
         log.warning("one thing: confidence unavailable: %s", e)

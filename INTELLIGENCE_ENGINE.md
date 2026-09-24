@@ -270,11 +270,25 @@ word and the object rides beside it as `confidence_detail`.
 - **Data Freshness** = 100 × the minimum over the card's sources of
   recency × completeness (`data_freshness.SOURCES`, one threshold table:
   recency is 1 within `grace` days of the expected lag, then falls to 0
-  over `horizon` days; an error — a failing sync, an expired token, two
-  missed review fetches — caps it at half; an unknown age is 0, never
-  current). Sources are dated by the last day the data COVERS (shifts by
-  their last day, counts by the oldest count), not by when a file was
-  written.
+  over `horizon` days; an error — a failing or empty sync, an expired or
+  unreadable token, a connected account whose metrics never synced, two
+  missed review fetches, a stale forecast — holds it under
+  `ERROR_CEILING` = 45, strictly below the stale threshold, so every
+  erroring source trips the stale cap and its caution; an unknown age is
+  0, never current; a date or stamp after the restaurant's today + 1 day is
+  a typo or clock error and reads unknown). Sources are dated by the last
+  day the data COVERS (shifts by their last day, the POS by its last
+  business date carrying sales — not the sync stamp — counts by the oldest
+  count, the DSR by its last final report; a provisional night is held
+  under "aging"), not by when a file was written. A POS with credentials
+  that never synced is `unknown` with pct null: no figure rests on it yet.
+  Missing sales days count ONCE, in Evidence Strength (coverage and the
+  `days_missing_sales` flag), not also as freshness completeness.
+  `MODULE_SOURCES` puts `sales` under labor, schedule, food and the DSR,
+  and `weather` under the schedule and demand; `TOOL_SOURCES` maps the Ask
+  tools whose module names no source. `pos_health`'s current / aging /
+  stale is this table's `pos` row (`age_pct`), one POS rule everywhere;
+  "connected" is credentials only.
 - **Overall** = the geometric mean of the measured dimensions; no evidence
   → not measurable. No track record here (accuracy null) → at most 70, with
   a caution. Freshness under 50 → at most 49. Band: ≥ 75 high, 50–74

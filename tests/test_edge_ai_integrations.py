@@ -445,7 +445,11 @@ def _toast_restaurant(db_path):
 
 
 def _time_entry(i, first="Staff", last="Member", guid=None, day=None, hours=6):
-    start = datetime(2026, 8, 1, 6, 0) + timedelta(days=(day if day is not None else i // 40),
+    # Anchored in the past: 2,500 entries at 40 a day span 63 days, and a
+    # synced row dated after today is dropped as a clock error (re-audit
+    # B3#4) — a fixed 8/1/26 start ran past today.
+    base = datetime.combine(date.today() - timedelta(days=70), datetime.min.time()).replace(hour=6)
+    start = base + timedelta(days=(day if day is not None else i // 40),
                                                    minutes=(i % 40) * 7)
     return {
         "guid": f"te-{i}",

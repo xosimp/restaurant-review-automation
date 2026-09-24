@@ -2895,6 +2895,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0):
                 _rainy = set()
                 for _w in (result.get("weather_forecast") or []):
+                    # A stale forecast copy never trims a shift for rain
+                    # (re-audit B3#6).
+                    if _w.get("stale"):
+                        continue
                     try:
                         if int(_w.get("precip_pct") or 0) >= 60:
                             _rainy.add(_w.get("date"))

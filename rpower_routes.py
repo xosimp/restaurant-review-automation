@@ -112,12 +112,14 @@ def disconnect_rpower(restaurant_id, current_user):
 
     The store binding goes with the token deliberately: a cg and store_mid
     left behind after a token is removed is a half-connected state that
-    is_connected would keep reporting as live.
+    is_connected would keep reporting as live. The sync stamp goes too: left
+    behind, it decayed to 0% freshness under every labor and food card
+    (re-audit B6#1).
     """
     update_restaurant(restaurant_id, {
         "rpower_token": None, "rpower_cg": None, "rpower_store_mid": None,
         "rpower_store_name": None, "rpower_verified_at": None,
-        "rpower_sync_error": None})
+        "rpower_sync_error": None, "rpower_last_synced": None})
     return jsonify(ok=True, message="RPOWER disconnected.")
 
 
@@ -156,7 +158,7 @@ def rpower_disconnect_client(current_user):
     update_restaurant(current_user["restaurant_id"], {
         "rpower_token": None, "rpower_cg": None, "rpower_store_mid": None,
         "rpower_store_name": None, "rpower_verified_at": None,
-        "rpower_sync_error": None})
+        "rpower_sync_error": None, "rpower_last_synced": None})
     return jsonify(ok=True, message="RPower disconnected.")
 
 

@@ -1396,13 +1396,17 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
     # clients decode. One ledger read for the list.
     try:
         import rec_trust
+        import data_freshness
         _ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+        # The Places "sampled" flag from the one helper Home, Do-today and
+        # the hero read too (re-audit B3#7, B4 M1).
+        _rv_flags = data_freshness.review_evidence_flags(_ctx.row())
         for d in out:
             n_rv = int(d.get("mention_count") or 0)
             d["confidence_detail"] = rec_trust.diagnosis_confidence(
                 restaurant_id, f"diag_review:{d.get('category')}", d, n_rv, "reviews",
                 f"{n_rv} reviews on this theme over {d.get('window_days') or 90} days",
-                sources=("reviews",), ctx=_ctx)
+                sources=("reviews",), flags=_rv_flags, ctx=_ctx)
     except Exception as e:
         print(f"[review_intelligence] diagnosis confidence unavailable: {e}")
     return out

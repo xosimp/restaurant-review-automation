@@ -2516,9 +2516,30 @@ def _do_mobile_labor(restaurant_id):
     except Exception:
         demand_accuracy = week_projection_accuracy = None
 
+    # The registry's reading of the labor data (data_freshness over the
+    # labor module's sources, dated by this analysis) — so the app marks the
+    # figures stale by the same rule every confidence and Home's strip use,
+    # not a 21-day rule of its own (re-audit B3#9, B6#5). {pct, state
+    # current|aging|stale|unknown, stale, basis, as_of, as_of_iso}; None on
+    # sample data.
+    labor_freshness = None
+    if analysis.get("is_live"):
+        try:
+            import data_freshness as _dfr
+            import confidence_engine as _ce_m
+            _fr = _ce_m.freshness(_dfr.states(restaurant,
+                                              _dfr.sources_for(["labor"]), context={"labor": analysis}))
+            labor_freshness = {"pct": _fr.get("pct"), "state": _ce_m.state(_fr.get("pct")),
+                               "stale": _fr.get("pct") is not None and _fr["pct"] < _ce_m.STALE_BELOW,
+                               "basis": _fr.get("basis"), "as_of": _fr.get("as_of"), "as_of_iso": _fr.get("as_of_iso")}
+        except Exception as e:
+            print(f"[mobile labor] freshness unavailable rid={restaurant_id}: {e}")
+            labor_freshness = None
+
     return {
         "ok": True,
         "is_live": bool(analysis.get("is_live")),
+        "labor_freshness": labor_freshness,
         "demand_accuracy": demand_accuracy,
         "week_projection_accuracy": week_projection_accuracy,
         "overall_labor_pct": overall_pct,
@@ -4509,7 +4530,7 @@ def _do_mobile_account(current_user):
                              and not getattr(restaurant, f"{name}_sync_error", None),
                 "last_synced": getattr(restaurant, f"{name}_last_synced", None),
                 "error": getattr(restaurant, f"{name}_sync_error", None),
-                "sync_state": st["state"], "age_days": st["age_days"]}
+                "sync_state": st["state"], "age_days": st["age_days"], "sync_pct": st.get("pct")}
 
     connections = {
         "google_business": {
@@ -4818,7 +4839,7 @@ def mobile_disconnect_toast(current_user):
     update_restaurant(current_user["restaurant_id"], {
         "toast_client_id": None, "toast_client_secret": None,
         "toast_restaurant_guid": None, "toast_access_token": None,
-        "toast_token_expires": None, "toast_sync_error": None,
+        "toast_token_expires": None, "toast_sync_error": None, "toast_last_synced": None,
     })
     return jsonify(ok=True)
 

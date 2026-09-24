@@ -201,9 +201,11 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     Returns the number of shift rows the synced window carried."""
     import csv as _csv
     import io as _io
-    from labor import load_shifts
+    from labor import load_shifts, drop_future_shifts
     from models import get_client_data, save_client_data
-    new_rows = load_shifts(csv_string=csv_str)
+    # A provider row dated after the restaurant's today is a clock or data
+    # error, never stored (re-audit B3#4 — the upload refuses it too).
+    new_rows = drop_future_shifts(load_shifts(csv_string=csv_str), restaurant_id=restaurant_id)
     dates = sorted({r["date"] for r in new_rows if r.get("date")})
     merged = list(new_rows)
     if dates:

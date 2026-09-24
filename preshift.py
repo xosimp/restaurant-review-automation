@@ -111,7 +111,9 @@ def build(restaurant_id, day=None, db_path=DB_PATH):
     if r:
         import weather
         wx = _safe(weather.get_forecast_for_week, r, [day.isoformat()])
-        if wx:
+        # A stale copy (past weather.FORECAST_STALE_HOURS, or of unknown
+        # age) is never told as today's weather (re-audit B3#6).
+        if wx and not wx[0].get("stale"):
             w = wx[0]
             rain = f", {w['precip_pct']}% chance of rain" if w.get("precip_pct") else ""
             items.append({"kind": "weather",

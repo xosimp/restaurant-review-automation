@@ -49,8 +49,14 @@ from models import DB_PATH
 
 
 def get_conn(db_path=None):
-    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
-    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports).
+    The functions here default db_path to the import-time DB_PATH, so that
+    value means "the default database" and resolves through models at call
+    time too — data_freshness's pattern (re-audit B6 low: it was passed on
+    explicitly, and a patched models.get_conn never reached it)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 
 # kind -> period ("week" = ISO Monday-Sunday, "month" = calendar month), the

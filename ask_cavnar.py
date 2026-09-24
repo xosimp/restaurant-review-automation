@@ -1708,8 +1708,13 @@ def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaura
             basis += f"; {checked} of {len(stated)} figures checked against your data"
         ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []), "basis": basis,
               "sample": bool(tools_used) and live == 0 and bool(sample)}
+        # Freshness from what each tool actually read — its module's sources
+        # plus data_freshness.TOOL_SOURCES for the tools whose module label
+        # names none (outcomes, goals, decisions, platform, the snapshot
+        # before it names its modules, the demand forecast's weather —
+        # re-audit B3#13).
         return rec_trust.assess(restaurant_id, "ask_answer", evidence=ev,
-                                sources=data_freshness.sources_for(modules))
+                                sources=data_freshness.sources_for_tools(tools_used, modules))
     except Exception as e:
         print(f"[ask_cavnar] answer confidence unavailable: {e}")
         import confidence_engine

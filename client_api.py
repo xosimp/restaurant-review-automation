@@ -1091,13 +1091,18 @@ def _do_today_confidence(rid, payload):
     not verify. Never raises."""
     try:
         import rec_trust
+        import data_freshness
         from models import get_review_stats as _grs
         n30 = int((_grs(rid) or {}).get("last_30d") or 0)
         unsupported = payload.get("unsupported_figures") or []
+        _ctx = rec_trust.Context(rid)
         return rec_trust.assess(rid, "insight_review", evidence={
             "n": n30, "kind": "reviews", "model_band": "medium", "unverified": len(unsupported),
+            # The Places "sampled" flag from the one helper every review
+            # surface reads (re-audit B3#7, B4 M1).
+            "flags": data_freshness.review_evidence_flags(_ctx.row()),
             "basis": f"a model-written suggestion from {n30} reviews in the last 30 days"},
-            sources=("reviews",))
+            sources=("reviews",), ctx=_ctx)
     except Exception as e:
         print(f"[reviews] do-today confidence unavailable: {e}")
         import confidence_engine
@@ -3973,7 +3978,7 @@ def client_upload_data(current_user):
         # normaliser every read goes through (SEC-16, MOD-LAB-10/11/12).
         # A refused file changes nothing: the previous dataset stays.
         from labor import validate_shifts_csv
-        _shift_rows, _shift_errors = validate_shifts_csv(csv_content)
+        _shift_rows, _shift_errors = validate_shifts_csv(csv_content, restaurant_id=restaurant_id)
         if _shift_errors:
             _more = len(_shift_errors) - 5
             return jsonify(ok=False, row_errors=_shift_errors[:50], error=(

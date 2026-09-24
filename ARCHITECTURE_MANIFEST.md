@@ -125,7 +125,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `credentials` | 0 | Fernet at rest for POS/OAuth columns |
 | `csrf` | 0 | CSRF cookie and check |
 | `dashboard` | 4 | pre-hosted standalone demo app (port 8080); 0 importers; candidate for `docs/history` |
-| `data_freshness` | 2 | how current and complete each data source is (contract K2): one `SOURCES` threshold table and `source_state(restaurant, key)` → `{pct, as_of, as_of_iso, basis, state, error}` for POS (every provider through `pos_health`), shifts and sales (dated by the last day the data covers), reviews (`fetched_at_ct`, missed fetch slots, Places sampled), counts (the oldest `last_recount_at`), deliveries, marketing (token expiry and `scheduler.metrics_sync_state` — a failing or missed nightly metrics sync is an error on the source; a deliberate function-scope L2→L4 import), AI visibility, competitors, weather (`age_hours` and `stale` past `weather.FORECAST_STALE_HOURS`), the DSR; an unknown age is never current |
+| `data_freshness` | 2 | how current and complete each data source is (contract K2): one `SOURCES` threshold table and `source_state(restaurant, key)` → `{pct, as_of, as_of_iso, basis, state, error}` for POS (every provider through `pos_health`), shifts and sales (dated by the last day the data covers), reviews (`fetched_at_ct`, missed fetch slots, Places sampled), counts (the oldest `last_recount_at`), deliveries, marketing (token expiry and `scheduler.metrics_sync_state` — a failing or missed nightly metrics sync is an error on the source; a deliberate function-scope L2→L4 import), AI visibility, competitors, weather (`age_hours` and `stale` past `weather.FORECAST_STALE_HOURS`), the DSR (final reports; a provisional night held under aging); an unknown age is never current, a future date is unknown, an erroring source is under `ERROR_CEILING` (below the engine's stale threshold); also `sources_for_tools` (Ask), `review_evidence_flags` (the Places "sampled" flag every review surface reads) and `review_fetch_state` (the reviews recency Home's nudge and portfolio read) |
 | `decisions` | 2 | the owner's decision record |
 | `delayed` | 2 | actions with an undo window |
 | `demand` | 2 | demand forecast from same-weekday medians |
@@ -216,7 +216,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `outcomes` | 2 | before/after trackers with the causation caveat |
 | `permissions` | 0 | roles and module view gates |
 | `pos` | 0 | provider registry and capability dispatch |
-| `pos_health` | 0 | `pos_sync_state(r)`: one provider-agnostic reading of the POS sync (provider, last success, error, age, state) over every provider's `{provider}_last_synced`/`_sync_error` columns — RPOWER included — for Home, the status page, admin, mobile connections and Data Freshness |
+| `pos_health` | 0 | `pos_sync_state(r)`: one provider-agnostic reading of the POS sync (provider, last success, error, age, state) over every provider's `{provider}_last_synced`/`_sync_error` columns — RPOWER included — for Home, the status page, admin, mobile connections and Data Freshness; connected means credentials (never a leftover stamp), the freshest credentialed provider is read, and current / aging / stale is `data_freshness`'s `pos` row (`age_state`: a deliberate function-scope L0→L2 import, so every surface names a POS state by one rule) |
 | `preshift` | 2 | the staff pre-shift read |
 | `pricing` | 0 | the one price list |
 | `promise` | 2 | the sales audit's promise, measured |

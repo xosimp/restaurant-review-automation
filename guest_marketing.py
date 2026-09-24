@@ -1139,7 +1139,13 @@ def _with_confidence(restaurant_id, out, ev_in, db_path=DB_PATH):
     out["evidence_input"] = ev_in
     try:
         import rec_trust
-        conf = rec_trust.assess(restaurant_id, "diag_campaign", evidence=ev_in, db_path=db_path)
+        import data_freshness
+        # Data Freshness from what the read rests on (re-audit B3#13, B4
+        # M12 — it passed no sources, so it was never measured): guests who
+        # came back are matched through the POS's orders; a read on link
+        # taps (flagged partial) rests on no dated POS data.
+        srcs = () if "partial" in (ev_in.get("flags") or ()) else data_freshness.sources_for(["campaigns"])
+        conf = rec_trust.assess(restaurant_id, "diag_campaign", evidence=ev_in, sources=srcs, db_path=db_path)
     except Exception as e:
         print(f"[guest_marketing] campaign confidence unavailable: {e}")
         import confidence_engine

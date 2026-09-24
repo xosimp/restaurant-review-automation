@@ -170,7 +170,17 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             if labor and labor.get("is_live") and labor.get("overall_labor_pct"):
                 lp = labor.get("overall_labor_pct", 0)
                 ot_risk = labor.get("overtime_risk", [])
-                labor_context = f"Labor: {lp:.1f}% of revenue this week"
+                # The window the figure covers, not "this week": the labor
+                # read is the current window (up to 28 days) ending on the
+                # last shift on file (re-audit B3#18).
+                _dr_lr = labor.get("date_range") or {}
+                _days_lr = int(_dr_lr.get("days") or labor.get("period_days") or 0)
+                if _dr_lr.get("end") and _days_lr:
+                    from time_utils import mdy as _mdy_lr
+                    labor_context = (f"Labor: {lp:.1f}% of revenue over the {_days_lr} days of shifts "
+                                     f"through {_mdy_lr(_dr_lr['end'])}")
+                else:
+                    labor_context = f"Labor: {lp:.1f}% of revenue over the shifts on file"
                 if ot_risk:
                     labor_context += f", {len(ot_risk)} overtime risk"
                 _facts["labor"] = {"pct": float(lp), "direction": None,
@@ -181,8 +191,12 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     from models import get_conn as _gc_lr
                     _conn_lr = _gc_lr()
                     _lh = _conn_lr.execute(
+                        # A period with no sales has no labor % (its 0.0 is a
+                        # missing figure): "trending … from 0.0%" (B6 low) —
+                        # the filter notify.py and get_labor_history apply.
                         """SELECT labor_pct, period_start FROM labor_history
-                           WHERE restaurant_id=? ORDER BY period_start DESC LIMIT 3""",
+                           WHERE restaurant_id=? AND total_sales > 0
+                           ORDER BY period_start DESC LIMIT 3""",
                         (report.restaurant_id,)
                     ).fetchall()
                     _conn_lr.close()

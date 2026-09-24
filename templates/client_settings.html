@@ -871,7 +871,8 @@ async function saveSettings() {
     timezone:        document.getElementById('timezone').value,
     google_place_id: document.getElementById('google_place_id').value,
     yelp_business_id:document.getElementById('yelp_business_id').value,
-    reviews_live:    {{ 1 if restaurant.gmb_refresh_token else 0 }},
+    {# The stored value is kept: a Place-ID-only restaurant (no Business Profile token) fetches through Places with reviews_live on, and posting 0 here switched its review fetching off on every admin save (re-audit B6). #}
+    reviews_live:    {{ 1 if (restaurant.gmb_refresh_token or restaurant.reviews_live) else 0 }},
     neighborhood:    document.getElementById('neighborhood').value,
     known_for:       document.getElementById('known_for').value,
     vibe:            document.getElementById('vibe').value,

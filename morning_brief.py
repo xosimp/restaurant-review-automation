@@ -102,7 +102,9 @@ def _day_context(restaurant, day):
     try:
         import weather
         rows = weather.get_forecast_for_week(restaurant, [day.isoformat()]) or []
-        if rows:
+        # A stale copy (past weather.FORECAST_STALE_HOURS, or of unknown
+        # age) is never told as today's weather (re-audit B3#6).
+        if rows and not rows[0].get("stale"):
             w = rows[0]
             piece = str(w.get("short_forecast") or "").lower()
             if w.get("high_f"):

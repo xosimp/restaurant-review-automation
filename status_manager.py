@@ -533,21 +533,26 @@ def _check_labor_analytics():
     ).fetchall()
     conn.close()
 
-    errored, stale = [], []
+    # The status page is PUBLIC (status_routes, status.html): it says how
+    # many locations are affected, never which — a restaurant's name next to
+    # "POS sync error" is its private operating state (re-audit B6#6).
+    errored = stale = 0
     for r in rows:
         st = pos_health.pos_sync_state(dict(r))
         if st["state"] == "error":
-            errored.append(r["name"])
+            errored += 1
         elif st["state"] == "stale":
-            stale.append(r["name"])
+            stale += 1
     if errored:
-        names = ", ".join(errored[:2])
-        update_service_status("labor_analytics", "degraded", f"POS sync error: {names}")
+        update_service_status("labor_analytics", "degraded", f"POS sync error at {_locations(errored)}")
     elif stale:
-        names = ", ".join(stale[:2])
-        update_service_status("labor_analytics", "degraded", f"POS not synced in 3+ days: {names}")
+        update_service_status("labor_analytics", "degraded", f"POS data behind at {_locations(stale)}")
     else:
         update_service_status("labor_analytics", "operational", None)
+
+
+def _locations(n):
+    return f"{n} location" + ("" if n == 1 else "s")
 
 
 def overall_status(statuses):

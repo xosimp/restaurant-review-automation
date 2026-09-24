@@ -349,10 +349,14 @@ def _location_signal(conn, r, now):
     if _pos["state"] == "error":
         # Any provider, RPOWER included (CA3 F6) — not Toast alone.
         issues.append(("critical", f"{pos_health_label(_pos)} sync failing"))
-    connected = bool(r.get("gmb_refresh_token") or r.get("reviews_live"))
-    age = _age_days(r.get("last_fetched_at"), now)
-    if connected and age is not None and age > 3:
-        issues.append(("important", f"Reviews not refreshed in {int(age)} days"))
+    # The registry's reviews rule (data_freshness.review_fetch_state), not a
+    # 3-day cut of its own, and last_fetched_at read as the Chicago-local
+    # stamp it is — _ts read it as server-local, hours off on a UTC host
+    # (re-audit B3#9, #20; B6 low).
+    import data_freshness
+    _rv = data_freshness.review_fetch_state(r, now=now)
+    if _rv["state"] == "stale":
+        issues.append(("important", f"Reviews not refreshed since {_rv['as_of']}"))
     if (awaiting.get("n") or 0) > 0:
         issues.append(("watch", f"{_plural(awaiting['n'], 'reply', 'replies')} waiting for approval"))
     sev_rank = {"critical": 3, "important": 2, "watch": 1}
@@ -1165,7 +1169,8 @@ def _build(current_user, present=True):
             last_fetch_age = _age_days(r.get("last_fetched_at"), now)
         # Places-only reviews are a sample (five at a time), and say so in
         # the evidence behind every review card (CA3 F13).
-        _rv_flags = ("sampled",) if (r.get("reviews_live") and not r.get("gmb_refresh_token")) else ()
+        # One helper for every review surface (re-audit B3#7, B4 M1).
+        _rv_flags = data_freshness.review_evidence_flags(r)
         _rv_src = ("reviews",) if google_connected else ()
 
         # attention
@@ -1210,8 +1215,12 @@ def _build(current_user, present=True):
             add_attn("google_not_connected", "important", "Google Business isn't connected",
                      "Nothing flows in until it is — reviews, drafts, alerts all start here.", "account", "Connect Google",
                      evidence="No review source")
-        if google_connected and last_fetch_age is not None and last_fetch_age > 3:
-            add_attn("reviews_stale", "important", f"Reviews haven't refreshed in {int(last_fetch_age)} days",
+        # Stale by the registry's reviews rule — the same reading that caps
+        # every review card's Data Freshness — not a 3-day cut of Home's own
+        # (re-audit B3#9).
+        _rv_fetch = data_freshness.review_fetch_state(r, now=now)
+        if google_connected and _rv_fetch["state"] == "stale" and last_fetch_age is not None:
+            add_attn("reviews_stale", "important", f"Reviews haven't refreshed since {_rv_fetch['as_of']}",
                      "The Google connection may need re-authorising. Numbers below are as of the last pull.", "account", "Check connection",
                      since=f"{int(last_fetch_age)}d")
         # trend: negative share last 2 weeks vs prior 2
@@ -1402,6 +1411,20 @@ def _build(current_user, present=True):
                                                ("days_with_conflicting_sales", labor.get("days_with_conflicting_sales")),
                                                ("period_too_short", period_days < _MIN_DAYS)) if on)
             _cover_note = f"{_with_sales} of {days} days carry sales" if _missing else ""
+            # The floors every labor claim on this page shares (re-audit
+            # B3#8, B4 M4): the attention card, the SMS alert and the win
+            # need MIN_DAYS_TO_EXTRAPOLATE days of shifts, and the tile,
+            # brief line and win need the labor data's own freshness — one
+            # day of shifts said "5.8 pts over target" in the tile and "Labor
+            # 35.8% against a 30% target" in the brief, and a green "under
+            # target" win could stand on a month-old file.
+            import confidence_engine as _ce_lab
+            _lab_srcs = trust_ctx.sources(sources_of("labor"))
+            _lab_fr = _ce_lab.freshness(_lab_srcs)
+            _lab_stalest = next((s for s in _lab_srcs if s.get("key") == _lab_fr.get("stalest")), None) or {}
+            _lab_short = period_days < _MIN_DAYS
+            _lab_stale = _lab_fr.get("pct") is not None and _lab_fr["pct"] < _ce_lab.STALE_BELOW
+            _lab_readable = not _lab_short and not _lab_stale
             if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
                 # Never from a cold start: one day of shifts is not "labor
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
@@ -1420,7 +1443,7 @@ def _build(current_user, present=True):
                          dollars_weekly=(round(savings, 2) if savings > 0 else None),
                          dollars_basis=("a week of the whole schedule's gap to your target, all shifts in the period"
                                         if savings > 0 else None))
-            elif over <= 0:
+            elif over <= 0 and _lab_readable:
                 add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under your {labor_target:.0f}% target over {days} days.", "labor")
             if ot_now:
                 n_ot = ot_now["people"]
@@ -1463,18 +1486,38 @@ def _build(current_user, present=True):
             if last_schedule and _ts(last_schedule.get("generated_at")) and _ts(last_schedule["generated_at"]) >= since_dt:
                 hs = float(last_schedule.get("hours_scheduled") or 0); hb = float(last_schedule.get("hours_budget") or 0)
                 add_change(f"New schedule built for {_mdy(last_schedule.get('week_start')) or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
-            snapshot.append({"key": "labor", "label": "Labor", "status": "available", "value": f"{pct:.1f}", "unit": "% of sales",
-                             "delta": ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0}),
+            _lab_interp = ((f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip())
+            _lab_state = "bad" if over > 6 else ("warn" if over > 0 else "good")
+            if _lab_short:
+                # Below the floor: "—" and what is needed, never a verdict.
+                _lab_interp = (f"{_plural(period_days, 'day')} of shifts so far — labor % reads against "
+                               f"your target from {_MIN_DAYS} days.")
+                _lab_state = "neutral"
+            elif _lab_stale:
+                _lab_interp = f"Out of date — {_lab_stalest.get('basis') or 'the shifts are old'}. " + _lab_interp
+                _lab_state = "neutral"
+            snapshot.append({"key": "labor", "label": "Labor", "status": "available",
+                             "value": "—" if _lab_short else f"{pct:.1f}", "unit": "" if _lab_short else "% of sales",
+                             "delta": (None if _lab_short else
+                                       ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
                              "secondary": [{"label": "Target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
-                             "interpretation": (f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip(),
-                             "state": "bad" if over > 6 else ("warn" if over > 0 else "good"),
+                             "interpretation": _lab_interp,
+                             "state": _lab_state,
+                             "below_floor": _lab_short, "stale": _lab_stale,
                              "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": over >= LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False,
+                             "attention": (over >= LABOR_OVER_TARGET_PTS and not _lab_short) or bool(ot_now), "sample": False,
                              # The last day the shifts cover, not when a file
                              # was written (CA3 F2).
                              "last_data": (labor.get("date_range") or {}).get("end") or client_data.get("updated_at"),
                              "coverage_note": _cover_note or None})
-            brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
+            if _lab_short:
+                brief_lines.append({"text": f"Labor: {_plural(period_days, 'day')} of shifts so far — a read "
+                                            f"against your target needs {_MIN_DAYS}.", "tone": "neutral", "module": "labor"})
+            elif _lab_stale:
+                brief_lines.append({"text": f"Labor {pct:.1f}% as of {_lab_fr.get('as_of') or 'the last upload'} — "
+                                            "the data under it is out of date.", "tone": "neutral", "module": "labor"})
+            else:
+                brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})
@@ -1847,6 +1890,18 @@ def _build(current_user, present=True):
     attention = [a for a in attention if not (a["dismissable"] and (
         a["rec_key"] in answered or (a["advice_signature"] and a["advice_signature"] in declined_sigs)))]
 
+    # Data freshness per module and source (K4), from the one registry every
+    # card's Data Freshness reads (data_freshness) — and the stalest date
+    # under the page. The strip used to be built here and rendered nowhere,
+    # with an unknown age reading "fresh" (CA3 F1, CA4 F7). Read before the
+    # headline: "Running well" is never said over stale or unknown data
+    # (re-audit B4 M4).
+    freshness = home_freshness(trust_ctx, active_keys, labor_live, inv_live,
+                               google_connected=google_connected, reviews_on_file=int(rstats.get("total") or 0))
+    data_as_of = stalest_as_of(freshness)
+    _not_current = [f for f in freshness if f.get("state") in ("stale", "unknown")]
+    _count_live = sum(1 for f in freshness if f.get("state") == "current")
+
     # ── order, brief headline, empty states ────────────────────────────────
     sev_rank = {"critical": 0, "important": 1, "watch": 2}
     attention.sort(key=lambda a: sev_rank[a["severity"]])
@@ -1863,7 +1918,11 @@ def _build(current_user, present=True):
     elif attention:
         headline = "Steady — a couple of things to watch"
         headline_tone = "neutral"
-    elif wins:
+    elif wins and _not_current:
+        headline = (f"Nothing flagged — but {_plural(len(_not_current), 'data source')} "
+                    f"{'is' if len(_not_current) == 1 else 'are'} out of date")
+        headline_tone = "neutral"
+    elif wins and _count_live:
         headline = "Running well — nothing needs you right now"
         headline_tone = "good"
     else:
@@ -2100,14 +2159,6 @@ def _build(current_user, present=True):
 
     readiness = _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt)
 
-    # Data freshness per module and source (K4), from the one registry every
-    # card's Data Freshness reads (data_freshness) — and the stalest date
-    # under the page. The strip used to be built here and rendered nowhere,
-    # with an unknown age reading "fresh" (CA3 F1, CA4 F7).
-    freshness = home_freshness(trust_ctx, active_keys, labor_live, inv_live,
-                               google_connected=google_connected, reviews_on_file=int(rstats.get("total") or 0))
-    data_as_of = stalest_as_of(freshness)
-
     payload = {
         "ok": True,
         "readiness": readiness,
@@ -2120,8 +2171,14 @@ def _build(current_user, present=True):
         "freshness": freshness,
         # What "Monitoring N signals" may honestly say: only sources that are
         # current count, beside the stalest date (E7).
-        "monitoring": {"count_live": sum(1 for f in freshness if f.get("state") == "current"),
+        # `stale` counts the sources reading stale or unknown; `all_clear`
+        # is whether an "All clear" box may be drawn at all — nothing needs
+        # the owner, at least one source is current and none is stale
+        # (re-audit B4 M4: the box ignored both).
+        "monitoring": {"count_live": _count_live,
                        "sources": sum(1 for f in freshness if f.get("pct") is not None),
+                       "stale": len(_not_current),
+                       "all_clear": bool(not attention and _count_live and not _not_current),
                        "stalest_as_of": data_as_of},
         "brief": {"headline": headline, "tone": headline_tone, "lines": brief_lines[:4], "overnight": overnight,
                   "data_as_of": data_as_of,
@@ -2173,6 +2230,7 @@ def _location_record(conn, r, now):
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days') THEN rating END),1) AS avg30,
                               SUM(COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS n30,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days') THEN rating END),1) AS avg_prev,
+                              SUM(COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')) AS n_prev,
                               SUM(rating<=2 AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-7 days')) AS low7
                        FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL""", (rid,)) or {}
     total = int(rs.get("total") or 0)
@@ -2196,7 +2254,8 @@ def _location_record(conn, r, now):
                     _ot_loc = None
                 labor = {"pct": float(la.get("overall_labor_pct") or 0), "target": target,
                          "over": round(float(la.get("overall_labor_pct") or 0) - target, 1),
-                         "overtime": (_ot_loc or {}).get("people", 0)}
+                         "overtime": (_ot_loc or {}).get("people", 0),
+                         "period_days": int(la.get("period_days") or (la.get("date_range") or {}).get("days") or 0)}
         except Exception:
             labor = None
     inv = None
@@ -2212,14 +2271,20 @@ def _location_record(conn, r, now):
     if sig["top_issue"]:
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
     from thresholds import LABOR_OVER_TARGET_PTS
-    if labor and labor["over"] >= LABOR_OVER_TARGET_PTS:
+    from labor import MIN_DAYS_TO_EXTRAPOLATE as _MIN_DAYS_G
+    # The location Home's own floors (re-audit B4 M5): labor over target
+    # needs MIN_DAYS_TO_EXTRAPOLATE days of shifts, and a rating move needs
+    # REVIEW_MOVE_MIN_N reviews on BOTH sides and RATING_MOVE_STARS — the
+    # group view flagged what the location's Home suppressed.
+    if labor and labor["over"] >= LABOR_OVER_TARGET_PTS and labor.get("period_days", 0) >= _MIN_DAYS_G:
         issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor"})
     if labor and labor["overtime"]:
         issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor"})
     if inv and inv["critical_low"]:
         issues.append({"severity": "important", "text": f"{_plural(inv['critical_low'], 'item')} critically low", "module": "inventory"})
     avg30 = rs.get("avg30"); prev = rs.get("avg_prev")
-    if avg30 and prev and (rs.get("n30") or 0) >= 3 and avg30 - prev <= -0.3:
+    if (avg30 and prev and (rs.get("n30") or 0) >= REVIEW_MOVE_MIN_N and (rs.get("n_prev") or 0) >= REVIEW_MOVE_MIN_N
+            and round(avg30 - prev, 1) <= -RATING_MOVE_STARS):
         issues.append({"severity": "important", "text": f"Rating slipped to {avg30:.1f}★ (from {prev:.1f}★)", "module": "reviews"})
     # Accountability: issues nobody has picked up. Counted, not listed — the
     # portfolio row says WHERE follow-through is slipping; the issue list at

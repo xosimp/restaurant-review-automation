@@ -12,10 +12,12 @@ def test_provider_names_track_pos_providers():
 
 
 def test_rpower_is_read_and_ages():
+    # Stale by the registry's pos row (re-audit B6#5): 4 days reads aging
+    # (64%), 6 days stale (36%) — the rule data_freshness scores.
     r = {"rpower_token": "t", "rpower_store_mid": "m",
-         "rpower_last_synced": (NOW - timedelta(days=4)).replace(tzinfo=None).isoformat(timespec="seconds")}
+         "rpower_last_synced": (NOW - timedelta(days=6)).replace(tzinfo=None).isoformat(timespec="seconds")}
     s = pos_health.pos_sync_state(r, now=NOW)
-    assert s["provider"] == "rpower" and s["state"] == "stale" and round(s["age_days"]) == 4
+    assert s["provider"] == "rpower" and s["state"] == "stale" and round(s["age_days"]) == 6
 
 
 def test_error_and_unknown_and_not_connected():

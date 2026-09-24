@@ -373,7 +373,7 @@ def _data_completeness(r, d):
     _pos = pos_health.pos_sync_state(r)
     pos_fresh = _pos.get("last_synced")
     if r.get("module_labor") or r.get("module_inventory"):
-        add("pos", "POS syncing", pos_fresh and not _pos.get("error") and (_age_days(pos_fresh) or 99) <= 3,
+        add("pos", "POS syncing", pos_fresh and not _pos.get("error") and _pos.get("state") in ("current", "aging"),
             f"{_POS_LABELS.get(_pos.get('provider'), 'POS')} sync error: {_pos.get('error')}" if _pos.get("error")
             else (f"last sync {_since(pos_fresh)}" if pos_fresh else "no POS sync on record"))
     if r.get("module_labor"):
@@ -934,7 +934,12 @@ def integrations():
                          # The per-location list's POS reading (CA3 F6), carried to the
                          # fleet list too so both say the same thing.
                          "sync_state": i.get("sync_state"), "age_days": i.get("age_days"),
-                         "freshness": ("never" if i["state"] == "connected" and age is None else ("stale" if age is not None and age > 3 else "fresh")) if i["state"] != "off" else "—",
+                         # A POS row reads pos_health's state — the registry's one
+                         # POS rule (re-audit B6#5) — not its own 3-day cut.
+                         "freshness": (("never" if i["state"] == "connected" and age is None else
+                                        ("stale" if (i.get("sync_state") == "stale" if i.get("sync_state")
+                                                     else (age is not None and age > 3)) else "fresh"))
+                                       if i["state"] != "off" else "—"),
                          "health": r["health"]})
     systemic = {}
     for row in rows:

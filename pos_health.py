@@ -9,14 +9,32 @@ reads f"{provider}_last_synced" / f"{provider}_sync_error", the way
 dsr/block_labor.py already does — so RPOWER (Simple EJ's) is never missed
 again.
 
+The current / aging / stale cut-offs are NOT this module's own: they are
+data_freshness's "pos" row read through confidence_engine.state (age_state
+below), so every surface that names a POS state agrees with the confidence
+engine's Data Freshness (re-audit B6#5, B3#9).
+
 Pure over the restaurant row; no network, no writes.
 """
 from datetime import datetime, timezone
 
-# Providers whose sync columns live on restaurants, in the order a restaurant
-# connected to several is read (the first with a stamp wins). Kept in step
-# with pos.PROVIDERS by tests/test_pos_health.py.
+# Providers whose sync columns live on restaurants. A restaurant with
+# credentials for several is read by the one with the freshest sync stamp
+# (ties in this order). Kept in step with pos.PROVIDERS by
+# tests/test_pos_health.py.
 PROVIDER_NAMES = ("toast", "square", "clover", "rpower")
+
+# The credential columns that mean a provider is connected. A leftover
+# `{name}_last_synced` is NOT a connection: a disconnect that left the stamp
+# behind read as a connected POS whose data decayed to 0% fresh, which
+# zeroed every labor and food card's confidence and named the restaurant on
+# the public status page (re-audit B6#1).
+CREDENTIAL_COLUMNS = {"toast": ("toast_restaurant_guid",), "square": ("square_access_token",),
+                      "clover": ("clover_api_token",), "rpower": ("rpower_token", "rpower_store_mid")}
+
+# A stamp this far ahead of now is not a sync that happened (a few minutes
+# of clock skew between hosts is tolerated).
+FUTURE_TOLERANCE_DAYS = 1.0 / 24
 
 
 def _get(r, name):
@@ -36,11 +54,23 @@ def parse_stamp(value):
 
 
 def _connected(r, name):
-    """Whether the restaurant row carries this provider's connection, read
-    from the columns only (no provider module import)."""
-    cols = {"toast": ("toast_restaurant_guid",), "square": ("square_access_token",),
-            "clover": ("clover_api_token",), "rpower": ("rpower_token", "rpower_store_mid")}
-    return any(_get(r, c) for c in cols.get(name, ())) or bool(_get(r, f"{name}_last_synced"))
+    """Whether the restaurant row carries this provider's credentials, read
+    from the columns only (no provider module import). Credentials only —
+    never the sync stamp (CREDENTIAL_COLUMNS)."""
+    return any(_get(r, c) for c in CREDENTIAL_COLUMNS.get(name, ()))
+
+
+def age_state(age_days, error=None) -> tuple:
+    """(pct, state) for a sync this many days old — the ONE POS freshness
+    rule: data_freshness's "pos" row (expected lag, grace, horizon, the
+    error ceiling) and confidence_engine's current/aging/stale cut-offs.
+    An error is its own state; an unknown age is `unknown` with pct 0."""
+    import data_freshness
+    import confidence_engine as ce
+    if age_days is None:
+        return 0, ("error" if error else "unknown")
+    pct = data_freshness.age_pct("pos", age_days, error=bool(error))
+    return pct, ("error" if error else ce.state(pct))
 
 
 def provider_state(r, name, now=None) -> dict:
@@ -49,23 +79,30 @@ def provider_state(r, name, now=None) -> dict:
     every provider (admin integrations). Never raises."""
     now = now or datetime.now(timezone.utc)
     out = {"provider": name, "connected": False, "last_synced": None, "last_synced_iso": None,
-           "age_days": None, "error": None, "state": "not_connected"}
+           "age_days": None, "error": None, "state": "not_connected",
+           "pct": None, "future": False, "unreadable": False}
     try:
         if not _connected(r, name):
             return out
-        stamp = parse_stamp(_get(r, f"{name}_last_synced"))
+        raw = _get(r, f"{name}_last_synced")
+        stamp = parse_stamp(raw)
         err = _get(r, f"{name}_sync_error") or None
-        out.update(connected=True, error=err)
+        out.update(connected=True, error=err, unreadable=bool(raw) and stamp is None)
+        age = None
         if stamp is not None:
-            age = max(0.0, (now - stamp).total_seconds() / 86400.0)
-            out.update(last_synced=stamp.isoformat(), last_synced_iso=stamp.date().isoformat(),
-                       age_days=round(age, 2))
-        if err:
-            out["state"] = "error"
-        elif stamp is None:
-            out["state"] = "unknown"
-        else:
-            out["state"] = "current" if age <= 1.5 else ("aging" if age <= 3 else "stale")
+            age = (now - stamp).total_seconds() / 86400.0
+            if age < -FUTURE_TOLERANCE_DAYS:
+                # A stamp in the future is a clock or data error, not a sync
+                # that happened: its age is unknown, never "current"
+                # (re-audit B3#14).
+                out["future"] = True
+                age = None
+            else:
+                age = max(0.0, age)
+                out.update(last_synced=stamp.isoformat(), last_synced_iso=stamp.date().isoformat(),
+                           age_days=round(age, 2))
+        pct, state = age_state(age, err)
+        out.update(pct=pct, state=state)
     except Exception as e:
         print(f"[pos_health] unreadable: {e}")
         out["state"] = "unknown"
@@ -74,21 +111,28 @@ def provider_state(r, name, now=None) -> dict:
 
 def pos_sync_state(r, now=None) -> dict:
     """{provider, connected, last_synced, last_synced_iso, age_days, error,
-    state} for the restaurant's POS. state: not_connected | error | current
-    | aging | stale | unknown. Thresholds: current ≤ 1.5 days (a nightly
-    sync), aging ≤ 3 days, stale after. Never raises."""
+    state, pct, future} for the restaurant's POS. state: not_connected |
+    error | current | aging | stale | unknown, from age_state (current while
+    the registry's pos row reads ≥ 80% — about 2.9 days after the sync;
+    aging to 50%, 5 days; stale after). With credentials for several
+    providers the one with the freshest stamp is read, so a restaurant that
+    moved from Toast to RPOWER is not judged on a dead Toast stamp
+    (re-audit B3#16). Never raises."""
     now = now or datetime.now(timezone.utc)
     out = {"provider": None, "connected": False, "last_synced": None, "last_synced_iso": None,
-           "age_days": None, "error": None, "state": "not_connected"}
+           "age_days": None, "error": None, "state": "not_connected",
+           "pct": None, "future": False, "unreadable": False}
     try:
-        chosen = None
+        best = None
         for name in PROVIDER_NAMES:
-            if _connected(r, name):
-                if chosen is None or (_get(r, f"{name}_last_synced") and not _get(r, f"{chosen}_last_synced")):
-                    chosen = name
-        if chosen is None:
-            return out
-        return provider_state(r, chosen, now=now)
+            if not _connected(r, name):
+                continue
+            st = provider_state(r, name, now=now)
+            # Stamped beats unstamped; then the freshest; ties keep the order.
+            rank = (st.get("age_days") is not None, -(st.get("age_days") or 0.0))
+            if best is None or rank > best[0]:
+                best = (rank, st)
+        return best[1] if best is not None else out
     except Exception as e:
         print(f"[pos_health] unreadable: {e}")
         out["state"] = "unknown"
