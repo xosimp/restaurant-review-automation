@@ -3297,13 +3297,12 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     if cap and done_today >= cap:
         return 0
     approved = 0
-    from ai_guard import check_review_reply
-    never_say = getattr(restaurant, "never_say", "") or ""
-    # What the restaurant has said about itself: a cause or a sourcing
-    # claim in a reply is allowed only when its words are here or in the
-    # guest's own review (ai_guard.public_reply_claims).
-    owner_said = " ".join(x for x in (getattr(restaurant, "voice_notes", "") or "",
-                                      getattr(restaurant, "menu_notes", "") or "") if x)
+    # The public-reply check (drafter.check_reply: the Response Validation
+    # Layer on reply_public). It reads what the restaurant has said about
+    # itself (voice and menu notes — a cause, a sourcing claim or an award is
+    # allowed only when its words are there or in the guest's own review),
+    # the never-say list, the guest's name and every other tenant's name.
+    from drafter import check_reply
     # 4-star joins the rule only when the owner turned it on. Same cap, same
     # urgency and needs-review gates; negative reviews never go here.
     ratings = (4, 5) if getattr(restaurant, "auto_approve_4star", 0) else (5,)
@@ -3326,12 +3325,19 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
         # reading it first. Anything that fails the check stays drafted for
         # the owner to look at — refusing to auto-publish is always safe,
         # publishing something odd is not.
-        # check_review_reply: the injection residue check_public_reply
-        # always ran, plus the claims a reply may not make unread —
-        # allergen/"safe for" promises, fault, inspections, comps, "won't
-        # happen again", invented causes (NS5 H5, NS1 H6, NS2 H8).
-        refusal = check_review_reply(candidate.get("draft_response"), never_say=never_say,
-                                     allowed_source=owner_said + " " + (candidate.get("text") or ""))
+        # The engine refuses the injection residue check_public_reply always
+        # caught, the never-say list, and the claims a reply may not make
+        # unread — allergen/"safe for" promises, fault, inspections, comps,
+        # "won't happen again", invented causes (NS5 H5, NS1 H6, NS2 H8),
+        # awards, a staff member named in public, another tenant's name.
+        draft_text = candidate.get("draft_response") or ""
+        refusal, checked = check_reply(draft_text, restaurant, restaurant_id=rid, review_id=review_id,
+                                       review_text=candidate.get("text") or "", action="auto_approve")
+        if not refusal and " ".join(str(checked).split()) != " ".join(draft_text.split()):
+            # The engine would reword it (a certainty or confidence phrase
+            # lowered); what would publish is the stored draft, which it did
+            # not pass as written. A person reads it first.
+            refusal = "Cavnar would reword part of this reply before it goes out"
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
             # Marked for the owner's review, which also takes it out of the

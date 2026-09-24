@@ -146,6 +146,113 @@ def get_recurring_themes(restaurant_id: int) -> str:
 LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "pt": "Portuguese", "de": "German"}
 
 
+# ── the public-reply check (Response Validation Layer, surface reply_public) ──
+#
+# One check for every path a reply takes to a public listing: the draft
+# (below), auto-approve (scheduler.auto_approve_five_stars) and the Ask
+# approve-all card (ask_cavnar_tools). It replaces ai_guard.check_review_reply
+# and reply_review_reason there; the engine runs check_public_reply WITH the
+# never-say list, unsupported_commitments, public_reply_claims and its own P1
+# list, so nothing those two caught is lost.
+
+_COMMITMENT_DETAIL = "a commitment nobody told Cavnar was true"
+
+
+def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review_text=None, reviewer_name=None,
+                  author=None, voice_notes=None, never_say=None, restaurant_name=None, sign_off=None,
+                  action="reply_check"):
+    """The ValidationContext for one public review reply.
+
+    untrusted: the guest's review (and their display name) — a cause or a
+    detail the guest wrote is theirs to have repeated back. names_allowed:
+    the guest's name, the restaurant's and the sign-off. offer_source: what
+    the owner wrote down about the restaurant (voice and menu notes) — a
+    sourcing claim, an award or an offer whose words are there is theirs.
+    never_say: the restaurant's list. tenant_names_denied: every other
+    Cavnar restaurant. Missing pieces are read from the restaurant and the
+    review row; nothing here raises."""
+    import response_validation as rv
+    rid = restaurant_id or getattr(restaurant, "id", None)
+    if restaurant is None and rid:
+        try:
+            restaurant = get_restaurant(rid)
+        except Exception:
+            restaurant = None
+    author = (author or "").strip()
+    if review_id and (review_text is None or not (reviewer_name or author)):
+        try:
+            conn = get_conn()
+            try:
+                row = conn.execute("SELECT author, text FROM reviews WHERE id=?", (review_id,)).fetchone()
+            finally:
+                conn.close()
+            if row:
+                author = author or (row["author"] or "").strip()
+                if review_text is None:
+                    review_text = row["text"] or ""
+        except Exception:
+            pass
+    r_get = (lambda k: (getattr(restaurant, k, "") or "") if restaurant is not None else "")
+    if voice_notes is None:
+        voice_notes = r_get("voice_notes")
+    if never_say is None:
+        never_say = r_get("never_say")
+    owner_said = " ".join(x for x in (voice_notes or "", r_get("menu_notes")) if x)
+    names = {n for n in (reviewer_name, author, author.split()[0] if author else "",
+                         restaurant_name or r_get("name"), sign_off or r_get("sign_off_name")) if n}
+    tenants = set()
+    if rid:
+        try:
+            tenants = _models_mod.other_tenant_names(rid)
+        except Exception:
+            tenants = set()
+    return rv.ValidationContext(
+        restaurant_id=rid, surface="reply_public",
+        untrusted=[x for x in (review_text or "", author) if x],
+        names_allowed=names, tenant_names_denied=tenants,
+        never_say=never_say or "", offer_source=owner_said,
+        policy={"action": action})
+
+
+def reply_reason(verdict):
+    """The needs-review reason for a refused reply, in the words the card
+    shows after "This reply …" — None when the verdict is not a refusal."""
+    if verdict is None or verdict.verdict != "refuse":
+        return None
+    refused = [f for f in verdict.findings if f.get("severity") == "refuse"]
+    if not refused:
+        return "states something Cavnar cannot confirm"
+    first = refused[0]
+    detail = first.get("detail") or ""
+    # check_public_reply's own wording ("the draft contains a link") reads
+    # as a sentence on the card without its subject.
+    if detail.startswith(("the draft ", "the copy ")):
+        return detail.split(" ", 2)[2]
+    commitments = [f["span"] for f in refused if f.get("detail") == _COMMITMENT_DETAIL and f.get("span")]
+    if commitments:
+        return "states a specific action the restaurant may not have taken: " + ", ".join(commitments[:3])
+    parts, seen = [], set()
+    for f in refused:
+        d, span = (f.get("detail") or "").strip(), (f.get("span") or "").strip()
+        key = span.lower().strip("'\" ") or d.lower()
+        if key in seen or any(key and key in s for s in seen):
+            continue
+        seen.add(key)
+        parts.append(d if (not span or span.lower() in d.lower()) else f"{d} ('{span}')")
+    return "makes a claim a public reply must not: " + "; ".join(parts[:2])
+
+
+def check_reply(draft, restaurant=None, **ctx_kw):
+    """(reason or None, Validated) for one public reply. The reason is set
+    exactly when the engine refuses the text (reply_reason); the Validated
+    str is the text to store or publish ("" when refused) and carries the
+    verdict (`.validation`, `.verdict`)."""
+    import response_validation as rv
+    ctx = reply_context(restaurant, **ctx_kw)
+    out = rv.enforce(draft or "", ctx, marker=False)
+    return reply_reason(out.verdict), out
+
+
 def draft_response(review_id: int, rating: int, text: str,
                    sentiment: str, restaurant_name: str,
                    voice_notes: str = "", restaurant_id: int = None,
@@ -296,15 +403,26 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     # differently"; the prompt no longer asks, and this still checks what it
     # wrote, so an invented remediation — staff retrained, a comp, a process
     # promise — never goes out unread as a statement the restaurant made.
-    # The public-reply claims too (NS5 H5): an allergen promise, a fault
-    # admission, a comp, "won't happen again", a cause nobody gave. Flagged
-    # here so the owner sees why, and so no bulk or auto publish counts it.
-    from ai_guard import reply_review_reason
-    _said = " ".join(x for x in (voice_notes or "", text or "") if isinstance(x, str) and x)
-    reason = reply_review_reason(draft, _said)
+    # The Response Validation Layer on reply_public (workstream A) runs every
+    # public-reply rule: the commitments and NS5 H5 claims (allergen, fault,
+    # inspection, comp, "won't happen again", a cause nobody gave), the
+    # never-say list, awards and sourcing the owner never wrote, a staff
+    # member named in public, another tenant's name, injection residue.
+    # Refused → the draft is kept for the owner and flagged with the reason,
+    # so no bulk or auto publish counts it.
+    reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
+                                  reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
+                                  restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
     if reason:
+        # Kept as the model wrote it (the engine's text is "" on a refusal),
+        # carrying the refusal verdict for the caller.
+        import response_validation as _rv
+        draft = _rv.Validated(draft, validation=checked.validation, verdict=checked.verdict)
         stored = update_draft(review_id, draft, needs_review=True, review_reason=reason)
     else:
+        # The engine's text: identical to the draft unless a rewrite lowered
+        # a claim (a model-stated confidence, a certainty word).
+        draft = checked or draft
         stored = update_draft(review_id, draft)
     if stored is False:
         # The reply went out (approved or posted) while this one was being

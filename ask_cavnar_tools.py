@@ -2806,7 +2806,11 @@ def proposal_details(name, args, restaurant_id) -> dict:
         # client_api._do_approve_all runs, so the card lists what would post
         # and says how many the check would hold back.
         from models import get_conn as _gc, BULK_PUBLISHABLE_SQL, bulk_publish_window, get_restaurant as _gr
-        from ai_guard import check_review_reply
+        # The public-reply check (drafter.check_reply: the Response
+        # Validation Layer on reply_public) — voice and menu notes as what
+        # the owner said, the never-say list, the guest's name, every other
+        # tenant's name. A reply it refuses is held, not listed.
+        from drafter import check_reply
         conn = _gc()
         try:
             rows = conn.execute(
@@ -2816,12 +2820,12 @@ def proposal_details(name, args, restaurant_id) -> dict:
         finally:
             conn.close()
         r_obj = _gr(restaurant_id)
-        said = " ".join(x for x in ((getattr(r_obj, "voice_notes", "") or "") if r_obj else "",
-                                    (getattr(r_obj, "menu_notes", "") or "") if r_obj else "") if x)
-        never = (getattr(r_obj, "never_say", "") or "") if r_obj else ""
         go, held = [], 0
         for r in rows:
-            if check_review_reply(r["draft_response"], never_say=never, allowed_source=said + " " + (r["text"] or "")):
+            refusal, _checked = check_reply(r["draft_response"], r_obj, restaurant_id=restaurant_id,
+                                            review_text=r["text"] or "", author=r["author"] or "",
+                                            action="approve_all_preview")
+            if refusal:
                 held += 1
             else:
                 go.append(r)

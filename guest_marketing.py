@@ -775,6 +775,35 @@ def invented_offers(text, allowed_source=""):
     return [ph for ph in found if re.sub(r"\s+", " ", ph.lower()) not in src]
 
 
+def _validate_sms(text, restaurant, offer_source, never_say):
+    """The guest text after the engine (surface guest_sms), or ValueError
+    "campaign copy rejected: …" when it refuses."""
+    import response_validation as rv
+    rid = getattr(restaurant, "id", None)
+    tenants = set()
+    if rid:
+        try:
+            import models as _m
+            tenants = _m.other_tenant_names(rid)
+        except Exception:
+            tenants = set()
+    names = {n for n in (getattr(restaurant, "name", None), getattr(restaurant, "sign_off_name", None)) if n}
+    out = rv.enforce(text, rv.ValidationContext(
+        restaurant_id=rid, surface="guest_sms", names_allowed=names, tenant_names_denied=tenants,
+        never_say=never_say, offer_source=offer_source, policy={"action": "guest_campaign_draft"}), marker=False)
+    v = out.verdict
+    if v is not None and v.verdict == "refuse":
+        why = next((f for f in v.findings if f.get("severity") == "refuse"), None)
+        detail = (why or {}).get("detail") or "it makes a claim a guest text must not"
+        span = (why or {}).get("span") or ""
+        if detail.startswith("the draft "):
+            detail = "the copy " + detail[len("the draft "):]
+        elif span and span.lower() not in detail.lower():
+            detail = f"{detail} ('{span}')"
+        raise ValueError(f"campaign copy rejected: {detail}")
+    return out
+
+
 def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
@@ -816,17 +845,24 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         raise ValueError("campaign copy was truncated")
     # This goes out as an SMS to real guests. A link, a phone number or an
     # offer the restaurant never agreed to is not something to send unread.
-    from ai_guard import check_public_reply
-    refusal = check_public_reply(text)
-    if refusal:
-        raise ValueError(f"campaign copy rejected: {refusal}")
     # The comment above promised an offer the restaurant never agreed to is
     # not sent unread, and only the link/phone check ran: "enjoy a free
     # dessert with any entree" and "20% off all week" both passed (M-24).
-    offers = invented_offers(text, (topic or "") + " " + (p.get("menu_notes") or ""))
+    # invented_offers stays: it names half price, two-for-one, "$5 off" and
+    # "discount", which the engine's comp rule does not.
+    offer_source = (topic or "") + " " + (p.get("menu_notes") or "")
+    offers = invented_offers(text, offer_source)
     if offers:
         raise ValueError("campaign copy rejected: it offers " + ", ".join(offers[:3])
                          + ", which nobody told Cavnar the restaurant is running")
+    # The Response Validation Layer on guest_sms (workstream A) replaces the
+    # bare check_public_reply: the same residue / link / phone check, now
+    # WITH the never-say list the prompt carried and the check did not (NS6
+    # A3 #6), plus the public claims — an award, a comp, a sourcing or
+    # allergen claim the owner never wrote, a fault or an inspection claim,
+    # another tenant's name, injection residue. Refused on the verdict, in
+    # shadow mode too: this text reaches guests.
+    text = _validate_sms(text, restaurant, offer_source, p.get("never_say") or "")
     # check_public_reply allows a 1,200-character review reply; a text
     # message has its own, much smaller budget.
     if len(text) > CAMPAIGN_MAX_CHARS:
@@ -1310,8 +1346,20 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB
     if len(text) > CAMPAIGN_MAX_CHARS:
         return {"ok": False, "error": f"That message is {len(text)} characters. A guest text can carry "
                                       f"{CAMPAIGN_MAX_CHARS} — shorten it and send again."}
+    # The owner's own words (or the fixed win-back copy): the residue / link
+    # / phone check, now WITH the restaurant's never-say list (NS6 A3 #6).
+    # Not the engine's claim rules — an offer, an award or a "because" the
+    # owner typed is theirs to send; a model rewrite of this text was
+    # already validated where it was drafted (draft_campaign_message).
     from ai_guard import check_public_reply
-    refusal = check_public_reply(text)
+    never_say = ""
+    try:
+        from models import get_restaurant as _gr
+        _r = _gr(restaurant_id, db_path=db_path)
+        never_say = (getattr(_r, "never_say", "") or "") if _r else ""
+    except Exception:
+        never_say = ""
+    refusal = check_public_reply(text, never_say=never_say)
     if refusal:
         return {"ok": False, "error": f"Not sent: {refusal}."}
     rec_key = row["rec_key"]
