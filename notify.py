@@ -930,7 +930,7 @@ def safety_disagreements(days: int = 30, db_path=None) -> int:
         return 0
 
 
-def _is_health_alert(text: str, urgency: str = None, processed: bool = None) -> bool:
+def _is_health_alert(text: str, urgency: str = None, processed: bool = None, rating=None) -> bool:
     """Whether a new review warrants the health/safety alert.
 
     The analyser's own urgency classification decides this when the review
@@ -961,7 +961,17 @@ def _is_health_alert(text: str, urgency: str = None, processed: bool = None) -> 
         # A keyword hit it read as normal is logged when the analysis is
         # stored (analyser.analyse_review → record_safety_disagreement, H5),
         # once per review whatever this restaurant's alert settings are.
-        return str(urgency or "").strip().lower() == "high"
+        # Except where code overrules it (R4, B5 #4): a strong health
+        # keyword on a 1–2★ review alerts whatever urgency was stored — the
+        # same rule analyser._escalate_urgency applies when it stores one,
+        # here for rows analysed before it.
+        if str(urgency or "").strip().lower() == "high":
+            return True
+        try:
+            import analyser
+            return analyser._escalate_urgency(rating, urgency, None, text)[0] == "high"
+        except Exception:
+            return False
     if processed is False:
         # Explicitly NOT analysed — the only case the keyword list exists
         # for, and the case that was unreachable before.
@@ -2124,7 +2134,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
 
         # Health alert — highest priority
         if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None),
-                                                    processed=bool(getattr(review, "processed", False))):
+                                                    processed=bool(getattr(review, "processed", False)),
+                                                    rating=rating):
             sms = (
                 f"🚨 HEALTH ALERT — {restaurant_name}\n"
                 f"{rating}★ {platform}: \"{sms_preview}{sms_ellipsis}\"\n"
