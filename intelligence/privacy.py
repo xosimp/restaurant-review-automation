@@ -67,7 +67,11 @@ _EMAIL_IN_VALUE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 # Names too generic to be read as a disclosure when they appear in a
 # label or a sentence ("Pizza", "Other", "Bar").
 _GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "pizza", "tavern", "bistro",
-                  "restaurant", "diner", "eatery", "lounge", "cantina", "demo", "test", "sample"}
+                  "restaurant", "diner", "eatery", "lounge", "cantina", "demo", "test", "sample",
+                  # the platform's own name appears in every cohort label
+                  # ("Pizza on Cavnar"), so an internal account named after
+                  # it must not make every label a disclosure
+                  "cavnar", "cavnar ai", "cavnar demo", "cavnar test"}
 _NAMES_TTL_SECONDS = 60
 _names_cache = {"key": None, "at": 0.0, "rx": None}
 
