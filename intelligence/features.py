@@ -11,7 +11,16 @@ nightly pass is bounded and resumable (jobs.py).
 import json
 from datetime import date, datetime, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
 
 FEATURE_KEYS = (
     # reviews
