@@ -440,6 +440,10 @@ def waste_trend_stats(weeks, target_weekly=None):
             stats["annualized_if_target"] = round(target_weekly * 52)
             stats["savings_if_at_target"] = round(max(0.0, stats["rolling4"] - target_weekly) * 52)
             stats["annualized_basis"] = "%d-week average x 52" % min(n, 4)
+            # What each annual figure is (NS3 R1): the gap to target is an
+            # opportunity (never "good"/green), the run rate a projection.
+            stats["money_kinds"] = {"savings_if_at_target": "opportunity", "annualized_current": "projection",
+                                    "annualized_if_target": "plan"}
         else:
             stats["annualized_basis"] = None
         recent = values[-4:]
@@ -518,8 +522,22 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
                         f"{min(n, 4)} weeks, about {_money(save)} a year if brought to target")
             out.append({"text": txt + ".", "tone": "bad" if stats.get("intervention") else "warn"})
         elif stats.get("annualized_if_target") is not None and stats.get("annualized_current") is not None:
-            out.append({"text": f"You're {_money(gap)} a week under the {target_pct:g}% target — holding here keeps roughly {_money(stats['annualized_if_target'] - stats['annualized_current'])} a year off the waste bill versus target.",
-                        "tone": "good"})
+            # The annual figure rests on the 4-week average, so the weekly
+            # figure beside it does too: "$50 a week under ... roughly $260 a
+            # year" paired the latest week with the average (x52 = $2,600) —
+            # the mistake already fixed for the over-target branch (NS3 M7).
+            bl = float(stats.get("gap_baseline_weekly") or 0)
+            if bl < 0:
+                base = abs(bl)
+                out.append({"text": f"You're {_money(abs(gap))} a week under the {target_pct:g}% target — averaging "
+                                    f"{_money(base)} a week under across the last {min(n, 4)} weeks, about "
+                                    f"{_money(round(base * 52))} a year below target if it holds (a projection).",
+                            "tone": "good"})
+            else:
+                # Under target this week, but the average still runs over.
+                out.append({"text": f"You're {_money(abs(gap))} under the {target_pct:g}% target this week — the last "
+                                    f"{min(n, 4)} weeks still averaged {_money(bl)} a week over it.",
+                            "tone": "neutral"})
         else:
             out.append({"text": f"You're {_money(gap)} a week under the {target_pct:g}% target.",
                         "tone": "good"})

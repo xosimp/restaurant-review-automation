@@ -892,9 +892,12 @@ def _supported_savings_block(analysis: dict) -> str:
     for x in (analysis.get("order_reduction") or [])[:4]:
         sav = float(x.get("savings_vs_last") or 0)
         if sav > 0:
-            lines.append(f"- {x['item']}: ${sav:,.2f} saved by ordering "
-                         f"{x.get('suggested_order_qty')} instead of repeating the last order of "
-                         f"{x.get('last_order_qty')}")
+            # A difference PER ORDER between two quantities, not money saved
+            # and not a monthly figure: "$168/month" came back from it
+            # (NS3 M6, food #4).
+            lines.append(f"- {x['item']}: ${sav:,.2f} less per order (a one-off difference per order, "
+                         f"not a monthly figure) if {x.get('suggested_order_qty')} is ordered instead of "
+                         f"repeating the last order of {x.get('last_order_qty')}")
     for x in (analysis.get("overstock") or [])[:3]:
         ov = float(x.get("overstock_cost") or 0)
         if ov > 0:
@@ -1287,7 +1290,7 @@ Today's date: {today_inv}
 Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f} ({analysis['projection_basis']})
-- Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
+- Recoverable (waste above tolerance — an opportunity projected from one week, not money saved): ${analysis['recoverable_monthly']:,.2f}/month
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
 - Waste rate vs industry: {analysis['waste_rate_pct']}% of ${analysis['total_purchased']:,.2f} purchased (industry target is 4-5% — label: {analysis['benchmark_label']}). Denominator basis: {analysis['purchases_basis']}{wow_context}{trend_context}{big_8_context}{holiday_context}
 
@@ -1303,7 +1306,7 @@ Overstocked items:
 Critical low stock:
 {json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]} for x in analysis["critical_low"][:12]], indent=2)}
 
-Savings the data supports (these are the only savings figures that exist — use these, do not compute your own):
+Dollar figures the data supports (opportunities and per-order differences — none of them is money already saved; these are the only such figures that exist, use them with the period each is given in, do not compute your own):
 {savings_block}{menu_context}
 
 Write a food cost analysis. Rules that apply to everything:
@@ -1332,8 +1335,8 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Maximum of three. Zero is allowed when the data supports none.
 - Number each one: start with "1. ", "2. ", "3. "
 - Hard cap: 30 words per recommendation. Lead with the action.
-- End each one with " — " then its monthly dollar figure and how hard it is, exactly as given above (e.g. " — $240/month, low effort"). State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
-- Each must quote a dollar figure from the driver list or the "Savings the data supports" block — never a figure you worked out yourself
+- End each one with " — " then its dollar figure WITH THE PERIOD IT IS GIVEN IN above and how hard it is (e.g. " — $240/month, low effort", or " — $38 per order, low effort"). Never turn a per-order or weekly figure into a monthly one, and never call any of them saved. State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
+- Each must quote a dollar figure from the driver list or the "Dollar figures the data supports" block — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule

@@ -347,7 +347,8 @@ def test_t3_digest_labor_and_waste_tags():
     B = emails.BRAND
     assert reporter.labor_tag(27.0, 26.0, B)[1] == "Watch closely"     # was "On target" at a hard 32
     assert reporter.labor_tag(25.0, 26.0, B)[1] == "On target"
-    assert reporter.labor_tag(35.0, 26.0, B)[1] == "Over budget"
+    # a target is not a budget (NS3 L5): "budget" is only dsr_budgets' word
+    assert reporter.labor_tag(35.0, 26.0, B)[1] == "Over target"
     assert reporter.waste_tag(0, B)[2] == "Not measured" and reporter.waste_tag(0, B)[1] == B["muted"]
     assert reporter.waste_tag(120, B)[2] == "Low waste"
     src = inspect.getsource(reporter._digest_parts)

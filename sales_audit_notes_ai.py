@@ -261,6 +261,22 @@ def _value_in_note(q, value, note_text) -> bool:
     return bool(words) and all(w in low for w in words)
 
 
+def _uncited_figures(text, source):
+    """The $ and % figures in `text` that `source` does not state (NS3 C4,
+    R15). An insight is the model's read of a note: "You are losing
+    $4,000/month on labor" from "GM works the floor most nights." carried a
+    figure nobody said, into a report the prospect keeps."""
+    from ai_guard import _figures
+    got, have = _figures(text or ""), _figures(source or "")
+    pool = have["money"] | have["pct"] | have["bare"]
+    out = []
+    for kind in ("money", "pct"):
+        for v in got[kind]:
+            if not any(abs(v - k) <= max(0.01, 0.001 * abs(v)) for k in pool):
+                out.append(v)
+    return out
+
+
 def _sanitize(parsed, notes, answers):
     insights, suggestions, caveats = [], [], []
     for ins in parsed.get("insights") or []:
@@ -272,6 +288,8 @@ def _sanitize(parsed, notes, answers):
             continue
         text = str(ins.get("text") or "").strip()
         if not text:
+            continue
+        if _uncited_figures(text, n.get("text")):
             continue
         cat = ins.get("category") if ins.get("category") in CATEGORIES else SECTION_TO_CATEGORY.get(n["section"])
         eff = ins.get("effect") if ins.get("effect") in EFFECTS else "context"
@@ -302,8 +320,10 @@ def _sanitize(parsed, notes, answers):
         suggestions.append({"note": sg.get("note"), "id": q["id"], "label": q["label"], "section": q["section"], "value": v,
                             "current": cur if cur not in (None, "") else None, "reason": str(sg.get("reason") or "").strip()[:200],
                             "source": n["source"]})
+    all_notes = "\n".join(str(n.get("text") or "") for n in notes)
     for c in parsed.get("caveats") or []:
-        if isinstance(c, str) and c.strip():
+        # A caveat cites no single note, so its figures must be in one of them.
+        if isinstance(c, str) and c.strip() and not _uncited_figures(c, all_notes):
             caveats.append(c.strip()[:240])
     return insights, suggestions[:12], caveats[:8]
 

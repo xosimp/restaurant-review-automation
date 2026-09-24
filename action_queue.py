@@ -31,6 +31,21 @@ SNOOZE_DAYS = 1
 MAX_SNOOZE_DAYS = 14
 
 
+
+def reprice_title(x) -> str:
+    """The reprice item's title. "Priced below its new cost" only when the
+    price IS under the plate cost: a rise that lifted a dish's food-cost %
+    is not selling at a loss, and every reprice read that way (NS3 M14)."""
+    try:
+        below = float(x["sell_price"]) < float(x["plate_cost"])
+    except (KeyError, TypeError, ValueError):
+        below = False
+    if below:
+        return f"Reprice {x['dish']} — it is priced below its new cost"
+    pct = x.get("food_cost_pct_now")
+    return (f"Reprice {x['dish']} — an ingredient rise lifted its food cost to {pct}%" if pct is not None
+            else f"Reprice {x['dish']} — an ingredient rise lifted its food cost")
+
 def _snoozed(restaurant_id, today, db_path):
     conn = get_conn(db_path)
     try:
@@ -255,8 +270,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                                   "mobile": "/mobile/api/food-cost/reprice/apply"},
                         "body": {"dish": x["dish"], "price": x["suggested_price"]}}
                        if x.get("suggested_price") else {"label": "Open Food Cost", "module": "inventory"})
-                add(menu_intelligence.reprice_key(x['dish']), "reprice",
-                    f"Reprice {x['dish']} — it is priced below its new cost",
+                add(menu_intelligence.reprice_key(x['dish']), "reprice", reprice_title(x),
                     "watch", act,
                     detail=f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",
                     module="inventory")

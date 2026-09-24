@@ -62,6 +62,8 @@ BENCHMARKS = {
 RECOVERY = {"low": 0.30, "likely": 0.50, "high": 0.70}
 
 COST_CATEGORIES = ("labor", "food", "bar", "marketing", "operations", "technology")
+# The walkaway question asks about a BUSY week; this many of them a year.
+WAITLIST_BUSY_WEEKS = 26
 REVENUE_CATEGORIES = ("reviews", "waitlist")
 
 CATEGORY_LABELS = [
@@ -91,11 +93,25 @@ MODULES = {
 
 # Live pricing — pricing.py is the single source (it mirrors pricing.html).
 from pricing import STARTER as _STARTER, FULL as _FULL
+def monthly_equivalent(annual) -> int:
+    """What an annual plan comes to a month: round(annual / 12). The report
+    printed the MONTHLY-billing price as the annual plan's "/mo equivalent"
+    ($349 for a $3,490 year, which is $291; $1,199 for $11,990, which is
+    $999), so the report and the payment email disagreed (NS3 H7, R15)."""
+    return int(round(float(annual) / 12.0))
+
+
 PRICING = {
-    "starter": {"label": "Starter Module", "setup": _STARTER["setup"], "annual": _STARTER["annual"], "monthly_equiv": _STARTER["monthly"],
-                "note": "One module. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % ("{:,}".format(_STARTER["setup"]), "{:,}".format(_STARTER["annual"]), _STARTER["monthly"])},
-    "full":    {"label": "Full System", "setup": _FULL["setup"], "annual": _FULL["annual"], "monthly_equiv": _FULL["monthly"],
-                "note": "All four live modules. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % ("{:,}".format(_FULL["setup"]), "{:,}".format(_FULL["annual"]), "{:,}".format(_FULL["monthly"]))},
+    "starter": {"label": "Starter Module", "setup": _STARTER["setup"], "annual": _STARTER["annual"],
+                "monthly_equiv": monthly_equivalent(_STARTER["annual"]),
+                "note": "One module. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % (
+                    "{:,}".format(_STARTER["setup"]), "{:,}".format(_STARTER["annual"]),
+                    "{:,}".format(monthly_equivalent(_STARTER["annual"])))},
+    "full":    {"label": "Full System", "setup": _FULL["setup"], "annual": _FULL["annual"],
+                "monthly_equiv": monthly_equivalent(_FULL["annual"]),
+                "note": "All four live modules. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % (
+                    "{:,}".format(_FULL["setup"]), "{:,}".format(_FULL["annual"]),
+                    "{:,}".format(monthly_equivalent(_FULL["annual"])))},
 }
 
 
@@ -810,15 +826,18 @@ def calc_waitlist(a, fin, cls, owner):
                 "confidence": answered_band(a, ("wl_walkaways_week",), estimate=True),
                 "current_state": "Owner reports no meaningful walkaways.", "opportunity": "Performing well", "calc": None, "missing": [], "module": module}
     ps = party if party else 2.5
-    lost = walk * ps * ac * 52
+    # The owner answers for a BUSY week; x52 treated every week as one (NS3
+    # H7). Busy weeks are assumed to be half the year — stated below.
+    lost = walk * ps * ac * WAITLIST_BUSY_WEEKS
     rng = _rng(lost, 0.25, 0.40, 0.50)
     calc = {"current_metric": "≈ %.0f walkaway parties/week" % walk,
             "benchmark": "25–50% of walkaways recoverable with accurate quotes and texting",
             "benchmark_source": "Operator assumption; no authoritative industry figure for walkaway recovery.",
-            "base": "%.0f parties × %.1f guests × $%.0f check × 52 = $%s lost revenue/yr" % (walk, ps, ac, "{:,.0f}".format(lost)),
+            "base": "%.0f parties × %.1f guests × $%.0f check × %d busy weeks = $%s lost revenue/yr" % (walk, ps, ac, WAITLIST_BUSY_WEEKS, "{:,.0f}".format(lost)),
             "formula": "lost revenue × 25% / 40% / 50%",
             "assumptions": ["Revenue, not profit — contribution margin on recovered covers is typically 60–70% after food and beverage cost.",
-                            "Walkaway count is the owner's estimate." + ("" if party else " Party size assumed at 2.5 — an estimate.")],
+                            "Walkaway count is the owner's estimate for a busy week; busy weeks are assumed to be %d of the year's 52 — an assumption, not a measurement." % WAITLIST_BUSY_WEEKS
+                            + ("" if party else " Party size assumed at 2.5 — an estimate.")],
             "method": "recovered walkaways", "overlap": "Does not overlap any cost category."}
     if not party:
         missing.append("Ask %s the average party size to firm up the walkaway estimate." % owner)
@@ -1268,6 +1287,35 @@ def recommend_modules(cats, scores):
     return mods, upcoming
 
 
+def roi_for(cats, mods, plan, months_open=None):
+    """The ROI multiple, or None when there is nothing honest to divide.
+
+    The numerator is the COST opportunity in the categories this audit
+    RECOMMENDS a LIVE module for — money the thing being sold works on. It
+    was the total opportunity: revenue categories (reviews, walkaways) and
+    modules not yet for sale included, and shown even when nothing was
+    recommended — a waitlist-only audit read "17.9x – 35.8x" against the
+    Starter plan (NS3 C4, R15). Withheld for a restaurant in its opening
+    months, whose annual figures are annualised from the opening period
+    (M13)."""
+    if months_open or not plan.get("annual"):
+        return None
+    keys = [k for k in (mods or []) if k in COST_CATEGORIES and MODULES.get(k, {}).get("live")
+            and (cats.get(k) or {}).get("status") == "ok"]
+    num = {b: sum(cats[k][b] for k in keys) for b in ("low", "likely", "high")}
+    if not keys or not num["high"]:
+        return None
+    return {"low_x": round(num["low"] / plan["annual"], 1), "high_x": round(num["high"] / plan["annual"], 1),
+            "first_year_low_x": round(num["low"] / plan["first_year"], 1),
+            "first_year_high_x": round(num["high"] / plan["first_year"], 1),
+            # Kept for the report's line: the numerator IS cost savings now.
+            "cost_low_x": round(num["low"] / plan["annual"], 1), "cost_high_x": round(num["high"] / plan["annual"], 1),
+            "numerator": num, "categories": keys, "kind": "opportunity",
+            "basis": ("estimated cost opportunity in the recommended live modules ("
+                      + ", ".join(dict(CATEGORY_LABELS)[k] for k in keys)
+                      + ") against the plan's annual price — revenue categories and upcoming modules are not counted")}
+
+
 def price_plan(n_modules, override=None):
     """override: None/'auto', 'full', 'starter' (single module) or 'starter:N'."""
     ov = override or "auto"
@@ -1291,11 +1339,12 @@ def price_plan(n_modules, override=None):
     tier = _plan_for(n)
     p = PRICING["starter"]
     note = ("%d modules. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)."
-            % (n, "{:,}".format(tier["setup"]), "{:,}".format(tier["annual"]), "{:,}".format(tier["monthly"]))
+            % (n, "{:,}".format(tier["setup"]), "{:,}".format(tier["annual"]),
+               "{:,}".format(monthly_equivalent(tier["annual"])))
             ) if n > 1 else p["note"]
     return {"plan": "starter", "label": p["label"] + (" × %d" % n if n > 1 else ""), "modules": n,
             "setup": tier["setup"], "annual": tier["annual"],
-            "first_year": tier["setup"] + tier["annual"], "monthly_equiv": tier["monthly"],
+            "first_year": tier["setup"] + tier["annual"], "monthly_equiv": monthly_equivalent(tier["annual"]),
             "note": note, "verify": None}
 
 
@@ -1341,7 +1390,10 @@ def apply_notes(cats, notes_read):
             continue
         # Only owner-safe, audit-note insights may reach the report's
         # "how this was estimated" block. Internal notes stay internal.
-        if c.get("calc") is not None and ins.get("report_safe") and ins.get("source") == "audit":
+        # And only when Will ticked the note for the report (NS3 C4): an
+        # unticked note's insight reached the prospect's copy.
+        if (c.get("calc") is not None and ins.get("report_safe") and ins.get("source") == "audit"
+                and ins.get("in_report")):
             c["calc"]["assumptions"] = list(c["calc"].get("assumptions") or []) + ["From the conversation: " + ins["text"]]
         c["notes"] = list(c.get("notes") or []) + [ins]
         out["applied"] += 1
@@ -1418,11 +1470,7 @@ def compute(answers, pricing_override=None, notes_read=None):
 
     mods, upcoming = recommend_modules(cats, scores)
     plan = price_plan(len(mods), pricing_override)
-    roi = None
-    if total["high"] and plan["annual"]:
-        roi = {"low_x": round(total["low"] / plan["annual"], 1), "high_x": round(total["high"] / plan["annual"], 1),
-               "first_year_low_x": round(total["low"] / plan["first_year"], 1), "first_year_high_x": round(total["high"] / plan["first_year"], 1),
-               "cost_low_x": round(cost["low"] / plan["annual"], 1), "cost_high_x": round(cost["high"] / plan["annual"], 1)}
+    roi = roi_for(cats, mods, plan, months_open)
     R = fin.get("annual_revenue", {}).get("value")
     hours = cats["operations"].get("hours_week")
     # Well-run: strong scores and cost savings that are small relative to

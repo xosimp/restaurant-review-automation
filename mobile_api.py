@@ -721,7 +721,9 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
                 "tone": "good" if on_track else "warn"}
     if key == "inventory":
         recoverable = int((inv or {}).get("recoverable_monthly", 0) or 0)
-        return {"value": value, "label": "recoverable", "tone": "warn" if recoverable > 0 else "good"}
+        # An opportunity projected from one week, never "good" money (NS3 M3).
+        return {"value": value, "label": "est. recoverable", "kind": "opportunity",
+                "tone": "warn" if recoverable > 0 else "good"}
     if key == "marketing":
         return {"value": value, "label": "pieces this month", "tone": None}
     if key == "intel":
@@ -846,7 +848,9 @@ def _home_weekly_receipts(rid, active_keys, inv):
     alerts = int((row["n"] if row else 0) or 0)
     if alerts:
         receipts.append({"module": "alerts", "emphasis": f"{alerts} {'alert' if alerts == 1 else 'alerts'}",
-                         "text": "sent to you before they became problems"})
+                         # Every alert_log row this week: counted, not
+                         # "before they became problems" (NS1 H5).
+                         "text": "sent to you this week"})
     return receipts[:3]
 
 
@@ -946,7 +950,10 @@ def _home_module_tiles(rid, restaurant):
             else:
                 kpi = {
                     "value": f"${int(inv.get('recoverable_monthly', 0))}",
-                    "sublabel": "recoverable / mo",
+                    # One week's waste above tolerance projected to a month:
+                    # an opportunity, not money saved (NS3 M3).
+                    "sublabel": "est. recoverable / mo",
+                    "kind": "opportunity",
                 }
         elif key == "marketing":
             try:
@@ -2403,6 +2410,10 @@ def _labor_data_caveat(analysis_failed, hours_estimated, sales_missing,
     return parts[0][:1].upper() + parts[0][1:] + ("; " + "; ".join(parts[1:]) if len(parts) > 1 else "") + "."
 
 
+# One map for web and iOS, defined beside labor.savings_breakdown.
+from labor import LABOR_BREAKDOWN_KINDS  # noqa: E402,F401
+
+
 def _do_mobile_labor(restaurant_id):
     from labor import analyse_shifts_for_restaurant
 
@@ -2469,37 +2480,15 @@ def _do_mobile_labor(restaurant_id):
     # Calendar days the synced shifts cover — computed once in labor.py.
     period_days = int(analysis.get("period_days") or 0)
     total_sales = analysis.get("total_sales", 0)
-    monthly_sales_est = (total_sales / period_days * 30) if period_days >= 7 else 0
-    potential_savings = analysis.get("potential_savings", 0)
-    labor_monthly = round(analysis.get("potential_savings_monthly", 0) or 0)
-    # 0.345 = midpoint of the 33-36% full-service industry range (NRA 2024
-    # Restaurant Operations Data Abstract) — was 0.32, a leftover from the
-    # stale pre-pandemic 28-32% benchmark already corrected everywhere else
-    # this figure appears (labor.py's AI prompt, the web dashboard, iOS's
-    # own benchmark band).
-    # A benchmark comparison is only honest against a measured actual over a
-    # real period. When hours were estimated, the labor percentage was
-    # understated, so the gap to the industry midpoint was overstated by
-    # exactly as much — a CSV missing one column produced $62,100/month of
-    # claimed savings. A sub-week period has no monthly rate to compare at
-    # all. Both now yield no claim rather than a large one.
-    # The benchmark and these guards now live in thresholds.
-    # labor_vs_industry_monthly, which the web tile reads too — it used 32%
-    # with none of them (CA1 L33).
-    import thresholds as _thr
-    labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
-        overall_pct, total_sales, period_days, hours_are_estimated=hours_are_estimated,
-        sales_data_missing=sales_data_missing, analysis_failed=analysis_failed or period_too_short)
-
-    savings_breakdown = {
-        "labor_monthly": labor_monthly,
-        "labor_annual": labor_monthly * 12,
-        "labor_overtime": round(ot_premium),
-        "labor_vs_industry_monthly": labor_vs_industry_monthly,
-        "labor_vs_industry_annual": labor_vs_industry_monthly * 12,
-        "labor_industry_pct": _thr.LABOR_INDUSTRY_PCT,
-        "labor_industry_basis": _thr.LABOR_INDUSTRY_BASIS,
-    }
+    # The sample week's dollars are nobody's (NS3 C3), and the tiles are
+    # one definition for web and iOS: labor.savings_breakdown (the gap is an
+    # opportunity, the industry figures a benchmark, overtime labor.py's own
+    # premium — never "savings"). The guards the industry comparison needs
+    # (estimated hours, missing sales, a sub-week period) live there too.
+    _is_sample = not analysis_failed and analysis.get("is_live") is False
+    potential_savings = 0 if _is_sample else analysis.get("potential_savings", 0)
+    import labor as _labor_sb
+    savings_breakdown = _labor_sb.savings_breakdown(analysis, analysis_failed=analysis_failed)
 
     # Upcoming holiday/event scheduling forecast — same 21-day window and
     # holiday-string parsing client_api.py's schedule builder and
@@ -2574,6 +2563,12 @@ def _do_mobile_labor(restaurant_id):
                                           analysis.get("days_with_conflicting_sales") or [],
                                           int(analysis.get("duplicate_rows_ignored") or 0)),
         "potential_savings": potential_savings,
+        # The labor on the days with sales — the figure that pairs with
+        # total_sales (NS3 H4); the gap and the percentage are over these.
+        "costed_labor": None if _is_sample else analysis.get("costed_labor"),
+        "total_sales": None if _is_sample else analysis.get("total_sales"),
+        "data_days": analysis.get("data_days"),
+        "money_kinds": analysis.get("money_kinds") or {},
         "overtime_risk": overtime_risk,
         "role_summary": role_summary,
         "date_range": date_range,
@@ -2627,6 +2622,12 @@ def mobile_labor_gap(current_user):
     from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
     try:
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        if not analysis.get("is_live"):
+            # The sample week is not the owner's overspend — same gate as the
+            # web twin (/api/labor-gap); this one returned it raw (NS3 labor #4).
+            return jsonify(ok=True, is_live=False, projectable=False, over_target=False,
+                           monthly_gap=0, current_pct=None, target_pct=analysis.get("labor_target"),
+                           kind="opportunity")
         gap = calculate_monthly_gap(analysis)
         return jsonify(ok=True, **gap)
     except Exception as e:
@@ -5903,6 +5904,7 @@ def _do_mobile_billing(restaurant_id):
             return {"ok": True, "status": "inactive", "message": "No active subscription found"}, 200
 
         sub = subs.data[0]
+        import pricing as _pricing_billing
         next_date = datetime.fromtimestamp(sub.current_period_end).strftime("%-m/%-d/%Y")
         amount = sum(i.price.unit_amount for i in sub["items"].data) / 100
 
@@ -5948,7 +5950,10 @@ def _do_mobile_billing(restaurant_id):
             "ok": True,
             "status": sub.status,
             "next_date": next_date,
-            "amount": f"${amount:,.0f}/mo",
+            # From the subscription's own billing interval (NS3 H7): an
+            # annual plan read "$11,990/mo".
+            "amount": _pricing_billing.billing_amount_label(amount, *_pricing_billing.subscription_interval(sub)),
+            "interval": _pricing_billing.subscription_interval(sub)[0],
             "payment_method": pm_desc,
             "portal_url": portal_url,
             "trial_end": datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,

@@ -452,7 +452,18 @@ def _read_food_cost(restaurant_id):
         "is_live": True,
         "weekly_waste_cost": a.get("total_waste_cost_week"),
         "monthly_waste_projection": a.get("monthly_waste_projection"),
+        "projection_basis": a.get("projection_basis"),
         "inventory_value": a.get("total_stock_value"),
+        # The period and kind of each dollar figure in these rows (NS3 food
+        # #13): waste rows' recoverable_cost is per WEEK, order rows'
+        # savings_vs_last is per ORDER (a hypothetical difference, not money
+        # saved), the projection is one week scaled to a month.
+        "money_periods": {"weekly_waste_cost": "week", "monthly_waste_projection": "month",
+                          "waste_items.recoverable_cost": "week", "waste_items.waste_cost": "week",
+                          "order_reduction.savings_vs_last": "per order", "overstock.overstock_cost": "now"},
+        "money_kinds": {"weekly_waste_cost": "measured", "monthly_waste_projection": "projection",
+                        "waste_items.recoverable_cost": "opportunity", "waste_items.waste_cost": "measured",
+                        "order_reduction.savings_vs_last": "estimate", "overstock.overstock_cost": "measured"},
         "critical_low": (a.get("critical_low") or [])[:_MAX_ROWS],
         "reorder_soon": (a.get("reorder_soon") or [])[:_MAX_ROWS],
         "waste_items": (a.get("waste_items") or [])[:_MAX_ROWS],

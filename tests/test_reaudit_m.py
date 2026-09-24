@@ -692,7 +692,8 @@ def test_m15_a_job_draft_month_earns_no_agency_credit(db_path):
         _content(db_path, rid, "instagram_post", "Carbonara night")
     item = [i for i in value_delivered.avoided(rid, db_path=db_path)["items"] if i["key"] == "content"][0]
     assert item["label"].startswith("1 posts written across 1 month") or item["label"].startswith("1 post")
-    assert item["dollars"] == value_delivered.AGENCY_MONTHLY
+    # one piece is one piece's worth, not a month's fee (NS3 M1)
+    assert item["dollars"] == value_delivered.AGENCY_PER_PIECE
 
 
 def test_m27_home_week_and_ios_receipt_count_real_pieces(db_path):

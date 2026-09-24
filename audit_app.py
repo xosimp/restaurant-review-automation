@@ -326,7 +326,7 @@ def generate_pdf(data):
             textColor=INK2, leading=15, spaceAfter=8)))
     rec_data = [[
         Paragraph("", sCellBold),
-        Paragraph("Est. monthly savings", sCellBold),
+        Paragraph("Est. monthly opportunity (not a promise)", sCellBold),
         Paragraph("Setup", sCellBold),
         Paragraph("Monthly", sCellBold),
     ],[
@@ -387,8 +387,8 @@ def send_email(to_email, restaurant, pdf_buf):
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
     The report outlines your scores across all five operational areas,
-    the top opportunities we identified, and estimated monthly savings
-    from each. Take a look and let me know if you have any questions.
+    the top opportunities we identified, and an estimated monthly opportunity
+    for each — an estimate from what you told us, not a promise. Take a look and let me know if you have any questions.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
     If you would like to move forward, just reply to this email or visit
@@ -586,11 +586,11 @@ textarea{resize:vertical;min-height:70px}
     </div>
     <div class="saving-row">
       <div class="form-group">
-        <label>Starter module est. savings</label>
+        <label>Starter module est. opportunity / mo</label>
         <input type="text" id="saving_starter" placeholder="$300/mo">
       </div>
       <div class="form-group">
-        <label>Full system est. savings</label>
+        <label>Full system est. opportunity / mo</label>
         <input type="text" id="saving_full" placeholder="$2,300/mo">
       </div>
     </div>

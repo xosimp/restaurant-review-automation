@@ -178,9 +178,13 @@ def check_savings(restaurant_id, db_path=DB_PATH):
         m = fire(restaurant_id, "savings", f"savings:{tier}",
                  f"${tier:,} in measured results",
                  body=(f"Across the changes you tracked, Cavnar AI has measured ${total:,.0f}, summed over "
-                       f"the days each change was measured and held, net of any that got worse. Every "
-                       f"dollar came from a before-and-after on your own numbers — measured, not an "
-                       f"estimate, and not proof the change alone caused it."),
+                       f"the days each change was measured and held, net of any that got worse. Each "
+                       f"figure is a before-and-after move on your own numbers, turned into dollars at "
+                       f"your own sales and costs — an estimate of what the move is worth, and not proof "
+                       f"the change alone caused it."),
+                 # It used to say the dollars were measured and "not an
+                 # estimate": the move is measured, the dollars are
+                 # metrics.monthly_dollars, "always an estimate" (NS1 H4, NS3 L1).
                  value=float(tier),
                  # Which "measured" this is (fix I7, CA4 F16): an all-time
                  # SUM over measured days — not Home's monthly rate, not the

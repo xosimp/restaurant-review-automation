@@ -56,14 +56,39 @@ def test_hours_past_forty_are_priced_on_the_overtime_hours_only():
     assert "4h of it overtime" in f["text"]
 
 
-def test_the_restaurants_own_ceiling_is_the_overtime_line():
+def test_a_ceiling_below_forty_is_a_cap_not_the_overtime_line():
+    """NS3 H5: the restaurant's weekly hours ceiling is a cap. Overtime pay
+    starts at labor.OVERTIME_THRESHOLD_HOURS (40): a 36h ceiling on a 40h
+    week flags the cap and prices no overtime (this test used to pin the
+    ceiling AS the overtime line, which priced premium nobody owed)."""
     w = _week()
     c = sr.Constraints(restaurant_id=1, week_dates=w, week_days=DAYS)
     c.compliance = dict(c.compliance or {}, weekly_hours_ceiling=36)
     rows = [_row(w[k], "Ana") for k in range(5)] + [_row(w[5], "Ben")]
     out = sl.overtime_forecast(rows, constraints=c)
-    assert out[0]["overtime_line"] == 36.0 and out[0]["overtime_hours"] == 4.0
-    assert "36h overtime line" in out[0]["text"]
+    assert out[0]["overtime_line"] == 40.0 and out[0]["overtime_hours"] == 0
+    assert "36h limit" in out[0]["text"] and "overtime line" not in out[0]["text"]
+    sl.price_overtime_moves(out, {"_default": 20.0})
+    assert out[0]["candidate"] is None or out[0]["candidate"]["saves"] is None
+
+
+def test_a_ceiling_below_forty_prices_no_overtime_premium():
+    """NS3 H5 probe: 40h week, ceiling 35 -> {'overtime_premium': 50.0}."""
+    import schedule_economics as E
+    import schedule_engine as se
+    rows = [{"employee": "Ana", "role": "Server", "date": f"2026-09-{21 + i}", "shift_start": "10:00",
+             "shift_end": "18:00", "scheduled_hours": 8} for i in range(5)]
+    pc = E.priced_cost(rows, {"Server": 20.0}, 20.0, ceiling=se._labor_ot_line())
+    assert pc["overtime_premium"] == 0 and pc["overtime_hours"] == 0
+    # and the move line never claims a saving for a move not yet made
+    rows44 = rows + [{"employee": "Ana", "role": "Server", "date": "2026-09-26", "shift_start": "10:00",
+                      "shift_end": "14:00", "scheduled_hours": 4},
+                     {"employee": "Ben", "role": "Server", "date": "2026-09-27", "shift_start": "10:00",
+                      "shift_end": "14:00", "scheduled_hours": 4}]
+    fc = sl.overtime_forecast(rows44)
+    sl.price_overtime_moves(fc, {"Server": 20.0}, 20.0)
+    assert fc and fc[0]["overtime_hours"] == 4.0
+    assert "That saves" not in fc[0]["text"]
 
 
 # ── shared DB harness ─────────────────────────────────────────────────────

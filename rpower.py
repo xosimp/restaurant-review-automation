@@ -991,7 +991,7 @@ def sync_to_db(restaurant_id: int) -> dict:
             if dr.get("start") and dr.get("end"):
                 save_labor_snapshot(restaurant_id, dr["start"], dr["end"],
                                     analysis["overall_labor_pct"],
-                                    analysis["total_labor_cost"],
+                                    analysis.get("costed_labor", analysis["total_labor_cost"]),
                                     analysis["total_sales"])
         except Exception as e:
             log.warning("[rpower] labor archive failed for %s: %s", restaurant_id, e)

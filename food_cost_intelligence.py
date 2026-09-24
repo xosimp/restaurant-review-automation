@@ -49,6 +49,7 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from metrics import WEEKS_PER_MONTH as _WEEKS_PER_MONTH, DAYS_PER_MONTH as _DAYS_PER_MONTH
 
 
 def get_conn(db_path=None):
@@ -538,6 +539,26 @@ def _food_cost_target(restaurant_id) -> float:
         return 30.0
 
 
+# Every driver is scaled to a month by metrics.WEEKS_PER_MONTH / DAYS_PER_MONTH
+# (NS3 L5): a price driver scaled by 30 days while waste used 52/12 weeks.
+#
+# The money kind of each driver (NS3 R1, H3). A price rise and usage over
+# recipe are estimates of money ALREADY being spent; waste above tolerance,
+# a dish's gap to the food-cost target and a cheaper supplier are
+# opportunities — gaps that could be closed, never money saved. A total that
+# mixes them is stated per kind (totals_by_kind), never as one "measured"
+# figure: business_intelligence called the mixed total "measured cost
+# drivers ... money already being spent".
+DRIVER_VALUE_KINDS = {"waste": "opportunity", "menu": "opportunity", "sourcing": "opportunity",
+                      "price": "estimate", "portion": "estimate"}
+_KIND_WORDS = {"estimate": "estimated cost already being spent",
+               "opportunity": "opportunity (a gap that could be closed, not money saved)"}
+
+
+def driver_value_kind(d: dict) -> str:
+    return d.get("value_kind") or DRIVER_VALUE_KINDS.get(str(d.get("kind") or ""), "estimate")
+
+
 def deduplicated_total(drivers: list) -> dict:
     """The monthly dollars across drivers with no ingredient counted twice
     (audit #36).
@@ -567,8 +588,16 @@ def deduplicated_total(drivers: list) -> dict:
     for i, d in enumerate(drivers):
         groups.setdefault(find(i), []).append(d)
     total = round(sum(max(x["dollars_monthly"] for x in g) for g in groups.values()), 2)
+    # Each group's kept (largest) driver carries its dollars into ITS kind's
+    # subtotal, so the subtotals partition `total` exactly (NS3 H3).
+    by_kind = {}
+    for g in groups.values():
+        keep = max(g, key=lambda x: x["dollars_monthly"])
+        k = driver_value_kind(keep)
+        by_kind[k] = round(by_kind.get(k, 0.0) + float(keep["dollars_monthly"]), 2)
     return {"total": total, "groups": len(groups),
-            "overlapping": sum(1 for g in groups.values() if len(g) > 1)}
+            "overlapping": sum(1 for g in groups.values() if len(g) > 1),
+            "by_kind": by_kind, "kinds": sorted(by_kind)}
 
 
 def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -616,7 +645,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         rec = _f(x.get("recoverable_cost"))
         if rec <= 0:
             continue
-        monthly = round(rec * 52.0 / 12.0, 2)
+        monthly = round(rec * _WEEKS_PER_MONTH, 2)
         if monthly < MIN_DRIVER_DOLLARS:
             continue
         weeks = max(1, int(_ww.get(str(x["item"]).strip().lower(), 0)))
@@ -680,7 +709,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             match = next((i for i in items if i["item"] == w["item"]), None)
             usage = _f(match.get("avg_daily_usage")) if match else 0.0
             delta = _f(w.get("new_price")) - _f(w.get("old_price"))
-            monthly = round(delta * usage * 30, 2)
+            monthly = round(delta * usage * _DAYS_PER_MONTH, 2)
             if monthly < MIN_DRIVER_DOLLARS:
                 continue
             _price_drivers.append({
@@ -709,7 +738,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         for c in comp.get("comparisons", [])[:2]:
             match = next((i for i in items if i["item"].lower() == c["ingredient"].lower()), None)
             usage = _f(match.get("avg_daily_usage")) if match else 0.0
-            monthly = round(c["spread_per_unit"] * usage * 30, 2)
+            monthly = round(c["spread_per_unit"] * usage * _DAYS_PER_MONTH, 2)
             if monthly < MIN_DRIVER_DOLLARS:
                 continue
             drivers.append({
@@ -744,7 +773,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             # of the gap.
             target_cost = _f(e.get("sell_price")) * target_pct / 100.0
             return round(max(0.0, _f(e["plate_cost"]) - target_cost)
-                         * _f(e["units_sold"]) * (30.0 / il._POPULARITY_WINDOW_DAYS), 2)
+                         * _f(e["units_sold"]) * (_DAYS_PER_MONTH / il._POPULARITY_WINDOW_DAYS), 2)
         cands = [e for e in (mp.get("priced") or [])
                  if not e.get("unit_warning") and _f(e.get("units_sold")) > 0
                  and _f(e.get("food_cost_pct")) > target_pct
@@ -783,6 +812,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # in `confidence_detail`, its band in `confidence` for older clients,
     # which decode that field as a string.
     _driver_confidence(restaurant_id, drivers, db_path=db_path)
+    for d in drivers:
+        d["value_kind"] = driver_value_kind(d)
 
     # The priority model, in order: financial impact first, then confidence,
     # then ease. Difficulty breaks a tie between two drivers worth similar
@@ -801,9 +832,15 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         # wherever one "money at stake" figure is shown (audit #36).
         "total_monthly": round(sum(d["dollars_monthly"] for d in drivers), 2),
         "total_monthly_deduplicated": dedup["total"],
-        "total_basis": ("the largest driver per ingredient — an ingredient that shows up as waste, a "
-                        "price rise and inside a dish's plate cost is counted once"
-                        if dedup["overlapping"] else "no ingredient appears in more than one driver"),
+        # The same total split by money kind, never one blended figure
+        # (NS3 H3): {"estimate": $, "opportunity": $}, summing to the total.
+        "totals_by_kind": dedup["by_kind"],
+        "total_kinds": dedup["kinds"],
+        "total_basis": (("the largest driver per ingredient — an ingredient that shows up as waste, a "
+                         "price rise and inside a dish's plate cost is counted once"
+                         if dedup["overlapping"] else "no ingredient appears in more than one driver")
+                        + ("; it mixes " + " and ".join(_KIND_WORDS[k] for k in dedup["kinds"] if k in _KIND_WORDS)
+                           + " — see totals_by_kind" if len(dedup["kinds"]) > 1 else "")),
         "min_driver_dollars": MIN_DRIVER_DOLLARS,
         # Sources that failed. A ranking missing a source is not a ranking,
         # and the caller has to be able to say so rather than presenting a
@@ -1284,9 +1321,22 @@ def _drivers_block(drv) -> str:
     # once per driver it appears in — up to four times — and the model was
     # told to quote it, while the web card showed the de-duplicated figure.
     _combined = drv.get("total_monthly_deduplicated", drv["total_monthly"])
-    out.append(f"\nCombined: ${_combined:,.0f}/month across "
-               f"{len(drv['drivers'])} drivers, with no ingredient counted twice. Quote this "
-               f"figure if you want a total — never add the drivers up yourself.")
+    # Never one blended total across kinds (NS3 H3, R6): a price rise is
+    # money being spent, a gap to target is an opportunity. When the
+    # drivers mix kinds the model gets a subtotal per kind and no total.
+    by_kind = drv.get("totals_by_kind") or deduplicated_total(drv["drivers"]).get("by_kind") or {}
+    by_kind = {k: v for k, v in by_kind.items() if v}
+    if len(by_kind) <= 1:
+        _kw = _KIND_WORDS.get(next(iter(by_kind), ""), "")
+        out.append(f"\nCombined: ${_combined:,.0f}/month across "
+                   f"{len(drv['drivers'])} drivers, with no ingredient counted twice"
+                   + (f" — all {_kw}" if _kw else "") + ". Quote this "
+                   f"figure if you want a total — never add the drivers up yourself.")
+    else:
+        parts = [f"${v:,.0f}/month of {_KIND_WORDS.get(k, k)}" for k, v in sorted(by_kind.items())]
+        out.append("\nSubtotals by kind, with no ingredient counted twice — NEVER add these together "
+                   "or state one combined figure: " + "; ".join(parts) + ". Quote each with its kind, "
+                   "and never add the drivers up yourself.")
     return "\n".join(out)
 
 
@@ -1768,6 +1818,8 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "fix_first": fix_first,
         "money_involved": ({"monthly_at_stake": drv.get("total_monthly_deduplicated", drv["total_monthly"]),
                             "monthly_at_stake_basis": drv.get("total_basis"),
+                            # The at-stake figure split by money kind (NS3 H3).
+                            "totals_by_kind": drv.get("totals_by_kind") or {},
                             "projected_month_delta": pp.get("dollars_vs_last_month"),
                             "claim_kind": "forecast"}
                            if drv.get("available") else

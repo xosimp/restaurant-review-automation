@@ -555,21 +555,20 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
 
 
 def at_stake_monthly(drivers) -> float:
-    """The food drivers' monthly dollars with each ingredient counted ONCE.
+    """The food drivers' monthly dollars with each ingredient counted ONCE —
+    food_cost_intelligence.deduplicated_total, the one definition.
 
     cost_drivers can name one ingredient several times — its waste, its
     price rise, its usage over recipe — each measured from the same spend.
-    Summing all of them counted salmon three times. Each item keeps its
-    largest driver; drivers with no item stand alone."""
-    best, loose = {}, 0.0
-    for d in drivers or []:
-        dollars = float(d.get("dollars_monthly") or 0)
-        item = str(d.get("item") or "").strip().lower()
-        if not item:
-            loose += dollars
-            continue
-        best[item] = max(best.get(item, 0.0), dollars)
-    return round(sum(best.values()) + loose, 2)
+    This used to keep the largest driver per item NAME, while the Food Cost
+    card grouped by a menu driver's ingredients, so Home read "At stake
+    $750/mo" beside "$400/month across 3 drivers" for the same drivers
+    (NS3 H3, R11). Now both read the same function."""
+    import food_cost_intelligence as _fci
+    drv = [dict(d, dollars_monthly=float(d.get("dollars_monthly") or 0)) for d in (drivers or [])]
+    if not drv:
+        return 0.0
+    return round(float(_fci.deduplicated_total(drv)["total"]), 2)
 
 
 def overtime_this_week(labor, today):
@@ -799,7 +798,8 @@ def trim_day_read(dow, by_day, labor_target, period_days):
         excess += max(0.0, float(dd.get("labor_cost") or 0) - float(sales) * float(labor_target) / 100.0)
     monthly, basis = None, None
     if n_days >= TRIM_MIN_WEEKDAYS_FOR_DOLLARS and int(period_days or 0) >= MIN_DAYS_TO_EXTRAPOLATE:
-        monthly = round(excess / n_days * 52.0 / 12.0, 2) or None
+        from metrics import WEEKS_PER_MONTH as _WPM   # one month definition (NS3 L5)
+        monthly = round(excess / n_days * _WPM, 2) or None
         if monthly:
             basis = (f"{day}s only: their labor above your {float(labor_target):g}% target, averaged over "
                      f"{n_days} {day}s with sales, × 52 ÷ 12")
@@ -1458,9 +1458,14 @@ def _build(current_user, present=True):
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
                 add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
                          f"Across the last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
-                         + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
+                         # The figure is the WHOLE schedule's weekly gap, so the
+                         # sentence says so: it read "recoverable by trimming the
+                         # overstaffed days" over $975/week when those days carried
+                         # $600 (NS3 M10). An opportunity, never money saved.
+                         + (f"; about ${savings:,.0f}/week above target across the whole schedule — an opportunity, not money saved." if savings > 0 else "."), "labor", "Open labor",
                          since=f"{days}d",
-                         evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales"
+                         # Labor on the days with sales, the pair of total_sales (NS3 H4).
+                         evidence=f"${float(labor.get('costed_labor', labor.get('total_labor_cost')) or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales"
                          + (f" · {_cover_note}" if _cover_note else ""),
                          # The labor alert's key: its latest period.
                          rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
@@ -1645,10 +1650,10 @@ def _build(current_user, present=True):
                 _wc = float(top.get("waste_cost") or 0)
                 add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut the {top.get('item', 'top-item')} order — it's the biggest waste line",
                         f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
-                        f"${_wc:,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
+                        f"${_wc:,.0f} wasted last week · ${recoverable:,.0f}/mo could be recovered across items (an opportunity)", "Food cost · margin", "inventory", "Next order",
                         "Adjust the order",
                         metric="weekly_waste",
-                        dollars=float(top.get("recoverable_cost") or 0) * 52.0 / 12.0 or None,
+                        dollars=float(top.get("recoverable_cost") or 0) * __import__("metrics").WEEKS_PER_MONTH or None,
                         dollars_basis="one week's recoverable waste on this item × 52 ÷ 12",
                         ev={"n": 1, "kind": "waste_weeks", "basis": "one week of waste counts"},
                         if_ignored="the same share keeps going in the bin every week", effort="low")
@@ -1710,7 +1715,10 @@ def _build(current_user, present=True):
                             + (f", led by {drivers[0]['label'].lower()}" if drivers else "") + ".",
                     "tone": "bad" if _over else "good", "module": "inventory"})
             elif recoverable > 0:
-                brief_lines.append({"text": f"${recoverable:,.0f}/month of recoverable food waste, led by {top.get('item') if top else 'a few items'}.", "tone": "warn", "module": "inventory"})
+                # One week's waste above tolerance projected to a month:
+                # an opportunity, labelled as one (NS3 M3).
+                brief_lines.append({"text": f"About ${recoverable:,.0f}/month of food waste above tolerance could be recovered (an opportunity projected from one week), led by {top.get('item') if top else 'a few items'}.", "tone": "warn", "module": "inventory",
+                                    "claim_kind": "opportunity"})
             # A week with no waste logged is not_measured (inventory), never a
             # win: nothing recorded is not "under control" (CA4 F11).
             _waste_measured = inv.get("benchmark_state") != "not_measured"
@@ -1723,7 +1731,11 @@ def _build(current_user, present=True):
             # The headline number is the margin position where it exists, and
             # the recoverable estimate only where it does not.
             _headline = f"{fc_pct}%" if fc_pct is not None else f"${recoverable:,.0f}"
-            _unit = ("food cost" if fc_pct is not None else "recoverable / mo")
+            _unit = ("food cost" if fc_pct is not None else "est. recoverable / mo")
+            # What the headline IS (NS3 R1, R10): a measured percentage, or
+            # an opportunity projected from one week. Renderers read `unit`
+            # and `kind` from here and never hardcode them (H2).
+            _headline_kind = "measured" if fc_pct is not None else "opportunity"
             _delta = None
             if fc_pct is not None and fc_target is not None:
                 _delta = {"value": f"{fc_pct - fc_target:+.1f} pts", "label": fc_label or "",
@@ -1738,9 +1750,10 @@ def _build(current_user, present=True):
                 # Each ingredient counted once (#36): salmon's waste, price
                 # rise and over-recipe usage are three readings of one spend.
                 _secondary.insert(0, {"label": "At stake",
-                                      "value": f"${at_stake_monthly(drivers):,.0f}/mo"})
+                                      "value": f"${at_stake_monthly(drivers):,.0f}/mo",
+                                      "kind": "opportunity"})
             snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available",
-                             "value": _headline, "unit": _unit,
+                             "value": _headline, "unit": _unit, "kind": _headline_kind,
                              "delta": _delta,
                              "secondary": _secondary,
                              # WHY, not just what — the one thing the card

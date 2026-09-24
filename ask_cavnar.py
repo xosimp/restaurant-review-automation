@@ -241,10 +241,11 @@ def _labor_context(restaurant_id):
     lines = [
         "LABOR",
         f"- Overall labor cost: {a['overall_labor_pct']}% of sales ({over_under} this restaurant's {target}% target)",
-        f"- Total labor cost this period: ${a['total_labor_cost']:,.0f} on ${a['total_sales']:,.0f} in sales",
-        f"- Estimated monthly savings available from optimized scheduling: "
-        f"${a.get('potential_savings_monthly', 0):,.0f} (gap above target over the "
-        f"{a.get('period_days', 0)} days synced, per month)",
+        # The labor on the days WITH sales, the only labor that pairs with
+        # total_sales (the ratio above is over the same days, NS3 H4).
+        f"- Labor cost this period: ${a.get('costed_labor', a['total_labor_cost']):,.0f} on "
+        f"${a['total_sales']:,.0f} in sales (the days with a sales figure; labor cost is hours x the rates on file, an estimate)",
+        _labor_gap_line(a),
         f"- Overstaffed days this period: {len(a.get('overstaffed_days') or [])}",
         f"- Understaffed days this period: {len(a.get('understaffed_days') or [])}",
     ]
@@ -255,6 +256,20 @@ def _labor_context(restaurant_id):
         lines.append(f"- These cover {rng['start']} to {rng['end']}{_staleness(rng['end'])}")
     lines.extend(_recent_days_lines(restaurant_id))
     return "\n".join(lines) + "\n"
+
+
+def _labor_gap_line(a):
+    """The gap above target as an OPPORTUNITY, never savings (NS3 R1/R3).
+
+    A period too short to project used to read "Estimated monthly savings
+    ... $0", hiding a real $840 gap for the period (NS3 labor #10); it now
+    states the period's own gap and says why there is no monthly rate."""
+    if a.get("period_too_short_to_project"):
+        return (f"- Opportunity (gap above target, not money saved): ${float(a.get('potential_savings') or 0):,.0f} "
+                f"over this {a.get('period_days', 0)}-day period — only {a.get('data_days', a.get('period_days', 0))} "
+                f"day(s) carry sales, too few to state a weekly or monthly rate")
+    return (f"- Opportunity (gap above target, not money saved): ${float(a.get('potential_savings_monthly') or 0):,.0f} "
+            f"a month — the gap above target over the {a.get('period_days', 0)} days synced, projected to a month")
 
 
 def _staleness(last_date):
@@ -320,7 +335,9 @@ def _inventory_context(restaurant_id):
     return (
         "FOOD COST\n"
         f"- Weekly waste cost: ${a['total_waste_cost_week']:,.0f}\n"
-        f"- Projected monthly waste: ${a['monthly_waste_projection']:,.0f}\n"
+        f"- Projected monthly waste: ${a['monthly_waste_projection']:,.0f} (a projection from one week's waste, not a month measured)\n"
+        f"- Recoverable waste (above each category's tolerance): ${float(a.get('recoverable_monthly') or 0):,.0f} a month — "
+        f"an opportunity projected from one week, not money saved\n"
         f"- Critical low items ({len(critical)}): {critical_names}\n"
         f"- Items to reorder soon ({len(reorder)}): {reorder_names}\n"
         f"- Total inventory value: ${a['total_stock_value']:,.0f}\n"

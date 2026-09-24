@@ -71,8 +71,17 @@ from models import get_restaurant, get_review_stats, DB_PATH
 REPLY_RATE = 5.00        # per review reply
 REPLY_RATE_BASIS = "what a managed review-response service charges per reply"
 REPLY_MINUTES = 6        # to read a review and write a considered reply
-AGENCY_MONTHLY = 1500.0  # per month content was actually produced
-AGENCY_BASIS = "a part-time social media manager, for months content was actually produced"
+AGENCY_MONTHLY = 1500.0  # a full month of a part-time social media manager's output
+# The rate counts PIECES of work (NS3 M1): $1,500 a month buys about this
+# many posts, so each real piece is credited AGENCY_PER_PIECE, capped at a
+# full month's fee in any one month. It paid $1,500 for any month with ONE
+# post — three captions, one per month, read "$4,500 you'd otherwise have
+# paid for".
+AGENCY_PIECES_PER_MONTH = 12
+AGENCY_PER_PIECE = round(AGENCY_MONTHLY / AGENCY_PIECES_PER_MONTH, 2)
+AGENCY_BASIS = (f"a part-time social media manager at ${AGENCY_MONTHLY:,.0f} a month for about "
+                f"{AGENCY_PIECES_PER_MONTH} posts — ${AGENCY_MONTHLY / AGENCY_PIECES_PER_MONTH:,.0f} a piece, "
+                f"counted only for pieces actually produced, never more than a month's fee in one month")
 SCHEDULE_MINUTES = 90    # to build a week's schedule by hand
 INVOICE_MINUTES = 12     # to key one supplier invoice in by hand
 
@@ -90,6 +99,7 @@ def rates() -> dict:
     return {
         "reply_rate": REPLY_RATE, "reply_rate_basis": REPLY_RATE_BASIS, "reply_minutes": REPLY_MINUTES,
         "agency_monthly": AGENCY_MONTHLY, "agency_basis": AGENCY_BASIS,
+        "agency_per_piece": AGENCY_PER_PIECE, "agency_pieces_per_month": AGENCY_PIECES_PER_MONTH,
         "schedule_minutes": SCHEDULE_MINUTES, "invoice_minutes": INVOICE_MINUTES,
         "overtime_multiplier": labor.OVERTIME_MULTIPLIER,
         "overtime_threshold_hours": labor.OVERTIME_THRESHOLD_HOURS,
@@ -255,19 +265,25 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> 
             # A month nobody opened Marketing but a scheduled job drafted a
             # post was credited $1,500 of work done.
             from marketing import REAL_PIECE_SQL, PIECE_ID_SQL
-            months = _scalar(conn,
-                             "SELECT COUNT(DISTINCT substr(created_at,1,7)) "
-                             f"FROM marketing_content_log WHERE restaurant_id=? AND {REAL_PIECE_SQL}",
-                             (restaurant_id,))
-            posts = _scalar(conn, f"SELECT COUNT(DISTINCT {PIECE_ID_SQL}) FROM marketing_content_log "
-                                  f"WHERE restaurant_id=? AND {REAL_PIECE_SQL}", (restaurant_id,))
+            per_month = conn.execute(
+                f"SELECT substr(created_at,1,7) AS m, COUNT(DISTINCT {PIECE_ID_SQL}) AS n "
+                f"FROM marketing_content_log WHERE restaurant_id=? AND {REAL_PIECE_SQL} "
+                f"GROUP BY substr(created_at,1,7)", (restaurant_id,)).fetchall()
+            per_month = [(r[0], int(r[1] or 0)) for r in per_month if r and r[1]]
+            months = len(per_month)
+            posts = sum(n for _, n in per_month)
             if months:
+                # Each piece at the per-piece rate, never more than a full
+                # month's fee in any one month (NS3 M1).
+                dollars = sum(min(n, AGENCY_PIECES_PER_MONTH) * AGENCY_PER_PIECE for _, n in per_month)
                 items.append({
                     "key": "content",
-                    "label": f"{posts:,} posts written across {months} "
+                    "label": f"{posts:,} {'post' if posts == 1 else 'posts'} written across {months} "
                              f"{'month' if months == 1 else 'months'}",
-                    "dollars": round(months * AGENCY_MONTHLY, 2), "hours": None,
-                    "rate": f"${AGENCY_MONTHLY:,.0f}/month", "basis": AGENCY_BASIS})
+                    "dollars": round(dollars, 2), "hours": None,
+                    "pieces": posts,
+                    "rate": f"${AGENCY_PER_PIECE:,.0f} a piece, up to ${AGENCY_MONTHLY:,.0f} a month",
+                    "basis": AGENCY_BASIS})
 
         if restaurant.module_labor:
             # DISTINCT WEEKS, not rows. schedule_history keeps a row per
@@ -684,7 +700,10 @@ def ledger_lines(led):
         (led.get("replies_drafted", 0), "review {n} drafted in your voice", "review replies drafted in your voice"),
         (led.get("replies_posted", 0), "reply posted to Google", "replies posted to Google"),
         (led.get("schedules_built", 0), "week's schedule built", "weeks' schedules built"),
-        (led.get("alerts_sent", 0), "alert sent before it became a problem", "alerts sent before they became problems"),
+        # alerts_sent counts every alert_log row (briefs, 5-star alerts
+        # included), so it says what it counts: nothing here knows any of
+        # them came "before it became a problem" (NS1 H5).
+        (led.get("alerts_sent", 0), "alert sent to you", "alerts sent to you"),
         (led.get("issues_resolved", 0), "issue resolved with a name on it", "issues resolved with a name on them"),
         (led.get("outcomes_measured", 0), "change measured before and after", "changes measured before and after"),
         (led.get("outcomes_improved", 0), "change measured as an improvement", "changes measured as improvements"),

@@ -33,6 +33,12 @@ class ScheduleGenerationError(ValueError):
     "try again" — never its exception text or a traceback (DATA-46)."""
 
 
+def _labor_ot_line() -> float:
+    """The hours past which overtime pay starts (labor.OVERTIME_THRESHOLD_HOURS)."""
+    from labor import OVERTIME_THRESHOLD_HOURS
+    return float(OVERTIME_THRESHOLD_HOURS)
+
+
 def _expected_rows(shifts, roster_pairs) -> int:
     """How many shift rows a week here usually has: the busiest of the last
     four full weeks in the history, else three and a half a head."""
@@ -2937,7 +2943,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 from models import get_role_rates as _grr
                 _rates = _grr(restaurant_id)
                 _priced = _econ.priced_cost(preview_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
-                                            ceiling=min(float(_constraints.compliance.get("weekly_hours_ceiling") or 40), 40.0),
+                                            # Overtime is priced from the 40h line
+                                            # (labor.OVERTIME_THRESHOLD_HOURS), never the
+                                            # owner's hours ceiling: a 35h ceiling priced
+                                            # $50 of "premium" on a week that owes none (NS3 H5).
+                                            ceiling=_labor_ot_line(),
                                             base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
                                             bucket=_constraints.bucket,
                                             daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))

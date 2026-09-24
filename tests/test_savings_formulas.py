@@ -160,8 +160,9 @@ def test_cost_avoidance_counts_work_that_happened_and_carries_its_rate(monkeypat
 
     class _Conn:
         def execute(self, sql, args=()):
-            n = 2 if "DISTINCT substr" in sql else 9
-            return SimpleNamespace(fetchone=lambda: [n])
+            # two months: one with 20 pieces (capped at a month), one with 3
+            rows = [("2026-08", 20), ("2026-09", 3)] if "GROUP BY" in sql else [[9]]
+            return SimpleNamespace(fetchone=lambda: rows[0], fetchall=lambda: rows)
 
         def close(self):
             pass
@@ -169,7 +170,9 @@ def test_cost_avoidance_counts_work_that_happened_and_carries_its_rate(monkeypat
     monkeypatch.setattr(models, "get_conn", lambda db_path=None: _Conn())
     out = value_delivered.avoided(1)
     by = {i["key"]: i for i in out["items"]}
-    assert by["content"]["dollars"] == 2 * value_delivered.AGENCY_MONTHLY
+    # NS3 M1: the rate counts pieces, never more than a month's fee a month
+    assert by["content"]["dollars"] == round(value_delivered.AGENCY_MONTHLY + 3 * value_delivered.AGENCY_PER_PIECE, 2)
+    assert by["content"]["pieces"] == 23
     assert by["replies"]["dollars"] == 4 * value_delivered.REPLY_RATE
     # Every item states the assumption it rests on.
     for item in out["items"]:

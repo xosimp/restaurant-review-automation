@@ -79,7 +79,8 @@ def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_e
         return 0
     if analysis_failed or hours_are_estimated or sales_data_missing or days < LABOR_INDUSTRY_MIN_DAYS or not pct:
         return 0
-    monthly_sales = sales / days * 30
+    from metrics import DAYS_PER_MONTH   # one month definition (NS3 L5)
+    monthly_sales = sales / days * DAYS_PER_MONTH
     return max(0, int(round((LABOR_INDUSTRY_PCT - pct) / 100 * monthly_sales)))
 
 

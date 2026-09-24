@@ -236,7 +236,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         dr = analysis.get("date_range", {})
         if dr.get("start") and dr.get("end"):
             save_labor_snapshot(restaurant_id, dr["start"], dr["end"], analysis["overall_labor_pct"],
-                                analysis["total_labor_cost"], analysis["total_sales"])
+                                analysis.get("costed_labor", analysis["total_labor_cost"]), analysis["total_sales"])
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
     return len(new_rows)

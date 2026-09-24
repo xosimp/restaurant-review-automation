@@ -700,6 +700,21 @@ OVERTIME_MULTIPLIER = 1.5
 # One Saturday over target used to become "$24,267/month in savings".
 MIN_DAYS_TO_EXTRAPOLATE = 7
 
+# The kind of every dollar field analyse_shifts returns (money kinds:
+# measured / estimate / projection / opportunity / plan / forecast / price).
+# Sales are the POS's figures; labor cost is hours × the rates on file; the
+# gap to target is an opportunity, and its weekly and monthly rates are that
+# opportunity projected from the synced period.
+LABOR_MONEY_KINDS = {
+    "total_sales": "measured",
+    "total_labor_cost": "estimate",
+    "costed_labor": "estimate",
+    "overtime_premium": "estimate",
+    "potential_savings": "opportunity",
+    "potential_savings_weekly": "opportunity",
+    "potential_savings_monthly": "opportunity",
+}
+
 
 def analyse_shifts(shifts: list[dict],
                    hourly_rate: float = DEFAULT_HOURLY_RATE,
@@ -1049,10 +1064,17 @@ def analyse_shifts(shifts: list[dict],
     # 4.33 — $800 of real overage presented as "$24,267/month in savings".
     # Below the floor the period figure still stands on its own; only the
     # projection is withheld, and period_too_short_to_project says why.
-    period_too_short_to_project = bool(period_days) and period_days < MIN_DAYS_TO_EXTRAPOLATE
-    if period_days >= MIN_DAYS_TO_EXTRAPOLATE:
+    #
+    # The floor counts days that carry DATA (shifts with a sales figure),
+    # not the calendar span: two shift days eight calendar days apart used
+    # to clear it and project "$576/mo" from two days (NS3 labor #9).
+    data_days = len([k for k in by_day.keys() if k and k in day_sales])
+    period_too_short_to_project = bool(period_days) and (
+        period_days < MIN_DAYS_TO_EXTRAPOLATE or data_days < MIN_DAYS_TO_EXTRAPOLATE)
+    if not period_too_short_to_project and period_days:
+        from metrics import WEEKS_PER_MONTH as _WPM
         potential_savings_weekly = round(potential_savings / period_days * 7, 2)
-        potential_savings_monthly = round(potential_savings_weekly * 52.0 / 12.0, 2)
+        potential_savings_monthly = round(potential_savings_weekly * _WPM, 2)
     else:
         potential_savings_weekly = 0.0
         potential_savings_monthly = 0.0
@@ -1078,6 +1100,12 @@ def analyse_shifts(shifts: list[dict],
 
     return {
         "total_labor_cost": round(total_labor, 2),
+        # Labor on the days that carry a sales figure — the only labor that
+        # may sit beside total_sales. "Labor $8,160 on $20,000 in sales"
+        # read as 29.1% when the ratio of those two was 40.8%: the labor
+        # counted every day and the sales only the days with sales (NS3 H4).
+        # Anything that shows labor next to sales shows THIS figure.
+        "costed_labor": round(costed_labor, 2),
         "total_sales": round(total_sales, 2),
         "overall_labor_pct": overall_pct,
         "overstaffed_days": sorted(overstaffed, key=lambda x: x["labor_pct"], reverse=True),
@@ -1112,6 +1140,13 @@ def analyse_shifts(shifts: list[dict],
         "days_with_conflicting_sales": sorted(sales_conflicts),
         "period_too_short_to_project": period_too_short_to_project,
         "min_days_to_project": MIN_DAYS_TO_EXTRAPOLATE,
+        # Days with shifts AND a sales figure — what the projection floor counts.
+        "data_days": data_days,
+        # What kind of money each dollar field is (NS3 R1), so a renderer or
+        # a model context can label it: the gap to target is an opportunity
+        # — never money saved — and every cost here is hours × configured
+        # rates, an estimate, not payroll.
+        "money_kinds": dict(LABOR_MONEY_KINDS),
         "overtime_hours": round(overtime_hours_total, 1),
         "overtime_premium": round(overtime_premium, 2),
         "week_start_day": int(week_start_day or 0),
@@ -1120,6 +1155,58 @@ def analyse_shifts(shifts: list[dict],
             "end":   max((k for k in by_day.keys() if k), default=None),
             "days":  len(by_day),
         },
+    }
+
+
+# The money kind of each savings_breakdown figure (web and iOS share it).
+LABOR_BREAKDOWN_KINDS = {
+    "labor_monthly": "opportunity",
+    "labor_annual": "projection",
+    "labor_overtime": "estimate",
+    "labor_vs_industry_monthly": "benchmark",
+    "labor_vs_industry_annual": "benchmark",
+}
+
+
+def savings_breakdown(analysis: dict, analysis_failed: bool = False) -> dict:
+    """The Labor tab's money tiles, one definition for web and iOS.
+
+    * The bundled sample week is a fictional restaurant: none of its dollars
+      are this owner's. "If optimized / mo $12,770" and "Annual savings
+      $153,240" reached brand-new accounts from it (NS3 C3). Every dollar is
+      0 (not null — shipped iOS decodes these as non-optional Doubles, and a
+      0 hides every tile) and `dollars_withheld` says why.
+    * Overtime is labor.py's own premium (hours past 40 x each employee's
+      role-blended rate x 0.5), over the whole synced window
+      (`overtime_period_days`). The web re-priced the flagged rows at the flat
+      restaurant.hourly_rate, so it read $351 where iOS read $306 (NS3 M9).
+    * The gap to target is an opportunity projected to a month; the annual
+      figure is that x12, a projection; the industry figures are a benchmark
+      comparison (`kinds`) — never savings (NS3 H1, R1)."""
+    import thresholds as _thr
+    a = analysis or {}
+    sample = not analysis_failed and a.get("is_live") is False
+    period_days = int(a.get("period_days") or 0)
+    monthly = 0 if sample else int(round(float(a.get("potential_savings_monthly") or 0)))
+    ot = 0 if sample else int(round(float(a.get("overtime_premium") or 0)))
+    vs_ind = _thr.labor_vs_industry_monthly(
+        a.get("overall_labor_pct"), a.get("total_sales"), period_days,
+        hours_are_estimated=bool(a.get("hours_are_estimated")),
+        sales_data_missing=bool(a.get("sales_data_missing")),
+        analysis_failed=bool(analysis_failed or a.get("analysis_failed") or sample
+                             or a.get("period_too_short_to_project")))
+    return {
+        "labor_monthly": monthly,
+        "labor_annual": monthly * 12,
+        "labor_overtime": ot,
+        "labor_vs_industry_monthly": vs_ind,
+        "labor_vs_industry_annual": vs_ind * 12,
+        "labor_industry_pct": _thr.LABOR_INDUSTRY_PCT,
+        "labor_industry_basis": _thr.LABOR_INDUSTRY_BASIS,
+        "kinds": dict(LABOR_BREAKDOWN_KINDS),
+        "overtime_period_days": period_days,
+        "data_days": a.get("data_days"),
+        "dollars_withheld": "sample" if sample else None,
     }
 
 
@@ -1450,7 +1537,9 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                 save_labor_snapshot(
                     restaurant_id, dr['start'], dr['end'],
                     analysis['overall_labor_pct'],
-                    analysis['total_labor_cost'],
+                    # The labor on the days with sales: the snapshot's
+                    # labor_pct is that over total_sales (NS3 H4).
+                    analysis.get('costed_labor', analysis['total_labor_cost']),
                     analysis['total_sales']
                 )
         except Exception as le:
@@ -1501,13 +1590,14 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     data_caveats = ("\n- DATA LIMITS you must respect: " + " ".join(_caveats)) if _caveats else ""
 
     if analysis.get("period_too_short_to_project"):
-        savings_line = (f"not available — this upload covers {analysis.get('period_days', 0)} day(s), which is too "
-                        f"short to state a weekly or monthly rate. Do NOT state a monthly or annual savings "
-                        f"figure. You may cite the ${analysis.get('potential_savings', 0):,.0f} gap above target "
-                        f"for the period itself.")
+        savings_line = (f"not available — this upload has {analysis.get('data_days', analysis.get('period_days', 0))} "
+                        f"day(s) with sales, too few to state a weekly or monthly rate. Do NOT state a monthly or "
+                        f"annual figure. You may cite the ${analysis.get('potential_savings', 0):,.0f} gap above "
+                        f"target for the period itself, as a gap — never as money saved.")
     else:
-        savings_line = (f"${analysis.get('potential_savings_monthly', 0):,.0f} (the gap above target over the "
-                        f"{analysis.get('period_days', 0)} days synced, per month)")
+        savings_line = (f"${analysis.get('potential_savings_monthly', 0):,.0f} a month (the gap above target over the "
+                        f"{analysis.get('period_days', 0)} days synced, projected to a month — an opportunity, "
+                        f"never money already saved; say \"could\" or \"at stake\", never \"saved\")")
 
     # The FORECAST line is computed after the call (_labor_forecast_line),
     # never asked of the model: its direction and figure were its own and
@@ -1544,13 +1634,13 @@ You are writing a weekly labor summary for {owner_name or "the owner"} of {resta
 Today's date: {today_labor}{upload_context}{holiday_context}
 
 Data:
-- Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
+- Overall labor cost: ${analysis.get('costed_labor', analysis['total_labor_cost']):,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio, the days with sales)
 - This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: {INDUSTRY_LABOR_RANGE[0]}–{INDUSTRY_LABOR_RANGE[1]}%, National Restaurant Association 2024)
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}{data_caveats}
-- Estimated monthly savings with optimized scheduling: {savings_line}{constraints_context}{top_pick_context}
+- Opportunity (gap above target, not money saved): {savings_line}{constraints_context}{top_pick_context}
 
 EVIDENCE RULES:
 - A figure belongs to the day, date, role or person it came from. Never attach one day's figure to another day, or a role's figure to a person.
@@ -1726,7 +1816,7 @@ def labor_insight_facts(analysis: dict) -> tuple:
         if isinstance(o, dict) and o.get("employee"):
             ent[str(o["employee"])].extend(v for k, v in o.items() if k != "employee")
     cov = a.get("covers") or {}
-    glob = [a.get(k) for k in ("overall_labor_pct", "total_labor_cost", "total_sales", "labor_target",
+    glob = [a.get(k) for k in ("overall_labor_pct", "total_labor_cost", "costed_labor", "total_sales", "labor_target",
                                "potential_savings", "potential_savings_weekly", "potential_savings_monthly",
                                "period_days")]
     glob += [cov.get("avg_sales_per_cover")]
@@ -2324,7 +2414,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # .projected_weekly_revenue) beats a twelfth of a monthly target.
         projected_revenue = round(float(projected_revenue_override), 0)
     elif monthly_revenue_target and monthly_revenue_target > 0:
-        projected_revenue = round(monthly_revenue_target / 4.33, 0)  # monthly → weekly
+        from metrics import WEEKS_PER_MONTH as _WPM
+        projected_revenue = round(monthly_revenue_target / _WPM, 0)  # monthly → weekly (one month definition)
     elif yoy_context:
         yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
         # Only a WHOLE prior-year week projects a week: four days of last
@@ -2972,20 +3063,33 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 
 
 def calculate_monthly_gap(analysis: dict) -> dict:
-    """Calculate the dollar gap between current and target labor %."""
+    """The monthly gap between current and target labor %, stated as the
+    SAME figure the Labor tab's "If optimized / mo" tile shows.
+
+    This used to rebuild the gap from total_labor_cost (every day) against
+    total_sales (only days with sales) x 30 / days, the partial-sales bug
+    analyse_shifts had already fixed, so the chip read $6,771 beside a
+    $1,765 tile on the same data, and it returned a positive gap for a
+    restaurant UNDER target on the days it had sales (NS3 H4). Now:
+    monthly_gap == potential_savings_monthly when over target, else 0, on
+    the costed days only and one month (metrics.DAYS_PER_MONTH).
+    """
+    from metrics import DAYS_PER_MONTH
     current_pct = analysis["overall_labor_pct"]
     total_sales  = analysis["total_sales"]
-    total_labor  = analysis["total_labor_cost"]
+    costed_labor = analysis.get("costed_labor", analysis["total_labor_cost"])
     target_pct   = analysis.get("labor_target", 30.0)
+    over_target  = bool(total_sales) and current_pct > target_pct
 
     # Was `* 2`, with the comment "data covers ~2 weeks". Uploads are
-    # whatever window the client exported: measured error against the real
-    # monthly rate was -53% on a one-week upload and +87% on a four-week
-    # one. Normalize by the calendar days the period actually covers, and
-    # refuse to project at all below a full week — the same floor
-    # analyse_shifts uses for its own weekly and monthly figures.
+    # whatever window the client exported. Normalize by the calendar days
+    # the period covers, and refuse to project at all below a full week of
+    # days WITH data, the same floor analyse_shifts uses.
     period_days = int(analysis.get("period_days") or 0)
-    if not period_days or period_days < MIN_DAYS_TO_EXTRAPOLATE:
+    too_short = analysis.get("period_too_short_to_project")
+    if too_short is None:
+        too_short = period_days < MIN_DAYS_TO_EXTRAPOLATE
+    if not period_days or too_short:
         return {
             "current_pct":   current_pct,
             "target_pct":    target_pct,
@@ -2993,18 +3097,19 @@ def calculate_monthly_gap(analysis: dict) -> dict:
             "monthly_sales": 0,
             "target_labor":  0,
             "monthly_gap":   0,
-            "over_target":   current_pct > target_pct,
+            "over_target":   over_target,
             "period_days":   period_days,
             "projectable":   False,
-            "reason":        (f"{period_days} day(s) of data — a monthly figure needs at least "
+            "kind":          "opportunity",
+            "reason":        (f"{analysis.get('data_days', period_days)} day(s) of data — a monthly figure needs at least "
                               f"{MIN_DAYS_TO_EXTRAPOLATE}") if period_days else "no shift data",
         }
 
-    scale         = 30.0 / period_days
+    scale         = DAYS_PER_MONTH / period_days
     monthly_sales = total_sales * scale
-    monthly_labor = total_labor * scale
+    monthly_labor = costed_labor * scale
     target_labor  = monthly_sales * (target_pct / 100)
-    gap           = max(0, monthly_labor - target_labor)
+    gap = float(analysis.get("potential_savings_monthly") or 0.0) if over_target else 0.0
 
     return {
         "current_pct":   current_pct,
@@ -3013,9 +3118,11 @@ def calculate_monthly_gap(analysis: dict) -> dict:
         "monthly_sales": round(monthly_sales, 0),
         "target_labor":  round(target_labor, 0),
         "monthly_gap":   round(gap, 0),
-        "over_target":   current_pct > target_pct,
+        "over_target":   over_target,
         "period_days":   period_days,
         "projectable":   True,
+        # An opportunity projected from the synced period, not money saved.
+        "kind":          "opportunity",
     }
 
 

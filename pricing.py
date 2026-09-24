@@ -77,3 +77,37 @@ def annual_saving(module_count: int) -> int:
 
 def money(n) -> str:
     return "$" + "{:,.0f}".format(n)
+
+
+_INTERVAL_SUFFIX = {"day": "day", "week": "wk", "month": "mo", "year": "yr"}
+
+
+def billing_amount_label(amount, interval, interval_count=1) -> str:
+    """"$11,990/yr" — the suffix from the Stripe price's own billing
+    interval. The billing screen hardcoded "/mo", so an annual subscription
+    read "$11,990/mo" (NS3 H7, R15). Unknown interval: the amount alone."""
+    try:
+        n = int(interval_count or 1)
+    except (TypeError, ValueError):
+        n = 1
+    suf = _INTERVAL_SUFFIX.get(str(interval or "").lower())
+    base = "${:,.0f}".format(float(amount or 0))
+    if not suf:
+        return base
+    return base + ("/" + suf if n == 1 else " every %d %ss" % (n, str(interval).lower()))
+
+
+def subscription_interval(sub):
+    """(interval, interval_count) of a Stripe subscription's first recurring
+    item, or (None, 1)."""
+    try:
+        for item in sub["items"].data:
+            rec = getattr(item.price, "recurring", None)
+            if rec:
+                iv = rec["interval"] if isinstance(rec, dict) else getattr(rec, "interval", None)
+                ic = (rec.get("interval_count") if isinstance(rec, dict) else getattr(rec, "interval_count", 1)) or 1
+                if iv:
+                    return iv, ic
+    except Exception:
+        pass
+    return None, 1

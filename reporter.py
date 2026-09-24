@@ -852,7 +852,9 @@ def labor_tag(labor_pct, target, brand):
         return brand["good"], "On target"
     if lp <= t + LABOR_WATCH_PTS:
         return brand["warn"], "Watch closely"
-    return brand["bad"], "Over budget"
+    # "Budget" names only a figure from dsr_budgets; this is the labor
+    # TARGET (NS3 L5, DSR finding 8).
+    return brand["bad"], "Over target"
 
 
 def waste_tag(waste, brand):
@@ -1079,7 +1081,9 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
                 report_eyebrow("Food Cost Control", tag=i_label, tag_color=i_color) +
                 report_stats([
                     (w_value, "waste this week", i_color),
-                    (f"${recoverable:,.0f}", "recoverable / mo"),
+                    # One week above tolerance projected to a month — an
+                    # opportunity beside a measured week (NS3 M3, M5).
+                    (f"${recoverable:,.0f}", "est. recoverable / mo (opportunity)"),
                 ]) + top_line + note(ai_summary.get("inventory"))
             )
     except Exception:
