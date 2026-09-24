@@ -488,6 +488,9 @@ final class HomeFollowThroughViewModel {
             var dollarsAdjusted: Double? = nil
             var calibrationN: Int? = nil
             var calibrationNote: String? = nil
+            /// What the figure covers (dollars_basis, B4 H7): the whole
+            /// schedule's gap, one driver alone …
+            var dollarsBasis: String? = nil
             /// The monthly figure the hero states — calibrated when sent.
             var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
             var dollarsNote: String? {
@@ -528,9 +531,11 @@ final class HomeFollowThroughViewModel {
                 case dollarsAdjusted = "dollars_adjusted"
                 case calibrationN = "calibration_n"
                 case calibrationNote = "calibration_note"
+                case dollarsBasis = "dollars_basis"
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
+                dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
                 dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
                 calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
                 calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)

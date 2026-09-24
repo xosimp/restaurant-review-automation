@@ -1706,6 +1706,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-focus-cf{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
 .hb-focus .ft .also{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hb-focus .ft .also .m{font-size:14.5px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
+.hb-focus .ft .also .m.rich{display:inline-flex;flex-direction:column;gap:3px;border-radius:12px;padding:8px 12px}
+.hb-focus .ft .also .m.rich .cf{margin-top:2px}
+.hb-also-ev{display:block;font-size:13px;font-weight:500;color:var(--ink3);line-height:1.45}
+.hb-dbasis{display:block;font-family:'Apfel Grotezk',sans-serif;margin-top:5px;font-size:12.5px;font-weight:500;color:var(--ink3);line-height:1.45;letter-spacing:0;text-transform:none}
+.hb-clear.warn{color:var(--hb-warn);font-size:15.5px}
 /* a link between two modules — the "across your restaurant" mark */
 .hb-join{display:flex;align-items:center;margin:6px 0 16px;flex-wrap:wrap;row-gap:8px}
 .hb-join .mod{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:7px 13px;white-space:nowrap}
@@ -1735,6 +1740,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .meta{display:flex;flex-wrap:wrap;gap:6px}
 .hb-rec .meta span{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 9px}
 .hb-rec .meta .usd{color:var(--ember);border-color:var(--hb-line)}
+.hb-rec .meta .hb-dbasis{flex-basis:100%;background:none;border:0;padding:0;border-radius:0;font-size:12.5px;font-weight:500;letter-spacing:0;margin-top:0}
+.hb-rec .meta .hb-dbasis .hb-num{background:none;border:0;padding:0;font-size:inherit;letter-spacing:0}
 /* .hb-conf is now the shared .cf confidence line (K1), which carries its
    own tone; the old high/low colours (low was ember2, against §9) went
    with the band-only line. */
@@ -1849,7 +1856,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    value is a sentence ("Nothing yet") is set in the text face. */
 .hb-stat .v.txt{font-family:'Apfel Grotezk',sans-serif;letter-spacing:-.01em}
 .hb-stat .s{font-size:13.5px;color:var(--ink3);margin-top:7px;line-height:1.4}
-.hb-stat.good .v{color:var(--hb-good)}.hb-stat.ember .v{color:var(--ember)}.hb-stat.bad .v{color:var(--hb-bad)}
+.hb-stat.good .v{color:var(--hb-good)}.hb-stat.warn .v{color:var(--hb-warn)}.hb-stat.bad .v{color:var(--hb-bad)}
 /* the lines under the worth tiles: what the measured figure rests on */
 .hb-vrows{margin-top:14px}
 .hb-row .t .vm{font-weight:400;color:var(--ink3);font-size:14px}
@@ -1910,7 +1917,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .no{background:linear-gradient(135deg,var(--hb-amber),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-rec:hover{border-color:var(--hb-copper)}
 .hb-stat.good .v{color:var(--hb-good2)}.hb-rcpt .ok,.hb-clear .ok{color:var(--hb-good2)}
-.hb-stat.ember .v{background:linear-gradient(135deg,var(--hb-amber),var(--ember));-webkit-background-clip:text;background-clip:text;color:transparent}
+/* A gap still open is a warning, amber - never the ember, which is not status (B4 L7). */
+.hb-stat.warn .v{background:linear-gradient(135deg,var(--hb-amber),var(--hb-warn));-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-focus .ev>span{transition:border-color .18s ease,transform .18s ease,background-color .18s ease}
 .hb-focus .ev>span:hover{border-color:var(--hb-copper);transform:translateY(-1px)}
 .hb-rcpt .it{border-color:transparent;transition:background-color .18s ease}
@@ -1981,8 +1989,12 @@ svg:hover .hb-xh{opacity:1}
    Older payloads send a bare band ("high") or {band, label, reason}; both
    still render, as a band line with no Why?. Percentages stay (the owner's
    call) and every one shown is the server's own figure: a missing one is a
-   dash with what it needs, never an invented number. Tone: 75 and up green,
-   50-74 ink, under 50 or not yet measurable amber - never red, never ember.
+   dash with what it needs, never an invented number. Tone: the server's
+   band (confidence_engine.band) - high green, medium ink, low or not yet
+   measurable amber - never red, never ember. A dimension row has no band of
+   its own, so it reads the payload's thresholds {high, medium} when sent,
+   else AT below (tests hold AT to confidence_engine.HIGH_AT / MEDIUM_AT).
+   Sample data is "not yet measurable", never "0%" (B4 L1).
    Global so every module's renderer (Home, Reviews, Food Cost, Labor,
    Marketing, Ask, the daily report) draws the same component.
    tests/test_confidence_web.py runs this block under node. */
@@ -1999,7 +2011,10 @@ svg:hover .hb-xh{opacity:1}
   }
   function mdyIso(x){var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(x||''));return m?(+m[2])+'/'+(+m[3])+'/'+m[1].slice(2):'';}
   function isMdy(x){return /^\d{1,2}\/\d{1,2}\/\d{2}$/.test(String(x||''));}
-  function tone(p){return p==null?'warn':(p>=75?'good':(p>=50?'mid':'warn'));}
+  var AT={high:75,medium:50};
+  function ats(c){var t=obj(c&&c.thresholds);return (t&&isNum(t.high)&&isNum(t.medium))?{high:t.high,medium:t.medium}:AT;}
+  function tone(p,at){at=at||AT;return p==null?'warn':(p>=at.high?'good':(p>=at.medium?'mid':'warn'));}
+  function bandOf(p,at){at=at||AT;return p==null?'low':(p>=at.high?'high':(p>=at.medium?'medium':'low'));}
   function bandTone(b){return b==='high'?'good':(b==='medium'?'mid':(b==='low'?'warn':'mid'));}
   function cap(s){s=String(s||'');return s.charAt(0).toUpperCase()+s.slice(1);}
   function obj(v){return v&&typeof v==='object'&&!(v instanceof Array)?v:null;}
@@ -2016,21 +2031,38 @@ svg:hover .hb-xh{opacity:1}
     var dims=obj(c.dimensions);
     var k1=c.version!=null||!!dims||c.hasOwnProperty('pct');
     var pct=pctOf(c.pct),band=String(c.band||'').toLowerCase();if(band==='moderate')band='medium';
-    var label;
-    if(pct!=null){band=pct>=75?'high':(pct>=50?'medium':'low');label=pct+'% confidence';}
-    else if(k1){band='low';label=(str(c.label)&&str(c.label).indexOf('%')<0)?c.label:'Confidence not yet measurable';}
+    var at=ats(c),reason=str(c.reason),label;
+    // Sample or demo data scores evidence 0 with nothing counted; the
+    // overall 0 that follows is not a measurement (B4 L1).
+    var sample=!!c.sample||isSample(dims&&obj(dims.evidence));
+    if(sample){pct=null;if(!reason)reason='Sample data — not measurable until your own data is in';}
+    if(pct!=null){
+      if(band!=='high'&&band!=='medium'&&band!=='low')band=bandOf(pct,at);
+      label=pct+'% confidence';
+    }
+    else if(k1){band='low';label=(!sample&&str(c.label)&&str(c.label).indexOf('%')<0)?c.label:'Confidence not yet measurable';}
     else{label=str(c.label)||(band?cap(band)+' confidence':'');}
     if(!label)return null;
-    return {pct:pct,band:band,label:label,reason:str(c.reason),caution:str(c.caution),dims:dims,k1:k1,
-            tone:(pct!=null||k1)?tone(pct):bandTone(band)};
+    return {pct:pct,band:band,label:label,reason:reason,caution:str(c.caution),dims:dims,k1:k1,at:at,sample:sample,
+            caps:obj(c.caps),tone:bandTone(band)};
   }
+  function isSample(e){return !!(e&&pctOf(e.pct)===0&&(e.n===0||e.n==null)&&/sample|demo/i.test(str(e.basis)));}
   // The three rows of the Why? panel, in a fixed order.
+  // "Sample: 12" (of n_full when the server sends it) - the evidence count
+  // on its own line, since several bases carry no count (B4 M7).
+  function sampleText(e){
+    if(!e||!isNum(e.n))return '';
+    var full=isNum(e.n_full)?e.n_full:null;
+    return 'Sample: '+(Math.round(e.n*10)/10)+(full!=null?' of the '+full+' a full read needs':'');
+  }
   function rows(n){
     var d=n&&n.dims;if(!d)return [];
+    var at=n.at||AT;
     var out=[],e=obj(d.evidence),a=obj(d.accuracy),f=obj(d.freshness),p;
     p=e?pctOf(e.pct):null;
-    out.push({key:'evidence',title:'Evidence strength',pct:p,tone:tone(p),value:p==null?'—':p+'%',
-              basis:e?(str(e.basis)||(p==null?'Not measured':'')):'Not measured',detail:''});
+    if(n.sample)p=null;
+    out.push({key:'evidence',title:'Evidence strength',pct:p,tone:tone(p,at),value:p==null?'—':p+'%',
+              basis:e?(str(e.basis)||(p==null?'Not measured':'')):'Not measured',detail:n.sample?'':sampleText(e)});
     p=a?pctOf(a.pct):null;
     if(a&&p!=null){
       var det=[];
@@ -2038,7 +2070,12 @@ svg:hover .hb-xh{opacity:1}
       if(isNum(a.low)&&isNum(a.high))det.push('likely '+Math.round(a.low)+'–'+Math.round(a.high)+'%');
       var bs=str(a.basis);
       if(a.source==='cohort'&&!/like yours/i.test(bs))det.unshift('From restaurants like yours');
-      out.push({key:'accuracy',title:'Historical accuracy',pct:p,tone:tone(p),value:p+'%',basis:bs,detail:det.join(' · ')});
+      // The pull toward even, said in words: 5 of 5 reads 75%, not 100%,
+      // because a short record is pulled toward 50% until more results are
+      // in (confidence_engine.shrink; B4 M7).
+      var raw=(isNum(a.improved)&&isNum(a.n)&&a.n>0)?Math.round(100*a.improved/a.n):null;
+      var shrinkNote=(raw!=null&&Math.abs(raw-p)>=1)?'Reads '+p+'%, not '+raw+'%: a short record is pulled toward 50% until more results are in':'';
+      out.push({key:'accuracy',title:'Historical accuracy',pct:p,tone:tone(p,at),value:p+'%',basis:bs,detail:det.join(' · '),note:shrinkNote});
     }else{
       var nn=a&&isNum(a.n)?a.n:0;
       out.push({key:'accuracy',title:'Historical accuracy',pct:null,tone:'warn',value:'—',
@@ -2046,15 +2083,22 @@ svg:hover .hb-xh{opacity:1}
     }
     p=f?pctOf(f.pct):null;
     var asOf=f?(isMdy(f.as_of)?f.as_of:mdyIso(f.as_of_iso||f.as_of)):'';
-    out.push({key:'freshness',title:'Data freshness',pct:p,tone:tone(p),value:p==null?'—':p+'%',
+    out.push({key:'freshness',title:'Data freshness',pct:p,tone:tone(p,at),value:p==null?'—':p+'%',
               basis:f?(str(f.basis)||(p==null?'Not measured':'')):'Not measured',detail:asOf?'as of '+asOf:''});
     return out;
   }
   function meter(p,cls){return '<span class="'+cls+(p==null?' none':'')+'" aria-hidden="true"><i style="width:'+(p==null?0:p)+'%"></i></span>';}
+  // What holds the overall figure down, in plain words (B4 M7): the two
+  // ceilings confidence_engine.overall applies. The figures come from the
+  // payload's caps {no_track_record, stale} when sent, else the engine's
+  // (tests hold them in step).
   function footer(n){
-    var a=n.dims&&obj(n.dims.accuracy),noTrack=!a||pctOf(a.pct)==null;
+    var d=n.dims||{},a=obj(d.accuracy),f=obj(d.freshness),noTrack=!a||pctOf(a.pct)==null;
+    var cp=n.caps||{},ntr=isNum(cp.no_track_record)?cp.no_track_record:70,stc=isNum(cp.stale)?cp.stale:49,stb=isNum(cp.stale_below)?cp.stale_below:50;
+    var fp=f?pctOf(f.pct):null;
     return 'The overall figure combines all three — the weakest pulls it down most.'
-      +(noTrack?' Without a track record here it stays at 70% or below.':'');
+      +(noTrack?' Without a track record here it stays at '+ntr+'% or below.':'')
+      +(fp!=null&&fp<stb?' Data under '+stb+'% fresh holds it at '+stc+'% or below.':'');
   }
   function panel(n){
     var h='<div class="cf-p">';
@@ -2065,11 +2109,13 @@ svg:hover .hb-xh{opacity:1}
     var rs=rows(n);
     for(var i=0;i<rs.length;i++){var r=rs[i];
       h+='<div class="cf-p-row '+r.tone+'" data-dim="'+r.key+'"><div class="cf-p-h"><span class="t">'+esc(r.title)+'</span><span class="v hb-num">'+esc(r.value)+'</span></div>'
-        +meter(r.pct,'cf-p-bar')+(r.basis?'<div class="b">'+num(r.basis)+'</div>':'')+(r.detail?'<div class="d">'+num(r.detail)+'</div>':'')+'</div>';}
+        +meter(r.pct,'cf-p-bar')+(r.basis?'<div class="b">'+num(r.basis)+'</div>':'')+(r.detail?'<div class="d">'+num(r.detail)+'</div>':'')+(r.note?'<div class="d">'+num(r.note)+'</div>':'')+'</div>';}
     return h+'<div class="cf-p-ft">'+esc(footer(n))+'</div></div>';
   }
-  // The line. o: {key, surface, module, noReason, cls}. Returns '' when
-  // there is nothing to say (no confidence, or "unknown").
+  // The line. o: {key, surface, module, noReason, noCaution, cls}. Returns
+  // '' when there is nothing to say (no confidence, or "unknown"). The
+  // caution rides on the line, as on iOS - "the data under this is out of
+  // date" was hidden behind Why? on the web (B4 M6).
   function line(c,o){
     o=o||{};var n=norm(c);if(!n)return '';
     var h='<div class="cf '+n.tone+(o.cls?' '+esc(o.cls):'')+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'">'
@@ -2083,7 +2129,7 @@ svg:hover .hb-xh{opacity:1}
         +(o.key?' data-explain-key="'+esc(o.key)+'" data-explain-surface="'+esc(o.surface||'home')+'" data-explain-module="'+esc(o.module||o.surface||'home')+'"':'')
         +' aria-label="Why '+esc(n.label)+'?">Why?</button>';
     }
-    if(n.caution&&!n.dims)h+='<span class="cf-c">'+num(n.caution)+'</span>';
+    if(n.caution&&!o.noCaution)h+='<span class="cf-c">'+num(n.caution)+'</span>';
     return h+'</div>';
   }
   // The claim tag (J5): AI-written beats the kind, because the owner's
@@ -2109,7 +2155,35 @@ svg:hover .hb-xh{opacity:1}
       out.push('<span class="ck-tag">'+esc(STRIP_ORDER[i]==='suggestion'?'Suggestion':(CLAIM[STRIP_ORDER[i]]||STRIP_ORDER[i]))+'</span> <span>'+esc(g.join(', '))+'</span>');}
     return out.length?'<div class="ck-strip">'+out.join('<span class="sep">·</span>')+'</div>':'';
   }
-  window.cavConf={norm:norm,rows:rows,line:line,panel:panel,tone:tone,footer:footer,claimTag:claimTag,claimStrip:claimStrip};
+  // K8 demand_accuracy, one sentence for Home and Schedule review.
+  // inside_range_pct is a share of n_ranged - the nights that HAD a range -
+  // not of n_nights (B6#10, B1 H7: "100% of 10 nights" was 1 of 1). The
+  // signed figure is actual over forecast (demand.py: actual / forecast - 1,
+  // renamed actual_vs_forecast_pct; bias_pct is its older name), so a
+  // positive one means nights came in ABOVE the forecast - it was printed
+  // as the forecast "running high", backwards (B6#2).
+  function demandAccuracyText(a){
+    a=obj(a);if(!a)return '';
+    var bits=[],nn=+a.n_nights||0,nr=isNum(a.n_ranged)?a.n_ranged:null;
+    function nights(k){return '<span class="hb-num">'+k+'</span> night'+(k===1?'':'s');}
+    if(a.inside_range_pct!=null&&nr!=null&&nr>0)bits.push('inside the forecast range on <span class="hb-num">'+Math.round(+a.inside_range_pct)+'%</span> of the '+nights(nr)+' that had a range');
+    if(nn>0)bits.push(nights(nn)+' measured');
+    if(a.mean_error_pct!=null)bits.push('<span class="hb-num">'+Math.round(+a.mean_error_pct)+'%</span> mean error');
+    var sv=a.actual_vs_forecast_pct!=null?+a.actual_vs_forecast_pct:(a.bias_pct!=null?+a.bias_pct:null);
+    if(sv!=null&&isFinite(sv)&&Math.abs(sv)>=1)bits.push('nights came in <span class="hb-num">'+Math.abs(Math.round(sv))+'%</span> '+(sv>0?'above':'below')+' the forecast on average');
+    return bits.join(' · ');
+  }
+  window.demandAccuracyText=demandAccuracyText;
+  // The measured object to draw, or null: confidence_detail, else a
+  // confidence that is itself K1. A bare band or a model's own word is
+  // not a measurement, so it draws nothing - "Low confidence" was drawn
+  // from a literal 'low' fallback or the model's band (B1 L1).
+  function k1(detail,legacy){
+    var d=obj(detail);if(d)return d;
+    var l=obj(legacy);if(l&&(l.version!=null||obj(l.dimensions)||l.hasOwnProperty('pct')))return l;
+    return null;
+  }
+  window.cavConf={k1:k1,norm:norm,rows:rows,line:line,panel:panel,tone:tone,footer:footer,claimTag:claimTag,claimStrip:claimStrip,demand:demandAccuracyText,AT:AT};
   window.cavConfLine=line;
 })();
 </script>
@@ -2258,9 +2332,13 @@ svg:hover .hb-xh{opacity:1}
   var FRESH_STATE={current:'current',fresh:'current',aging:'aging',stale:'stale',not_connected:'off',missing:'off',manual:'off',unknown:'unknown',sample:'sample'};
   var FRESH_WORD={aging:'aging',stale:'stale',off:'not connected',unknown:'age unknown',sample:'sample data'};
   function renderFreshness(d){
-    var fr=d.freshness||[];if(!fr.length&&!d.data_as_of)return '';
+    // The date sits at brief.data_as_of and monitoring.stalest_as_of on the
+    // web payload (home_brief); only mobile lifts it to the top level, so a
+    // top-level-only read never drew it here (B6#8).
+    var dao=d.data_as_of||(d.brief&&d.brief.data_as_of)||(d.monitoring&&d.monitoring.stalest_as_of)||'';
+    var fr=d.freshness||[];if(!fr.length&&!dao)return '';
     var h='<div class="hb-fresh hb-rise" style="--i:2" aria-label="How current your data is">';
-    if(d.data_as_of)h+='<span class="hb-fresh-k">Data as of <span class="hb-num">'+esc(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(d.data_as_of)?d.data_as_of:mdy(d.data_as_of))+'</span></span>';
+    if(dao)h+='<span class="hb-fresh-k">Data as of <span class="hb-num">'+esc(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(dao)?dao:mdy(dao))+'</span></span>';
     for(var i=0;i<fr.length;i++){var f=fr[i]||{},st=FRESH_STATE[f.state]||'unknown';
       var lbl=f.label||MODLABEL[f.module||f.key]||f.source||f.module||f.key||'';if(!lbl)continue;
       var basis=f.basis||f.note||(f.as_of?'as of '+f.as_of:'');
@@ -2604,7 +2682,11 @@ svg:hover .hb-xh{opacity:1}
     var lo=+m.low,hi=+m.high;if(!isFinite(lo)&&!isFinite(hi))return '';
     if(!isFinite(lo))lo=hi;if(!isFinite(hi))hi=lo;
     var fig='$'+num2(lo)+(Math.round(hi)!==Math.round(lo)?'–$'+num2(hi):'');
-    return fig+'<small>/month'+(m.label?' · '+esc(String(m.label).charAt(0).toLowerCase()+String(m.label).slice(1)):'')+'</small>';
+    // The label names the kind of figure; the server's carries the amount
+    // too ("Labor — opportunity, $1,200-$2,400/month"), which printed the
+    // figure twice (B6 sub-audit). The amount is cut from the label.
+    var lb=String(m.label||'').replace(/,?\s*\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$[\d,]+(?:\.\d+)?)?(?:\s*\/\s*(?:month|mo))?/g,'').replace(/[\s,—–-]+$/,'');
+    return fig+'<small>/month'+(lb?' · '+esc(lb.charAt(0).toLowerCase()+lb.slice(1)):'')+'</small>'+(m.basis?hbDollarsBasis(m.basis):'');
   }
   function renderFocus(d,g){
     var att=d.attention||[],recs=d.recommendations||[];
@@ -2628,7 +2710,7 @@ svg:hover .hb-xh{opacity:1}
       // .pick_one_thing): the top driver's own fix, a diagnosis's
       // recommended action, or the replies that are owed.
       lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly){var ffa=(typeof ff.dollars_adjusted==='number'&&isFinite(ff.dollars_adjusted))?ff.dollars_adjusted:null;
-        money='$'+num2(ffa!==null?ffa:ff.dollars_monthly)+'<small>/month'+(ffa!==null?' · '+esc(ff.calibration_note||('adjusted from '+(+ff.calibration_n||0)+' measured results')):'')+'</small>';}
+        money='$'+num2(ffa!==null?ffa:ff.dollars_monthly)+'<small>/month'+(ffa!==null?' · '+esc(ff.calibration_note||('adjusted from '+(+ff.calibration_n||0)+' measured results')):'')+'</small>'+hbDollarsBasis(ff.dollars_basis);}
       else if(ff.money)money=hbMoneyRange(ff.money);
       if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
@@ -2681,7 +2763,11 @@ svg:hover .hb-xh{opacity:1}
     // item is named beside its button so "Reply now" is not floating under
     // a headline about food cost.
     if(att.length&&att[0].action){var a=att[0];var leadIsAtt=(lead===a.title);
-      h+='<span class="also">'+(leadIsAtt?'':'<span class="m">'+num(a.title)+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button></span>';}
+      // A finding that leads names the most urgent item beside its button;
+      // the item keeps what it rests on and how sure (B4 L3) rather than
+      // arriving as a bare title.
+      var aEv=leadIsAtt?'':String(a.evidence||'').split(' · ')[0],aCf=leadIsAtt?'':cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home',noReason:1,noCaution:1});
+      h+='<span class="also">'+(leadIsAtt?'':'<span class="m'+(aEv||aCf?' rich':'')+'">'+num(a.title)+(aEv?'<span class="hb-also-ev">'+num(aEv)+'</span>':'')+aCf+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button></span>';}
     else if(!clear&&!ff&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
@@ -2732,12 +2818,16 @@ svg:hover .hb-xh{opacity:1}
   // CA2 #8): dollars_adjusted replaces the stated figure, which stays in
   // the title, and the line says "adjusted from N measured results". Below
   // the floor the server sends no adjusted figure and the card is as before.
+  // What a dollar figure covers (dollars_basis): one Home page can carry
+  // three labor figures - one weekday's trim, the whole schedule's gap, a
+  // week of it - and each says its scope under the figure (B4 H7).
+  function hbDollarsBasis(b){return b?'<span class="hb-dbasis">covers '+num(String(b).replace(/\.$/,''))+'</span>':'';}
   function hbRecDollars(r){
     if(!r||!r.dollars_monthly)return '';
     var adj=(typeof r.dollars_adjusted==='number'&&isFinite(r.dollars_adjusted))?r.dollars_adjusted:null;
-    if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>';
+    if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>'+hbDollarsBasis(r.dollars_basis);
     var n=+r.calibration_n||0,note=r.calibration_note||(n?'adjusted from '+n+' measured result'+(n===1?'':'s'):'adjusted from measured results');
-    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo at stake</span><span>'+num(note)+'</span>';
+    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo at stake</span><span>'+num(note)+'</span>'+hbDollarsBasis(r.dollars_basis);
   }
   function hbRecCard(r,j,skip,isNew,trk,d){
     var c=r.confidence_detail||r.confidence||null,meta=[];
@@ -2823,16 +2913,22 @@ svg:hover .hb-xh{opacity:1}
     for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
     return h;
   }
-  function hbAttnClearHtml(used){return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
+  // "All clear" only when the sources under it are current: nothing flagged
+  // on stale data, or with no live source at all, says so (B4 M4).
+  function hbStaleSources(d){var fr=(d&&d.freshness)||[],n=0;for(var i=0;i<fr.length;i++){var st=fr[i]&&fr[i].state;if(st==='stale'||st==='unknown')n++;}return n;}
+  function hbAttnClearHtml(used,d){
+    var mo=d&&d.monitoring,stale=hbStaleSources(d),none=mo&&typeof mo==='object'&&mo.count_live!=null&&(+mo.count_live)===0&&(+mo.sources||0)>0;
+    if(stale||none)return '<div class="hb-clear warn" id="hb-attn-clear"><span>'+(none?'Nothing flagged — but no source under this is current, so there is nothing live to watch.':'Nothing flagged — but <span class="hb-num">'+stale+'</span> source'+(stale===1?' is':'s are')+' out of date or undated, so this is not a clean bill.')+'</span></div>';
+    return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
   function renderAttention(d,used){
     var items=(d.attention||[]).slice(used&&used.att?1:0),iss=_hbIssues||[],total=items.length+iss.length;
     var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
-    if(!total)h+=hbAttnClearHtml(used);
+    if(!total)h+=hbAttnClearHtml(used,d);
     // What an item rests on is on the row, not in a hover tooltip a phone
     // never shows (CA4 J4): the evidence (or, from an older server, the
     // detail) under the title, then its confidence line.
     for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=(a.confidence_detail||a.confidence)?cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
-      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
+      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+(a.dollars_basis?'<div class="hb-att-ev">'+hbDollarsBasis(a.dollars_basis)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
@@ -3191,7 +3287,7 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="hb-stat"><div class="k">Of your work, done for you</div><div class="v hb-num">'+(av.hours>0?'<span class="cu" data-n="'+Math.round(av.hours)+'" data-p="">'+Math.round(av.hours)+'</span><small>hrs</small>':'<span class="cu" data-n="'+Math.round(av.dollars||0)+'" data-p="$">$'+num2(av.dollars)+'</span>')+'</div><div class="s">'+(av.hours>0&&av.dollars>0?'$'+num2(av.dollars)+' you’d otherwise have paid for · ':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(avBody)+'" data-explain-title="Work done for you">How?</button></div></div>';
     }
     if(sf.dollars>0)h+='<div class="hb-stat"><div class="k">Put in front of you</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(sf.dollars)+'" data-p="$">$'+num2(sf.dollars)+'</span></div><div class="s">of problems, across '+sf.alerts+' alerts in '+sf.days+' days</div></div>';
-    if(op.monthly>0)h+='<div class="hb-stat ember"><div class="k">Still on the table</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(op.monthly)+'" data-p="$">$'+num2(op.monthly)+'</span><small>/mo</small></div><div class="s">available, not captured</div></div>';
+    if(op.monthly>0)h+='<div class="hb-stat warn"><div class="k">Still on the table</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(op.monthly)+'" data-p="$">$'+num2(op.monthly)+'</span><small>/mo</small></div><div class="s">available, not captured</div></div>';
     // No estimate, alert total or gap: the second group is not drawn empty.
     if(h.length===othOpen)h=h.slice(0,oth).replace('class="hb-vsplit"','class="hb-vsplit solo"');else h+='</div></div>';
     h+='</div>';
@@ -3349,9 +3445,8 @@ svg:hover .hb-xh{opacity:1}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
-    if(da&&+da.n_nights>0)h+='<div class="hb-empty" style="font-size:12.5px;margin-top:10px">'+cavConf.claimTag('forecast')+' Past demand forecasts here: '
-      +(da.inside_range_pct!=null?'inside their range on <span class="hb-num">'+Math.round(+da.inside_range_pct)+'%</span> of ':'')+'<span class="hb-num">'+(+da.n_nights)+'</span> nights'
-      +(da.mean_error_pct!=null?' · <span class="hb-num">'+Math.round(+da.mean_error_pct)+'%</span> mean error':'')+'.</div>';
+    if(da&&+da.n_nights>0&&window.demandAccuracyText)h+='<div class="hb-empty" style="font-size:12.5px;margin-top:10px">'+cavConf.claimTag('forecast')+' Past demand forecasts here: '
+      +demandAccuracyText(da)+'.</div>';
     h+='</div>';
     // Open issues live in the Needs attention card (hbAttnSetIssues); goals
     // and results are built by _hbMeasured below.
@@ -4056,7 +4151,7 @@ svg:hover .hb-xh{opacity:1}
           :(rk&&x.answerable!==false&&typeof recControlsHtml==='function'?'<div class="ft">'+recControlsHtml(rk,'dsr',MODULE[blk]||'ops')+'</div>':'');
         // Each action's confidence is built from the facts it cites (K1,
         // E16) - urgency and effort stay the model's labels, said as such.
-        var acf=(x.confidence_detail||x.confidence)&&window.cavConfLine?cavConfLine(x.confidence_detail||x.confidence,{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
+        var acf=window.cavConf&&cavConf.k1(x.confidence_detail,x.confidence)?cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
         h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
           +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')
           +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
@@ -4067,12 +4162,19 @@ svg:hover .hb-xh{opacity:1}
     // that cites the estimated food cost or the forecast is counted apart
     // and said to be an estimate. The count is read from whichever shape
     // the server sends (a number, or the list of lines).
-    if(vf&&isNum(vf.checked)){var dropped=(vf.dropped||[]).length,est=vf.estimated!=null?vf.estimated:vf.estimates;
+    // Not every dropped line failed a figure check: settle_actions also
+    // leaves out what the owner already answered, said not for us to, or a
+    // repeat of a line above (dsr/narrative.py). Each is said as what it is
+    // (B6 sub-audit: the footer called all of them failed figures).
+    if(vf&&isNum(vf.checked)){var dl=(vf.dropped instanceof Array)?vf.dropped:[],dAns=0;
+      for(var di=0;di<dl.length;di++){if(dl[di]&&/owner|already answered|same action|not for us/i.test(String(dl[di].why||'')))dAns++;}
+      var dropped=(dl.length||(isNum(vf.dropped)?vf.dropped:0))-dAns,est=vf.estimated!=null?vf.estimated:vf.estimates;
       var nEst=isNum(est)?est:((est&&est.length)||0);
       h+='<div class="dr-foot">Every measured figure above traced to a fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'
         +(isNum(vf.measured)?' · '+hn(vf.measured)+' measured':'')
         +(nEst?' · '+hn(nEst)+' '+(nEst===1?'line rests':'lines rest')+' on an estimate, and says so':'')
-        +(dropped?' · '+hn(dropped)+' dropped because a figure didn’t trace':'')+' · written by Cavnar AI</div>';}
+        +(dropped?' · '+hn(dropped)+' dropped because '+(dropped===1?'it':'they')+' didn’t pass the check against the night’s facts':'')
+        +(dAns?' · '+hn(dAns)+' left out because you already answered '+(dAns===1?'it':'them')+' or '+(dAns===1?'it repeated':'they repeated')+' a line above':'')+' · written by Cavnar AI</div>';}
     return h;
   }
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
@@ -4161,7 +4263,7 @@ svg:hover .hb-xh{opacity:1}
       return h;},
     food:function(b){
       var m=b.metrics||{},d=b.detail||{},t='',est=d.estimate||{};
-      if(has(m,'est_food_cost_pct'))t+=tile('Est. food cost',esc(pct(m.est_food_cost_pct)),(isNum(m.est_food_cost)?hn(money(m.est_food_cost,true))+' by recipe':'')+(isNum(m.recipe_coverage_pct)&&m.recipe_coverage_pct<100?' · '+hn(pct(m.recipe_coverage_pct,0))+' of dishes costed':''));
+      if(has(m,'est_food_cost_pct'))t+=tile('Est. food cost',esc(pct(m.est_food_cost_pct)),(isNum(m.est_food_cost)?hn(money(m.est_food_cost,true))+' by recipe':'')+(isNum(m.recipe_coverage_pct)&&m.recipe_coverage_pct<100?' · '+hn(pct(m.recipe_coverage_pct,0))+' of units sold costed':''));
       if(has(m,'waste_logged'))t+=tile('Waste logged',esc(money(m.waste_logged,true)),isNum(m.waste_inferred)?hn(money(m.waste_counted,true))+' counted · '+hn(money(m.waste_inferred,true))+' inferred':'');
       if(isNum(m.variance_cost))t+=tile('Variance',esc(money(m.variance_cost,true)),isNum(m.variance_items)?hn(cnt(m.variance_items))+' item'+(m.variance_items===1?'':'s')+' over recipe':'');
       if(isNum(m.recoverable_monthly))t+=tile('Recoverable',esc(money(m.recoverable_monthly))+'<small>/mo</small>');
@@ -4753,7 +4855,9 @@ svg:hover .hb-xh{opacity:1}
       // Measured only against the weeks that prompted it: shown, never
       // counted in the value figures or the learning (F1).
       if(o.baseline_overlaps_trigger)ft.push('<span class="rh-pill partial">Not counted</span>');
-      if(o.recheck_verdict)ft.push('<span class="x" style="margin:0">Re-checked'+(o.rechecked_at?' '+utcDay(o.rechecked_at):'')+': '+esc(RECHECK[o.recheck_verdict]||o.recheck_verdict)+'</span>');
+      // rechecked_at is the restaurant's local date (outcomes.recheck:
+      // today.isoformat()); read as UTC midnight it showed a day early.
+      if(o.recheck_verdict)ft.push('<span class="x" style="margin:0">Re-checked'+(o.rechecked_at?' '+(/^\d{4}-\d{2}-\d{2}$/.test(String(o.rechecked_at))?md(String(o.rechecked_at)):utcDay(o.rechecked_at)):'')+': '+esc(RECHECK[o.recheck_verdict]||o.recheck_verdict)+'</span>');
       else if(o.recheck_on&&(o.verdict==='improved'||o.verdict==='worsened'))ft.push('<span class="x" style="margin:0">Re-check on '+md(o.recheck_on)+'</span>');
       var ck=o.owner_checkin;if(ck&&DID[ck.did_it])ft.push('<span class="rh-pill you">'+esc(DID[ck.did_it])+(ck.conditions_changed?' · something else changed':'')+'</span>');
       if(ft.length)h+='<div class="ft">'+ft.join('')+'</div>';
@@ -5709,6 +5813,8 @@ svg:hover .hb-xh{opacity:1}
 .sq-delta.down{background:var(--red-bg);color:var(--hb-bad)}
 .sq-prov{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:var(--amber-bg);color:var(--hb-warn);vertical-align:middle}
 .sq-prov-why{font-size:13px;color:var(--hb-warn);line-height:1.5;margin-top:6px}
+.sq-comp{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06);font-size:13.5px;font-weight:600;color:rgba(255,255,255,.75)}
+.sq-comp-dot{width:6px;height:6px;border-radius:50%}
 /* What Cavnar changed in the draft, and what is still the owner's */
 .sq-opt{margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
 .sq-opt .hd{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.5}
@@ -9385,8 +9491,9 @@ function _appendAskCavnarEvidence(d) {
   // meta.confidence is the K1 object now (K5): a percentage computed from
   // what the tools returned, not "high" for reading two modules. A bare
   // band from an older server still renders as its band.
-  var cfHtml = ((d.confidence_detail || d.confidence) && d.confidence !== 'unknown' && window.cavConfLine)
-    ? cavConfLine(d.confidence_detail || d.confidence, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
+  var askConf = window.cavConf ? cavConf.k1(d.confidence_detail, d.confidence) : null;
+  var cfHtml = (askConf && window.cavConfLine)
+    ? cavConfLine(askConf, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
   if (!mods.length && !bad.length && !cfHtml) return;
   var messages = document.getElementById('ask-cavnar-messages');
   var row = document.createElement('div');
@@ -9735,17 +9842,14 @@ window.sendAskCavnar = function() {
       if (evt.type === 'progress') {
         _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
       } else if (evt.type === 'answer') {
-        // Rebuilt field by field, so anything the server adds has to be
-        // added here too — the evidence strip silently never rendered on
-        // the streamed path (the normal one) while working fine on the
-        // JSON fallback, because these three were being dropped.
-        _finish({ok: true, answer: evt.answer, truncated: evt.truncated,
-                 proposals: evt.proposals,
-                 modules_consulted: evt.modules_consulted,
-                 confidence: evt.confidence,
-                 unverified_figures: evt.unverified_figures,
-                 message_id: evt.message_id,
-                 suggestions: evt.suggestions});
+        // Every field the server streams is carried through, not a hand-
+        // picked list: a field-by-field rebuild dropped the evidence strip
+        // once and then confidence_detail (the % and its Why?) on this, the
+        // normal path, while the JSON fallback drew both.
+        var _ans = {ok: true};
+        for (var _k in evt) { if (evt.hasOwnProperty(_k) && _k !== 'type') _ans[_k] = evt[_k]; }
+        _ans.ok = true;
+        _finish(_ans);
       } else if (evt.type === 'error') {
         _finish({ok: false, error: evt.error});
       }
@@ -10446,6 +10550,14 @@ function loadReviewInsight(){
     }
   }catch(e){}
   fetch('/api/review-insight').then(apiJson).then(function(d){
+    // An error payload carries its message in insight: it is said as an
+    // error - never tagged as a checked AI read, never cached for five
+    // minutes as if it were one (B6 sub-audit).
+    if(!d||d.ok===false||d.error){
+      el.classList.remove('insight-loading');
+      el.innerHTML=emptyStateHtml('Analysis unavailable',_escHtml((d&&(d.error||d.insight))||'Check back shortly — the AI retries automatically'),true);
+      return;
+    }
     var html=d.insight||'Analysis unavailable.';
     /* The WHOLE payload is cached, not just the sentence. Caching the string
        meant the caveats that qualify it — unverified figures, unverified
@@ -10473,10 +10585,15 @@ function renderReviewClaims(el,d){
   if(!el||!d||!window.cavConf)return;
   var old=el.parentNode&&el.parentNode.querySelector('.rv-claims-box');if(old)old.parentNode.removeChild(old);
   var h=cavConf.claimStrip(d.claim_kinds,RV_CLAIM_NAMES,!!d.insight);
-  var t=d.trend||{},tc=String(t.confidence||d.confidence||'').toLowerCase();
-  if(t.direction&&tc&&tc!=='unknown'){
+  // The trend's strength is a measured percentage (trend_strength_pct:
+  // how consistently the weekly moves agree with the slope, scaled by the
+  // sample), never a band word - "medium confidence" read the same for a
+  // zigzag as for a steady slide (B4 L2, B1 H8). An older server with no
+  // figure gets the direction and its weeks, no word.
+  var t=d.trend||{},tsp=(typeof t.trend_strength_pct==='number'&&isFinite(t.trend_strength_pct))?Math.max(0,Math.min(100,Math.round(t.trend_strength_pct))):null;
+  if(t.direction){
     var dirWord={improving:'improving',declining:'slipping',flat:'holding steady',up:'improving',down:'slipping'}[t.direction]||t.direction;
-    var tl='<div class="ck-strip rv-trend-cf"><span class="ck-tag">Computed</span> <span>Rating trend '+_rvEsc(dirWord)+' — '+_rvEsc(tc==='moderate'?'medium':tc)+' confidence'+(t.weeks_above_floor!=null?', from <span class="hb-num">'+(+t.weeks_above_floor)+'</span> weeks with 3+ reviews':'')+'</span></div>';
+    var tl='<div class="ck-strip rv-trend-cf"><span class="ck-tag">Computed</span> <span>Rating trend '+_rvEsc(dirWord)+(tsp!=null?' — trend strength <span class="hb-num">'+tsp+'%</span>':'')+(t.weeks_above_floor!=null?', from <span class="hb-num">'+(+t.weeks_above_floor)+'</span> weeks with 3+ reviews':'')+'</span></div>';
     h=(h||'')+tl;
   }
   if(!h)return;
@@ -10844,7 +10961,7 @@ function renderReviewDiagnosis(d){
      "medium confidence" - the model's own rating - is the .cf line with
      its evidence, track record and freshness behind Why?. A read from
      before the object shipped still says its band. */
-  var cfl=cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'reviews',module:'reviews'});
+  var cfl=cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'reviews',module:'reviews'});
   var h=''
     +'<div class="rv-diag">'
     +'<div class="rv-diag-hd">'
@@ -12628,6 +12745,13 @@ function loadMktPerformance(){
     emptyEl.innerHTML=emptyStateHtml('Could not load performance data','Refresh the page to try again');
   });
 }
+// A cached read served because a new one failed (client_api stale=True)
+// says so, as Labor's does - the marketing read was shown as current (B6
+// sub-audit).
+function mktStaleCaveat(el,d){
+  if(!el||!d||!d.stale||typeof aiCaveat!=='function')return;
+  el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
+}
 function loadMktInsight(){
   mktLoaded=true;
   var el=document.getElementById('mkt-insight');
@@ -12643,7 +12767,7 @@ function loadMktInsight(){
       el.innerHTML=cached;
       /* The figure check travels with the cached copy: a session-cache hit
          dropped the "unverified numbers" caveat (M-16). */
-      try{applyFigureCaveat(el,JSON.parse(sessionStorage.getItem('mkt_brief_check')||'{}'));}catch(x){}
+      try{var mck=JSON.parse(sessionStorage.getItem('mkt_brief_check')||'{}');applyFigureCaveat(el,mck);mktStaleCaveat(el,mck);}catch(x){}
       mktLoaded=true;
       return;
     }
@@ -12651,10 +12775,11 @@ function loadMktInsight(){
   fetch('/api/mkt-insight').then(apiJson).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
     try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));
-        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[]}));}catch(e){}
+        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||''}));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
     applyFigureCaveat(el,d);
+    mktStaleCaveat(el,d);
     mktLoaded=true;
   }).catch(function(){
     el.classList.remove('insight-loading');
@@ -12676,7 +12801,7 @@ function renderDiagnosis(id,dg){
   var dsurf=DIAG_SURFACE[id]||'labor';
   el.innerHTML='<div class="diag-h"><span>Most likely cause</span></div>'
     +'<div class="diag-cause">'+esc(dg.cause)+'</div>'
-    +cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:dsurf,module:dsurf,cls:'diag-cf'})
+    +cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:dsurf,module:dsurf,cls:'diag-cf'})
     +(dg.alternative_cause?'<div class="diag-alt"><b>Also fits:</b> '+esc(dg.alternative_cause)+'</div>':'')
     +(dg.what_would_confirm?'<div class="diag-alt"><b>What would tell them apart:</b> '+esc(dg.what_would_confirm)+'</div>':'')
     +(evh?'<div class="diag-evs">'+evh+'</div>':'')
@@ -12697,7 +12822,7 @@ function in2LoadQueries(){
     if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
     var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt">'+runs.length+' check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
     for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
-      for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]?String(runs[j].at||'').slice(0,10):'')+'"></i>';}
+      for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
       h+='<div class="in2-q"><span class="t">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
     el.innerHTML=h+'</div><div class="hb-empty" style="font-size:12px;margin-top:6px">Each dot is one check, oldest first \u2014 lit when this restaurant was named in the answer. The same score can be a steady three questions or a different three every week; this is which.</div>';el.hidden=false;
   }).catch(function(){});
@@ -12800,7 +12925,10 @@ function loadLaborInsight(){
       _laborInsightFull=cs.html;
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
       el.innerHTML=cs.html;
-      laborApplyCaveats(el,cs.figs,null,cs.note);
+      // The read's stale/stale_note/as_of ride with the cached text, so a
+      // reload inside five minutes still says it is an older read (B6#12).
+      var cmeta=null;try{cmeta=JSON.parse(sessionStorage.getItem('labor_insight_meta')||'null');}catch(e2){cmeta=null;}
+      laborApplyCaveats(el,cs.figs,cmeta,cs.note);
       return;
     }
   }catch(e){}
@@ -12811,7 +12939,8 @@ function loadLaborInsight(){
       var ls=laborSplitUnverified(html);
       _laborInsightFull=ls.html;
       renderDiagnosis('lb2-diag',d.diagnosis);
-      try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));}catch(e){}
+      try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));
+        sessionStorage.setItem('labor_insight_meta',JSON.stringify({stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||''}));}catch(e){}
       elLaborInsight.classList.remove('insight-loading');
       typewriterEffect(elLaborInsight,ls.html);
       laborApplyCaveats(elLaborInsight,ls.figs,d,ls.note);
@@ -13429,7 +13558,7 @@ function renderShiftQuality(quality, whatIf, prevScore) {
   var band = (quality.band || '').charAt(0).toUpperCase() + (quality.band || '').slice(1);
   document.getElementById('sq-band').textContent = band;
   _renderQualityDelta(prevScore, score);
-  renderQualityConfidence(quality.confidence);
+  renderQualityConfidence(quality.confidence, quality.confidence_detail);
   renderQualityDimensions(quality.dimensions || [], quality.week_dimensions || []);
   renderQualityWarnings(quality);
   renderQualityOptimizer();
@@ -13591,26 +13720,35 @@ function _qualityDial(score, tone) {
 // Confidence is a separate claim from quality. A 94 built on a fully rated
 // roster is not the same statement as a 94 built on three ratings, and one
 // number for both would be the most misleading thing this panel could do.
-function renderQualityConfidence(confidence) {
+function renderQualityConfidence(confidence, detail) {
   var el = document.getElementById('sq-confidence');
   var prov = document.getElementById('sq-prov');
   if (prov) prov.innerHTML = '';
   if (!el) return;
+  // One engine for the panel and its items (B4 H3): when the server sends
+  // the panel's own K1 object it is the pill, drawn by the shared component,
+  // so the pill and the items below it are the same kind of figure.
+  var k1 = (detail && typeof detail === 'object' && window.cavConf) ? cavConf.norm(detail) : null;
+  if (k1 && k1.k1) {
+    if (prov && k1.band === 'low') prov.innerHTML = '<span class="sq-prov">provisional</span>';
+    el.innerHTML = cavConfLine(detail, {surface: 'schedule_review', module: 'schedule', cls: 'on-dark'});
+    return;
+  }
   if (!confidence) { el.innerHTML = ''; return; }
-  // Low confidence makes the number provisional, and says why first.
+  // Low completeness makes the number provisional, and says why first.
   var low = confidence.level === 'low', top = (confidence.reasons || [])[0];
   if (prov && low) prov.innerHTML = '<span class="sq-prov" title="' + _escAttr(confidence.summary || '') + '">provisional</span>';
-  // One confidence colour map on every surface (J15): high green, medium
-  // (this engine's "moderate") neutral, low amber - low means unsure, not
-  // bad, so it is never red. Colours from tokens, not raw hex (CA4 F10).
+  // The read's measured completeness (shift_quality.confidence: 100 less a
+  // stated penalty per missing input) as its percentage, never a band word
+  // (B4 L2) - named for what it measures, so it is not read as the items'
+  // confidence. Tone from the server's level; colours from tokens (CA4 F10),
+  // low amber - unsure, not bad, so never red.
   var tone = confidence.level === 'high' ? 'var(--green)'
            : (confidence.level === 'moderate' || confidence.level === 'medium' ? 'var(--ink3)' : 'var(--amber)');
-  var lvl = confidence.level === 'moderate' ? 'medium' : String(confidence.level || '');
-  var label = lvl.charAt(0).toUpperCase() + lvl.slice(1);
-  el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
-    + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:13.5px;font-weight:600;color:rgba(255,255,255,.75)">'
-    + '<span style="width:6px;height:6px;border-radius:50%;background:' + tone + '"></span>'
-    + _escHtml(label) + ' confidence</span>'
+  var sc = (typeof confidence.score === 'number' && isFinite(confidence.score)) ? Math.max(0, Math.min(100, Math.round(confidence.score))) : null;
+  el.innerHTML = '<span class="sq-comp" title="' + _escAttr(confidence.summary || '') + '">'
+    + '<span class="sq-comp-dot" style="background:' + tone + '"></span>'
+    + (sc == null ? 'Read completeness not measured' : 'Read completeness <span class="hb-num">' + sc + '%</span>') + '</span>'
     + (low && top ? '<div class="sq-prov-why">' + num(top) + '</div>' : '');
 }
 
@@ -13673,7 +13811,7 @@ function renderQualityWarnings(quality) {
   var html = '<div style="padding:12px 14px;border-radius:10px;background:rgba(242,153,74,.07)">';
   for (i = 0; i < Math.min(lines.length, 5); i++) {
     html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">'
-      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:#f2994a;margin-top:6px"></span>'
+      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:6px"></span>'
       + '<span style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6">'
       + _escHtml(lines[i]) + '</span></div>';
   }
@@ -13687,7 +13825,7 @@ function renderQualityWarnings(quality) {
     var rec = (recObj && typeof recObj === 'object') ? String(recObj.text || recObj.title || '') : String(recObj || ''), st = _recState[rec];
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
-      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule', module: 'labor', cls: 'on-dark'}) : '') + '</span>'
+      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', cls: 'on-dark'}) : '') + '</span>'
       + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'not for us') + '</span>'
             : '<span class="acts"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
               + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Not for us" aria-label="Not for us" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
@@ -15757,23 +15895,33 @@ function fc2LoadCfo(){
       if(dg&&dg.headline){h+='<div class="fc2-hl">'+wtEsc(dg.headline)+'</div>';}
       // The month-end projection, always labelled a projection.
       var p=b.profitability;
+      // b.trust is read here; t below is assigned after this block, so the
+      // old t.prime_cost_accuracy fallback read an undefined (B6 sub-audit).
+      var bt=b.trust||{},pcaObj=b.prime_cost_accuracy||bt.prime_cost_accuracy||null;
+      // A projection whose record reads "often wide" is held back: the
+      // month-to-date figure stays, the projection is not drawn beside a
+      // line saying it is not shown (B6#4).
+      var pcHeld=!!(pcaObj&&pcaObj.withheld)||!!(p&&p.withheld);
       if(p&&p.available){
-        h+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(p.claim_kind||'forecast'):'')+'</span>'
-          +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%). '
-          +'At this run rate the month lands near '+fc2Money(p.projected_prime_cost)
-          +' on '+fc2Money(p.projected_sales)+' of sales';
-        if(p.dollars_vs_last_month!=null){
-          h+=' — '+fc2Money(Math.abs(p.dollars_vs_last_month))+' '
-            +(p.dollars_vs_last_month>0?'worse':'better')+' than last month';
+        h+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(pcHeld?'measured':(p.claim_kind||'forecast')):'')+'</span>'
+          +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%).';
+        if(!pcHeld&&p.projected_prime_cost!=null){
+          h+=' At this run rate the month lands near '+fc2Money(p.projected_prime_cost)
+            +' on '+fc2Money(p.projected_sales)+' of sales';
+          if(p.dollars_vs_last_month!=null){
+            h+=' — '+fc2Money(Math.abs(p.dollars_vs_last_month))+' '
+              +(p.dollars_vs_last_month>0?'worse':'better')+' than last month';
+          }
+          h+='. Projection, not a measurement. '+wtEsc(p.basis||'');
         }
-        h+='. Projection, not a measurement. '+wtEsc(p.basis||'')+'</span></div>';
+        h+='</span></div>';
         // The frozen mid-month projection's own record (K8, CA1 F16):
         // prime_cost_accuracy {reading, mean_error_pct, n_months, withheld}.
-        var pca=fc2AccLine(b.prime_cost_accuracy||t.prime_cost_accuracy,'month-end projections');
+        var pca=fc2AccLine(pcaObj,'month-end projections');
         if(pca)h+='<div class="fc2-row alt"><div class="k">How close these have been</div><div class="v">'+pca+'</div></div>';
       }
       if(dg&&dg.cause){
-        var fcl=cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'food',module:'food'});
+        var fcl=cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'food',module:'food'});
         if(fcl)h+='<div class="fc2-row"><div class="k">How sure</div>'+fcl+'</div>';
         h+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
         if(dg.alternative_cause){h+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
@@ -15794,7 +15942,7 @@ function fc2LoadCfo(){
           h+='<div class="fc2-drv"><div class="n"><span class="hb-num">'+fc2Money(x.dollars_monthly)+'</span></div>'
             +'<div class="bd"><div class="lbl">'+wtEsc(x.label)+'</div>'
             +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
-            +cavConfLine(x.confidence_detail||x.confidence,{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
+            +cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
             +'<div class="tags"><span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
             +'<span class="tag">if ignored: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
         }
@@ -15902,7 +16050,11 @@ function fc2LoadRecipeDrafts(note){
     for(var i=0;i<ds.length;i++){var dr=ds[i];
       // What kind of draft this is (recipes._draft_flags, H6): a model's
       // estimate from the ingredient list, or a transcribed recipe card.
-      var dtag=dr.is_estimate===true?(window.cavConf?cavConf.claimTag('estimate'):''):(dr.is_estimate===false?'<span class="ck-tag" data-claim="transcribed">From your card</span>':'');
+      // "From your card" only when a line says it was transcribed: a draft
+      // written before lines carried a source has is_estimate false too, and
+      // read as a transcription it never was (B6 sub-audit).
+      var dtrans=false;for(var dj=0;dj<(dr.lines||[]).length;dj++){if(dr.lines[dj]&&dr.lines[dj].source==='transcribed'){dtrans=true;break;}}
+      var dtag=dr.is_estimate===true?(window.cavConf?cavConf.claimTag('estimate'):''):(dtrans?'<span class="ck-tag" data-claim="transcribed">From your card</span>':'');
       h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dtag?' '+dtag:'')+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
       for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];var lc=String(ln.confidence||'').toLowerCase();if(lc==='moderate')lc='medium';
         // A unit Python could not convert (unit_ok false) is never written on
@@ -16445,10 +16597,23 @@ function wtDrawDrill(){
   }
   box.innerHTML=h+catRow;
 }
-function wtObBullet(ob){return '<div class="fc2-wt-ob"><i class="'+wtEsc(ob.tone||'')+'"></i><div>'+wtEsc(ob.text)+(ob.confidence?'<small>'+wtEsc(ob.confidence)+'</small>':'')+'</div></div>';}
+// An observation's footnote: the trend's measured strength as a
+// percentage (trend_strength_pct, on the observation or the stats) with its
+// weeks - never the band word the server's older note carries ("moderate
+// confidence · 5 weeks" read the same for a zigzag as a steady climb; B4 L2).
+var _wtStrength=null;
+function wtObNote(ob){
+  var p=(ob&&typeof ob.trend_strength_pct==='number')?ob.trend_strength_pct:_wtStrength;
+  var raw=String((ob&&ob.confidence)||''),wk=/(\d+)\s+weeks?/.exec(raw);
+  var weeks=wk?wk[1]+' week'+(wk[1]==='1'?'':'s'):'';
+  if(typeof p==='number'&&isFinite(p))return 'trend strength '+Math.max(0,Math.min(100,Math.round(p)))+'%'+(weeks?' · '+weeks:'');
+  return weeks;
+}
+function wtObBullet(ob){var nt=wtObNote(ob);return '<div class="fc2-wt-ob"><i class="'+wtEsc(ob.tone||'')+'"></i><div>'+wtEsc(ob.text)+(nt?'<small>'+wtEsc(nt)+'</small>':'')+'</div></div>';}
 function wtDrawObs(d){
   var box=document.getElementById('fc2-wt-obs');if(!box)return;
   var obs=d.observations||[];
+  _wtStrength=(d.stats&&typeof d.stats.trend_strength_pct==='number')?d.stats.trend_strength_pct:null;
   // Cold-start: no tone-classified observations yet, just the "here's what
   // it takes to get your first one" note — plain, no column headers to split.
   if(!obs.length){
@@ -18796,7 +18961,9 @@ function revokeOtherSessions(btn){
           +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%'+(uw?' <span class="fc2-unit-q" title="Check the units">?</span>':''):'—')+'</td>'
           +'<td class="r hb-num">'+(x.units_sold!=null?x.units_sold:'—')+'</td>'
           +'<td class="r hb-num">'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
-          +'<td>'+(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':'')+'</td></tr>';}
+          // A plate cost that fails the unit check cannot justify cutting or
+          // repricing the dish: the move waits on the check (B6 sub-audit).
+          +'<td>'+(uw&&(x.action==='cut'||x.action==='reprice')?'<span class="fc2-act review" title="'+_fcEsc(uw)+'">Check units first</span>':(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':''))+'</td></tr>';}
       sb.innerHTML=h+'</tbody></table></div>';
     }).catch(function(){sb.innerHTML='<div class="hb-empty">Couldn\'t load the scorecard.</div>';});
     fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(apiJson).then(function(d){
@@ -20535,7 +20702,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
     var band=r.quality_band;
     var qtone=(band==='excellent'||band==='good')?'good':(band==='fair'?'fair':(band?'warn':''));
-    var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+(r.confidence==='low'?' · provisional':'')+'</span>':'';
+    // The read's completeness as its percentage when the row carries it,
+    // never a band word (B4 L2); low still reads provisional.
+    var qc=(typeof r.confidence_score==='number'&&isFinite(r.confidence_score))?' · read completeness '+Math.round(r.confidence_score)+'%':'';
+    var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+esc(qc)+(r.confidence==='low'?' · provisional: some inputs were missing':'')+'">'+r.quality_score+(r.confidence==='low'?' · provisional':'')+'</span>':'';
     var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'';
     // A draft replaced by a newer draft of the same week reads quieter;
     // a published week updated after it went out says so.
@@ -20692,12 +20862,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // nights actually measured. Nothing below a handful of nights.
   function _rvDemandLine(a){
     if(!a||typeof a!=='object'||!(+a.n_nights>0))return '';
-    var bits=[];
-    if(a.inside_range_pct!=null)bits.push('inside the forecast range on <span class="hb-num">'+Math.round(+a.inside_range_pct)+'%</span> of <span class="hb-num">'+(+a.n_nights)+'</span> nights');
-    else bits.push('<span class="hb-num">'+(+a.n_nights)+'</span> nights measured');
-    if(a.mean_error_pct!=null)bits.push('<span class="hb-num">'+Math.round(+a.mean_error_pct)+'%</span> mean error');
-    if(a.bias_pct!=null&&Math.abs(+a.bias_pct)>=1)bits.push('running <span class="hb-num">'+Math.abs(Math.round(+a.bias_pct))+'%</span> '+(+a.bias_pct>0?'high':'low'));
-    return '<div class="sr-note"><span class="ck-tag">Forecast</span> Demand forecasts here: '+bits.join(' · ')+'.</div>';
+    return '<div class="sr-note"><span class="ck-tag">Forecast</span> Demand forecasts here: '+demandAccuracyText(a)+'.</div>';
   }
   // The table and the panel must agree on which rows break a hard rule.
   // On the generated payload the rows already carry needs_review from the

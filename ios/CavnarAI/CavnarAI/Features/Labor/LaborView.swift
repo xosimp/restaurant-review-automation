@@ -393,6 +393,12 @@ struct LaborView: View {
                 // presented on `labor` — Done / Not for us / Track (#25).
                 recSurface: "labor"
             )
+            // A cached read served because the latest failed says how old
+            // it is, on the phone as on the web (B6#12).
+            if let note = analyticsViewModel.insight?.olderReadNote {
+                CavnarCaveat.olderRead(note)
+                    .padding(.top, 6)
+            }
             // The forecast ribbon straddles this card's bottom edge (see
             // cavnarRibbonHeroAnchor below) — cavnarGlassCard's own 16pt
             // padding alone left the ribbon's ~34pt-tall pill touching the

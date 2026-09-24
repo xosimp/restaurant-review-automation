@@ -46,6 +46,11 @@ struct CavnarCaveat: View {
         )
     }
 
+    /// A cached AI read served because a new one failed (B6#12).
+    static func olderRead(_ note: String) -> CavnarCaveat {
+        CavnarCaveat(title: "Older read", detail: note)
+    }
+
     static func unverifiedFigures(_ figures: [String]) -> CavnarCaveat {
         let detail: String
         if figures.isEmpty {

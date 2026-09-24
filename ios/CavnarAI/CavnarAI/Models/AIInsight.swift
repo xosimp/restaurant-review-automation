@@ -28,6 +28,22 @@ struct AIInsight: Codable, Equatable {
     var causesVerified: Bool? = nil
     var unsupportedCauses: [String]? = nil
     var computedForecast: ComputedForecast? = nil
+    /// B6#12: the server served the last completed read because a new one
+    /// failed (`stale`, with `stale_note` / `as_of`, M/D/YY). Optional:
+    /// absent on a fresh read and on older cached copies. Encoded with the
+    /// cached copy, so a relaunch still says it is an older read.
+    var stale: Bool? = nil
+    var staleNote: String? = nil
+    var asOf: String? = nil
+
+    /// What the "Older read" caveat says, or nil on a fresh read.
+    var olderReadNote: String? {
+        guard stale == true else { return nil }
+        if let note = staleNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { return note }
+        let date = ConfidenceDisplay.mdyDate(asOf: asOf, asOfISO: nil)
+        return "This is the last read Cavnar completed" + (date.map { ", from \($0)" } ?? "")
+            + ". A new one couldn\u{2019}t be written just now."
+    }
 
     enum CodingKeys: String, CodingKey {
         case intro = "insight_intro"
@@ -39,6 +55,9 @@ struct AIInsight: Codable, Equatable {
         case causesVerified = "causes_verified"
         case unsupportedCauses = "unsupported_causes"
         case computedForecast = "forecast"
+        case stale
+        case staleNote = "stale_note"
+        case asOf = "as_of"
     }
 
     /// The key for the recommendation at `index`, or nil when it has none

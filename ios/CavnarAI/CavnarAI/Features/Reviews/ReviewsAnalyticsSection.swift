@@ -307,7 +307,8 @@ struct ReviewsAnalyticsSection: View {
         switch key {
         case "safety":      return .cavnarRed
         case "legal":       return .cavnarAmber
-        case "operational": return .cavnarEmber
+        // Ember is emphasis, never a severity (B4 L7).
+        case "operational": return .cavnarInk2
         default:            return .cavnarInk3
         }
     }
@@ -492,11 +493,13 @@ struct ReviewsAnalyticsSection: View {
         .accessibilityLabel("Forecast. \("$" + abs(low).commaFormatted) to \("$" + abs(high).commaFormatted) a month \(m.direction == "at_risk" ? "at risk" : "of upside").")
     }
 
-    /// "Medium confidence trend" — the rating trend's own band, in the one
-    /// confidence colour map (green / ink2 / amber; never red or ember).
-    static func trendConfidenceLabel(_ band: String?) -> String? {
-        guard let b = TrustConfidence.normalisedBand(band) else { return nil }
-        return b.prefix(1).uppercased() + b.dropFirst() + " confidence trend"
+    /// "Trend strength 62%" — the rating trend's measured strength
+    /// (trend_strength_pct), never a band word: "medium confidence" read
+    /// the same for a zigzag as for a steady slide (B4 L2, B1 H8). Nil when
+    /// the server sent no figure.
+    static func trendStrengthLabel(_ pct: Int?) -> String? {
+        guard let pct else { return nil }
+        return "Trend strength \(max(0, min(100, pct)))%"
     }
 
     /// The claim_kinds key an insight line is: 📊 this_week, ⚠️ watch,
@@ -513,21 +516,18 @@ struct ReviewsAnalyticsSection: View {
     @ViewBuilder
     private var ratingTrendLine: some View {
         if let sentence = viewModel.ratingTrend?.sentence {
-            let band = viewModel.trendConfidence
-            let label = Self.trendConfidenceLabel(band)
+            let strength = viewModel.ratingTrend?.trendStrengthPct
+            let label = Self.trendStrengthLabel(strength)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 (HomeMixedText.make(sentence, size: 12.5, weight: 600, color: .cavnarInk2)
                  + (label.map {
                      HomeMixedText.make(" \u{00B7} " + $0, size: 12.5, weight: 700,
-                                        color: ConfidenceDisplay.tone(band: band).color)
+                                        color: ConfidenceDisplay.tone(pct: strength).color)
                  } ?? Text(verbatim: "")))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
             }
-        } else if let label = Self.trendConfidenceLabel(viewModel.trendConfidence) {
-            HomeMixedText.make(label, size: 12.5, weight: 700,
-                               color: ConfidenceDisplay.tone(band: viewModel.trendConfidence).color)
         }
     }
 

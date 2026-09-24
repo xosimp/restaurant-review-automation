@@ -71,14 +71,17 @@ final class HomeSummaryTests: XCTestCase {
     func testDecodesTheK4FreshnessShape() throws {
         let s = try withFields("""
             "freshness": [
-              {"module": "labor", "source": "POS (Toast)", "state": "current", "pct": 94, "as_of": "9/23/26",
-               "basis": "synced 9/23/26"},
-              {"module": "reviews", "source": "Google reviews", "state": "aging", "pct": 61.6, "as_of": "2026-09-20",
-               "basis": "fetched 4 days ago"},
-              {"module": "inventory", "source": "Counts", "state": "stale", "pct": 20, "as_of": "9/9/26"},
-              {"module": "marketing", "source": "Instagram", "state": "not_connected", "pct": null},
-              {"module": "intel", "source": "Competitors", "state": "unknown"},
-              {"module": "labor", "source": "Shifts", "state": "sample", "basis": "sample data — upload shifts"}],
+              {"module": "labor", "source": "pos", "state": "current", "pct": 94, "as_of": "9/23/26",
+               "basis": "POS synced 9/23/26", "key": "labor", "label": "Labor"},
+              {"module": "reviews", "source": "reviews", "state": "aging", "pct": 61.6, "as_of": "2026-09-20",
+               "basis": "fetched 4 days ago", "key": "reviews", "label": "Reviews"},
+              {"module": "inventory", "source": "counts", "state": "stale", "pct": 20, "as_of": "9/9/26",
+               "key": "inventory", "label": "Food cost"},
+              {"module": "marketing", "source": "instagram", "state": "not_connected", "pct": null,
+               "key": "marketing", "label": "Marketing"},
+              {"module": "intel", "source": "competitors", "state": "unknown", "key": "intel", "label": "Intel"},
+              {"module": "labor", "source": null, "state": "sample", "basis": "sample data — upload shifts",
+               "key": "labor", "label": "Labor"}],
             "data_as_of": "2026-09-09",
             "monitoring": {"count_live": 1, "stalest_as_of": "9/9/26"}
             """)
@@ -93,6 +96,12 @@ final class HomeSummaryTests: XCTestCase {
         XCTAssertEqual(e[3].caption, "not connected")
         XCTAssertEqual(e[4].caption, "age unknown")
         XCTAssertEqual(e[5].caption, "sample data — upload shifts")
+        // The chip prints the server's label, never the source key (B6#9).
+        XCTAssertEqual(e.map(\.name), ["Labor", "Reviews", "Food cost", "Marketing", "Intel", "Labor"])
+        XCTAssertEqual(e[0].source, "pos")
+        // No label: the module's name, still never the key.
+        let bare = try withFields(#""freshness": [{"module": "inventory", "source": "pos", "state": "current"}]"#)
+        XCTAssertEqual(bare.freshness?.entries.first?.name, "Food cost")
         let kicker = MainActor.assumeIsolated {
             HomeFreshnessStrip.kicker(dataAsOf: s.dataAsOfDisplay, monitoring: s.monitoring)
         }

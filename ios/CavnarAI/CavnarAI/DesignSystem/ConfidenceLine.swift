@@ -227,13 +227,17 @@ struct ConfidenceWhySheet: View {
                     HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let note = row.note {
+                    HomeMixedText.make(note, size: 12.5, weight: 500, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.bottom, 12)
             if showsDivider { AccountRowDivider() }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.title): \(row.value == "\u{2014}" ? "not measured" : row.value). \(row.basis)"
-                            + (row.detail.map { ". \($0)" } ?? ""))
+                            + (row.detail.map { ". \($0)" } ?? "") + (row.note.map { ". \($0)" } ?? ""))
     }
 }
 

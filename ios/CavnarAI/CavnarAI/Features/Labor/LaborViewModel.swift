@@ -476,6 +476,12 @@ struct QualityConfidence: Codable, Equatable {
     let summary: String
 
     var label: String { level.prefix(1).uppercased() + level.dropFirst() }
+
+    /// The pill: the read's measured completeness as a percentage — 100 less
+    /// a stated penalty per missing input (shift_quality.confidence) — never
+    /// a band word (B4 L2; percentages stay). Named for what it measures, so
+    /// it is not read as the recommendations' confidence.
+    var completenessLabel: String { "Read completeness \(max(0, min(100, score)))%" }
 }
 
 /// One alternative arrangement the engine tried, and what it bought.
@@ -553,6 +559,11 @@ struct ScheduleQuality: Codable, Equatable {
     let weaknesses: [String]?
     let recommendations: [String]?
     let confidence: QualityConfidence?
+    /// The panel's own K1 confidence, when the server sends one — then the
+    /// panel and its items read from the same engine and the pill is that
+    /// percentage (B4 H3). Absent today: the pill falls back to the read's
+    /// measured completeness, `confidence.score`, as a percentage.
+    var confidenceDetail: TrustConfidence? = nil
     let best: String?
     let worst: String?
     let reason: String?
@@ -586,6 +597,7 @@ struct ScheduleQuality: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case checked, score, band, shifts, dimensions, strengths, weaknesses, optimizer
         case recommendations, confidence, best, worst, reason
+        case confidenceDetail = "confidence_detail"
         case belowProfile = "below_profile"
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
         case recommendationItems = "recommendation_items"
@@ -596,6 +608,12 @@ struct ScheduleQuality: Codable, Equatable {
     /// rule only for an older payload.
     func kind(of text: String) -> String {
         recommendationItems?.first { $0.text == text }?.kind ?? Self.recommendationKind(text)
+    }
+
+    /// The served item for a recommendation sentence (its key and K1
+    /// confidence), or nil on an older payload.
+    func item(for text: String) -> RecommendationItem? {
+        recommendationItems?.first { $0.text == text }
     }
 
     /// The ledger's kind for a recommendation sentence, by its opening
@@ -613,11 +631,50 @@ struct ScheduleQuality: Codable, Equatable {
     }
 }
 
-/// One Shift Quality recommendation as the server filed it.
+/// One Shift Quality recommendation as the server filed it:
+/// `{text, kind, key, rec_key, confidence}` — `confidence` is the K1 object
+/// (rec_trust.attach_schedule_confidence), drawn under the line like every
+/// other recommendation (B4 H4: the phone dropped it). Lenient: an odd
+/// confidence is nil, never a failed schedule.
 struct RecommendationItem: Codable, Equatable {
     let text: String
     let kind: String
     let key: String?
+    var recKey: String? = nil
+    var confidence: TrustConfidence? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case text, kind, key, confidence
+        case recKey = "rec_key"
+        case confidenceDetail = "confidence_detail"
+    }
+
+    init(text: String, kind: String, key: String?, recKey: String? = nil, confidence: TrustConfidence? = nil) {
+        self.text = text; self.kind = kind; self.key = key; self.recKey = recKey; self.confidence = confidence
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        kind = ((try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil) ?? "other"
+        key = (try? c.decodeIfPresent(String.self, forKey: .key)) ?? nil
+        recKey = (try? c.decodeIfPresent(String.self, forKey: .recKey)) ?? nil
+        let detail = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail)) ?? nil
+        let plain = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
+        confidence = detail ?? plain
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(text, forKey: .text)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(key, forKey: .key)
+        try c.encodeIfPresent(recKey, forKey: .recKey)
+        try c.encodeIfPresent(confidence, forKey: .confidence)
+    }
+
+    /// The key a Why? tap is logged under.
+    var ledgerKey: String? { recKey ?? key }
 }
 
 /// One change the Shift Quality optimizer made to the draft, with why.

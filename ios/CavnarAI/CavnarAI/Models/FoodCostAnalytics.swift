@@ -411,7 +411,7 @@ struct FoodCostCFO: Decodable {
         /// The K1 object when `confidence` stays the band word for older builds
         /// (confidence audit, group E). Views read `trust`.
         var confidenceDetail: TrustConfidence? = nil
-        var trust: TrustConfidence? { confidenceDetail ?? confidence }
+        var trust: TrustConfidence? { TrustConfidence.measured(confidenceDetail, confidence) }
         let difficulty: String
         let evidence: String
         let ifIgnored: String
@@ -448,7 +448,7 @@ struct FoodCostCFO: Decodable {
         /// The K1 object when `confidence` stays the band word for older builds
         /// (confidence audit, group E). Views read `trust`.
         var confidenceDetail: TrustConfidence? = nil
-        var trust: TrustConfidence? { confidenceDetail ?? confidence }
+        var trust: TrustConfidence? { TrustConfidence.measured(confidenceDetail, confidence) }
         /// The recommended action's rec_ledger key, whether the owner already
         /// answered it (the action and its controls then drop), when the
         /// read was written (M/D/YY) and the server's note for a read that

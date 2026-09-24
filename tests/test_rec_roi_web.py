@@ -149,8 +149,9 @@ def test_the_check_in_asks_both_questions_and_rereads_the_result():
     "recControlsHtml(dg.rec_key,DIAG_SURFACE[id]||'labor'",                       # the labor diagnosis
     "recControlsHtml(sg[j].rec_key, 'ask', 'ask')",                               # Ask suggestions
     "'/api/ask-cavnar/feedback'",                                                 # Was this useful?
-    "message_id: evt.message_id",
-    "suggestions: evt.suggestions",
+    # The streamed answer carries every field the server sends (message_id,
+    # suggestions, confidence_detail ...), not a hand-picked list (B6#3).
+    "for (var _k in evt) { if (evt.hasOwnProperty(_k) && _k !== 'type') _ans[_k] = evt[_k]; }",
 ])
 def test_the_coverage_contract_has_its_web_controls(needle):
     assert needle in SRC, needle

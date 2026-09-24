@@ -409,7 +409,7 @@ final class ConfidenceDisplayTests: XCTestCase {
             """)
         XCTAssertEqual(n.verification?.dropped, 1)
         XCTAssertEqual(n.verification?.footer,
-                       "Every figure above traced to a measured fact · 7 of 8 lines kept · 1 dropped because a figure didn’t trace")
+                       "Every figure above traced to a measured fact · 7 of 8 lines kept · 1 dropped because it didn’t pass the check against the night’s facts")
         let withEstimates = try decode(DSRVerification.self, #"{"checked": 5, "kept": 5, "dropped": [], "estimated": 2}"#)
         XCTAssertEqual(withEstimates.footer,
                        "Every figure above traced to a measured fact · 5 of 5 lines kept · 2 estimates, labelled as such")
@@ -449,7 +449,8 @@ final class ConfidenceDisplayTests: XCTestCase {
                  "claim_kinds": {"this_week": "measured", "why": "inferred", "rating_trend": "computed"},
                  "confidence": "moderate",
                  "trend": {"direction": "improving", "confidence": "moderate", "change": 0.2, "first": 4.1,
-                           "latest": 4.3, "weeks_above_floor": 9, "reason": "r", "anomalies": []}}
+                           "latest": 4.3, "weeks_above_floor": 9, "reason": "r", "anomalies": [],
+                           "trend_strength_pct": 62.4}}
                 """)
             default:
                 return EdgeHTTP.reply(request, 200, #"{"ok": true, "data": null, "weeks": []}"#)
@@ -460,7 +461,11 @@ final class ConfidenceDisplayTests: XCTestCase {
         XCTAssertEqual(vm.trendConfidence, "medium")
         XCTAssertEqual(vm.claimKinds["why"], "inferred")
         XCTAssertEqual(vm.ratingTrend?.sentence, "Rating improving (+0.2★ over 9 weeks)")
-        XCTAssertEqual(ReviewsAnalyticsSection.trendConfidenceLabel(vm.trendConfidence), "Medium confidence trend")
+        // The trend reads its measured strength, never a band word (B4 L2).
+        XCTAssertEqual(vm.ratingTrend?.trendStrengthPct, 62)
+        XCTAssertEqual(ReviewsAnalyticsSection.trendStrengthLabel(vm.ratingTrend?.trendStrengthPct),
+                       "Trend strength 62%")
+        XCTAssertNil(ReviewsAnalyticsSection.trendStrengthLabel(nil))
         XCTAssertEqual(ReviewsAnalyticsSection.claimKey(forInsightLine: "📊 This week: 12 reviews."), "this_week")
         XCTAssertEqual(ReviewsAnalyticsSection.claimKey(forInsightLine: "✅ Do today: call"), "do_today")
     }
@@ -494,11 +499,20 @@ final class ConfidenceDisplayTests: XCTestCase {
 
     func testDemandAccuracySentence() throws {
         let d = try decode(DemandAccuracy.self, """
-            {"mean_error_pct": 11.6, "bias_pct": -3.0, "inside_range_pct": 64.2, "n_nights": 21}
+            {"mean_error_pct": 11.6, "bias_pct": -3.0, "inside_range_pct": 64.2, "n_nights": 21, "n_ranged": 14}
             """)
-        XCTAssertEqual(d.sentence, "Demand forecasts here: within range 64% of 21 nights · 12% mean error")
+        // The inside-range share is of the nights that had a range (B6#10),
+        // and a negative actual-vs-forecast means nights came in BELOW it (B6#2).
+        XCTAssertEqual(d.sentence, "Demand forecasts here: inside the range on 64% of the 14 nights that had one"
+                       + " · 21 nights measured · 12% mean error · nights came in 3% below the forecast on average")
         XCTAssertEqual(try decode(DemandAccuracy.self, #"{"mean_error_pct": 9, "n_nights": 14}"#).sentence,
-                       "Demand forecasts here: 9% mean error over 14 nights")
+                       "Demand forecasts here: 14 nights measured · 9% mean error")
+        // 1 of 1 ranged night, 10 scored: never "100% of 10 nights" (B1 H7).
+        let thin = try decode(DemandAccuracy.self, #"{"inside_range_pct": 100, "n_nights": 10, "n_ranged": 1, "mean_error_pct": 25, "actual_vs_forecast_pct": 8}"#)
+        XCTAssertEqual(thin.sentence, "Demand forecasts here: inside the range on 100% of the 1 night that had one"
+                       + " · 10 nights measured · 25% mean error · nights came in 8% above the forecast on average")
+        // An older server with no n_ranged: no inside-range claim at all.
+        XCTAssertNil(try decode(DemandAccuracy.self, #"{"inside_range_pct": 64, "n_nights": 21}"#).sentence)
         XCTAssertNil(try decode(DemandAccuracy.self, #"{"n_nights": 3}"#).sentence)
         XCTAssertNil(try decode(DemandAccuracy.self, #""soon""#).sentence)
     }

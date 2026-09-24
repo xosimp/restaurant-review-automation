@@ -44,7 +44,7 @@ struct HomeActionDeck: View {
     /// the confidence line when any item carries them (K4).
     static func cardHeight(for items: [NeedsAttentionItem]) -> CGFloat {
         cardHeight
-            + (items.contains { $0.evidence != nil } ? 36 : 0)
+            + (items.contains { $0.evidenceLine != nil } ? 36 : 0)
             + (items.contains { $0.confidence != nil } ? 26 : 0)
     }
 
@@ -223,7 +223,7 @@ private struct ActionDeckCard: View {
                     // "Why?" behind it. Compact: the reason and any
                     // caution are in the sheet, so the deck keeps one
                     // height.
-                    if let evidence = item.evidence {
+                    if let evidence = item.evidenceLine {
                         HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
                             .lineLimit(2)
                     }
