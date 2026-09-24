@@ -581,10 +581,15 @@ struct DSRNarrative: Decodable {
         biggestWin = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestWin)
         biggestStaffingConcern = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestStaffingConcern)
         biggestFinancialOpportunity = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestFinancialOpportunity)
-        largestMoneyOpportunity = ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestOpportunity)) ?? nil)
-            ?? ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestMoneyOpportunity)) ?? nil)
-            ?? ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestDollarGap)) ?? nil)
-            ?? ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestMoneySaving)) ?? nil)
+        // The renamed opportunity slot first, then the older names.
+        var opportunity: DSRLine? = nil
+        for key in [CodingKeys.largestOpportunity, .largestMoneyOpportunity, .largestDollarGap, .largestMoneySaving] {
+            if let line = (try? c.decodeIfPresent(DSRLine.self, forKey: key)) ?? nil {
+                opportunity = line
+                break
+            }
+        }
+        largestMoneyOpportunity = opportunity
         largestGuestExperience = try? c.decodeIfPresent(DSRLine.self, forKey: .largestGuestExperience)
         actionsTomorrow = (try? c.decodeIfPresent([DSRAction].self, forKey: .actionsTomorrow)) ?? []
         verification = try? c.decodeIfPresent(DSRVerification.self, forKey: .verification)
