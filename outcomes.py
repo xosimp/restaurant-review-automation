@@ -1717,20 +1717,33 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
         "pick AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY family, day ORDER BY rk, ABS(dollars) DESC, "
         "outcome_id) AS rn FROM v WHERE held = 1 AND dollars <> 0), "
         "chosen AS (SELECT * FROM pick WHERE rn = 1), "
-        f"final AS (SELECT c.* FROM chosen c WHERE NOT (c.family IN ({','.join('?' for _ in cost)}) AND EXISTS "
-        "(SELECT 1 FROM chosen s WHERE s.family = 'sales' AND s.day = c.day AND (s.dollars > 0) = (c.dollars > 0)))) ")
+        # The days a sales reading moved each way: a cost share that moved
+        # the same way that day is not counted (a join, not a correlated
+        # subquery per row).
+        "sales_days AS (SELECT day, MAX(dollars > 0) AS up, MAX(dollars < 0) AS down FROM chosen "
+        "WHERE family = 'sales' GROUP BY day), "
+        "final AS (SELECT c.* FROM chosen c LEFT JOIN sales_days s ON s.day = c.day "
+        f"WHERE NOT (c.family IN ({','.join('?' for _ in cost)}) AND "
+        "((c.dollars > 0 AND COALESCE(s.up, 0) = 1) OR (c.dollars < 0 AND COALESCE(s.down, 0) = 1)))) ")
     cargs = narrow + args + cost
     conn = get_conn(db_path)
     try:
         measured = {bool(r["sl"]): dict(r) for r in conn.execute(
             cte + "SELECT family = 'sales' AS sl, COUNT(DISTINCT day) AS n, MIN(day) AS a, MAX(day) AS b "
                   "FROM v GROUP BY sl", cargs).fetchall()}
-        sums = [dict(r) for r in conn.execute(
-            cte + "SELECT family = 'sales' AS sl, module, ROUND(SUM(CASE WHEN dollars > 0 THEN dollars ELSE 0 END), 4) "
-                  "AS g, ROUND(SUM(CASE WHEN dollars < 0 THEN -dollars ELSE 0 END), 4) AS l, MIN(day) AS a, "
-                  "MAX(day) AS b FROM final GROUP BY sl, module", cargs).fetchall()]
-        counted_days = {bool(r["sl"]): r["n"] for r in conn.execute(
-            cte + "SELECT family = 'sales' AS sl, COUNT(DISTINCT day) AS n FROM final GROUP BY sl", cargs).fetchall()}
+        # One pass over the counted days: summed by module in SQL, the
+        # distinct counted days taken from the same rows.
+        sums, counted_days = [], {}
+        for r in conn.execute(
+                cte + "SELECT family = 'sales' AS sl, module, "
+                      "ROUND(SUM(CASE WHEN dollars > 0 THEN dollars ELSE 0 END), 4) AS g, "
+                      "ROUND(SUM(CASE WHEN dollars < 0 THEN -dollars ELSE 0 END), 4) AS l, MIN(day) AS a, "
+                      "MAX(day) AS b, group_concat(DISTINCT day) AS ds FROM final GROUP BY sl, module",
+                cargs).fetchall():
+            r = dict(r)
+            counted_days.setdefault(bool(r["sl"]), set()).update((r.pop("ds") or "").split(","))
+            sums.append(r)
+        counted_days = {k: len(v - {""}) for k, v in counted_days.items()}
     finally:
         conn.close()
 
@@ -1920,7 +1933,7 @@ def linked_episodes(restaurant_id, db_path=DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND tracker_id IS NOT NULL "
-                            "ORDER BY rec_id DESC", (restaurant_id,)).fetchall()
+                            "ORDER BY created_at DESC, rowid DESC", (restaurant_id,)).fetchall()
     except Exception as e:
         print(f"[outcomes] linked episodes unreadable for {restaurant_id}: {e}")
         return {}
@@ -1934,12 +1947,22 @@ def linked_episodes(restaurant_id, db_path=DB_PATH) -> dict:
 
 def visible_to(viewer, r, linked=None, db_path=DB_PATH) -> bool:
     """Whether a login may see one tracker (re-audit A26/A28): its metric
-    (metric_visible_to), and the recommendation behind it — the linked
-    episode, else the source key read as one — by rec_learning.viewer_sees
-    (owner-only, a loss, a module it lacks). No viewer: an internal caller."""
+    (metric_visible_to), the module it is credited to (the line /value
+    draws, permissions.MODULE_VIEW_PERMISSIONS), and the recommendation
+    behind it — the linked episode, else the source key read as one — by
+    rec_learning.viewer_sees (owner-only, a loss, a module it lacks). No
+    viewer: an internal caller. Fails closed."""
     if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
         return True
     if not metric_visible_to(viewer, r.get("metric")):
+        return False
+    try:
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        need = MODULE_VIEW_PERMISSIONS.get(module_of_row(r))
+        if need and not has_permission(viewer, need):
+            return False
+    except Exception as e:
+        print(f"[outcomes] module visibility check failed closed: {e}")
         return False
     if linked is None:
         linked = linked_episodes(r.get("restaurant_id"), db_path=db_path)
