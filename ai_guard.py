@@ -569,6 +569,39 @@ def _capture(message: str, job: str, restaurant_id=None):
 CAUSAL_RE = re.compile(
     r"\b(because|due to|caus(?:e|es|ed|ing)|driven by|led to|leads to|leading to|as a result of|"
     r"result of|thanks to|owing to|stems? from)\b", re.I)
+
+# R5 (B5 #5): the ten constructions that walked past CAUSAL_RE — "after",
+# "hurt", "which is why", "stemming from", "attributable to", "contributed
+# to", "resulting in", "so", "drove" — and which side of the connective the
+# cause sits on. A FORWARD connective puts the cause after it ("fell because
+# X", "fell after X"); a BACKWARD one before it ("X hurt ratings", "X, so
+# guests rated you lower"). The anchor has to be in THAT clause: a sentence
+# naming the stored cause's words but stating a new cause ("slow service
+# rose because a new POS is dropping tickets") no longer passes.
+_MOVE = (r"(?:rose|fell|dropped|climbed|slipped|declined|jumped|increased|decreased|improved|worsened|"
+         r"eased|spiked|dipped|sank|grew|shrank|soared|plunged|tumbled|surged|went\s+(?:up|down)|took\s+a\s+hit)")
+_CAUSAL_FORWARD = re.compile(
+    r"\b(?:because(?:\s+of)?|due\s+to|caused\s+by|driven\s+by|as\s+a\s+result\s+of|(?<!as\s)result\s+of|"
+    r"thanks\s+to|owing\s+to|on\s+account\s+of|stem(?:s|med|ming)?\s+from|attributable\s+to|"
+    r"attributed\s+to|fu(?:e)?l(?:l)?ed\s+by|(?:the\s+)?(?:likely\s+|main\s+|real\s+)?cause\s+(?:is|was|:))\b"
+    r"|\b" + _MOVE + r"\b[^.!?;]{0,40}?\bafter\b", re.I)
+_CAUSAL_BACKWARD = re.compile(
+    r"\b(?:caus(?:e|es|ed|ing)(?!\s+by)(?!\s+(?:is|was)\b)|led\s+to|leads\s+to|leading\s+to|"
+    r"hurt(?:s|ing)?|which\s+is\s+why|that['’]?s\s+why|that\s+is\s+why|this\s+is\s+why|"
+    r"contribut(?:ed|es|ing)\s+to|result(?:ed|s|ing)\s+in|drove|drives|driving|explains?\s+(?:the|why|your))\b"
+    r"|,\s*so\s+(?:that\s+)?(?:\w+\s+){0,3}?(?:rated|fell|rose|dropped|went|came|stayed|spent|complained|"
+    r"left|ordered|lost|gained|slipped|climbed|declined|were|was|is|are|has|have|had)\b", re.I)
+
+
+def causal_clauses(sentence: str) -> list:
+    """[(connective, the clause the cause sits in)] for every causal
+    construction in one sentence (R5)."""
+    out = []
+    for m in _CAUSAL_FORWARD.finditer(sentence or ""):
+        out.append((m.group(0), sentence[m.end():]))
+    for m in _CAUSAL_BACKWARD.finditer(sentence or ""):
+        out.append((m.group(0), sentence[:m.start()]))
+    return out
 _STOP = {"that", "this", "with", "from", "have", "been", "were", "they", "their", "there", "which", "about",
          "into", "than", "then", "when", "what", "your", "more", "most", "less", "over", "under", "also",
          "just", "only", "some", "same", "each", "because", "cause", "caused", "causes", "causing", "driven",
@@ -585,7 +618,7 @@ def _stem(w: str) -> str:
 
 
 def _content_stems(text: str) -> set:
-    return {_stem(w) for w in re.findall(r"[A-Za-z][A-Za-z'-]+", text or "")
+    return {_stem(w) for w in re.findall(r"[A-Za-z][A-Za-z']+", text or "")
             if len(w) >= 4 and w.lower() not in _STOP}
 
 
@@ -604,36 +637,45 @@ def carries_anchor(sentence: str, anchors) -> bool:
     """Whether a sentence carries one of the stored causes. A short anchor
     (a driver's label, a weekday, a category — up to four content words)
     must appear whole; a long one (a diagnosis's cause sentence) must share
-    at least two of its content words, or all of them when it has fewer."""
+    a third of its content words (at least two, at most four) — two shared
+    words let "kitchen tickets lost by a new printer" pass as a long
+    staffing cause (R5)."""
     words = _content_stems(sentence)
-    low = (sentence or "").lower()
+    low = " ".join((sentence or "").lower().replace("-", " ").split())
     for a in anchors or ():
         a = " ".join(str(a or "").split())
         if not a:
             continue
         stems = _content_stems(a)
         if not stems:
-            if a.lower() in low:
+            if a.lower().replace("-", " ") in low:
                 return True
             continue
         if len(stems) <= 4:
-            if a.lower() in low or stems <= words:
+            if a.lower().replace("-", " ") in low or stems <= words:
                 return True
-        elif len(stems & words) >= 2:
+        elif len(stems & words) >= max(2, min(4, -(-len(stems) // 3))):
             return True
     return False
 
 
 def unsupported_causes(generated: str, anchors, job: str = None, restaurant_id=None) -> list:
-    """The sentences in `generated` that state a cause ("because", "due to",
-    "caused", "driven by", "led to", "as a result of", "thanks to") without
-    carrying one of `anchors` — the stored diagnosis's cause and the drivers
-    it cites. Empty anchors means there is no stored cause, so every causal
-    sentence is unsupported. Returns the sentences (trimmed), empty = clean;
-    reported to the failure digest under `job` when given."""
+    """The sentences in `generated` that state a cause without carrying one
+    of `anchors` — the stored diagnosis's cause and the drivers it cites —
+    IN THE CLAUSE THE CAUSE SITS IN (R5): after a forward connective
+    ("because", "due to", "driven by", "thanks to", "stemming from",
+    "attributable to", a move "after" something), before a backward one
+    ("led to", "caused", "hurt", "which is why", "contributed to",
+    "resulting in", "drove", ", so guests …"). Empty anchors means there is
+    no stored cause, so every causal sentence is unsupported. Returns the
+    sentences (trimmed), empty = clean; reported to the failure digest
+    under `job` when given."""
     out = []
     for s in sentences(generated):
-        if CAUSAL_RE.search(s) and not carries_anchor(s, anchors):
+        clauses = causal_clauses(s)
+        if not clauses and CAUSAL_RE.search(s):
+            clauses = [(None, s)]
+        if any(not carries_anchor(clause, anchors) for _w, clause in clauses):
             out.append(s[:160])
     if out and job:
         _capture(f"{job} stated a cause no stored diagnosis supports: {out[:2]}", job, restaurant_id)

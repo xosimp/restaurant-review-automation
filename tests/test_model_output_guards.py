@@ -270,8 +270,10 @@ def test_h4_the_corpus_is_built_from_verified_history_not_the_raw_messages():
     src = inspect.getsource(ask_cavnar.ask_with_tools)
     assert "_verified_history(" in src
     assert 'seen_corpus = [context] + [m["content"] for m in messages' not in src
-    # Every answer's check is recorded where it is returned.
-    assert src.count("_recorded(answer, _meta(") == 3
+    # Every answer's check is recorded where it is returned — through
+    # _finish since R3, which records it under the text actually shown.
+    assert src.count("= _finish(_answer_of(") == 3
+    assert "_recorded(answer, meta, restaurant_id)" in inspect.getsource(ask_cavnar._finish)
 
 
 # ── H5: keyword/model safety disagreements ─────────────────────────────────

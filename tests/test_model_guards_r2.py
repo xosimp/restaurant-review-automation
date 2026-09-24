@@ -254,3 +254,81 @@ def test_r3_p18_model_stated_confidence_is_rewritten_to_the_computed_one(db_path
         if "High" in said:
             assert f"{pct}% confidence" in answer
         assert answer.startswith("Trim the Tuesday bar shift.")
+
+
+# ── R5: the cause check (p02), and on the DSR and Ask ───────────────────────
+
+_ANCHORS = ["The kitchen is understaffed on Friday dinner, so tickets back up during the rush.",
+            "Tickets slow when the line runs a cook short", "slow service"]
+
+
+@pytest.mark.parametrize("sentence", [
+    "Ratings fell because of the new menu prices.",
+    "Ratings fell after the new menu prices went up.",
+    "The new menu prices hurt your ratings.",
+    "Prices went up, which is why ratings fell.",
+    "Complaints are stemming from the price increase.",
+    "The drop is attributable to the price increase.",
+    "The price increase contributed to the drop.",
+    "Prices rose, resulting in lower ratings.",
+    "Prices rose 8%, so guests rated you lower.",
+    "Slow service complaints rose because a new POS system is dropping tickets.",
+    "Ratings fell because the kitchen tickets were lost by the new printer.",
+])
+def test_r5_p02_every_causal_construction_needs_the_anchor_in_its_cause_clause(sentence):
+    assert ai_guard.unsupported_causes(sentence, _ANCHORS) == [sentence]
+
+
+@pytest.mark.parametrize("sentence", [
+    "Ratings fell because the kitchen is understaffed on Friday dinner.",
+    "Slow service drove the drop in ratings.",
+    "Check again after Friday.",
+    "Labor ran 31%, so trim Tuesday.",
+])
+def test_r5_anchored_or_non_causal_sentences_pass(sentence):
+    assert ai_guard.unsupported_causes(sentence, _ANCHORS) == []
+
+
+def test_r5_p07_dsr_drops_a_cause_its_cites_do_not_hold():
+    from dsr import narrative as N
+    F = _dsr_facts()
+    bad = {"text": "Sales were $19,850 because the patio reopened.", "cites": ["sales.net"]}
+    assert "cause" in (N.check_item(bad, F) or "")
+    ok = {"text": "Labor ran 27.1% of sales, up 0.3 points because labor hours ran 212.",
+          "cites": ["labor.pct", "labor.pct_last_week", "labor.hours"]}
+    assert N.check_item(ok, F) is None
+
+
+def test_r5_ask_flags_a_cause_nothing_it_read_states(db_path):
+    rid = _rid(db_path)
+    snap = "LABOR: 31.4% of sales. REVIEWS: likely cause: Friday dinner is short a line cook."
+    m = ask_cavnar._meta("Ratings fell after the patio closed.", [snap], [], [], "standard", rid)
+    assert m["unsupported_causes"]
+    assert "cause" in m["confidence_detail"]["dimensions"]["evidence"]["basis"]
+    ok = ask_cavnar._meta("Ratings fell because Friday dinner is short a line cook.", [snap], [], [], "standard", rid)
+    assert ok["unsupported_causes"] == []
+
+
+# ── R6: the weekly plan reads the FULL unverified list (p08) ────────────────
+
+def test_r6_p08_the_sixth_invented_figure_is_not_filed(db_path):
+    rid = _rid(db_path)
+    snapshot = "LABOR: 31.4% of sales against a 28% target. WASTE: $2,400 this month."
+    items = [{"title": "Cut Friday prep", "why": "Waste hit $1,100, $1,200, $1,300, $1,400, $1,500 in five weeks."},
+             {"title": "Trim Tuesday bar shift", "why": "Tuesday labor cost is $6,600 a week over plan."},
+             {"title": "Retrain host stand", "why": "Labor ran 31.4%.", "owner": "Marco Ruiz"}]
+    brunch = {"title": "Promote brunch", "why": "Labor ran 31.4% while brunch sales fell after the menu change.",
+              "owner": "owner"}
+    answer = json.dumps(items)
+    meta = ask_cavnar._meta(answer, [snapshot], [], [], "standard", rid)
+    assert len(meta["unverified_figures"]) == 5 and len(meta["unverified_all"]) == 6
+    anchors = ["Friday dinner is short a cook"]
+    got = {it["title"]: strategy_jobs._plan_item_problem(it, meta["unverified_all"], frozenset(), anchors)
+           for it in strategy_jobs._parse_plan(answer)}
+    assert got["Trim Tuesday bar shift"] == "it states a figure nothing it read supports"
+    assert got["Cut Friday prep"] == "it states a figure nothing it read supports"
+    assert strategy_jobs._plan_item_problem(brunch, meta["unverified_all"], frozenset(), anchors) == \
+        "it states a cause no stored diagnosis supports"
+    assert got["Retrain host stand"] is None
+    # the owner field is a closed list: a name the model wrote never lands
+    assert [it["owner"] for it in strategy_jobs._parse_plan(answer)][-1] == "owner"

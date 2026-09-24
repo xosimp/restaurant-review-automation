@@ -1658,6 +1658,15 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
                                     job="ask_cavnar", restaurant_id=restaurant_id, check_counts=True)
     except Exception:
         unverified = []
+    # A cause is checked too (R5, B5 #5): Ask had no cause check at all. A
+    # causal sentence must carry, in the clause its cause sits in, a cause
+    # the data it read states — a sentence of the snapshot or a tool result
+    # that itself names a cause (a stored diagnosis, labor's lead driver, a
+    # cross-module link). Guest and owner text is fenced and never counts.
+    try:
+        causes = unsupported_causes_in(answer, corpus)
+    except Exception:
+        causes = []
     # What the answer rests on: the modules the tool names imply, plus the
     # ones a tool reported reading on its own (read_business_snapshot reads
     # every module in one call, and its name says none of them).
@@ -1677,7 +1686,8 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # that did not check out caps it low. Freshness: the sources of the
     # modules read. `confidence` stays the band string both shipped clients
     # decode; the K1 object rides in `confidence_detail`.
-    detail = _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id)
+    detail = _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id,
+                                causes=causes)
     return {
         "modules_consulted": modules,
         "tools_used": list(dict.fromkeys(tools_used)),
@@ -1685,6 +1695,7 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
         "confidence": detail.get("band") or "low",
         "confidence_detail": detail,
         "unverified_figures": unverified[:5],
+        "unsupported_causes": causes[:3],
         # The whole list (R6): the weekly plan's unattended gate read the
         # five above and filed an item carrying the sixth.
         "unverified_all": list(unverified),
@@ -1781,7 +1792,21 @@ def _tool_reads(corpus):
     return len(reads), counts["sample"]
 
 
-def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id):
+def unsupported_causes_in(answer, corpus) -> list:
+    """The answer's causal sentences that no cause in `corpus` supports
+    (R5). The anchors are the corpus's own cause-bearing sentences (outside
+    any UNTRUSTED fence) — what the snapshot and the tools said about why."""
+    from ai_guard import (CAUSAL_RE, _strip_untrusted, causal_clauses, sentences as _sentences,
+                          unsupported_causes)
+    anchors = []
+    for c in corpus or []:
+        for s in _sentences(_strip_untrusted(str(c or ""))):
+            if CAUSAL_RE.search(s) or causal_clauses(s):
+                anchors.append(s[:300])
+    return unsupported_causes(answer or "", anchors)
+
+
+def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id, causes=()):
     """The K1 confidence of one Ask answer. Never raises.
 
     Evidence is the number of distinct live reads that back a figure the
@@ -1826,7 +1851,10 @@ def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaura
                 basis += "; not counted: " + ", ".join(skipped)
         if claims:
             basis += f"; {checked} of {len(claims)} figures checked against your data"
-        ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []), "basis": basis,
+        if causes:
+            basis += f"; {len(causes)} cause{'s' if len(causes) != 1 else ''} nothing it read states"
+        ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []) + len(causes or []),
+              "basis": basis,
               "sample": bool(tools_used) and not reads and bool(sample)}
         return rec_trust.assess(restaurant_id, "ask_answer", evidence=ev,
                                 sources=data_freshness.sources_for(modules))

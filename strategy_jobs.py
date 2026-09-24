@@ -370,6 +370,9 @@ WEEKLY_PLAN_PROMPT = (
 )
 
 
+PLAN_OWNERS = ("owner", "manager", "kitchen")
+
+
 def _parse_plan(answer):
     # The first JSON array of objects in the answer. A greedy [.*] match ran
     # from the first "[" in any preamble to the last "]" in any sign-off, so
@@ -388,8 +391,11 @@ def _parse_plan(answer):
             due = max(1, min(7, int(it.get("due_days") or 7)))
         except (TypeError, ValueError):
             due = 7
+        # The owner field is a closed list (R13, B5 #17): a name the model
+        # wrote ("Marco Ruiz") would land on Home as the person responsible.
+        owner = str(it.get("owner") or "owner").strip().lower()
         out.append({"title": str(it["title"]).strip()[:80], "why": str(it.get("why") or "").strip()[:200],
-                    "owner": str(it.get("owner") or "owner").lower()[:20], "due_days": due})
+                    "owner": owner if owner in PLAN_OWNERS else "owner", "due_days": due})
     return out[:3]
 
 
@@ -480,6 +486,12 @@ def _plan_item_problem(item, unverified, guest_shingles=frozenset(), cause_ancho
     if _plan_item_unverified(item, unverified):
         return "it states a figure nothing it read supports"
     bad = [u for u in (unverified or []) if u]
+    # Every figure the item states must be one the verifier traced (R6):
+    # each checkable claim (money, %, rating, count) is matched to the
+    # unverified list claim by claim, not only by substring of the text.
+    from ai_guard import checkable_claims
+    if any(any(c == u or c in u or u in c for u in bad) for c in checkable_claims(text)):
+        return "it states a figure nothing it read supports"
     figures = [c for c in figure_claims(text) if c["kind"] in ("money", "pct", "star") and not c["year"]
                and not any(c["raw"] in u or u in c["raw"] for u in bad)]
     if not figures:
@@ -523,7 +535,11 @@ def run_weekly_plan(db_path=DB_PATH):
             from ask_cavnar import ask_with_tools
             answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None,
                                                            read_only=True)
-            unverified = (_meta or {}).get("unverified_figures") or []
+            # The FULL list (R6, B5 #6): unverified_figures is cut to five for
+            # the screen, and the sixth invented figure was filed unattended.
+            unverified = (_meta or {}).get("unverified_all")
+            if unverified is None:
+                unverified = (_meta or {}).get("unverified_figures") or []
             guest = _guest_shingles(r.id, db_path=db_path)
             anchors = _plan_cause_anchors(r.id, db_path=db_path)
             for i, item in enumerate(_parse_plan(answer)):
