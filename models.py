@@ -7318,6 +7318,9 @@ NON_ALERT_TYPES = (
     # Auto-publish's held notice and a milestone (re-audit A-18), and a
     # supplier order the trusted-order job held back (A-22).
     "schedule_publish_held", "milestone", "order_send_held",
+    # The nightly Daily Sales Report — one a night by construction
+    # (dsr.deliver's claims), so never an alert against the cap.
+    "dsr",
 )
 
 

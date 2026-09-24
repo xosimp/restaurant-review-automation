@@ -42,6 +42,11 @@ THE RULES, each one pinned by tests/test_dsr_pipeline.py:
   MAX_FAILURES it is marked unavailable rather than holding the night. The
   pipeline itself raising is retried on the same backoff and, after
   MAX_FAILURES, the night is FAILED.
+* Telling people is last. Once a version is saved final or provisional,
+  dsr.deliver.on_terminal emails every owner and manager their view and
+  pushes them (held through quiet hours) — once per night, plus one
+  "Updated" when a provisional night goes final. It runs after the save and
+  can never fail or roll back the report; a failed night tells nobody.
 * Nothing double-runs. Every run claims (restaurant, business date,
   version) with ops.claim_period; a version that finished keeps its claim
   for good, one that is waiting for a retry gives it back, and one a deploy
@@ -516,8 +521,22 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     store.set_stage(report_id, terminal, db_path=db)
     nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if required_missing else None
     store.schedule_retry(report_id, nxt, db_path=db, count=False)
+    _deliver(restaurant, report_id, now_utc, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
+
+
+def _deliver(restaurant, report_id, now_utc, db):
+    """Tell the owners and managers (dsr.deliver) — after the version is
+    saved terminal, and never able to fail it: the report is the record,
+    the notice is best effort on top of it (captured, never raised). A
+    FAILED night never gets here; its errors were captured on the way."""
+    import ops
+    try:
+        from dsr import deliver
+        deliver.on_terminal(restaurant, report_id, now_utc=now_utc, db_path=db)
+    except Exception as e:
+        ops.capture(e, job="dsr_deliver", context=f"restaurant_id={restaurant.id} report_id={report_id}")
 
 
 def _can_write(facts):

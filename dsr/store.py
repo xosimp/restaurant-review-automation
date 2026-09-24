@@ -98,6 +98,31 @@ def init_dsr(db_path=DB_PATH):
             imported_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, business_date)
         )""")
+        # Who was told about a night, on which channel, and whether it was
+        # the first notice or the one "Updated" (dsr.deliver). The row is
+        # the claim: it is written BEFORE the send, and UNIQUE makes a retry,
+        # a second process or a re-run of the night a no-op rather than a
+        # second email. user_id 0 is the restaurant's one notification-
+        # history row (channel "history") for the night and kind.
+        conn.execute("""CREATE TABLE IF NOT EXISTS dsr_deliveries (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT    NOT NULL,
+            user_id         INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            kind            TEXT    NOT NULL,
+            report_id       INTEGER,
+            version         INTEGER,
+            provisional     INTEGER NOT NULL DEFAULT 0,
+            view            TEXT,
+            status          TEXT    NOT NULL,
+            hold_until      TEXT,
+            detail          TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            sent_at         TEXT,
+            UNIQUE(restaurant_id, business_date, user_id, channel, kind)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dsr_deliveries_held ON dsr_deliveries(status, hold_until)")
         conn.commit()
     finally:
         conn.close()

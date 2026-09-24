@@ -207,6 +207,9 @@ PRIORITY = {
     "schedule_drafted": P3_INFO, "login": P3_INFO, "staff_signin": P3_INFO,
     "negative_trend": P3_INFO, "outcome_achieved": P3_INFO,
     "morning_brief": P4_SUMMARY, "closing_summary": P4_SUMMARY,
+    # The nightly Daily Sales Report (dsr.deliver): a summary, like the
+    # closing summary it replaces; held through quiet hours, never sounds.
+    "dsr": P4_SUMMARY,
     "weekly_review": P4_SUMMARY, "monthly_review": P4_SUMMARY,
     "any_review": P5_LOW, "ai_visibility_drop": P5_LOW, "demand_opportunity": P5_LOW,
     "competitor_move": P3_INFO, "review_request_nudge": P5_LOW,
@@ -242,6 +245,9 @@ NOTIFICATION_MODULE = {
     "morning_brief": "ask", "daily_briefing": "ask", "intraday_pulse": "ask",
     "closing_summary": "ask", "weekly_review": "ask", "monthly_review": "ask",
     "outcome_achieved": "ask", "milestone": "ask", "while_away": "reviews",
+    # The report itself is the destination: the web opens it at #dsr/<date>
+    # from Home, iOS from the payload's type + business_date.
+    "dsr": "home",
     "issue": "account", "issue_escalated": "account",
     # Not a product module — the web dashboard's bell reads this field
     # directly; iOS's DeepLinkRouter has its own "login" special-case.

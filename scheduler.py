@@ -3053,6 +3053,14 @@ def scheduler_loop():
                 from dsr.pipeline import run_sweep
                 _ops.run_job("dsr_sweep", run_sweep)
 
+            # Every tick, claimed per 10-minute slot — DSR pushes held through
+            # a restaurant's quiet hours go out once they end
+            # (dsr.deliver.release_held). Bounded; the held rows are the
+            # queue, and each is taken (held -> sending) before it is sent.
+            if _ops.claim_period("dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}"):
+                from dsr.deliver import release_held
+                _ops.run_job("dsr_delivery", release_held)
+
             # Every tick — scheduled posts, delayed actions whose undo window
             # closed, issue escalations, alerts held through a rush. Skipped
             # when a job's pulse ran them within the last interval.

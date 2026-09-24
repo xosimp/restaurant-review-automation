@@ -1166,12 +1166,18 @@ def run_closing_summary(db_path=DB_PATH):
     from models import is_in_quiet_hours
     from time_utils import restaurant_now
     sent = 0
+    from dsr.deliver import replaces_closing_summary
     for r in _restaurants(db_path):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
         local = restaurant_now(r, naive=True)
         day = _closing_due_day(r, local)
         if day is None:
+            continue
+        # The nightly DSR says how tonight went for every restaurant it runs
+        # for (DSR on, POS connected) — one notification, not two
+        # (DSR_ENGINE_PLAN.md §1). Every other restaurant keeps this one.
+        if replaces_closing_summary(r):
             continue
         if not ops.claim_period(f"closing_summary:{r.id}", day.isoformat()):
             continue

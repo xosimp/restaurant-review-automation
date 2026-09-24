@@ -200,6 +200,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 - `dsr_budgets` — PK (restaurant_id, business_date); gross / net budget per night.
 - `dsr_category_map` — PK (restaurant_id, pos_name) → category; an unmapped POS department is shown as Unmapped, never guessed.
 - `dsr_history_import` — PK (restaurant_id, business_date): gross, net, categories_json, source_file — last year from the owner's old DSR workbooks; an empty cell is skipped, never stored as $0.
+- `dsr_deliveries` — UNIQUE (restaurant_id, business_date, user_id, channel, kind): who was told about a night (`dsr.deliver`). `channel` email | push | history (user_id 0: the restaurant's one `alert_log` row for the night and kind, its id in `detail`); `kind` first | updated; `status` sending | sent | held | failed | skipped | expired; `hold_until` (UTC) when a held push may go; `report_id` / `version` / `provisional` the version it was rendered from (a released held push records the version it actually carried); `view` owner | manager; `detail` the error or the reason it was skipped. The row is written BEFORE the send — the UNIQUE constraint is the claim, so a retry, a second process or a re-run never sends twice; a row left `sending` by a killed process is never retried (one missed notice, never two).
 - `restaurants`: `fiscal_week_start_dow`, `fiscal_year_start`, `fiscal_period_scheme` (4x13 | 445), `dsr_enabled`, `dsr_deadline_hour`.
 
 ## Conventions that apply across this schema

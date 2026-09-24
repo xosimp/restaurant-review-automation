@@ -215,7 +215,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                             "text": "Prepared this morning's brief."})
         flagged = _row(conn, "SELECT COUNT(*) AS n, MAX(fired_at) AS at FROM alert_log WHERE restaurant_id=? "
                              "AND fired_at >= ? AND alert_type NOT IN ('morning_brief','intraday_pulse','closing_summary',"
-                             "'weekly_review','monthly_review','daily_briefing','login','staff_signin')",
+                             "'weekly_review','monthly_review','daily_briefing','login','staff_signin','dsr')",
                        (restaurant_id, day))
         if flagged and flagged["n"]:
             entries.append({"at": _iso_z(flagged["at"]), "module": "home", "kind": "flagged",

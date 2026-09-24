@@ -592,9 +592,13 @@ Three exist. Pick by what the email *is*, not by which is nearest:
 
 1. **`report_shell(kicker, title, subtitle, sections, cta_label, cta_url)`** —
    anything an owner reads for information. The digest, the monthly review,
-   the closing summary. Compose the body from `report_eyebrow`,
-   `report_paragraph`, `report_stats`, `report_lines`, `report_quote`,
-   `report_action`, `report_rule`. **New reporting email starts here.**
+   the closing summary, the nightly DSR (`emails.dsr_email`). Compose the body
+   from `report_eyebrow`, `report_paragraph`, `report_stats`, `report_lines`,
+   `report_bullets`, `report_quote`, `report_action`, `report_rule`. **New
+   reporting email starts here.** `report_bullets(items, accent)` is
+   `report_lines` without a label — a list whose eyebrow already names it
+   (the DSR's *Went well* on a `good` rule, *Needs attention* on `warn`,
+   *Not in this report* on the quiet border).
 2. **`_branded_email(inner_html)`** — short transactional mail: a code, a
    confirmation, a link. Wordmark, one white card, seal footer.
 3. **Bespoke** — legacy. 14 emails still are. Not a starting point; migrate

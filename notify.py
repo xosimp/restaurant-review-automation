@@ -292,6 +292,10 @@ ALERT_TAB = {
 # three levels, enforced at every briefing send.
 BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
                              "connection_lost", "monthly_review",
+                             # The nightly DSR: every owner and manager gets
+                             # it, by the product owner's rule — no level
+                             # or budget holds it back (dsr.deliver).
+                             "dsr",
                              # A promised supplier order that did not go out:
                              # a delivery that will not come (MOD-FC-10).
                              "order_send_voided",

@@ -959,6 +959,21 @@ def report_paragraph(text: str) -> str:
             f'margin:0">{text}</p>')
 
 
+def report_bullets(items, accent: str = None) -> str:
+    """One sentence per line on a thin rule — report_lines without the
+    label, for a list whose eyebrow already says what it is (the DSR's went
+    well / needs attention). `accent` is the rule's colour, a verdict token
+    or None for the quiet border."""
+    out = ""
+    for text in items or ():
+        if not text:
+            continue
+        out += (f'<div style="border-left:2px solid {accent or BRAND["border"]};padding:1px 0 1px 13px;'
+                f'margin:0 0 10px"><div style="font-family:{_SANS};font-size:13.5px;color:{BRAND["body"]};'
+                f'line-height:1.55">{text}</div></div>')
+    return out
+
+
 def report_shell(kicker: str, title: str, subtitle: str, sections,
                  cta_label: str = None, cta_url: str = "https://dashboard.cavnar.ai") -> str:
     body = report_rule().join(s for s in sections if s)
@@ -993,6 +1008,92 @@ def report_shell(kicker: str, title: str, subtitle: str, sections,
 </td></tr>
 </table>
 </div>""")
+
+
+def _header_text(value) -> str:
+    """A value made safe for a Subject line: one line, no control characters."""
+    return " ".join(str(value or "").split())
+
+
+def dsr_email(d: dict):
+    """(subject, html, preheader) for the nightly Daily Sales Report.
+
+    `d` is dsr.deliver.digest() — one login's rendered DSR (the owner's or
+    the manager's view, already redacted by dsr.access), so nothing here
+    decides who may read what, and every figure is one the payload carries.
+    Two shapes: the first notice (the whole summary) and the one "Updated"
+    notice a provisional night gets when its sales land."""
+    name = _header_text(d.get("name"))
+    net = d.get("net_label")
+    updated = d.get("kind") == "updated"
+    owner = d.get("view") == "owner"
+    if updated:
+        subject = f"Updated · {name} · {d['date_short']}" + (f" · {net} net" if net else "")
+    elif d.get("provisional"):
+        subject = f"{name} · {d['date_short']} · Provisional, sales still syncing"
+    else:
+        subject = f"{name} · {d['date_short']}" + (f" · {net} net" if net else "")
+
+    stats = report_stats([(esc(s["value"]), esc(s["label"]), BRAND.get(s["tone"]) if s.get("tone") else None)
+                          for s in d.get("stats") or []])
+    sections = []
+    if updated:
+        title = "Sales are now in"
+        sections.append(report_paragraph(
+            f"{esc(d['weekday'])}&rsquo;s report went out provisional while sales were still syncing. "
+            "They&rsquo;re in now, and the full report is final."))
+        sections.append(stats)
+        preheader = " · ".join(x for x in (f"{net} net" if net else None, d.get("compare")) if x) \
+            or "The report is final now."
+    else:
+        title = d["date_long"]
+        if d.get("provisional"):
+            sections.append(report_eyebrow("Provisional", BRAND["warn"]) + report_paragraph(
+                "Sales hadn&rsquo;t synced from the POS by the deadline, so this report has no sales "
+                "figures yet. You&rsquo;ll get one short update when they land."))
+        if d.get("lead"):
+            sections.append(report_paragraph(esc(d["lead"])))
+        elif d.get("lead_missing"):
+            sections.append(report_paragraph(esc(d["lead_missing"])))
+        sections.append(stats)
+        if d.get("went_well"):
+            sections.append(report_eyebrow("Went well", BRAND["good"])
+                            + report_bullets([esc(t) for t in d["went_well"]], BRAND["good"]))
+        if d.get("needs_attention"):
+            sections.append(report_eyebrow("Needs attention", BRAND["warn"])
+                            + report_bullets([esc(t) for t in d["needs_attention"]], BRAND["warn"]))
+        actions = d.get("actions") or []
+        if actions:
+            first = esc(actions[0]["text"])
+            if actions[0].get("why"):
+                first += (f'<div style="font-family:{_SANS};font-size:12.5px;font-weight:400;'
+                          f'color:{BRAND["body"]};margin-top:6px">{esc(actions[0]["why"])}</div>')
+            rest = report_bullets([esc(a["text"]) for a in actions[1:]])
+            sections.append(report_action("Tomorrow", first)
+                            + (f'<div style="margin-top:14px">{rest}</div>' if rest else ""))
+        missing = list(d.get("missing") or [])
+        if missing:
+            sections.append(report_eyebrow("Not in this report") + report_bullets([esc(m) for m in missing]))
+        lead_line = (d.get("lead") or "").split(". ")[0].rstrip(".")
+        figures = " · ".join(x for x in (f"{net} net" if net else None, d.get("compare")) if x)
+        preheader = (f"{figures}. {lead_line}." if figures and lead_line else figures or lead_line
+                     or ("Sales are still syncing." if d.get("provisional") else ""))
+
+    subtitle = " &middot; ".join(esc(x) for x in (name, d.get("fiscal")) if x)
+    kicker = "Daily report" if owner else "Manager report"
+    html = report_shell(kicker=kicker, title=esc(title), subtitle=subtitle, sections=sections,
+                        cta_label="View full report", cta_url=esc(d["url"]))
+    return subject, html, preheader[:150]
+
+
+def send_dsr_email(to_email: str, d: dict, restaurant_id: int = None) -> SendResult:
+    """One login's DSR email (dsr.deliver owns who and when). Operational
+    mail, not marketing: no unsubscribe; suppression, the email log, retry
+    and the Resend timeout are emails.deliver's."""
+    subject, html, preheader = dsr_email(d)
+    return deliver(email_type="send_dsr_email", restaurant_id=restaurant_id, payload={
+        "from": sender("client"), "to": [to_email], "subject": subject,
+        "preheader": preheader, "html": html})
 
 
 def send_password_reset_email(to_email: str, reset_url: str) -> bool:

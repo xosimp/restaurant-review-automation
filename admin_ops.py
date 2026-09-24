@@ -1070,6 +1070,9 @@ RUNNABLE_JOBS = {
     # Safe to run on demand: every night claims (restaurant, date, version)
     # and a finished version is never re-run, so a second pass does nothing.
     "dsr_sweep":               {"cadence": "every 10 minutes", "what": "Nightly DSR: past each close, poll the POS close, collect, write, finalise (provisional only when sales are missing at the deadline; v2 when they land)", "target": ("dsr.pipeline", "run_sweep")},
+    # Safe to run on demand despite "sends": a held push is taken
+    # (held -> sending) before it goes, so a second pass finds nothing.
+    "dsr_delivery":            {"cadence": "every 10 minutes", "what": "Send the DSR pushes held through each restaurant's quiet hours, once they end", "target": ("dsr.deliver", "release_held"), "sends": True},
 }
 
 

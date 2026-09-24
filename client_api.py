@@ -5644,6 +5644,7 @@ _NOTIFICATION_LABELS = {
     "daily_briefing":   "Your day, in one place",
     "intraday_pulse":   "Today vs a typical day",
     "closing_summary":  "How tonight went",
+    "dsr":              "Daily report ready",
     "weekly_review":    "Your week",
     "monthly_review":   "Your month",
     "schedule_drafted": "Next week's schedule drafted",
