@@ -604,7 +604,7 @@ def test_the_closeout_routes_take_the_new_fields_on_web_and_mobile(routes, db, m
         "id": 5, "restaurant_id": rid, "is_admin": 0, "role": "manager", "username": "sam", "email": "s@x.com"})
     got = routes.get("/api/closeout").get_json()
     assert got["ok"] and got["dsr_fields"] == list(closeout.DSR_FIELDS)
-    assert got["labels"]["influence"] == "Why the day went how it did"
+    assert got["labels"]["influence"].startswith("Influence — what was going on")
     body = routes.post("/api/closeout", json={"went_well": "Clean", "vip_guests": "Mayor Lee"}).get_json()
     assert body["ok"] and body["closeout"]["vip_guests"] == "Mayor Lee"
 

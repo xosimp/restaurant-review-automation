@@ -215,16 +215,34 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
 
 ## 11. Questions for Erik (block the parts that must match his sheet)
 
-1. Calendar: 13 periods × 4 weeks, weeks Wed–Tue, period 1 starting Wed
-   1/14/26? (inferred from Period 9 Week 1 = Wed 8/26/26; or a 4-4-5 year)
-2. Gross vs net: what comes off gross — comps, discounts, voids, tax?
+1. ~~Calendar~~ **Answered (Erik, 9/24/26):** "a mixture of 4 and 5 week
+   periods. It must line up with Back Office. Our weeks start on Wednesday"
+   (Wed–Tue). A 4-4-5 year starting Wed 12/31/25 puts Period 9 · Week 1 on
+   8/26/26 exactly, as on his sheet — the working setting. **Still to confirm
+   against Back Office's own period dates** (a screenshot of its fiscal
+   calendar); `fiscal_period_scheme` also takes 4-5-4, 5-4-4 or the exact
+   lengths if Back Office differs.
+2. ~~Gross vs net~~ **Answered:** "gross sales — everything included; net
+   sales = gross − comps, voids, tax etc." His net is the DSR's net (items
+   after discounts and comps, no tax or voids); his gross adds tax and voided
+   lines back: `dsr_gross_basis = "all"`. **Verify on the first live RPower
+   night** against RPower's own totals (`detail.source_checks`) — and whether
+   "etc." also means service charges or gift cards.
 3. The six categories: how do his RPower departments map (draft beer under
-   Beer? "Retail/Rental" = merch + room rental?).
-4. Budget: does he set it weekly per day? Where does it come from?
+   Beer? "Retail/Rental" = merch + room rental?). Waits on the RPower token.
+4. ~~Budget~~ **Answered:** "I want to set budget daily" — the grid's budget
+   editor is per day (`POST dsr/budget`).
 5. Last year: can he send past DSR workbooks so Last Year fills from day one?
+   (The importer reads the Cavnar template; his layout is added from his file.)
 6. ~~Who gets which version~~ **Answered (Will, 9/23/26):** every owner login gets the Owner DSR (Simple EJ's: Erik and Jim); every manager login gets the Manager DSR. Still open: how soon after close.
 7. Petty Cash, Check Requests, CC Register tabs — in scope now or later?
-8. What goes in "Influence/Result"?
+8. ~~Influence/Result~~ **Answered:** "what was going on — Cubs, Bears, World
+   Cup, event — so we know looking back why a change in sales out of the
+   ordinary happened." The close-out's `influence` field, worded that way; the
+   grid shows it beside the day's listed events.
+
+Simple EJ's settings, ready for the official account:
+`docs/clients/simple-ejs/dsr_config.json`.
 
 ## Not known yet — must not be assumed
 

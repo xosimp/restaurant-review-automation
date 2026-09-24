@@ -46,7 +46,7 @@ LABELS = {
     "maintenance": "Maintenance",
     "shift_notes": "Shift notes",
     "general_notes": "General notes",
-    "influence": "Why the day went how it did",
+    "influence": "Influence — what was going on (a Cubs or Bears game, the World Cup, an event)",
 }
 MAX_LEN = 1000
 

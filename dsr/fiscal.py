@@ -7,15 +7,26 @@ A restaurant sets three facts (restaurants columns):
   fiscal_week_start_dow  0=Monday … 6=Sunday (Python weekday); unset = Monday
   fiscal_year_start      ISO date of Period 1, Week 1's first day; unset = no
                          periods, only the week
-  fiscal_period_scheme   "4x13" (13 periods of 4 weeks) or "445" (quarters of
-                         4-4-5 weeks); unset = "4x13"
+  fiscal_period_scheme   "4x13" (13 periods of 4 weeks); "445", "454", "544"
+                         (quarters of 4- and 5-week periods in that order);
+                         or the exact period lengths in weeks, comma-separated
+                         ("4,4,5,4,4,5,4,4,5,4,4,5") — for a calendar that has
+                         to line up with an accounting system's (Erik: "a
+                         mixture of 4 and 5 week periods … must line up with
+                         Back Office"); unset = "4x13"
+
+The fiscal year is named for the calendar year that holds most of it, so a
+year starting Wed 12/31/25 is fiscal 2026. A 53-week year is expressed by
+listing its lengths (one period of 5 more); the year start is the owner's to
+move forward each year if their accounting system does.
 
 Nothing here guesses a calendar: with no year start, a report shows its week
 (Wed 8/26 – Tue 9/1) and no period number.
 """
 from datetime import date, timedelta
 
-SCHEMES = ("4x13", "445")
+SCHEMES = ("4x13", "445", "454", "544")
+_QUARTERS = {"445": [4, 4, 5], "454": [4, 5, 4], "544": [5, 4, 4]}
 
 
 def _as_date(d):
@@ -40,10 +51,29 @@ def week_bounds(restaurant, day):
     return start, start + timedelta(days=6)
 
 
+def period_lengths(scheme):
+    """The period lengths in weeks for a scheme, or None when it is not one.
+    A named scheme, or 12-13 periods of 4 or 5 weeks totalling 52 or 53."""
+    s = str(scheme or "").replace(" ", "")
+    if s == "4x13":
+        return [4] * 13
+    if s in _QUARTERS:
+        return _QUARTERS[s] * 4
+    try:
+        lengths = [int(x) for x in s.split(",") if x != ""]
+    except ValueError:
+        return None
+    if 12 <= len(lengths) <= 13 and all(n in (4, 5) for n in lengths) and sum(lengths) in (52, 53):
+        return lengths
+    return None
+
+
+def valid_scheme(scheme) -> bool:
+    return period_lengths(scheme) is not None
+
+
 def _period_lengths(scheme):
-    if scheme == "445":
-        return [4, 4, 5] * 4
-    return [4] * 13
+    return period_lengths(scheme) or [4] * 13
 
 
 def position(restaurant, day) -> dict:
@@ -60,10 +90,7 @@ def position(restaurant, day) -> dict:
         y0 = _as_date(raw)
     except (TypeError, ValueError):
         return out
-    scheme = getattr(restaurant, "fiscal_period_scheme", None) or "4x13"
-    if scheme not in SCHEMES:
-        scheme = "4x13"
-    lengths = _period_lengths(scheme)
+    lengths = _period_lengths(getattr(restaurant, "fiscal_period_scheme", None) or "4x13")
     weeks_in_year = sum(lengths)
     # Walk whole fiscal years forward or back from the configured start.
     weeks_from_start = (ws - y0).days // 7
@@ -75,7 +102,9 @@ def position(restaurant, day) -> dict:
             break
         remaining -= n
         period += 1
-    out.update({"fiscal_year": y0.year + year_index, "period": period, "week": remaining + 1})
+    year_start = y0 + timedelta(weeks=year_index * weeks_in_year)
+    fiscal_year = (year_start + timedelta(weeks=weeks_in_year // 2)).year
+    out.update({"fiscal_year": fiscal_year, "period": period, "week": remaining + 1})
     return out
 
 

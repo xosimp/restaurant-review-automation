@@ -3029,6 +3029,7 @@ def _dsr_settings_payload(r):
             "fiscal_period_scheme": getattr(r, "fiscal_period_scheme", None) or "4x13",
             "dsr_enabled": bool(getattr(r, "dsr_enabled", 1)),
             "dsr_notify": bool(getattr(r, "dsr_notify", 0)),
+            "dsr_gross_basis": getattr(r, "dsr_gross_basis", None) or "items",
             "dsr_deadline_hour": 4 if hour is None else int(hour),
             "calendar_label": fiscal.label(r, closeout.business_date_for(r))}
 
@@ -3089,13 +3090,20 @@ def _do_dsr_settings_set(u):
                 return {"ok": False, "error": "The year start must be a date."}, 400
             fields["fiscal_year_start"] = d.isoformat()
     if "fiscal_period_scheme" in body:
-        if body.get("fiscal_period_scheme") not in fiscal.SCHEMES:
-            return {"ok": False, "error": "Pick 13 four-week periods or 4-4-5."}, 400
-        fields["fiscal_period_scheme"] = body["fiscal_period_scheme"]
+        scheme = str(body.get("fiscal_period_scheme") or "").replace(" ", "")
+        if not fiscal.valid_scheme(scheme):
+            return {"ok": False, "error": "Pick 13 four-week periods, 4-4-5, 4-5-4 or 5-4-4, or list your "
+                                          "periods' lengths in weeks (12 or 13 of 4 or 5, totalling 52 or 53)."}, 400
+        fields["fiscal_period_scheme"] = scheme
     if "dsr_enabled" in body:
         fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
     if "dsr_notify" in body:
         fields["dsr_notify"] = 1 if body.get("dsr_notify") else 0
+    if "dsr_gross_basis" in body:
+        from dsr.block_sales import GROSS_BASES
+        if body.get("dsr_gross_basis") not in GROSS_BASES:
+            return {"ok": False, "error": "Gross is either items only or everything rung (items, tax and voids)."}, 400
+        fields["dsr_gross_basis"] = body["dsr_gross_basis"]
     if "dsr_deadline_hour" in body:
         try:
             h = int(body.get("dsr_deadline_hour"))

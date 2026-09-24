@@ -174,12 +174,45 @@ def collect(ctx):
     return _ready(ctx, data, provider, closed)
 
 
+# What the report calls GROSS, per restaurant (restaurants.dsr_gross_basis).
+# NET is the same under both: items after discounts and comps, never tax or
+# voids — Erik (Simple EJ's, 9/24/26): "gross sales = everything included;
+# net sales = gross − comps, voids, tax etc." His net is our net; his gross
+# adds the tax and the voided lines back. To verify against RPower's own
+# totals (detail.source_checks) on the first live night.
+GROSS_BASES = {
+    "items": {"gross": "items at the price rung, before discounts and comps; no tax, tips, gift cards, "
+                       "refunds or voids",
+              "net": "gross less discounts and comps"},
+    "all": {"gross": "everything rung: items at the price rung before discounts and comps, plus tax and "
+                     "voided lines",
+            "net": "gross less comps, discounts, voids and tax"},
+}
+
+
+def _gross(ctx, data):
+    """(gross, basis, missing) for this restaurant's basis. An "all" gross
+    whose tax or voids the POS did not report is not measured — never the
+    items figure passed off as everything."""
+    basis = getattr(ctx.restaurant, "dsr_gross_basis", None) or "items"
+    if basis not in GROSS_BASES:
+        basis = "items"
+    items = data.get("gross")
+    if basis == "items" or items is None:
+        return items, basis, []
+    missing = [k for k in ("tax", "voids") if data.get(k) is None]
+    if missing:
+        return None, basis, missing
+    return round(float(items) + float(data["tax"]) + float(data["voids"]), 2), basis, []
+
+
 def _ready(ctx, data, provider, closed_by):
     day = ctx.business_date
-    net, gross = data["net"], data["gross"]
+    net = data["net"]
+    gross, gross_basis, gross_missing = _gross(ctx, data)
     tx, guests = data["transactions"], data["guests"]
     metrics = {
-        "gross": gross, "net": net, "transactions": tx, "guests": guests,
+        "gross": gross, "gross_items": data["gross"], "net": net, "transactions": tx, "guests": guests,
         "avg_ticket": round(net / tx, 2) if tx else None,
         "per_guest": round(net / guests, 2) if guests else None,
         "discounts": data["discounts"], "comps": data["comps"], "voids": data["voids"],
@@ -220,8 +253,8 @@ def _ready(ctx, data, provider, closed_by):
     detail = {
         "provider": provider,
         "closed_by": closed_by,
-        "definition": {"gross": "items at the price rung, before discounts and comps; no tax, tips, "
-                                "gift cards, refunds or voids",
+        "definition": {"gross": GROSS_BASES[gross_basis]["gross"], "net": GROSS_BASES[gross_basis]["net"],
+                       "gross_basis": gross_basis, "gross_missing": gross_missing,
                        "net_deductions": data.get("net_deductions") or []},
         "baselines": baselines,
         "budget": {"gross": b_gross, "net": b_net} if budget else None,

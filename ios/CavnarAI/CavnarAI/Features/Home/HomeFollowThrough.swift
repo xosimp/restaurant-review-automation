@@ -1370,7 +1370,7 @@ struct CloseOutSheet: View {
                                      focus: $focused, field: CloseOutField.shiftNotes)
                         AccountField(label: "General notes", text: $draft.generalNotes,
                                      focus: $focused, field: CloseOutField.generalNotes)
-                        AccountField(label: "Why the day went how it did", text: $draft.influence,
+                        AccountField(label: "Influence — what was going on (Cubs, Bears, an event)", text: $draft.influence,
                                      focus: $focused, field: CloseOutField.influence,
                                      showsDivider: false)
                     }

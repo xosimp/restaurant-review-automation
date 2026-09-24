@@ -56,8 +56,7 @@ def period_bounds(restaurant, day):
         return None
     ws = _d(pos["week_start"])
     start = ws - timedelta(weeks=pos["week"] - 1)
-    scheme = getattr(restaurant, "fiscal_period_scheme", None) or "4x13"
-    lengths = fiscal._period_lengths(scheme if scheme in fiscal.SCHEMES else "4x13")
+    lengths = fiscal._period_lengths(getattr(restaurant, "fiscal_period_scheme", None) or "4x13")
     return start, start + timedelta(weeks=lengths[pos["period"] - 1]) - timedelta(days=1)
 
 

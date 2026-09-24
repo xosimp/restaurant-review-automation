@@ -1,0 +1,24 @@
+{
+  "_about": "Simple EJ's DSR settings from Erik's answers (texted to Will, 9/24/26). Load onto the OFFICIAL account (not the test one) via POST /api/dsr/settings as an owner, or update_restaurant. Two items are still to confirm — see _confirm.",
+  "settings": {
+    "fiscal_week_start_dow": 2,
+    "fiscal_year_start": "2025-12-31",
+    "fiscal_period_scheme": "445",
+    "dsr_gross_basis": "all",
+    "dsr_enabled": true,
+    "dsr_notify": false,
+    "dsr_deadline_hour": 4
+  },
+  "_why": {
+    "fiscal_week_start_dow": "Weeks run Wednesday to Tuesday (Python weekday 2 = Wednesday).",
+    "fiscal_year_start / fiscal_period_scheme": "\"A mixture of 4 and 5 week periods ... must line up with Back Office.\" A 4-4-5 year from Wed 12/31/25 puts Period 9 Week 1 on 8/26/26, as on his sheet.",
+    "dsr_gross_basis": "\"Gross sales = everything included. Net sales = gross - comps, voids, tax etc.\" Gross = items + tax + voids; net unchanged.",
+    "dsr_notify": "Off until Will has watched a few real nights; then on for Erik and Jim.",
+    "budget": "\"I want to set budget daily\" — entered per day in the weekly grid.",
+    "influence": "\"What was going on — Cubs, Bears, World Cup, event.\" The close-out's influence field."
+  },
+  "_confirm": [
+    "Back Office's period start dates for the current fiscal year (a screenshot of its fiscal calendar) — confirms 4-4-5 from 12/31/25, or gives the exact lengths.",
+    "On the first live RPower night: our 'everything included' gross against RPower's own gross and net (detail.source_checks), and whether 'etc.' also covers service charges or gift cards."
+  ]
+}
