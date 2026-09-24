@@ -101,7 +101,10 @@ def test_an_archive_with_a_three_week_hole_is_not_read_as_covering_the_window(db
     rid = _rid(db_path)
     _sales(db_path, rid, [(TODAY - timedelta(days=40), 1000), (TODAY - timedelta(days=27), 1000),
                           (TODAY - timedelta(days=5), 1000)])
-    monkeypatch.setattr(pos, "fetch_business_days", lambda r, s, e: ({"x": 23000.0}, "toast"))
+    # The live POS answers for every day of the window — it is held to the
+    # same coverage rule as the archive now (CA3 F14).
+    monkeypatch.setattr(pos, "fetch_business_days", lambda r, s, e: (
+        {(TODAY - timedelta(days=k)).isoformat(): 1000.0 for k in range(5, 28)}, "toast"))
     total, _why = cogs.net_sales_in_window(rid, TODAY - timedelta(days=27), TODAY - timedelta(days=5))
     assert total == 23000.0
 

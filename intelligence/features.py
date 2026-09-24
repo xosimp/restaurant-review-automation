@@ -81,7 +81,14 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             (restaurant_id, d90.isoformat())).fetchall()
         last30 = [r for r in rows if _d(r["review_date"]) >= d30.isoformat()]
         prior = [r for r in rows if _d(r["review_date"]) < d30.isoformat()]
-        f["reviews_30d"] = len(last30)
+        # None, not 0, when the restaurant has no review source and nothing
+        # on file: "no reviews arrive" is unmeasured, not "0 reviews", and a
+        # 0 counted it as measured in completeness (CA3 F12 — group G owns
+        # this line and labor_pct_28d below).
+        src = conn.execute("SELECT gmb_refresh_token, reviews_live, google_place_id FROM restaurants WHERE id=?",
+                           (restaurant_id,)).fetchone()
+        has_source = bool(src and (src["gmb_refresh_token"] or (src["reviews_live"] and src["google_place_id"])))
+        f["reviews_30d"] = len(last30) if (rows or has_source) else None
         if last30:
             f["avg_rating_30d"] = round(sum(r["rating"] for r in last30) / len(last30), 2)
             replied = [r for r in last30 if r["response_status"] in ("approved", "posted")]
@@ -110,9 +117,17 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         lab = conn.execute(
             "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? ORDER BY date",
             (restaurant_id, d28.isoformat())).fetchall()
-        pcts = [float(r["labor_pct"]) for r in lab if r["labor_pct"] is not None]
+        # Days with a sales figure only (a missing figure is NULL — or, on
+        # rows from before that fix, 0 — and has no labor %), and SALES-
+        # WEIGHTED: the period's labor % is total labor over total sales,
+        # the figure labor.py reports. An unweighted mean of daily %s read a
+        # slow Monday at 60% as heavily as a $9,000 Saturday (CA3 F12).
+        costed = [r for r in lab if r["labor_pct"] is not None and r["sales"] and float(r["sales"]) > 0]
+        pcts = [float(r["labor_pct"]) for r in costed]
         if pcts:
-            f["labor_pct_28d"] = round(sum(pcts) / len(pcts), 2)
+            tot_sales = sum(float(r["sales"]) for r in costed)
+            f["labor_pct_28d"] = round(sum(float(r["labor_pct"]) * float(r["sales"]) for r in costed)
+                                       / tot_sales, 2)
             if len(pcts) >= 5:
                 m = sum(pcts) / len(pcts)
                 f["labor_pct_sd_28d"] = round((sum((p - m) ** 2 for p in pcts) / (len(pcts) - 1)) ** 0.5, 2)
@@ -321,8 +336,13 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict
             "ON m.restaurant_id=f.restaurant_id AND m.week=f.week WHERE f.week >= ?", (floor,)).fetchall()
     finally:
         conn.close()
+    # Cross-restaurant readers (benchmarks, patterns, trends) only ever see
+    # real restaurants: a demo account's seeded rows counted toward the
+    # privacy floor and the cohort percentiles (CA3 F7).
+    from .jobs import seeded_restaurant_ids
+    seeded = seeded_restaurant_ids(db_path=db_path)
     return {r["restaurant_id"]: {"week": r["week"], "features": json.loads(r["features_json"]),
-                                 "completeness": r["completeness"]} for r in rows}
+                                 "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
 
 
 def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
@@ -334,8 +354,12 @@ def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
                             (floor,)).fetchall()
     finally:
         conn.close()
+    from .jobs import seeded_restaurant_ids
+    seeded = seeded_restaurant_ids(db_path=db_path)      # demo accounts excluded (CA3 F7)
     out = {}
     for r in rows:
+        if r["restaurant_id"] in seeded:
+            continue
         out.setdefault(r["week"], {})[r["restaurant_id"]] = json.loads(r["features_json"])
     return out
 

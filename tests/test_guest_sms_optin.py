@@ -143,7 +143,7 @@ def test_the_invite_records_the_response(db_path):
 def _toast_restaurant(db_path):
     rid = _restaurant(db_path, module_marketing=1)
     conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET toast_client_id='demo', toast_client_secret='demo', "
+    conn.execute("UPDATE restaurants SET is_demo=1, toast_client_id='demo', toast_client_secret='demo', "
                  "toast_restaurant_guid='demo' WHERE id=?", (rid,))
     conn.commit()
     conn.close()

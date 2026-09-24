@@ -289,7 +289,7 @@ def test_toast_departments_hours_and_items(db_path, monkeypatch):
 
 
 def test_toast_demo_mode_cannot_report_a_real_day(db_path, monkeypatch):
-    rid = _restaurant(db_path, toast_restaurant_guid="demo", toast_client_id="demo", toast_client_secret="demo")
+    rid = _restaurant(db_path, is_demo=1, toast_restaurant_guid="demo", toast_client_id="demo", toast_client_secret="demo")
     with pytest.raises(pos.POSCapabilityError):
         pos.fetch_day_sales(rid, date(2026, 9, 22))
 

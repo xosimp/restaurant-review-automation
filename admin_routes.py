@@ -647,12 +647,21 @@ def client_settings_page(restaurant_id, current_user):
     staff_notes = get_staff_notes(restaurant_id)
     from notify import get_alert_contacts
     alert_contacts = get_alert_contacts(restaurant_id)
+    # The last physical count (ingredients.last_recount_at, the column
+    # ordering reads) — restaurants.inventory_updated_at is never written, so
+    # this field read "Never" or a stale date forever (CA3 F9).
+    try:
+        import ordering
+        count_freshness = ordering.count_freshness(restaurant_id)
+    except Exception:
+        count_freshness = {}
     return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,
         client_data=client_data,
         staff_notes=staff_notes,
-        alert_contacts=alert_contacts)
+        alert_contacts=alert_contacts,
+        count_freshness=count_freshness)
 
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -2651,9 +2660,21 @@ def admin_api_set_demo(restaurant_id, current_user):
     from models import get_restaurant, update_restaurant
     data = request.get_json(silent=True) or {}
     on = 1 if data.get("is_demo") else 0
-    if not get_restaurant(restaurant_id):
+    current = get_restaurant(restaurant_id)
+    if not current:
         return jsonify(ok=False, error="Not found"), 404
-    update_restaurant(restaurant_id, {"is_demo": on})
+    fields = {"is_demo": on}
+    if not on and int(getattr(current, "is_demo", 0) or 0) == 1:
+        # Turning demo OFF leaves the seeded rows (rr_% reviews, seeded
+        # shifts, ingredients, labor history) in place — never hard-deleted
+        # here — and TAGS the restaurant: demo_cleared_at keeps it out of
+        # cross-restaurant learning until every feature window has rolled
+        # past the seeded history (intelligence.jobs.real_restaurant_ids,
+        # CA3 F7). Synthetic history must not become a real baseline for
+        # everyone else.
+        from time_utils import utc_stamp
+        fields["demo_cleared_at"] = utc_stamp()
+    update_restaurant(restaurant_id, fields)
     try:
         import admin_events
         admin_events.record("admin", "demo_flag.set", restaurant_id=restaurant_id, amount=on,

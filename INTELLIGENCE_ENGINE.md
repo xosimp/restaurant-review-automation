@@ -11,7 +11,11 @@ one restaurant ever seeing another's data. Written before implementation
    holds only ratios, rates and counts per restaurant-week — and every
    figure that leaves it is an aggregate over a cohort of at least
    `MIN_COHORT` (5) restaurants. Below that the answer is "not enough
-   similar restaurants", never a number.
+   similar restaurants", never a number. Demo accounts are never in a
+   cohort, a platform rate or the MIN_COHORT count: `jobs.seeded_restaurant_ids`
+   (`is_demo`, or de-flagged under `SEEDED_HISTORY_DAYS` ago) is left out by
+   `active_restaurants`, `features.latest_by_restaurant`/`weekly_by_restaurant`,
+   `scoring.kind_stats` and the confidence log (CA3 F7).
 3. **Nothing is generated to fill a gap.** A pattern exists only when a
    permutation test and a false-discovery correction say so; a benchmark
    only when the cohort is large enough; a confidence score only from

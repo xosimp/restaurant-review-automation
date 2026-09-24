@@ -78,7 +78,10 @@ def _critical_low(restaurant_id):
     if not is_live or not items:
         return []
     analysis = (analysis_for(restaurant_id, items=items, is_live=True) or (None, None, {}))[2]
-    return [x["item"] for x in (analysis.get("critical_low") or [])]
+    # Not an item whose stock rests on a stale count or a ledger that went
+    # negative — the same rule as the critical-low push (notify.py, CA3 F14).
+    return [x["item"] for x in (analysis.get("critical_low") or [])
+            if not x.get("count_stale") and not x.get("count_discrepancy")]
 
 
 def _schedule_drafted_recently(restaurant_id, db_path=DB_PATH, days=5):

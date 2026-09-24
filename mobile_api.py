@@ -4488,31 +4488,39 @@ def _do_mobile_account(current_user):
     # button while no data has synced since. sync_error is the same signal
     # admin.html already reads for exactly this reason (see its "Last error"
     # line) — this brings the client-facing surfaces in line with it.
+    # Every POS row, RPOWER included, also carries the one provider-agnostic
+    # reading (pos_health.provider_state — CA3 F6): `sync_state` is current |
+    # aging | stale | error | unknown | not_connected, so a sync that simply
+    # stopped reads stale here as it does on Home, admin and the status page.
+    import pos_health as _ph
+    import admin_ops as _ao
+    _g_source, _g_label = _ao.review_source(restaurant)
+
+    def _pos_row(name, id_attr):
+        st = _ph.provider_state(restaurant, name)
+        return {"connected": bool(getattr(restaurant, id_attr, None))
+                             and not getattr(restaurant, f"{name}_sync_error", None),
+                "last_synced": getattr(restaurant, f"{name}_last_synced", None),
+                "error": getattr(restaurant, f"{name}_sync_error", None),
+                "sync_state": st["state"], "age_days": st["age_days"]}
+
     connections = {
         "google_business": {
             "connected": bool(getattr(restaurant, "gmb_refresh_token", None)),
+            # Places-only reviews are a five-at-a-time sample, not a
+            # Business Profile connection (CA3 F13).
+            "source": _g_source,
+            "label": _g_label,
         },
         "instagram": {
             "connected": bool(getattr(restaurant, "ig_token", None)),
         },
-        "toast": {
-            "connected": bool(getattr(restaurant, "toast_restaurant_guid", None))
-                        and not getattr(restaurant, "toast_sync_error", None),
-            "last_synced": getattr(restaurant, "toast_last_synced", None),
-            "error": getattr(restaurant, "toast_sync_error", None),
-        },
-        "square": {
-            "connected": bool(getattr(restaurant, "square_location_id", None))
-                        and not getattr(restaurant, "square_sync_error", None),
-            "last_synced": getattr(restaurant, "square_last_synced", None),
-            "error": getattr(restaurant, "square_sync_error", None),
-        },
-        "clover": {
-            "connected": bool(getattr(restaurant, "clover_merchant_id", None))
-                        and not getattr(restaurant, "clover_sync_error", None),
-            "last_synced": getattr(restaurant, "clover_last_synced", None),
-            "error": getattr(restaurant, "clover_sync_error", None),
-        },
+        "toast": _pos_row("toast", "toast_restaurant_guid"),
+        "square": _pos_row("square", "square_location_id"),
+        "clover": _pos_row("clover", "clover_merchant_id"),
+        # RPOWER (Simple EJ's) was missing from this list entirely.
+        "rpower": _pos_row("rpower", "rpower_store_mid"),
+        "pos": _ph.pos_sync_state(restaurant),
     }
     alerts = {
         "contacts": get_alert_contacts(rid),
@@ -4774,6 +4782,10 @@ def mobile_connect_toast(current_user):
     result = _toast.test_credentials(client_id, client_secret, restaurant_guid)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error") or "Toast rejected those credentials")
+    # The "demo" credentials load synthetic shifts and sales; only a
+    # restaurant flagged is_demo may use them (CA3 F8).
+    if result.get("demo") and not _toast.demo_allowed(rid):
+        return jsonify(ok=False, error="Those are not Toast credentials"), 400
 
     update_restaurant(rid, {
         "toast_client_id": client_id,

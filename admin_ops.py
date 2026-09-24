@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 from pricing import TIERS as _TIERS
 MONTHLY_BY_MODULES = {n: t["monthly"] for n, t in _TIERS.items()}
 
-INTEGRATIONS = ("google_business", "toast", "square", "clover", "instagram", "webhook")
+INTEGRATIONS = ("google_business", "toast", "square", "clover", "rpower", "instagram", "webhook")
 
 
 # ── time helpers ─────────────────────────────────────────────────────────────
@@ -38,31 +38,16 @@ INTEGRATIONS = ("google_business", "toast", "square", "clover", "instagram", "we
 # writes UTC with a space ("2026-09-06 23:17:24"); Python's isoformat()
 # writes local time with a T ("2026-09-06T18:17:24"). Everything here is
 # normalised to naive LOCAL time so ages and "since" are right for both.
-_UTC_OFFSET = datetime.now() - datetime.utcnow()
 
 
 def _parse(ts):
-    if not ts:
-        return None
-    raw = str(ts).strip()
-    s = raw.replace("Z", "")
-    d = None
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            d = datetime.strptime(s, fmt)
-            break
-        except ValueError:
-            continue
-    if d is None:
-        try:
-            d = datetime.fromisoformat(s)
-            if d.tzinfo:
-                return (d - d.utcoffset()).replace(tzinfo=None) + _UTC_OFFSET
-        except Exception:
-            return None
-    if raw.endswith("Z") or ("T" not in raw and " " in raw):
-        d = d + _UTC_OFFSET
-    return d
+    """A stored stamp as NAIVE server-local time, through the one parser
+    (time_utils.parse_stamp, CA3 F15): an offset or Z is that instant,
+    SQLite's space form is UTC, and a naive 'T' stamp or bare date is read
+    as server-local — this module's rule since it was written."""
+    from time_utils import parse_stamp
+    d = parse_stamp(ts, naive_tz="local")
+    return None if d is None else d.astimezone().replace(tzinfo=None)
 
 
 def _age_hours(ts):
@@ -175,7 +160,11 @@ def _load_everything():
     alerts = per_rid("SELECT restaurant_id, COUNT(*) AS fired_7d, MAX(fired_at) AS last_at FROM alert_log WHERE fired_at >= ? GROUP BY restaurant_id", (week,))
     webhooks = per_rid("SELECT restaurant_id, url, is_active, consecutive_failures, last_status, last_fired_at, disabled_reason FROM webhooks")
     client_data = per_rid("SELECT restaurant_id, shifts_csv IS NOT NULL AND shifts_csv != '' AS has_shifts, inventory_csv IS NOT NULL AND inventory_csv != '' AS has_inventory, updated_at FROM client_data")
-    ingredients = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(updated_at) AS cost_updated_at "
+    # last_count_at: the newest physical count (the column ordering reads).
+    # restaurants.inventory_updated_at is never written by anything, so
+    # inventory read "fresh" forever off it (CA3 F9).
+    ingredients = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(updated_at) AS cost_updated_at, "
+                          "MAX(last_recount_at) AS last_count_at "
                           "FROM ingredients WHERE COALESCE(is_active,1)=1 GROUP BY restaurant_id")
     recipes = per_rid("""SELECT mi.restaurant_id AS restaurant_id, COUNT(DISTINCT mi.id) AS items,
                                 COUNT(DISTINCT ri.menu_item_id) AS mapped
@@ -183,6 +172,11 @@ def _load_everything():
                          GROUP BY mi.restaurant_id""")
     labor_days = per_rid("SELECT restaurant_id, COUNT(DISTINCT date) AS n, MAX(date) AS last FROM labor_daily_history "
                          "WHERE date >= date('now','-30 days') AND sales > 0 GROUP BY restaurant_id")
+    # The last day the labor data COVERS (a day with sales), not when a file
+    # was last written — a sync that keeps landing shifts with no sales is
+    # not current data (CA3 F2/F3).
+    labor_last = per_rid("SELECT restaurant_id, MAX(date) AS last FROM labor_daily_history "
+                         "WHERE sales > 0 GROUP BY restaurant_id")
     contacts = per_rid("SELECT restaurant_id, COUNT(*) AS n, SUM(COALESCE(sms_consent,0)) AS consented "
                        "FROM alert_contacts GROUP BY restaurant_id")
     routing = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM issue_routing GROUP BY restaurant_id")
@@ -202,7 +196,7 @@ def _load_everything():
     return dict(now=now, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month, ai_today=ai_today,
                 ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week, emails=emails, pushes=pushes, tokens=tokens, alerts=alerts,
                 webhooks=webhooks, client_data=client_data, ingredients=ingredients, marketing=marketing,
-                recipes=recipes, labor_days=labor_days, contacts=contacts, routing=routing,
+                recipes=recipes, labor_days=labor_days, labor_last=labor_last, contacts=contacts, routing=routing,
                 stale_issues=stale_issues,
                 sched_posts=sched_posts, schedules=schedules, logins=logins, sessions=sessions, guests=guests,
                 job_failures=job_failures, resolved=resolved)
@@ -210,31 +204,61 @@ def _load_everything():
 
 # ── the per-location health record ──────────────────────────────────────────
 
+def _pos_integration(r, name, label, configured, auth):
+    """One POS provider's row, judged through pos_health.provider_state —
+    the same provider-agnostic reading every other surface uses (CA3 F6) —
+    so RPOWER is listed and a sync that stopped days ago without writing an
+    error is not "connected"."""
+    import pos_health
+    st = pos_health.provider_state(r, name)
+    err = r.get(f"{name}_sync_error") or None
+    if not err and configured and st.get("state") == "stale":
+        err = f"No successful sync in {int(st.get('age_days') or 0)} days"
+    return {"key": name, "label": label,
+            "connected": bool(configured) and st.get("state") in ("current", "aging"),
+            "configured": bool(configured),
+            "last_success": r.get(f"{name}_last_synced"), "error": err,
+            "sync_state": st.get("state"), "age_days": st.get("age_days"),
+            "auth": auth}
+
+
+def review_source(r):
+    """(source, label) for how this location's Google reviews arrive.
+    Places — a place id with reviews_live and no Business Profile — returns
+    at most five reviews a fetch, so it is a SAMPLE of the listing and never
+    "Google Business connected" (CA3 F13)."""
+    if (r.get("gmb_refresh_token") if isinstance(r, dict) else getattr(r, "gmb_refresh_token", None)):
+        return "gbp", "Google Business"
+    live = r.get("reviews_live") if isinstance(r, dict) else getattr(r, "reviews_live", 0)
+    place = r.get("google_place_id") if isinstance(r, dict) else getattr(r, "google_place_id", None)
+    if live and place:
+        return "places_sampled", PLACES_SAMPLED_LABEL
+    return "none", "Google Business"
+
+
+PLACES_SAMPLED_LABEL = "Google reviews (sampled — Places returns 5 at a time)"
+_POS_LABELS = {"toast": "Toast", "square": "Square", "clover": "Clover", "rpower": "RPOWER"}
+
+
 def _integrations_for(r, hooks):
     """Every external connection, in one shape: state, last success, error."""
     ig_exp = _parse(r.get("ig_token_expires"))
     ig_days_left = None if not ig_exp else (ig_exp - datetime.now()).days
+    source, g_label = review_source(r)
     out = [
-        {"key": "google_business", "label": "Google Business",
+        {"key": "google_business", "label": g_label, "source": source,
          "connected": bool(r.get("gmb_refresh_token")),
          "configured": bool(r.get("google_place_id") or r.get("gmb_location_id")),
          "last_success": r.get("last_fetched_at"), "error": None,
          "auth": "oauth" if r.get("gmb_refresh_token") else ("place id only" if r.get("google_place_id") else "none")},
-        {"key": "toast", "label": "Toast POS",
-         "connected": bool(r.get("toast_restaurant_guid") and r.get("toast_client_id")) and not r.get("toast_sync_error"),
-         "configured": bool(r.get("toast_restaurant_guid")),
-         "last_success": r.get("toast_last_synced"), "error": r.get("toast_sync_error") or None,
-         "auth": "credentials" if r.get("toast_client_id") else "none"},
-        {"key": "square", "label": "Square POS",
-         "connected": bool(r.get("square_access_token")) and not r.get("square_sync_error"),
-         "configured": bool(r.get("square_access_token")),
-         "last_success": r.get("square_last_synced"), "error": r.get("square_sync_error") or None,
-         "auth": "token" if r.get("square_access_token") else "none"},
-        {"key": "clover", "label": "Clover POS",
-         "connected": bool(r.get("clover_api_token")) and not r.get("clover_sync_error"),
-         "configured": bool(r.get("clover_api_token")),
-         "last_success": r.get("clover_last_synced"), "error": r.get("clover_sync_error") or None,
-         "auth": "token" if r.get("clover_api_token") else "none"},
+        _pos_integration(r, "toast", "Toast POS", bool(r.get("toast_restaurant_guid")),
+                         "credentials" if r.get("toast_client_id") else "none"),
+        _pos_integration(r, "square", "Square POS", bool(r.get("square_access_token")),
+                         "token" if r.get("square_access_token") else "none"),
+        _pos_integration(r, "clover", "Clover POS", bool(r.get("clover_api_token")),
+                         "token" if r.get("clover_api_token") else "none"),
+        _pos_integration(r, "rpower", "RPOWER POS", bool(r.get("rpower_token") or r.get("rpower_store_mid")),
+                         "token" if r.get("rpower_token") else "none"),
         {"key": "instagram", "label": "Instagram & Facebook",
          "connected": bool(r.get("ig_token")) and (ig_days_left is None or ig_days_left >= 0),
          "configured": bool(r.get("ig_token")),
@@ -264,7 +288,10 @@ def _modules_for(r, d):
     ing = d["ingredients"].get(rid, {})
     mk = d["marketing"].get(rid, {})
     sc = d["schedules"].get(rid, {})
-    pos = bool(r.get("toast_restaurant_guid") or r.get("square_access_token") or r.get("clover_api_token"))
+    import pos_health
+    pos_state = pos_health.pos_sync_state(r)
+    pos = bool(pos_state.get("connected"))
+    labor_last = (d.get("labor_last") or {}).get(rid, {}).get("last")
     mods = [
         {"key": "reviews", "label": "Reviews", "enabled": bool(r.get("module_reviews")),
          "configured": bool(r.get("gmb_refresh_token") or r.get("google_place_id") or r.get("yelp_business_id")),
@@ -272,11 +299,11 @@ def _modules_for(r, d):
         {"key": "labor", "label": "Labor", "enabled": bool(r.get("module_labor")),
          "configured": pos or bool(cd.get("has_shifts")),
          "receiving": bool(sc.get("n")) or pos or bool(cd.get("has_shifts")),
-         "last_data": r.get("toast_last_synced") or r.get("square_last_synced") or r.get("clover_last_synced") or cd.get("updated_at")},
+         "last_data": labor_last or (pos_state.get("last_synced") if pos else None) or cd.get("updated_at")},
         {"key": "inventory", "label": "Food Cost", "enabled": bool(r.get("module_inventory")),
          "configured": bool(ing.get("n")) or bool(cd.get("has_inventory")),
-         "receiving": bool(r.get("inventory_updated_at")) or bool(cd.get("has_inventory")),
-         "last_data": r.get("inventory_updated_at") or cd.get("updated_at")},
+         "receiving": bool(ing.get("last_count_at")) or bool(cd.get("has_inventory")),
+         "last_data": ing.get("last_count_at") or cd.get("updated_at")},
         {"key": "marketing", "label": "Marketing", "enabled": bool(r.get("module_marketing")),
          "configured": bool(r.get("ig_token") or r.get("gmb_refresh_token") or r.get("voice_notes")),
          "receiving": bool(mk.get("pieces")), "last_data": mk.get("last_at")},
@@ -336,13 +363,19 @@ def _data_completeness(r, d):
         checks.append({"key": key, "label": label, "ok": bool(ok), "detail": detail})
 
     if r.get("module_reviews"):
+        _src, _label = review_source(r)
         add("reviews", "Google reviews connected", r.get("gmb_refresh_token") or r.get("reviews_live"),
-            "reviews fetch automatically" if (r.get("gmb_refresh_token") or r.get("reviews_live"))
-            else "no live review source")
-    pos_fresh = r.get("toast_last_synced") or r.get("square_last_synced") or r.get("clover_last_synced")
+            "sampled — Places returns 5 reviews a fetch; connect Business Profile to read them all"
+            if _src == "places_sampled" else
+            ("reviews fetch automatically" if (r.get("gmb_refresh_token") or r.get("reviews_live"))
+             else "no live review source"))
+    import pos_health
+    _pos = pos_health.pos_sync_state(r)
+    pos_fresh = _pos.get("last_synced")
     if r.get("module_labor") or r.get("module_inventory"):
-        add("pos", "POS syncing", pos_fresh and (_age_days(pos_fresh) or 99) <= 3,
-            f"last sync {_since(pos_fresh)}" if pos_fresh else "no POS sync on record")
+        add("pos", "POS syncing", pos_fresh and not _pos.get("error") and (_age_days(pos_fresh) or 99) <= 3,
+            f"{_POS_LABELS.get(_pos.get('provider'), 'POS')} sync error: {_pos.get('error')}" if _pos.get("error")
+            else (f"last sync {_since(pos_fresh)}" if pos_fresh else "no POS sync on record"))
     if r.get("module_labor"):
         n = (d["labor_days"].get(rid) or {}).get("n") or 0
         add("labor", "Daily sales & labor, last 30 days", n >= 14, f"{n} of 30 days on file")
@@ -363,9 +396,17 @@ def _data_completeness(r, d):
         "set" if (d["routing"].get(rid) or {}).get("n") else "bad reviews don't reach anyone on the floor")
     add("app", "Owner has the app", (d["tokens"].get(rid) or {}).get("devices"),
         "push-enabled device on file" if (d["tokens"].get(rid) or {}).get("devices") else "no device — briefs go by email")
+    # "Setup completeness", not "data completeness" (G14): these are setup
+    # checks, and the intelligence layer's feature completeness (the share of
+    # features a restaurant can measure) is a different number that had the
+    # same name. The label travels with the payload so no screen names it.
     if not checks:
-        return {"score": None, "checks": []}
-    return {"score": round(100 * sum(c["ok"] for c in checks) / len(checks)), "checks": checks}
+        return {"score": None, "checks": [], "label": SETUP_COMPLETENESS_LABEL}
+    return {"score": round(100 * sum(c["ok"] for c in checks) / len(checks)), "checks": checks,
+            "label": SETUP_COMPLETENESS_LABEL}
+
+
+SETUP_COMPLETENESS_LABEL = "Setup completeness"
 
 
 # A live reviews restaurant should be fetched every four hours. This is
@@ -395,7 +436,7 @@ def _churn_risk(r, d, last_active, completeness):
         reasons.append(f"usage fell from {prev} to {wk} AI actions week over week"); points += 1
     score = (completeness or {}).get("score")
     if score is not None and score < 50:
-        reasons.append(f"data completeness {score}% — insights are thin"); points += 1
+        reasons.append(f"setup completeness {score}% — insights are thin"); points += 1
     if r.get("billing_status") == "past_due":
         reasons.append("billing past due"); points += 2
     if (d["reviews"].get(rid) or {}).get("urgent_stale"):
@@ -425,6 +466,11 @@ def _churn_risk(r, d, last_active, completeness):
 
     level = "high" if points >= 4 else "medium" if points >= 2 else "low"
     return {"level": level, "reasons": reasons}
+
+
+def _pos_state_for(r):
+    import pos_health
+    return pos_health.pos_sync_state(r)
 
 
 def location_record(r, d):
@@ -479,8 +525,10 @@ def location_record(r, d):
         "integration_health": ("error" if any(i["state"] == "error" for i in integrations)
                                else "ok" if any(i["state"] == "connected" for i in integrations) else "none"),
         "onboarding": onboarding,
-        "freshness": {"reviews": r.get("last_fetched_at"), "pos": r.get("toast_last_synced") or r.get("square_last_synced") or r.get("clover_last_synced"),
-                      "inventory": r.get("inventory_updated_at"), "intel": r.get("competitor_updated_at")},
+        "freshness": {"reviews": r.get("last_fetched_at"), "pos": _pos_state_for(r).get("last_synced"),
+                      "pos_state": _pos_state_for(r),
+                      "inventory": (d["ingredients"].get(rid) or {}).get("last_count_at"),
+                      "intel": r.get("competitor_updated_at")},
         "reviews": {"total": rv.get("total") or 0, "awaiting": rv.get("awaiting") or 0, "responded": rv.get("responded") or 0,
                     "urgent_stale": rv.get("urgent_stale") or 0},
         "ai": {"calls_30d": ai.get("calls") or 0, "cost_30d": float(ai.get("cost") or 0), "tokens_30d": ai.get("tokens") or 0,
@@ -500,6 +548,9 @@ def location_record(r, d):
         "internal_notes": r.get("internal_notes"),
         "issues": issues,
         "health": health,
+        # setup_completeness is the name; data_completeness stays as an alias
+        # until admin.html reads the new key (group J).
+        "setup_completeness": completeness,
         "data_completeness": completeness,
         "churn_risk": churn,
     }
@@ -522,17 +573,9 @@ def fetched_at_ct(raw):
     Chicago local with a 'T'; SQLite's datetime('now') (older rows, tests,
     hand fixes) is UTC with a space."""
     from zoneinfo import ZoneInfo
-    s = str(raw or "").strip()
-    if not s:
-        return None
-    try:
-        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    ct = ZoneInfo("America/Chicago")
-    if d.tzinfo is None:
-        d = d.replace(tzinfo=ct) if "T" in s else d.replace(tzinfo=ZoneInfo("UTC"))
-    return d.astimezone(ct)
+    from time_utils import parse_stamp
+    d = parse_stamp(raw, naive_tz="America/Chicago")
+    return None if d is None else d.astimezone(ZoneInfo("America/Chicago"))
 
 
 def fetch_slots_missed(last_fetched_at, now=None) -> int:
@@ -582,7 +625,7 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active):
             add("contract", "Contract still unsigned", "warning", r.get("created_at"), "Resend contract", f"/admin/resend-contract/{rid}")
     for i in integrations:
         if i["state"] == "error":
-            sev = "critical" if i["key"] in ("toast", "square", "clover", "google_business") else "warning"
+            sev = "critical" if i["key"] in ("toast", "square", "clover", "rpower", "google_business") else "warning"
             add(f"int:{i['key']}", f"{i['label']} needs attention", sev, i.get("last_success"),
                 "Reconnect", None, i["error"])
     for m in modules:

@@ -16,17 +16,33 @@ from typing import Optional
 TOAST_BASE    = os.getenv("TOAST_API_BASE", "https://ws-api.toasttab.com")
 TOAST_SANDBOX = "https://ws-sandbox.toasttab.com"
 
-_DEMO_ID = "demo"  # any credential field equal to this triggers demo mode
+_DEMO_ID = "demo"  # a credential field equal to this triggers demo mode — on a demo restaurant only
 
 
 # ── Demo mode ─────────────────────────────────────────────────────────────────
 
-def _is_demo(restaurant_id: int) -> bool:
-    """True when any credential field is set to the literal string 'demo'."""
+def demo_allowed(restaurant_id: int) -> bool:
+    """Whether this restaurant may run on the synthetic "demo" Toast feed:
+    only when it is flagged restaurants.is_demo=1. Any owner could type
+    "demo" into the connect form and load 600 synthetic shifts and eight
+    weeks of invented sales into a real restaurant, which then read "Toast
+    synced" and fed the cross-restaurant benchmarks (CA3 F8)."""
     try:
         from models import get_restaurant
         r = get_restaurant(restaurant_id)
-        return bool(r and (
+        return bool(r and int(getattr(r, "is_demo", 0) or 0) == 1)
+    except Exception:
+        return False
+
+
+def _is_demo(restaurant_id: int) -> bool:
+    """True when a credential field is the literal string 'demo' AND the
+    restaurant is flagged is_demo. On a real restaurant "demo" credentials
+    are just wrong credentials: the sync calls Toast and fails honestly."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return bool(r and int(getattr(r, "is_demo", 0) or 0) == 1 and (
             r.toast_client_id == _DEMO_ID or
             r.toast_client_secret == _DEMO_ID or
             r.toast_restaurant_guid == _DEMO_ID
@@ -726,7 +742,9 @@ def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
             shift_start = in_dt.strftime("%H:%M") if in_dt else ""
             shift_end   = out_dt.strftime("%H:%M") if out_dt else ""
 
-            sales = sales_by_date.get(date_str, 0)
+            # Blank, never 0, for a day Toast returned no sales figure
+            # (pos.py's sales contract; CA3 F3).
+            sales = sales_by_date.get(date_str, "")
 
             rows.append({
                 "date":             date_str,
@@ -852,6 +870,8 @@ def test_credentials(client_id: str, client_secret: str, restaurant_guid: str) -
     Validate credentials by fetching a token and hitting a lightweight endpoint.
     Returns {"ok": True} or {"ok": False, "error": "..."}.
     Pass "demo" for all three fields to enter demo mode without hitting the API.
+    The result then carries demo=True, and every caller refuses it unless the
+    restaurant is flagged is_demo (demo_allowed) — CA3 F8.
     """
     if client_id == _DEMO_ID or client_secret == _DEMO_ID or restaurant_guid == _DEMO_ID:
         return {"ok": True, "demo": True}

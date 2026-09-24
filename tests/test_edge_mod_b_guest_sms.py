@@ -438,7 +438,7 @@ def test_an_interrupted_review_request_run_does_not_re_text_guests(db_path, monk
 def _toast_restaurant(db_path, name, **kw):
     rid = _rid(db_path, name=name, **kw)
     conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET toast_client_id='demo', toast_client_secret='demo', "
+    conn.execute("UPDATE restaurants SET is_demo=1, toast_client_id='demo', toast_client_secret='demo', "
                  "toast_restaurant_guid='demo' WHERE id=?", (rid,))
     conn.commit()
     conn.close()

@@ -159,13 +159,24 @@ def _archived_net_sales(restaurant_id, start, end, today=None):
     in_window = {d: v for d, v in by_day.items() if d0 <= d <= d1}
     if not in_window:
         return None
-    trading_weekdays = {d.weekday() for d in by_day}
-    expected = sum(1 for k in range((d1 - d0).days + 1)
-                   if (d0 + timedelta(days=k)).weekday() in trading_weekdays)
-    if len(in_window) < expected - max(1, expected // 10):
+    if not _covers_trading_days(in_window, by_day, d0, d1)[0]:
         return None          # a hole inside the span: not what the restaurant sold
     total = sum(in_window.values())
     return round(total, 2) if total > 0 else None
+
+
+def _covers_trading_days(in_window, reference, d0, d1):
+    """(ok, have, expected): whether `in_window` ({date: sales > 0}) has a
+    figure for (nearly) every day the restaurant trades between d0 and d1.
+    Trading days are the weekdays with sales anywhere in `reference` (a
+    closed-Monday restaurant is not counted short for Mondays). One missing
+    day in ten is allowed. The one coverage rule for net sales — the archive
+    and the live POS both answer to it (CA3 F14)."""
+    trading_weekdays = {d.weekday() for d in reference}
+    expected = sum(1 for k in range((d1 - d0).days + 1)
+                   if (d0 + timedelta(days=k)).weekday() in trading_weekdays)
+    have = len(in_window)
+    return have >= expected - max(1, expected // 10), have, expected
 
 
 def net_sales_in_window(restaurant_id, start, end):
@@ -206,10 +217,38 @@ def net_sales_in_window(restaurant_id, start, end):
         return None, f"POS request failed: {e}"
     if not by_date:
         return None, "POS returned no business days for this window"
-    total = sum(_f(v) for v in by_date.values())
+    # The same 90% coverage rule as the archive (CA3 F14). The live path
+    # summed whatever days came back, so a POS that answered for 9 of 28
+    # days gave a sales figure a third of the truth and a food cost % three
+    # times too high. Judged through yesterday, like the archive: today's
+    # sales are not in until tonight's close.
+    live = {}
+    for k, v in by_date.items():
+        try:
+            d = date.fromisoformat(str(k)[:10])
+        except ValueError:
+            continue
+        if _f(v) > 0:
+            live[d] = live.get(d, 0.0) + _f(v)
+    total = sum(live.values())
     if total <= 0:
         return None, "POS reported no sales for this window"
+    try:
+        d0 = date.fromisoformat(str(start)[:10])
+        d1 = min(date.fromisoformat(str(end)[:10]), date.today() - timedelta(days=1))
+    except ValueError:
+        return None, "window dates unreadable"
+    if d1 >= d0:
+        closed = {d: v for d, v in live.items() if d0 <= d <= d1}
+        ok, have, expected = _covers_trading_days(closed, live, d0, d1)
+        if not ok:
+            return None, (f"POS returned sales for {have} of {expected} trading days in this window — "
+                          "too few to state a food cost %")
     return round(total, 2), None
+
+
+# Above this, COGS / net sales is not a food cost % but a data error.
+MAX_MEASURABLE_PCT = 100.0
 
 
 def band_label(pct, target=None):
@@ -337,6 +376,17 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         return payload
 
     pct = round(cogs / net_sales * 100, 1)
+    if pct > MAX_MEASURABLE_PCT:
+        # More food cost than sales is not a kitchen, it is a count, a
+        # delivery or a sales window that is wrong. Refused as not
+        # measurable rather than shown (CA3 F14).
+        payload["cogs"] = cogs
+        payload["missing"] = [{
+            "component": "a consistent count",
+            "why": f"food cost would be {pct:.0f}% of sales — a count, an unrecorded delivery "
+                   "or missing sales days, not a measurement",
+        }]
+        return payload
     label, tone = band_label(pct, target)
     payload.update({
         "ok": True,
