@@ -677,3 +677,18 @@ def test_the_illustration_curve_is_never_called_a_typical_restaurant():
     assert "the trend a typical restaurant sees" not in sw and "Illustration only" in sw
     fc = _read("ios", "CavnarAI", "CavnarAI", "Features", "FoodCost", "FoodCostTrendChart.swift")
     assert 'Text("vs. industry")' not in fc and '"Industry target: ' not in fc
+
+
+def test_the_personalised_email_paragraph_is_told_to_make_no_peer_claims(monkeypatch):
+    """Probe p_email: 'already running ahead of most restaurants I bring on'."""
+    seen = {}
+    monkeypatch.setattr(emails, "create_with_retry", lambda *a, **k: seen.update(k) or _msg("Your setup is live."),
+                        raising=False)
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: seen.update(k) or _msg("Your setup is live."))
+    monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    emails.generate_email_personalization("Reviews handled this month: 0.", "FALLBACK", restaurant_id=None)
+    prompt = seen["messages"][0]["content"]
+    assert "Never compare this restaurant with other restaurants" in prompt
+    assert "do not celebrate results that are not there" in prompt

@@ -150,6 +150,12 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             "Reference the specific data given below naturally, not as a list. "
             + ("Open on the substance — no run-up like 'I wanted to share' or "
                "'Great news'. State what happened, plainly. " if brief else "")
+            # No peer claims (NS4 H1: "running ahead of most restaurants I
+            # bring on" was emailed in Will's first person), and no
+            # celebration where the data shows no activity (NS4 matrix).
+            + "Never compare this restaurant with other restaurants, other clients, 'most' restaurants or an "
+              "industry average — nothing below measures them. If the activity below is zero or missing, say "
+              "plainly what is set up and what comes next; do not celebrate results that are not there. "
             + "Plain text only, no markdown.\n\n" + context
         )
         msg = create_with_retry(
