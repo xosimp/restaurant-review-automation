@@ -61,6 +61,9 @@ MIN_MEASURED_FOR_RATE = 5
 SUMMARY_WINDOWS = (30, 90, 180)
 _Z90 = 1.645
 CLEAR_VERDICTS = ("improved", "worsened", "no_clear_change")
+# outcomes.INFORMATIONAL_PREFIX (a test holds them in step): a tracker that
+# measured what followed an alert being READ, not a change.
+INFORMATIONAL_PREFIX = "observed:alert_"
 
 # The effectiveness model (see the module docstring).
 EFFECT_WINDOW_DAYS = 365
@@ -103,6 +106,18 @@ FOOD_KINDS = ("reprice", "price_spike", "food_cost_driver", "cut_waste", "stock_
               "diag_food", "food_diagnosis", "insight_food", "food_waste", "invoice")
 _MONEY_MODULE = {"food_cost": "food", "food": "food", "labor": "labor", "reviews": "reviews",
                  "marketing": "marketing", "intel": "intel"}
+# The names a surface files a module's evidence under, as the permission
+# vocabulary viewer_sees reads. "food_cost" (business_intelligence's links),
+# "inventory" (Home's module key) and "menu" are all Food Cost: read as
+# their own names they matched no permission and a manager was shown a
+# food-cost link (re-audit B12).
+MODULE_ALIASES = {"food_cost": "food", "inventory": "food", "menu": "food", "labor_cost": "labor",
+                  "review": "reviews", "guest": "guests"}
+
+
+def _module_name(m):
+    m = str(m or "").strip().lower()
+    return MODULE_ALIASES.get(m, m)
 
 
 def _is_loss(row) -> bool:
@@ -113,27 +128,32 @@ def _is_loss(row) -> bool:
 def modules_of(row) -> set:
     """Every module a recommendation's content comes from: its own, its
     evidence, and what its kind says (a food kind filed under Home is food;
-    "money:food_cost" is food; a DSR action on the food block is food)."""
+    "money:food_cost" is food; a DSR action on the food block is food; a
+    cross-module link names both of its modules — "reviews_x_food_cost",
+    "reviews_x_menu" are food). Names are normalised (MODULE_ALIASES)."""
     out = set()
     if row.get("module"):
-        out.add(row["module"])
+        out.add(_module_name(row["module"]))
     src = row.get("evidence_sources")
     if isinstance(src, str):
         try:
             src = json.loads(src)
         except (TypeError, ValueError):
             src = []
-    out.update(s for s in (src or []) if s)
+    out.update(_module_name(s) for s in (src or []) if s)
     key = str(row.get("key") or "")
     kind = row.get("kind") or rec_ledger.kind_of(key)
     parts = key.split(":")
     if kind in FOOD_KINDS:
         out.add("food")
     if kind == "money" and len(parts) > 1:
-        out.add(_MONEY_MODULE.get(parts[1], parts[1]))
+        out.add(_MONEY_MODULE.get(parts[1], _module_name(parts[1])))
     if kind == "dsr_action" and len(parts) > 2:
         block = parts[2].split("/", 1)[0]
-        out.add({"sales": "ops", "closeout": "ops"}.get(block, block))
+        out.add({"sales": "ops", "closeout": "ops"}.get(block, _module_name(block)))
+    if kind == "link" and len(parts) > 1:
+        out.update(_module_name(m) for m in parts[1].split("_x_") if m)
+    out.discard("")
     return out
 
 
@@ -164,9 +184,38 @@ def viewer_sees(viewer, row) -> bool:
 
 # ── episodes, as the readers below need them ────────────────────────────────
 
-def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None):
+_TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
+                 "after_end, recheck_verdict, owner_checkin, source_key")
+
+
+def _tracker_rows(conn, rid, tids):
+    out = {}
+    for i in range(0, len(tids), 400):
+        chunk = tids[i:i + 400]
+        try:
+            rows = conn.execute(f"SELECT {_TRACKER_COLS} FROM recommendation_outcomes WHERE restaurant_id=? AND id IN "
+                                f"({','.join('?' for _ in chunk)})", (rid, *chunk)).fetchall()
+        except Exception as e:
+            # A database from before the re-check / check-in columns: the
+            # verdict alone, and said so (a silent fallback here once hid
+            # every re-check and check-in from the learning).
+            print(f"[rec_learning] tracker columns missing, reading verdicts only: {e}")
+            rows = conn.execute(f"SELECT id, status, verdict, dollars_monthly, evaluate_on FROM "
+                                f"recommendation_outcomes WHERE restaurant_id=? AND id IN "
+                                f"({','.join('?' for _ in chunk)})", (rid, *chunk)).fetchall()
+        for o in rows:
+            out[o["id"]] = dict(o)
+    return out
+
+
+def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False):
     """Episodes of this restaurant (bookkeeping keys excluded) with their
-    events folded in. `before` is a (created_at, rec_id) cursor."""
+    events folded in. `before` is a (created_at, rec_id) cursor.
+
+    `lean` is for the effectiveness model, which reads a year of episodes
+    on every Home build: the `shown` rows — most of the trail, one per
+    surface per day — are not loaded, only whether each episode has one
+    (re-audit B18); `surfaces` is then empty."""
     where, args = ["restaurant_id=?"], [rid]
     if since:
         where.append("created_at >= ?")
@@ -188,29 +237,34 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
     if not rows:
         return []
     evs = {}
+    shown = set()
     ids = [r["rec_id"] for r in rows]
     for i in range(0, len(ids), 400):
         chunk = ids[i:i + 400]
-        for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN "
-                              f"({','.join('?' for _ in chunk)}) ORDER BY at, id", chunk).fetchall():
-            evs.setdefault(e["rec_id"], []).append(dict(e))
+        marks = ",".join("?" for _ in chunk)
+        if lean:
+            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN ({marks}) "
+                                  f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
+                evs.setdefault(e["rec_id"], []).append(dict(e))
+            for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
+                                  f"AND event = 'shown'", chunk).fetchall():
+                shown.add(e["rec_id"])
+        else:
+            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN "
+                                  f"({marks}) ORDER BY at, id", chunk).fetchall():
+                evs.setdefault(e["rec_id"], []).append(dict(e))
     trackers = {}
     tids = sorted({r["tracker_id"] for r in rows if r.get("tracker_id")})
     if tids:
         try:
-            for i in range(0, len(tids), 400):
-                chunk = tids[i:i + 400]
-                for o in conn.execute(f"SELECT id, status, verdict, dollars_monthly, evaluate_on FROM "
-                                      f"recommendation_outcomes WHERE restaurant_id=? AND id IN "
-                                      f"({','.join('?' for _ in chunk)})", (rid, *chunk)).fetchall():
-                    trackers[o["id"]] = dict(o)
+            trackers = _tracker_rows(conn, rid, tids)
         except Exception as e:
             print(f"[rec_learning] trackers unreadable: {e}")
     now = datetime.utcnow()
     for r in rows:
         es = evs.get(r["rec_id"], [])
         r["events"] = es
-        r["shown"] = any(e["event"] == "shown" for e in es)
+        r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
         r["state"] = _state(r, now)
@@ -245,27 +299,65 @@ def _state(r, now):
     return "open"
 
 
+def learned_verdict(verdict, tracker=None, checkin=None):
+    """What a measured result says about the recommendation it measured —
+    the ONE mapping rec_learning and the engine's feedback.sync both read
+    (re-audit B9), following outcomes.counts_in_delivered:
+
+      * the owner said they did not make the change, or that something else
+        changed in those weeks (the tracker's owner_checkin, or the ledger's
+        latest check-in) → `unknown`: neither this recommendation working
+        nor failing;
+      * a tracker that measured what followed a READ (informational) →
+        `unknown`: it measured no change;
+      * a move that faded or reversed at its re-check → `no_clear_change`:
+        not a win (and not a loss — the number went back);
+      * anything that is not a clear verdict → `unknown`.
+    `verdict` is the verdict as recorded; `tracker` the recommendation_
+    outcomes row (dict) when there is one."""
+    tr = tracker or {}
+    ck = checkin
+    if ck is None:
+        raw = tr.get("owner_checkin")
+        if isinstance(raw, dict):
+            ck = raw
+        elif raw:
+            try:
+                ck = json.loads(raw)
+            except (TypeError, ValueError):
+                ck = None
+    if isinstance(ck, dict) and (ck.get("did_it") == "no" or ck.get("conditions_changed")
+                                 or (ck.get("attribution") or {}).get("discount")):
+        return "unknown"
+    if str(tr.get("source_key") or "").startswith(INFORMATIONAL_PREFIX):
+        return "unknown"
+    if verdict in ("improved", "worsened") and tr.get("recheck_verdict") in ("faded", "reversed"):
+        return "no_clear_change"
+    return verdict if verdict in CLEAR_VERDICTS else "unknown"
+
+
 def _verdict(r, events, tracker):
     """The measured result of an episode — the ledger's latest outcome event,
-    else its linked tracker's verdict — or (None, None). A result the owner's
-    check-in discounted (did not do it, or something else changed) reads
-    `unknown`: it is not this recommendation working or failing."""
+    else its linked tracker's verdict — or (None, None), read through
+    learned_verdict: a result the owner's check-in discounted (did not do
+    it, or something else changed) reads `unknown`, and one that faded or
+    reversed at its re-check is not a win."""
     verdict, at = None, None
     for e in events:
         if e["event"] == "outcome":
             v = _meta(e).get("verdict")
             if v:
                 verdict, at = v, e["at"]
-    if verdict is None and tracker and tracker.get("status") == "evaluated":
-        verdict, at = (tracker.get("verdict") or "unknown"), tracker.get("evaluate_on")
+    if tracker and tracker.get("status") == "evaluated":
+        # The tracker's CURRENT verdict: the ledger's outcome event is the
+        # verdict as first carried in.
+        verdict, at = (tracker.get("verdict") or verdict or "unknown"), tracker.get("evaluate_on")
     if verdict is None:
         return None, None
     if tracker and tracker.get("evaluate_on"):
         at = tracker["evaluate_on"]
     checkins = [_meta(e) for e in events if e["event"] == "checkin"]
-    if checkins and (checkins[-1].get("attribution") or {}).get("discount"):
-        return "unknown", at
-    return (verdict if verdict in CLEAR_VERDICTS else "unknown"), at
+    return learned_verdict(verdict, tracker, checkins[-1] if checkins else None), at
 
 
 def _taken(r):
@@ -287,12 +379,16 @@ def summary(restaurant_id, days=30, viewer=None, db_path=DB_PATH) -> dict:
     in the denominator), accept_rate ((accepted + completed + implemented) /
     n) with its 90% Wilson interval, enough (n ≥ MIN_SETTLED_FOR_RATE).
 
-    by_tag: over recommendations TAKEN with a result — measured (clear
-    verdicts), improved, worsened, no_clear_change, unknown (not measurable,
-    or discounted by the owner's check-in; never in the denominator),
-    success_rate (improved / measured), enough (measured ≥
-    MIN_MEASURED_FOR_RATE). most_effective: the tag with enough results and
-    the best lower bound of success, when that is at least even."""
+    by_tag: one row per subject tag, over recommendations TAKEN with a
+    result, across every module the tag was recommended under — measured
+    (clear verdicts, one per change: _one_per_window), improved, worsened,
+    no_clear_change, unknown (not measurable, or discounted by the owner's
+    check-in; never in the denominator), success_rate (improved / measured),
+    enough (measured ≥ MIN_MEASURED_FOR_RATE), module (where most of its
+    results came from) and modules. A result that faded or reversed at its
+    re-check is not a win (learned_verdict). most_effective: the tag with
+    enough results and the best lower bound of success, when that is at
+    least even, with its own improved/measured."""
     days = int(days)
     since_d = datetime.utcnow() - timedelta(days=days)
     conn = get_conn(db_path)
@@ -323,18 +419,71 @@ def summary(restaurant_id, days=30, viewer=None, db_path=DB_PATH) -> dict:
             "min_settled": MIN_SETTLED_FOR_RATE, "min_measured": MIN_MEASURED_FOR_RATE}
 
 
-def _by_tag(eps) -> list:
-    groups = {}
+def _after_window(tracker):
+    """(start, end) ISO dates a tracker's "after" was read over — the same
+    reading as outcomes._after_window — or None without a tracker."""
+    tr = tracker or {}
+    start = tr.get("after_start") or tr.get("started_on")
+    if not start:
+        return None
+    end = tr.get("after_end") or tr.get("evaluate_on") or start
+    return str(start)[:10], str(end)[:10]
+
+
+def _one_per_window(eps) -> list:
+    """The measured episodes of one tag with each change counted once: one
+    result per tracker, and on one metric one result per non-overlapping
+    after-window (the earliest kept) — two recommendations read over the
+    same weeks on the same number are one change, whichever way it went
+    (owner_report's rule for results, applied per tag; re-audit B13)."""
+    seen, by_metric, kept = set(), {}, []
     for e in eps:
-        v = e["verdict"] if e["verdict"] in CLEAR_VERDICTS else "unknown"
+        tr = e.get("tracker") or {}
+        tid = tr.get("id")
+        if tid is not None:
+            if tid in seen:
+                continue
+            seen.add(tid)
+        win = _after_window(tr)
+        if e["verdict"] in CLEAR_VERDICTS and tr.get("metric") and win:
+            by_metric.setdefault(tr["metric"], []).append((win, e))
+        else:
+            kept.append(e)
+    for items in by_metric.values():
+        last_end = ""
+        for (start, end), e in sorted(items, key=lambda x: (x[0][0], x[1]["rec_id"])):
+            if last_end and start <= last_end:
+                continue
+            kept.append(e)
+            last_end = max(last_end, end)
+    return kept
+
+
+def _by_tag(eps) -> list:
+    """One row per subject TAG, across every module it was recommended
+    under — "weekend staffing" filed under Labor (Home's trim_day cards) and
+    under Schedule (Shift Quality's lines) is one subject, and splitting it
+    let 5 of 5 in one module stand as the answer while 0 of 6 in the other
+    was never weighed (re-audit B13). `module` is the module most of its
+    results came from (the key clients match most_effective against);
+    `modules` lists them all."""
+    by_tag = {}
+    for e in eps:
         for t in e["tag_list"]:
-            g = groups.setdefault((t, e["module"] or "home"), {"improved": 0, "worsened": 0, "no_clear_change": 0,
-                                                               "unknown": 0})
-            g[v] += 1
+            by_tag.setdefault(t, []).append(e)
     out = []
-    for (tag, module), g in groups.items():
+    for tag, group in by_tag.items():
+        g = {"improved": 0, "worsened": 0, "no_clear_change": 0, "unknown": 0}
+        mods = {}
+        for e in _one_per_window(group):
+            v = e["verdict"] if e["verdict"] in CLEAR_VERDICTS else "unknown"
+            g[v] += 1
+            m = e["module"] or "home"
+            mods[m] = mods.get(m, 0) + 1
         measured = g["improved"] + g["worsened"] + g["no_clear_change"]
-        out.append({"tag": tag, "label": rec_ledger.tag_label(tag), "module": module, "measured": measured, **g,
+        module = sorted(mods.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if mods else "home"
+        out.append({"tag": tag, "label": rec_ledger.tag_label(tag), "module": module, "modules": sorted(mods),
+                    "measured": measured, **g,
                     "success_rate": round(g["improved"] / measured, 3) if measured else None,
                     "enough": measured >= MIN_MEASURED_FOR_RATE})
     out.sort(key=lambda r: (-r["measured"], r["tag"], r["module"]))
@@ -342,9 +491,13 @@ def _by_tag(eps) -> list:
 
 
 def most_effective(by_tag):
-    """The tag whose success is most consistently high: enough measured
-    results, success at least even, ranked by the LOWER end of its 90%
-    interval (so three of three never outranks nine of ten)."""
+    """The subject most often followed by an improvement: enough measured
+    results (one per change — _one_per_window — across every module the
+    tag was recommended under), success at least even, ranked by the LOWER
+    end of its 90% interval (so three of three never outranks nine of ten).
+    Carries its own counts (`improved` of `measured`), so a sentence quotes
+    the same totals it was chosen on. Followed by an improvement, not the
+    cause of one: the measurement is before-and-after."""
     best, best_key = None, None
     for r in by_tag or []:
         if not r["enough"] or r["success_rate"] is None or r["success_rate"] < 0.5:
@@ -355,8 +508,8 @@ def most_effective(by_tag):
             best, best_key = r, k
     if best is None:
         return None
-    return {"tag": best["tag"], "label": best["label"], "module": best["module"],
-            "success_rate": best["success_rate"], "measured": best["measured"]}
+    return {"tag": best["tag"], "label": best["label"], "module": best["module"], "modules": best.get("modules"),
+            "success_rate": best["success_rate"], "measured": best["measured"], "improved": best["improved"]}
 
 
 # ── the owner's timeline ────────────────────────────────────────────────────
@@ -507,13 +660,18 @@ class Effectiveness:
             try:
                 import intelligence
                 from intelligence import privacy
-                s = intelligence.recommendation_success(kind, cohort=self.cohort, db_path=self.db_path)
+                # The cohort WITHOUT this restaurant — its own record is
+                # weighed against the prior, never counted inside it — and
+                # each rate only over the restaurants that contributed to it:
+                # five restaurants that let one card expire are no floor for a
+                # success rate one restaurant measured (re-audit B3).
+                s = intelligence.recommendation_success(kind, cohort=self.cohort, db_path=self.db_path,
+                                                        exclude_restaurant_id=self.rid)
                 privacy.assert_anonymous(s)
-                if s.get("available") and privacy.cohort_ok(s.get("restaurants")):
-                    if s.get("answered"):
-                        acc = float(s.get("acceptance_rate_shrunk") or 0.5)
-                    if s.get("measured"):
-                        suc = float(s.get("success_rate_shrunk") or 0.5)
+                if s.get("answered") and privacy.cohort_ok(s.get("answered_restaurants")):
+                    acc = float(s.get("acceptance_rate_shrunk") or 0.5)
+                if s.get("measured") and privacy.cohort_ok(s.get("measured_restaurants")):
+                    suc = float(s.get("success_rate_shrunk") or 0.5)
             except Exception as e:
                 print(f"[rec_learning] cohort prior unavailable for {kind}: {e}")
         self._priors[kind] = (acc, suc)
@@ -581,7 +739,7 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> 
     try:
         conn = get_conn(db_path)
         try:
-            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)))
+            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)), lean=True)
         finally:
             conn.close()
     except Exception as e:
@@ -598,7 +756,32 @@ def episode_for(restaurant_id, key, db_path=DB_PATH):
     try:
         row = conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND key=? "
                            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                           (restaurant_id, str(key or "")[:160])).fetchone()
+                           (restaurant_id, str(key or "").strip()[:160])).fetchone()
+        out = dict(row) if row else None
+        if out is not None:
+            out["shown"] = bool(conn.execute("SELECT 1 FROM rec_events WHERE rec_id=? AND event='shown' LIMIT 1",
+                                             (out["rec_id"],)).fetchone())
     finally:
         conn.close()
-    return dict(row) if row else None
+    return out
+
+
+def answerable_episode(viewer, restaurant_id, key, db_path=DB_PATH):
+    """The episode a login's answer to `key` belongs to, or None — the check
+    every answer route makes before it writes (K2): the key's latest
+    episode exists at THIS restaurant, some surface showed it (a
+    client-originated answer names something it was shown), and this login
+    may see it (viewer_sees: a manager may not answer — and so silence for
+    the owner — a loss, food-cost or owner-only recommendation). The routes
+    answer None with a 404 that confirms nothing. Never raises."""
+    key = str(key or "").strip()[:160]
+    if not restaurant_id or not key:
+        return None
+    try:
+        ep = episode_for(restaurant_id, key, db_path=db_path)
+    except Exception as e:
+        print(f"[rec_learning] answer check failed closed for {restaurant_id} {key}: {e}")
+        return None
+    if ep is None or not ep.get("shown") or not viewer_sees(viewer, ep):
+        return None
+    return ep

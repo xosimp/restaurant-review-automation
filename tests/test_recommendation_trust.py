@@ -375,9 +375,14 @@ def test_home_records_every_card_and_attention_item_as_shown(db_path):
     shown = {r["key"] for r in c.execute("SELECT key FROM rec_events WHERE restaurant_id=? AND event='shown' "
                                          "AND surface='home'", (rid,))}
     c.close()
-    assert {a["rec_key"] for a in p["attention"]} <= shown
-    assert {r["key"] for r in p["recommendations"]} <= shown
+    # Every item the owner can ANSWER is recorded; a setup/health nudge
+    # (no social account connected) is not advice and is never recorded
+    # (re-audit B7).
+    assert {a["rec_key"] for a in p["attention"] if a["answerable"]} <= shown
+    assert {r["key"] for r in p["recommendations"] if r["answerable"]} <= shown
     assert "no_response" in shown, "Home's drafted-replies item carries the brief's key"
+    social = next(a for a in p["attention"] if a["key"] == "social_not_connected")
+    assert social["answerable"] is False and "social_not_connected" not in shown
 
 
 def test_needs_attention_can_be_answered_except_a_critical_item(db_path):

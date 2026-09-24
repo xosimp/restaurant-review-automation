@@ -9463,17 +9463,23 @@ def current_ask_conversation_id(restaurant_id, db_path: str = DB_PATH, viewer_id
 def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP,
                            db_path: str = DB_PATH, viewer_id=None) -> list:
     """Newest first. Each entry carries what a history row needs: the
-    title, a preview of the last thing said, when, and how many turns."""
+    title, a preview of the last thing said, when, and how many turns — the
+    preview and the count over the turns THIS viewer may read (the same
+    clause get_ask_history reads a chat's turns by), so a chat another
+    login once wrote into never previews their words (re-audit B5)."""
     conn = get_conn(db_path)
+    msg_where, msg_args = _viewer_clause(viewer_id, "m.")
+    conv_where, conv_args = _viewer_clause(viewer_id, "c.")
     try:
         rows = conn.execute(
             "SELECT c.id, c.title, c.created_at, c.updated_at, "
-            "  (SELECT COUNT(*) FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) AS message_count, "
-            "  (SELECT content FROM ask_cavnar_messages m WHERE m.conversation_id=c.id "
+            "  (SELECT COUNT(*) FROM ask_cavnar_messages m WHERE m.conversation_id=c.id" + msg_where + ") "
+            "  AS message_count, "
+            "  (SELECT content FROM ask_cavnar_messages m WHERE m.conversation_id=c.id" + msg_where +
             "   ORDER BY m.id DESC LIMIT 1) AS preview "
-            "FROM ask_cavnar_conversations c WHERE c.restaurant_id=?" + _viewer_clause(viewer_id, "c.")[0] +
+            "FROM ask_cavnar_conversations c WHERE c.restaurant_id=?" + conv_where +
             " ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
-            [restaurant_id, *_viewer_clause(viewer_id, "c.")[1], limit]
+            [*msg_args, *msg_args, restaurant_id, *conv_args, limit]
         ).fetchall()
     finally:
         conn.close()
@@ -9577,16 +9583,19 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
                      conversation_id=None, db_path: str = DB_PATH) -> int:
     """Appends a turn and returns the conversation it landed in.
 
-    With no conversation_id, the turn goes into the restaurant's current
-    chat (creating the first one if none exists) — the web panel's
-    behaviour. A specific id must belong to this restaurant."""
+    With no conversation_id, the turn goes into THIS login's current chat
+    (creating one if it has none) — the web panel's behaviour. A specific
+    id must belong to this restaurant and, when `user_id` is given, be one
+    this login may read (_viewer_clause: its own, or one from before chats
+    had owners). The fallback used to be unfiltered: a teammate's first
+    question landed in the owner's chat, and the owner's replayed history
+    carried it (re-audit B5). `user_id` None is an internal caller."""
     import json as _json
-    if conversation_id is not None and get_ask_conversation(restaurant_id, conversation_id, db_path=db_path) is None:
+    if conversation_id is not None and get_ask_conversation(restaurant_id, conversation_id, db_path=db_path,
+                                                            viewer_id=user_id) is None:
         raise ValueError("conversation not found")
     if conversation_id is None:
-        # Deliberately unfiltered: this is the write path, and the turn
-        # continues whatever chat the restaurant is currently in.
-        conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path)
+        conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=user_id)
     if conversation_id is None:
         conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
     conn = get_conn(db_path)
@@ -9653,12 +9662,23 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
     return out
 
 
-def clear_ask_history(restaurant_id, db_path: str = DB_PATH):
-    """Every chat, gone. The action audit stays."""
+def clear_ask_history(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
+    """Every chat, gone — every chat THIS login may read (its own, and the
+    ones from before chats had owners) when `viewer_id` is given: "Clear
+    history" from a teammate's login used to delete the owner's chats too.
+    None (maintenance, tests) is every chat. The action audit stays."""
+    where, params = _viewer_clause(viewer_id)
     conn = get_conn(db_path)
     try:
-        conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=?", (restaurant_id,))
-        conn.execute("DELETE FROM ask_cavnar_conversations WHERE restaurant_id=?", (restaurant_id,))
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=?" + where,
+            [restaurant_id, *params]).fetchall()]
+        for cid in ids:
+            conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=?",
+                         (restaurant_id, cid))
+            conn.execute("DELETE FROM ask_cavnar_conversations WHERE restaurant_id=? AND id=?", (restaurant_id, cid))
+        if viewer_id is None:
+            conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=?", (restaurant_id,))
         conn.commit()
     finally:
         conn.close()
@@ -9695,10 +9715,11 @@ def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="prop
 
 def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
     """The proposal row `proposal_id` names, scoped to this restaurant, with
-    its settlement (the latest confirm/dismiss row for it), or None."""
+    its settlement (the latest confirm/dismiss row for it), or None.
+    `user_id` is the login it was proposed to (None for an older row)."""
     conn = get_conn(db_path)
     try:
-        p = conn.execute("SELECT id, action, summary, body, outcome, created_at FROM ask_cavnar_actions "
+        p = conn.execute("SELECT id, action, summary, body, outcome, created_at, user_id FROM ask_cavnar_actions "
                          "WHERE id=? AND restaurant_id=? AND outcome='proposed'",
                          (proposal_id, restaurant_id)).fetchone()
         if not p:

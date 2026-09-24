@@ -44,7 +44,76 @@ def _is_loss(r):
     return r.get("kind") == "loss" or key == "loss" or key.startswith("loss:")
 
 
-def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
+# Outcome metrics a login needs a permission to see: Food Cost's, and the
+# comp/void rates (a loss figure).
+_FOOD_METRICS = ("food_cost_pct", "weekly_waste")
+_LOSS_METRICS = ("comp_rate", "void_rate")
+
+
+def _redact(rows, viewer, conn, restaurant_id):
+    """The decision records this login may read (re-audit B4): each is
+    judged by rec_learning.viewer_sees on what the ledger knows of its key —
+    the module, evidence and owner_only of every episode of it (the most
+    restrictive wins) — or on the key alone when no episode exists, and a
+    measured outcome on a food-cost or comp/void metric needs that
+    permission. A manager's /decisions, Ask's decisions context and its
+    read_decisions tool used to carry the owner's food-cost and owner-only
+    DSR decisions verbatim."""
+    import json as _json
+    import rec_learning
+    from permissions import has_permission, is_principal, FOOD_COST_VIEW
+    try:
+        import issues
+        loss_ok = issues.viewer_sees_loss(viewer)
+    except Exception:
+        loss_ok = False
+    keys = [r["key"] for r in rows if r.get("key")]
+    known = {}
+    for i in range(0, len(keys), 400):
+        chunk = keys[i:i + 400]
+        try:
+            for row in conn.execute(f"SELECT key, module, kind, evidence_sources, owner_only FROM rec_instances "
+                                    f"WHERE restaurant_id=? AND key IN ({','.join('?' for _ in chunk)})",
+                                    (restaurant_id, *chunk)).fetchall():
+                k = known.setdefault(row["key"], {"key": row["key"], "kind": row["kind"], "module": row["module"],
+                                                  "evidence_sources": [], "owner_only": 0, "modules": set()})
+                k["owner_only"] = max(int(k["owner_only"] or 0), int(row["owner_only"] or 0))
+                if row["module"]:
+                    k["modules"].add(row["module"])
+                try:
+                    k["evidence_sources"] += list(_json.loads(row["evidence_sources"] or "[]") or [])
+                except (TypeError, ValueError):
+                    pass
+        except Exception as e:
+            print(f"[decisions] redaction lookup failed closed: {e}")
+            return []
+    out = []
+    for r in rows:
+        ep = known.get(r.get("key"))
+        if ep is not None:
+            probe = {"key": ep["key"], "kind": ep["kind"], "owner_only": ep["owner_only"],
+                     "evidence_sources": sorted(set(ep["evidence_sources"]) | ep["modules"]),
+                     "module": ep["module"]}
+        else:
+            probe = {"key": r.get("key"), "kind": None if r.get("kind") in ("recommendation", "proposal", "preference",
+                                                                            "issue") else r.get("kind")}
+        if not rec_learning.viewer_sees(viewer, probe):
+            continue
+        # An Ask proposal answered by another login is theirs (B6's rule):
+        # a teammate reads their own, a principal reads every one.
+        if r.get("kind") == "proposal" and r.get("_uid") is not None and r["_uid"] != viewer.get("id") \
+                and not is_principal(viewer):
+            continue
+        metric = str((r.get("outcome") or {}).get("metric") or "").split(":", 1)[0]
+        if metric in _FOOD_METRICS and not has_permission(viewer, FOOD_COST_VIEW):
+            continue
+        if metric in _LOSS_METRICS and not loss_ok:
+            continue
+        out.append(r)
+    return out
+
+
+def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=None):
     """Decision records, newest first. Each: {key, title, kind, asked_on,
     answer, reason, reason_code, times_hidden, outcome, issue}. `answer`
     includes "implemented" (the change was actually made — rec_ledger);
@@ -53,7 +122,9 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
     `sees_loss=False` leaves out loss signals and loss issues (they name
     the approving manager), as issues.list_issues does — for anything a
     manager may read, including a narrative that renders into the manager's
-    view of the daily report."""
+    view of the daily report. `viewer` (a login dict) redacts to what that
+    login may see (_redact: food cost, owner-only, loss); None is an
+    internal caller or the owner's own view."""
     conn = _conn(db_path)
     recs = {}
 
@@ -183,7 +254,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
             pass
         # Proposals from Ask, settled.
         try:
-            for row in conn.execute("SELECT action, summary, outcome, created_at, proposal_id, reason "
+            for row in conn.execute("SELECT action, summary, outcome, created_at, proposal_id, reason, user_id "
                                     "FROM ask_cavnar_actions "
                                     "WHERE restaurant_id=? AND outcome IN ('confirmed','dismissed') "
                                     "ORDER BY id DESC LIMIT 40", (restaurant_id,)).fetchall():
@@ -193,15 +264,20 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
                        f"ask:{row['action']}:{(row['summary'] or '')[:40]}")
                 r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=str(row["created_at"] or "")[:10])
                 r["answer"] = row["outcome"]
+                r["_uid"] = row["user_id"]         # who answered it (redaction only; never returned)
                 if row["reason"] and not r.get("reason"):
                     r["reason"] = row["reason"]      # the owner's own "why not"
         except Exception:
             pass
+        out = sorted(recs.values(), key=lambda r: (r.get("answered_on") or r.get("asked_on") or ""), reverse=True)
+        if not sees_loss:
+            out = [r for r in out if not _is_loss(r)]
+        if viewer is not None and not (isinstance(viewer, dict) and viewer.get("is_admin")):
+            out = _redact(out, viewer, conn, restaurant_id)
     finally:
         conn.close()
-    out = sorted(recs.values(), key=lambda r: (r.get("answered_on") or r.get("asked_on") or ""), reverse=True)
-    if not sees_loss:
-        out = [r for r in out if not _is_loss(r)]
+    for r in out:
+        r.pop("_uid", None)
     return out[:limit]
 
 
@@ -227,10 +303,10 @@ def _fmt_outcome(o):
     return f" — measured: {v}{money}"
 
 
-def context(restaurant_id, db_path=DB_PATH, sees_loss=True):
+def context(restaurant_id, db_path=DB_PATH, sees_loss=True, viewer=None):
     """The prompt section: short, dated, and only what was actually decided.
-    `sees_loss` as history()."""
-    rows = history(restaurant_id, limit=MAX_CONTEXT_LINES, db_path=db_path, sees_loss=sees_loss)
+    `sees_loss` and `viewer` as history()."""
+    rows = history(restaurant_id, limit=MAX_CONTEXT_LINES, db_path=db_path, sees_loss=sees_loss, viewer=viewer)
     if not rows:
         return ""
     lines = ["WHAT THIS RESTAURANT HAS DECIDED BEFORE",
@@ -324,8 +400,11 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
         # Only settled episodes vote. Going quiet does not stop the kind
         # being shown below the top three, and that showing opens a new
         # episode — counted as 'not expired', it made the kind loud again
-        # on the very next build.
-        if r["status"] == "open":
+        # on the very next build. A superseded episode is not settled
+        # either: Cavnar replaced it and the chain carries on (its expiry
+        # lands on the replacement) — voting "not expired", a card re-priced
+        # daily was never quiet (re-audit B11).
+        if r["status"] in ("open", "superseded"):
             continue
         by_kind.setdefault(kind, []).append(r["status"])
     for kind, statuses in by_kind.items():

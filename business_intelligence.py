@@ -951,7 +951,13 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
         flush()
         candidates = ordered
     for c in candidates:
-        if c["key"] in silenced or c["key"].split(":", 1)[0] in quiet:
+        if c["key"] in silenced:
+            continue
+        # A quiet kind never leads — unless the candidate is critical: the
+        # owner going quiet on a kind is not an answer to an emergency, and
+        # "reply to the 1-star reviews" skipped for "post this week" was
+        # the defect (re-audit B7).
+        if c["key"].split(":", 1)[0] in quiet and c.get("urgency") != "critical":
             continue
         if c.get("same_as") and c["same_as"] in silenced:
             continue            # answered under the other name for the same news

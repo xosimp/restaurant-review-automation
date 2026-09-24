@@ -521,7 +521,10 @@ def test_h16_home_logs_as_shown_exactly_what_its_payload_carries(db_path, monkey
     c = get_conn(db_path)
     logged = {r[0] for r in c.execute("SELECT key FROM rec_events WHERE restaurant_id=? AND event='shown'", (rid,))}
     c.close()
-    assert logged == {a["rec_key"] for a in p["attention"][:2]} | {r["key"] for r in p["recommendations"]}
+    # Exactly what it renders AND the owner can answer there (re-audit B7): a
+    # critical item (never dismissable) or a setup nudge is not recorded.
+    assert logged == ({a["rec_key"] for a in p["attention"][:2] if a["answerable"]}
+                      | {r["key"] for r in p["recommendations"] if r["answerable"]})
 
 
 def test_h16_the_server_caps_match_what_web_and_ios_render():

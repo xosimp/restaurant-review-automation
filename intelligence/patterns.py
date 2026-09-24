@@ -19,10 +19,19 @@ before it is stored.
 import json
 from datetime import date
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
 from . import privacy, categories
 from . import features as _features
 from .stats import cohen_d, permutation_test, benjamini_hochberg, mean
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
 
 MIN_EFFECT_D = 0.3
 MAX_P = 0.05

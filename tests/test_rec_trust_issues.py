@@ -485,8 +485,8 @@ def test_decisions_leave_loss_issues_out_for_a_login_without_loss_view(monkeypat
     all pass the viewer's LOSS_VIEW through to decisions.history."""
     import ask_cavnar, ask_cavnar_tools, decisions, strategy_routes, issues as _iss
     seen = []
-    monkeypatch.setattr(decisions, "history", lambda rid, limit=40, db_path=None, sees_loss=True: seen.append(("h", sees_loss)) or [])
-    monkeypatch.setattr(decisions, "context", lambda rid, db_path=None, sees_loss=True: seen.append(("c", sees_loss)) or "")
+    monkeypatch.setattr(decisions, "history", lambda rid, limit=40, db_path=None, sees_loss=True, viewer=None: seen.append(("h", sees_loss)) or [])
+    monkeypatch.setattr(decisions, "context", lambda rid, db_path=None, sees_loss=True, viewer=None: seen.append(("c", sees_loss)) or "")
     monkeypatch.setattr(_iss, "viewer_sees_loss", lambda u: False)
     monkeypatch.setattr(strategy_routes, "_rid", lambda u: 1)
     monkeypatch.setattr(strategy_routes, "_sees_food", lambda u: True)

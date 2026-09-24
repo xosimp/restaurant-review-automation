@@ -82,13 +82,18 @@ def _ignored(db, rid, key, module):
     rl.expire_stale(db_path=db)
 
 
-def _measured(db, rid, key, module, verdict):
+def _measured(db, rid, key, module, verdict, slot=0):
+    """A taken recommendation measured over its own window: `slot` n reads
+    the 28 days ending 30n days earlier — results over the same weeks on one
+    number are one change (re-audit B13), so distinct results need distinct
+    windows."""
     rec = rl.present(rid, key, module, "home", db_path=db)
     rl.record(rid, key, "accepted", surface="home", db_path=db)
     c = models.get_conn(db)
     cur = c.execute("INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, started_on, "
-                    "evaluate_on, status, verdict) VALUES (?, 'recommendation', ?, 't', 'labor_pct', date('now','-30 days'), "
-                    "date('now','-2 days'), 'evaluated', ?)", (rid, key, verdict))
+                    "evaluate_on, status, verdict) VALUES (?, 'recommendation', ?, 't', 'labor_pct', date('now', ?), "
+                    "date('now', ?), 'evaluated', ?)",
+                    (rid, key, f"-{30 + 30 * slot} days", f"-{2 + 30 * slot} days", verdict))
     c.execute("UPDATE rec_instances SET tracker_id=? WHERE rec_id=?", (cur.lastrowid, rec))
     c.commit(); c.close()
 
@@ -121,9 +126,10 @@ def test_success_per_tag_leaves_unknown_out_and_names_the_most_effective(client,
     _as(monkeypatch, rid)
     for i, v in enumerate(["improved"] * 5 + ["worsened", "unknown", "unknown"]):
         day = ("Saturday", "Sunday", "Friday")[i % 3]
-        _measured(db, rid, f"schedule_coverage:{day} dinner gap {i}", "schedule", v)
+        _measured(db, rid, f"schedule_coverage:{day} dinner gap {i}", "schedule", v, slot=i)
     for i, v in enumerate(["improved", "no_clear_change", "worsened", "worsened", "improved"]):
-        _measured(db, rid, f"trim_day:{('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Monday')[i]}#{i}", "labor", v)
+        _measured(db, rid, f"trim_day:{('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Monday')[i]}#{i}", "labor", v,
+                  slot=10 + i)
     body = client.get("/api/recs/summary?days=30").get_json()
     wk = next(t for t in body["by_tag"] if t["tag"] == "focus:weekend_staffing")
     assert wk["label"] == "Weekend staffing" and wk["module"] == "schedule"
@@ -278,6 +284,9 @@ def test_home_dismiss_takes_a_reason_code_on_web_and_phone(db, monkeypatch):
     import mobile_api
     rid = _rid(db)
     user = _as(monkeypatch, rid)
+    # What Home showed this owner — an answer names something shown (K2).
+    rl.present(rid, "trim_day:Monday", "labor", "home", db_path=db)
+    rl.present(rid, "labor_over:2026-09-01", "labor", "home", db_path=db)
     app = Flask(__name__)
     with app.test_request_context(json={"key": "trim_day:Monday", "kind": "not_for_us", "reason_code": "nope"}):
         resp = client_api.home_dismiss_api.__wrapped__(current_user=user)

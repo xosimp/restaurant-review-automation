@@ -8,10 +8,19 @@ crosses the tenant line, and it is an aggregate over ≥ MIN_COHORT.
 """
 from datetime import date
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
 from . import privacy, categories
 from . import features as _features
 from .stats import percentile, mean
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
 
 BETTER = {"avg_rating_30d": "higher", "response_24h_rate_30d": "higher", "reply_rate_30d": "higher",
           "labor_pct_28d": "lower", "labor_pct_sd_28d": "lower", "food_cost_pct_28d": "lower",

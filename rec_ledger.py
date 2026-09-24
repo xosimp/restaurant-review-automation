@@ -114,6 +114,10 @@ ACCEPTED_QUIET_DAYS = 14
 # An open episode nobody has answered in this long is ignored, not pending:
 # it closes as `expired`, and the next showing starts a new episode.
 EXPIRE_AFTER_DAYS = 14
+# A change made where it happens (a price applied, a post published) is
+# recorded as `implemented` on the key's episode only while that episode is
+# live or accepted, or ended within this many days (_may_implement).
+IMPLEMENT_ATTACH_DAYS = 28
 # Events that describe an episode someone already saw and never begin one:
 # a tracker's verdict, an alert opened, the evidence read. An outcome with
 # no episode behind it is an episode nobody was shown (H-5).
@@ -183,6 +187,13 @@ def init_rec_ledger(db_path: str = DB_PATH):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_ev_rec ON rec_events(rec_id, event)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_ev_at ON rec_events(at)")
+        # Every answer's idempotency check (_record_on, recorded,
+        # sync_existing's "already carried") asks restaurant + key + dedupe;
+        # decisions.history, shown_elsewhere_today and the timeline read one
+        # restaurant's events of one kind by time. Without these both were a
+        # scan of every restaurant's trail (re-audit B21).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_ev_rest_key_dedupe ON rec_events(restaurant_id, key, dedupe)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_ev_rest_event_at ON rec_events(restaurant_id, event, at)")
         # Columns added after the table shipped (ROI audit #17, #27, #36,
         # #37, and the owner view's redaction) — at boot, never on a call.
         have = {r[1] for r in conn.execute("PRAGMA table_info(rec_instances)").fetchall()}
@@ -220,6 +231,12 @@ _ADDED_COLUMNS = (
     ("owner_only", "INTEGER DEFAULT 0"),   # rests on owner-only figures (DSR cites)
     ("superseded_by", "TEXT"),        # the rec_id that replaced it
     ("target", "TEXT"),               # the target it was shown with (a price, a %)
+    # When the recommendation this episode carries on was first shown: an
+    # episode that replaced an unanswered one (superseded) keeps the chain's
+    # start, and the 14-day expiry runs from it (is_stale). NULL = its own
+    # created_at. Without it a card re-priced every day never expired and was
+    # never counted as ignored (re-audit B11).
+    ("chain_started_at", "TEXT"),
 )
 
 
@@ -334,18 +351,33 @@ def _review_categories():
         return ()
 
 
+def _names_a_thing(kind, bits) -> bool:
+    """Whether the subject is a dish or an item's NAME (reprice:Friday Fish
+    Fry, cut_waste:Dinner Rolls, stock_low:Sunday Gravy, a DSR action on
+    food/<item>) — words in a name are not the day or daypart the
+    recommendation is about (re-audit B14)."""
+    if kind in DISH_KINDS or kind in ITEM_KINDS:
+        return True
+    return kind == "dsr_action" and len(bits) > 1 and bits[1].partition("/")[0] == "food" and "/" in bits[1]
+
+
 def tags_for(key, module=None, kind=None, food_category=None) -> list:
     """The subject tags of one recommendation key (the vocabulary above),
     sorted. Pure — `food_category` is looked up by the caller. A subject
-    that is an opaque hash (a model read's line) carries only its topic."""
+    that is an opaque hash (a model read's line) carries only its topic; a
+    subject that is a dish or item name carries no day, day type or daypart
+    read out of the name."""
     import re
     key = str(key or "").strip()
     kind = (kind or kind_of(key)).strip()
     subject = key.split(":", 1)[1] if ":" in key else ""
     low = subject.lower().replace("_", " ")
+    named = _names_a_thing(kind, subject.split(":"))
+    if named:
+        low = ""                      # nothing about WHEN is read from a name
     tags = set()
     days = [d for d in WEEKDAYS if re.search(rf"(?<![a-z]){d}s?(?![a-z])", low)]
-    if kind not in PERIOD_DATE_KINDS:
+    if kind not in PERIOD_DATE_KINDS and not named:
         for iso in re.findall(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", subject):
             try:
                 days.append(WEEKDAYS[datetime.strptime(iso, "%Y-%m-%d").weekday()])
@@ -386,8 +418,9 @@ def tags_for(key, module=None, kind=None, food_category=None) -> list:
         if block == "food" and entity.strip():
             tags.add(f"item:{_slug(entity.replace('-', ' '))}")
     cats = _review_categories()
-    if kind in REVIEW_CATEGORY_KINDS and first.lower() in cats:
-        tags.add(f"category:{first.lower()}")
+    cat = first.lower().replace(" ", "_")          # "Wait time" is wait_time
+    if kind in REVIEW_CATEGORY_KINDS and cat in cats:
+        tags.add(f"category:{cat}")
     if kind == "link" and len(bits) > 1 and bits[1].strip().lower() in cats:
         tags.add(f"category:{bits[1].strip().lower()}")
     if food_category:
@@ -467,19 +500,36 @@ def stale_cutoff(days=EXPIRE_AFTER_DAYS, now=None) -> str:
     return ((now or datetime.utcnow()) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _col(row, name):
+    """row[name], or None for a row read without that column."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
+def chain_start(row):
+    """When the recommendation an episode carries was first shown: the
+    chain's start for an episode that replaced an unanswered one, else its
+    own creation."""
+    return _col(row, "chain_started_at") or _col(row, "created_at")
+
+
 def is_stale(row, now=None, days=EXPIRE_AFTER_DAYS) -> bool:
     """THE expiry rule, read the same way by _open_or_new, expire_stale and
     the admin page's `ignored`: an episode still open (no accept, complete
     or dismiss) that was CREATED more than `days` ago and is not inside a
     snooze. Measured from creation, not from the last event: a card shown
     every day bumps its last event daily, so it never expired and the
-    recommendations owners ignore most were never counted as ignored."""
+    recommendations owners ignore most were never counted as ignored. An
+    episode that superseded an unanswered one is measured from the chain's
+    start (chain_start): re-pricing a card must not restart the clock."""
     if row is None or row["status"] != "open":
         return False
     now_s = (now or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
     if row["snoozed_until"] and row["snoozed_until"] > now_s:
         return False
-    return (row["created_at"] or "") < stale_cutoff(days, now)
+    return (chain_start(row) or "") < stale_cutoff(days, now)
 
 
 def _latest(conn, rid, key):
@@ -561,34 +611,81 @@ def _supersede(conn, old_rec_id, rid, key, by=None, meta=None):
     return bool(n)
 
 
+def _fill_missing(conn, row, attrs, title=None):
+    """An open episode first shown without a figure, a target or a metric
+    (a brief line, a record()-opened episode) takes them from the first
+    showing that has them — the prediction a result is calibrated against
+    was otherwise never learned (re-audit B16). Never overwrites a value it
+    has (a different one is _material_change's to judge); owner_only only
+    ever tightens."""
+    attrs = attrs or {}
+    sets, args = [], []
+    if _col(row, "dollar_value") is None and _num(attrs.get("dollar_value")) is not None:
+        sets.append("dollar_value=?")
+        args.append(_num(attrs["dollar_value"]))
+    if _col(row, "target") in (None, "") and attrs.get("target") not in (None, ""):
+        sets.append("target=?")
+        args.append(str(attrs["target"])[:60])
+    if not _col(row, "expected_metric") and attrs.get("expected_metric"):
+        sets.append("expected_metric=?")
+        args.append(str(attrs["expected_metric"])[:60])
+    if not _col(row, "title") and title:
+        sets.append("title=?")
+        args.append(str(title)[:200])
+    if attrs.get("owner_only") and not _col(row, "owner_only"):
+        sets.append("owner_only=1")
+    if sets:
+        conn.execute(f"UPDATE rec_instances SET {', '.join(sets)} WHERE rec_id=?", (*args, row["rec_id"]))
+
+
 def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=None, position=None, created_at=None):
     """The episode a showing belongs to: the open one, else a new one — unless
-    the latest was answered and is still silencing (then None). An open
-    episode re-shown with materially different content (_material_change)
-    is closed as superseded and a new one begins; a new key of a
-    REPLACING_KINDS kind supersedes the kind's other open keys."""
+    the latest was answered and is still silencing, or is open inside a
+    snooze ("Not today" — the same rule silenced() reads), then None. An
+    open episode re-shown with materially different content
+    (_material_change) is closed as superseded and a new one begins; a new
+    key of a REPLACING_KINDS kind supersedes the kind's other open keys. A
+    replacement carries on the chain it replaced (chain_started_at), so the
+    expiry clock is not restarted by a new figure; a replaced episode that
+    was already stale expires instead."""
     row = _latest(conn, rid, key)
     now = _now()
     replaced = None
+    chain = None
     if row is not None:
         if row["status"] == "open":
             if not is_stale(row):
+                if row["snoozed_until"] and row["snoozed_until"] > now:
+                    return None
                 change = _material_change(row, attrs) if created_at is None else None
                 if not change:
+                    _fill_missing(conn, row, attrs, title)
                     return row["rec_id"]
                 replaced = (row["rec_id"], change)
+                chain = chain_start(row)
             else:
                 _close(conn, row["rec_id"], rid, key, "expired", meta={"reason": "no answer"})
         elif _silenced_row(row, now):
             return None
     attrs = attrs or {}
     kind = kind or kind_of(key)
+    others = []
+    if kind in REPLACING_KINDS and created_at is None:
+        for other in conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND kind=? AND status='open' "
+                                  "AND key != ?", (rid, kind, key)).fetchall():
+            if is_stale(other):
+                _close(conn, other["rec_id"], rid, other["key"], "expired", meta={"reason": "no answer"})
+                continue
+            others.append(other)
+            start = chain_start(other)
+            if start and (chain is None or start < chain):
+                chain = start
     rec_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO rec_instances (rec_id, restaurant_id, key, module, kind, title, dollar_value, confidence_band, "
         "evidence_sources, cross_module, model_written, cavnar_completes, expected_metric, expected_by, first_surface, "
-        "first_position, created_at, last_event_at, tags, owner_only, target) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "first_position, created_at, last_event_at, tags, owner_only, target, chain_started_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (rec_id, rid, key, module, kind, (title or "")[:200] or None,
          _num(attrs.get("dollar_value")), attrs.get("confidence_band"),
          json.dumps(sorted(set(attrs.get("evidence_sources") or []))) if attrs.get("evidence_sources") else None,
@@ -596,13 +693,12 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
          1 if attrs.get("model_written") else 0, 1 if attrs.get("cavnar_completes") else 0,
          attrs.get("expected_metric"), attrs.get("expected_by"), surface, position, created_at or now,
          created_at or now, _stored_tags(conn, rid, key, module, kind), 1 if attrs.get("owner_only") else 0,
-         str(attrs["target"])[:60] if attrs.get("target") not in (None, "") else None))
+         str(attrs["target"])[:60] if attrs.get("target") not in (None, "") else None,
+         chain if (chain and chain < (created_at or now)) else None))
     if replaced:
         _supersede(conn, replaced[0], rid, key, by=rec_id, meta=replaced[1])
-    if kind in REPLACING_KINDS and created_at is None:
-        for other in conn.execute("SELECT rec_id, key FROM rec_instances WHERE restaurant_id=? AND kind=? "
-                                  "AND status='open' AND key != ? AND rec_id != ?", (rid, kind, key, rec_id)).fetchall():
-            _supersede(conn, other["rec_id"], rid, other["key"], by=rec_id, meta={"why": "replaced", "key": key})
+    for other in others:
+        _supersede(conn, other["rec_id"], rid, other["key"], by=rec_id, meta={"why": "replaced", "key": key})
     return rec_id
 
 
@@ -661,6 +757,23 @@ _PRESENT_ATTRS = ("dollar_value", "confidence_band", "evidence_sources", "cross_
                   "cavnar_completes", "expected_metric", "expected_by", "target", "owner_only")
 
 
+def local_day(conn, restaurant_id, now=None) -> str:
+    """The restaurant's own calendar date (its timezone) as YYYY-MM-DD — the
+    day a `shown` is counted once per surface. A UTC day began at 7pm CDT,
+    so an evening Home view and the next morning's were one "day" and
+    counted once, while every other "today" (decisions.shown_elsewhere_today,
+    the brief) is local (re-audit B25). Falls back to operator time."""
+    from datetime import timezone as _tz
+    from time_utils import restaurant_tz
+    try:
+        row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        name = row[0] if row else None
+    except Exception:
+        name = None
+    utc = (now or datetime.utcnow()).replace(tzinfo=_tz.utc)
+    return utc.astimezone(restaurant_tz(name or None)).strftime("%Y-%m-%d")
+
+
 def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path=DB_PATH, replaces=()) -> dict:
     """{key: rec_id or None} for a batch shown together (a Home page, a
     brief), on one connection. Never raises: measurement must not take a
@@ -674,13 +787,13 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     out = {}
     if not restaurant_id or not items:
         return out
-    day = datetime.utcnow().strftime("%Y-%m-%d")
     try:
         conn = get_conn(db_path)
     except Exception as e:
         print(f"[rec_ledger] present unavailable: {e}")
         return out
     try:
+        day = local_day(conn, restaurant_id)
         for i, it in enumerate(items):
             key = str(it.get("key") or "").strip()[:160]
             if not key:
@@ -720,12 +833,19 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
 
 
 def record(restaurant_id, key, event, surface=None, user_id=None, role=None, meta=None, source_ref=None,
-           silence_days=None, snooze_until=None, at=None, silence_until=None, db_path=DB_PATH) -> bool:
+           silence_days=None, snooze_until=None, at=None, silence_until=None, db_path=DB_PATH,
+           rec_id=None, require_existing=False) -> bool:
     """The owner (or Cavnar on their behalf) did something with a
     recommendation. Terminal events close the episode; `dismissed` and
     `completed`/`accepted` silence the key everywhere for SILENCE_DAYS /
     ACCEPTED_QUIET_DAYS (or `silence_days`, or an absolute `silence_until`).
     Never raises.
+
+    `rec_id` names the episode the answer belongs to (a check-in on the
+    result a tracker measured — K1) instead of the key's latest; it must be
+    an episode of this restaurant and key, else nothing is recorded.
+    `require_existing` refuses to start an episode at the answer: a
+    client-originated answer names a recommendation it was shown (K2).
 
     `source_ref` names the answer: the same answer recorded again (a sync,
     a retry) is a no-op for this key across EVERY episode, not only the
@@ -757,7 +877,7 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
     try:
         added = _record_on(conn, restaurant_id, key, event, surface=surface, user_id=user_id, role=role, meta=meta,
                            source_ref=source_ref, silence_days=silence_days, snooze_until=snooze_until, when=when,
-                           silence_until=silence_until)
+                           silence_until=silence_until, rec_id=rec_id, require_existing=require_existing)
         conn.commit()
         return added
     except Exception as e:
@@ -771,8 +891,31 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
         conn.close()
 
 
+def _may_implement(row, when=None) -> bool:
+    """Whether a change made now can be the one this episode recommended:
+    it is live (open, not stale), accepted, or it ended — answered, expired,
+    superseded — within IMPLEMENT_ATTACH_DAYS. A post today is not the
+    change a "post this week" card nobody answered in March asked for
+    (re-audit B15)."""
+    now = datetime.strptime(when, "%Y-%m-%d %H:%M:%S") if when else datetime.utcnow()
+    st = row["status"]
+    if st == "accepted" or (st == "open" and not is_stale(row, now=now)):
+        return True
+    closed = _stamp(_col(row, "closed_at"))
+    ended = datetime.strptime(closed, "%Y-%m-%d %H:%M:%S") if closed else None
+    if st in ("open", "expired"):
+        # An ignored episode ended when it went stale — EXPIRE_AFTER_DAYS
+        # after its chain began — not when the 8am job got round to closing
+        # it (a card from March closed this morning is not recent).
+        start = _stamp(chain_start(row))
+        stale_at = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S") + timedelta(days=EXPIRE_AFTER_DAYS)) if start else None
+        ended = min(x for x in (ended, stale_at) if x is not None) if (ended or stale_at) else None
+    return ended is not None and ended >= now - timedelta(days=IMPLEMENT_ATTACH_DAYS)
+
+
 def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role=None, meta=None, source_ref=None,
-               silence_days=None, snooze_until=None, when=None, silence_until=None) -> bool:
+               silence_days=None, snooze_until=None, when=None, silence_until=None, rec_id=None,
+               require_existing=False) -> bool:
     """record()'s body on the caller's connection, uncommitted — for a
     caller already inside its own write transaction (a schedule save), where
     a second connection would wait on the lock that caller holds."""
@@ -780,7 +923,12 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
     if dedupe and conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
                                (restaurant_id, key, dedupe)).fetchone():
         return False
-    if when:
+    if rec_id:
+        row = conn.execute("SELECT * FROM rec_instances WHERE rec_id=? AND restaurant_id=? AND key=?",
+                           (rec_id, restaurant_id, key)).fetchone()
+        if row is None:
+            return False
+    elif when:
         row = _episode_at(conn, restaurant_id, key, when)
         if row is None and _latest(conn, restaurant_id, key) is not None:
             # Every episode of this key began after the answer: whatever
@@ -789,8 +937,10 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
             return False
     else:
         row = _latest(conn, restaurant_id, key)
+    if row is not None and event == "implemented" and not rec_id and not _may_implement(row, when):
+        return False
     if row is None:
-        if event in NON_OPENING:
+        if event in NON_OPENING or require_existing:
             return False
         # Answered before any surface logged showing it (an alert, an
         # older client): the episode starts at the answer.
@@ -816,7 +966,14 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
                          (_stamp(silence_until), base, f"+{int(silence_days or ACCEPTED_QUIET_DAYS)} days", rec_id))
         elif event == "snoozed":
             until = snooze_until or (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-            conn.execute("UPDATE rec_instances SET snoozed_until=? WHERE rec_id=?", (str(until), rec_id))
+            # "Not today" on a card the 8am job had just expired (it was
+            # still on the owner's screen) is an answer to that card: it
+            # reopens, snoozed, instead of staying expired and unsilenced so
+            # the next surface showed it again at once (re-audit B17).
+            conn.execute("UPDATE rec_instances SET snoozed_until=?, "
+                         "status=CASE WHEN status='expired' THEN 'open' ELSE status END, "
+                         "closed_at=CASE WHEN status='expired' THEN NULL ELSE closed_at END WHERE rec_id=?",
+                         (str(until), rec_id))
         elif event == "implemented":
             # The change was made. Open, expired or accepted become
             # implemented; Done stays Done and a "not for us" stays
@@ -928,12 +1085,55 @@ def link_tracker(restaurant_id, key, tracker_id, db_path=DB_PATH) -> bool:
 CHECKIN_ANSWERS = ("yes", "no", "partly")
 
 
+def checkin_episode(restaurant_id, key=None, tracker_id=None, db_path=DB_PATH):
+    """The episode a check-in answers, as a dict, or None (K1):
+
+      tracker_id given  the episode that tracker measures
+                        (rec_instances.tracker_id) for THIS restaurant — the
+                        result the owner was asked about, however many times
+                        the key was shown since. With `key` too, a key that
+                        is not that episode's is None.
+      key only          the key's latest episode that has a tracker, else
+                        its latest.
+
+    Resolving by key alone answered the key's LATEST episode: a card shown
+    again after its tracker started took the "No, I didn't do it" meant for
+    the measured one, and the result it was about kept counting (re-audit
+    B1). Never raises."""
+    if not restaurant_id or (tracker_id is None and not key):
+        return None
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return None
+    try:
+        if tracker_id is not None:
+            row = conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND tracker_id=? "
+                               "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                               (restaurant_id, int(tracker_id))).fetchone()
+            if row is not None and key and row["key"] != str(key).strip()[:160]:
+                row = None
+        else:
+            k = str(key).strip()[:160]
+            row = (conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND key=? AND tracker_id IS NOT NULL "
+                                "ORDER BY created_at DESC, rowid DESC LIMIT 1", (restaurant_id, k)).fetchone()
+                   or _latest(conn, restaurant_id, k))
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"[rec_ledger] checkin episode lookup failed: {e}")
+        return None
+    finally:
+        conn.close()
+
+
 def checkin(restaurant_id, key, did_it, conditions_changed=False, note=None, user_id=None, role=None,
-            surface=None, db_path=DB_PATH):
+            surface=None, db_path=DB_PATH, tracker_id=None, rec_id=None):
     """The owner's check-in on a recommendation: did they make the change,
     and did anything else change in those weeks (ROI audit #21's question,
-    asked when a result lands). Recorded as a `checkin` event on the latest
-    episode of `key`; None when there is no episode (nothing to check in on).
+    asked when a result lands). Recorded as a `checkin` event on the episode
+    it answers — `rec_id` when the caller has resolved it, else
+    checkin_episode(key, tracker_id); None when there is none (nothing to
+    check in on).
 
     The event's meta — the field the outcome evaluation may read:
       did_it              "yes" | "no" | "partly"
@@ -945,23 +1145,29 @@ def checkin(restaurant_id, key, did_it, conditions_changed=False, note=None, use
                            true when did_it is "no" or conditions_changed:
                            a measured move on that tracker should not be read
                            as this recommendation working
-    "yes" also records the episode as implemented (the owner says the change
-    was made), once."""
+    "yes" also records THAT episode as implemented (the owner says the
+    change was made), once."""
     if did_it not in CHECKIN_ANSWERS:
         raise ValueError("did_it must be yes, no or partly")
     key = str(key or "").strip()[:160]
-    if not restaurant_id or not key:
+    if not restaurant_id or (not key and tracker_id is None and not rec_id):
         return None
-    try:
-        conn = get_conn(db_path)
-    except Exception:
+    if rec_id:
+        try:
+            conn = get_conn(db_path)
+        except Exception:
+            return None
+        try:
+            got = conn.execute("SELECT * FROM rec_instances WHERE rec_id=? AND restaurant_id=?",
+                               (rec_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        row = dict(got) if got else None
+    else:
+        row = checkin_episode(restaurant_id, key=key or None, tracker_id=tracker_id, db_path=db_path)
+    if row is None or (key and row["key"] != key):
         return None
-    try:
-        row = _latest(conn, restaurant_id, key)
-    finally:
-        conn.close()
-    if row is None:
-        return None
+    key = row["key"]
     changed = bool(conditions_changed)
     meta = {"did_it": did_it, "conditions_changed": changed,
             "note": (str(note).strip()[:300] or None) if note else None,
@@ -969,11 +1175,12 @@ def checkin(restaurant_id, key, did_it, conditions_changed=False, note=None, use
             "attribution": {"implemented": did_it, "confounded": changed,
                             "discount": did_it == "no" or changed}}
     ok = record(restaurant_id, key, "checkin", surface=surface, user_id=user_id, role=role, meta=meta,
-                db_path=db_path)
+                db_path=db_path, rec_id=row["rec_id"])
     if ok and did_it == "yes":
         record(restaurant_id, key, "implemented", surface=surface, user_id=user_id, role=role,
-               meta={"via": "checkin"}, source_ref=f"checkin:{row['rec_id']}", db_path=db_path)
-    return dict(meta, rec_id=row["rec_id"], recorded=bool(ok))
+               meta={"via": "checkin"}, source_ref=f"checkin:{row['rec_id']}", db_path=db_path,
+               rec_id=row["rec_id"])
+    return dict(meta, rec_id=row["rec_id"], key=key, recorded=bool(ok))
 
 
 def latest_checkin(restaurant_id, tracker_id=None, key=None, db_path=DB_PATH):
@@ -1101,17 +1308,24 @@ def note_problem(restaurant_id, source, subject_key, module=None, detail=None, l
 
 
 def backfill_tags(db_path=DB_PATH, limit=5000) -> int:
-    """Tag episodes written before tags were stored (#17). Bounded; the
-    `tags IS NULL` filter is its own cursor, so the nightly job finishes the
-    tail on later nights. Never raises."""
+    """Tag episodes written before tags were stored (#17), and re-tag a dish
+    or item episode stored with a day, day type or daypart read out of its
+    NAME ("reprice:Friday Fish Fry" as a weekend recommendation — re-audit
+    B14). Bounded; the filter is its own cursor (a re-tagged row no longer
+    matches it), so the nightly job finishes the tail on later nights.
+    Never raises."""
     try:
         conn = get_conn(db_path)
     except Exception:
         return 0
     n = 0
+    named = tuple(DISH_KINDS) + tuple(ITEM_KINDS)
     try:
-        rows = conn.execute("SELECT rec_id, restaurant_id, key, module, kind FROM rec_instances WHERE tags IS NULL "
-                            "LIMIT ?", (int(limit),)).fetchall()
+        rows = conn.execute(
+            "SELECT rec_id, restaurant_id, key, module, kind FROM rec_instances WHERE tags IS NULL "
+            f"OR ((kind IN ({','.join('?' for _ in named)}) OR (kind='dsr_action' AND key LIKE 'dsr_action:%:food/%')) "
+            "    AND (tags LIKE '%\"day:%' OR tags LIKE '%\"daytype:%' OR tags LIKE '%\"daypart:%')) "
+            "LIMIT ?", (*named, int(limit))).fetchall()
         for r in rows:
             conn.execute("UPDATE rec_instances SET tags=? WHERE rec_id=?",
                          (_stored_tags(conn, r["restaurant_id"], r["key"], r["module"], r["kind"]), r["rec_id"]))

@@ -1293,7 +1293,13 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB
     return dict(result, draft_id=draft_id)
 
 
-def dismiss_winback(restaurant_id, draft_id, user_id=None, kind="not_for_us", db_path=DB_PATH) -> dict:
+def dismiss_winback(restaurant_id, draft_id, user_id=None, kind="not_for_us", db_path=DB_PATH, viewer=None,
+                    reason_code=None, reason=None) -> dict:
+    """"Not for us" on a win-back draft. With `viewer` (the routes) the
+    draft's recommendation must be one this login was shown and may see
+    (K2) — otherwise it reads as gone. `reason_code` (rec_ledger.
+    REASON_CODES; the route refuses any other) and a free `reason` ride on
+    the ledger answer like every other "Not for us" (K3)."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT rec_key FROM guest_campaign_drafts WHERE id=? AND restaurant_id=?",
@@ -1302,12 +1308,21 @@ def dismiss_winback(restaurant_id, draft_id, user_id=None, kind="not_for_us", db
         conn.close()
     if not row:
         return {"ok": False, "error": "That draft is gone."}
+    if viewer is not None:
+        import rec_learning
+        if rec_learning.answerable_episode(viewer, restaurant_id, row["rec_key"], db_path=db_path) is None:
+            return {"ok": False, "error": "That draft is gone."}
     _answer_winback(restaurant_id, draft_id, "dismissed", user_id, db_path=db_path)
     try:
         import rec_ledger
+        meta = {"kind": kind if kind in ("hide", "not_for_us") else "not_for_us", "module": "marketing"}
+        if reason_code in rec_ledger.REASON_CODES:
+            meta["reason_code"] = reason_code
+        if isinstance(reason, str) and reason.strip():
+            meta["reason"] = reason.strip()[:200]
         rec_ledger.record(restaurant_id, row["rec_key"], "dismissed", surface="marketing", user_id=user_id,
-                          meta={"kind": kind if kind in ("hide", "not_for_us") else "not_for_us",
-                                "module": "marketing"}, db_path=db_path)
+                          role=(viewer or {}).get("role") if isinstance(viewer, dict) else None,
+                          meta=meta, db_path=db_path, require_existing=viewer is not None)
     except Exception:
         pass
     return {"ok": True}

@@ -142,7 +142,7 @@ def times_hidden(conn, rid):
 
 
 def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
-            surface="home", role=None, _card=True, reason_code=None):
+            surface="home", role=None, _card=True, reason_code=None, require_existing=False):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -155,8 +155,15 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     on Home a "no" in the brief, the weekly email, the digest and the queue
     (they all read rec_ledger.silenced_keys). `reason_code` is the owner's
     one-tap why (rec_ledger.REASON_CODES — the route refuses any other),
-    stored on the ledger answer beside the free `reason`."""
-    key = (key or "").strip()[:120]
+    stored on the ledger answer beside the free `reason`.
+
+    A setup or health nudge (HOME_SETUP_KEYS) is hidden on Home only — it
+    is not a recommendation, so nothing is written to the ledger.
+    `require_existing` (the route's answers, K2) never starts a ledger
+    episode at the answer. The key is kept to the ledger's own 160
+    characters: cut to 120 here, a long key's answer was filed under a key
+    nobody was shown."""
+    key = (key or "").strip()[:160]
     if not key:
         return {"ok": False, "error": "Missing key"}
     kind = kind if kind in _DISMISS_DAYS_BY_KIND else "recommendation"
@@ -178,13 +185,15 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
         import rec_ledger
         from datetime import datetime as _dtl
         code = reason_code if reason_code in rec_ledger.REASON_CODES else None
-        if kind == "snooze":
+        if key in HOME_SETUP_KEYS:
+            pass                                 # Home's own hide; not an answer to advice
+        elif kind == "snooze":
             until = (_dtl.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
             smeta = {"until": until, "days": days}
             if code:
                 smeta["reason_code"] = code
             rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
-                              meta=smeta, snooze_until=until)
+                              meta=smeta, snooze_until=until, require_existing=require_existing)
         else:
             meta = {"kind": _LEDGER_KIND[kind]}
             if reason:
@@ -192,7 +201,8 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
             if code:
                 meta["reason_code"] = code
             rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
-                              user_id=user_id, role=role, meta=meta, silence_days=days)
+                              user_id=user_id, role=role, meta=meta, silence_days=days,
+                              require_existing=require_existing)
     except Exception as e:
         print(f"[home] dismissal not recorded in the ledger: {e}")
     # The critically-low card lists every unanswered item under the first
@@ -229,7 +239,8 @@ def undismiss(rid, key, _card=True):
         except Exception as e:
             print(f"[home] stock card restore incomplete: {e}")
     conn = get_conn()
-    n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
+    n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key IN (?, ?)",
+                     (rid, (key or "").strip()[:160], (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
     try:
         import rec_ledger
@@ -563,6 +574,24 @@ def _may_assign(user) -> bool:
 LEDGER_KEY = {"awaiting_approval": "no_response"}
 # A card key -> the attention item's ledger key that says the same news.
 SAME_NEWS = {"publish_drafts": "no_response"}
+# Home's setup and health nudges — the product's own state (a connection
+# missing or failing, data gone stale, a post that failed to publish), not
+# advice an owner takes or declines. They are never presented to the ledger
+# (every one expired as "ignored" and taught the rankers the owner ignores
+# advice), carry answerable=false, and a hide on one is Home's own
+# (home_dismissals), never a ledger answer (re-audit B7). Value: the module
+# whose view permission may hide it.
+HOME_SETUP_KEYS = {"google_not_connected": "reviews", "reviews_stale": "reviews", "toast_sync": "labor",
+                   "inventory_stale": "food", "post_failed": "marketing", "social_not_connected": "marketing"}
+
+
+def attention_answerable(a) -> bool:
+    """Whether a Needs-attention item is a recommendation the owner can
+    answer from Home: dismissable (a critical item never is), not a setup or
+    health nudge, and a key the ledger may present (rec_delivery)."""
+    import rec_delivery
+    return bool(a.get("dismissable")) and a.get("key") not in HOME_SETUP_KEYS \
+        and rec_delivery.answerable(a.get("rec_key") or a.get("key"))
 # What the clients render (web renderFocus/renderAttention/renderRecs, iOS
 # HomeActionDeck/HomeRecommendations): at most this many of each.
 HOME_ATTENTION_SHOWN = 4
@@ -1517,6 +1546,9 @@ def _build(current_user, present=True):
         a["rec_key"] = a.get("rec_key") or ledger_key(a["key"])
         a["dismissable"] = a["severity"] != "critical"
         a["times_hidden"] = hidden_counts.get(a["rec_key"], 0)
+        # The contract every payload carrying a recommendation keeps
+        # (rec_delivery.answerable): only an answerable item is presented.
+        a["answerable"] = attention_answerable(a)
     attention = [a for a in attention if not (a["dismissable"] and (a["rec_key"] in answered))]
 
     # ── order, brief headline, empty states ────────────────────────────────
@@ -1635,19 +1667,31 @@ def _build(current_user, present=True):
     # three cards. The payload keeps every attention item (web's "+N more"
     # counts them) and exactly the cards both clients show.
     recs = recs[:HOME_RECS_SHOWN]
-    rendered_attention = attention[:HOME_ATTENTION_SHOWN]
+    import rec_delivery
+    for r in recs:
+        r["answerable"] = rec_delivery.answerable(r["key"])
 
     # Every card and attention item this Home shows is an impression in the
     # ledger (#37) — one episode per key, one `shown` per surface per day.
     # A key the ledger says is answered comes back None and is not shown.
-    try:
-        shown = (rec_ledger.present_many if present else _answered_only)(rid, [
+    # Only what the owner can ANSWER here is presented (re-audit B7): a
+    # setup or health nudge, a critical item (never dismissable) and a key
+    # rec_delivery never presents (urgent_reviews) would each expire as
+    # "ignored" with no answer ever offered. An item that drops out (its
+    # key came back answered) lets the next one into view, which is then
+    # presented too — at most one more pass.
+    shown = {}
+    done = set()
+    for _pass in range(2):
+        rendered_attention = attention[:HOME_ATTENTION_SHOWN]
+        batch = rec_delivery.only_presentable([
             *({"key": a["rec_key"], "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"],
-               "position": i} for i, a in enumerate(rendered_attention)),
+               "position": i} for i, a in enumerate(rendered_attention) if a["answerable"]),
             # A card that stands for several (critically low: one key per
             # item) shows each of them.
             *({"key": k, "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"], "position": i}
-              for i, a in enumerate(rendered_attention) for k in (a.get("rec_keys") or []) if k != a["rec_key"]),
+              for i, a in enumerate(rendered_attention) if a["answerable"]
+              for k in (a.get("rec_keys") or []) if k != a["rec_key"]),
             *({"key": r["key"], "module": _LEDGER_MODULE.get(r["module"], "home"), "title": r["title"],
                "position": 100 + i, "dollar_value": r.get("dollars_monthly"),
                "confidence_band": (r.get("confidence") or {}).get("band"),
@@ -1657,12 +1701,26 @@ def _build(current_user, present=True):
                # (rec_ledger supersedes the open episode, ROI #37).
                "target": ((r.get("action") or {}).get("price") if (r.get("action") or {}).get("kind") == "reprice"
                           else None)}
-              for i, r in enumerate(recs))], "home", user_id=current_user.get("id"))
-    except Exception:
-        shown = {}
-    if shown:
-        attention = [a for a in attention if not a["dismissable"] or shown.get(a["rec_key"], True) is not None]
-        recs = [r for r in recs if shown.get(r["key"], True) is not None]
+              for i, r in enumerate(recs) if r["answerable"])])
+        batch = [it for it in batch if it["key"] not in done]
+        if not batch:
+            break
+        try:
+            # A build that must record nothing (the Ask opening's fallback,
+            # re-audit C5) filters what was answered without writing.
+            got = (rec_ledger.present_many if present else _answered_only)(
+                rid, batch, "home", user_id=current_user.get("id"))
+        except Exception:
+            got = {}
+        if not got:
+            break
+        done.update(got)
+        shown.update(got)
+        before = [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]]
+        attention = [a for a in attention if not a["answerable"] or shown.get(a["rec_key"], True) is not None]
+        recs = [r for r in recs if not r["answerable"] or shown.get(r["key"], True) is not None]
+        if [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] == before:
+            break
 
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []

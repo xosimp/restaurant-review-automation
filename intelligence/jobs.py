@@ -13,9 +13,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
-from models import get_conn, DB_PATH, get_all_restaurants
+import models as _models_mod
+from models import DB_PATH, get_all_restaurants
 from . import categories, feedback, patterns, benchmarks, scoring
 from . import features as _features
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
 
 CURSOR_KEY = "intelligence_features"
 FEATURE_WALL_SECONDS = 240
