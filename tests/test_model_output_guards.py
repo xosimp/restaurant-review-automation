@@ -504,9 +504,12 @@ def test_h10_specific_complaint_is_fenced_and_its_numbers_verify_nothing(db_path
 # ── H11: competitor checks ─────────────────────────────────────────────────
 
 COMPETITORS = [
-    {"name": "Luigi's Trattoria", "price_level": 2, "reviews": [{"ref": "R1"}, {"ref": "R2"}]},
-    {"name": "Bella Cucina", "price_level": 3, "reviews": [{"ref": "R3"}]},
-    {"name": "Nonna Rosa", "price_level": 2, "reviews": [{"ref": "R4"}]},
+    # Each review carries its text: since R13 a bullet's cite must say what
+    # the bullet says.
+    {"name": "Luigi's Trattoria", "price_level": 2, "reviews": [{"ref": "R1", "text": "Fast service at lunch."},
+                                                                {"ref": "R2", "text": "Cozy room."}]},
+    {"name": "Bella Cucina", "price_level": 3, "reviews": [{"ref": "R3", "text": "The pasta was cold."}]},
+    {"name": "Nonna Rosa", "price_level": 2, "reviews": [{"ref": "R4", "text": "A cozy corner booth."}]},
 ]
 
 
