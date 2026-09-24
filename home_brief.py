@@ -1810,9 +1810,11 @@ def _build(current_user, present=True):
             add_rec("intel_recs", f"Read the {_plural(intel['recs'], 'suggestion')} from this week's competitor comparison",
                     f"The weekly Intel pass compared you with {_plural(intel['competitors'], 'nearby competitor')} {int(age)}d ago.",
                     f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "Open Intel",
-                    # A model-written comparison: the model's read caps it at
-                    # medium whatever the count; its age is Data Freshness.
-                    ev={"n": intel["competitors"], "kind": "competitors", "model_band": "medium",
+                    # A model-written comparison is an inference: flagged as
+                    # one (never high) — not a "model_band" the model never
+                    # gave (R9, B1 M1: the Why? panel said "the AI read rated
+                    # itself medium", a constant 65). Its age is Data Freshness.
+                    ev={"n": intel["competitors"], "kind": "competitors", "flags": ("inferred",),
                         "basis": f"a model-written comparison of {_plural(intel['competitors'], 'public listing')}"},
                     if_ignored="the suggestions age out at the next weekly pass", effort="medium", model_written=True)
 

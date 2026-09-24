@@ -724,9 +724,12 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             # Use up to 5 reviews, 250 chars each for richer insight
             rev_list = c.get("reviews", [])
             if rev_list:
-                # Competitor review text is written by the public. Fenced
-                # below with the rest of the block — see UNTRUSTED_NOTE in
-                # the prompt.
+                # Competitor review text is written by the public, so it —
+                # and only it — is fenced (R8, B5 #8): the ratings, review
+                # counts and price levels around it are Google's data, and
+                # fencing them too meant the figure check could never verify
+                # a true "4.5★, 812 reviews", so its UNVERIFIED flag carried
+                # no information. See UNTRUSTED_NOTE in the prompt.
                 #
                 # Each review now carries its age. Google picks these five
                 # by its own relevance ranking, not by recency, so without a
@@ -755,7 +758,7 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             comp_summary += f"""
 - {c["name"]} ({(str(c["rating"]) + "★") if c.get("rating") else "no rating yet"}, {c["review_count"]} reviews){price_line}{dist_line}{match_line}{prov_line}
   Recent customer reviews (with how long ago each was written):
-  {reviews_text}
+  {wrap_untrusted(reviews_text) if rev_list else reviews_text}
 """
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
@@ -835,7 +838,7 @@ CRITICAL RULES:
 - Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews above, or a specific way to win over customers unhappy with a named competitor
 
 Nearby competitors and their recent customer reviews:
-{wrap_untrusted(comp_summary)}
+{comp_summary}
 
 EVIDENCE RULES — these bound what you may claim:
 - Each review carries how long ago it was written. A review over a year old is NOT evidence of what a competitor is doing now. Prefer recent ones, and if you cite an older one, say when it was ("last year", "two years ago").
@@ -959,6 +962,34 @@ def _cites_about_named(line, cites, competitors) -> bool:
     return all(c in own for c in cites)
 
 
+# Words a strength or weakness bullet uses whatever it claims; sharing only
+# these with a cited review is no support.
+_SUPPORT_GENERIC = {"known", "great", "good", "best", "nice", "really", "very", "always", "never", "town",
+                    "restaurant", "diner", "place", "competitor", "customers", "customer", "people", "their",
+                    "strong", "weak", "poor", "popular", "loved", "love", "loves", "consistently"}
+
+
+def _cites_support(line, cites, competitors) -> bool:
+    """Whether the reviews a bullet cites say what the bullet says (R13, B5
+    #17): at least one content word of the claim — the competitor's own name
+    and generic praise left out — appears in a cited review. The id check
+    proved only that the review exists and is that competitor's: "best patio
+    in town [R3]" stood on a review about cold coffee."""
+    from ai_guard import _content_stems
+    by_ref = {str(r.get("ref")).upper(): str(r.get("text") or "") for c in competitors or []
+              for r in (c.get("reviews") or []) if r.get("ref")}
+    names = set()
+    for c in competitors or []:
+        names |= _content_stems(str(c.get("name") or ""))
+    claim = {w for w in _content_stems(line) if w not in names and w not in _SUPPORT_GENERIC}
+    if not claim:
+        return False
+    cited = set()
+    for ref in cites or []:
+        cited |= _content_stems(by_ref.get(str(ref).upper(), ""))
+    return bool(claim & cited)
+
+
 def _validate_bullets(text, competitors):
     """The DOING WELL / DOING POORLY bullets, cite-checked (H11). Each bullet
     must name a competitor and end with the ids of that competitor's reviews
@@ -986,7 +1017,8 @@ def _validate_bullets(text, competitors):
         if section and st.startswith("-"):
             body, cites = split_citations(st.lstrip("- ").strip())
             if (cites and all(c in known for c in cites) and _named_competitors(body, competitors)
-                    and _cites_about_named(body, cites, competitors)):
+                    and _cites_about_named(body, cites, competitors)
+                    and _cites_support(body, cites, competitors)):
                 if pending_header is not None:
                     out.append(pending_header)
                     pending_header = None
@@ -1078,9 +1110,15 @@ def spot_check_menu(summary, source_text) -> str:
         return ""
     src_words = set(src.split())
 
+    src_numbers = set(_re.findall(r"\d+(?:\.\d+)?", str(source_text or "")))
+
     def present(item):
         words = [w for w in _re.findall(r"[a-z0-9]+", item.lower()) if len(w) >= 3]
-        return bool(words) and all(w in src_words or w.rstrip("s") in src_words for w in words)
+        # A price is checked whatever its length (R13, B5 #17): words under
+        # three characters were skipped, so "$19" passed on a menu reading 14.
+        nums = _re.findall(r"\d+(?:\.\d+)?", item)
+        return (bool(words) and all(w in src_words or w.rstrip("s") in src_words for w in words if not w.isdigit())
+                and all(n in src_numbers for n in nums))
 
     out_parts, kept_total = [], 0
     for part in _re.split(r"(?<=\.)\s+(?=[A-Z][A-Za-z ]{2,30}:)", summary.strip()):

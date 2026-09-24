@@ -272,7 +272,10 @@ def test_the_executive_contract_asks_for_evidence_and_confidence(db_path, monkey
                         lambda client, **kw: captured.update(kw) or _reply("ok"))
     ask_cavnar.ask_with_tools(r, "why did profits drop?")
     text = _system_text(captured)
-    assert "How confident you are" in text
+    # R3 (B5 #3): the confidence is computed and shown beside the answer;
+    # the model is told NOT to state one of its own.
+    assert "How confident you are" not in text
+    assert "give none of your own" in text and "Do NOT state a confidence of your own" in text
     assert "What to watch" in text
 
 
@@ -516,8 +519,12 @@ def test_the_business_snapshot_reports_every_module_it_actually_read(db_path, mo
         return _reply("Friday is the thing to look at.")
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", _fake)
+    # R3: a module counts as consulted only when the snapshot read live data
+    # for it — marketing here is sample-only and is left out.
     monkeypatch.setattr(tools, "run_read_tool", lambda name, rid, inp, **kw: json.dumps(
-        {"has_data": True, "modules_consulted": ["reviews", "food_cost", "labor"]}))
+        {"has_data": True, "modules_consulted": ["reviews", "food_cost", "labor", "marketing"],
+         "reviews": {"biggest_problems": ["slow service"]}, "food_cost": {"why": "salmon waste"},
+         "labor": {"labor_pct": 31.4}, "marketing": {"is_live": False}}))
 
     _a, _t, _p, meta = ask_cavnar.ask_with_tools(r, "why did profits drop?")
     assert set(meta["modules_consulted"]) == {"reviews", "food_cost", "labor"}

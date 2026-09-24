@@ -176,10 +176,14 @@ def test_several_lowering_notes_move_confidence_one_step_only():
     res = engine.compute(a["answers"], None, rec)
     order = ["low", "moderate", "high"]
     assert order.index(res["categories"]["labor"]["confidence"]) == max(0, order.index(base["categories"]["labor"]["confidence"]) - 1)
-    # a raise and a lower cancel out
+    # R14 (B1 H6): notes only ever lower — a "raise" beside a lower does not
+    # cancel it, and a raise alone changes nothing.
     rec["insights"] = [rec["insights"][0], dict(rec["insights"][0], effect="raise_confidence", text="Corroborated.")]
     res2 = engine.compute(a["answers"], None, rec)
-    assert res2["categories"]["labor"]["confidence"] == base["categories"]["labor"]["confidence"]
+    assert res2["categories"]["labor"]["confidence"] == res["categories"]["labor"]["confidence"]
+    rec["insights"] = [dict(rec["insights"][0], effect="raise_confidence", text="Corroborated.")]
+    res3 = engine.compute(a["answers"], None, rec)
+    assert res3["categories"]["labor"]["confidence"] == base["categories"]["labor"]["confidence"]
 
 
 def test_stale_read_is_shown_but_not_applied():

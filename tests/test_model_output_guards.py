@@ -95,8 +95,10 @@ def test_h1_review_diagnosis_keeps_only_operational_evidence_its_module_line_hol
         {"module": "marketing", "metric": "reach", "value": "31.4%"},       # labor's figure, wrong module
     ])
     out = ri._validate_diagnosis(raw, {1, 2}, "prompt 31.4%", 1, op_lines={"labor": LABOR_LINE})
+    # R1: a plain-string line (no named fields) keeps the model's words but
+    # carries the figures it matched; one entry per module.
     assert out["operational_evidence"] == [{"module": "labor", "metric": "labor %", "value": "31.4%",
-                                            "verified": True}]
+                                            "verified": True, "fields": ["pct:31.4"]}]
     assert out["confidence"] == "high" and out["model_confidence"] == "high"
 
 
@@ -268,8 +270,10 @@ def test_h4_the_corpus_is_built_from_verified_history_not_the_raw_messages():
     src = inspect.getsource(ask_cavnar.ask_with_tools)
     assert "_verified_history(" in src
     assert 'seen_corpus = [context] + [m["content"] for m in messages' not in src
-    # Every answer's check is recorded where it is returned.
-    assert src.count("_recorded(answer, _meta(") == 3
+    # Every answer's check is recorded where it is returned — through
+    # _finish since R3, which records it under the text actually shown.
+    assert src.count("= _finish(_answer_of(") == 3
+    assert "_recorded(answer, meta, restaurant_id)" in inspect.getsource(ask_cavnar._finish)
 
 
 # ── H5: keyword/model safety disagreements ─────────────────────────────────
@@ -371,7 +375,10 @@ def test_h6_drafts_are_labelled_estimates_and_past_edits_lower_confidence(db_pat
     d = [x for x in recipes.list_drafts(rid, db_path=db_path) if x["menu_item_id"] == 9][0]
     line = d["lines"][0]
     assert d["is_estimate"] is True and d["note"].startswith("Estimated by Cavnar")
-    assert line["confidence"] == "medium", "high stepped down: the owner rewrote past pizza drafts"
+    # R9: code sets the ceiling — an estimate is never high, so the model's
+    # "high" reads medium — and the owner's rewrites of past pizza drafts
+    # step that down one more.
+    assert line["confidence"] == "low", "medium (code's ceiling) stepped down: the owner rewrote past pizza drafts"
     assert line["qty"] == pytest.approx(0.25) and line["unit"] == "lb"
     assert "confidence lowered" in d["note"]
 
@@ -500,9 +507,12 @@ def test_h10_specific_complaint_is_fenced_and_its_numbers_verify_nothing(db_path
 # ── H11: competitor checks ─────────────────────────────────────────────────
 
 COMPETITORS = [
-    {"name": "Luigi's Trattoria", "price_level": 2, "reviews": [{"ref": "R1"}, {"ref": "R2"}]},
-    {"name": "Bella Cucina", "price_level": 3, "reviews": [{"ref": "R3"}]},
-    {"name": "Nonna Rosa", "price_level": 2, "reviews": [{"ref": "R4"}]},
+    # Each review carries its text: since R13 a bullet's cite must say what
+    # the bullet says.
+    {"name": "Luigi's Trattoria", "price_level": 2, "reviews": [{"ref": "R1", "text": "Fast service at lunch."},
+                                                                {"ref": "R2", "text": "Cozy room."}]},
+    {"name": "Bella Cucina", "price_level": 3, "reviews": [{"ref": "R3", "text": "The pasta was cold."}]},
+    {"name": "Nonna Rosa", "price_level": 2, "reviews": [{"ref": "R4", "text": "A cozy corner booth."}]},
 ]
 
 

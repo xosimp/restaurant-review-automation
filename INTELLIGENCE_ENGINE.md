@@ -493,8 +493,11 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
   feedback.sync skips these trackers.
 - **Pattern strength.** A pattern's `confidence` is a display blend of
   effect size, p and n, not the probability it is right; payloads carry it
-  as `strength_pct` with its label and basis (`patterns.strength_fields`),
-  and Ask's context says "strength … not a probability".
+  as `strength_pct` with its label and basis (`patterns.strength_fields`).
+  Ask's context line carries the pattern's MEASURED figures instead — the
+  restaurants behind it, Cohen's d and p — "an association, not a cause and
+  not a probability" (R9): a composite percentage in a prompt came back as
+  the model's own "I'm 62% sure".
 
 ## Pattern-discovery architecture
 

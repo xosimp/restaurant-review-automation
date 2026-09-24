@@ -396,11 +396,15 @@ def test_ask_confidence_is_measured_not_breadth(db, monkeypatch):
     import ask_cavnar
     rid = _rid(db)
     two_live = ["ctx", json.dumps({"is_live": True, "labor_pct": 31}), json.dumps({"reviews": 3})]
-    m = ask_cavnar._meta("Labor ran 31% last week.", two_live, ["read_labor", "read_reviews"], [], "standard", rid)
+    m = ask_cavnar._meta("Labor ran 31% last week and reviews hit 3 complaints.", two_live,
+                         ["read_labor", "read_reviews"], [], "standard", rid)
     d = m["confidence_detail"]
     # two modules read no longer means "high": no track record caps it
     assert d["pct"] is not None and d["pct"] <= ce.NO_TRACK_RECORD_CAP and m["confidence"] != "high"
     assert "2 live reads" in d["dimensions"]["evidence"]["basis"]
+    # R3: a read backing none of the answer's figures is not evidence for it
+    one = ask_cavnar._meta("Labor ran 31% last week.", two_live, ["read_labor", "read_reviews"], [], "standard", rid)
+    assert "1 live read of your data" in one["confidence_detail"]["dimensions"]["evidence"]["basis"]
     sample = ["ctx", json.dumps({"is_live": False, "labor_pct": 31})]
     s = ask_cavnar._meta("Labor ran 31%.", sample, ["read_labor"], [], "standard", rid)["confidence_detail"]
     assert s["dimensions"]["evidence"]["pct"] == 0 and s["band"] == "low"

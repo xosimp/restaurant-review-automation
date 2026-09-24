@@ -104,6 +104,12 @@ def claimed_direction(text: str, cost: bool) -> str | None:
     return "up" if up else "down"
 
 
+# The measured topics a digest clause can claim a direction about (R12).
+_TOPIC_RE = {"labor": r"\b(?:labor|labour|staffing|payroll)\b",
+             "inventory": r"\b(?:waste|food\s+cost|inventory)\b",
+             "reviews": r"(?:\brating|\bstars?\b|★)"}
+
+
 def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=None) -> str | None:
     """Why one digest line must not be emailed, or None (H9): a name that
     was never in its input (ai_guard.unsupported_names, the Reviews
@@ -129,6 +135,20 @@ def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=
             return f"says {key} went {said}, and nothing measured moved"
         if said and measured and said != measured:
             return f"says {key} went {said}; it went {measured}"
+    # Every line, not only the three module lines (R12, B5 #13): a headline
+    # saying "Labor climbed…" when labor fell was emailed. Each clause that
+    # is about exactly one measured topic is held to that topic's direction.
+    for clause in _re_dir.split(r"(?<=[.;])\s+|,\s+|\s+(?:and|while|but)\s+", line or ""):
+        topics = [t for t, pat in _TOPIC_RE.items() if _re_dir.search(pat, clause, _re_dir.I)]
+        if len(topics) != 1:
+            continue
+        t = topics[0]
+        said = claimed_direction(clause, cost=(t != "reviews"))
+        measured = directions.get(t)
+        if said and not measured:
+            return f"says {t} went {said}, and nothing measured moved"
+        if said and measured and said != measured:
+            return f"says {t} went {said}; it went {measured}"
     causes = unsupported_causes(line, cause_anchors)
     if causes:
         return "states a cause no diagnosis supports"

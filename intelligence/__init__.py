@@ -77,8 +77,18 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
             lines.append(f"{b['label']}: this restaurant is in the {b['standing']} of {b['n']} {b['cohort_label'].lower()} "
                          f"(band {b['p25']}–{b['p75']}, middle {b['p50']}).")
     for p in patterns.active(cohort, db_path=db_path, limit=3):
-        # Pattern STRENGTH (patterns.strength_fields), never worded as the
-        # chance the pattern is right (CA1 red flag 9).
-        lines.append(f"Pattern (strength {p['confidence']:.0%}: effect size, significance and sample — not a "
-                     f"probability): {p['sentence']}")
+        # The pattern's MEASURED figures, never a composite percentage (R9,
+        # B1: the strength % mixes weights that were never fitted, and a
+        # model handed "strength 62%" can restate it as how sure it is).
+        # Never worded as the chance the pattern is right (CA1 red flag 9).
+        ev = p.get("evidence") or {}
+        bits = []
+        if ev.get("n"):
+            bits.append(f"{ev['n']} restaurants")
+        if p.get("cohen_d") is not None:
+            bits.append(f"effect size d={float(p['cohen_d']):.2f}")
+        if p.get("p_value") is not None:
+            bits.append(f"p={float(p['p_value']):.3f}")
+        lines.append(f"Pattern ({', '.join(bits) or 'measured across the cohort'} — an association, not a cause "
+                     f"and not a probability): {p['sentence']}")
     return lines

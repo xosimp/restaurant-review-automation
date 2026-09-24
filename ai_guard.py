@@ -207,7 +207,17 @@ _COMMITMENT_RE = re.compile(
     # A process promise without a subject: "Going forward, every order will
     # be double-checked", "From now on all plates will be".
     r"(?:going|moving)\s+forward,?\s+[^.!?\n]{0,80}?\bwill\b"
-    r"|from\s+now\s+on,?\s+[^.!?\n]{0,80}?\bwill\b"
+    r"|from\s+now\s+on\b"
+    # R13 (B5 #15 / p10): the passive voice ("the server involved has been
+    # retrained", "the issue is fixed") and "our team is now …-ing".
+    r"|(?:the|our|your|that)\s+" + _STAFF + r"\s+(?:\w+\s+){0,2}?(?:has|have)\s+been\s+"
+    r"(?:retrained|re-trained|replaced|fired|let\s+go|terminated|disciplined|spoken\s+to|talked\s+to|"
+    r"written\s+up|coached|reprimanded|suspended|dealt\s+with)"
+    r"|(?:the|this|that|your)\s+(?:issue|problem|matter|situation|mistake|error)\s+(?:is|was|has\s+been|"
+    r"have\s+been)\s+(?:now\s+)?(?:fixed|resolved|addressed|corrected|sorted(?:\s+out)?|handled|"
+    r"taken\s+care\s+of|dealt\s+with)"
+    r"|(?:our|the)\s+(?:\w+\s+)?(?:team|staff|kitchen|crew|servers?|cooks?|managers?|chefs?)\s+(?:is|are)\s+"
+    r"now\s+[\w-]+ing"
     r"|(?:this|that|it)\s+will\s+(?:never|not)\s+happen\s+again"
     r"|(?:every|each|all)\s+(?:order|plate|dish|meal|ticket|table|delivery)s?\s+will\s+(?:now\s+)?be\s+\w+"
     + r"|"
@@ -282,9 +292,161 @@ _BARE_RE = re.compile(r"(?<![\w.:/])(\d[\d,]*(?:\.\d+)?)(?![\w:/])")
 # held to an exact-match rule instead: a rating is quoted to one decimal from
 # a specific query, so 4.2 and 4.3 are different claims, not rounding.
 _STAR_RE = re.compile(
-    r"(?:(\d(?:\.\d)?)\s?(?:★|☆|-?\s?stars?\b)"
+    r"(?:(\d(?:\.\d)?)\s?(?:★|☆|-?\s?stars?\b|\s+out\s+of\s+(?:5|five)\b)"
     r"|\brating(?:\s+\w+){0,2}\s+(?:of|to|at|was|is)\s+(\d(?:\.\d)?))",
     re.I)
+
+
+# ── figures written in words (R7, B5 #7) ───────────────────────────────────
+#
+# "45 percent", "three thousand dollars", "up 7 points" and "a dozen guests"
+# were never checked: the figure regexes read digits and "%" only.
+_NUM_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+_NUM_TENS = {w: 10 * (i + 2) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
+_NUM_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000}
+_NUM_WORD = r"(?:" + "|".join(sorted(list(_NUM_UNITS) + list(_NUM_TENS) + list(_NUM_SCALES) + ["dozen"],
+                                     key=len, reverse=True)) + r")"
+_SPELLED_RE = re.compile(
+    r"\b(?:(?:half\s+a|a|an)\s+(?=(?:hundred|thousand|million|dozen)\b))?" + _NUM_WORD
+    + r"(?:(?:\s+and\s+|\s+|-)" + _NUM_WORD + r")*\b", re.I)
+_UNIT_AFTER_RE = re.compile(r"\s*(?:%|percent\b|per\s+cent\b|dollars?\b|bucks\b|points?\b|pts?\b|stars?\b|★)",
+                            re.I)
+
+
+def _spelled_value(phrase: str):
+    words = re.findall(r"[a-z]+", phrase.lower())
+    total, current, half = 0, 0, False
+    for i, w in enumerate(words):
+        if w == "half":
+            half = True
+        elif w in ("a", "an", "and"):
+            continue
+        elif w in _NUM_UNITS:
+            current += _NUM_UNITS[w]
+        elif w in _NUM_TENS:
+            current += _NUM_TENS[w]
+        elif w == "dozen":
+            current = (current or 1) * 12
+        elif w == "hundred":
+            current = (current or 1) * 100
+        elif w in ("thousand", "million"):
+            total += (current or 1) * _NUM_SCALES[w]
+            current = 0
+    value = total + current
+    return value / 2 if half else value
+
+
+def normalise_numbers(text: str) -> str:
+    """`text` with figures written in words turned into the digits the
+    figure checks read: "45 percent" → "45%", "three thousand dollars" →
+    "3000 dollars", "a dozen guests" → "12 guests", "twenty-five percent" →
+    "25%". A small number word on its own ("one server", "two no-shows")
+    is ordinary prose and is left alone; it is converted only at 11 or more,
+    with a scale word (hundred, thousand, dozen), or right before a unit
+    (percent, dollars, points, stars)."""
+    body = str(text or "")
+
+    def _sub(m):
+        phrase = m.group(0)
+        words = re.findall(r"[a-z]+", phrase.lower())
+        value = _spelled_value(phrase)
+        scaled = any(w in ("hundred", "thousand", "million", "dozen") for w in words)
+        unit = bool(_UNIT_AFTER_RE.match(body[m.end():m.end() + 12]))
+        if not (value >= 11 or scaled or unit) or (value == 0 and not unit):
+            return phrase
+        return str(int(value)) if float(value).is_integer() else str(value)
+    body = _SPELLED_RE.sub(_sub, body)
+    body = re.sub(r"(\d)\s*(?:percent|per\s+cent)\b", r"\1%", body, flags=re.I)
+    return body
+
+
+# Percentage points: a move between two percentages ("up 7 points").
+_POINTS_RE = re.compile(r"(?<![\w.$])(\d+(?:\.\d+)?)\s*(?:percentage\s+)?(?:points?|pts?|pp)\b", re.I)
+
+# Parts of a prompt that are not figures (R7): a review id before its star
+# rating ("4521 (2★)", "#4521 (2★)"), ISO dates and month-name dates. A
+# "$4,500" passed on review id 4521 and "21%" on the 21 of "2026-09-21".
+_NOT_FIGURES_RE = re.compile(
+    r"#?\b\d+(?=\s*\(\s*\d(?:\.\d)?\s*★\))"
+    r"|\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b"
+    r"|\b(?:review[_ ]?id|id)\s*[:=#]\s*\d+", re.I)
+
+
+def _blank_non_figures(text: str) -> str:
+    return _NOT_FIGURES_RE.sub(lambda m: " " * len(m.group(0)), text or "")
+
+
+# The period a money figure is stated for (R7): "$2,400 a week" is not the
+# "$2,400 this month" it was checked against.
+_PERIOD_RE = re.compile(
+    r"^\s*(?:(?:a|an|per|each|every|this|last|that|the|/)\s*)?(?:(?:past|prior|previous|whole)\s+)?"
+    r"(week|wk|month|mo|year|yr|day|night|shift|weekly|monthly|yearly|annually|annual|daily|nightly)\b", re.I)
+_PERIOD_NORM = {"wk": "week", "weekly": "week", "mo": "month", "monthly": "month", "yr": "year",
+                "yearly": "year", "annually": "year", "annual": "year", "daily": "day", "nightly": "night"}
+
+
+def _period_after(text: str, end: int):
+    m = _PERIOD_RE.match(text[end:end + 30])
+    if not m:
+        return None
+    p = m.group(1).lower()
+    return _PERIOD_NORM.get(p, p)
+
+
+def _money_periods(text: str) -> dict:
+    """{value: {period or None}} for each money figure the context states."""
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    out = {}
+    for pat in (_MONEY_RE, _DOLLARS_RE):
+        for m in pat.finditer(text):
+            try:
+                v = _value(m)
+            except ValueError:
+                continue
+            out.setdefault(v, set()).add(_period_after(text, m.end()))
+    return out
+
+
+# Which way a figure moved, where the words say so (R7): "fell to 31.4%" is
+# a different claim from the "31.4% (up from 29.0%)" in the data.
+_DIR_DOWN = {"fell", "dropped", "declined", "slipped", "decreased", "dipped", "sank", "eased", "down", "lower",
+             "shrank", "plunged", "tumbled", "improved_down"}
+_DIR_UP = {"rose", "climbed", "increased", "grew", "jumped", "spiked", "up", "higher", "surged", "soared"}
+
+
+def _direction_near(text: str, start: int, end: int):
+    """+1 / -1 when the words right around a figure say which way it moved
+    ("fell to 31.4%", "31.4% (up from 29%)", "up to $2,400"), else None."""
+    before = re.findall(r"[a-z]+", text[max(0, start - 30):start].lower())[-3:]
+    after = re.findall(r"[a-z]+", text[end:end + 16].lower())[:2]
+    for w in reversed(before):
+        if w in _DIR_DOWN:
+            return -1
+        if w in _DIR_UP:
+            return 1
+    if after and after[0] in ("down", "up") and (len(after) < 2 or after[1] in ("from", "on", "vs", "versus")):
+        return -1 if after[0] == "down" else 1
+    return None
+
+
+def _directions(text: str) -> dict:
+    """{(kind, value): {+1/-1}} for the figures a context states with a
+    direction."""
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    out = {}
+    for kind, pat in (("money", _MONEY_RE), ("pct", _PCT_RE)):
+        for m in pat.finditer(text):
+            d = _direction_near(text, *m.span())
+            if d is None:
+                continue
+            try:
+                out.setdefault((kind, _value(m)), set()).add(d)
+            except ValueError:
+                continue
+    return out
 
 
 def _value(m) -> float:
@@ -314,7 +476,7 @@ def _figures(text: str) -> dict:
     can back either. Calendar years and the parts of dates and times are not
     figures: "2026" in "Today's date" verified any invented $1,990-$2,066.
     """
-    text = _strip_untrusted(text)
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
     out = {"money": set(), "pct": set(), "bare": set()}
     spans = []
     for kind, pats in (("money", (_MONEY_RE, _DOLLARS_RE)), ("pct", (_PCT_RE,))):
@@ -459,12 +621,15 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
     it must appear in the context exactly (H3). Callers whose prompt forbids
     an invented count turn it on.
     """
+    generated = normalise_numbers(generated)
     known = _figures(context)
     missing = []
     claims = ([(m, "money") for m in _MONEY_RE.finditer(generated or "")]
               + [(m, "money") for m in _DOLLARS_RE.finditer(generated or "")]
               + [(m, "pct") for m in _PCT_RE.finditer(generated or "")])
     taken = []
+    periods_known = _money_periods(context) if any(k == "money" for _m, k in claims) else None
+    dirs_known = None
     for m, kind in claims:
         taken.append(m.span())
         try:
@@ -478,6 +643,47 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
         else:
             tol = max(tolerance * max(abs(value), 1), 0.5)
         if any(abs(value - k) <= tol for k in pool):
+            # The sign, where the data states one for this figure (R7):
+            # "fell to 31.4%" against "31.4% (up from 29%)".
+            said_dir = _direction_near(generated, *m.span())
+            if said_dir is not None:
+                if dirs_known is None:
+                    dirs_known = _directions(context)
+                ds = set()
+                for (k_kind, k), dd in dirs_known.items():
+                    if k_kind == kind and abs(value - k) <= tol:
+                        ds |= dd
+                if ds and said_dir not in ds:
+                    missing.append(m.group(0).strip() + (" (it went up)" if 1 in ds else " (it went down)"))
+                    continue
+            # The period is part of a money figure (R7): "$2,400 a week" is
+            # not the "$2,400 this month" in the data.
+            if kind == "money":
+                said = _period_after(generated, m.end())
+                if said:
+                    periods = set()
+                    for k, ps in (periods_known if periods_known is not None else {}).items():
+                        if abs(value - k) <= tol:
+                            periods |= ps
+                    if periods and None not in periods and said not in periods:
+                        missing.append(m.group(0).strip() + f" a {said}")
+            continue
+        missing.append(m.group(0).strip())
+
+    # Percentage points (R7): "up 7 points" is a move between two
+    # percentages, so it must be a percentage or a difference of two.
+    pcts = sorted(known["pct"] | known["bare"])
+    for m in _POINTS_RE.finditer(generated or ""):
+        if any(a <= m.start(1) < b for a, b in taken):
+            continue
+        taken.append(m.span())
+        try:
+            value = float(m.group(1))
+        except ValueError:
+            continue
+        tol = _small_tolerance(m.group(1)) if value <= 10 else max(tolerance * value, 0.5)
+        diffs = {abs(x - y) for i, x in enumerate(sorted(known["pct"])) for y in sorted(known["pct"])[i + 1:]}
+        if any(abs(value - k) <= tol for k in set(pcts) | diffs):
             continue
         missing.append(m.group(0).strip())
 
@@ -569,6 +775,39 @@ def _capture(message: str, job: str, restaurant_id=None):
 CAUSAL_RE = re.compile(
     r"\b(because|due to|caus(?:e|es|ed|ing)|driven by|led to|leads to|leading to|as a result of|"
     r"result of|thanks to|owing to|stems? from)\b", re.I)
+
+# R5 (B5 #5): the ten constructions that walked past CAUSAL_RE — "after",
+# "hurt", "which is why", "stemming from", "attributable to", "contributed
+# to", "resulting in", "so", "drove" — and which side of the connective the
+# cause sits on. A FORWARD connective puts the cause after it ("fell because
+# X", "fell after X"); a BACKWARD one before it ("X hurt ratings", "X, so
+# guests rated you lower"). The anchor has to be in THAT clause: a sentence
+# naming the stored cause's words but stating a new cause ("slow service
+# rose because a new POS is dropping tickets") no longer passes.
+_MOVE = (r"(?:rose|fell|dropped|climbed|slipped|declined|jumped|increased|decreased|improved|worsened|"
+         r"eased|spiked|dipped|sank|grew|shrank|soared|plunged|tumbled|surged|went\s+(?:up|down)|took\s+a\s+hit)")
+_CAUSAL_FORWARD = re.compile(
+    r"\b(?:because(?:\s+of)?|due\s+to|caused\s+by|driven\s+by|as\s+a\s+result\s+of|(?<!as\s)result\s+of|"
+    r"thanks\s+to|owing\s+to|on\s+account\s+of|stem(?:s|med|ming)?\s+from|attributable\s+to|"
+    r"attributed\s+to|fu(?:e)?l(?:l)?ed\s+by|(?:the\s+)?(?:likely\s+|main\s+|real\s+)?cause\s+(?:is|was|:))\b"
+    r"|\b" + _MOVE + r"\b[^.!?;]{0,40}?\bafter\b", re.I)
+_CAUSAL_BACKWARD = re.compile(
+    r"\b(?:caus(?:e|es|ed|ing)(?!\s+by)(?!\s+(?:is|was)\b)|led\s+to|leads\s+to|leading\s+to|"
+    r"hurt(?:s|ing)?|which\s+is\s+why|that['’]?s\s+why|that\s+is\s+why|this\s+is\s+why|"
+    r"contribut(?:ed|es|ing)\s+to|result(?:ed|s|ing)\s+in|drove|drives|driving|explains?\s+(?:the|why|your))\b"
+    r"|,\s*so\s+(?:that\s+)?(?:\w+\s+){0,3}?(?:rated|fell|rose|dropped|went|came|stayed|spent|complained|"
+    r"left|ordered|lost|gained|slipped|climbed|declined|were|was|is|are|has|have|had)\b", re.I)
+
+
+def causal_clauses(sentence: str) -> list:
+    """[(connective, the clause the cause sits in)] for every causal
+    construction in one sentence (R5)."""
+    out = []
+    for m in _CAUSAL_FORWARD.finditer(sentence or ""):
+        out.append((m.group(0), sentence[m.end():]))
+    for m in _CAUSAL_BACKWARD.finditer(sentence or ""):
+        out.append((m.group(0), sentence[:m.start()]))
+    return out
 _STOP = {"that", "this", "with", "from", "have", "been", "were", "they", "their", "there", "which", "about",
          "into", "than", "then", "when", "what", "your", "more", "most", "less", "over", "under", "also",
          "just", "only", "some", "same", "each", "because", "cause", "caused", "causes", "causing", "driven",
@@ -585,7 +824,7 @@ def _stem(w: str) -> str:
 
 
 def _content_stems(text: str) -> set:
-    return {_stem(w) for w in re.findall(r"[A-Za-z][A-Za-z'-]+", text or "")
+    return {_stem(w) for w in re.findall(r"[A-Za-z][A-Za-z']+", text or "")
             if len(w) >= 4 and w.lower() not in _STOP}
 
 
@@ -604,36 +843,45 @@ def carries_anchor(sentence: str, anchors) -> bool:
     """Whether a sentence carries one of the stored causes. A short anchor
     (a driver's label, a weekday, a category — up to four content words)
     must appear whole; a long one (a diagnosis's cause sentence) must share
-    at least two of its content words, or all of them when it has fewer."""
+    a third of its content words (at least two, at most four) — two shared
+    words let "kitchen tickets lost by a new printer" pass as a long
+    staffing cause (R5)."""
     words = _content_stems(sentence)
-    low = (sentence or "").lower()
+    low = " ".join((sentence or "").lower().replace("-", " ").split())
     for a in anchors or ():
         a = " ".join(str(a or "").split())
         if not a:
             continue
         stems = _content_stems(a)
         if not stems:
-            if a.lower() in low:
+            if a.lower().replace("-", " ") in low:
                 return True
             continue
         if len(stems) <= 4:
-            if a.lower() in low or stems <= words:
+            if a.lower().replace("-", " ") in low or stems <= words:
                 return True
-        elif len(stems & words) >= 2:
+        elif len(stems & words) >= max(2, min(4, -(-len(stems) // 3))):
             return True
     return False
 
 
 def unsupported_causes(generated: str, anchors, job: str = None, restaurant_id=None) -> list:
-    """The sentences in `generated` that state a cause ("because", "due to",
-    "caused", "driven by", "led to", "as a result of", "thanks to") without
-    carrying one of `anchors` — the stored diagnosis's cause and the drivers
-    it cites. Empty anchors means there is no stored cause, so every causal
-    sentence is unsupported. Returns the sentences (trimmed), empty = clean;
-    reported to the failure digest under `job` when given."""
+    """The sentences in `generated` that state a cause without carrying one
+    of `anchors` — the stored diagnosis's cause and the drivers it cites —
+    IN THE CLAUSE THE CAUSE SITS IN (R5): after a forward connective
+    ("because", "due to", "driven by", "thanks to", "stemming from",
+    "attributable to", a move "after" something), before a backward one
+    ("led to", "caused", "hurt", "which is why", "contributed to",
+    "resulting in", "drove", ", so guests …"). Empty anchors means there is
+    no stored cause, so every causal sentence is unsupported. Returns the
+    sentences (trimmed), empty = clean; reported to the failure digest
+    under `job` when given."""
     out = []
     for s in sentences(generated):
-        if CAUSAL_RE.search(s) and not carries_anchor(s, anchors):
+        clauses = causal_clauses(s)
+        if not clauses and CAUSAL_RE.search(s):
+            clauses = [(None, s)]
+        if any(not carries_anchor(clause, anchors) for _w, clause in clauses):
             out.append(s[:160])
     if out and job:
         _capture(f"{job} stated a cause no stored diagnosis supports: {out[:2]}", job, restaurant_id)
@@ -664,6 +912,10 @@ def _fact_numbers(values) -> set:
     return out
 
 
+_DAY_ABBR = {"monday": ("mon",), "tuesday": ("tue", "tues"), "wednesday": ("wed", "weds"),
+             "thursday": ("thu", "thur", "thurs"), "friday": ("fri",), "saturday": ("sat",), "sunday": ("sun",)}
+
+
 def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: str = None,
                     restaurant_id=None) -> list:
     """Money, percentage and rating figures stated in a sentence about a
@@ -679,36 +931,63 @@ def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: st
         if len(n) >= 3:
             names.setdefault(n.lower(), set()).update(_fact_numbers(vals))
     glob = _fact_numbers(global_facts)
-    pats = {n: re.compile(r"(?<![\w])" + re.escape(n) + r"s?(?![\w])", re.I) for n in names}
+
+    def _pat(n):
+        # A weekday is matched by its abbreviations too (R13, B5 #14): "Wed
+        # ran 38%" escaped a Wednesday fact.
+        alts = [re.escape(n)] + [re.escape(a) for a in _DAY_ABBR.get(n, ())]
+        return re.compile(r"(?<![\w])(?:" + "|".join(alts) + r")(?:s|'s|\.)?(?![\w])", re.I)
+    pats = {n: _pat(n) for n in names}
     out = []
-    for s in sentences(generated):
-        about = [n for n, p in pats.items() if p.search(s)]
-        if not about:
-            continue
-        pool = set(glob)
-        for n in about:
-            pool |= names[n]
+    last = None
+    for raw in sentences(generated):
+        s = normalise_numbers(raw)
+        mentions = sorted((m.start(), n) for n, p in pats.items() for m in p.finditer(s))
+        if not mentions:
+            # "Wednesday was the problem. It ran 38%." — a sentence opening
+            # on a pronoun is about the entity the last one named (R13).
+            if last and re.match(r"^\s*(?:it|its|that|this|they|there|that day|the day|he|she)\b", s, re.I):
+                mentions = [(-1, last)]
+            else:
+                last = None
+                continue
+        last = mentions[-1][1]
+        # Clauses: a figure is bound to the entities of ITS clause, or the
+        # nearest one named before it (R13): "Unlike Friday, Wednesday ran
+        # 38%" pooled both days' figures and passed Friday's 38%.
+        bounds = [0] + [m.end() for m in re.finditer(r"[,;:]\s+|\s+(?:but|while|whereas|unlike)\s+", s, re.I)] + [len(s)]
         for c in figure_claims(s):
             if c["kind"] not in ("money", "pct", "star") or c["year"]:
                 continue
+            lo = max(b for b in bounds if b <= c["start"])
+            hi = min(b for b in bounds if b > c["start"]) if any(b > c["start"] for b in bounds) else len(s)
+            here = {n for pos, n in mentions if lo <= pos < hi}
+            if not here:
+                before = [n for pos, n in mentions if pos < c["start"]]
+                here = {before[-1]} if before else {mentions[0][1]}
+            pool = set(glob)
+            for n in here:
+                pool |= names[n]
             v = abs(c["value"])
             tol = (0.051 if c["kind"] == "star" else
                    max(0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0), 0.005 * v) + 1e-9)
             if not any(abs(v - abs(k)) <= tol for k in pool):
-                out.append(f"{c['raw']} (about {about[0]})")
+                out.append(f"{c['raw']} (about {sorted(here)[0]})")
     if out and job:
         _capture(f"{job} attached figures to the wrong fact: {out[:4]}", job, restaurant_id)
     return out
 
 
-def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
+def unverified_note(figures=(), causes=(), bindings=(), names=()) -> str | None:
     """The one UNVERIFIED line an insight carries, or None when clean. With
     only figures it is the long-standing "$145, 38%" form every client
-    already parses; causes and misattached figures say what they are."""
+    already parses; causes, misattached figures and names nobody gave it
+    (R11) say what they are."""
     figures, causes, bindings = list(figures or []), list(causes or []), list(bindings or [])
-    if not (figures or causes or bindings):
+    names = list(names or [])
+    if not (figures or causes or bindings or names):
         return None
-    if figures and not causes and not bindings:
+    if figures and not causes and not bindings and not names:
         return ", ".join(str(u) for u in figures[:5])
     parts = []
     if figures:
@@ -717,6 +996,8 @@ def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
         parts.append("figures attached to the wrong day or item: " + ", ".join(str(b) for b in bindings[:4]))
     if causes:
         parts.append("a cause no stored diagnosis supports (\"" + str(causes[0])[:120] + "\")")
+    if names:
+        parts.append("a name that is not in the data: " + ", ".join(str(n) for n in names[:3]))
     return "; ".join(parts)
 
 
@@ -725,7 +1006,25 @@ def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
 _NAME_SKIP = {"google", "yelp", "monday", "tuesday", "wednesday", "thursday",
               "friday", "saturday", "sunday", "january", "february", "march",
               "april", "may", "june", "july", "august", "september", "october",
-              "november", "december", "cavnar", "respond", "review", "reviews"}
+              "november", "december", "cavnar", "respond", "review", "reviews",
+              # common nouns a sentence opens on ("Service was slow")
+              "service", "food", "kitchen", "staff", "labor", "sales", "waste", "the", "this", "that",
+              "everything", "nothing", "lunch", "dinner", "brunch", "breakfast", "delivery", "parking",
+              "music", "everyone", "someone", "nobody", "team", "management", "manager", "each", "every",
+              "prep", "front", "back", "floor", "bar", "patio", "weekend", "weekends", "tonight", "today",
+              "tomorrow", "yesterday", "last", "next", "overtime", "schedule", "shift", "shifts",
+              # role titles ("Have Chef Marco…" names Marco, not Chef)
+              "chef", "sous", "server", "servers", "cook", "cooks", "host", "hostess", "bartender", "busser",
+              "runner", "waiter", "waitress", "owner", "expo", "lead", "supervisor", "cashier", "dishwasher"}
+# Roles a name can follow ("Chef Marco", "server Tina") or stand in
+# apposition to ("Marco, the new weekend server"), and the imperatives an
+# owner is told to do something to a person with ("ask Marco", "pull Tina").
+_ROLE_WORDS = (r"(?:chef|sous(?:\s+chef)?|cook|line\s+cook|server|waiter|waitress|bartender|barback|host|hostess|"
+               r"manager|gm|busser|runner|dishwasher|cashier|owner|expo|supervisor|lead)")
+_PERSON_VERBS = (r"(?:ask|tell|call|have|let|get|remind|thank|text|email|pull|move|schedule|put|coach|train|"
+                 r"praise|talk\s+to|speak\s+(?:to|with)|check\s+(?:in\s+)?with|pair|send)")
+_PERSON_STATES = (r"(?:rude|late|slow|absent|sick|out|off|short|dismissive|unfriendly|friendly|careless|"
+                  r"missing|drunk|yelling|new|overwhelmed|understaffed|behind|on\s+(?:the\s+)?(?:phone|break))")
 
 
 def unsupported_names(generated: str, context: str) -> list:
@@ -741,6 +1040,13 @@ def unsupported_names(generated: str, context: str) -> list:
         r"\b(?:from|by|to|for|with)\s+([A-Z][a-z]{2,})\b",   # "respond to Amanda"
         r"\b([A-Z][a-z]{2,})\s+[A-Z]\.",                       # "Amanda L."
         r"\b([A-Z][a-z]{2,})'s\b",                             # "Amanda's review"
+        # R11 (B5 #11 / p03, p09, p15): "Chef Marco", "server Tina",
+        # "Marco, the new weekend server", "Marco was rude", "ask Marco".
+        r"(?i:\b" + _ROLE_WORDS + r")\s+([A-Z][a-z]{2,})\b",
+        r"\b([A-Z][a-z]{2,}),\s+(?:the|our|your|a|an)\s+(?:\w+\s+){0,3}?(?i:" + _ROLE_WORDS + r")\b",
+        r"\b([A-Z][a-z]{2,})\s+(?:was|is|has\s+been|had\s+been|seemed|seems|kept|keeps)\s+(?i:"
+        + _PERSON_STATES + r")\b",
+        r"(?i:\b" + _PERSON_VERBS + r")\s+([A-Z][a-z]{2,})\b",
     )
     for pat in patterns:
         for m in re.finditer(pat, generated or ""):
@@ -769,6 +1075,97 @@ def echoes(text: str, untrusted_shingles: set, n: int = ECHO_WORDS) -> bool:
     return bool(untrusted_shingles and (shingles(text, n) & untrusted_shingles))
 
 
+# ── a model's own confidence never reaches an owner as ours (R3, R9) ───────
+#
+# The confidence an owner reads is computed (confidence_engine, the K1
+# object). A model that writes "high confidence" or "I'm about 85% sure"
+# beside it puts a second, unmeasured figure on the same screen — and Ask's
+# 85% passed the figure check because "85 covers" was in the snapshot (B5
+# #3). Prompts no longer ask for one; whatever a model writes anyway is
+# rewritten to the computed figure, or taken out.
+_CONF_WORD = r"(?:very\s+high|fairly\s+high|high|medium|moderate|low|very\s+low)"
+_CONF_NOUN_RE = re.compile(
+    r"\b(?:" + _CONF_WORD + r"[\s-]+(?:confidence|certainty)"
+    r"|\d{1,3}\s?%\s+(?:confidence|confident|sure|certain))\b", re.I)
+# "confidence is low", "Confidence: medium" — the band word alone is swapped.
+_CONF_IS_RE = re.compile(
+    r"\b(confidence(?:\s+(?:level|here|in\s+(?:this|that|it)))?\s*(?:is|:|—|-|of)\s*)(?:"
+    + _CONF_WORD + r"|\d{1,3}\s?%)(?![\w%])", re.I)
+_SELF_SURE_RE = re.compile(
+    r"(?:,?\s*(?:and|so|but)\s+)?\b(?:I['’]?m|I\s+am|we['’]?re|we\s+are|I['’]d\s+say\s+I['’]?m)\s+"
+    r"(?:\w+\s+){0,2}?(?:\d{1,3}\s?%\s+)?(?:sure|confident|certain)\b[^.!?\n]*", re.I)
+
+
+def rewrite_confidence_claims(text: str, pct=None, bands: bool = True) -> tuple:
+    """(text, n) with every confidence the MODEL stated replaced by the
+    computed one or removed. `pct` is the computed K1 percentage (None when
+    it is not measurable). A band or percentage phrase ("high confidence",
+    "85% sure") becomes "{pct}% confidence"; "confidence is low" becomes
+    "confidence is {pct}%"; with no pct the phrase is removed. A
+    self-assurance clause ("I'm about 85% sure this pays off", ", and I'm
+    highly confident") is removed through the end of its sentence, and a
+    sentence left empty goes with it. `n` counts what was changed. With
+    bands=False only the self-assurance clauses go — for a read whose input
+    carries a computed band (a rating trend's) it may quote."""
+    body = str(text or "")
+    n = 0
+    label = f"{int(round(pct))}% confidence" if isinstance(pct, (int, float)) else ""
+
+    def _clause(m):
+        nonlocal n
+        n += 1
+        return ""
+    body = _SELF_SURE_RE.sub(_clause, body)
+
+    def _is(m):
+        nonlocal n
+        n += 1
+        return m.group(1) + f"{int(round(pct))}%"
+    if not bands:
+        pass
+    elif label:
+        body = _CONF_IS_RE.sub(_is, body)
+    else:
+        # nothing to swap in: the sentence stating it goes
+        kept_lines = []
+        for line in body.splitlines():
+            parts = re.split(r"(?<=[.!?])\s+", line)
+            keep = [p for p in parts if not _CONF_IS_RE.search(p)]
+            n += len(parts) - len(keep)
+            kept_lines.append(" ".join(keep))
+        body = "\n".join(kept_lines)
+
+    def _noun(m):
+        nonlocal n
+        n += 1
+        return label
+    if bands:
+        body = _CONF_NOUN_RE.sub(_noun, body)
+    if not n:
+        return text, 0
+    out_lines = []
+    for line in body.splitlines():
+        line = re.sub(r"\s+([,.;:!?])", r"\1", line)
+        line = re.sub(r",\s*,", ",", line)
+        line = re.sub(r"([,;:—-])\s*([.!?])", r"\2", line)
+        line = re.sub(r"(?:^|(?<=[.!?]))\s*[,;:—-]?\s*[.!?](?=\s|$)", "", line)
+        # a sentence that now opens on the dash its removed phrase led into
+        line = re.sub(r"(?<=[.!?])\s+[—-]\s*(\w)", lambda m: " " + m.group(1).upper(), line)
+        line = re.sub(r"\s*\(\s*\)", "", line)
+        indent = line[:len(line) - len(line.lstrip())]
+        line = indent + re.sub(r"[ \t]{2,}", " ", line.lstrip()).rstrip()
+        out_lines.append(line)
+    return "\n".join(out_lines).strip(), n
+
+
+def checkable_claims(text: str, check_counts: bool = True) -> list:
+    """The figures in `text` the figure check actually checks — money,
+    percentages, star ratings and (with check_counts) counts — for a basis
+    line that says "N of M figures checked" about those kinds only (R3):
+    a bare "top 3" is not a claim, so it is never counted as checked."""
+    return unsupported_figures(text, "", check_counts=check_counts)
+
+
 # ── a model's own confidence only ever lowers a band (H1, K6) ──────────────
 
 BANDS = ("low", "medium", "high")
@@ -789,20 +1186,90 @@ def cap_band(model_band, *, verified_evidence: int, unverified_figures=()) -> st
     return band if BANDS.index(band) <= BANDS.index(ceiling) else ceiling
 
 
+class OperationalLine(str):
+    """One module's line in a diagnosis prompt's "what the other modules
+    recorded" block, carrying the NAMED figures it states (R1).
+
+    It is a str, so the block still joins it as prose; `fields` is
+    {name: {"label", "value", "kind", "evidence", "display"}} — kind is
+    pct / money / count / context, and `evidence` is False for a figure that
+    is context, not a measurement (the owner's target, the window's length).
+    verify_operational_evidence matches a value's figures to these fields,
+    never to "any word in the line": the line template always says
+    "understaffed", "target" and "sales", so a word match let three template
+    words read as three cross-checks (B5 #1)."""
+    fields = None
+
+    def __new__(cls, text, fields=None):
+        obj = super().__new__(cls, text)
+        obj.fields = dict(fields or {})
+        return obj
+
+
+def op_field(label, value, kind, evidence=True, display=None) -> dict:
+    """One named figure of an OperationalLine."""
+    return {"label": label, "value": value, "kind": kind, "evidence": evidence,
+            "display": display if display is not None else str(value)}
+
+
+def _claim_tol(c) -> float:
+    return (0.051 if c["kind"] == "star" else
+            0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0) + 1e-9)
+
+
+def _field_matches(c, f) -> bool:
+    """Whether figure claim `c` states named field `f`, to the claim's own
+    written precision and never across kinds (a "$28" is not the 28% target)."""
+    try:
+        v = float(f.get("value"))
+    except (TypeError, ValueError):
+        return False
+    fk = f.get("kind")
+    if c["kind"] == "money" and fk != "money":
+        return False
+    if c["kind"] == "pct" and fk != "pct":
+        return False
+    return abs(abs(c["value"]) - abs(v)) <= _claim_tol(c)
+
+
+def _is_measured_field(f) -> bool:
+    """A field that can stand as evidence: a measurement, and not a zero
+    count — "0 understaffed days" says nothing happened, so it is no
+    cross-check for a cause that needs something to have happened."""
+    if not f.get("evidence"):
+        return False
+    try:
+        return not (f.get("kind") == "count" and float(f.get("value") or 0) == 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def verify_operational_evidence(entries, module_lines: dict, allowed_modules=()) -> tuple:
     """(kept, dropped) for a diagnosis's operational_evidence.
 
     The model writes {module, metric, value} and the screen shows it under
-    "Cross-checked against". It used to be copied through with only the
-    module name whitelisted. An entry is kept only when its module had a line
-    in the block the model was handed and its value is that line's: every
-    figure in the value appears in THAT module's line (to its written
-    precision), or — for a value with no figure (an item's name) — the value
-    appears in the line verbatim. Each kept entry carries verified: True;
-    the dropped ones are returned so the caller can report them (K6)."""
-    kept, dropped = [], []
-    lines = {k: str(v or "") for k, v in (module_lines or {}).items() if v}
-    for e in (entries or [])[:4]:
+    "Cross-checked against"; the number of kept entries is Evidence Strength
+    for the food diagnosis and lifts the review diagnosis's band. So the
+    model must not be able to raise it by writing more (R1, B5 #1):
+
+    * every value must carry a figure — a word ("understaffed", "target",
+      "sales") is never evidence, whatever the line says;
+    * with an OperationalLine, every figure must be one of that module's
+      NAMED fields, at least one of them a measured, non-zero one (the
+      target and the window length are context); the kept entry's metric and
+      value are the fields' own labels and figures, written by code, so a
+      mislabelled metric ("overtime cost rose: 28%") never reaches a screen;
+      a plain-string line (older callers) falls back to "every figure is in
+      the line";
+    * entries are merged by module: one kept entry per module, however many
+      times — or under however many metric names — the model lists it, so
+      len(kept) is the number of distinct modules that corroborate.
+
+    Each kept entry carries verified: True and `fields`; each dropped entry
+    carries why, so the caller can report it (K6)."""
+    by_module, order, dropped = {}, [], []
+    lines = {k: v for k, v in (module_lines or {}).items() if v}
+    for e in (entries or [])[:8]:
         if not isinstance(e, dict):
             continue
         module = e.get("module")
@@ -811,23 +1278,84 @@ def verify_operational_evidence(entries, module_lines: dict, allowed_modules=())
         entry = {"module": module, "metric": str(e.get("metric") or "")[:80],
                  "value": str(e.get("value") or "")[:80]}
         line = lines.get(module)
-        ok = False
-        if line and entry["value"].strip():
-            claims = [c for c in figure_claims(entry["value"]) if not c["year"]]
-            if claims:
-                known = _figures(line)
-                pool = known["money"] | known["pct"] | known["bare"]
-                ok = all(any(abs(abs(c["value"]) - abs(k)) <=
-                             (0.051 if c["kind"] == "star" else
-                              0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0) + 1e-9)
-                             for k in pool) for c in claims)
-            else:
-                ok = entry["value"].strip().lower() in line.lower()
-        if ok:
-            kept.append(dict(entry, verified=True))
+        if not line:
+            dropped.append(dict(entry, reason="no line for that module"))
+            continue
+        claims = [c for c in figure_claims(entry["value"]) if not c["year"]]
+        if not claims:
+            dropped.append(dict(entry, reason="no figure"))
+            continue
+        fields = getattr(line, "fields", None)
+        if fields:
+            matched, ok = [], True
+            for c in claims:
+                hit = [n for n, f in fields.items() if _field_matches(c, f)]
+                if not hit:
+                    ok = False
+                    break
+                # a figure two fields share counts for the measured one
+                meas = [n for n in hit if _is_measured_field(fields[n])]
+                matched.append(meas[0] if meas else hit[0])
+            measured = [n for n in matched if _is_measured_field(fields[n])]
+            if not ok:
+                dropped.append(dict(entry, reason="a figure not in that module's line"))
+                continue
+            if not measured:
+                dropped.append(dict(entry, reason="no measured figure (context or a zero count)"))
+                continue
+            keys = list(dict.fromkeys(measured))
         else:
-            dropped.append(entry)
+            known = _figures(str(line))
+            pool = known["money"] | known["pct"] | known["bare"]
+            if not all(any(abs(abs(c["value"]) - abs(k)) <= _claim_tol(c) for k in pool) for c in claims):
+                dropped.append(dict(entry, reason="a figure not in that module's line"))
+                continue
+            keys = [f"{c['kind']}:{round(abs(c['value']), 2)}" for c in claims]
+        cur = by_module.get(module)
+        if cur is None:
+            by_module[module] = cur = {"module": module, "keys": [], "metric": [], "value": []}
+            order.append(module)
+        new = [k for k in keys if k not in cur["keys"]]
+        if not new:
+            dropped.append(dict(entry, reason="duplicate"))
+            continue
+        cur["keys"].extend(new)
+        if fields:
+            for k in new:
+                cur["metric"].append(fields[k]["label"])
+                cur["value"].append(fields[k]["display"])
+        else:
+            cur["metric"].append(entry["metric"])
+            cur["value"].append(entry["value"])
+    kept = [{"module": m, "metric": "; ".join(by_module[m]["metric"])[:160],
+             "value": "; ".join(by_module[m]["value"])[:160], "verified": True,
+             "fields": by_module[m]["keys"]} for m in order]
     return kept, dropped
+
+
+def served_operational_evidence(entries) -> list:
+    """The operational evidence a stored diagnosis may serve (R1): only
+    entries the validator marked verified, only those whose value carries a
+    figure (a row written before R1 may hold a template word marked
+    verified), merged to one entry per module — so every reader that counts
+    the list (the food diagnosis's Evidence Strength, the band cap, Home's
+    evidence inputs) counts distinct corroborating modules, never padding."""
+    out, seen = [], {}
+    for e in entries or []:
+        if not (isinstance(e, dict) and e.get("verified") is True):
+            continue
+        if not [c for c in figure_claims(str(e.get("value") or "")) if not c["year"]]:
+            continue
+        m = e.get("module")
+        if m in seen:
+            prev = out[seen[m]]
+            if str(e.get("value")) not in str(prev.get("value")):
+                prev["value"] = (str(prev.get("value")) + "; " + str(e.get("value")))[:160]
+                prev["metric"] = (str(prev.get("metric")) + "; " + str(e.get("metric") or ""))[:160]
+            continue
+        seen[m] = len(out)
+        out.append(dict(e))
+    return out
 
 
 # ── how old is this, and does the reader need telling ──────────────────────

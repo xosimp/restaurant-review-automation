@@ -221,7 +221,7 @@ UNCLASSIFIED = "unclassified"
 UNCLASSIFIED_RANKS_AS = "service"
 
 
-def _validate_analysis(result, rating: int = None):
+def _validate_analysis(result, rating: int = None, text: str = None):
     """Coerce the model's JSON into what the schema and the UI can hold.
 
     The reviews table's own CHECK constraints were doing this job, which
@@ -253,10 +253,54 @@ def _validate_analysis(result, rating: int = None):
         complaint = None
     severity = _severity_floor(rating, urgency,
                                str(result.get("severity") or "").strip().lower())
-    return {"sentiment": sentiment, "categories": cats, "summary": summary,
-            "urgency": urgency, "severity": severity,
-            "specific_complaint": complaint,
-            "entities": _validate_entities(result.get("entities"))}
+    model_urgency = urgency
+    urgency, escalated = _escalate_urgency(rating, urgency, severity, text)
+    out = {"sentiment": sentiment, "categories": cats, "summary": summary,
+           "urgency": urgency, "severity": severity,
+           "specific_complaint": complaint,
+           "entities": _validate_entities(result.get("entities")),
+           "model_urgency": model_urgency}
+    if escalated:
+        out["urgency_escalated"] = escalated
+    return out
+
+
+# Keywords strong enough that, on a 1–2★ review, code raises the alert
+# whatever the model said (R4). A subset of notify.HEALTH_KEYWORDS: the ones
+# a complaint uses literally. "hospital" (a nurse from the hospital), "rat "
+# (it is inside "great ") and "mold" (molded chocolate) are left to the
+# model.
+STRONG_HEALTH_KEYWORDS = (
+    "food poison", "foodborne", "sick after", "got sick", "felt sick", "vomit", "threw up", "throw up",
+    "diarrhea", "nausea after", "ill after", "health department", "health inspector", "cockroach", "roach",
+    "rodent", "bug in ", "insect in", "foreign object", "glass in", "metal in", "hair in", "raw chicken",
+    "undercooked chicken", "salmonella", "ecoli", "e. coli")
+LOW_RATING_ESCALATES = 2
+
+
+def _escalate_urgency(rating, urgency, severity, text=None):
+    """(urgency, why) with the safety call made in code where the model's
+    own fields contradict it (R4, B5 #4). `_severity_floor` raised severity
+    from urgency, never urgency from severity, so a food-poisoning review
+    the model scored urgency=normal but severity=safety fired no alert. Now
+    a safety or legal severity, or a strong health keyword on a review of
+    LOW_RATING_ESCALATES stars or fewer, makes it urgent; `why` says which
+    (None when the model's urgency stands)."""
+    if str(urgency or "").lower() == "high":
+        return "high", None
+    if severity in ("safety", "legal"):
+        return "high", f"the analysis rated its severity {severity}"
+    try:
+        low = rating is not None and int(rating) <= LOW_RATING_ESCALATES
+    except (TypeError, ValueError):
+        low = False
+    if low and text:
+        import unicodedata
+        t = unicodedata.normalize("NFKC", text).lower()
+        hits = [k for k in STRONG_HEALTH_KEYWORDS if k in t]
+        if hits:
+            return "high", f"a {int(rating)}-star review mentions {hits[0].strip()!r}"
+    return urgency, None
 
 
 def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = None) -> dict:
@@ -291,7 +335,7 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     # A leading "Here is the JSON:" or a code fence used to fail json.loads
     # and cost the review one of its five attempts (AI-26).
     result = _validate_analysis(parse_json_reply(extract_text(message), expect=dict),
-                                rating=rating)
+                                rating=rating, text=text)
     update_analysis(
         review_id,
         result["sentiment"],
@@ -308,7 +352,10 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     # "normal" is logged, once per analysis, so how often the two disagree
     # is a rate rather than a guess; auto-approve keeps those reviews out
     # (models.auto_approve_candidates) (H5).
-    if result.get("urgency") != "high":
+    # The disagreement is the MODEL's (its own urgency), logged even when
+    # code escalated the review (R4) — it is still the evidence of how often
+    # Haiku misses one.
+    if result.get("model_urgency", result.get("urgency")) != "high":
         try:
             import notify
             hits = notify.health_keyword_hits(text)

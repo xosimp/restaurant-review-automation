@@ -1538,7 +1538,7 @@ Today's date: {today_labor}{upload_context}{holiday_context}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
-- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: 33–36%, National Restaurant Association 2024)
+- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: {INDUSTRY_LABOR_RANGE[0]}–{INDUSTRY_LABOR_RANGE[1]}%, National Restaurant Association 2024)
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
@@ -1604,6 +1604,10 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # the labor prompt had no cause rule at all.
     anchors = [_diag.get("cause"), _diag.get("alternative_cause")] if _diag.get("cause") else []
     causes = unsupported_causes(text, anchors, job="labor_insight", restaurant_id=restaurant_id)
+    # A name the prompt never held (R11, B5 #11): the labor read had no
+    # name check at all.
+    from ai_guard import unsupported_names
+    names = unsupported_names(text, prompt)
     fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
     if fc_line:
         text = text.rstrip() + "\n" + fc_line
@@ -1616,10 +1620,49 @@ The Recommendations section must start with exactly the word "Recommendations:" 
                           f"{trend_diff:+.1f} points on the last comparable upload")
             except Exception as _fe:
                 print(f"[labor forecast log] {_fe}")
-    note = unverified_note(unsupported, causes, misbound)
+    note = unverified_note(unsupported, causes, misbound, names)
     if note:
         text = text.rstrip() + "\n\nUNVERIFIED: " + note
     return text
+
+
+def schedule_note_problem(bullet, prompt, restaurant_id=None):
+    """Why one of the schedule's "Cavnar AI's note" bullets is dropped, or
+    None (R10, B5 #10): the digest's line checks — a link or injection tell,
+    a figure or count its prompt did not hold, a name outside it, a cause
+    the prompt does not state. The bullets went from the model to the page
+    with no check at all."""
+    from ai_guard import (CAUSAL_RE, _strip_untrusted, causal_clauses, injection_residue, sentences,
+                          unsupported_causes, unsupported_figures, unsupported_names)
+    why = injection_residue(bullet)
+    if why:
+        return why
+    figs = unsupported_figures(bullet, prompt, check_counts=True)
+    if figs:
+        return f"states {', '.join(figs[:3])}, which the schedule's input does not hold"
+    names = unsupported_names(bullet, prompt)
+    if names:
+        return f"names {', '.join(names[:3])}, who is not on the roster"
+    anchors = [x for x in sentences(_strip_untrusted(prompt or "")) if CAUSAL_RE.search(x) or causal_clauses(x)]
+    if unsupported_causes(bullet, anchors):
+        return "states a cause its input does not hold"
+    return None
+
+
+def _drop_note_bullets(bullets, prompt, restaurant_id=None):
+    kept = []
+    for b in bullets:
+        why = schedule_note_problem(b, prompt, restaurant_id)
+        if why:
+            try:
+                import ops
+                ops.capture(RuntimeError(f"schedule note bullet dropped: {why}"), job="schedule_note",
+                            context=f"restaurant_id={restaurant_id}")
+            except Exception:
+                pass
+            continue
+        kept.append(b)
+    return kept
 
 
 def _labor_forecast_line(analysis: dict, trend_diff) -> str:
@@ -1637,6 +1680,10 @@ def _labor_forecast_line(analysis: dict, trend_diff) -> str:
             if abs(trend_diff) >= 1 else "about level with the last upload")
     return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
             f"next week near {cur:g}% (a projection, not a measurement).")
+
+
+# The industry full-service labor range the labor prompt quotes (NRA 2024).
+INDUSTRY_LABOR_RANGE = (33, 36)
 
 
 def labor_insight_facts(analysis: dict) -> tuple:
@@ -1675,7 +1722,10 @@ def labor_insight_facts(analysis: dict) -> tuple:
     glob = [a.get(k) for k in ("overall_labor_pct", "total_labor_cost", "total_sales", "labor_target",
                                "potential_savings", "potential_savings_weekly", "potential_savings_monthly",
                                "period_days")]
-    glob += [cov.get("avg_sales_per_cover"), 33, 36]
+    glob += [cov.get("avg_sales_per_cover")]
+    # The industry range the prompt quotes is bound to a sentence that says
+    # "industry" (R13, B5 #14): as a global it let "Wednesday ran 36%" pass.
+    ent["industry"].extend(INDUSTRY_LABOR_RANGE)
     return dict(ent), [g for g in glob if g is not None]
 
 
@@ -2869,6 +2919,12 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         line = _re_sched.sub(r'\*+', '', line).strip()
         if line:
             summary_bullets.append(line)
+    # "Cavnar AI's note" reaches the page unread (R10, B5 #10), so each
+    # bullet passes the digest's line checks: no figure or count the prompt
+    # did not hold, no name outside it, no cause it does not state, no link
+    # or injection tell. A failing bullet is dropped (the computed "what
+    # changed" diff lines stand on their own).
+    summary_bullets = _drop_note_bullets(summary_bullets, prompt, restaurant_id=restaurant_id)
 
     return {
         "schedule_csv": csv_clean,
