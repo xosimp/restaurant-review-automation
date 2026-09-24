@@ -2608,7 +2608,7 @@ svg:hover .hb-xh{opacity:1}
     var byKey={};for(var i=0;i<lines.length;i++)byKey[lines[i].key]=lines[i];
     var lead='',why='',ev=[],money='',ask='',kick='Today’s focus',clear=false,mods=[];
     var alt='',confirm='',fconf=null,fkey='',ftag='';
-    if(ff&&ff.what){kick='If you only do one thing';fconf=ff.confidence||null;fkey=ff.rec_key||ff.key||'';ftag=cavConf.claimTag(ff.claim_kind,ff.model_written);ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
+    if(ff&&ff.what){kick='If you only do one thing';fconf=ff.confidence_detail||ff.confidence||null;fkey=ff.rec_key||ff.key||'';ftag=cavConf.claimTag(ff.claim_kind,ff.model_written);ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
       // When the lead IS a cross-module link, this card owns it entirely -
       // the confirm step and the innocent reading come here, and
       // renderConnections skips it, so the same finding is never on the
@@ -2625,8 +2625,8 @@ svg:hover .hb-xh{opacity:1}
       lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly)money='$'+num2(ff.dollars_monthly)+'<small>/month</small>';else if(ff.money)money=hbMoneyRange(ff.money);
       if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
-    else if(att.length){lead=att[0].title;why=att[0].detail||'';if(att[0].evidence)ev=String(att[0].evidence).split(' · ').filter(function(x){return x;}).slice(0,3);fconf=att[0].confidence||null;fkey=att[0].rec_key||att[0].key||'';ask='What should I do about this: '+att[0].title;}
-    else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);fconf=recs[0].confidence||null;fkey=recs[0].key||'';ftag=recs[0].model_written?cavConf.claimTag('',true):'';ask='Walk me through this: '+recs[0].title;}
+    else if(att.length){lead=att[0].title;why=att[0].detail||'';if(att[0].evidence)ev=String(att[0].evidence).split(' · ').filter(function(x){return x;}).slice(0,3);fconf=att[0].confidence_detail||att[0].confidence||null;fkey=att[0].rec_key||att[0].key||'';ask='What should I do about this: '+att[0].title;}
+    else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);fconf=recs[0].confidence_detail||recs[0].confidence||null;fkey=recs[0].key||'';ftag=recs[0].model_written?cavConf.claimTag('',true):'';ask='Walk me through this: '+recs[0].title;}
     else if(byKey.all_clear){lead=byKey.all_clear.text;clear=true;kick='All clear';ask=byKey.all_clear.ask;}
     else{lead='Nothing needs you right now.';clear=true;kick='All clear';why='Cavnar AI is watching. This fills in as your numbers come in.';ask='What are you watching for me right now?';}
     // The biggest dollar opportunity rides along as the figure, unless the
@@ -2721,7 +2721,7 @@ svg:hover .hb-xh{opacity:1}
   // could contradict the confidence line on the same card, and the
   // confidence's Evidence strength row now says the same thing, measured.
   function hbRecCard(r,j,skip,isNew,trk,d){
-    var c=r.confidence||null,meta=[];
+    var c=r.confidence_detail||r.confidence||null,meta=[];
     if(r.timeframe)meta.push('<span>'+esc(r.timeframe)+'</span>');
     if(r.impact)meta.push('<span>'+esc(r.impact)+'</span>');
     var act='';
@@ -2812,7 +2812,7 @@ svg:hover .hb-xh{opacity:1}
     // What an item rests on is on the row, not in a hover tooltip a phone
     // never shows (CA4 J4): the evidence (or, from an older server, the
     // detail) under the title, then its confidence line.
-    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=a.confidence?cavConfLine(a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
+    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=(a.confidence_detail||a.confidence)?cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
       h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
@@ -4014,7 +4014,7 @@ svg:hover .hb-xh{opacity:1}
           :(rk&&x.answerable!==false&&typeof recControlsHtml==='function'?'<div class="ft">'+recControlsHtml(rk,'dsr',MODULE[blk]||'ops')+'</div>':'');
         // Each action's confidence is built from the facts it cites (K1,
         // E16) - urgency and effort stay the model's labels, said as such.
-        var acf=x.confidence&&window.cavConfLine?cavConfLine(x.confidence,{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
+        var acf=(x.confidence_detail||x.confidence)&&window.cavConfLine?cavConfLine(x.confidence_detail||x.confidence,{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
         h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
           +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')+acf+ans+'</div>';}
       h+='</div>';}
@@ -9290,8 +9290,8 @@ function _appendAskCavnarEvidence(d) {
   // meta.confidence is the K1 object now (K5): a percentage computed from
   // what the tools returned, not "high" for reading two modules. A bare
   // band from an older server still renders as its band.
-  var cfHtml = (d.confidence && d.confidence !== 'unknown' && window.cavConfLine)
-    ? cavConfLine(d.confidence, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
+  var cfHtml = ((d.confidence_detail || d.confidence) && d.confidence !== 'unknown' && window.cavConfLine)
+    ? cavConfLine(d.confidence_detail || d.confidence, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
   if (!mods.length && !bad.length && !cfHtml) return;
   var messages = document.getElementById('ask-cavnar-messages');
   var row = document.createElement('div');
@@ -10741,7 +10741,7 @@ function renderReviewDiagnosis(d){
      "medium confidence" - the model's own rating - is the .cf line with
      its evidence, track record and freshness behind Why?. A read from
      before the object shipped still says its band. */
-  var cfl=cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'reviews',module:'reviews'});
+  var cfl=cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'reviews',module:'reviews'});
   var h=''
     +'<div class="rv-diag">'
     +'<div class="rv-diag-hd">'
@@ -12561,7 +12561,7 @@ function renderDiagnosis(id,dg){
   var dsurf=DIAG_SURFACE[id]||'labor';
   el.innerHTML='<div class="diag-h"><span>Most likely cause</span></div>'
     +'<div class="diag-cause">'+esc(dg.cause)+'</div>'
-    +cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:dsurf,module:dsurf,cls:'diag-cf'})
+    +cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:dsurf,module:dsurf,cls:'diag-cf'})
     +(dg.alternative_cause?'<div class="diag-alt"><b>Also fits:</b> '+esc(dg.alternative_cause)+'</div>':'')
     +(dg.what_would_confirm?'<div class="diag-alt"><b>What would tell them apart:</b> '+esc(dg.what_would_confirm)+'</div>':'')
     +(evh?'<div class="diag-evs">'+evh+'</div>':'')
@@ -13559,7 +13559,7 @@ function renderQualityWarnings(quality) {
   // and its confidence - the line then says how sure, like every other
   // surface, on this panel's dark ground.
   for (i = 0; i < Math.min(recs.length, 5); i++) {
-    var recObj = recs[i], recConf = (recObj && typeof recObj === 'object') ? recObj.confidence : null;
+    var recObj = recs[i], recConf = (recObj && typeof recObj === 'object') ? (recObj.confidence_detail || recObj.confidence) : null;
     var rec = (recObj && typeof recObj === 'object') ? String(recObj.text || recObj.title || '') : String(recObj || ''), st = _recState[rec];
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
@@ -15645,7 +15645,7 @@ function fc2LoadCfo(){
         h+='. Projection, not a measurement. '+wtEsc(p.basis||'')+'</span></div>';
       }
       if(dg&&dg.cause){
-        var fcl=cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'food',module:'food'});
+        var fcl=cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'food',module:'food'});
         if(fcl)h+='<div class="fc2-row"><div class="k">How sure</div>'+fcl+'</div>';
         h+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
         if(dg.alternative_cause){h+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
@@ -15666,7 +15666,7 @@ function fc2LoadCfo(){
           h+='<div class="fc2-drv"><div class="n"><span class="hb-num">'+fc2Money(x.dollars_monthly)+'</span></div>'
             +'<div class="bd"><div class="lbl">'+wtEsc(x.label)+'</div>'
             +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
-            +cavConfLine(x.confidence,{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
+            +cavConfLine(x.confidence_detail||x.confidence,{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
             +'<div class="tags"><span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
             +'<span class="tag">if ignored: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
         }

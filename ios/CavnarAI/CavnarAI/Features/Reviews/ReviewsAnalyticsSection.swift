@@ -316,11 +316,11 @@ struct ReviewsAnalyticsSection: View {
                                size: 12, weight: 400, color: .cavnarInk3)
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
-                .padding(.bottom, d.confidence == nil ? 12 : 8)
+                .padding(.bottom, d.trust == nil ? 12 : 8)
 
             // How sure, as a percentage with what it rests on (K1/K6) — the
             // shared confidence line, not a bare band capsule.
-            if let c = d.confidence {
+            if let c = d.trust {
                 ConfidenceLine(confidence: c, recKey: d.recKey, surface: "reviews", module: "reviews")
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)

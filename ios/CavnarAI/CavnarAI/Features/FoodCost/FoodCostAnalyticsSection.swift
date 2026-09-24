@@ -349,7 +349,7 @@ struct FoodCostAnalyticsSection: View {
                             }
                             // How sure, as a percentage with what it rests on
                             // (K1/K6) — the shared line, not a bare capsule.
-                            if let c = dg?.confidence {
+                            if let c = dg?.trust {
                                 ConfidenceLine(confidence: c, recKey: dg?.recKey, surface: "food", module: "food")
                             }
                         }
@@ -455,7 +455,7 @@ struct FoodCostAnalyticsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                     // How sure, on the shared line (K1); the effort and
                     // what happens if it is ignored stay beside it.
-                    if let c = d.confidence {
+                    if let c = d.trust {
                         ConfidenceLine(confidence: c, recKey: d.recKey, surface: "food", module: "food")
                     }
                     HomeMixedText.make("\(d.difficulty) effort · if ignored: \(d.ifIgnored)",

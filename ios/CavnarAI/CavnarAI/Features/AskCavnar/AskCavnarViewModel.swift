@@ -114,13 +114,17 @@ struct AskEvidence: Decodable, Hashable {
 struct AskMeta: Decodable, Hashable, Sendable {
     let confidence: TrustConfidence?
 
-    enum CodingKeys: String, CodingKey { case confidence }
+    enum CodingKeys: String, CodingKey {
+        case confidence
+        case confidenceDetail = "confidence_detail"
+    }
 
     /// Never throws: a `meta` that is not an object is no metadata, not an
     /// answer event that fails to decode.
     init(from decoder: Decoder) throws {
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { confidence = nil; return }
-        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail))
+            ?? (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence))
     }
 
     static func pick(_ topLevel: TrustConfidence?, _ meta: AskMeta?) -> TrustConfidence? {
@@ -333,6 +337,9 @@ final class AskCavnarViewModel {
         let conversationId: Int?
         let modulesConsulted: [String]?
         let confidence: TrustConfidence?
+        /// The K1 object when the server keeps `confidence` as the band
+        /// word for older builds (confidence audit, group E).
+        var confidenceDetail: TrustConfidence? = nil
         let meta: AskMeta?
         let unverifiedFigures: [String]?
         let messageId: Int?
@@ -340,6 +347,7 @@ final class AskCavnarViewModel {
 
         enum CodingKeys: String, CodingKey {
             case ok, answer, error, truncated, proposals, confidence, suggestions, meta
+            case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
@@ -348,7 +356,7 @@ final class AskCavnarViewModel {
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
-                        confidence: AskMeta.pick(confidence, meta),
+                        confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [])
         }
     }

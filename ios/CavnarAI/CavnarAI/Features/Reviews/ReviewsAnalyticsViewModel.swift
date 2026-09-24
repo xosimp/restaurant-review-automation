@@ -187,6 +187,10 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     /// K6: the K1 object (a percentage with "Why?"); an older server's bare
     /// band ("medium") still decodes.
     let confidence: TrustConfidence?
+    /// The K1 object when `confidence` stays the band word for older builds
+    /// (confidence audit, group E). Views read `trust`.
+    var confidenceDetail: TrustConfidence? = nil
+    var trust: TrustConfidence? { confidenceDetail ?? confidence }
     let ageHours: Double?
     let stale: Bool?
     /// The recommended action's rec_ledger key — present only when there is
@@ -211,6 +215,7 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case category, cause, confidence, stale, answered
+        case confidenceDetail = "confidence_detail"
         case recKey = "rec_key"
         case asOf = "as_of"
         case staleNote = "stale_note"

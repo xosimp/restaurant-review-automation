@@ -54,6 +54,7 @@ struct LaborDiagnosis: Decodable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case available, cause, summary, confidence, answered, answerable
+        case confidenceDetail = "confidence_detail"
         case alternativeCause = "alternative_cause"
         case whatWouldConfirm = "what_would_confirm"
         case operationalEvidence = "operational_evidence"
@@ -67,7 +68,8 @@ struct LaborDiagnosis: Decodable, Equatable {
         alternativeCause = try? c.decodeIfPresent(String.self, forKey: .alternativeCause)
         whatWouldConfirm = try? c.decodeIfPresent(String.self, forKey: .whatWouldConfirm)
         summary = try? c.decodeIfPresent(String.self, forKey: .summary)
-        confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail))
+            ?? (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence))
         operationalEvidence = (try? c.decodeIfPresent([Evidence].self, forKey: .operationalEvidence)) ?? []
         recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
         answered = try? c.decodeIfPresent(Bool.self, forKey: .answered)

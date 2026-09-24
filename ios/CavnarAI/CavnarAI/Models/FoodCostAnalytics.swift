@@ -377,6 +377,10 @@ struct FoodCostCFO: Decodable {
         /// K1 (a percentage with "Why?"); an older server's bare band
         /// ("high") still decodes, and so does a driver with none.
         let confidence: TrustConfidence?
+        /// The K1 object when `confidence` stays the band word for older builds
+        /// (confidence audit, group E). Views read `trust`.
+        var confidenceDetail: TrustConfidence? = nil
+        var trust: TrustConfidence? { confidenceDetail ?? confidence }
         let difficulty: String
         let evidence: String
         let ifIgnored: String
@@ -386,12 +390,13 @@ struct FoodCostCFO: Decodable {
         var id: String { "\(kind)-\(label)" }
         enum CodingKeys: String, CodingKey {
             case kind, label, confidence, difficulty, evidence
+            case confidenceDetail = "confidence_detail"
             case dollarsMonthly = "dollars_monthly"
             case ifIgnored = "if_ignored"
             case recKey = "rec_key"
         }
         /// The band, for anything that still ranks or words by it.
-        var confidenceBand: String { confidence?.effectiveBand ?? "low" }
+        var confidenceBand: String { trust?.effectiveBand ?? "low" }
     }
 
     struct Diagnosis: Decodable {
@@ -409,6 +414,10 @@ struct FoodCostCFO: Decodable {
         /// bare band still decodes. Declared apart from the others so the
         /// doc above stays with its fields.
         let confidence: TrustConfidence?
+        /// The K1 object when `confidence` stays the band word for older builds
+        /// (confidence audit, group E). Views read `trust`.
+        var confidenceDetail: TrustConfidence? = nil
+        var trust: TrustConfidence? { confidenceDetail ?? confidence }
         /// The recommended action's rec_ledger key, whether the owner already
         /// answered it (the action and its controls then drop), when the
         /// read was written (M/D/YY) and the server's note for a read that
@@ -427,6 +436,7 @@ struct FoodCostCFO: Decodable {
         }
         enum CodingKeys: String, CodingKey {
             case headline, cause, confidence, stale, answered
+            case confidenceDetail = "confidence_detail"
             case recKey = "rec_key"
             case asOf = "as_of"
             case staleNote = "stale_note"
@@ -440,7 +450,7 @@ struct FoodCostCFO: Decodable {
             case ageHours = "age_hours"
         }
         /// The band — K1's, else the legacy one, else low.
-        var confidenceBand: String { confidence?.effectiveBand ?? "low" }
+        var confidenceBand: String { trust?.effectiveBand ?? "low" }
     }
 
     /// Month-to-date prime cost projected to month end. Always a forecast,

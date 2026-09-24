@@ -410,6 +410,8 @@ actor APIClient {
         let modulesConsulted: [String]?
         /// K5: the K1 object; an older server's band string still decodes.
         let confidence: TrustConfidence?
+        /// The K1 object when `confidence` stays the band word (group E).
+        var confidenceDetail: TrustConfidence? = nil
         /// K5's `meta` block, when the server nests it.
         let meta: AskMeta?
         let unverifiedFigures: [String]?
@@ -420,6 +422,7 @@ actor APIClient {
 
         enum CodingKeys: String, CodingKey {
             case type, label, state, answer, truncated, proposals, error, confidence, suggestions, meta
+            case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
@@ -428,7 +431,7 @@ actor APIClient {
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
-                        confidence: AskMeta.pick(confidence, meta),
+                        confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [])
         }
     }
