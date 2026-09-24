@@ -921,28 +921,36 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     return ctx
 
 
+def _operational_lines(ctx) -> dict:
+    """{module: its line} for the modules that reported — the lines
+    _operational_block joins, kept apart so the diagnosis's operational
+    evidence is checked against the ONE module line it names (H1, K6)."""
+    lines = {}
+    lab = ctx.get("labor")
+    if lab:
+        lines["labor"] = (f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% "
+                          f"target, {lab['understaffed_days']} understaffed and "
+                          f"{lab['overstaffed_days']} overstaffed days over {lab['period_days']} days"
+                          + (f", data through {lab['covers_to']}" if lab.get("covers_to") else ""))
+    rev = ctx.get("reviews")
+    if rev:
+        lines["reviews"] = (f"- Reviews: {rev['mentions']} negative reviews mention "
+                            f"{rev['category'].replace('_',' ')} in the last {rev['window_days']} days"
+                            + (f", concentrated on {rev['dish']}" if rev.get("dish") else "")
+                            + " — relevant because it bounds how far portions can be cut")
+    mk = ctx.get("marketing")
+    if mk:
+        lines["marketing"] = (f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
+                              f"{mk['reach_30d']:,} — a demand change would show up in usage")
+    return lines
+
+
 def _operational_block(ctx) -> str:
     """The cross-module evidence as prose, or an explicit statement that there
     is none. An empty block reads to a model as "nothing notable happened",
     which is a different claim from "we have no data" — and it is the second
     that has to pull the confidence down."""
-    lines = []
-    lab = ctx.get("labor")
-    if lab:
-        lines.append(f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% "
-                     f"target, {lab['understaffed_days']} understaffed and "
-                     f"{lab['overstaffed_days']} overstaffed days over {lab['period_days']} days"
-                     + (f", data through {lab['covers_to']}" if lab.get("covers_to") else ""))
-    rev = ctx.get("reviews")
-    if rev:
-        lines.append(f"- Reviews: {rev['mentions']} negative reviews mention "
-                     f"{rev['category'].replace('_',' ')} in the last {rev['window_days']} days"
-                     + (f", concentrated on {rev['dish']}" if rev.get("dish") else "")
-                     + " — relevant because it bounds how far portions can be cut")
-    mk = ctx.get("marketing")
-    if mk:
-        lines.append(f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
-                     f"{mk['reach_30d']:,} — a demand change would show up in usage")
+    lines = list(_operational_lines(ctx).values())
     for note in ctx.get("notes") or []:
         lines.append(f"- {note}")
     if not lines:
@@ -1319,13 +1327,23 @@ def _pattern_block(wd, seasonal) -> str:
     return "\n".join(lines) if lines else "- Nothing above the evidence floor."
 
 
-def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id):
+OPERATIONAL_MODULES = ("labor", "reviews", "marketing")
+
+
+def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None):
     """Reject a diagnosis that names a driver it was not given.
 
     The same discipline ai_guard applies to figures, applied to drivers. A
     CFO's paragraph is only worth more than a summary because every claim in
     it traces to a measured line; a cause naming a driver nobody computed
     breaks that in the one place it matters most.
+
+    `op_lines` is {module: the line the model was handed}. Operational
+    evidence is kept only when its value is that module's line, each kept
+    entry verified: True, the rest dropped (H1, K6). `model_confidence` is
+    the model's own band; `confidence` is it capped — medium at most with no
+    verified operational evidence, low with an unverified figure — never
+    raised.
     """
     if not isinstance(raw, dict):
         raise ValueError("diagnosis was not a JSON object")
@@ -1349,17 +1367,23 @@ def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id):
     conf = str(raw.get("confidence") or "").strip().lower()
     conf = conf if conf in CONFIDENCES else "low"
 
-    op = []
-    for e in (raw.get("operational_evidence") or [])[:4]:
-        if isinstance(e, dict) and e.get("module") in ("labor", "reviews", "marketing"):
-            op.append({"module": e["module"], "metric": str(e.get("metric") or "")[:80],
-                       "value": str(e.get("value") or "")[:80]})
+    from ai_guard import cap_band, verify_operational_evidence
+    op, op_dropped = verify_operational_evidence(raw.get("operational_evidence"), op_lines or {},
+                                                 OPERATIONAL_MODULES)
+    if op_dropped:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"food_cost_diagnosis operational evidence not in its input: "
+                                     f"{[(d['module'], d['value']) for d in op_dropped][:3]}"),
+                        job="food_cost_diagnosis", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
 
     out = {
         "headline": headline, "cause": cause,
         "alternative_cause": _line("alternative_cause"),
         "what_would_confirm": _line("what_would_confirm"),
-        "operational_evidence": op, "confidence": conf,
+        "operational_evidence": op, "confidence": conf, "model_confidence": conf,
         "recommended_action": _line("recommended_action"),
         "expected_outcome": _line("expected_outcome"),
         "cited_drivers": cited,
@@ -1375,7 +1399,7 @@ def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id):
     bad = verify_figures(joined, prompt, "food_cost_diagnosis", restaurant_id)
     if bad:
         out["unsupported_figures"] = bad
-        out["confidence"] = "low"
+    out["confidence"] = cap_band(conf, verified_evidence=len(op), unverified_figures=bad)
     return out
 
 
@@ -1455,7 +1479,8 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     from ai_utils import parse_json_reply
     labels = [d.get("item") or d["label"] for d in drv["drivers"]]
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
-                                 labels, prompt, restaurant_id)
+                                 labels, prompt, restaurant_id,
+                                 op_lines=_operational_lines(ev["operational"]))
 
     # One "at stake" figure, the same one the web card and iOS header show:
     # what the drivers carry, with no ingredient counted twice (M-10). It
@@ -1479,8 +1504,8 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 (restaurant_id, window_days, headline, cause, alternative_cause,
                  what_would_confirm, drivers_json, operational_evidence, confidence,
                  recommended_action, expected_outcome, dollars_at_stake, unsupported_figures,
-                 generated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+                 model_confidence, generated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
             ON CONFLICT(restaurant_id, window_days) DO UPDATE SET
                 headline=excluded.headline, cause=excluded.cause,
                 alternative_cause=excluded.alternative_cause,
@@ -1492,6 +1517,7 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 expected_outcome=excluded.expected_outcome,
                 dollars_at_stake=excluded.dollars_at_stake,
                 unsupported_figures=excluded.unsupported_figures,
+                model_confidence=excluded.model_confidence,
                 generated_at=excluded.generated_at
         """, (restaurant_id, DIAGNOSIS_WINDOW_DAYS, result["headline"], result["cause"],
               result["alternative_cause"], result["what_would_confirm"],
@@ -1499,7 +1525,9 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
               result["confidence"], result["recommended_action"], result["expected_outcome"],
               round(_f(at_stake), 2),
               # Kept with the read so every surface shows the caveat (M-17).
-              json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None))
+              json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None,
+              # The model's own band, apart from the capped one (H1).
+              result.get("model_confidence")))
         conn.commit()
     finally:
         conn.close()
@@ -1541,13 +1569,21 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         except Exception:
             return fallback
 
+    from ai_guard import cap_band as _cap_band
+    _op = [e for e in _j(row["operational_evidence"], []) if isinstance(e, dict) and e.get("verified") is True]
     return {
         "ok": True, "headline": row["headline"], "cause": row["cause"],
         "alternative_cause": row["alternative_cause"],
         "what_would_confirm": row["what_would_confirm"],
         "drivers": _j(row["drivers_json"], []),
-        "operational_evidence": _j(row["operational_evidence"], []),
-        "confidence": row["confidence"],
+        # Only verified cross-checks are served (K6); an older row's
+        # unchecked entries are left out and its band capped like a new one.
+        "operational_evidence": _op,
+        "confidence": _cap_band(row["confidence"], verified_evidence=len(_op),
+                                unverified_figures=_j(row["unsupported_figures"] if "unsupported_figures"
+                                                      in row.keys() else None, [])),
+        "model_confidence": (row["model_confidence"] if "model_confidence" in row.keys() else None)
+                            or row["confidence"],
         "recommended_action": row["recommended_action"],
         "expected_outcome": row["expected_outcome"],
         "dollars_at_stake": row["dollars_at_stake"],

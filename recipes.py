@@ -17,7 +17,17 @@ import json
 import re
 from ai_utils import model_for
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): a
+    bound copy kept whatever models.get_conn was when this module was first
+    imported — in a test run, an earlier test's database."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 MODEL = model_for("recipes")
 RECIPE_DRAFT_LIMIT = 8
@@ -44,6 +54,122 @@ _SCHEMA = {
     "required": ["ingredients", "note"],
     "additionalProperties": False,
 }
+
+
+# ── units: the card's, converted in Python (H6) ─────────────────────────────
+#
+# A photographed card's "8 oz" was stored as 8 in the ingredient's own unit —
+# 8 lb when the ingredient is kept in pounds — because the line took
+# `ing.get("unit") or ln.get("unit")`. The card's unit is kept now and the
+# quantity converted here; a unit that cannot be converted (ounces of an
+# ingredient kept by the each) is flagged, never guessed at.
+_UNIT_EXTRA = {"tsp": "tsp", "teaspoon": "tsp", "teaspoons": "tsp", "tbsp": "tbsp", "tbs": "tbsp",
+               "tablespoon": "tbsp", "tablespoons": "tbsp", "cup": "cup", "cups": "cup", "c": "cup",
+               "pt": "pt", "pint": "pt", "pints": "pt", "ml": "ml", "milliliter": "ml", "milliliters": "ml",
+               "fl oz": "floz", "floz": "floz", "fl. oz": "floz", "quarts": "qt", "grams": "g", "gram": "g",
+               "kilogram": "kg", "kilograms": "kg", "liters": "l", "litres": "l", "lb.": "lb", "oz.": "oz"}
+# Each unit's size in its dimension's base unit: grams, millilitres, pieces.
+_UNIT_SIZE = {"g": ("mass", 1.0), "kg": ("mass", 1000.0), "oz": ("mass", 28.349523125),
+              "lb": ("mass", 453.59237),
+              "ml": ("volume", 1.0), "l": ("volume", 1000.0), "tsp": ("volume", 4.92892159375),
+              "tbsp": ("volume", 14.78676478125), "floz": ("volume", 29.5735295625),
+              "cup": ("volume", 236.5882365), "pt": ("volume", 473.176473), "qt": ("volume", 946.352946),
+              "gal": ("volume", 3785.411784),
+              "each": ("count", 1.0), "dozen": ("count", 12.0)}
+
+
+def norm_unit(u):
+    """A unit written any usual way, as one token (invoices._unit plus the
+    kitchen measures a recipe card uses), or None when there is none."""
+    raw = " ".join(str(u or "").strip().lower().split())
+    if not raw:
+        return None
+    if raw in _UNIT_EXTRA:
+        return _UNIT_EXTRA[raw]
+    import invoices
+    base = invoices._unit(raw)
+    return _UNIT_EXTRA.get(base, base)
+
+
+def convert_qty(qty, from_unit, to_unit):
+    """`qty` of `from_unit` expressed in `to_unit`, or None when the two are
+    not the same kind of measure (weight, volume, count) or either is
+    unknown. Same unit is the quantity unchanged."""
+    try:
+        q = float(qty)
+    except (TypeError, ValueError):
+        return None
+    a, b = norm_unit(from_unit), norm_unit(to_unit)
+    if not a or not b:
+        return None
+    if a == b:
+        return q
+    if a not in _UNIT_SIZE or b not in _UNIT_SIZE or _UNIT_SIZE[a][0] != _UNIT_SIZE[b][0]:
+        return None
+    return q * _UNIT_SIZE[a][1] / _UNIT_SIZE[b][1]
+
+
+# ── what past drafts taught (H6) ────────────────────────────────────────────
+#
+# The owner's edits to accepted drafts were stored (accepted_lines_json,
+# edited_lines) and never read. Where the owner has rewritten most of the
+# lines on past drafts of the same kind of dish, a new draft's confidence
+# steps down one level, and the draft says why.
+DISH_TYPES = (("pizza", ("pizza", "flatbread", "calzone")), ("burger", ("burger", "slider")),
+              ("sandwich", ("sandwich", "panini", "sub", "wrap", "melt", "club")),
+              ("pasta", ("pasta", "spaghetti", "linguine", "penne", "rigatoni", "ravioli", "lasagna",
+                         "carbonara", "alfredo", "gnocchi", "fettuccine")),
+              ("salad", ("salad", "caesar")), ("soup", ("soup", "chowder", "bisque", "chili")),
+              ("taco", ("taco", "burrito", "quesadilla", "enchilada", "nachos")),
+              ("breakfast", ("pancake", "waffle", "omelet", "omelette", "benedict", "french toast", "hash")),
+              ("dessert", ("cake", "pie", "brownie", "cookie", "sundae", "tiramisu", "cheesecake", "gelato")),
+              ("drink", ("cocktail", "margarita", "martini", "spritz", "sangria", "mojito", "latte", "smoothie")))
+EDIT_HISTORY_MIN_DRAFTS = 3         # accepted drafts of that type before their edits count
+EDIT_HISTORY_LOWER_AT = 0.5         # share of drafted lines the owner changed or removed
+_CONF_STEP = {"high": "medium", "medium": "low", "low": "low"}
+
+
+def dish_type(name):
+    """A coarse kind of dish read from its name ("Margherita Pizza" → pizza),
+    or "other"."""
+    low = f" {str(name or '').lower()} "
+    for kind, words in DISH_TYPES:
+        if any(re.search(rf"(?<![a-z]){re.escape(w)}s?(?![a-z])", low) for w in words):
+            return kind
+    return "other"
+
+
+def draft_edit_history(restaurant_id, kind, db_path=DB_PATH) -> dict:
+    """{"drafts", "lines", "edited", "rate"} over this restaurant's accepted
+    ESTIMATED drafts of dishes of this kind (photographed cards excluded —
+    those are transcriptions, not estimates)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT menu_item_name, lines_json, edited_lines, note FROM recipe_drafts WHERE restaurant_id=? "
+            "AND status='accepted' AND accepted_lines_json IS NOT NULL ORDER BY id DESC LIMIT 60",
+            (restaurant_id,)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    drafts = lines = edited = 0
+    for r in rows:
+        if str(r["note"] or "").startswith("From a photographed recipe card"):
+            continue
+        if dish_type(r["menu_item_name"]) != kind:
+            continue
+        try:
+            n = len(json.loads(r["lines_json"] or "[]"))
+        except Exception:
+            continue
+        if n <= 0:
+            continue
+        drafts += 1
+        lines += n
+        edited += min(n, int(r["edited_lines"] or 0))
+    return {"drafts": drafts, "lines": lines, "edited": edited,
+            "rate": round(edited / lines, 2) if lines else None}
 
 
 def _recipe_of(item):
@@ -114,6 +240,12 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
             ops.capture(e, job="recipe_draft", context=f"restaurant_id={restaurant_id} item={item.get('id')}")
             skipped += 1
             continue
+        # What the owner's edits to past drafts of this kind of dish said
+        # (H6): most lines rewritten → this draft's confidence steps down.
+        kind = dish_type(item.get("name"))
+        hist = draft_edit_history(restaurant_id, kind, db_path=db_path)
+        lower = bool(hist["drafts"] >= EDIT_HISTORY_MIN_DRAFTS and hist["rate"] is not None
+                     and hist["rate"] >= EDIT_HISTORY_LOWER_AT)
         lines = []
         for ln in out.get("ingredients") or []:
             ing = by_name.get(str(ln.get("name") or "").strip().lower())
@@ -123,17 +255,41 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
                 continue
             if not ing or qty <= 0:
                 continue          # never an ingredient the restaurant does not have
-            lines.append({"ingredient_id": ing["id"], "name": ing["name"], "qty": round(qty, 4),
-                          "unit": ing.get("unit") or ln.get("unit") or "",
-                          "confidence": ln.get("confidence") or "low"})
+            conf = ln.get("confidence") if ln.get("confidence") in _CONF_STEP else "low"
+            if lower:
+                conf = _CONF_STEP[conf]
+            ing_unit = ing.get("unit") or ""
+            said_unit = ln.get("unit") or ing_unit
+            converted = convert_qty(qty, said_unit, ing_unit) if ing_unit else None
+            line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit,
+                    "confidence": conf, "source": "estimate", "per": "plate"}
+            if converted is not None and converted > 0:
+                line["qty"] = round(converted, 4)
+                line["unit_ok"] = True
+                if norm_unit(said_unit) != norm_unit(ing_unit):
+                    line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
+            else:
+                # The model answered in a unit the ingredient is not kept
+                # in and cannot be converted to: kept, flagged, never
+                # written by an unedited accept.
+                line.update(qty=round(qty, 4), unit=said_unit, unit_ok=False,
+                            unit_note=f"estimated in {said_unit or 'no unit'}; {ing['name']} is kept in "
+                                      f"{ing_unit or 'no unit'}")
+            lines.append(line)
         if not lines:
             skipped += 1
             continue
+        note_bits = ["Estimated by Cavnar — check each quantity before accepting"]
+        if lower:
+            note_bits.append(f"confidence lowered: you changed {int(hist['rate'] * 100)}% of the lines on "
+                             f"{hist['drafts']} past {kind} drafts")
+        if out.get("note"):
+            note_bits.append(str(out["note"])[:160])
         conn = get_conn(db_path)
         try:
             conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note) "
                          "VALUES (?,?,?,?,?)",
-                         (restaurant_id, item["id"], item["name"], json.dumps(lines), (out.get("note") or "")[:300] or None))
+                         (restaurant_id, item["id"], item["name"], json.dumps(lines), " · ".join(note_bits)[:300]))
             conn.commit()
         finally:
             conn.close()
@@ -218,17 +374,20 @@ _PHOTO_SCHEMA = {
     "type": "object",
     "properties": {
         "menu_item_name": {"type": ["string", "null"]},
+        "yield": {"type": ["number", "null"]},
         "ingredients": _SCHEMA["properties"]["ingredients"],
         "note": {"type": ["string", "null"]},
     },
-    "required": ["menu_item_name", "ingredients", "note"],
+    "required": ["menu_item_name", "yield", "ingredients", "note"],
     "additionalProperties": False,
 }
 
 _PHOTO_PROMPT = (
     "This is a photo of a recipe card, prep sheet or handwritten recipe from a restaurant kitchen. "
-    "Transcribe it: the dish name as written, and every ingredient line with its quantity and unit as "
-    "written (per the batch or plate the card describes — do not scale). Where the card names an "
+    "Transcribe it: the dish name as written, and every ingredient line with its quantity and unit "
+    "exactly as the card writes them (per the batch or plate the card describes — do not scale, do not "
+    "convert units). `yield` is how many plates or portions the card says it makes, only if the card "
+    "says so; null when it does not. Where the card names an "
     "ingredient that is on the restaurant's list below, use the list's spelling exactly; otherwise keep "
     "the card's words. Mark confidence low for anything you had to guess at. Return the JSON only.\n\n"
     "Ingredients on the restaurant's list:\n{names}"
@@ -237,6 +396,32 @@ _PHOTO_PROMPT = (
 
 class RecipePhotoError(ValueError):
     pass
+
+
+def _card_line(ing, qty, card_unit, confidence, card_yield=None):
+    """One transcribed card line as a draft line: the card's own quantity
+    and unit kept (card_qty / card_unit), the quantity converted to the
+    ingredient's unit in Python, divided by the card's yield when it states
+    one (per plate) or marked per batch when it does not. A unit that does
+    not convert is flagged (unit_ok False) — an unedited accept never
+    writes it (H6)."""
+    ing_unit = ing.get("unit") or ""
+    card_unit = (card_unit or "").strip()
+    converted = convert_qty(qty, card_unit or ing_unit, ing_unit) if ing_unit and (card_unit or ing_unit) else None
+    conf = confidence if confidence in _CONF_STEP else "low"
+    line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit, "confidence": conf,
+            "source": "transcribed", "card_qty": round(float(qty), 4), "card_unit": card_unit or None,
+            "per": "plate" if card_yield else "batch"}
+    if converted is None or converted <= 0 or not card_unit:
+        line.update(qty=round(float(qty), 4), unit_ok=False,
+                    unit_note=(f"the card gives no unit; {ing['name']} is kept in {ing_unit or 'no unit'}"
+                               if not card_unit else
+                               f"the card says {qty:g} {card_unit}; {ing['name']} is kept in "
+                               f"{ing_unit or 'no unit'} and the two don't convert"))
+        return line
+    line["qty"] = round(converted / card_yield if card_yield else converted, 4)
+    line["unit_ok"] = True
+    return line
 
 
 def extract_from_image(restaurant_id, data, media_type, user_id=None, client=None, db_path=DB_PATH):
@@ -279,6 +464,11 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     dish = (out.get("menu_item_name") or "").strip()[:120]
     if not dish:
         raise RecipePhotoError("No dish name could be read from the card — write it at the top and try again.")
+    try:
+        card_yield = float(out.get("yield")) if out.get("yield") is not None else None
+    except (TypeError, ValueError):
+        card_yield = None
+    card_yield = card_yield if card_yield and card_yield > 0 else None
     lines, unmatched = [], []
     for ln in out.get("ingredients") or []:
         nm = str(ln.get("name") or "").strip()
@@ -288,8 +478,7 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
             qty = None
         ing = by_name.get(nm.lower())
         if ing and qty and qty > 0:
-            lines.append({"ingredient_id": ing["id"], "name": ing["name"], "qty": round(qty, 4),
-                          "unit": ing.get("unit") or ln.get("unit") or "", "confidence": ln.get("confidence") or "low"})
+            lines.append(_card_line(ing, qty, ln.get("unit"), ln.get("confidence"), card_yield))
         elif nm:
             unmatched.append({"name": nm, "qty": qty, "unit": ln.get("unit") or ""})
     if not lines:
@@ -316,6 +505,13 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     else:
         item_id, item_name = match["id"], match["name"]
     note_bits = ["From a photographed recipe card"]
+    if card_yield:
+        note_bits.append(f"the card makes {card_yield:g} — quantities are per plate")
+    elif any(l.get("per") == "batch" for l in lines):
+        note_bits.append("the card doesn't say how many plates it makes — enter the yield before accepting")
+    bad_units = [l["name"] for l in lines if not l.get("unit_ok")]
+    if bad_units:
+        note_bits.append("units to check: " + ", ".join(bad_units[:4]))
     if out.get("note"):
         note_bits.append(str(out["note"])[:160])
     if unmatched:
@@ -329,7 +525,22 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     finally:
         conn.close()
     return {"id": draft_id, "menu_item_id": item_id, "menu_item_name": item_name, "lines": lines,
-            "note": " · ".join(note_bits)[:300], "unmatched": unmatched, "menu_item_matched": matched}
+            "note": " · ".join(note_bits)[:300], "unmatched": unmatched, "menu_item_matched": matched,
+            **_draft_flags(lines)}
+
+
+def _draft_flags(lines) -> dict:
+    """What a client needs to say about a draft before Accept (H6): whether
+    it is an estimate or a transcription, whether it still needs the card's
+    yield, which lines' units could not be converted, and the confidence
+    levels its lines carry (high, medium and low are distinct values)."""
+    lines = [l for l in (lines or []) if isinstance(l, dict)]
+    return {"is_estimate": any(l.get("source") == "estimate" for l in lines),
+            "needs_yield": any(l.get("per") == "batch" for l in lines),
+            "unit_warnings": [{"name": l.get("name"), "note": l.get("unit_note")}
+                              for l in lines if l.get("unit_ok") is False],
+            "confidence_levels": sorted({l.get("confidence") for l in lines if l.get("confidence") in _CONF_STEP},
+                                        key=["high", "medium", "low"].index)}
 
 
 def list_drafts(restaurant_id, status="pending", db_path=DB_PATH):
@@ -346,15 +557,43 @@ def list_drafts(restaurant_id, status="pending", db_path=DB_PATH):
             d["lines"] = json.loads(d.pop("lines_json") or "[]")
         except Exception:
             d["lines"] = []
+        d.update(_draft_flags(d["lines"]))
         out.append(d)
     return out
 
 
-def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
+def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH, yield_count=None):
     """Write the recipe. `lines` (optional) are the owner's edited lines —
     [{ingredient_id, qty}] — otherwise the draft's own. Returns
-    {"ok", "written", "skipped"}."""
+    {"ok", "written", "skipped"}.
+
+    A photographed card that never said how many plates it makes is a
+    BATCH: its quantities are refused as one plate's until the owner gives
+    `yield_count` (the draft's per-batch lines are divided by it) or types
+    the lines themselves. An unedited accept never writes a line whose unit
+    could not be converted (unit_ok False) — it is skipped and named (H6)."""
     import inventory_ledger
+    owner_lines = isinstance(lines, list) and bool(lines)
+    try:
+        yc = float(yield_count) if yield_count not in (None, "") else None
+    except (TypeError, ValueError):
+        yc = None
+    yc = yc if yc and yc > 0 else None
+    if not owner_lines:
+        conn = get_conn(db_path)
+        try:
+            peek = conn.execute("SELECT lines_json FROM recipe_drafts WHERE id=? AND restaurant_id=? AND status='pending'",
+                                (draft_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        try:
+            peek_lines = json.loads(peek["lines_json"] or "[]") if peek else []
+        except Exception:
+            peek_lines = []
+        if any(isinstance(l, dict) and l.get("per") == "batch" for l in peek_lines) and not yc:
+            return {"ok": False, "written": 0, "skipped": 0, "needs_yield": True,
+                    "error": "This card is a batch recipe — say how many plates it makes, or enter each "
+                             "quantity per plate, before accepting."}
     # Claim first: the pending -> accepted flip is the one atomic step, and
     # only the request that makes it writes anything. Read-then-write let a
     # second accept (double tap, second device) read 'pending', find every
@@ -373,14 +612,34 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
     if not row:
         return {"ok": False, "error": "That draft is gone or already answered."}
     drafted = json.loads(row["lines_json"] or "[]")
-    use = lines if isinstance(lines, list) and lines else drafted
+    unit_skipped = []
+    if owner_lines:
+        use = lines
+    else:
+        use = []
+        for d in drafted:
+            if not isinstance(d, dict):
+                continue
+            if d.get("unit_ok") is False:
+                unit_skipped.append(d.get("name"))
+                continue
+            if d.get("per") == "batch" and yc:
+                try:
+                    d = dict(d, qty=round(float(d["qty"]) / yc, 4), per="plate")
+                except (KeyError, TypeError, ValueError):
+                    unit_skipped.append(d.get("name"))
+                    continue
+            use.append(d)
     # Suggested vs chosen (audit #41) and provenance (audit #35): a line the
     # owner accepted exactly as drafted is 'draft_accepted' — the model's
     # quantity, unreviewed; one they changed or added is 'draft_edited'.
     by_ing = {}
     for d in drafted:
         try:
-            by_ing[int(d.get("ingredient_id"))] = float(d.get("qty"))
+            # A batch line divided by the yield the owner gave is still the
+            # card's own quantity, not an owner edit of it.
+            div = yc if (yc and d.get("per") == "batch") else 1.0
+            by_ing[int(d.get("ingredient_id"))] = round(float(d.get("qty")) / div, 4)
         except (TypeError, ValueError, AttributeError):
             continue
     written = skipped = edited = 0
@@ -421,7 +680,8 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
             conn.commit()
         finally:
             conn.close()
-    return {"ok": written > 0, "written": written, "skipped": skipped, "edited": edited,
+    return {"ok": written > 0, "written": written, "skipped": skipped + len(unit_skipped), "edited": edited,
+            "unit_skipped": [n for n in unit_skipped if n],
             "error": None if written else "None of those lines could be written."}
 
 

@@ -868,6 +868,50 @@ def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = 
     return _over_alert_ceiling(restaurant_id, db_path)
 
 
+def health_keyword_hits(text: str) -> list:
+    """The HEALTH_KEYWORDS a review's text contains (NFKC, lower-cased)."""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", text or "").lower().strip()
+    return [kw for kw in HEALTH_KEYWORDS if kw in t]
+
+
+# ops.capture job name for a keyword hit the analyser read as "normal" (H5).
+# Counted by safety_disagreements(); the failure digest shows the rate.
+SAFETY_DISAGREEMENT_JOB = "safety_disagreement"
+
+
+def record_safety_disagreement(hits, restaurant_id=None, review_id=None) -> None:
+    """Log one review where the keyword list fired and the model said the
+    review was not urgent. The model's verdict stands (its negation reading
+    is why the keyword list is only a fallback), but the disagreement is the
+    only evidence of how often Haiku misses one, and a review in it is kept
+    out of auto-approve (models.auto_approve_candidates). No guest text is
+    logged — only which keywords, and where."""
+    try:
+        import ops
+        ops.capture(RuntimeError(f"health keywords {list(hits)[:4]} on a review the analyser rated normal urgency"),
+                    job=SAFETY_DISAGREEMENT_JOB,
+                    context=f"restaurant_id={restaurant_id} review_id={review_id}")
+    except Exception as e:
+        print(f"[notify] safety disagreement not logged: {e}")
+
+
+def safety_disagreements(days: int = 30, db_path=None) -> int:
+    """How many keyword/model disagreements were logged in `days` — the
+    counter beside record_safety_disagreement. 0 when unreadable."""
+    try:
+        from models import get_conn as _gc_sd
+        conn = _gc_sd(db_path) if db_path else _gc_sd()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM job_failures WHERE job=? AND created_at >= datetime('now', ?)",
+                               (SAFETY_DISAGREEMENT_JOB, f"-{int(days)} days")).fetchone()
+        finally:
+            conn.close()
+        return int(row["n"] or 0) if row else 0
+    except Exception:
+        return 0
+
+
 def _is_health_alert(text: str, urgency: str = None, processed: bool = None) -> bool:
     """Whether a new review warrants the health/safety alert.
 
@@ -896,6 +940,9 @@ def _is_health_alert(text: str, urgency: str = None, processed: bool = None) -> 
         # Analysed: the analyser read it in context and its answer stands,
         # including when that answer is "normal" (see the negated-mention
         # case above — keywords would fire on that, the analyser does not).
+        # A keyword hit it read as normal is logged when the analysis is
+        # stored (analyser.analyse_review → record_safety_disagreement, H5),
+        # once per review whatever this restaurant's alert settings are.
         return str(urgency or "").strip().lower() == "high"
     if processed is False:
         # Explicitly NOT analysed — the only case the keyword list exists

@@ -83,6 +83,61 @@ def _review_card(r) -> str:
 </div>"""
 
 
+# The digest's direction check (H9): which way a line says a module moved.
+# For a cost (labor %, waste) "improved" means it fell; for the rating it
+# means it rose. A line with words both ways is left to the figure check.
+import re as _re_dir
+_UP_WORDS = r"\b(?:up|rose|rising|risen|increas\w*|higher|climb\w*|grew|growing|jump\w*)\b"
+_DOWN_WORDS = r"\b(?:down|fell|falling|fallen|dropp\w*|decreas\w*|lower|declin\w*|slipp\w*|dipp\w*)\b"
+_BETTER_WORDS = r"\b(?:improv\w*|better)\b"
+_WORSE_WORDS = r"\b(?:worse\w*|worsen\w*)\b"
+
+
+def claimed_direction(text: str, cost: bool) -> str | None:
+    """"up", "down" or None (no claim, or words both ways). `cost` says
+    whether better means down (labor %, waste) or up (a rating)."""
+    low = str(text or "").lower()
+    up = bool(_re_dir.search(_UP_WORDS, low)) or bool(_re_dir.search(_WORSE_WORDS if cost else _BETTER_WORDS, low))
+    down = bool(_re_dir.search(_DOWN_WORDS, low)) or bool(_re_dir.search(_BETTER_WORDS if cost else _WORSE_WORDS, low))
+    if up == down:
+        return None
+    return "up" if up else "down"
+
+
+def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=None) -> str | None:
+    """Why one digest line must not be emailed, or None (H9): a name that
+    was never in its input (ai_guard.unsupported_names, the Reviews
+    insight's check), a direction that disagrees with what was measured —
+    or claims one where nothing measured moved — a cause no stored
+    diagnosis holds, and for the ACTION line, when a diagnosis exists, an
+    action that is not its recommendation (the prompt said so; now it is
+    checked)."""
+    from ai_guard import carries_anchor, unsupported_causes, unsupported_names
+    names = unsupported_names(line, prompt)
+    if names:
+        return f"names {', '.join(names[:3])}, who is not in the data"
+    if key in ("labor", "inventory", "reviews"):
+        text = line
+        if key == "reviews":
+            # Only a claim about the rating: "3 more reviews than last week"
+            # is not a rating direction.
+            text = " ".join(s for s in _re_dir.split(r"(?<=[.;])\s+", line)
+                            if _re_dir.search(r"\b(?:rating|stars?|★)", s, _re_dir.I))
+        said = claimed_direction(text, cost=(key != "reviews"))
+        measured = directions.get(key)
+        if said and not measured:
+            return f"says {key} went {said}, and nothing measured moved"
+        if said and measured and said != measured:
+            return f"says {key} went {said}; it went {measured}"
+    causes = unsupported_causes(line, cause_anchors)
+    if causes:
+        return "states a cause no diagnosis supports"
+    if key == "action" and diagnosis and diagnosis.get("recommended_action"):
+        if not carries_anchor(line, [diagnosis.get("recommended_action"), diagnosis.get("cause")]):
+            return "is not the diagnosis's recommended action"
+    return None
+
+
 def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaurant_id=None):
     """Generate a short AI summary paragraph for the weekly digest."""
     try:
@@ -286,6 +341,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # theme" — which the owner already knew — and one that says what most
         # likely produced it and what would confirm that.
         diagnosis_context = ""
+        _d0 = None
         try:
             import review_intelligence as _ri_rpt
             _dg = _ri_rpt.get_diagnoses(report.restaurant_id, include_stale=True)
@@ -322,6 +378,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # first connect an entire multi-year history arrives stamped with one
         # fetched_at, so "last week" was whatever happened to sync then.
         wow_context = ""
+        _rating_move = None          # this week's average rating minus last week's, for the direction check
         try:
             from datetime import timedelta
             from models import get_reviews_since, get_conn as _gc_r, REVIEW_TIME_AXIS_BARE as _AX_RPT
@@ -341,6 +398,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 diff = report.total_reviews - last_week["cnt"]
                 diff_str = f"+{diff}" if diff >= 0 else str(diff)
                 avg_diff = round((report.avg_rating or 0) - (last_week["avg_r"] or 0), 1)
+                _rating_move = avg_diff
                 avg_diff_str = f"+{avg_diff}" if avg_diff >= 0 else str(avg_diff)
                 wow_context = f"\n- vs last week: {diff_str} reviews, rating {avg_diff_str}"
         except Exception:
@@ -522,12 +580,36 @@ Rules:
         # recoverable" is dropped rather than emailed.
         from ai_guard import unsupported_figures
         for key in list(parsed):
-            bad = unsupported_figures(parsed[key], prompt)
+            # Counts too: the prompt forbids an invented count (H3).
+            bad = unsupported_figures(parsed[key], prompt, check_counts=True)
             if bad:
                 print(f"[digest] dropped {key} line — unsupported figures {bad}")
                 try:
                     import ops
                     ops.capture(RuntimeError(f"digest {key} line stated {bad} — not in the input"),
+                                job="weekly_digest", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
+                parsed.pop(key)
+
+        # Names, directions and causes (H9): a figure check passes a line
+        # naming a guest nobody mentioned, saying labor is "up" when it
+        # fell, or stating a cause no diagnosis holds. This email goes out
+        # unread, so each such line is dropped, not caveated.
+        _directions = {"labor": (_facts["labor"] or {}).get("direction"),
+                       "inventory": (_facts["inventory"] or {}).get("waste_direction"),
+                       "reviews": (None if _rating_move is None or abs(_rating_move) < 0.05
+                                   else ("up" if _rating_move > 0 else "down"))}
+        _anchors = ([_d0.get("cause"), _d0.get("alternative_cause"), _d0.get("recommended_action")]
+                    if _d0 else [])
+        for key in list(parsed):
+            why = digest_line_problem(key, parsed[key], prompt, _directions, _anchors,
+                                      diagnosis=_d0)
+            if why:
+                print(f"[digest] dropped {key} line — {why}")
+                try:
+                    import ops
+                    ops.capture(RuntimeError(f"digest {key} line dropped: {why}"),
                                 job="weekly_digest", context=f"restaurant_id={restaurant_id}")
                 except Exception:
                     pass

@@ -207,7 +207,18 @@ def _severity_floor(rating: int, urgency: str, severity: str) -> str:
             return "minor"
     except (TypeError, ValueError):
         pass
-    return sev or "minor"
+    # No tier from the model is no tier — stored NULL and counted as
+    # unclassified everywhere (H14). This used to default to "minor" here
+    # while complaint_clusters defaulted the same NULL to "service", so one
+    # review sat in two different tiers depending on the screen.
+    return sev
+
+
+# A review with no severity tier. Never folded into a tier: counted apart
+# (severity_breakdown's and each cluster's `unclassified`), and ranked like
+# UNCLASSIFIED_RANKS_AS only where a sort needs a position for it.
+UNCLASSIFIED = "unclassified"
+UNCLASSIFIED_RANKS_AS = "service"
 
 
 def _validate_analysis(result, rating: int = None):
@@ -291,6 +302,20 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         specific_complaint=result.get("specific_complaint"),
         severity=result.get("severity"),
     )
+    # Safety rests on Haiku alone once a review is analysed (notify.
+    # _is_health_alert). Its verdict stands — its negation reading is why
+    # the keyword list is only a fallback — but a keyword hit it read as
+    # "normal" is logged, once per analysis, so how often the two disagree
+    # is a rate rather than a guess; auto-approve keeps those reviews out
+    # (models.auto_approve_candidates) (H5).
+    if result.get("urgency") != "high":
+        try:
+            import notify
+            hits = notify.health_keyword_hits(text)
+            if hits:
+                notify.record_safety_disagreement(hits, restaurant_id=restaurant_id, review_id=review_id)
+        except Exception as e:
+            print(f"    [{review_id}] safety disagreement check failed: {e}")
     return result
 
 

@@ -411,7 +411,10 @@ def test_a_stored_diagnosis_round_trips_with_its_age(db_path):
               "alternative_cause": "hold times at the window",
               "what_would_confirm": "watch two Friday services",
               "evidence_review_ids": cluster["review_ids"][:2],
-              "operational_evidence": [{"module": "labor", "metric": "labor %", "value": "31.4%"}],
+              # As _validate_diagnosis stores it: only verified entries are
+              # served back (K6).
+              "operational_evidence": [{"module": "labor", "metric": "labor %", "value": "31.4%",
+                                        "verified": True}],
               "confidence": "medium", "recommended_action": "put a manager on the pass",
               "expected_outcome": "cold-food mentions fall within two weeks"}
     ri._save_diagnosis(1, cluster, result, {"available": False}, db_path)

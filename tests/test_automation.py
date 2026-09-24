@@ -640,7 +640,7 @@ def test_the_weekly_plan_files_issues_only_when_switched_on(db_path, monkeypatch
     import strategy_jobs, issues, ask_cavnar, ops, time_utils
     rid = _rid(db_path, weekly_plan_enabled=0)
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 21, 8, 0))   # a Monday
-    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: ('[{"title": "Do the thing", "why": "because 12%", "owner": "owner", "due_days": 3}]', False, [], {}))
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: ('[{"title": "Do the thing", "why": "Labor ran 12% over target", "owner": "owner", "due_days": 3}]', False, [], {}))
     filed = []
     monkeypatch.setattr(issues, "create_issue", lambda r_, kind, title, **k: filed.append((kind, title, k.get("notify"))) or ({}, None))
     monkeypatch.setattr(ops, "claim_period", lambda *a, **k: True)

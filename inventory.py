@@ -824,6 +824,32 @@ def build_price_watch(trends: dict) -> list:
     return sorted(watch.values(), key=lambda x: abs(x["change_pct"]), reverse=True)
 
 
+def food_insight_facts(analysis: dict, drivers=()) -> tuple:
+    """({item: [its figures]}, [headline figures]) — what the food insight
+    may attach to each ingredient or dish it names, for ai_guard.
+    unbound_figures (H3). A driver carries its dollars and the evidence
+    text it was ranked on; a waste, overstock or low-stock item its own row.
+    The headline figures any sentence may quote are the week's totals."""
+    from collections import defaultdict
+    a = analysis or {}
+    ent = defaultdict(list)
+    for d in drivers or ():
+        if not isinstance(d, dict):
+            continue
+        vals = [d.get("dollars_monthly"), d.get("evidence"), d.get("if_ignored"), d.get("label")]
+        for name in {d.get("item"), d.get("label")}:
+            if name:
+                ent[str(name)].extend(vals)
+    for key in ("waste_items", "overstock", "critical_low", "reorder_soon", "order_reduction"):
+        for x in a.get(key) or []:
+            if isinstance(x, dict) and x.get("item"):
+                ent[str(x["item"])].extend(v for k, v in x.items() if k != "item")
+    glob = [a.get(k) for k in ("total_waste_cost_week", "monthly_waste_projection", "recoverable_monthly",
+                               "total_stock_value", "waste_rate_pct", "total_purchased")]
+    glob += [4, 5]            # the industry waste target the prompt states
+    return dict(ent), [g for g in glob if g is not None]
+
+
 def _supported_savings_block(analysis: dict) -> str:
     """The dollar figures a recommendation is allowed to quote, each tied to
     the item and the mechanism that produces it.
@@ -1099,6 +1125,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     cross_block = ""
     diag_block = ""
     ranked_labels = []
+    ranked_drivers = []         # the drivers themselves, for the figure binding below (H3)
+    cause_anchors = []          # the stored cause and the ranked drivers (H2)
     if restaurant_id:
         try:
             import food_cost_intelligence as _fci
@@ -1109,6 +1137,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             drivers_block = _fci._drivers_block(_ev["drivers"])
             cross_block = _fci._operational_block(_ev["operational"])
             ranked_labels = [d["label"] for d in (_ev["drivers"].get("drivers") or [])]
+            ranked_drivers = list(_ev["drivers"].get("drivers") or [])[:6]
+            cause_anchors += [d.get("item") or d.get("label") for d in ranked_drivers]
             _pat = _fci._pattern_block(_ev["weekday"], _ev["seasonal"])
             _acc = _ev["forecast_accuracy"]
             _acc_line = ("\n\nHow accurate past forecasts here have been: "
@@ -1135,6 +1165,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             import food_cost_intelligence as _fci2
             _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
             if _dg and _dg.get("cause"):
+                cause_anchors += [_dg.get("cause"), _dg.get("alternative_cause")]
                 diag_block = (
                     "\n\nROOT-CAUSE READ (stored, " + str(_dg.get("confidence")) + " confidence"
                     # The read's date, not its age in hours: the prompt is
@@ -1311,8 +1342,19 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
     result = _re_inv.sub(r'#{1,6}\s', '', result)
-    if unsupported:
-        result = result.rstrip() + "\n\nUNVERIFIED: " + ", ".join(str(u) for u in unsupported[:5])
+    # A cause only where it carries the stored root-cause read or a ranked
+    # driver (H2), and each figure bound to the item its sentence names
+    # (H3) — the prompt holds every item's figures, so "presence anywhere"
+    # verified one ingredient's dollars quoted against another.
+    from ai_guard import unbound_figures, unsupported_causes, unverified_note
+    causes = unsupported_causes(result, cause_anchors, job="inventory_insight", restaurant_id=restaurant_id)
+    _ents, _glob = food_insight_facts(analysis, ranked_drivers)
+    misbound = unbound_figures(result, _ents, _glob + [savings_block, position_block, profit_block,
+                                                      forecast_next_week, forecast_monthly],
+                               job="inventory_insight", restaurant_id=restaurant_id)
+    note = unverified_note(unsupported, causes, misbound)
+    if note:
+        result = result.rstrip() + "\n\nUNVERIFIED: " + note
     if _fp and result.strip():
         try:
             import insight_store as _ist2

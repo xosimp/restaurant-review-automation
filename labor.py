@@ -1286,6 +1286,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # Pull labor history for trend awareness
     trend_context = ""
     has_trend = False
+    trend_diff = None           # this period's labor % minus the last comparable upload's
     if restaurant_id:
         try:
             from models import get_labor_history, save_labor_snapshot
@@ -1312,6 +1313,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                     if _comparable:
                         has_trend = True
                         diff = analysis['overall_labor_pct'] - history[0]['labor_pct']
+                        trend_diff = round(diff, 1)
                         if abs(diff) >= 1:
                             direction = "UP" if diff > 0 else "DOWN"
                             trend_context += f"\n- TREND: Labor % is {direction} {abs(diff):.1f} points from last upload — mention this trend explicitly"
@@ -1385,12 +1387,24 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         savings_line = (f"${analysis.get('potential_savings_monthly', 0):,.0f} (the gap above target over the "
                         f"{analysis.get('period_days', 0)} days synced, per month)")
 
-    forecast_instruction = (
-        '\nAfter the 3 recommendations, add one final line starting with exactly "FORECAST:" '
-        "— one sentence, 25 words max, predicting where labor % is headed next week and what "
-        "happens if the current trajectory continues. Only write this if the trend direction is "
-        "genuinely supported by the data given."
-    ) if has_trend else ""
+    # The FORECAST line is computed after the call (_labor_forecast_line),
+    # never asked of the model: its direction and figure were its own and
+    # nothing scored them (H8).
+    forecast_instruction = ""
+
+    # The single biggest opportunity is chosen here — labor.diagnose's lead
+    # driver, ranked by how far past target it runs — not by the model
+    # (H8, CA5 F9). The model phrases it; it does not pick it.
+    try:
+        _diag = diagnose(analysis)
+    except Exception:
+        _diag = {}
+    if _diag.get("cause"):
+        top_pick_context = ("\n- THE SINGLE BIGGEST OPPORTUNITY (already chosen from the figures — lead with this "
+                            f"one, do not pick another): {_diag['cause']}")
+    else:
+        top_pick_context = ("\n- THE SINGLE BIGGEST OPPORTUNITY: none — nothing in this period runs over target. "
+                            "Say labor is on target; do not invent an opportunity.")
 
     # The Labor read's lines are recommendations on the ledger now
     # (insight_labor:<hash>, answered on web and iOS like Food's): what the
@@ -1414,13 +1428,17 @@ Data:
 - Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}{data_caveats}
-- Estimated monthly savings with optimized scheduling: {savings_line}{constraints_context}
+- Estimated monthly savings with optimized scheduling: {savings_line}{constraints_context}{top_pick_context}
+
+EVIDENCE RULES:
+- A figure belongs to the day, date, role or person it came from. Never attach one day's figure to another day, or a role's figure to a person.
+- Never say one thing happened because of another (because, due to, driven by, led to) unless it is the opportunity named above. Say what the figures show.
 
 This is read on a phone screen — brevity is the whole point. Every sentence you don't need is a sentence a client scrolls past. Cut ruthlessly.
 
 Write a short consultant note structured exactly like this:
 
-Opening: Start with "{greeting}" then ONE sentence with the key number and the single biggest opportunity (a specific date and dollar amount). Maximum 2 sentences total — never 3+.
+Opening: Start with "{greeting}" then ONE sentence with the key number and THE SINGLE BIGGEST OPPORTUNITY given above, with its own figure. Maximum 2 sentences total — never 3+.
 
 Recommendations:
 1. [One concrete, actionable scheduling suggestion. Hard cap: 20 words. Lead with the action, not the reasoning — "Trim Wednesday staffing by 1" beats "Because Wednesday has historically run high on labor percentage, consider trimming..."]
@@ -1452,14 +1470,98 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # with invented numbers was captured for the operator and shown to the
     # owner as fact. verify_figures' own docstring describes the flag this
     # is for; labor was the one path not wiring it up.
+    # A FORECAST line the model wrote anyway is not the forecast (H8): it is
+    # removed before anything is checked, and the computed one stands in.
+    text = re.sub(r'(?im)^\s*forecast:.*$\n?', '', text).strip()
     unsupported = verify_figures(text, prompt, "labor_insight", restaurant_id)
     text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
     text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
     text = re.sub(r'#{1,6}\s', '', text)
     text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
-    if unsupported:
-        text = text.rstrip() + "\n\nUNVERIFIED: " + ", ".join(str(u) for u in unsupported[:5])
+    from ai_guard import unbound_figures, unsupported_causes, unverified_note
+    # Each figure must belong to the day, date, role or person its sentence
+    # names — the prompt is a JSON dump of every day, so presence anywhere
+    # in it verified almost anything (H3, the DSR narrative's claim→cite
+    # binding ported to prose).
+    entities, globals_ = labor_insight_facts(analysis)
+    misbound = unbound_figures(text, entities, globals_, job="labor_insight", restaurant_id=restaurant_id)
+    # A cause is allowed only where it carries the diagnosis's driver (H2);
+    # the labor prompt had no cause rule at all.
+    anchors = [_diag.get("cause"), _diag.get("alternative_cause")] if _diag.get("cause") else []
+    causes = unsupported_causes(text, anchors, job="labor_insight", restaurant_id=restaurant_id)
+    fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
+    if fc_line:
+        text = text.rstrip() + "\n" + fc_line
+        if restaurant_id:
+            try:
+                import insight_store as _ist_fc
+                _ist_fc.record_weekly_forecast(
+                    restaurant_id, "labor_week", analysis.get("overall_labor_pct"),
+                    basis=f"this period's labor % carried forward ({analysis.get('period_days')} days); "
+                          f"{trend_diff:+.1f} points on the last comparable upload")
+            except Exception as _fe:
+                print(f"[labor forecast log] {_fe}")
+    note = unverified_note(unsupported, causes, misbound)
+    if note:
+        text = text.rstrip() + "\n\nUNVERIFIED: " + note
     return text
+
+
+def _labor_forecast_line(analysis: dict, trend_diff) -> str:
+    """The note's FORECAST line, computed rather than written (H8): this
+    period's labor % carried forward, with the measured move on the last
+    comparable upload stated beside it — never a trajectory projected into
+    a figure nobody measured. Logged as forecast_log kind labor_week."""
+    try:
+        cur = float(analysis.get("overall_labor_pct"))
+    except (TypeError, ValueError):
+        return None
+    if trend_diff is None:
+        return None
+    move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the last upload"
+            if abs(trend_diff) >= 1 else "about level with the last upload")
+    return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
+            f"next week near {cur:g}% (a projection, not a measurement).")
+
+
+def labor_insight_facts(analysis: dict) -> tuple:
+    """({entity: [its figures]}, [headline figures]) — what the labor note
+    may attach to each weekday, date, role and person it names, for
+    ai_guard.unbound_figures. A weekday carries its own day-of-week figure
+    and every dated day that fell on it; a date carries only its own."""
+    from collections import defaultdict
+    a = analysis or {}
+    ent = defaultdict(list)
+
+    def _date_names(d):
+        s = str(d or "").strip()
+        out = [s] if s else []
+        parts = s.split("/")
+        if len(parts) == 3:
+            out.append(f"{parts[0]}/{parts[1]}")
+        return out
+
+    for d in (a.get("overstaffed_days") or []) + (a.get("understaffed_days") or []):
+        if not isinstance(d, dict):
+            continue
+        vals = [v for k, v in d.items() if k not in ("date", "day")]
+        for name in [d.get("day")] + _date_names(d.get("date")):
+            if name:
+                ent[str(name)].extend(vals)
+    for day, v in (a.get("dow_summary") or {}).items():
+        ent[str(day)].extend(list(v.values()) if isinstance(v, dict) else [v])
+    for role, d in (a.get("role_summary") or {}).items():
+        if isinstance(d, dict):
+            ent[str(role)].extend(d.values())
+    for o in a.get("overtime_risk") or []:
+        if isinstance(o, dict) and o.get("employee"):
+            ent[str(o["employee"])].extend(v for k, v in o.items() if k != "employee")
+    cov = a.get("covers") or {}
+    glob = [a.get(k) for k in ("overall_labor_pct", "total_labor_cost", "total_sales", "labor_target",
+                               "potential_savings", "potential_savings_weekly", "potential_savings_monthly",
+                               "period_days")]
+    glob += [cov.get("avg_sales_per_cover"), 33, 36]
+    return dict(ent), [g for g in glob if g is not None]
 
 
 def _present_dayparts(row: dict) -> list:
