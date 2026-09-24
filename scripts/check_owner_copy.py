@@ -63,7 +63,7 @@ ALLOW_MARKER = "owner-copy-ok"
 
 # How many banned labels owner copy still carries. Ratchet only: lower it as
 # copy is fixed (the lint says when); it fails the moment the count rises.
-BASELINE = 45
+BASELINE = 42
 
 
 # ── reading the text out of each kind of file ───────────────────────────────
