@@ -207,7 +207,9 @@ struct AIVisibilitySection: View {
         }()
         return VStack(alignment: .leading, spacing: 0) {
             // The Orbit: today's score as a ring, every past run as a line.
-            VisibilityOrbitChart(score: result.aiScore ?? 0, runs: viewModel.history)
+            // A missing score is "not measured" on the ring too — never a
+            // 0% ring (J10).
+            VisibilityOrbitChart(score: result.aiScore, runs: viewModel.history)
                 .padding(.bottom, 14)
                 .opacity(measured ? 1 : 0.35)
             HStack(spacing: 0) {
@@ -216,7 +218,8 @@ struct AIVisibilitySection: View {
                     tone: measured ? aiScoreTone(result.aiScore ?? 0) : Color.cavnarInk3,
                     // Named, not "AI". One system is asked.
                     label: (result.platform ?? "AI").uppercased(),
-                    sub: measured ? aiScoreLabel(result.aiScore ?? 0) : "Not measured"
+                    sub: measured ? aiScoreLabel(result.aiScore ?? 0) : "Not measured",
+                    claim: result.aiScore == nil ? nil : result.claimKinds?["ai_score"]
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
                 Button {
@@ -234,12 +237,16 @@ struct AIVisibilitySection: View {
                     let listing = result.presenceScore ?? result.gbpScore
                     heroStat(
                         value: listing.map { "\($0)%" } ?? "\u{2014}",
-                        tone: listing.map { gbpTone($0) } ?? Color.cavnarInk3,
+                        // The server's tone when it sends one (I10: one
+                        // source for the thresholds); the client's own
+                        // breakpoints only for an older server.
+                        tone: listing.map { Self.presenceColor(server: result.presenceTone, score: $0) } ?? Color.cavnarInk3,
                         label: "LISTING STRENGTH",
                         sub: listing.map { gbpScoreLabel($0) + ((result.presenceUnmeasured ?? 0) > 0
                                                                ? " \u{00B7} of \(result.presenceMeasured ?? 0) read" : "") }
                             ?? "Not measured",
-                        expandable: true, isExpanded: showGbpChecklist
+                        expandable: true, isExpanded: showGbpChecklist,
+                        claim: listing == nil ? nil : result.claimKinds?["presence_score"]
                     )
                 }
                 .buttonStyle(.plain)
@@ -322,7 +329,8 @@ struct AIVisibilitySection: View {
     /// value arrives pre-styled by the caller (glow tint differs per stat) —
     /// mirrors statTile's own doc comment in IntelView for why this never
     /// applies its own color on top of what's passed in.
-    private func heroStat(value: String, tone: Color, label: String, sub: String, expandable: Bool = false, isExpanded: Bool = false) -> some View {
+    private func heroStat(value: String, tone: Color, label: String, sub: String, expandable: Bool = false,
+                          isExpanded: Bool = false, claim: String? = nil) -> some View {
         VStack(spacing: 4) {
             Text(value)
                 .font(.cavnarNumber(28, weight: 700))
@@ -342,6 +350,8 @@ struct AIVisibilitySection: View {
             Text(sub)
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk.opacity(0.55))
+            // Measured, or a partial check's estimate (claim_kinds) — J5.
+            ClaimKindTag(kind: claim)
         }
         .frame(maxWidth: .infinity)
     }
@@ -421,10 +431,21 @@ struct AIVisibilitySection: View {
         return "Critical gaps"
     }
 
-    private func gbpTone(_ score: Int) -> Color {
+    private static func gbpTone(_ score: Int) -> Color {
         if score >= 70 { return .cavnarGreen }
         if score >= 40 { return .cavnarAmber }
         return .cavnarRed
+    }
+
+    /// The listing-strength colour: the server's `presence_tone` (good /
+    /// warn / bad) when sent, else the local breakpoints.
+    static func presenceColor(server: ServerTone?, score: Int) -> Color {
+        switch server?.value {
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        case "bad": return .cavnarRed
+        default: return gbpTone(score)
+        }
     }
 
     // MARK: - GBP checklist breakdown — was a full-width, single-column

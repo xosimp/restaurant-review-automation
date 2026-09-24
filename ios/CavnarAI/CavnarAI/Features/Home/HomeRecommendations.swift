@@ -19,8 +19,9 @@ import SwiftUI
 /// Every card answers five questions (the recommendation-trust audit): what
 /// to do (the title, verb first), why now, the dollars at stake when they
 /// were measured, ONE confidence with what it rests on, and what happens if
-/// it is ignored — plus the timeframe, impact and evidence strength the
-/// payload always carried. Every answer (Done, Not for us, Hide with its
+/// it is ignored — plus the timeframe and impact. The confidence is the
+/// shared `ConfidenceLine` (a percentage with "Why?"); the separate
+/// evidence-strength pill is gone. Every answer (Done, Not for us, Hide with its
 /// reason, Assign) goes to the server, so it holds on every other surface.
 struct HomeRecommendations: View {
     let recommendations: [HomeRecommendation]
@@ -126,23 +127,14 @@ struct HomeRecommendations: View {
         }
     }
 
-    private func confidenceColor(_ band: String) -> Color {
-        switch band {
-        case "high": return .cavnarGreen
-        case "low": return .cavnarEmber2
-        default: return .cavnarInk2
-        }
-    }
-
-    private static let strengthLabel = ["strong": "strong evidence", "moderate": "some evidence",
-                                        "early": "early signal"]
-
-    private func chips(_ rec: HomeRecommendation) -> [String] {
+    /// Dollars at stake, timeframe, impact. The old "evidence strength" pill
+    /// is gone (CA4 F1): the card's one confidence line says how sure, with
+    /// what it rests on behind "Why?".
+    static func chips(_ rec: HomeRecommendation) -> [String] {
         var out: [String] = []
         if let d = rec.dollarsMonthly, d > 0 { out.append("$\(d.commaFormatted)/mo at stake") }
         if let t = rec.timeframe { out.append(t) }
         if let i = rec.impact { out.append(i) }
-        if let s = rec.strength, let l = Self.strengthLabel[s] { out.append(l) }
         return out
     }
 
@@ -155,34 +147,26 @@ struct HomeRecommendations: View {
                     .frame(width: 26, alignment: .leading)
                 VStack(alignment: .leading, spacing: 5) {
                     HomeMixedText.make(rec.title, size: 15, weight: 600, color: .cavnarInk)
+                    if rec.modelWritten == true {
+                        ClaimKindTag(kind: nil, modelWritten: true)
+                    }
                     if let why = rec.why {
                         HomeMixedText.make(why, size: 13, weight: 500, color: .cavnarInk2)
                     }
-                    let meta = chips(rec)
+                    let meta = Self.chips(rec)
                     if !meta.isEmpty {
-                        Text(meta.joined(separator: " · "))
-                            .font(.cavnarBody(11.5, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
+                        HomeMixedText.make(meta.joined(separator: " · "), size: 11.5, weight: 600, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let evidence = rec.evidence {
                         HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
                     }
-                    // ONE confidence per card, with what it rests on. A
-                    // server that predates the label still sends the low
-                    // band's caution sentence, which is shown as before.
+                    // ONE confidence per card: the percentage, what it rests
+                    // on, and "Why?" for the three dimensions behind it. An
+                    // older server's band-only object (and its low-band
+                    // caution) renders through the same line.
                     if let c = rec.confidence {
-                        if let label = c.label {
-                            (Text(label).font(.cavnarBody(12.5, weight: 700)).foregroundColor(confidenceColor(c.band))
-                             + Text(c.reason.map { " — \($0)" } ?? "")
-                                .font(.cavnarBody(12.5, weight: 500)).foregroundColor(.cavnarInk3))
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else if c.band == "low", let caution = c.caution {
-                            Text(caution)
-                                .font(.cavnarBody(12.5, weight: 500))
-                                .foregroundStyle(Color.cavnarEmber2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home")
                     }
                     if let ignored = rec.ifIgnored {
                         (Text("If ignored: ").font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)

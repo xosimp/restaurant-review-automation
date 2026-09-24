@@ -39,6 +39,17 @@ struct HomeActionDeck: View {
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
 
+    /// One height for every card in the deck (the ghosts must line up with
+    /// the card in front): the base, plus room for the evidence line and
+    /// the confidence line when any item carries them (K4).
+    static func cardHeight(for items: [NeedsAttentionItem]) -> CGFloat {
+        cardHeight
+            + (items.contains { $0.evidence != nil } ? 36 : 0)
+            + (items.contains { $0.confidence != nil } ? 26 : 0)
+    }
+
+    private var deckCardHeight: CGFloat { Self.cardHeight(for: items) }
+
     private struct Entry: Identifiable {
         let depth: Int
         let item: NeedsAttentionItem
@@ -62,6 +73,7 @@ struct HomeActionDeck: View {
                 ForEach(stack.reversed()) { entry in
                     ActionDeckCard(
                         item: entry.item,
+                        height: deckCardHeight,
                         busy: busy && entry.depth == 0,
                         onPrimary: { onPrimary(entry.item) },
                         onSecondary: { onSecondary(entry.item) },
@@ -78,7 +90,7 @@ struct HomeActionDeck: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: Self.cardHeight + Self.ghostStep * 2)
+            .frame(height: deckCardHeight + Self.ghostStep * 2)
             .contentShape(Rectangle())
             .gesture(swipe, including: count > 1 ? .all : .subviews)
 
@@ -189,6 +201,7 @@ struct HomeActionDeck: View {
 /// ember lit edge and a soft cast — branded, not a wall of orange.
 private struct ActionDeckCard: View {
     let item: NeedsAttentionItem
+    var height: CGFloat = HomeActionDeck.cardHeight
     let busy: Bool
     let onPrimary: () -> Void
     let onSecondary: () -> Void
@@ -206,6 +219,18 @@ private struct ActionDeckCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HomeMixedText.make(item.detail, size: 13, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+                    // What it rests on, inline (K4) — and how sure, with
+                    // "Why?" behind it. Compact: the reason and any
+                    // caution are in the sheet, so the deck keeps one
+                    // height.
+                    if let evidence = item.evidence {
+                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .lineLimit(2)
+                    }
+                    if let c = item.confidence {
+                        ConfidenceLine(confidence: c, recKey: item.recKey, surface: "home",
+                                       module: "home", compact: true)
+                    }
                 }
                 Spacer(minLength: 0)
                 // The same answers a recommendation has — never on a
@@ -255,7 +280,7 @@ private struct ActionDeckCard: View {
         .padding(.top, 16)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: HomeActionDeck.cardHeight)
+        .frame(height: height)
         .background(
             ZStack {
                 shape.fill(Self.obsidian)

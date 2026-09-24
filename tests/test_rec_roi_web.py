@@ -163,7 +163,10 @@ def test_the_browser_no_longer_builds_the_ai_visibility_roadmap():
 def test_evidence_opened_on_a_keyed_recommendation_is_recorded():
     ev = _fn("recEvidenceViewed")
     assert "event:'evidence_viewed'" in ev and "_recEvidenceSeen[key]" in ev
-    assert "data-explain-key" in SRC and "recEvidenceViewed(t.getAttribute('data-explain-key'),'home','home')" in SRC
+    # Home by default; a confidence Why? elsewhere names its own surface (J1).
+    assert "data-explain-key" in SRC and ("recEvidenceViewed(t.getAttribute('data-explain-key'),"
+                                          "t.getAttribute('data-explain-surface')||'home',"
+                                          "t.getAttribute('data-explain-module')||'home')") in SRC
     assert 'data-evidence-key="\'+recEsc(r.key)+\'"' in SRC                     # Intel's cited reviews
     assert "recEvidenceViewed(key, 'intel', 'intel')" in SRC                     # the roadmap's reasoning
 

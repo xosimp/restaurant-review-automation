@@ -251,11 +251,9 @@ struct FoodCostAnalyticsSection: View {
                         }
                     }
                 }
-                let trustLines = Self.trustLines(a)
+                let trustLines = Self.trustLines(a, cfoTrust: viewModel.cfo?.brief?.trust)
                 if !trustLines.isEmpty {
-                    Text(trustLines.joined(separator: "  ·  "))
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make(trustLines.joined(separator: "  ·  "), size: 12, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -263,12 +261,15 @@ struct FoodCostAnalyticsSection: View {
         }
     }
 
-    private static func trustLines(_ a: FoodCostAnalytics) -> [String] {
+    /// How far the numbers above can be trusted. The CFO brief's `trust`
+    /// (the same two measures, from food_cost_intelligence) fills in when
+    /// the analytics payload lacks one — it was decoded and never shown.
+    static func trustLines(_ a: FoodCostAnalytics, cfoTrust: FoodCostCFO.Brief.Trust? = nil) -> [String] {
         var out: [String] = []
-        if let cov = a.recipeCoverage, let pct = cov.coveragePct {
+        if let pct = a.recipeCoverage?.coveragePct ?? cfoTrust?.recipeCoveragePct {
             out.append("recipes cover \(Int(pct))% of what sold")
         }
-        if let w = a.wasteSplit, let pct = w.inferredPct {
+        if let pct = a.wasteSplit?.inferredPct ?? cfoTrust?.inferredWastePct {
             out.append("\(Int(pct))% of waste is an unexplained count gap")
         }
         if a.windowFromCounts == false {
@@ -307,23 +308,14 @@ struct FoodCostAnalyticsSection: View {
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarEmber)
                     Spacer(minLength: 0)
-                    if let band = dg?.confidenceBand {
-                        Text(band)
-                            .font(.cavnarBody(10, weight: 700)).tracking(0.7)
-                            .textCase(.uppercase)
-                            .foregroundStyle(Self.confidenceTint(band))
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Self.confidenceTint(band).opacity(0.14), in: Capsule())
-                    }
                 }
                 .padding(.horizontal, 16).padding(.top, 14)
 
                 if let total = cfo.drivers?.atStake, total > 0 {
-                    Text("$\(total.commaFormatted)/month across \(viewModel.drivers.count) driver\(viewModel.drivers.count == 1 ? "" : "s")"
+                    HomeMixedText.make("$\(total.commaFormatted)/month across \(viewModel.drivers.count) driver\(viewModel.drivers.count == 1 ? "" : "s")"
                          + (dg?.asOf.map { " · read \($0)" } ?? "")
-                         + ((dg?.stale ?? false) && dg?.staleNote == nil ? " · older read" : ""))
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
+                         + ((dg?.stale ?? false) && dg?.staleNote == nil ? " · older read" : ""),
+                                       size: 12, weight: 400, color: .cavnarInk3)
                         .padding(.horizontal, 16).padding(.top, 4)
                 }
                 // The server's own sentence for a read that hasn't been
@@ -349,7 +341,18 @@ struct FoodCostAnalyticsSection: View {
                         profitabilityBlock(p, prime: prime, projected: projected)
                     }
                     if let cause = dg?.cause {
-                        cfoRow("Most likely cause", cause)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                cfoRow("Most likely cause", cause)
+                                // The cause is the model's read — said so.
+                                ClaimKindTag(kind: cfo.claimKinds?["why"])
+                            }
+                            // How sure, as a percentage with what it rests on
+                            // (K1/K6) — the shared line, not a bare capsule.
+                            if let c = dg?.confidence {
+                                ConfidenceLine(confidence: c, recKey: dg?.recKey, surface: "food", module: "food")
+                            }
+                        }
                     }
                     if let alt = dg?.alternativeCause { cfoRow("It could also be", alt, quiet: true) }
                     if let confirm = dg?.whatWouldConfirm { cfoRow("What would tell them apart", confirm) }
@@ -369,7 +372,9 @@ struct FoodCostAnalyticsSection: View {
                                oe.map { "\($0.module): \($0.metric) \($0.value)" }
                                  .joined(separator: "  ·  "), quiet: true)
                     }
-                    if !viewModel.drivers.isEmpty { driverList(viewModel.drivers) }
+                    if !viewModel.drivers.isEmpty {
+                        driverList(viewModel.drivers, claimKind: cfo.claimKinds?["drivers"])
+                    }
                 }
                 .padding(16)
             }
@@ -425,12 +430,16 @@ struct FoodCostAnalyticsSection: View {
         .accessibilityLabel("Forecast. Prime cost \(String(format: "%.1f", prime)) percent month to date.")
     }
 
-    private func driverList(_ drivers: [FoodCostCFO.Driver]) -> some View {
+    private func driverList(_ drivers: [FoodCostCFO.Driver], claimKind: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Ranked by dollars, then confidence, then ease")
-                .font(.cavnarBody(10, weight: 700)).tracking(0.9)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarInk3)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Ranked by dollars, then confidence, then ease")
+                    .font(.cavnarBody(10, weight: 700)).tracking(0.9)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.cavnarInk3)
+                Spacer(minLength: 0)
+                ClaimKindTag(kind: claimKind)
+            }
             ForEach(Array(drivers.prefix(5))) { d in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -442,19 +451,22 @@ struct FoodCostAnalyticsSection: View {
                             .foregroundStyle(Color.cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(d.evidence)
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make(d.evidence, size: 12, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(d.confidence) confidence · \(d.difficulty) effort · if ignored: \(d.ifIgnored)")
-                        .font(.cavnarBody(11))
-                        .foregroundStyle(Color.cavnarInk3)
+                    // How sure, on the shared line (K1); the effort and
+                    // what happens if it is ignored stay beside it.
+                    if let c = d.confidence {
+                        ConfidenceLine(confidence: c, recKey: d.recKey, surface: "food", module: "food")
+                    }
+                    HomeMixedText.make("\(d.difficulty) effort · if ignored: \(d.ifIgnored)",
+                                       size: 11.5, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("$\(d.dollarsMonthly.commaFormatted) a month. \(d.label). \(d.evidence)")
+                // .contain, not .combine: the "Why?" button inside must
+                // stay reachable on its own.
+                .accessibilityElement(children: .contain)
             }
         }
     }
@@ -474,14 +486,6 @@ struct FoodCostAnalyticsSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label). \(body)")
-    }
-
-    private static func confidenceTint(_ band: String) -> Color {
-        switch band {
-        case "high":   return .cavnarGreen
-        case "medium": return .cavnarAmber
-        default:       return .cavnarInk3
-        }
     }
 
     private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {

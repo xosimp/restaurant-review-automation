@@ -34,6 +34,9 @@ struct HomeOneThingCard: View {
                     }
                     HomeMixedText.make(what, size: 18, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
+                    // What kind of claim this is (K4) — measured, computed,
+                    // forecast, inferred.
+                    ClaimKindTag(kind: ff.claimKind)
                     if let why = ff.why, !why.isEmpty {
                         HomeMixedText.make(why.prefix(1).uppercased() + why.dropFirst(), size: 13.5, weight: 500,
                                            color: .cavnarInk2)
@@ -50,6 +53,24 @@ struct HomeOneThingCard: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                    }
+                    // How sure — the most prominent item on Home carried a
+                    // confidence it never showed (CA4, CA1 H8).
+                    if let c = ff.confidence {
+                        ConfidenceLine(confidence: c, recKey: ff.answerKey, surface: "home", module: "home")
+                    }
+                    // The money fallback is a range with its label — never
+                    // one figure pulled out of it (CA4 F3).
+                    if let range = ff.moneyRange {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HomeMixedText.make(range, size: 19, weight: 600, color: .cavnarInk,
+                                               numberWeight: 600)
+                            if let label = ff.money?.label, !label.isEmpty {
+                                HomeMixedText.make(label, size: 12.5, weight: 600, color: .cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
                         if let dollars = ff.dollarsMonthly, dollars > 0 {

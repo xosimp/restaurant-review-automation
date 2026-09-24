@@ -142,6 +142,10 @@ struct AIVisibilityResult: Decodable {
     /// be read (left out of it, never counted as 0) — M-14.
     let presenceMeasured: Int?
     let presenceUnmeasured: Int?
+    /// The server's tone for the listing-strength figure (I10) — used
+    /// instead of the client's own thresholds when present. Lenient: an
+    /// odd value is nil, never a failed check.
+    var presenceTone: ServerTone? = nil
     let setupDone: Int?
     let setupTotal: Int?
     let claimKinds: [String: String]?
@@ -210,6 +214,7 @@ struct AIVisibilityResult: Decodable {
         case presenceScore = "presence_score"
         case presenceMeasured = "presence_measured"
         case presenceUnmeasured = "presence_unmeasured"
+        case presenceTone = "presence_tone"
         case setupDone = "setup_done"
         case setupTotal = "setup_total"
         case claimKinds = "claim_kinds"

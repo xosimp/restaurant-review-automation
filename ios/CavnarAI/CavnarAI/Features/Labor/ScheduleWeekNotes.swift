@@ -17,6 +17,10 @@ struct ScheduleWeekNotes: View {
             if let source = result.projectedRevenueSource, !source.isEmpty {
                 caption("Revenue basis: \(source).")
             }
+            // How the demand forecast behind that basis has held up (K8).
+            if let record = result.demandAccuracy?.sentence {
+                caption(record + ".")
+            }
             if result.hourlyProfileReady == false {
                 notice("No intraday sales captured yet — starts are not staggered by the sales curve.", tone: .cavnarInk3)
             }

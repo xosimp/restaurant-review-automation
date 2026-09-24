@@ -28,9 +28,19 @@ final class ReviewsAnalyticsViewModel {
     var revenueAtRisk: RevenueAtRisk?
     /// Open complaints by severity tier — how serious, not how many.
     var severityTiers: [SeverityTier] = []
+    /// Complaints no tier was assigned to (H14) — shown beside the tiers so
+    /// the strip never implies it covers every complaint.
+    var unclassifiedCount: Int = 0
     /// How confident the rating direction is (`high`/`medium`/`low`), or nil
     /// when there is no direction to be confident about.
     var trendConfidence: String?
+    /// The rating trend itself (review_intelligence.rating_trend): its
+    /// direction and the ★ change, shown beside `trendConfidence`.
+    var ratingTrend: ReviewRatingTrend?
+    /// What kind of claim each part of the read is (ai_guard.CLAIM_KINDS):
+    /// this_week measured, watch inferred, do_today suggestion, next_week
+    /// forecast, why inferred, revenue_at_risk forecast, …
+    var claimKinds: [String: String] = [:]
     /// True when this passage is the last completed read rather than a fresh
     /// one, with `insightAsOf` saying when it was written.
     var insightIsStale = false
@@ -87,21 +97,26 @@ final class ReviewsAnalyticsViewModel {
         let diagnosis: ReviewDiagnosis?
         let revenueAtRisk: RevenueAtRisk?
         let severity: SeverityBreakdown?
-        let confidence: String?
+        /// The rating trend's own confidence — a band today; read through
+        /// TrustConfidence so a K1 object here decodes too.
+        let confidence: TrustConfidence?
         let stale: Bool?
         let asOf: String?
         /// Optional: an older server sends no recs, and absent means "no
         /// answer controls", never an error.
         let recs: [ReviewInsightRec]?
+        let claimKinds: ClaimKindMap?
+        let trend: ReviewRatingTrend?
 
         enum CodingKeys: String, CodingKey {
-            case ok, insight, diagnosis, confidence, stale, severity, recs
+            case ok, insight, diagnosis, confidence, stale, severity, recs, trend
             case figuresVerified = "figures_verified"
             case unsupportedFigures = "unsupported_figures"
             case namesVerified = "names_verified"
             case unsupportedNames = "unsupported_names"
             case revenueAtRisk = "revenue_at_risk"
             case asOf = "as_of"
+            case claimKinds = "claim_kinds"
         }
     }
 
@@ -139,7 +154,11 @@ final class ReviewsAnalyticsViewModel {
         // not a reassurance worth a chip, it is noise between the ones that
         // matter.
         severityTiers = (insightPayload?.severity?.tiers ?? []).filter { $0.open > 0 }
-        trendConfidence = insightPayload?.confidence
+        unclassifiedCount = max(0, insightPayload?.severity?.unclassified ?? 0)
+        let trendBand = insightPayload?.confidence
+        trendConfidence = (trendBand?.band != nil || trendBand?.pct != nil) ? trendBand?.effectiveBand : nil
+        ratingTrend = insightPayload?.trend
+        claimKinds = insightPayload?.claimKinds?.kinds ?? [:]
         insightIsStale = insightPayload?.stale ?? false
         insightAsOf = insightPayload?.asOf
         insightRecs = insightPayload?.recs ?? []
@@ -165,7 +184,9 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     let expectedOutcome: String?
     let evidenceReviewIds: [Int]
     let operationalEvidence: [OperationalEvidence]
-    let confidence: String?
+    /// K6: the K1 object (a percentage with "Why?"); an older server's bare
+    /// band ("medium") still decodes.
+    let confidence: TrustConfidence?
     let ageHours: Double?
     let stale: Bool?
     /// The recommended action's rec_ledger key — present only when there is
@@ -205,8 +226,62 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
         case ageHours = "age_hours"
     }
 
-    /// How serious to treat this read. Mirrors the web's three-band chip.
-    var confidenceBand: String { (confidence ?? "low").lowercased() }
+    /// How serious to treat this read, as a band — the K1 band, else the
+    /// legacy one ("moderate" reads as medium), else low.
+    var confidenceBand: String { confidence?.effectiveBand ?? "low" }
+}
+
+/// review_intelligence.rating_trend, the part the phone shows: which way
+/// the rating is moving, by how much, over how many weeks. Every field
+/// lenient.
+struct ReviewRatingTrend: Decodable, Sendable, Equatable {
+    let direction: String?
+    let change: Double?
+    let weeksAboveFloor: Int?
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case direction, change, reason
+        case weeksAboveFloor = "weeks_above_floor"
+    }
+
+    init(direction: String? = nil, change: Double? = nil, weeksAboveFloor: Int? = nil, reason: String? = nil) {
+        self.direction = direction; self.change = change
+        self.weeksAboveFloor = weeksAboveFloor; self.reason = reason
+    }
+
+    /// Never throws — a trend that is not an object must not take the whole
+    /// reviews read down with it.
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init()
+            return
+        }
+        self.init(direction: try? c.decodeIfPresent(String.self, forKey: .direction),
+                  change: try? c.decodeIfPresent(Double.self, forKey: .change),
+                  weeksAboveFloor: try? c.decodeIfPresent(Int.self, forKey: .weeksAboveFloor),
+                  reason: try? c.decodeIfPresent(String.self, forKey: .reason))
+    }
+
+    /// "Rating improving (+0.2★ over 9 weeks)" — nil without a direction.
+    var sentence: String? {
+        guard let dir = direction?.lowercased(), !dir.isEmpty else { return nil }
+        let word: String
+        switch dir {
+        case "improving", "up": word = "improving"
+        case "declining", "down": word = "declining"
+        case "flat", "steady", "stable": word = "holding steady"
+        default: word = dir.replacingOccurrences(of: "_", with: " ")
+        }
+        var s = "Rating " + word
+        var bits: [String] = []
+        if let change, abs(change) >= 0.05 {
+            bits.append((change > 0 ? "+" : "\u{2212}") + String(format: "%.1f", abs(change)) + "\u{2605}")
+        }
+        if let w = weeksAboveFloor, w > 0 { bits.append("over \(w) week\(w == 1 ? "" : "s")") }
+        if !bits.isEmpty { s += " (" + bits.joined(separator: " ") + ")" }
+        return s
+    }
 }
 
 /// One answerable line from the reviews read. `kind` is "do_today" for the

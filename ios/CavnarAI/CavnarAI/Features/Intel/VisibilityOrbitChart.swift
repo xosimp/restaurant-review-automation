@@ -5,7 +5,9 @@ import SwiftUI
 /// line to the right, each run landing as a dot. The drop alert, made
 /// visible before it fires.
 struct VisibilityOrbitChart: View {
-    let score: Int
+    /// Nil when there is no measurement — drawn as an empty ring with "—"
+    /// and "not measured", never as a 0% ring (J10, CA1 I1).
+    let score: Int?
     let runs: [AIVisibilityRun]
 
     private var delta: Int? {
@@ -13,8 +15,15 @@ struct VisibilityOrbitChart: View {
         return runs[runs.count - 1].aiScore - runs[runs.count - 2].aiScore
     }
 
+    /// What the ring's centre reads: the figure, or a dash when nothing
+    /// was measured.
+    static func centerText(_ score: Int?, progress: Double = 1) -> String {
+        guard let score else { return "\u{2014}" }
+        return "\(Int((Double(score) * progress).rounded()))"
+    }
+
     var body: some View {
-        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score)-\(runs.count)", ambient: true) { ctx, size, t, clock in
+        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score.map(String.init) ?? "none")-\(runs.count)", ambient: true) { ctx, size, t, clock in
             draw(&ctx, size: size, t: t, clock: clock)
         }
     }
@@ -24,21 +33,26 @@ struct VisibilityOrbitChart: View {
         let R: CGFloat = 46
         let s = CavnarChart.easeInOut(min(1, t / 0.9))
         ctx.stroke(Path(ellipseIn: CGRect(x: center.x - R, y: center.y - R, width: R * 2, height: R * 2)), with: .color(Color.white.opacity(0.06)), lineWidth: 10)
-        let sweep = 360 * Double(score) / 100 * s
-        var arc = Path()
-        arc.addArc(center: center, radius: R, startAngle: .degrees(-90), endAngle: .degrees(-90 + sweep), clockwise: false)
-        if sweep > 0.5 {
-            CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 10, blur: 8)
+        if let score {
+            let sweep = 360 * Double(score) / 100 * s
+            var arc = Path()
+            arc.addArc(center: center, radius: R, startAngle: .degrees(-90), endAngle: .degrees(-90 + sweep), clockwise: false)
+            if sweep > 0.5 {
+                CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 10, blur: 8)
+            }
+            let orbit = (-90 + sweep) * Double.pi / 180
+            let dot = CGPoint(x: center.x + CGFloat(cos(orbit)) * R, y: center.y + CGFloat(sin(orbit)) * R)
+            let r = 5 + CGFloat(sin(clock * 3))
+            ctx.drawLayer { layer in
+                layer.addFilter(.shadow(color: cavnarEmberHot.opacity(0.9), radius: 8))
+                layer.fill(Path(ellipseIn: CGRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)), with: .color(cavnarEmberHot))
+            }
+            CavnarChart.text(&ctx, CavnarChart.number(Self.centerText(score, progress: s), size: 26, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
+            CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 15))
+        } else {
+            CavnarChart.text(&ctx, CavnarChart.number(Self.centerText(nil), size: 26, weight: 700, color: .cavnarInk3), at: CGPoint(x: center.x, y: center.y - 4))
+            CavnarChart.text(&ctx, CavnarChart.kicker("Not measured", color: .cavnarInk3), at: CGPoint(x: center.x, y: center.y + 15))
         }
-        let orbit = (-90 + sweep) * Double.pi / 180
-        let dot = CGPoint(x: center.x + CGFloat(cos(orbit)) * R, y: center.y + CGFloat(sin(orbit)) * R)
-        let r = 5 + CGFloat(sin(clock * 3))
-        ctx.drawLayer { layer in
-            layer.addFilter(.shadow(color: cavnarEmberHot.opacity(0.9), radius: 8))
-            layer.fill(Path(ellipseIn: CGRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)), with: .color(cavnarEmberHot))
-        }
-        CavnarChart.text(&ctx, CavnarChart.number("\(Int((Double(score) * s).rounded()))", size: 26, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
-        CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 15))
 
         // History — a trend needs two runs; until then the right half is
         // a single line of copy, not an empty plot.

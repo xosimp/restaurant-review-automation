@@ -761,11 +761,18 @@ struct LikelyEdit: Codable, Identifiable, Equatable {
     let reason: String?
     let text: String?
     let index: Int?
+    /// I9: how often a flag like this has been right here (the backtest),
+    /// in the server's words. Either key; lenient; absent on older servers.
+    var calibrationNote: LenientText? = nil
+    var note: LenientText? = nil
     var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")-\(date ?? "")" }
     enum CodingKeys: String, CodingKey {
-        case kind, employee, date, role, likelihood, reason, text, index
+        case kind, employee, date, role, likelihood, reason, text, index, note
         case shiftStart = "shift_start"
+        case calibrationNote = "calibration_note"
     }
+    /// The calibration sentence to show under the %, if any.
+    var calibrationText: String? { calibrationNote?.value ?? note?.value }
 }
 
 /// A day likely to lose somebody to a no-show, and who could be on call.
@@ -790,12 +797,18 @@ struct StandbyDay: Codable, Identifiable, Equatable {
     /// (standby/ask records it), so no Done / Not for us is drawn.
     var recKey: String? = nil
     var answerable: Bool? = nil
+    /// I9: what the % assumes and how it has held up ("assumes no-shows are
+    /// independent"), in the server's words. Either key; lenient.
+    var calibrationNote: LenientText? = nil
+    var note: LenientText? = nil
     var id: String { date }
     enum CodingKeys: String, CodingKey {
-        case date, day, standby, answerable
+        case date, day, standby, answerable, note
         case chanceOfANoShow = "chance_of_a_no_show"
         case recKey = "rec_key"
+        case calibrationNote = "calibration_note"
     }
+    var calibrationText: String? { calibrationNote?.value ?? note?.value }
 }
 
 /// One `overtime_forecast[]` item of a delivered draft — decoded leniently
@@ -1231,11 +1244,20 @@ struct GeneratedSchedule: Codable {
     // violations check re-reads the same moves live; this is what the
     // draft itself said, and the fallback when that check can't be read.
     var overtimeForecast: [OvertimeForecastItem]? = nil
+    // I9 block-level calibration notes for the likely-edit and standby %s
+    // (the per-item notes are on LikelyEdit / StandbyDay), and K8 demand
+    // accuracy. All lenient; absent on an older server.
+    var likelyEditsNote: LenientText? = nil
+    var standbyNote: LenientText? = nil
+    var demandAccuracy: DemandAccuracy? = nil
 
     enum CodingKeys: String, CodingKey {
         case standbyDays = "standby_days"
         case likelyEdits = "likely_edits"
         case overtimeForecast = "overtime_forecast"
+        case likelyEditsNote = "likely_edits_note"
+        case standbyNote = "standby_note"
+        case demandAccuracy = "demand_accuracy"
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
         case trimmed, staggered, departments, optimizer, gate
         case whatIf = "what_if"

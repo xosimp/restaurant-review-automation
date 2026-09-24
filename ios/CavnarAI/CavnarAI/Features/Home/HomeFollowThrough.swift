@@ -435,12 +435,45 @@ final class HomeFollowThroughViewModel {
             let linkHeadline: String?
             let recKey: String?
             let answerable: Bool?
+            /// K1 — how sure, with "Why?" (K4). Absent on an older server.
+            let confidence: TrustConfidence?
+            /// measured / computed / forecast / inferred (K4).
+            let claimKind: String?
+            /// The money fallback as the RANGE it is (K4): never collapsed
+            /// to one figure. Only drawn when `dollarsMonthly` is absent.
+            let money: Money?
+            struct Money: Decodable, Equatable {
+                let low: Double?
+                let high: Double?
+                let label: String?
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    low = try? c.decodeIfPresent(Double.self, forKey: .low)
+                    high = try? c.decodeIfPresent(Double.self, forKey: .high)
+                    label = try? c.decodeIfPresent(String.self, forKey: .label)
+                }
+                enum CodingKeys: String, CodingKey { case low, high, label }
+                /// "$1,200–$2,400/month" — both ends, or the one that exists;
+                /// nil when neither is a positive figure.
+                var rangeText: String? {
+                    let l = (low ?? 0) > 0 ? low : nil
+                    let h = (high ?? 0) > 0 ? high : nil
+                    switch (l, h) {
+                    case let (l?, h?) where l.rounded() != h.rounded():
+                        return "$\(l.commaFormatted)\u{2013}$\(h.commaFormatted)/month"
+                    case let (l?, _): return "$\(l.commaFormatted)/month"
+                    case let (nil, h?): return "up to $\(h.commaFormatted)/month"
+                    default: return nil
+                    }
+                }
+            }
             enum CodingKeys: String, CodingKey {
-                case key, what, why, modules, evidence, alternative, answerable
+                case key, what, why, modules, evidence, alternative, answerable, confidence, money
                 case dollarsMonthly = "dollars_monthly"
                 case confirmBy = "confirm_by"
                 case linkHeadline = "link_headline"
                 case recKey = "rec_key"
+                case claimKind = "claim_kind"
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -455,9 +488,17 @@ final class HomeFollowThroughViewModel {
                 linkHeadline = try? c.decodeIfPresent(String.self, forKey: .linkHeadline)
                 recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
                 answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+                confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+                claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
+                money = try? c.decodeIfPresent(Money.self, forKey: .money)
             }
             /// The key its answer row posts — rec_key, else the pick's own key.
             var answerKey: String? { recKey ?? key }
+            /// The range to draw when there is no measured monthly figure.
+            var moneyRange: String? {
+                guard (dollarsMonthly ?? 0) <= 0 else { return nil }
+                return money?.rangeText
+            }
         }
         let ok: Bool
         let links: [Link]?
@@ -1154,11 +1195,14 @@ struct HomeFollowThrough: View {
 
     /// What Cavnar AI has been worth. Four figures, never added together —
     /// a measurement, an estimate at stated rates, an alert total and a gap
-    /// against target are not addends (see value_delivered.py).
+    /// against target are not addends (see value_delivered.py). They sit
+    /// under two headings (CA4 F6, J6): what was measured, then what Cavnar
+    /// surfaced or is still available — so an estimate never reads as a
+    /// measured result.
     @ViewBuilder
     private var valueCard: some View {
         if let v = viewModel.value, let d = v.delivered, v.showsWorthCard {
-            HomeSectionHeader(kicker: "Worth", title: "What Cavnar AI has been worth")
+            HomeSectionHeader(kicker: "Worth", title: "What was measured")
             VStack(alignment: .leading, spacing: 0) {
                 let unpriced = RecValueFormat.unpricedWinLines(d)
                 if (d.wins ?? 0) > 0 {
@@ -1197,19 +1241,7 @@ struct HomeFollowThrough: View {
                             showsDivider: true)
                 }
                 if let denom = Self.denominatorLine(d) {
-                    lineRow(denom, tone: .cavnarInk3, showsDivider: true)
-                }
-                if let av = v.avoided, let line = Self.avoidedLine(av) {
-                    lineRow(line, tone: .cavnarInk3, showsDivider: true)
-                }
-                if let sf = v.surfaced, let dollars = sf.dollars, dollars > 0 {
-                    lineRow("\(Self.money(dollars)) of problems put in front of you across "
-                            + "\(sf.alerts ?? 0) alerts in the last \(sf.days ?? 30) days",
-                            tone: .cavnarInk3, showsDivider: true)
-                }
-                if let op = v.opportunity?.monthly, op > 0 {
-                    lineRow("\(Self.money(op))/month still on the table — available, not captured",
-                            tone: .cavnarEmber, showsDivider: false)
+                    lineRow(denom, tone: .cavnarInk3, showsDivider: false)
                 }
                 if let caveat = d.caveat {
                     CavnarCaveat(title: "Before and after, not proof", detail: caveat)
@@ -1231,6 +1263,67 @@ struct HomeFollowThrough: View {
                 recordLink.padding(.top, 12)
             }
             .cavnarCard()
+            surfacedCard(v)
+        }
+    }
+
+    /// The other three figures, each on its own line and never added to the
+    /// measured ones: work done at stated rates (each with its rate and
+    /// basis), dollars the alerts carried, and the gap still available.
+    @ViewBuilder
+    private func surfacedCard(_ v: HomeFollowThroughViewModel.ValueSummary) -> some View {
+        let avoided = v.avoided.flatMap { Self.avoidedLine($0) }
+        let rates = v.avoided.map { Self.avoidedRateLines($0) } ?? []
+        let surfaced = v.surfaced.flatMap { sf -> String? in
+            guard let dollars = sf.dollars, dollars > 0 else { return nil }
+            return "\(Self.money(dollars)) of problems put in front of you across "
+                + "\(sf.alerts ?? 0) alerts in the last \(sf.days ?? 30) days"
+        }
+        let opportunity = v.opportunity?.monthly.flatMap { op -> String? in
+            op > 0 ? "\(Self.money(op))/month still on the table \u{2014} available, not captured" : nil
+        }
+        if avoided != nil || surfaced != nil || opportunity != nil {
+            HomeSectionHeader(kicker: "Not measured", title: "What Cavnar surfaced / still available")
+            VStack(alignment: .leading, spacing: 0) {
+                if let avoided {
+                    lineRow(avoided, tone: .cavnarInk3, showsDivider: rates.isEmpty && (surfaced != nil || opportunity != nil))
+                    if !rates.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(rates.enumerated()), id: \.offset) { _, line in
+                                HomeMixedText.make(line, size: 12.5, weight: 500, color: .cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.leading, 20)
+                        .padding(.bottom, 11)
+                        if surfaced != nil || opportunity != nil {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        }
+                    }
+                }
+                if let surfaced {
+                    lineRow(surfaced, tone: .cavnarInk3, showsDivider: opportunity != nil)
+                }
+                if let opportunity {
+                    // A gap, not a result — amber "watch", never the ember
+                    // or a win's green (DESIGN_SYSTEM §9).
+                    lineRow(opportunity, tone: .cavnarAmber, showsDivider: false)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// Each avoided figure's own rate and what it stands for —
+    /// "412 review replies written: $3.50 each — what a reply service
+    /// charges". value_delivered states the rate for every item.
+    static func avoidedRateLines(_ av: HomeFollowThroughViewModel.ValueSummary.Avoided) -> [String] {
+        (av.items ?? []).compactMap { item in
+            guard let label = item.label, !label.isEmpty else { return nil }
+            var s = label
+            if let rate = item.rate, !rate.isEmpty { s += ": " + rate }
+            if let basis = item.basis, !basis.isEmpty { s += " \u{2014} " + basis }
+            return s == label ? nil : s
         }
     }
 
@@ -1250,7 +1343,8 @@ struct HomeFollowThrough: View {
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarEmber2)
                 HomeMixedText.make(
-                    "At your audit on \(p.auditDate ?? "sign-up") we estimated "
+                    // audit_date arrives ISO; an owner reads M/D/YY (CA1 O16).
+                    "At your audit on \(p.auditDate.map { CavnarDate.mdy($0) } ?? "sign-up") we estimated "
                     + "\(Self.money(low))–\(Self.money(annual.high ?? low)) a year was available.",
                     size: 14, weight: 600, color: .cavnarInk)
                 ForEach(Array((p.categories ?? []).enumerated()), id: \.offset) { _, c in

@@ -316,6 +316,11 @@ struct DailyReportView: View {
                                         }
                                     }
                                 }
+                                // How sure, from the facts it cites (K1).
+                                if let c = action.confidence {
+                                    ConfidenceLine(confidence: c, recKey: action.answerKey,
+                                                   surface: "dsr", module: action.answerModule)
+                                }
                                 // Done / Not for us / Track, as on the web
                                 // (rec-ROI #9). An answered action keeps its
                                 // line — the report is a record — and drops
@@ -331,9 +336,11 @@ struct DailyReportView: View {
                 }
             }
         }
-        if let v = n.verification, let checked = v.checked, let kept = v.kept, checked > 0 {
-            HomeMixedText.make("Every figure above traced to a measured fact · \(kept) of \(checked) lines kept",
-                               size: 12, color: .cavnarInk3)
+        // Kept of checked, and — as the web says — how many were dropped
+        // because a figure didn't trace, and any estimates counted apart.
+        if let footer = n.verification?.footer {
+            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

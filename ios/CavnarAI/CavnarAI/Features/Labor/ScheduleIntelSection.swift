@@ -47,7 +47,10 @@ struct ScheduleIntelSection: View {
                     if let prediction = intel.editPrediction { editPredictionBlock(prediction) }
                     if let calibration = intel.weightCalibration { calibrationBlock(calibration) }
                     if let start = intel.startingPoints, start.ownHistory != true { startingPointsBlock(start) }
-                    if let revenue = intel.revenue, let value = revenue.value { revenueLine(revenue, value: value) }
+                    if let revenue = intel.revenue, let value = revenue.value {
+                        revenueLine(revenue, value: value,
+                                    accuracy: intel.demandAccuracy ?? revenue.demandAccuracy)
+                    }
                     if let outcomes = intel.outcomes, !outcomes.isEmpty { outcomesBlock(outcomes) }
                     if let splh = intel.splh, !splh.isEmpty { splhBlock(splh, objective: intel.splhObjective) }
                     if let lines = intel.rotation?.lines, !lines.isEmpty { rotationPlanBlock(lines, weeks: intel.rotation?.weeks) }
@@ -298,7 +301,7 @@ struct ScheduleIntelSection: View {
 
     // MARK: Revenue
 
-    private func revenueLine(_ revenue: IntelRevenue, value: Double) -> some View {
+    private func revenueLine(_ revenue: IntelRevenue, value: Double, accuracy: DemandAccuracy? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("$\(value.commaFormatted)")
                 .font(.cavnarNumber(22, weight: 700))
@@ -310,6 +313,12 @@ struct ScheduleIntelSection: View {
                     .foregroundStyle(Color.cavnarInk2)
                 if let source = revenue.source, !source.isEmpty {
                     HomeMixedText.make(source, size: 12.5, color: .cavnarInk3)
+                }
+                // How these projections have held up here (K8) — so the
+                // figure is read with its record beside it.
+                if let record = accuracy?.sentence {
+                    HomeMixedText.make(record, size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 0)

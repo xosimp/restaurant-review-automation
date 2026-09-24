@@ -408,7 +408,10 @@ actor APIClient {
         /// it is, and any figure in it the backend could not trace back to
         /// data the model was actually handed.
         let modulesConsulted: [String]?
-        let confidence: String?
+        /// K5: the K1 object; an older server's band string still decodes.
+        let confidence: TrustConfidence?
+        /// K5's `meta` block, when the server nests it.
+        let meta: AskMeta?
         let unverifiedFigures: [String]?
         /// The answer's id — what "Was this useful?" rates.
         let messageId: Int?
@@ -416,7 +419,7 @@ actor APIClient {
         let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
-            case type, label, state, answer, truncated, proposals, error, confidence, suggestions
+            case type, label, state, answer, truncated, proposals, error, confidence, suggestions, meta
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
@@ -425,7 +428,7 @@ actor APIClient {
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
-                        confidence: confidence ?? "unknown",
+                        confidence: AskMeta.pick(confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [])
         }
     }

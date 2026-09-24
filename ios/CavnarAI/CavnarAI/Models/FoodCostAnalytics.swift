@@ -374,16 +374,24 @@ struct FoodCostCFO: Decodable {
         let kind: String
         let label: String
         let dollarsMonthly: Double
-        let confidence: String
+        /// K1 (a percentage with "Why?"); an older server's bare band
+        /// ("high") still decodes, and so does a driver with none.
+        let confidence: TrustConfidence?
         let difficulty: String
         let evidence: String
         let ifIgnored: String
+        /// The driver's rec_ledger key, when the server sends one — what
+        /// "Why?" records the evidence look against.
+        let recKey: String?
         var id: String { "\(kind)-\(label)" }
         enum CodingKeys: String, CodingKey {
             case kind, label, confidence, difficulty, evidence
             case dollarsMonthly = "dollars_monthly"
             case ifIgnored = "if_ignored"
+            case recKey = "rec_key"
         }
+        /// The band, for anything that still ranks or words by it.
+        var confidenceBand: String { confidence?.effectiveBand ?? "low" }
     }
 
     struct Diagnosis: Decodable {
@@ -393,11 +401,14 @@ struct FoodCostCFO: Decodable {
         let whatWouldConfirm: String?
         let recommendedAction: String?
         let expectedOutcome: String?
-        let confidence: String?
         let dollarsAtStake: Double?
         let operationalEvidence: [OperationalEvidence]?
         let ageHours: Double?
         let stale: Bool?
+        /// K6 — the K1 object (a percentage with "Why?"); an older server's
+        /// bare band still decodes. Declared apart from the others so the
+        /// doc above stays with its fields.
+        let confidence: TrustConfidence?
         /// The recommended action's rec_ledger key, whether the owner already
         /// answered it (the action and its controls then drop), when the
         /// read was written (M/D/YY) and the server's note for a read that
@@ -428,7 +439,8 @@ struct FoodCostCFO: Decodable {
             case operationalEvidence = "operational_evidence"
             case ageHours = "age_hours"
         }
-        var confidenceBand: String { (confidence ?? "low").lowercased() }
+        /// The band — K1's, else the legacy one, else low.
+        var confidenceBand: String { confidence?.effectiveBand ?? "low" }
     }
 
     /// Month-to-date prime cost projected to month end. Always a forecast,
@@ -463,14 +475,78 @@ struct FoodCostCFO: Decodable {
 
     struct Brief: Decodable {
         let trust: Trust?
+        /// K8 — how the waste forecasts have held up. Read from the brief,
+        /// else from `trust.forecast_accuracy` where the server carried it
+        /// before K8.
+        let forecastAccuracy: ForecastAccuracy?
+
+        enum CodingKeys: String, CodingKey {
+            case trust
+            case forecastAccuracy = "forecast_accuracy"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            trust = try? c.decodeIfPresent(Trust.self, forKey: .trust)
+            forecastAccuracy = (try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .forecastAccuracy))
+                ?? trust?.forecastAccuracy
+        }
+
         struct Trust: Decodable {
             let recipeCoveragePct: Double?
             let inferredWastePct: Double?
+            let forecastAccuracy: ForecastAccuracy?
             enum CodingKeys: String, CodingKey {
                 case recipeCoveragePct = "recipe_coverage_pct"
                 case inferredWastePct = "inferred_waste_pct"
+                case forecastAccuracy = "forecast_accuracy"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                recipeCoveragePct = try? c.decodeIfPresent(Double.self, forKey: .recipeCoveragePct)
+                inferredWastePct = try? c.decodeIfPresent(Double.self, forKey: .inferredWastePct)
+                forecastAccuracy = try? c.decodeIfPresent(ForecastAccuracy.self, forKey: .forecastAccuracy)
             }
         }
+    }
+}
+
+/// How a forecast has held up here (K8): `{reading, mean_error_pct,
+/// n_weeks, withheld}`. The pre-K8 server shape (`available`, `scored`) is
+/// read too. Every field lenient.
+struct ForecastAccuracy: Decodable, Equatable, Sendable {
+    let reading: String?
+    let meanErrorPct: Double?
+    let nWeeks: Int?
+    let withheld: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case reading, withheld, available, scored
+        case meanErrorPct = "mean_error_pct"
+        case nWeeks = "n_weeks"
+    }
+
+    init(reading: String?, meanErrorPct: Double?, nWeeks: Int?, withheld: Bool = false) {
+        self.reading = reading; self.meanErrorPct = meanErrorPct; self.nWeeks = nWeeks; self.withheld = withheld
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reading = try? c.decodeIfPresent(String.self, forKey: .reading)
+        meanErrorPct = try? c.decodeIfPresent(Double.self, forKey: .meanErrorPct)
+        nWeeks = (try? c.decodeIfPresent(Int.self, forKey: .nWeeks)) ?? (try? c.decodeIfPresent(Int.self, forKey: .scored)) ?? nil
+        let available = try? c.decodeIfPresent(Bool.self, forKey: .available)
+        withheld = ((try? c.decodeIfPresent(Bool.self, forKey: .withheld)) ?? nil) ?? (available == false)
+    }
+
+    /// "Past forecasts here have been roughly right (22% mean error over 6
+    /// weeks)" — nil when withheld or there is no reading.
+    var sentence: String? {
+        guard !withheld, let reading, !reading.isEmpty else { return nil }
+        var detail: [String] = []
+        if let e = meanErrorPct { detail.append("\(Int(e.rounded()))% mean error") }
+        if let n = nWeeks, n > 0 { detail.append("over \(n) week\(n == 1 ? "" : "s")") }
+        return "Past forecasts here have been \(reading)" + (detail.isEmpty ? "" : " (\(detail.joined(separator: " ")))")
     }
 }
 

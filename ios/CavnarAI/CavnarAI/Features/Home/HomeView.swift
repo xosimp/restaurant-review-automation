@@ -115,6 +115,16 @@ struct HomeView: View {
                             .padding(.top, 18)
                             .belowFold(heroAppeared, delay: 0.1)
 
+                            // How current each source behind those tiles is
+                            // (K4/J2). Nothing on an older server.
+                            if let entries = summary.freshness?.entries, !entries.isEmpty {
+                                HomeFreshnessStrip(entries: entries, dataAsOf: summary.dataAsOfDisplay,
+                                                   monitoring: summary.monitoring)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 12)
+                                    .belowFold(heroAppeared, delay: 0.13)
+                            }
+
                             // The activity strip — what Cavnar AI is doing
                             // right now, rotating; tap for the feed. Shows
                             // nothing for an account with nothing armed.
