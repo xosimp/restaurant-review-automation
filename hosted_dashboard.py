@@ -554,6 +554,7 @@ def index(current_user):
     _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
     _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
+    import value_delivered as _vd_rates
     savings_breakdown = {
         # The banner: measured monthly dollars only.
         "total":            int(round((value["delivered"] or {}).get("monthly") or 0)),
@@ -571,6 +572,10 @@ def index(current_user):
         "reviews_avoided":  int(round(next(((i["dollars"] or 0)
                                             for i in (value["avoided"] or {}).get("items") or []
                                             if i.get("key") == "replies"), 0))),
+        # The stated rate behind that line, from its one definition, so the
+        # line's own caption states it from here too (rec-ROI #12).
+        "reply_rate":       _vd_rates.REPLY_RATE,
+        "reply_rate_basis": _vd_rates.REPLY_RATE_BASIS,
         "opportunity":      int(round((value["opportunity"] or {}).get("monthly") or 0)),
         # Labor-tab context, unchanged.
         "labor_monthly":    _labor_monthly if _mod_l else 0,
