@@ -139,6 +139,7 @@ def test_hours_budget_computed_from_monthly_revenue_target_when_set(monkeypatch)
     )
 
     prompt = captured["messages"][0]["content"]
-    # weekly = 365000 / 4.33 ≈ 84296; budget% of that ≈ 19388; /26/hr ≈ 745.7h
-    assert "Projected revenue: $84,296" in prompt or "Projected revenue: $84,297" in prompt
+    # weekly = 365000 / (52/12) ≈ 84231 (metrics.WEEKS_PER_MONTH, the one month
+    # definition — was / 4.33, NS3 L5); budget% of that ≈ 19373; /26/hr ≈ 745.1h
+    assert "Projected revenue: $84,231" in prompt
     assert "745" in prompt  # hours_budget, allowing for rounding

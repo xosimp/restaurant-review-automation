@@ -1459,8 +1459,12 @@ def _do_schedule_violations(u):
             import schedule_economics as _econ
             from models import get_role_rates
             rates = get_role_rates(_rid(u))
+            # Overtime pay starts at 40h (labor.OVERTIME_THRESHOLD_HOURS);
+            # the owner's weekly hours ceiling is a cap, not the overtime
+            # line, in either direction (NS3 H5).
+            from labor import OVERTIME_THRESHOLD_HOURS as _OT_LINE
             out["cost"] = _econ.cost_delta(base, rows, rates, (rates or {}).get("_default"),
-                                           ceiling=c.compliance.get("weekly_hours_ceiling") or 40)
+                                           ceiling=float(_OT_LINE))
         except Exception:
             out["cost"] = None
     return out, 200

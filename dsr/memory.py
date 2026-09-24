@@ -47,7 +47,7 @@ HEADLINE = {
 DETAIL_KEYS = {
     "sales": ("top_items", "bottom_items", "categories", "unmapped"),
     "labor": ("coverage", "observations", "shift_quality"),
-    "food": ("estimate", "stock", "waste", "recoverable"),
+    "food": ("estimate", "stock", "waste", "recoverable", "drivers_at_stake"),
     "reviews": ("themes",),
     "marketing": ("posts", "campaigns", "upcoming"),
     "intel": ("weather", "events", "competitors", "traffic"),

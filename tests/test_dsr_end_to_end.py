@@ -112,7 +112,7 @@ REPLY = {
              ["sales.comps"]),
     ],
     "highest_priority_issue": _it("Comps ran $40.", "sales.comps"),
-    "largest_money_saving": None, "largest_guest_experience": None, "largest_staffing": None,
+    "largest_opportunity": None, "largest_guest_experience": None, "largest_staffing": None,
 }
 
 

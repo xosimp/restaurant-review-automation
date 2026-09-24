@@ -497,13 +497,15 @@ def index(current_user):
             print(f"[intel market] {_mx}")
             intel_market = None
 
-    # Labor overtime premium cost (0.5× blended rate on hours over 40/week)
-    _hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
-    _ot_premium = 0
-    for _ot in labor.get("overtime_risk", []):
-        if _ot.get("status") == "overtime":
-            _ot_premium += max(0, _ot.get("hours", 0) - 40) * _hourly_rate * 0.5
-    labor_overtime_cost = int(round(_ot_premium))
+    # Labor overtime premium: labor.py's own figure (hours past 40 x each
+    # employee's role-blended rate x 0.5), the one iOS shows, from
+    # labor.savings_breakdown. This used to re-price the flagged rows at the
+    # flat restaurant.hourly_rate, so the web read $351 where iOS read $306
+    # for the same data (NS3 M9); the sample week's dollars are nobody's (C3).
+    import labor as _labor_sb
+    _labor_sb_row = _labor_sb.savings_breakdown(labor, analysis_failed=bool(labor.get("analysis_failed")),
+                                                 restaurant=restaurant)
+    labor_overtime_cost = _labor_sb_row["labor_overtime"]
 
     # Marketing activity stats
     try:
@@ -563,24 +565,9 @@ def index(current_user):
     # Labor-tab context figures. These are NOT value delivered and never were
     # — they stay here because the Labor tab renders them as context beside
     # the labor percentage, which is an honest use of them.
-    _labor_monthly = int(round(labor.get("potential_savings_monthly", 0) or 0))
-    _period_days = labor.get("period_days") or labor.get("date_range", {}).get("days") or 0
-    _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
-    # One benchmark and one set of guards for web and iOS (thresholds.
-    # labor_vs_industry_monthly): the web used 32% with no guards while iOS
-    # used 34.5% and refused on estimated hours, missing sales or a sub-week
-    # period, so the same tile showed two dollar figures (CA1 L33). The
-    # figure is by restaurant type (NS4 H3): no published entry for this
-    # type, no industry tile.
+    # The tiles are labor.savings_breakdown's (computed above): one
+    # definition for web and iOS, each figure with its kind (NS3 R1).
     import thresholds as _thr
-    _labor_ind = _thr.labor_industry_benchmark(restaurant)
-    _labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
-        labor.get("overall_labor_pct"), labor.get("total_sales"), _period_days,
-        hours_are_estimated=bool(labor.get("hours_are_estimated")),
-        sales_data_missing=bool(labor.get("sales_data_missing")),
-        analysis_failed=bool(labor.get("analysis_failed")),
-        industry_pct=(_labor_ind or {}).get("pct"))
-    _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # The "3.1% sales lift from responding to reviews" figure had no source in
     # the product and was worded as the owner's own number (CA4 F5, CA1 R16):
@@ -612,16 +599,20 @@ def index(current_user):
         "reply_rate_basis": _vd_rates.REPLY_RATE_BASIS,
         "opportunity":      int(round((value["opportunity"] or {}).get("monthly") or 0)),
         # Labor-tab context, unchanged.
-        "labor_monthly":    _labor_monthly if _mod_l else 0,
+        "labor_monthly":    _labor_sb_row["labor_monthly"] if _mod_l else 0,
         "inv_monthly":      _inv_value     if int(restaurant.module_inventory or 0) else 0,
-        "labor_annual":     int(_labor_monthly * 12) if _mod_l else 0,
+        "labor_annual":     _labor_sb_row["labor_annual"] if _mod_l else 0,
         "inv_annual":       int(_inv_value * 12)     if int(restaurant.module_inventory or 0) else 0,
-        "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
-        "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
-        "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,
-        "labor_industry_pct":        (_labor_ind or {}).get("pct") if _mod_l else None,
-        "labor_industry_basis":      (_labor_ind or {}).get("basis") if _mod_l else None,
+        "labor_overtime":   _labor_sb_row["labor_overtime"] if _mod_l else 0,
+        "labor_vs_industry_monthly": _labor_sb_row["labor_vs_industry_monthly"] if _mod_l else 0,
+        "labor_vs_industry_annual":  _labor_sb_row["labor_vs_industry_annual"]  if _mod_l else 0,
+        "labor_industry_pct":        _labor_sb_row["labor_industry_pct"] if _mod_l else None,
+        "labor_industry_basis":      _labor_sb_row["labor_industry_basis"] if _mod_l else None,
         "sales_lift_yr":             _sales_lift_yr,
+        # What each labor figure is (NS3 R1) — one map for web and iOS.
+        "labor_kinds":               _labor_sb_row["kinds"],
+        "labor_overtime_period_days": _labor_sb_row["overtime_period_days"],
+        "labor_dollars_withheld":    _labor_sb_row["dollars_withheld"],
     }
 
     import secrets as _sec

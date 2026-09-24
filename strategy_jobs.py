@@ -200,7 +200,11 @@ def _tell_owners_what_worked(results, db_path):
             body = row.get("attribution_label") or _outcomes.win_message(row)
             money = (f"about ${dollars:,.0f}/month more in sales (revenue, not profit)"
                      if _outcomes.metrics.family(row.get("metric")) == "sales"
-                     else f"about ${dollars:,.0f}/month, measured")
+                     # The MOVE is measured; its dollars are the move priced
+                     # at this restaurant's own sales and costs
+                     # (metrics.monthly_dollars: "always an estimate"), so the
+                     # title never calls them measured (NS1 M7, NS3 L1).
+                     else f"worth about ${dollars:,.0f}/month (an estimate from the measured move)")
             if _reach(rid, "outcome_achieved",
                       f"{label} improved while your change was in place — {money}", body,
                       {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},

@@ -117,7 +117,16 @@ ACTION_KINDS = {
 }
 ITEM_LISTS = ("went_well", "needs_attention")
 ITEM_SINGLES = ("biggest_risk", "biggest_win", "biggest_financial_opportunity", "biggest_staffing_concern",
-                "highest_priority_issue", "largest_money_saving", "largest_guest_experience", "largest_staffing")
+                "highest_priority_issue", "largest_opportunity", "largest_guest_experience", "largest_staffing")
+# Retired (NS3 C2, R13): "largest_money_saving" named a SAVING, nothing held
+# what it could cite, and its own test fixture put an opportunity in it — the
+# web showed a $420 budget shortfall under "Largest saving". The model slot is
+# now largest_opportunity; the old key stays in every narrative as null so a
+# shipped client reading it shows nothing (dsr.access.narrative_for also
+# nulls it on stored narratives).
+RETIRED_SINGLES = ("largest_money_saving",)
+# A slot whose name asserts a kind accepts only facts of that kind (R13).
+SLOT_KINDS = {"biggest_win": ("measured",)}
 # The manager's opening (check_operations_summary): the executive summary
 # usually cites the budget, which a manager never reads, so without this the
 # Manager DSR had no lead at all. Operations only — sales volume, labor,
@@ -186,23 +195,56 @@ def _ready(block):
     return isinstance(block, dict) and block.get("status") == _dsr.READY
 
 
+# The money kinds a fact key can be (NS3 R1): measured, estimate, projection
+# (a forecast), opportunity, plan. Only "measured" counts as measured — in
+# check_item's "rests on a measured figure", in can_write's floor and in the
+# footer's count. is_estimate used to know only est_/forecast/projected, so
+# food.recoverable_monthly (an opportunity), sales.budget_net and
+# labor.target_pct (plans) all counted as measured, and "You saved $1,200"
+# citing an opportunity went out under "7 of 7 lines · 7 measured" (NS3 C2).
+KINDS = ("measured", "estimate", "projection", "opportunity", "plan")
+_OPPORTUNITY_TOKENS = {"recoverable", "opportunity", "opportunities", "potential", "savings"}
+_PLAN_TOKENS = {"budget", "target", "goal", "plan"}
+
+
+def kind_of(key):
+    """The money kind of a fact key, from its last part. A `vs_` key is a
+    variance — the actual minus its comparator, measured against a plan or a
+    past night — and is measured."""
+    last = str(key or "").lower().split(".")[-1]
+    toks = set(last.split("_"))
+    if last.startswith("vs_"):
+        return "measured"
+    if toks & _OPPORTUNITY_TOKENS or "at_stake" in last:
+        return "opportunity"
+    if last.startswith(("est_", "estimated_")) or toks & {"estimate", "estimated"}:
+        return "estimate"
+    if last.startswith("projected_") or toks & {"forecast", "projected", "projection"}:
+        return "projection"
+    if toks & _PLAN_TOKENS:
+        return "plan"
+    return "measured"
+
+
 def is_estimate(key):
     """Whether a fact key is an estimate or a forecast rather than a
     measurement — est_food_cost_pct (recipes × units sold), forecast_net (the
     demand forecast), anything projected (H13, CA1 D3). An estimate may be
     cited and quoted, but it is named as one, never counted as measured, and
     the footer counts the lines resting on one apart."""
-    last = str(key or "").lower().split(".")[-1]
-    toks = set(last.split("_"))
-    return last.startswith(("est_", "estimated_", "projected_")) or bool(toks & {"forecast", "projected",
-                                                                                 "estimate", "estimated"})
+    return kind_of(key) in ("estimate", "projection")
+
+
+def is_measured(key):
+    return kind_of(key) == "measured"
 
 
 def _measured(block):
     """Ready with at least one measured figure — a ready block with nothing
-    measured has nothing to say or cite. An estimate is not a measurement
-    (H13): a block whose only figure is estimated does not count."""
-    return _ready(block) and any(_is_number(v) and not is_estimate(k)
+    measured has nothing to say or cite. An estimate, an opportunity or a
+    plan is not a measurement (H13, NS3 C2): a block whose only figures are
+    those does not count."""
+    return _ready(block) and any(_is_number(v) and is_measured(k)
                                  for k, v in (block.get("metrics") or {}).items())
 
 
@@ -420,10 +462,19 @@ class Facts:
         figure's source."""
         cites = list(cites)
         missing = self.untraced(text, cites)
+        # Completion never adds a fact of another kind than the model cited
+        # (NS3 R14): it added food.recoverable_monthly by itself to back
+        # "Labor savings of $1,200". A plan (budget, target) is added only
+        # when the words name it as one ("below the $7,300 budget").
+        kinds = {kind_of(c) for c in cites}
+        names_plan = bool(_PLAN_WORDS_RE.search(str(text or "")))
         for key in self.metrics:
             if not missing:
                 break
             if key in cites or key.startswith("closeout."):
+                continue
+            k = kind_of(key)
+            if k not in kinds and not (k == "measured" or (k == "plan" and names_plan)):
                 continue
             alone = self.untraced(text, [key])
             if any(m not in alone for m in missing):
@@ -514,14 +565,36 @@ class Facts:
         """The first figure in `text` that only the cited ESTIMATES back —
         traced with the estimates cited and untraced without them — or
         None (H13)."""
-        est = [c for c in cites if is_estimate(c)]
+        return self.kind_quoted(text, cites, ("estimate", "projection"))
+
+    def kind_quoted(self, text, cites, kinds):
+        """The first figure in `text` that only the cites of `kinds` back —
+        traced with them and untraced without them — or None."""
+        est = [c for c in cites if kind_of(c) in kinds]
         if not est:
             return None
-        rest = [c for c in cites if not is_estimate(c)]
+        rest = [c for c in cites if kind_of(c) not in kinds]
         with_est = set(self.untraced(text, cites))
         for fig in self.untraced(text, rest):
             if fig not in with_est:
                 return fig
+        return None
+
+    def period_mismatch(self, text, cites):
+        """The first money figure stated per month, week or year that no
+        cited fact OF THAT PERIOD backs (NS3 1c): "Waste is costing $84.50 a
+        month" traced to one night's waste and passed. A night is never a
+        month, and no DSR fact is annual."""
+        t = _normalise(text)
+        for c in figure_claims(t):
+            if c["year"] or c["kind"] != "money":
+                continue
+            per = _period_after(t, c["end"])
+            if not per:
+                continue
+            pool = [k for k in cites if k in self.metrics and _period_of(k) == per]
+            if not pool or not _supported(c, "money", _direction(t, c), self.candidates(pool)):
+                return c["raw"], per
         return None
 
     def monthly_supported(self, dollars, cites):
@@ -616,6 +689,137 @@ def _tolerance(claim):
 
 # A line quoting an estimate must say it is one (H13).
 _ESTIMATE_WORDS = re.compile(r"\b(estimat\w*|est\.|forecast\w*|projected|projection|expected)", re.I)
+
+# ── money-claim rules (NS3 DSR rules 1a-1e, R2-R7) ──────────────────────────
+# The figure check matched the number and never the claim around it, so an
+# opportunity, a budget or one night's figure could be called "saved", "on
+# pace" or "a month" as long as the number existed.
+# (a) Saving words. The DSR holds no delivered-value fact (outcomes), so a
+#     money figure is never "saved"; an opportunity may say it COULD be.
+_SAVED_RE = re.compile(r"\b(sav(?:e|ed|es|ing|ings)|recover(?:ed|ing)?|recouped|recoup|clawed\s+back|"
+                       r"you\s+(?:made|earned|kept)|made\s+you|paid\s+off|delivered)\b", re.I)
+_HEDGED_SAVE_RE = re.compile(r"\b(?:could|can|might|may|would)\s+(?!have\b)(?:\w+\s+){0,2}?"
+                             r"(?:sav(?:e|ed|ing)|recover(?:ed)?|recoup(?:ed)?)\b", re.I)
+# (b) Pace words: a night is never a run rate.
+_PACE_RE = re.compile(r"\b(on\s+pace|on\s+track\s+for|run[\s-]+rate|at\s+this\s+pace|would\s+be)\b", re.I)
+# (d) Sums across facts: never a total of the model's own.
+_SUM_RE = re.compile(r"\b(together|add(?:s|ed)?\s+up|combined|in\s+total|total\s+of|altogether|all\s+told)\b",
+                     re.I)
+# An opportunity figure names itself (R3); a plan figure names itself (NS3
+# DSR finding 3): "Net sales came in at $18,500" citing the budget passed.
+_OPPORTUNITY_WORDS = re.compile(r"\b(could|would|might|potential\w*|opportunit\w*|at\s+stake|on\s+the\s+table|"
+                                r"available|recover\w*|if\b)", re.I)
+_PLAN_WORDS_RE = re.compile(r"\b(budget\w*|target\w*|goal\w*|plan(?:ned)?)\b", re.I)
+# NS2 C2: a cause between facts of different blocks — "Net sales fell short
+# because labor ran 34.8%" (backwards: labor % is high BECAUSE sales were
+# low). The DSR stores no cross-block cause, so the line is dropped.
+_CAUSAL_RE = re.compile(r"\b(because|due\s+to|driven\s+by|drove|caused|causing|led\s+to|leading\s+to|"
+                        r"as\s+a\s+result|thanks\s+to|resulting\s+in|result\s+of|which\s+is\s+why|"
+                        r"that'?s\s+why|responsible\s+for|is\s+the\s+reason|is\s+behind|to\s+blame)\b", re.I)
+# The restaurant-wide monthly totals: never one dish's dollars (NS3 food #1).
+RESTAURANT_WIDE_MONTHLY = ("food.recoverable_monthly", "food.drivers_at_stake_monthly")
+
+_PER_MONTH_RE = re.compile(r"^\s*(?:(?:a|per|each|every|this|next)\s+month\b|/\s*mo(?:nth)?\b|monthly\b|"
+                           r"(?:a|per)\s+mo\b)", re.I)
+_PER_WEEK_RE = re.compile(r"^\s*(?:(?:a|per|each|every)\s+week\b|/\s*wk\b|/\s*week\b|weekly\b)", re.I)
+_PER_YEAR_RE = re.compile(r"^\s*(?:(?:a|per|each|every|this|over\s+a)\s+year\b|/\s*yr\b|/\s*year\b|"
+                          r"annual(?:ly)?\b|yearly\b)", re.I)
+
+
+def _period_after(t, end):
+    """'month' | 'week' | 'year' when the words right after a figure make
+    it a rate ("$640 a month", "$84/wk", "$14,400 a year"), else None."""
+    rest = t[end:end + 24]
+    for per, rx in (("month", _PER_MONTH_RE), ("week", _PER_WEEK_RE), ("year", _PER_YEAR_RE)):
+        if rx.match(rest):
+            return per
+    return None
+
+
+def _period_of(key):
+    toks = _tokens(key)
+    if toks & {"monthly", "month"}:
+        return "month"
+    if toks & {"weekly", "week"} and not toks & {"last"}:
+        return "week"
+    if toks & {"annual", "yearly", "annualized"}:
+        return "year"
+    return None
+
+
+def _money_figures(text):
+    t = _normalise(text)
+    return [c for c in figure_claims(t) if c["kind"] == "money" and not c["year"]]
+
+
+def line_kind(cites):
+    """What a kept line rests on, for the footer: estimate (an estimate
+    or forecast cited) > opportunity > plan > measured. Only "measured"
+    counts toward the footer's measured lines (NS3 R1, R16)."""
+    kinds = {kind_of(c) for c in cites or ()}
+    if kinds & {"estimate", "projection"}:
+        return "estimate"
+    if "opportunity" in kinds:
+        return "opportunity"
+    if "plan" in kinds:
+        return "plan"
+    return "measured"
+
+
+def money_claim_problem(text, cites, F):
+    """Why a line's money wording is dropped (NS3 DSR rules 1a-1e, R2-R7,
+    R13), or None. Runs after the figures traced."""
+    if not text:
+        return None
+    money = _money_figures(text)
+    if money:
+        # Every saving word must sit inside a hedge ("could be recovered")
+        # AND an opportunity fact must back a figure in the line; otherwise
+        # it claims money saved, which the DSR never holds.
+        hedges = [(h.start(), h.end()) for h in _HEDGED_SAVE_RE.finditer(text)]
+        opp_backs = any(kind_of(c) == "opportunity" and c in F.metrics and _money_backs(F, text, c)
+                        for c in cites)
+        for m in _SAVED_RE.finditer(text):
+            inside = any(a <= m.start() and m.end() <= b for a, b in hedges)
+            if not (inside and opp_backs):
+                return (f"calls a figure \"{m.group(0).lower()}\" — nothing in tonight's facts is money "
+                        f"saved or recovered")
+        m = _PACE_RE.search(text)
+        if m and not any(kind_of(c) == "projection" for c in cites):
+            return f"says \"{m.group(0).lower()}\" about one night's figure — a night is not a run rate"
+        m = _SUM_RE.search(text)
+        if m and len([c for c in cites if c in F.metrics]) > 1:
+            return f"adds figures up (\"{m.group(0).lower()}\") — no total of the report's own"
+        per = F.period_mismatch(text, cites)
+        if per:
+            return f"states {per[0]} per {per[1]}, which no cited {per[1]}ly fact holds"
+        fig = F.kind_quoted(text, cites, ("opportunity",))
+        if fig and not _OPPORTUNITY_WORDS.search(text):
+            return f"states {fig} from an opportunity without saying it is one (could, at stake, recoverable)"
+        fig = F.kind_quoted(text, cites, ("plan",))
+        if fig and not _PLAN_WORDS_RE.search(text):
+            return f"states {fig} from a budget or target without naming it as one"
+    for sent in _SENTENCE_SPLIT_RE.split(text):
+        if not _CAUSAL_RE.search(sent):
+            continue
+        # The blocks whose figures THIS sentence states (traced_cites), so a
+        # lead citing sales in one sentence and a labor cause in the next is
+        # judged sentence by sentence.
+        blocks = {c.split(".", 1)[0] for c in traced_cites({"text": sent, "cites": cites}, F)
+                  if not c.startswith("closeout.")}
+        if len(blocks) > 1:
+            return ("states a cause between " + " and ".join(sorted(blocks))
+                    + " figures — the report holds no cause across blocks, only that they moved together")
+    return None
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def _money_backs(F, text, cite):
+    """Whether `cite` alone backs a money figure in `text`."""
+    base = set(F.untraced(text, []))
+    return bool(base - set(F.untraced(text, [cite])))
 
 # An action is "before_service" (Today) only when a figure it cites moved
 # past these from what it is compared with, or it cites a critical count
@@ -767,15 +971,28 @@ def validate(raw):
 
 # ── checking what the model wrote ───────────────────────────────────────────
 
-def check_item(item, F, action=False, lead=False):
+def check_item(item, F, action=False, lead=False, slot=None):
     """None when the item stands, else why it is dropped."""
     cites = item["cites"]
     bad = [c for c in cites if not F.has(c)]
     if bad:
         return f"cites {', '.join(bad)}, which {'is' if len(bad) == 1 else 'are'} not a fact tonight"
-    measured = [c for c in cites if c in F.metrics and not is_estimate(c)]
-    if not measured:
+    measured = [c for c in cites if c in F.metrics and is_measured(c)]
+    # An opportunity may carry an item on its own (a hedged "could" line in
+    # the opportunity slots). A plan (budget, target) never carries a line
+    # alone, but beside an estimate it is what the estimate is judged
+    # against ("Estimated food cost is 2.6 points over its 30% target").
+    carrying = measured + [c for c in cites if c in F.metrics and kind_of(c) == "opportunity" and not lead]
+    if not carrying and not lead:
+        kinds = {kind_of(c) for c in cites if c in F.metrics}
+        if "plan" in kinds and kinds & {"estimate", "projection"}:
+            carrying = [c for c in cites if c in F.metrics]
+    if not carrying:
         return "rests on no measured figure"
+    if slot and SLOT_KINDS.get(slot):
+        off = [c for c in cites if c in F.metrics and kind_of(c) not in SLOT_KINDS[slot]]
+        if off:
+            return f"{slot} names a result, and {', '.join(off)} is not a measured one"
     if action and any(c.startswith("closeout.") for c in cites):
         # The closeout is the one block anyone can type into, so it is the
         # injection surface: an action may be informed by it, never rest on it.
@@ -808,9 +1025,18 @@ def check_item(item, F, action=False, lead=False):
             # quoting an estimate as if it were one is how that stopped
             # being true (H13).
             return f"quotes {est} from an estimate ({', '.join(c for c in cites if is_estimate(c))}) without saying so"
+        why = money_claim_problem(text, cites, F)
+        if why:
+            return why
     if action and item["dollars_monthly"] is not None and not F.monthly_supported(item["dollars_monthly"], cites):
         return (f"puts ${item['dollars_monthly']:,.0f}/month on it, which is not a monthly figure it cites "
                 f"(a night is never multiplied into a month)")
+    if action and item["dollars_monthly"] is not None and item.get("subject"):
+        backing = [c for c in cites if c in F.metrics and _is_monthly(c)
+                   and abs(abs(F.metrics[c]) - abs(float(item["dollars_monthly"]))) <= 0.5]
+        if backing and all(c in RESTAURANT_WIDE_MONTHLY for c in backing):
+            return (f"puts the restaurant-wide ${item['dollars_monthly']:,.0f}/month ({backing[0]}) on "
+                    f"{item['subject']} alone")
     return None
 
 
@@ -854,14 +1080,28 @@ def check_operations_summary(item, F):
     return None
 
 
-def estimated_lines(body) -> int:
-    """How many kept lines cite an estimate (is_estimate) — the lines the
-    footer's "traced to a measured fact" must not claim (H13)."""
+def _kept_items(body):
     items = [body.get("executive_summary"), body.get(OPS_SUMMARY)]
     items += [it for f in ITEM_LISTS for it in (body.get(f) or [])]
     items += [body.get(f) for f in ITEM_SINGLES]
     items += list(body.get("actions_tomorrow") or [])
-    return sum(1 for it in items if isinstance(it, dict) and any(is_estimate(c) for c in it.get("cites") or []))
+    return [it for it in items if isinstance(it, dict)]
+
+
+def estimated_lines(body) -> int:
+    """How many kept lines cite an estimate (is_estimate) — the lines the
+    footer's "traced to a measured fact" must not claim (H13)."""
+    return sum(1 for it in _kept_items(body) if line_kind(it.get("cites")) == "estimate")
+
+
+def lines_by_kind(body) -> dict:
+    """Kept lines by what they rest on (line_kind): {measured, estimate,
+    opportunity, plan}. Only `measured` is the footer's measured count —
+    a line citing an opportunity or a budget never is (NS3 R1, R16)."""
+    out = {k: 0 for k in ("measured", "estimate", "opportunity", "plan")}
+    for it in _kept_items(body):
+        out[line_kind(it.get("cites"))] += 1
+    return out
 
 
 def verify(clean, F):
@@ -892,7 +1132,7 @@ def verify(clean, F):
                 body[field].append(it)
     for field in ITEM_SINGLES:
         it = clean[field]
-        why = check_item(it, F) if it else None
+        why = check_item(it, F, slot=field) if it else None
         if why:
             dropped.append({"field": field, "text": it["text"], "why": why})
         body[field] = None if why else it
@@ -1241,12 +1481,13 @@ EVIDENCE RULES. A line that breaks one is deleted before the owner reads it; an 
 6. The earlier summaries only tell you whether tonight is unusual. Quote nothing from them.
 7. Never propose anything under ALREADY DECLINED, or anything the owner's past decisions mark "not for us", in those words or any others.
 8. A cause — "because", "due to", "after", "drove", "led to", "so guests…" — may only name something a fact you cite measures (sales, labor hours, overtime, no-shows, an item in a cited list). Nothing here records why guests came or stayed away, so never give a reason the facts do not hold (a patio, the weather, a new menu); say what happened instead.
+9. Money words. Nothing in these facts is money saved: never write saved, saving(s), recovered, "paid off", "you made" or "you kept" about a dollar figure. A fact whose key says recoverable, opportunity or at_stake is an OPPORTUNITY — say it could be recovered or is at stake, never that it was. A budget, target, goal or plan figure is named as a budget or target in the same sentence. Never write "on pace", "on track for", "run rate", "together", "combined" or "in total" next to a dollar figure, and never put "a month", "a week" or "a year" after a figure unless its key says monthly (or weekly). Never say one block's figure caused another block's (labor did not cause the sales, reviews did not cause the labor) — say they moved together.
 
 WHAT TO WRITE
 - executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in tonight's facts drove it, then what to watch. Measured figures only.
 - operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, or comps, voids and refunds. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Leave it out when the operations figures cannot carry it.
 - went_well, needs_attention: up to 4 each, one sentence each, most important first. An empty list is fine.
-- biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_money_saving, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch.
+- biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
 - actions_tomorrow: at most 3, each something the manager or owner can start tomorrow with the staff and suppliers they already have.
   text: the action, one imperative sentence. why: the figure that makes it worth doing.
   cites: measured figures only. The manager's closeout may inform an action but an action never cites it.
@@ -1263,7 +1504,7 @@ Return only this JSON object:
  "went_well": [{{"text": "...", "cites": ["..."]}}], "needs_attention": [...],
  "biggest_risk": {{"text": "...", "cites": [...]}} (or left out), "biggest_win": ..., "biggest_financial_opportunity": ..., "biggest_staffing_concern": ...,
  "actions_tomorrow": [{{"text": "...", "why": "...", "dollars_monthly": null, "urgency": "before_service", "effort": "low", "kind": "control_hours", "subject": null, "cites": ["..."]}}],
- "highest_priority_issue": ..., "largest_money_saving": ..., "largest_guest_experience": ..., "largest_staffing": ...}}"""
+ "highest_priority_issue": ..., "largest_opportunity": ..., "largest_guest_experience": ..., "largest_staffing": ...}}"""
 
 _NAME_KEYS = ("name", "item", "label", "title", "role", "category", "supplier")
 
@@ -1552,7 +1793,16 @@ def _write(ctx, facts):
             # estimate (H13): the kept lines that cite one are counted here
             # so the clients can say "k measured, e estimated".
             "estimated": estimated_lines(body),
-            "measured": (checked - len(dropped)) - estimated_lines(body),
+            # Opportunity and plan lines are not measured either (NS3 R1,
+            # R16): the footer said "7 measured" over an opportunity called
+            # "saved". by_kind carries every count; `measured` is only the
+            # lines resting on measured facts alone.
+            "opportunity": lines_by_kind(body)["opportunity"],
+            "plan": lines_by_kind(body)["plan"],
+            "by_kind": lines_by_kind(body),
+            "measured": lines_by_kind(body)["measured"],
         },
+        # The retired slot, null for shipped clients (RETIRED_SINGLES).
+        **{k: None for k in RETIRED_SINGLES},
     }
     return {"ok": True, "narrative": narrative, "reason": None}

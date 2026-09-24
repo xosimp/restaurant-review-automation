@@ -152,7 +152,8 @@ def test_a_coffee_shop_gets_no_industry_saving():
     assert thresholds.labor_vs_industry_monthly(22.0, 60000, 30, industry_pct=None) == 0
     trat = thresholds.labor_industry_benchmark(Restaurant(name="N", owner_email="x@x.test", category="italian"))
     assert trat["pct"] == 34.2 and "NRA 2025" in trat["basis"]
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=trat["pct"]) == round(4.2 / 100 * 30000)
+    from metrics import DAYS_PER_MONTH   # one month definition (NS3 L5)
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=trat["pct"]) == round(4.2 / 100 * 30000 / 30 * DAYS_PER_MONTH)
     assert not hasattr(thresholds, "LABOR_INDUSTRY_PCT")
 
 

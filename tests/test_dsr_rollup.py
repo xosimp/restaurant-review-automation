@@ -92,7 +92,11 @@ def test_a_week_is_erik_s_grid(db):
     assert t["cats"]["Food"] == 7700.0 and t["cats"]["Retail"] is None
     # vs budget only over the nights that have both: 11,000 against 11,000, not against 18,300.
     assert (t["vs_budget_net"], t["vs_budget_net_pct"]) == (0.0, 0.0)
-    assert t["budget_net"] == 18300.0
+    # ...and the budget total beside it covers the same nights, so the row
+    # reads net - budget == vs budget (NS3 H6); the week's whole budget is
+    # still there, named for what it is.
+    assert t["budget_net"] == 11000.0 and t["net"] - t["budget_net"] == t["vs_budget_net"]
+    assert t["budget_net_full_range"] == 18300.0
     assert t["labor_pct"] == round(2900 / 11000 * 100, 1)
     ptd = w["period_to_date"]
     assert (ptd["start"], ptd["end"], ptd["net"]) == ("2026-08-26", "2026-09-22", 11000.0)

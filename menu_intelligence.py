@@ -257,7 +257,9 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
         # labelled "the last 30 days" (MOD-FC-28). Scaled to 30 and said so.
         # (The key keeps its old name; clients read it.)
         window = inventory_ledger._POPULARITY_WINDOW_DAYS
-        monthly = round(inc * units * 30.0 / window, 2) if units else None
+        # One month definition (metrics.DAYS_PER_MONTH, NS3 L5).
+        from metrics import DAYS_PER_MONTH as _DPM
+        monthly = round(inc * units * _DPM / window, 2) if units else None
         if monthly is not None and monthly < MIN_MONTHLY_MARGIN_LOST:
             continue
         d.update({
@@ -267,7 +269,7 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
             "suggested_price": suggested,
             "price_change": round(suggested - price, 2) if suggested else None,
             "monthly_margin_lost": monthly,
-            "monthly_basis": (f"units sold over the last {window} days, scaled to 30" if units else
+            "monthly_basis": (f"units sold over the last {window} days, scaled to a month" if units else
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)

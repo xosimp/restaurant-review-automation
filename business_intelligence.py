@@ -633,10 +633,17 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
 
     fc = ((data.get("food_cost") or {}).get("brief") or {}).get("money_involved") or {}
     if fc.get("monthly_at_stake") is not None:
+        # Never "computed" (NS3 H3): the drivers are estimates of money
+        # being spent (price, usage over recipe) and opportunities (waste,
+        # menu and supplier gaps), each scaled to a month.
+        _fk = [k for k, v in (fc.get("totals_by_kind") or {}).items() if v]
         lines.append({"module": "food_cost", "label": "Food cost drivers",
                       "monthly": round(_f(fc["monthly_at_stake"]), 2),
-                      "claim_kind": "computed",
-                      "basis": "ranked cost drivers, dollars per month"})
+                      "claim_kind": "estimate" if _fk == ["estimate"] else "opportunity",
+                      "money_kinds": fc.get("totals_by_kind") or {},
+                      "basis": "ranked cost drivers, dollars per month"
+                               + (" — estimated costs and opportunities, not added together elsewhere"
+                                  if len(_fk) > 1 else "")})
     else:
         unavailable.append({"module": "food_cost",
                             "reason": fc.get("reason") or "no driver figure available"})
@@ -647,7 +654,9 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
     elif labor.get("potential_savings_monthly"):
         lines.append({"module": "labor", "label": "Scheduling against target",
                       "monthly": round(_f(labor["potential_savings_monthly"]), 2),
-                      "claim_kind": "computed",
+                      # A gap to target projected to a month: an
+                      # opportunity, never money saved (NS3 R1).
+                      "claim_kind": "opportunity",
                       "basis": (f"gap above the {labor.get('labor_target', 30)}% target over "
                                 f"{labor.get('period_days', 0)} days synced")})
     elif labor.get("period_too_short_to_project") or \
@@ -707,9 +716,10 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
         # the screen and the least defensible one, and audit #14 already
         # caught a model inventing exactly that kind of total.
         "total_note": ("Do not add these together. They come from three different methods — "
-                       "measured cost drivers, a scheduling gap against target, and a forecast "
-                       "from rating elasticity — and only the first is money already being "
-                       "spent. Quote them separately, each with its own basis."),
+                       "food cost drivers (estimated costs already being spent, plus waste, menu "
+                       "and supplier gaps that are opportunities), a scheduling gap against "
+                       "target (an opportunity), and a forecast from rating elasticity — none of "
+                       "them is money saved. Quote them separately, each with its own basis."),
     }
 
 

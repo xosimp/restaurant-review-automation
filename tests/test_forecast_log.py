@@ -568,10 +568,14 @@ def test_labor_vs_industry_is_one_constant_with_one_set_of_guards():
     for path in ("hosted_dashboard.py", "mobile_api.py"):
         code = _code(path)
         assert "0.345" not in code and "(0.32 -" not in code
-        assert "labor_vs_industry_monthly(" in code
-    # The benchmark is by restaurant type now (benchmark_registry, NS4 H3):
-    # the caller passes the type's published figure, and none means no claim.
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=34.2) == round((34.2 - 30.0) / 100 * 30000)
+        # both surfaces read one breakdown (labor.savings_breakdown, NS3 M9),
+        # which is where the guarded comparison is made
+        assert "savings_breakdown(" in code
+    assert "labor_vs_industry_monthly(" in _code("labor.py")
+    from metrics import DAYS_PER_MONTH   # one month definition (NS3 L5)
+    # The benchmark is by restaurant type (benchmark_registry, NS4 H3): the
+    # caller passes the type's published figure, and none means no claim.
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=34.2) == round((34.2 - 30.0) / 100 * 30000 / 30 * DAYS_PER_MONTH)
     assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30) == 0
     assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, hours_are_estimated=True, industry_pct=34.2) == 0
     assert thresholds.labor_vs_industry_monthly(30.0, 30000, 5, industry_pct=34.2) == 0

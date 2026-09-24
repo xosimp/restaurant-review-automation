@@ -183,6 +183,30 @@ def _totals(rows, cats):
     t["vs_last_year_net_pct"] = _pct_change(nl, ll) if both_ly else None
     t["labor_pct"] = (round(sum(r["labor_cost"] for r in both_labor) / sum(r["net"] for r in both_labor) * 100, 1)
                       if both_labor else None)
+    # A total row compares the SAME days on both sides: vs_X == net - X
+    # (NS3 H6, R11). Budget and last year used to sum all seven days while
+    # net summed the three measured, so mid-week read "Net $30,000, Budget
+    # $66,500, vs Budget +$1,500" under a footnote saying totals cover only
+    # measured days. Now the X total covers the measured days; where a
+    # measured night has no X, the total and its comparison are withheld
+    # rather than set beside a net they do not match. The whole range's
+    # figure stays, named for what it is (X_full_range).
+    measured = [r for r in rows if r["net"] is not None]
+    for key, both, vs in (("budget_net", both_b, "vs_budget_net"), ("last_year_net", both_ly, "vs_last_year_net")):
+        t[f"{key}_full_range"], t[f"{key}_full_range_days"] = t[key], t[f"{key}_days"]
+        if both and len(both) == len(measured):
+            t[key], t[f"{key}_days"] = round(sum(r[key] for r in both), 2), len(both)
+        else:
+            if both:
+                t[f"{key}_note"] = (f"{len(measured) - len(both)} measured night(s) have no "
+                                    f"{'budget' if key.startswith('budget') else 'last-year figure'}, "
+                                    f"so the total and its comparison are not shown")
+            t[key], t[f"{key}_days"] = None, 0
+            t[vs], t[f"{vs}_pct"] = None, None
+    bg = [r for r in measured if r.get("budget_gross") is not None]
+    t["budget_gross_full_range"], t["budget_gross_full_range_days"] = t["budget_gross"], t["budget_gross_days"]
+    t["budget_gross"] = round(sum(r["budget_gross"] for r in bg), 2) if bg and len(bg) == len(measured) else None
+    t["budget_gross_days"] = len(bg) if t["budget_gross"] is not None else 0
     return t
 
 

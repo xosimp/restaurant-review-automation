@@ -55,9 +55,38 @@ def cost_of_waiting(review) -> str:
     if not worse:
         return ""
     lead = max(worse, key=lambda m: abs(m["monthly_dollars"]))
+    days = window_days(review)
+    monthly = abs(lead["monthly_dollars"])
+    src = f"from {window_phrase(days)}'s move" if days else "from the period's move"
+    # A yearly figure is a projection and needs at least ANNUAL_MIN_DAYS of
+    # data under it: "roughly $37,440 over a year" was one week's move x12,
+    # in bold, unlabelled (NS3 M4, NS1 H3). Below the floor the year is
+    # withheld; above it, it says what it is and what it rests on.
+    if days is not None and days >= ANNUAL_MIN_DAYS:
+        return (f"If {lead['label'].lower()} stays where it is, that is about "
+                f"${monthly:,.0f} a month — about ${monthly * 12:,.0f} over a year if it holds "
+                f"(a projection {src}, not a measurement).")
     return (f"If {lead['label'].lower()} stays where it is, that is about "
-            f"${abs(lead['monthly_dollars']):,.0f} a month — roughly "
-            f"${abs(lead['monthly_dollars']) * 12:,.0f} over a year.")
+            f"${monthly:,.0f} a month if it holds (a projection {src}, not a measurement).")
+
+
+# A yearly dollar figure needs this many days of data behind it (NS3 R7).
+ANNUAL_MIN_DAYS = 28
+
+
+def window_days(review):
+    """Calendar days the review's window covers, from review["window"]
+    ([start ISO, end ISO]); None when it carries none."""
+    try:
+        from datetime import date as _d
+        a, b = (review or {}).get("window") or (None, None)
+        return (_d.fromisoformat(str(b)[:10]) - _d.fromisoformat(str(a)[:10])).days + 1
+    except (TypeError, ValueError):
+        return None
+
+
+def window_phrase(days) -> str:
+    return "last week" if days and days <= 7 else ("last month" if days and days >= 28 else f"the last {days} days")
 
 
 # ── the ledger, for both reviews ─────────────────────────────────────────────

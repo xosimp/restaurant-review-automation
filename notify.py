@@ -2946,18 +2946,25 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 from inventory import analysis_for
                 items, is_live, analysis = analysis_for(rid)
                 waste_items = (analysis or {}).get("waste_items") or [] if (items and is_live) else []
-                total = sum(float(x.get("waste_cost") or 0) for x in waste_items)
                 flagged = [x for x in waste_items if float(x.get("waste_cost") or 0) > 0]
+                # The FULL totals, never the display slice: waste_items is the
+                # top 6, and summing it read "$345 of waste flagged" where the
+                # week carried $450 across 9 items — an undercount that also
+                # fed "surfaced" dollars through alert_log.value (NS3 M8).
+                total = float((analysis or {}).get("waste_items_total")
+                              if waste_items and (analysis or {}).get("waste_items_total") is not None
+                              else sum(float(x.get("waste_cost") or 0) for x in waste_items))
+                n_flagged = int((analysis or {}).get("waste_items_count") or len(flagged)) if waste_items else 0
                 # Fire on deterioration, not on a level: a restaurant that is
                 # chronically over tolerance used to get the identical alert
                 # every 7 days forever. _waste_alert_worsened compares against
                 # what was last alerted on.
-                if (len(flagged) >= 3 or total >= 150) and _waste_alert_worsened(rid, total, db_path=db_path):
+                if (n_flagged >= 3 or total >= 150) and _waste_alert_worsened(rid, total, db_path=db_path):
                     top = ", ".join(x.get("item", "?") for x in flagged[:3])
                     _fire("food_waste",
                           f"Cavnar AI: ${total:,.0f} of waste flagged this week at {name} ({top}).",
                           f"Food waste flagged — {name}",
-                          [f"${total:,.0f} of waste across {len(flagged)} items this week.",
+                          [f"${total:,.0f} of waste across {n_flagged} items this week.",
                            f"Biggest: {top}.", "Open Food Cost to see the breakdown."],
                           value=total)
             except Exception as e:

@@ -1248,7 +1248,8 @@ def price_overtime_moves(forecast: list, role_rates=None, default_rate=None) -> 
         c["overtime_hours_avoided"] = hours_off
         c["saves"] = round(hours_off * rate * OVERTIME_PREMIUM) if (rate and hours_off > 0) else None
         if c["saves"]:
-            f["text"] = f["text"] + f" That saves about ${c['saves']:,} in overtime pay."
+            # A move not yet made: "would", never "saves" (NS3 labor #13).
+            f["text"] = f["text"] + f" That move would save about ${c['saves']:,} in overtime pay."
     return forecast
 
 
@@ -1271,10 +1272,14 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
         max_hours = constraints.max_hours if max_hours is None else max_hours
         if ceiling is None:
             ceiling = (getattr(constraints, "compliance", None) or {}).get("weekly_hours_ceiling")
-    # The weekly overtime line: 40, or the restaurant's own compliance
-    # ceiling. A person's cap (max_hours) may sit below it; that is a limit,
-    # not overtime (re-audit A-4).
+    # The restaurant's weekly hours ceiling is a CAP (like a person's own
+    # max_hours), never the overtime line. Overtime pay starts at
+    # labor.OVERTIME_THRESHOLD_HOURS (40): a ceiling set to 35 priced "5h of
+    # overtime ... saves about $50 in overtime pay" on a 40h week that owes
+    # none (NS3 H5; re-audit A-4 for the personal cap).
+    from labor import OVERTIME_THRESHOLD_HOURS as _OT_LINE
     ceil = float(ceiling or WEEKLY_HOURS_CEILING)
+    ot_line = float(_OT_LINE)
 
     def _cap(name):
         if max_hours is not None:
@@ -1361,8 +1366,8 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
                 break
         from time_utils import mdy
         published = round(_base(low, b), 1)
-        overtime = round(max(0.0, total - ceil), 1)
-        past = (f"{over:g}h past the {ceil:g}h overtime line" if overtime > 0.05 and cap >= ceil - 0.05
+        overtime = round(max(0.0, total - ot_line), 1)
+        past = (f"{over:g}h past the {ot_line:g}h overtime line" if overtime > 0.05 and abs(cap - ot_line) < 0.05
                 else f"{over:g}h past their {cap:g}h limit"
                 + (f", {overtime:g}h of it overtime" if overtime > 0.05 else ""))
         text = (f"{name} is scheduled for {round(total, 1):g}h in the payroll week{f' of {mdy(b)}' if b else ''} — "
@@ -1373,6 +1378,6 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
                      f"the {mdy(pick['date'])} {pick['shift_start']}–{pick['shift_end']} shift.")
         out.append({"employee": name, "bucket": b, "hours": round(total, 1), "draft_hours": round(h, 1),
                     "published_hours": published, "ceiling": cap, "over": over,
-                    "overtime_line": ceil, "overtime_hours": overtime, "candidate": pick, "text": text})
+                    "overtime_line": ot_line, "overtime_hours": overtime, "candidate": pick, "text": text})
     out.sort(key=lambda x: (-x["over"], x["employee"]))
     return out

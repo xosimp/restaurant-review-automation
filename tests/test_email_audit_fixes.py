@@ -150,10 +150,20 @@ def _review(**metric):
     return {"metrics": [base]}
 
 
-def test_cost_of_waiting_states_the_month_and_the_year():
-    import weekly_review
-    out = weekly_review.cost_of_waiting(_review())
-    assert "$1,450" in out and "$17,400" in out
+def test_cost_of_waiting_states_the_year_only_as_a_projection_on_28_days():
+    """NS3 M4 / NS1 H3: "roughly $17,400 over a year" was one week's move
+    x12, unlabelled. A year needs >= 28 days of data and the word
+    "projection"; a week's move states the month, labelled, and no year."""
+    import weekly_review, monthly_review
+    week = dict(_review(), window=["2026-09-14", "2026-09-20"])
+    out = weekly_review.cost_of_waiting(week)
+    assert "$1,450" in out and "$17,400" not in out and "year" not in out
+    assert "projection" in out and "last week" in out
+    month = dict(_review(), window=["2026-08-01", "2026-08-31"])
+    out = monthly_review.cost_of_waiting(month)
+    assert "$1,450" in out and "$17,400" in out and "projection" in out and "if it holds" in out
+    # no window at all: never a year
+    assert "$17,400" not in weekly_review.cost_of_waiting(_review())
 
 
 def test_cost_of_waiting_is_silent_when_nothing_worsened():

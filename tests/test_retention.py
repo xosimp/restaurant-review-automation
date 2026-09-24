@@ -148,7 +148,11 @@ def test_ledger_lines_omit_zeros_and_read_as_sentences():
     lines = value_delivered.ledger_lines({"replies_drafted": 2, "schedules_built": 0,
                                           "alerts_sent": 1})
     assert lines == ["2 review replies drafted in your voice",
-                     "1 alert sent before it became a problem"]
+                     "1 alert sent to you"]
+    # NS1 H5: every alert_log row is counted, so the line never claims they
+    # came "before they became problems".
+    assert not [l for l in value_delivered.ledger_lines({"alerts_sent": 3}) if "became a problem" in l
+                or "became problems" in l]
 
 
 # ── the grouped digest ───────────────────────────────────────────────────────

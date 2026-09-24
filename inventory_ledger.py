@@ -34,6 +34,13 @@ _TREND_WINDOW_DAYS = 7
 _POPULARITY_WINDOW_DAYS = 28
 
 
+def _days_per_month():
+    """metrics.DAYS_PER_MONTH, the one month definition (NS3 L5)."""
+    from metrics import DAYS_PER_MONTH
+    return DAYS_PER_MONTH
+
+
+
 def _as_date_str(d) -> str:
     """An event date as YYYY-MM-DD. A string that is not an ISO date raises
     ValueError: the ledger orders and windows events by this text, and
@@ -600,7 +607,7 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
                 "unit": r["unit"] or "", "gap_qty": round(gap, 3),
                 "theoretical_qty": round(theo, 3),
                 "variance_pct": pct, "cost": cost,
-                "monthly_cost": round(cost * (30.0 / days), 2),
+                "monthly_cost": round(cost * (_days_per_month() / days), 2),
                 # The recounts (days) that showed a gap — the portion
                 # driver's Evidence Strength (confidence_engine N_FULL
                 # "recounts"): one recount's gap can be a miscount.

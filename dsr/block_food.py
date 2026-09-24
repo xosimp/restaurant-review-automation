@@ -191,23 +191,51 @@ def _stock(analysis):
             "count_stale": bool(fresh.get("stale"))}
 
 
-def _recoverable(ctx):
+def _drivers_at_stake(ctx):
+    """The cost drivers' monthly dollars, each ingredient once — what is at
+    stake across price rises, waste, menu and supplier gaps. It used to be
+    published as `recoverable_monthly`, the name every other surface gives
+    inventory's waste above tolerance ($782 here against $182 there for the
+    same restaurant, NS3 H3); it is `drivers_at_stake_monthly` now, with its
+    split by money kind, and `recoverable_monthly` is inventory's figure."""
     import food_cost_intelligence as fci
     drv = fci.cost_drivers(ctx.restaurant_id)
     total = drv.get("total_monthly_deduplicated")
     complete = bool(drv.get("complete", True))
     if total is None or (not complete and not drv.get("drivers")):
-        return None, {"note": "Recoverable dollars couldn't be priced tonight.",
+        return None, {"note": "The cost drivers couldn't be priced tonight.",
                       "degraded_sources": drv.get("degraded_sources") or []}
     return float(total), {
         "total_monthly": float(total),
         "basis": drv.get("total_basis") or drv.get("basis"),
         "per": "month",
+        # Opportunities and estimates of money already being spent, never
+        # money saved; by kind, never one blended claim (NS3 H3).
+        "kind": "opportunity",
+        "totals_by_kind": drv.get("totals_by_kind") or {},
         "complete": complete,
         "degraded_sources": drv.get("degraded_sources") or [],
         "note": drv.get("reason"),
-        "top": [{"label": d["label"], "dollars_monthly": d["dollars_monthly"], "confidence": d["confidence"]}
+        "top": [{"label": d["label"], "dollars_monthly": d["dollars_monthly"], "confidence": d["confidence"],
+                 "value_kind": d.get("value_kind")}
                 for d in (drv.get("drivers") or [])[:3]],
+    }
+
+
+def _recoverable(analysis):
+    """inventory's recoverable figure — waste above each category's
+    tolerance, one week projected to a month — the one number "recoverable"
+    means on every surface (NS3 H3, R11)."""
+    v = (analysis or {}).get("recoverable_monthly")
+    if v is None:
+        return None, {"note": "Recoverable waste couldn't be read tonight."}
+    return float(v), {
+        "total_monthly": float(v),
+        "per": "month",
+        "kind": "opportunity",
+        "basis": (analysis or {}).get("recoverable_basis"),
+        "projection_basis": (analysis or {}).get("projection_basis"),
+        "note": "An opportunity projected from one week's waste — not money saved.",
     }
 
 
@@ -277,9 +305,12 @@ def collect(ctx):
     metrics["low_stock"] = stock["low_count"]
     detail["stock"] = stock
 
-    rec = common.guard(ctx, "food", "recoverable", lambda: _recoverable(ctx), gaps, default=(None, None))
+    rec = _recoverable(analysis)
     metrics["recoverable_monthly"] = rec[0]
-    detail["recoverable"] = rec[1] or {"note": "Recoverable dollars couldn't be priced tonight."}
+    detail["recoverable"] = rec[1]
+    drv = common.guard(ctx, "food", "drivers", lambda: _drivers_at_stake(ctx), gaps, default=(None, None))
+    metrics["drivers_at_stake_monthly"] = drv[0]
+    detail["drivers_at_stake"] = drv[1] or {"note": "The cost drivers couldn't be priced tonight."}
 
     var = common.guard(ctx, "food", "variance", lambda: _variance(ctx, ledger), gaps, default=(None, None))
     metrics["variance_cost"] = var[0]["cost"] if var[0] else None

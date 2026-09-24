@@ -2109,7 +2109,10 @@ def _one_thing_block(out, fix_first, src, when, rid=None):
     try:
         if not fix_first or not fix_first.get("what"):
             return None
-        money = (f" — about ${fix_first['dollars_monthly']:,.0f}/month"
+        # The one thing's dollars are what is AT STAKE, with the scope Home
+        # shows beside them (NS3 M5): the email dropped both.
+        money = (f" — about ${fix_first['dollars_monthly']:,.0f}/month at stake"
+                 + (f" ({fix_first['dollars_basis']})" if fix_first.get("dollars_basis") else "")
                  if fix_first.get("dollars_monthly") else "")
         why = str(fix_first.get("why") or "").strip()
         block = (report_eyebrow(f"If you only do one thing {when}")
@@ -2153,7 +2156,9 @@ def _priority_line(p) -> str:
         money = f"{lo}-{hi}/month" if (lo and hi) else (f"{lo or hi}/month" if (lo or hi) else "")
     else:
         money = f"{_usd(p.get('monthly'))}/month" if p.get("monthly") and _usd(p.get("monthly")) else ""
-    return f"{p.get('label') or ''} — {money}" if money else str(p.get("label") or "")
+    # Each priority is an opportunity or a forecast, never money saved:
+    # named as at stake (NS3 M5).
+    return f"{p.get('label') or ''} — {money} at stake" if money else str(p.get("label") or "")
 
 
 def _weekly_review_sections(restaurant_id):
@@ -2211,8 +2216,13 @@ def _weekly_review_sections(restaurant_id):
     priorities = _uncovered_priorities(review.get("priorities"), shown_first)
     try:
         if priorities:
+            # The monthly email's note, now on the weekly too (NS3 M5):
+            # these are different kinds of figure and are never a total.
             out.append(report_eyebrow("Worth your time this week")
-                       + report_paragraph(_list(_priority_line(p) for p in priorities)))
+                       + report_paragraph(_list(_priority_line(p) for p in priorities))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'These come from different measurements and are not '
+                                          f'added together.</span>'))
     except Exception as e:
         print(f"[weekly] priorities block failed: {e}")
     # What two modules saw that neither could see alone. The digest is the

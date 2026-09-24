@@ -151,14 +151,46 @@ def test_pricing_follows_recommended_modules_and_override():
     # The published two-module price, not 2 x Starter, and no "confirm before
     # quoting" caveat now that pricing.html carries the number.
     assert two["plan"]["annual"] == 6490 and two["plan"]["setup"] == 1500
-    assert two["plan"]["monthly_equiv"] == 649 and two["plan"]["verify"] is None
+    # NS3 H7/R15: "/mo equivalent" of an ANNUAL plan is annual / 12, not the
+    # monthly-billing price ($541, not $649; $291 not $349; $999 not $1,199).
+    assert two["plan"]["monthly_equiv"] == round(6490 / 12) and two["plan"]["verify"] is None
+    assert "($541/mo equivalent)" in two["plan"]["note"]
+    assert "($291/mo equivalent)" in engine.PRICING["starter"]["note"]
+    assert "($999/mo equivalent)" in engine.PRICING["full"]["note"]
     assert engine.compute(FULL, pricing_override="full")["plan"]["plan"] == "full"
 
 
 def test_roi_uses_ranges_against_annual_investment():
+    """NS3 C4/R15: the numerator is the cost opportunity in the recommended
+    LIVE modules only — never revenue categories or upcoming modules."""
     r = engine.compute(FULL)
-    assert r["roi"]["low_x"] == round(r["totals"]["annual"]["low"] / 11990, 1)
+    keys = r["roi"]["categories"]
+    assert keys and set(keys) <= set(engine.COST_CATEGORIES)
+    assert all(engine.MODULES[k]["live"] for k in keys)
+    low = sum(r["categories"][k]["low"] for k in keys)
+    assert r["roi"]["low_x"] == round(low / 11990, 1)
+    assert r["roi"]["low_x"] < round(r["totals"]["annual"]["low"] / 11990, 1)
     assert "does not guarantee" in r["disclaimer"]
+
+
+def test_roi_is_withheld_when_no_live_cost_module_is_recommended():
+    """NS3 C4 probe: a waitlist-only audit showed "17.9x - 35.8x" against
+    the Starter plan."""
+    r = engine.compute({"restaurant_name": "W", "fin_avg_check": "60", "wl_walkaways_week": "20",
+                        "wl_party_size": "4"})
+    assert r["roi"] is None
+    # a restaurant in its opening months never gets a multiple either (M13)
+    new = engine.compute({"restaurant_name": "New", "years_in_business": "0.17", "fin_monthly_revenue": "150000",
+                          "lab_labor_pct": "42", "food_cost_pct": "38", "fin_avg_check": "30"})
+    assert new["roi"] is None
+
+
+def test_a_busy_week_of_walkaways_is_not_every_week():
+    """NS3 H7: a busy week's walkaways were multiplied by 52."""
+    r = engine.compute({"fin_avg_check": "60", "wl_walkaways_week": "20", "wl_party_size": "4"})
+    w = r["categories"]["waitlist"]
+    assert "26 busy weeks" in w["calc"]["base"]
+    assert w["high"] <= 20 * 4 * 60 * 26
 
 
 def test_derived_values_carry_provenance():
@@ -364,7 +396,10 @@ def test_totals_split_cost_savings_from_added_revenue():
     t = r["totals"]
     assert t["cost"]["high"] + t["revenue"]["high"] == t["annual"]["high"]
     assert t["revenue"]["high"] == r["categories"]["reviews"]["high"] + r["categories"]["waitlist"]["high"]
-    assert r["roi"]["cost_high_x"] < r["roi"]["high_x"]
+    # The ROI multiple is cost savings in the recommended live modules only
+    # (NS3 C4), so it never counts the revenue categories at all.
+    assert r["roi"]["cost_high_x"] == r["roi"]["high_x"]
+    assert r["roi"]["high_x"] < round(t["annual"]["high"] / r["plan"]["annual"], 1)
     assert t["pct_of_revenue"]["high"] < 10
 
 

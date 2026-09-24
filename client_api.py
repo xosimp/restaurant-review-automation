@@ -3930,6 +3930,7 @@ def billing_info(current_user):
 
         sub = subs.data[0]
         from datetime import datetime
+        import pricing as _pricing_billing
         next_date = datetime.fromtimestamp(sub.current_period_end).strftime("%-m/%-d/%Y")
         amount    = sum(i.price.unit_amount for i in sub["items"].data) / 100
         status    = sub.status  # active, trialing, past_due, canceled
@@ -3961,7 +3962,10 @@ def billing_info(current_user):
             ok=True,
             status=status,
             next_date=next_date,
-            amount=f"${amount:,.0f}/mo",
+            # The suffix from the subscription's own billing interval: an
+            # annual plan read "$11,990/mo" (NS3 H7).
+            amount=_pricing_billing.billing_amount_label(amount, *_pricing_billing.subscription_interval(sub)),
+            interval=_pricing_billing.subscription_interval(sub)[0],
             payment_method=pm_desc,
             portal_url=portal_url,
             trial_end=datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,
@@ -4395,7 +4399,8 @@ def client_upload_data(current_user):
                 if _dr.get("start") and _dr.get("end"):
                     _sls(restaurant_id, _dr["start"], _dr["end"],
                          _shift_analysis["overall_labor_pct"],
-                         _shift_analysis["total_labor_cost"],
+                         # labor on the days with sales, the pair of total_sales (NS3 H4)
+                         _shift_analysis.get("costed_labor", _shift_analysis["total_labor_cost"]),
                          _shift_analysis["total_sales"])
             except Exception as _snap_e:
                 # The trend chart's snapshot; not what YoY generation reads,
@@ -4412,6 +4417,7 @@ def client_upload_data(current_user):
                     "total_hours": round(sum(float((d or {}).get("actual") or 0)
                                              for d in (_shift_analysis.get("by_day") or {}).values()), 1),
                     "total_labor_cost": _shift_analysis.get("total_labor_cost"),
+                    "costed_labor": _shift_analysis.get("costed_labor"),
                     "total_sales": _shift_analysis.get("total_sales"),
                 })
             except Exception:

@@ -331,11 +331,12 @@ def build(audit, results):
             "Marketing (live): social / SMS / email content written in the restaurant's voice and scheduled from the dashboard, a guest text club with QR opt-in, Meta post performance synced nightly, content calendar.",
             "Platform: a daily Home brief across every active module, a weekly AI digest email, iOS app with push alerts, Ask Cavnar (plain-English questions answered from the restaurant's own data, with proposed actions that always need confirmation), competitor intelligence, AI-search visibility check.",
         ]},
-        {"h": "How the dashboard sizes savings once connected (no flat assumptions)", "items": [
-            "Labor: the dollars above the restaurant's own labor target over the synced period, normalized to a week by the calendar days synced and to a month at 52/12 weeks. Never a whole-period gap times a constant.",
-            "Food cost: only the waste above each category's tolerance band counts as recoverable — produce 28%, bakery 25%, beverage and pantry 20%, protein and dairy 15% of the last order. Waste inside the band is normal trim and spoilage and is never counted. Per item, from the POS-synced count, projected at 52/12 weeks a month.",
-            "Reviews: managed responses at what a reputation service charges per response. Marketing: a part-time social manager equivalent, only once content has been produced.",
-            "Total Value Delivered on Home is the sum of those four for active modules with live data. If asked 'per what?': reviews and marketing are lifetime, labor and food are monthly run-rate.",
+        {"h": "How the dashboard sizes money once connected (no flat assumptions, four figures never added together)", "items": [
+            "Measured results: a change the owner made, measured on their own numbers before and after, priced per month at their own sales and costs — an estimate of what the move is worth, never proof the change alone caused it. This is the only figure called a result.",
+            "Work done for you (cost avoidance at a stated rate): replies at what a managed response service charges per reply; posts at a part-time social manager's rate per piece, never more than a month's fee in a month. Only work that actually happened.",
+            "Put in front of you: the dollars the waste and price alerts carried — flagged, not saved.",
+            "Still on the table (opportunity): labor dollars above the restaurant's own target, normalized to a week by the calendar days synced and to a month at 52/12 weeks; food waste above each category's tolerance band (produce 28%, bakery 25%, beverage and pantry 20%, protein and dairy 15% of the last order), projected from one week. Available, not captured — never value delivered.",
+            "The old 'Total Value Delivered' banner summed labor and food gaps with reviews and marketing and is retired: it rose as a restaurant got worse. Never quote a combined figure.",
             "The audit itself works differently: it sizes from what the owner tells you, against benchmarks, in ranges. Once connected, the dashboard sizes from their actual POS data.",
         ]},
         {"h": "What it does NOT do", "items": [
