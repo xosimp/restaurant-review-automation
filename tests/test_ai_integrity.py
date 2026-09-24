@@ -73,7 +73,9 @@ def test_auto_approve_skips_urgent_reviews(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
     rid = create_restaurant(Restaurant(name="Auto Co", owner_email="a@x.test"), db_path=db_path)
     save_reviews([Review(restaurant_id=rid, platform="google", external_id="g1",
-                         author="Dana", rating=5, text="Loved it, but I had a reaction")],
+                         # Not "I had a reaction": that is a health keyword now
+                         # (NS5 H5) and would hide the urgency gate under test.
+                         author="Dana", rating=5, text="Loved it, but our server was rude to my mother")],
                  db_path=db_path)
     conn = real(db_path)
     conn.execute("UPDATE reviews SET response_status='drafted', draft_response='Thanks!', urgency='high'")

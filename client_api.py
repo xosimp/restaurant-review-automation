@@ -375,10 +375,37 @@ def _do_approve_all(restaurant_id, limit=25):
     from models import BULK_PUBLISHABLE_SQL, bulk_publish_window, reply_queue_counts
     conn = get_conn()
     rows = conn.execute(
-        f"SELECT id FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
+        f"SELECT id, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
         "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
         (restaurant_id, bulk_publish_window(), limit)).fetchall()
     conn.close()
+
+    # Nobody reads these one by one, so each gets the checks auto-approve
+    # runs (NS5 M10): injection residue, the never-say list, commitments,
+    # and the public-reply claims. A reply that fails is held for the owner
+    # with the reason on it, and counted — never posted.
+    from ai_guard import check_review_reply
+    r_obj = get_restaurant(restaurant_id)
+    never_say = (getattr(r_obj, "never_say", "") or "") if r_obj else ""
+    owner_said = " ".join(x for x in ((getattr(r_obj, "voice_notes", "") or "") if r_obj else "",
+                                      (getattr(r_obj, "menu_notes", "") or "") if r_obj else "") if x)
+    held_now = 0
+    checked = []
+    for row in rows:
+        refusal = check_review_reply(row["draft_response"], never_say=never_say,
+                                     allowed_source=owner_said + " " + (row["text"] or ""))
+        if refusal:
+            held_now += 1
+            conn = get_conn()
+            try:
+                conn.execute("UPDATE reviews SET draft_needs_review=1, draft_review_reason=? "
+                             "WHERE id=? AND restaurant_id=?", (f"held from bulk publish: {refusal}", row["id"], restaurant_id))
+                conn.commit()
+            finally:
+                conn.close()
+            continue
+        checked.append(row)
+    rows = checked
 
     approved = posted = failed = 0
     google = {}
@@ -409,8 +436,11 @@ def _do_approve_all(restaurant_id, limit=25):
             pass
     # `held`: urgent or flagged drafts a bulk publish never posts — they
     # wait for someone to read them one at a time.
+    # `held_for_review`: replies this run held because their words failed
+    # the public-reply check (NS5 M10) — also inside `held`.
     return {"ok": True, "approved": approved, "posted": posted,
-            "failed": failed, "remaining": int(remaining), "held": int(held)}, 200
+            "failed": failed, "remaining": int(remaining), "held": int(held),
+            "held_for_review": held_now}, 200
 
 
 
@@ -3534,9 +3564,21 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
     # complimentary dinner on us" to a clean draft — or keeping the flagged
     # sentence while fixing a typo — made it eligible to publish unread
     # (audit #14). The flag now follows the edited text.
-    from ai_guard import unsupported_commitments
-    claims = unsupported_commitments(draft)
-    reason = ("states a specific action the restaurant may not have taken: " + ", ".join(claims[:3])) if claims else None
+    # The flag follows the public-reply claims as well (NS5 H5): an owner
+    # typing "next round's on me" into a clean draft makes it one to read.
+    from ai_guard import reply_review_reason
+    _r_said = get_restaurant(restaurant_id)
+    conn = get_conn()
+    try:
+        _rev = conn.execute("SELECT text FROM reviews WHERE id=? AND restaurant_id=?",
+                            (review_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    _said = " ".join(x for x in ((getattr(_r_said, "voice_notes", "") or "") if _r_said else "",
+                                 (getattr(_r_said, "menu_notes", "") or "") if _r_said else "",
+                                 (_rev["text"] if _rev else "") or "") if x)
+    reason = reply_review_reason(draft, _said)
+    claims = bool(reason)
     conn = get_conn()
     try:
         # original_draft keeps the model's text as it stood before the first
@@ -7451,35 +7493,111 @@ def set_staff_contact_api(current_user):
     return _m("mobile_set_staff_contact")(current_user)
 
 
-def publish_blockers(restaurant_id, schedule_id=None):
+def publish_blockers(restaurant_id, schedule_id=None, unattended=False):
     """Why this schedule should not go to staff unread: rows the engine
     flagged (hard rule breaches, names it could not vouch for), and a week
-    the quality engine judged weak or could not judge. Empty means clear."""
+    the quality engine judged weak or could not judge. Empty means clear.
+    The texts of publish_review's blockers — see there."""
+    return [b["text"] for b in publish_review(restaurant_id, schedule_id, unattended=unattended)["blockers"]]
+
+
+def _local_today(restaurant_id):
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        from datetime import date as _d
+        return _d.today()
+
+
+def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
+    """{"blockers": [{"key", "text"}], "soft": [text], "schedule_id"} — the
+    publish gate, computed against the data as it stands NOW.
+
+    It read the review saved when the draft was generated, so time off
+    approved afterwards never reached it: a week with a fresh hard breach
+    went to staff by a manual, delayed or automatic publish alike (NS5 H3).
+    The rule sweep is re-run here on every call, over the saved review's
+    lines (a line from either is a blocker), and the notice rule is checked
+    against today's date (NS5 H2 notice_short).
+
+    `unattended` is automation (auto-publish, its delayed run): the soft
+    flags schedule_rules.HOLD_UNATTENDED names stop it too, and every other
+    soft flag is returned in `soft` for the owner's notice (NS5 M7). Each
+    blocker carries a stable `key` so an acknowledgement given for one set
+    does not carry to a blocker that appeared later."""
     from models import _ensure_history_columns
     conn = get_conn()
     try:
         _ensure_history_columns(conn)
+        cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, hours_scheduled, "
+                "hours_budget, published_at FROM schedule_history ")
         if schedule_id:
-            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json, hours_scheduled, hours_budget "
-                               "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
+            row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
-            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json, hours_scheduled, hours_budget "
-                               "FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            row = conn.execute(cols + "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
     finally:
         conn.close()
     if not row:
-        return []
-    out = []
+        return {"blockers": [], "soft": [], "schedule_id": None}
+    out, soft, seen = [], [], set()
+
+    def add(key, text):
+        if text and text not in seen:
+            seen.add(text)
+            out.append({"key": key, "text": text})
+
     flagged = sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line)
     if flagged:
-        out.append(f"{flagged} shift{'s' if flagged != 1 else ''} marked NEEDS REVIEW")
+        add("needs_review", f"{flagged} shift{'s' if flagged != 1 else ''} marked NEEDS REVIEW")
     try:
         review = json.loads(row["review_json"] or "null") or {}
     except Exception:
         review = {}
     for line in (review.get("lines") or [])[:6]:
         if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
-            out.append(line.lstrip("⚠ ").strip())
+            t = line.lstrip("⚠ ").strip()
+            add("saved:" + t, t)
+    # The sweep against today's data: time off approved, a person
+    # deactivated, a floor or a minor's age band set since the draft.
+    try:
+        import schedule_rules as _sr
+        from schedule_versions import rows_from_csv
+        from datetime import datetime as _dt, timedelta as _td
+        rows = rows_from_csv(row["schedule_csv"] or "")
+        ws = _dt.strptime(str(row["week_start"])[:10], "%Y-%m-%d")
+        we = _dt.strptime(str(row["week_end"] or row["week_start"])[:10], "%Y-%m-%d")
+        dates = [(ws + _td(days=i)).strftime("%Y-%m-%d") for i in range(max(0, min(13, (we - ws).days)) + 1)]
+        days = [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates]
+        c = _sr.build_constraints(restaurant_id, dates, days, restaurant=get_restaurant(restaurant_id))
+        viols = _sr.violations(rows, c)
+        hard = [v for v in viols if v["hard"] and v["kind"] != "over_max_hours"] + \
+               [v for v in viols if v["kind"] == "over_max_hours"][:1]
+        for v in sorted(hard, key=lambda x: (x.get("date") or "", x.get("employee") or "")):
+            where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
+            add(f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}",
+                f"{v['employee']} — {where}: {v['detail']}")
+        for v in viols:
+            if v["hard"]:
+                continue
+            where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
+            text = f"{v['employee']} — {where}: {v['detail']}"
+            if unattended and v["kind"] in _sr.HOLD_UNATTENDED:
+                add(f"soft:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}", text)
+            elif text not in soft:
+                soft.append(text)
+        if not row["published_at"]:
+            short = _sr.notice_shortfall(c.compliance, row["week_start"], today or _local_today(restaurant_id))
+            if short:
+                from time_utils import mdy as _mdy_n
+                given = short["days_given"]
+                add("notice_short",
+                    f"Less notice than your {short['notice_days']}-day schedule notice rule: the week of "
+                    f"{_mdy_n(row['week_start'])} starts in {given} day{'s' if given != 1 else ''}")
+    except Exception as e:
+        import ops as _ops_pb
+        _ops_pb.capture(e, job="publish_blockers_sweep", context=f"restaurant_id={restaurant_id}")
+        add("sweep_failed", "The rule check could not run against today's data")
     # The labor budget is a ceiling. A week the model wrote past it is not
     # trimmed (a silently thinner week is worse) — it is named here, so the
     # owner sends it knowing, or takes hours out first.
@@ -7488,20 +7606,21 @@ def publish_blockers(restaurant_id, schedule_id=None):
     except (TypeError, ValueError, KeyError, IndexError):
         hs = hb = 0.0
     if hb > 0 and hs > hb * 1.02:
-        out.append(f"{hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
+        add("hours_over", f"{hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
     try:
         quality = json.loads(row["quality_json"] or "null") or {}
     except Exception:
         quality = {}
     if quality.get("checked"):
         if quality.get("band") == "weak":
-            out.append(f"Shift Quality {quality.get('score')}/100 — a weak week")
+            add("quality_weak", f"Shift Quality {quality.get('score')}/100 — a weak week")
         if (quality.get("confidence") or {}).get("level") == "low":
-            out.append("The quality engine had too little to judge this week on")
+            add("quality_low", "The quality engine had too little to judge this week on")
         below = quality.get("below_profile") or []
         if below:
-            out.append(f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    return out
+            add("below_profile",
+                f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
+    return {"blockers": out, "soft": soft, "schedule_id": row["id"]}
 
 
 def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
@@ -7540,9 +7659,20 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     if not row or not (row["schedule_csv"] or "").strip():
         return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
 
-    blockers = publish_blockers(rid, row["id"])
-    if blockers and not acknowledge:
-        return {"ok": False, "needs_ack": True, "blockers": blockers, "schedule_id": row["id"],
+    # `acknowledge` is True (a person read the list just now) or the list
+    # of blocker keys a person acknowledged when they queued it (a delayed
+    # publish): a blocker that appeared since is not covered (NS5 H3).
+    unattended = acknowledge is False and bool(actor.get("role") == "automation")
+    review = publish_review(rid, row["id"], unattended=unattended)
+    blockers = [b["text"] for b in review["blockers"]]
+    if isinstance(acknowledge, (list, tuple, set)):
+        acked = {str(k) for k in acknowledge}
+        unacked = [b["text"] for b in review["blockers"] if b["key"] not in acked]
+    else:
+        unacked = [] if acknowledge else blockers
+    if unacked:
+        return {"ok": False, "needs_ack": True, "blockers": blockers, "new_blockers": unacked,
+                "schedule_id": row["id"],
                 "error": "This week has things to look at before it goes to staff."}, 409
 
     schedule_id = row["id"]
@@ -7719,14 +7849,19 @@ def _publish_schedule_request(current_user):
             conn.close()
         if not row:
             return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
-        blockers = publish_blockers(rid, row["id"])
+        review = publish_review(rid, row["id"])
+        blockers = [b["text"] for b in review["blockers"]]
         if blockers and not data.get("acknowledge"):
             return jsonify(ok=False, needs_ack=True, blockers=blockers, schedule_id=row["id"],
                            error="This week has things to look at before it goes to staff."), 409
         import delayed
         from time_utils import mdy as _mdy_pub
+        # What the person acknowledged, by key: when the window ends the
+        # gate runs again, and a blocker that was not on this list holds the
+        # publish (NS5 H3) — an "OK" to one list is not an OK to another.
         act = delayed.schedule(rid, "schedule_publish",
-                               {"schedule_id": row["id"], "acknowledge": bool(data.get("acknowledge"))},
+                               {"schedule_id": row["id"], "manual": True,
+                                "acknowledge": [b["key"] for b in review["blockers"]] if data.get("acknowledge") else []},
                                delay, actor=current_user,
                                label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],

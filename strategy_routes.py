@@ -1180,12 +1180,13 @@ def _do_staff_settings_set(u):
                          daypart_availability=b.get("daypart_availability"), is_minor=b.get("is_minor"),
                          time_windows=b.get("time_windows"), certifications=b.get("certifications"),
                          preferred_dayparts=b.get("preferred_dayparts"), desired_hours=b.get("desired_hours"),
-                         experienced=b.get("experienced"), updated_by=_who(u))
+                         experienced=b.get("experienced"), minor_age_band=b.get("minor_age_band"),
+                         updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
     changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",
                            "time_windows", "certifications", "preferred_dayparts", "desired_hours",
-                           "experienced") if k in b]
+                           "experienced", "minor_age_band") if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
                       detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
     return {"ok": True, "settings": row}, 200

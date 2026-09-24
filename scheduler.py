@@ -2599,9 +2599,16 @@ def run_auto_publish_schedules():
         # Never unread: a week with flagged rows, a hard rule breach, a
         # weak quality verdict or a low-confidence score waits for a human,
         # and the owner is told why instead of being told it went out.
+        # The gate as it stands now, as automation sees it: the notice rule,
+        # hard breaches against today's data, and the soft flags a person
+        # decides (meal breaks, daily overtime, unanswered time off) all
+        # hold it; any other soft flag is named in the notice (NS5 H2/H3/M7).
+        soft = []
         try:
-            from client_api import publish_blockers
-            blockers = publish_blockers(r.id, row["id"])
+            from client_api import publish_review
+            _rv = publish_review(r.id, row["id"], unattended=True)
+            blockers = [b["text"] for b in _rv["blockers"]]
+            soft = _rv.get("soft") or []
         except Exception as e:
             _ops.capture(e, job="auto_publish_schedule_check", context=f"restaurant_id={r.id}")
             blockers = ["The publish check could not run"]
@@ -2619,7 +2626,7 @@ def run_auto_publish_schedules():
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
             continue
         try:
-            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]},
+            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
                                       AUTO_PUBLISH_UNDO_MINUTES,
                                       label=f"Publishing the week of {mdy(row['week_start'])} to staff")
             from strategy_jobs import _reach, _clock
@@ -2631,7 +2638,10 @@ def run_auto_publish_schedules():
             at = _clock(goes.hour, goes.minute)
             _reach(r.id, "schedule_publish_pending",
                    f"Next week's schedule goes to staff at {at}",
-                   f"The week of {mdy(row['week_start'])} is unchanged from the draft. Undo from Home before then if you'd rather look first.",
+                   f"The week of {mdy(row['week_start'])} is unchanged from the draft."
+                   + (f" Worth a look: {'; '.join(soft[:3])}" + (f" and {len(soft) - 3} more" if len(soft) > 3 else "") + "."
+                      if soft else "")
+                   + " Undo from Home before then if you'd rather look first.",
                    {"delayed_action_id": action["id"]}, DB_PATH,
                    subject=f"Publishing next week's schedule at {at} — {r.name}")
             queued += 1
@@ -3284,8 +3294,13 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     if cap and done_today >= cap:
         return 0
     approved = 0
-    from ai_guard import check_public_reply
+    from ai_guard import check_review_reply
     never_say = getattr(restaurant, "never_say", "") or ""
+    # What the restaurant has said about itself: a cause or a sourcing
+    # claim in a reply is allowed only when its words are here or in the
+    # guest's own review (ai_guard.public_reply_claims).
+    owner_said = " ".join(x for x in (getattr(restaurant, "voice_notes", "") or "",
+                                      getattr(restaurant, "menu_notes", "") or "") if x)
     # 4-star joins the rule only when the owner turned it on. Same cap, same
     # urgency and needs-review gates; negative reviews never go here.
     ratings = (4, 5) if getattr(restaurant, "auto_approve_4star", 0) else (5,)
@@ -3308,7 +3323,12 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
         # reading it first. Anything that fails the check stays drafted for
         # the owner to look at — refusing to auto-publish is always safe,
         # publishing something odd is not.
-        refusal = check_public_reply(candidate.get("draft_response"), never_say=never_say)
+        # check_review_reply: the injection residue check_public_reply
+        # always ran, plus the claims a reply may not make unread —
+        # allergen/"safe for" promises, fault, inspections, comps, "won't
+        # happen again", invented causes (NS5 H5, NS1 H6, NS2 H8).
+        refusal = check_review_reply(candidate.get("draft_response"), never_say=never_say,
+                                     allowed_source=owner_said + " " + (candidate.get("text") or ""))
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
             # Marked for the owner's review, which also takes it out of the

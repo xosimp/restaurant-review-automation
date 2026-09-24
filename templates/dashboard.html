@@ -14263,6 +14263,9 @@ function rescoreSchedule(btn) {
         if (cs && cs.length) toast('Updated schedule sent to ' + cs.join(', '), 'success');
         else if (cs && !cs.length) toast('Saved; nobody\u2019s shifts changed', 'success');
         else toast('Schedule saved \u2014 this is what your staff will receive', 'success');
+        /* A change inside the notice window: the pay warning replaces the
+           saved toast, since it is the one the owner must read (NS5 H2). */
+        if (d.late_change_warning) toast(d.late_change_warning, 'warning');
         if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
       }
       if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
@@ -21192,7 +21195,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<td><select class="ac-select" data-rst-f="employment_type" aria-label="Employment type"'+(ro?' disabled':'')+'>'+_lbOpts(types,st.employment_type||types[0],_EMP_LABELS)+'</select></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="min_hours" min="0" max="80" step="1" value="'+(st.min_hours==null?'':esc(st.min_hours))+'" placeholder="—" aria-label="Minimum hours"'+(ro?' disabled':'')+'></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
-        +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)+'</td></tr>';
+        +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)
+        /* Which minor rule table applies (NS5 H4): 14-15 carries the federal
+           school-day limits, 16-17 the restaurant's own minor rule. */
+        +(st.is_minor?'<select class="ac-select" data-rst-f="minor_age_band" aria-label="Age band" title="Age band sets which minor limits are checked"'+(ro?' disabled':'')+'>'+_lbOpts(['','14-15','16-17'],st.minor_age_band||'',{'':'Age?','14-15':'14\u201315','16-17':'16\u201317'})+'</select>':'')
+        +'</td></tr>';
       if(open){
         var av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],j;
         h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
@@ -21238,14 +21245,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var f=t.getAttribute('data-rst-f'),day=t.getAttribute('data-rst-day'),patch={};
     if(f==='active'||f==='is_minor'||f==='experienced')patch[f]=!!t.checked;
     else if(f==='min_hours'||f==='max_hours')patch[f]=t.value===''?null:+t.value;
-    else if(f==='employment_type')patch[f]=t.value;
+    else if(f==='employment_type'||f==='minor_age_band')patch[f]=t.value;
     else if(day){
       var sels=tr.querySelectorAll('[data-rst-day]'),map={},i;
       for(i=0;i<sels.length;i++)map[sels[i].getAttribute('data-rst-day')]=sels[i].value;
       patch.daypart_availability=map;
       t.className='ac-select '+t.value;
     } else return;
-    _rstSave(name,patch,f==='active'?renderRoster:null);
+    _rstSave(name,patch,(f==='active'||f==='is_minor')?renderRoster:null);
   });
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.getAttribute)return;

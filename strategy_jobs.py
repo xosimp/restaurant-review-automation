@@ -1056,18 +1056,84 @@ PULSE_MOVE_MIN_BEHIND_PCT = 15
 PULSE_MOVE_MIN_HOURS = 1.0
 
 
+def _pulse_suppressed(restaurant, day, db_path=DB_PATH):
+    """Why no cut is suggested today, or None: a holiday, or a day the
+    owner has an event or booked covers on — the night is not "running
+    behind" a typical one, and the pulse's own history cannot say what it
+    needs (NS5 H6)."""
+    try:
+        import schedule_economics as _se
+        name = _se._holiday_dates(day.year).get(day.isoformat())
+        if name:
+            return f"today is {name}"
+    except Exception:
+        pass
+    try:
+        import demand_signals as _ds
+        sig = _ds.by_date(restaurant.id, [day.isoformat()], db_path=db_path).get(day.isoformat())
+        if sig and (sig.get("labels") or sig.get("covers")):
+            return "there are reservations or an event on the book today"
+    except Exception:
+        pass
+    return None
+
+
+def _cut_is_legal(restaurant, day, rows, who, cut_label, db_path=DB_PATH):
+    """Whether sending `who` home at the cut leaves the day inside every
+    rule it was inside before: the day is re-checked with the cut applied
+    (schedule_rules.violations), and any violation the cut adds — keyholder
+    cover until close, the last-of-role-after-close rule, a floor, a manager
+    on duty — refuses it. The pulse named the only keyholder and the closer
+    the owner's own rule keeps (NS5 H6 probes A and B)."""
+    import schedule_rules as _sr
+    iso = day.isoformat()
+    weekday = day.strftime("%A")
+    base = [dict(r, date=iso, day=weekday) for r in rows]
+    try:
+        c = _sr.build_constraints(restaurant.id, [iso], [weekday], restaurant=restaurant, db_path=db_path)
+    except Exception:
+        return False
+    # Only rules about who is on the floor: a single-day sweep would read
+    # "days off" and hours-per-week on a one-day week.
+    def _key(v):
+        return (v["kind"], (v.get("employee") or "").strip().lower(), v.get("shift_start"))
+
+    def _sweep(rs):
+        return {_key(v) for v in _sr.violations(rs, c) if v["kind"] not in ("days_off", "under_min_hours")}
+    before = _sweep(base)
+    after_rows = []
+    for r in base:
+        r = dict(r)
+        if (r.get("employee") or "") == who["employee"] and r.get("shift_start") == who["shift_start"]:
+            r["shift_end"] = cut_label
+            s_m = _sr.parse_minutes(r.get("shift_start", "")) or 0
+            r["scheduled_hours"] = f"{max(0.0, (PULSE_CUT_HOUR * 60 - s_m) / 60.0):.1f}"
+        after_rows.append(r)
+    new = _sweep(after_rows) - before
+    # Judged by kind: a day-level rule (keyholder until close, stays after
+    # close) is pinned to the day's last row, which the cut itself moves, so
+    # the same breach already there before reads as a new key. A kind the
+    # day did not break before is the cut's doing.
+    kinds_before = {k[0] for k in before}
+    return all(k[0] in kinds_before for k in new)
+
+
 def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     """ONE specific staffing move for a night running behind, from the
     published week and the restaurant's own labor rates — or None.
 
-    Only when today is at least PULSE_MOVE_MIN_BEHIND_PCT behind, and only
+    Only when today is at least PULSE_MOVE_MIN_BEHIND_PCT behind, not a
+    holiday or a day with reservations or an event on the book, and only
     in a role with more people on at PULSE_CUT_HOUR than its dinner floor
-    (schedule_rules role floors; with no floor set, one person is the
-    floor). The person suggested is that role's latest starter, and the
-    saving is the hours from the cut to their scheduled end, at the role's
-    rate. {"text", "employee", "role", "cut_at", "hours", "dollars", "on",
-    "floor", "key"}. Servers are considered first — the usual first cut on
-    a slow floor — then whichever role has the most spare."""
+    (schedule_rules role floors; with no floor set, one person is the floor).
+    The person suggested is that role's latest starter whose cut leaves
+    the day inside every rule (_cut_is_legal) — never the only keyholder,
+    never the closer a "stays after close" rule keeps. The saving is the
+    hours from the cut to their scheduled end at the role's rate, and says
+    it is before any predictability pay when a notice rule is set.
+    {"text", "employee", "role", "cut_at", "hours", "dollars", "on",
+    "floor", "key", "pay_caveat"}. Servers are considered first — the usual
+    first cut on a slow floor — then whichever role has the most spare."""
     try:
         pct = float(pulse.get("pct") or 0)
     except (TypeError, ValueError):
@@ -1079,6 +1145,8 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     # same-weekday readings the pulse says how the night is running and
     # stops there (CA1 L28).
     if int(pulse.get("samples") or 0) < intraday.MIN_SAMPLES_FOR_CUT:
+        return None
+    if _pulse_suppressed(restaurant, local.date(), db_path):
         return None
     import schedule_rules as _sr
     from models import get_role_rates
@@ -1107,11 +1175,20 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     if not choices:
         return None
     choices.sort(key=lambda c: (c[0], c[1], c[2]))
-    _srv, _spare, role, people, floor = choices[0]
-    who = sorted(people, key=lambda x: (x["_start"], x["_end"]))[-1]
-    hours = round((who["_end"] - cut) / 60.0, 1)
-    if hours < PULSE_MOVE_MIN_HOURS:
+    pick = None
+    for _srv, _spare, role, people, floor in choices:
+        for who in sorted(people, key=lambda x: (x["_start"], x["_end"]), reverse=True):
+            if round((who["_end"] - cut) / 60.0, 1) < PULSE_MOVE_MIN_HOURS:
+                continue
+            if _cut_is_legal(restaurant, local.date(), rows, who, _clock(PULSE_CUT_HOUR), db_path):
+                pick = (role, people, floor, who)
+                break
+        if pick:
+            break
+    if not pick:
         return None
+    role, people, floor, who = pick
+    hours = round((who["_end"] - cut) / 60.0, 1)
     rates = get_role_rates(restaurant.id, db_path=db_path) or {}
     rate = None
     for k, v in rates.items():
@@ -1121,13 +1198,22 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         rate = float(rates.get("_default") or getattr(restaurant, "hourly_rate", None) or 0) or None
     dollars = round(hours * rate) if rate else None
     end_label = who["shift_end"] or "close"
+    # A notice rule in force means a same-day cut may carry predictability
+    # pay the saving does not net out — said, not computed (NS5 H6).
+    try:
+        notice = _sr.compliance(restaurant).get("notice_days")
+    except Exception:
+        notice = None
+    pay_caveat = bool(notice)
+    saving = (f"saves about {hours:g}h" + (f" (~${dollars:,.0f})" if dollars else "")
+              + (" in wages, before any predictability pay a same-day change may owe under your notice rule"
+                 " — check with counsel" if pay_caveat else ""))
     text = (f"{len(people)} {role.lower()}{'' if len(people) == 1 else 's'} on at {_clock(PULSE_CUT_HOUR)} "
             f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
-            f"{_clock(PULSE_CUT_HOUR)} saves about {hours:g}h"
-            + (f" (~${dollars:,.0f})" if dollars else "") + ".")
+            f"{_clock(PULSE_CUT_HOUR)} {saving}.")
     import staff_settings as _ss
     return {"text": text, "employee": who["employee"], "role": role, "cut_at": _clock(PULSE_CUT_HOUR),
-            "hours": hours, "dollars": dollars, "on": len(people), "floor": floor,
+            "hours": hours, "dollars": dollars, "on": len(people), "floor": floor, "pay_caveat": pay_caveat,
             "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}
 
 
@@ -1168,7 +1254,9 @@ def run_coverage_check(db_path=DB_PATH):
                     import labor_replacements
                     fits = labor_replacements.for_gap(r.id, m.get("role"), local.strftime("%A"),
                                                       exclude=on_today | {m["employee"]}, db_path=db_path,
-                                                      on_date=local.date().isoformat()) or []
+                                                      on_date=local.date().isoformat(),
+                                                      shift={"employee": m["employee"],
+                                                             "shift_start": m.get("shift_start")}) or []
                     fits_text = labor_replacements.sentence(fits)
                 except Exception as fe:
                     ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")

@@ -266,9 +266,41 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
         if r and r["edited_at"] and str(r["edited_at"]) >= str(queued_at):
             return {"ok": False, "error": "The week was changed after it was queued, so it was not sent. "
                                           "Publish it from the Labor tab when it's ready."}
+    # The gate runs again now, against today's data (NS5 H3). A person's
+    # queued publish carries the blocker keys they acknowledged, and only
+    # those; an older row carrying acknowledge=True is read the same way it
+    # was queued. Auto-publish acknowledged nothing, and the soft flags a
+    # person decides (HOLD_UNATTENDED) hold it too.
+    ack = payload.get("acknowledge")
+    if isinstance(ack, list):
+        acknowledge = ack
+    elif "acknowledge" in payload or payload.get("manual"):
+        acknowledge = True if ack else []      # a person's publish, queued before keys were stored
+    else:
+        acknowledge = False                    # auto-publish: nothing acknowledged, unattended
     out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
-                                     acknowledge=bool(payload.get("acknowledge")))
+                                     acknowledge=acknowledge)
+    if out.get("needs_ack"):
+        _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path)
+        out = dict(out, ok=False, error="The week was not sent: " + "; ".join((out.get("new_blockers")
+                                                                             or out.get("blockers") or [])[:3]) + ".")
     return out
+
+
+def _tell_owner_schedule_held(restaurant_id, payload, blockers, db_path):
+    """A queued publish the gate held at send time. The owner was told
+    "goes to staff at 11am"; without this the week simply never arrived."""
+    title = "Next week's schedule was not sent"
+    body = ("It was held when its send time came: " + "; ".join(blockers[:3])
+            + ". Review it on the Labor tab and send it yourself.")
+    try:
+        import strategy_jobs
+        strategy_jobs._reach(restaurant_id, "schedule_publish_held", title, body,
+                             {"schedule_id": payload.get("schedule_id")}, db_path,
+                             subject="Next week's schedule was not sent")
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_publish_held", context=f"restaurant_id={restaurant_id}")
 
 
 def _run_order_send(restaurant_id, payload, db_path):

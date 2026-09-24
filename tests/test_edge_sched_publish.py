@@ -447,9 +447,11 @@ def _queued(db, rid):
 
 def test_auto_publish_queues_next_weeks_clean_draft(db, friday):
     rid = _auto_restaurant(db)
-    hid = _save(db, rid, W1, _week_csv(W1))
+    # Five days, not seven: a seven-day run for everyone is a hard breach
+    # the send-time sweep now holds (NS5 H3).
+    hid = _save(db, rid, W1, _week_csv(W1[:5]))
     scheduler.run_auto_publish_schedules()
-    assert _queued(db, rid) == [{"schedule_id": hid}] and "schedule_publish_pending" in friday
+    assert _queued(db, rid) == [{"schedule_id": hid, "automatic": True}] and "schedule_publish_pending" in friday
 
 
 def test_auto_publish_queues_nothing_for_a_week_already_published(db, friday):
@@ -463,16 +465,16 @@ def test_auto_publish_queues_nothing_for_a_week_already_published(db, friday):
 
 def test_auto_publish_picks_next_weeks_draft_not_a_later_one(db, friday):
     rid = _auto_restaurant(db)
-    nxt = _save(db, rid, W1, _week_csv(W1))
-    _save(db, rid, W2, _week_csv(W2))                            # generated afterwards, a week further out
+    nxt = _save(db, rid, W1, _week_csv(W1[:5]))
+    _save(db, rid, W2, _week_csv(W2[:5]))                        # generated afterwards, a week further out
     scheduler.run_auto_publish_schedules()
-    assert _queued(db, rid) == [{"schedule_id": nxt}]
+    assert _queued(db, rid) == [{"schedule_id": nxt, "automatic": True}]
 
 
 def test_the_delayed_publish_is_voided_when_the_week_was_edited_in_the_window(db, friday, monkeypatch):
     rid = _auto_restaurant(db)
     _contacts(db, rid, "Ana", "Bob")
-    hid = _save(db, rid, W1, _week_csv(W1))
+    hid = _save(db, rid, W1, _week_csv(W1[:5]))
     scheduler.run_auto_publish_schedules()
     assert _queued(db, rid)
     models.update_schedule_history_rows(rid, _week_csv(W1, people=(("Ana", "9:00am", "1:00pm", 4),)),
@@ -494,7 +496,7 @@ def test_an_edit_to_a_week_staff_already_have_tells_them(db, save_app, monkeypat
     sv.append(rid, hid, "published", _week_csv(W1), saved_by="Owner")
     told = []
     monkeypatch.setattr(mobile_api, "_notify_changed_rows",
-                        lambda r, h, csv_text, actor: told.append((r, h)) or ["Ana"])
+                        lambda r, h, csv_text, actor, **k: told.append((r, h)) or ["Ana"])
     rows = _rows(_week_csv(W1))
     rows[0]["shift_start"] = "12:00pm"
     resp = _post_save(save_app, _bearer(db, rid), rows, history_id=hid, version=1)

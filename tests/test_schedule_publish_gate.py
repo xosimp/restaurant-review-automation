@@ -130,11 +130,12 @@ def test_auto_publish_holds_a_week_with_blockers():
     cover that restaurant's branch."""
     import scheduler
     src = open(scheduler.__file__).read()
-    assert "publish_blockers" in src and "schedule_publish_held" in src
+    assert "publish_review" in src and "schedule_publish_held" in src
     # The gate is read at the source level too: the job must consult
-    # publish_blockers before it ever reaches _publish_schedule.
+    # publish_review (publish_blockers' source, recomputed at send time —
+    # NS5 H3) before it ever reaches _publish_schedule.
     fn = src[src.index("def run_auto_publish_schedules"):]
-    assert fn.index("publish_blockers") < fn.index("delayed.schedule(")
+    assert fn.index("publish_review(r.id, row[\"id\"], unattended=True)") < fn.index("delayed.schedule(")
     assert fn.index("schedule_publish_held") < fn.index("delayed.schedule(")
 
 

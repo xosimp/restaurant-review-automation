@@ -113,6 +113,143 @@ def check_public_reply(draft: str, never_say: str = "") -> str | None:
     return None
 
 
+# ── claims a public review reply must never make unread (NS5 H5) ───────────
+#
+# check_public_reply catches the residue of an injection; it let through all
+# ten of the audit's liability drafts: "our kitchen made you ill — entirely
+# our fault", "the whole kitchen is nut-free and safe for celiacs", "we
+# passed our latest health inspection", "next round's on me", "20 percent
+# off", "fully compliant with the ADA" — and "we were short-staffed, which
+# caused the delay" (NS2 H8), "this has been fixed", "we'll make it right",
+# "we guarantee" (NS1 H6). Each is a statement the restaurant never made,
+# posted under its name. These are checked on every reply that can publish
+# without a person reading it (auto-approve, bulk approve) and flagged on
+# every draft so the owner sees why.
+_REPLY_CLAIMS = (
+    ("an allergen or food-safety promise", re.compile(
+        r"\b(?:nut|peanut|tree[- ]nut|gluten|dairy|lactose|allergen|allergy|shellfish|soy|egg|sesame|wheat)[- ]free\b"
+        r"|\ballerg(?:en|y)[- ](?:safe|friendly)\b"
+        r"|\bsafe\s+for\s+(?:celiacs?|coeliacs?|people|anyone|those|allerg\w*|guests?|diners?|nut|peanut|gluten|"
+        r"your\s+(?:son|daughter|child|kids?|family)|kids?|children|everyone)\b"
+        r"|\b(?:no|zero)\s+(?:risk\s+of\s+)?cross[- ]contact\b|\b(?:no|zero)\s+(?:risk\s+of\s+)?cross[- ]contaminat\w*"
+        r"|\b(?:completely|totally|100\s?%|perfectly)\s+safe\b", re.I)),
+    ("an admission of fault or liability", re.compile(
+        r"\b(?:entirely|completely|totally|all|wholly)\s+our\s+fault\b|\bour\s+fault\b|\bmy\s+fault\b"
+        r"|\b(?:we|i)\s+(?:take|accept|bear)\s+(?:full\s+|complete\s+|total\s+)?(?:responsibility|liability|the\s+blame)\b"
+        r"|\bfull\s+responsibility\b|\b(?:we\s+are|we['’]re|we\s+were)\s+(?:liable|to\s+blame)\b"
+        r"|\b(?:made|making|got)\s+you\s+(?:ill|sick)\b|\bmade\s+(?:your|you\w*)\s+\w+\s+(?:ill|sick)\b", re.I)),
+    ("an inspection or compliance claim", re.compile(
+        r"\b(?:passed|aced|cleared)\s+(?:our|the|a|an|every|its)\s+(?:\w+\s+){0,3}(?:inspection|audit)s?\b"
+        r"|\b(?:health|food[- ]safety|fire)\s+(?:inspection|code|score|grade|rating)s?\b"
+        r"|\b(?:fully\s+)?compliant\s+with\b|\bin\s+(?:full\s+)?compliance\s+with\b|\bthe\s+ADA\b|\bADA[- ]compliant\b"
+        r"|\bperfect\s+(?:inspection|health)\s+score\b|\bcertified\s+(?:safe|clean|allergen)\b", re.I)),
+    ("a comp or discount nobody offered", re.compile(
+        r"(?:['’]s|\bis|\bare|\bbe|\bwill\s+be)\s+on\s+me\b"
+        r"|\b(?:\d{1,3}|\w+)\s*(?:%|percent|per\s+cent)\s+off\b"
+        r"|\bbuy\s+you\s+(?:a|an|your|the|another)\s+\w+"
+        r"|\b(?:your|the)\s+next\s+(?:\w+\s+){0,4}(?:is|are|will\s+be)\s+(?:free|complimentary|on\s+(?:us|me|the\s+house))\b"
+        r"|\bfree\s+(?:glass|bottle|drinks?|round|meal|dinner|lunch|brunch|dessert|appetizers?|entr[eé]es?|coffee|"
+        r"visit|side|pizza|pint|beer|cocktail)\b"
+        r"|\bdiscount(?:ed)?\b|\bhalf[- ]?(?:price|off)\b|\bno\s+charge\b", re.I)),
+    ("a promise the problem is fixed or will not recur", re.compile(
+        r"\b(?:has|have|had)\s+(?:now\s+)?been\s+(?:fixed|addressed|resolved|corrected|sorted|handled|taken\s+care\s+of)\b"
+        r"|\b(?:is|was|are|were)\s+(?:now\s+)?(?:fixed|resolved)\b"
+        r"|\bmade\s+sure\b|\bmaking\s+sure\b"
+        r"|\b(?:won['’]t|will\s+not|will\s+never|never)\s+happen\s+again\b"
+        r"|\bmake\s+(?:it|this|that|things)\s+(?:right|up\s+to\s+you)\b"
+        r"|\bguarantee[sd]?\b", re.I)),
+    ("a guest's private visit details", re.compile(
+        r"\b(?:at\s+)?table\s+\d{1,3}\b"
+        r"|\byour\s+(?:usual|standing|regular)\s+(?:\w+\s+){0,2}(?:reservation|table|booking|order|seat)\b"
+        r"|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)\s+(?:\w+\s+){0,2}(?:reservation|booking)\b", re.I)),
+)
+
+# A cause for what went wrong ("short-staffed, which caused the delay"),
+# or a claim about how often it happens ("never happens on a normal night"),
+# is invented unless the guest said it or the owner wrote it down (NS2 H8).
+_REPLY_CAUSE = re.compile(
+    r"\b(?:which|that|this)\s+(?:is\s+what\s+)?(?:caused|causes|led\s+to|is\s+why|was\s+why|explains?)\b"
+    r"|\bthat['’]s\s+why\b|\bbecause\s+(?:we|our|the|a|he|she|they|it)\b|\bdue\s+to\b|\bas\s+a\s+result\b"
+    r"|\b(?:short[- ]?staffed|understaffed|under[- ]staffed|new\s+that\s+night|was\s+new|were\s+new|still\s+training"
+    r"|in\s+training|a\s+one[- ]time|one[- ]off|isolated\s+incident|not\s+the\s+norm|on\s+a\s+normal\s+night"
+    r"|never\s+happens|always\s+(?:is|are|do|does|get|gets))\b", re.I)
+
+# How the restaurant sources or makes its food — true only if the owner
+# said it (voice or menu notes); a model inventing "fresh daily from local,
+# organic ingredients" is an advertising claim on a public listing (NS1 H6).
+_REPLY_SOURCING = re.compile(
+    r"\b(?:made|baked|prepared|cooked|cut|ground|rolled|smoked)\s+(?:fresh\s+)?(?:daily|in[- ]house|from\s+scratch|"
+    r"every\s+(?:day|morning))\b|\bfresh\s+daily\b|\blocally[- ]sourced\b|\blocal(?:ly)?,?\s+organic\b|\borganic\b"
+    r"|\bfarm[- ]to[- ]table\b|\bfrom\s+local\s+(?:farms?|farmers|suppliers|growers)\b|\bhand[- ]?made\b|\bhomemade\b",
+    re.I)
+
+
+def public_reply_claims(draft: str, allowed_source: str = "") -> list:
+    """["<what> ('<phrase>')", ...] — the claims in a public reply that it
+    may not make on the restaurant's behalf unread (NS5 H5). Empty when
+    there are none.
+
+    `allowed_source` is what the restaurant and the guest actually said —
+    the review text, the owner's voice and menu notes. A stated cause or a
+    sourcing claim whose words appear there is theirs and is allowed; an
+    allergen promise, a fault admission, an inspection claim, a comp or a
+    "won't happen again" never is, whoever wrote the words first."""
+    text = draft or ""
+    out = []
+    for what, rx in _REPLY_CLAIMS:
+        m = rx.search(text)
+        if m:
+            out.append(f"{what} ({m.group(0).strip()!r})")
+    src = " ".join((allowed_source or "").lower().split())
+    src_stems = _content_stems(allowed_source or "")
+    for m in _REPLY_SOURCING.finditer(text):
+        if " ".join(m.group(0).lower().split()) not in src:
+            out.append(f"a claim about how the food is made or sourced ({m.group(0).strip()!r})")
+            break
+    for s in sentences(text):
+        m = _REPLY_CAUSE.search(s)
+        if not m:
+            continue
+        # Theirs when the sentence's own content words are mostly in what
+        # the guest or the owner wrote; an explanation the model supplied
+        # shares almost none of them.
+        stems = _content_stems(s)
+        if stems and len(stems & src_stems) >= max(2, -(-len(stems) // 2)):
+            continue
+        out.append(f"an explanation nobody gave ({m.group(0).strip()!r})")
+        break
+    return out
+
+
+def check_review_reply(draft: str, never_say: str = "", allowed_source: str = "") -> str | None:
+    """Why this review reply must not publish unread, or None: everything
+    check_public_reply refuses, a commitment the restaurant never made
+    (unsupported_commitments), and the public-reply claims (NS5 H5). The
+    one check auto-approve and bulk approve run on each reply."""
+    refusal = check_public_reply(draft, never_say=never_say)
+    if refusal:
+        return refusal
+    claims = public_reply_claims(draft, allowed_source)
+    if claims:
+        return "the draft makes " + "; ".join(claims[:2])
+    commitments = unsupported_commitments(draft)
+    if commitments:
+        return "the draft states an action the restaurant may not have taken: " + ", ".join(commitments[:3])
+    return None
+
+
+def reply_review_reason(draft: str, allowed_source: str = "") -> str | None:
+    """The needs-review reason stored on a draft (drafter, a saved edit):
+    the commitment wording it always had, or the public-reply claims."""
+    claims = unsupported_commitments(draft)
+    if claims:
+        return "states a specific action the restaurant may not have taken: " + ", ".join(claims[:3])
+    found = public_reply_claims(draft, allowed_source)
+    if found:
+        return "makes a claim a public reply must not: " + "; ".join(found[:2])
+    return None
+
+
 # ── error text that is safe to hand a client ───────────────────────────────
 #
 # A requests exception's message includes the URL it failed on, and every

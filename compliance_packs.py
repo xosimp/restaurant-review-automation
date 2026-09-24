@@ -26,7 +26,7 @@ PACKS = {
         "rules": {"meal_break_after_hours": 6, "min_rest_hours": 10},
         "notes": ["A meal period is due on a shift over six hours that spans the midday meal.",
                   "Spread-of-hours pay may apply to a day spanning more than ten hours — not computed here.",
-                  "New York City fast-food employers: predictive scheduling with 14 days' notice (set notice days if that is you)."],
+                  "New York City fast-food employers: predictive scheduling with 14 days' notice (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice)."],
     },
     "OR": {
         "label": "Oregon",
@@ -37,13 +37,15 @@ PACKS = {
     "WA": {
         "label": "Washington",
         "rules": {"meal_break_after_hours": 5, "min_rest_hours": 10},
-        "notes": ["Seattle secure scheduling: 14 days' notice and a 10-hour rest for covered employers (set notice days if that is you).",
+        "notes": ["Seattle secure scheduling: 14 days' notice and a 10-hour rest for covered employers (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice).",
                   "A meal period is due on a shift over five hours."],
     },
     "IL": {
         "label": "Illinois",
         "rules": {"meal_break_after_hours": 7.5, "min_rest_hours": 10},
-        "notes": ["Chicago Fair Workweek: 14 days' notice for covered employers (set notice days if that is you).",
+        "notes": ["Chicago Fair Workweek: 14 days' notice for covered employers (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice).",
+                  "The 10-hour rest between shifts is the Chicago ordinance's starting value, not an Illinois state rule.",
+                  "Predictability pay for late changes is not modelled — Cavnar warns when a published week changes inside the notice window.",
                   "One day of rest in seven applies to most employees."],
     },
     "MA": {
@@ -75,5 +77,8 @@ def apply(compliance: dict, jurisdiction: str, owner_set: dict = None) -> dict:
         if v is not None:
             merged[k] = v
             applied[k] = v
-    merged["_pack"] = {"code": code, "label": pack["label"], "applied": applied, "notes": list(pack["notes"])}
+    # "starting values", never "rules that apply": a pack is a place to
+    # start, checked with counsel for the restaurant's own situation (NS5 L13).
+    merged["_pack"] = {"code": code, "label": pack["label"], "applied": applied, "notes": list(pack["notes"]),
+                       "wording": f"Starting values from the {pack['label']} pack — check with counsel."}
     return merged

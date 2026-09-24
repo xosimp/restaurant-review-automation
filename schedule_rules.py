@@ -31,7 +31,11 @@ DEFAULTS = {
     "part_time_days_off": 3,
     "weekly_hours_ceiling": 40.0,
     "max_consecutive_days": 6,       # a longer run is a hard breach (the tail of the published week counts)
-    "notice_days": None,             # predictive-scheduling notice; informational
+    "notice_days": None,             # predictive-scheduling notice: a week published with less is held (notice_shortfall)
+    # A keyholder (can close, or holds a manager/keyholder certification) is
+    # on until close every trading day — enforced whenever anyone on the
+    # roster is a keyholder (NS5 M8). The owner can switch it off.
+    "keyholder_until_close": True,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "daily_ot_hours": (4, 24),
            "meal_break_after_hours": (2, 12), "minor_max_daily_hours": (1, 12),
@@ -45,9 +49,15 @@ NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", 
                      "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere"})
 NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert"})
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
-                            "no_manager_on_duty"})
+                            "minor_early", "minor_week_hours",
+                            "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
-                  "before_arrival", "ends_before_role_close", "manager_rule_unusable"})
+                  "before_arrival", "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown"})
+# Soft flags that still stop an UNATTENDED publish (auto-publish and the
+# delayed run of one): a meal break owed, daily overtime and a time-off
+# request nobody answered are things a person decides, not a week to send
+# unread (NS5 M7). A person publishing may still send them.
+HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off"})
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -67,7 +77,164 @@ LABELS = {
     "before_arrival": "starts before that role's arrival time",
     "ends_before_role_close": "ends before that role is meant to stay until",
     "manager_rule_unusable": "manager on duty is on, but nobody is a closer or keyholder",
+    "minor_early": "a minor starting before the earliest allowed start",
+    "minor_week_hours": "a minor over the weekly hours limit",
+    "minor_age_unknown": "a minor with no age band set — only the generic minor rule is checked",
+    "coverage_floor": "fewer people on than the staffing floor for that role",
+    "keyholder_until_close": "no keyholder on until close",
+    "nobody_at_close": "nobody scheduled until close",
+    "notice_short": "less notice than the schedule notice rule",
 }
+
+
+# ── minors: age bands ──────────────────────────────────────────────────────
+#
+# One "is a minor" switch with a 10pm / 8h default let a 15-year-old work
+# 35 hours in a school week, 4-10pm on school nights and a 6am open with no
+# hard flag (NS5 H4). The limits depend on age, so a minor carries an age
+# band, and each band has a hard rule table: the US federal floor first
+# (FLSA child-labor rules, 29 CFR 570.35 for 14-15 year olds), then any
+# stricter values a jurisdiction adds. These are starting values the code
+# checks, not legal advice — the screens and the prompt say so.
+MINOR_BANDS = ("14-15", "16-17")
+
+# The federal floor. 16-17 year olds have no federal hours or time-of-day
+# limits in non-hazardous work, so that band is held to the owner's own
+# minor rule (minor_latest_end / minor_max_daily_hours) and nothing more.
+FEDERAL_MINOR_RULES = {
+    "14-15": {
+        "earliest_start": "7:00am",
+        "latest_end_school": "7:00pm",        # during the school year
+        "latest_end_summer": "9:00pm",        # June 1 through Labor Day
+        "max_daily_school_day": 3.0,
+        "max_daily_other_day": 8.0,
+        "max_weekly_school_week": 18.0,
+        "max_weekly_other_week": 40.0,
+        "source": "federal child-labor rules for 14-15 year olds",
+    },
+    "16-17": {"source": "no federal hours limit for 16-17 year olds; your own minor rule applies"},
+}
+
+# The jurisdiction hook: {code: {band: {rule: value}}}, merged over the
+# federal floor keeping whichever is STRICTER. Deliberately empty: a state
+# or city value goes here only once it has been checked against the source,
+# never from memory (the product must not state a rule it cannot stand
+# behind).
+JURISDICTION_MINOR_RULES = {}
+
+
+def minor_rules(band, jurisdiction=None) -> dict:
+    """The hard limits for one age band: the federal floor, tightened by the
+    jurisdiction's entry where it has one. {} for an unknown band."""
+    base = dict(FEDERAL_MINOR_RULES.get(band) or {})
+    if not base:
+        return {}
+    extra = (JURISDICTION_MINOR_RULES.get((jurisdiction or "").strip().upper()) or {}).get(band) or {}
+    for k, v in extra.items():
+        if k == "source" or v is None:
+            continue
+        cur = base.get(k)
+        if cur is None:
+            base[k] = v
+        elif k == "earliest_start":
+            if (parse_minutes(v) or 0) > (parse_minutes(cur) or 0):
+                base[k] = v
+        elif k.startswith("latest_end"):
+            if (parse_minutes(v) or 24 * 60) < (parse_minutes(cur) or 24 * 60):
+                base[k] = v
+        else:
+            try:
+                base[k] = min(float(cur), float(v))
+            except (TypeError, ValueError):
+                pass
+    if extra:
+        base["source"] = base.get("source", "") + f" and the {jurisdiction.strip().upper()} entry"
+    return base
+
+
+def _labor_day(year: int):
+    from datetime import date as _date
+    first = _date(year, 9, 1)
+    return first + timedelta(days=(0 - first.weekday()) % 7)
+
+
+def is_summer(date_str: str) -> bool:
+    """June 1 through Labor Day — the federal rule's out-of-school season."""
+    try:
+        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    return (d.month, d.day) >= (6, 1) and d <= _labor_day(d.year)
+
+
+def is_school_day(date_str: str) -> bool:
+    """Monday to Friday outside the summer season. The product has no
+    school calendar, so a weekday in term time is assumed to be a school day
+    — the conservative reading: a holiday week is held to the school-week
+    limits rather than a school week to the holiday ones."""
+    try:
+        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    return d.weekday() < 5 and not is_summer(date_str)
+
+
+def is_school_week(date_str: str) -> bool:
+    """Whether the Monday-to-Sunday week holding this date has a school day."""
+    try:
+        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    mon = d - timedelta(days=d.weekday())
+    return any(is_school_day((mon + timedelta(days=i)).isoformat()) for i in range(5))
+
+
+# ── notice: predictive scheduling ──────────────────────────────────────────
+
+def _as_date(value):
+    from datetime import date as _date
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, _date):
+        return value
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+
+def notice_shortfall(comp: dict, week_start, today):
+    """{"notice_days", "days_given"} when a week published `today` would
+    reach staff with less notice than the owner's notice rule, else None.
+    The rule was a settings field nothing read (NS5 H2): a 14-day Fair
+    Workweek notice set in Cavnar let Friday's auto-publish give three."""
+    try:
+        need = float((comp or {}).get("notice_days") or 0)
+        given = (_as_date(week_start) - _as_date(today)).days
+    except (TypeError, ValueError):
+        return None
+    if not need or given >= need:
+        return None
+    return {"notice_days": int(need), "days_given": given}
+
+
+PREDICTABILITY_PAY_WARNING = (
+    "{n} changed inside your {days}-day notice window. Where a predictive-scheduling law covers you, "
+    "the restaurant may owe the affected staff premium pay for changes like these — check with counsel.")
+
+
+def late_change_warning(comp: dict, changed_dates, today):
+    """The warning an edit to a PUBLISHED week carries when it moves shifts
+    inside the notice window (NS5 H2). Worded as a possibility to check,
+    never as a sum owed: the product does not model predictability pay."""
+    try:
+        need = float((comp or {}).get("notice_days") or 0)
+        t = _as_date(today)
+        inside = sorted({str(d)[:10] for d in (changed_dates or [])
+                         if d and (_as_date(d) - t).days < need})
+    except (TypeError, ValueError):
+        return None
+    if not need or not inside:
+        return None
+    n = f"{len(inside)} day{'s' if len(inside) != 1 else ''} of shifts"
+    return PREDICTABILITY_PAY_WARNING.format(n=n[0].upper() + n[1:], days=int(need))
 
 
 # ── settings ───────────────────────────────────────────────────────────────
@@ -106,6 +273,8 @@ def compliance(restaurant) -> dict:
         if out.get(k) is not None:
             out[k] = int(out[k])
     out["manager_on_duty"] = bool(data.get("manager_on_duty"))
+    if "keyholder_until_close" in data:
+        out["keyholder_until_close"] = bool(data["keyholder_until_close"])
     return _with_pack(out, restaurant, data)
 
 
@@ -200,6 +369,10 @@ def save_compliance(restaurant_id, data: dict, db_path=DB_PATH) -> dict:
         clean["minor_latest_end"] = data["minor_latest_end"].strip()[:10] or DEFAULTS["minor_latest_end"]
     if "manager_on_duty" in (data or {}):
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
+    if "keyholder_until_close" in (data or {}):
+        clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    elif "keyholder_until_close" in _prev:
+        clean["keyholder_until_close"] = bool(_prev["keyholder_until_close"])
     update_restaurant(restaurant_id, {"compliance_json": json.dumps(clean) if clean else None}, db_path=db_path)
     from models import get_restaurant
     return compliance(get_restaurant(restaurant_id, db_path))
@@ -368,6 +541,8 @@ class Constraints:
     hours_limits: dict = field(default_factory=dict)       # {lower: (min, max)}
     employment: dict = field(default_factory=dict)         # {lower: 'full'|'part'}
     minors: set = field(default_factory=set)
+    minor_bands: dict = field(default_factory=dict)        # {lower: "14-15"|"16-17"} (MINOR_BANDS)
+    jurisdiction: str = ""                                 # the restaurant's pack code, for JURISDICTION_MINOR_RULES
     base_hours: dict = field(default_factory=dict)         # {lower: {bucket: hours already published}}
     base_rows: dict = field(default_factory=dict)          # {lower: [published rows outside this week]}
     notes: dict = field(default_factory=dict)              # {lower: free-text note}
@@ -516,6 +691,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c.compliance = compliance(restaurant)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
+    c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
     c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
@@ -546,8 +722,10 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 c.employment[key] = st["employment_type"]
             if st.get("daypart_availability"):
                 c.daypart_avail[key] = dict(st["daypart_availability"])
-            if st.get("is_minor"):
+            if st.get("is_minor") or st.get("minor_age_band"):
                 c.minors.add(key)
+                if st.get("minor_age_band") in MINOR_BANDS:
+                    c.minor_bands[key] = st["minor_age_band"]
             if st.get("time_windows"):
                 win = {}
                 for day, w in st["time_windows"].items():
@@ -737,11 +915,21 @@ def violations(rows: list, c: Constraints) -> list:
         if mx and hrs > float(mx) + 0.01:
             out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h"))
         if key in c.minors:
-            latest = parse_minutes(c.compliance.get("minor_latest_end") or "")
+            band_rules = minor_rules(c.minor_bands.get(key), c.jurisdiction)
+            latest_label = c.compliance.get("minor_latest_end")
+            latest = parse_minutes(latest_label or "")
+            band_latest = band_rules.get("latest_end_summer" if is_summer(r.get("date", "")) else "latest_end_school")
+            if band_latest and (latest is None or parse_minutes(band_latest) < latest):
+                latest, latest_label = parse_minutes(band_latest), band_latest
             end_m = parse_minutes(r.get("shift_end", ""))
             start_m = parse_minutes(r.get("shift_start", ""))
+            band = c.minor_bands.get(key)
+            who = f"minors {band}" if band else "minors"
             if latest is not None and end_m is not None and start_m is not None and (end_m > latest or end_m < start_m):
-                out.append(_v("minor_late", i, r, f"ends {r.get('shift_end')}, minors stop at {c.compliance.get('minor_latest_end')}"))
+                out.append(_v("minor_late", i, r, f"ends {r.get('shift_end')}, {who} stop at {latest_label}"))
+            earliest = band_rules.get("earliest_start")
+            if earliest and start_m is not None and start_m < parse_minutes(earliest):
+                out.append(_v("minor_early", i, r, f"starts {r.get('shift_start')}, {who} start no earlier than {earliest}"))
             mm = c.compliance.get("minor_max_daily_hours")
             if mm and hrs > float(mm) + 0.01:
                 out.append(_v("minor_hours", i, r, f"{hrs:g}h, minors stop at {float(mm):g}h a day"))
@@ -783,18 +971,23 @@ def violations(rows: list, c: Constraints) -> list:
                 day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
             except (ValueError, TypeError):
                 continue
-            close_m = parse_minutes((c.close_times or {}).get(day, ""))
+            close_m = close_minutes(c, day)
             if close_m is None:
                 continue
             need = close_m + int(c.close_mins[role])
-            ends = [(parse_minutes(r.get("shift_end", "")), i, r) for i, r in items]
+            ends = [(end_minutes(r), i, r) for i, r in items]
             ends = [(e, i, r) for e, i, r in ends if e is not None]
             if not ends:
                 continue
             e_last, i_last, r_last = max(ends, key=lambda t: t[0])
             if e_last < need - 15:
                 out.append(_v("ends_before_role_close", i_last, r_last,
-                              f"last {r_last.get('role')} ends {r_last.get('shift_end')}, the rule is until {_fmt_minutes(need)}"))
+                              f"last {r_last.get('role')} ends {r_last.get('shift_end')}, the rule is until {_fmt_minutes(need % (24 * 60))}"))
+
+    # coverage the owner set and the defaults every trading day needs
+    # (NS5 M8): the role floors are hard, a keyholder stays until close
+    # whenever the roster has one, and somebody is on at close.
+    out.extend(_coverage_violations(rows, c))
 
     # every open daypart needs a manager or keyholder, when the owner says so
     if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
@@ -861,6 +1054,43 @@ def violations(rows: list, c: Constraints) -> list:
             this_week = sum(row_hours(r) for _, r in items)
             if this_week + 0.05 < mn:
                 out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h"))
+        # a minor's age band: the day and week caps (school day / school
+        # week vs out of school), counted in date order so the shift that
+        # crosses the cap is the one flagged — moving it fixes the breach
+        if key in c.minors:
+            band = c.minor_bands.get(key)
+            br = minor_rules(band, c.jurisdiction)
+            if not band:
+                out.append(_v("minor_age_unknown", items[0][0], items[0][1],
+                              f"{name} is marked a minor with no age band — set 14-15 or 16-17 so the age limits are checked"))
+            if br.get("max_daily_school_day") or br.get("max_weekly_school_week"):
+                day_tot, week_tot = {}, {}
+                for r in (c.base_rows.get(key) or []):
+                    d = r.get("date") or ""
+                    try:
+                        wk = (_as_date(d) - timedelta(days=_as_date(d).weekday())).isoformat()
+                    except (TypeError, ValueError):
+                        continue
+                    week_tot[wk] = week_tot.get(wk, 0.0) + row_hours(r)
+                for i, r in items:
+                    d = r.get("date") or ""
+                    try:
+                        wk = (_as_date(d) - timedelta(days=_as_date(d).weekday())).isoformat()
+                    except (TypeError, ValueError):
+                        continue
+                    h = row_hours(r)
+                    day_tot[d] = day_tot.get(d, 0.0) + h
+                    week_tot[wk] = week_tot.get(wk, 0.0) + h
+                    school_day = is_school_day(d)
+                    dcap = br.get("max_daily_school_day" if school_day else "max_daily_other_day")
+                    if dcap and day_tot[d] > float(dcap) + 0.01:
+                        out.append(_v("minor_hours", i, r, f"{day_tot[d]:g}h on a {'school ' if school_day else ''}day, "
+                                                           f"minors {band} stop at {float(dcap):g}h"))
+                    school_week = is_school_week(d)
+                    wcap = br.get("max_weekly_school_week" if school_week else "max_weekly_other_week")
+                    if wcap and week_tot[wk] > float(wcap) + 0.01:
+                        out.append(_v("minor_week_hours", i, r, f"{week_tot[wk]:g}h in a {'school ' if school_week else ''}week, "
+                                                                f"minors {band} stop at {float(wcap):g}h"))
         # rest and overlap, against this week's other shifts and the published tail
         spans = [(i, r, *shift_span(r, c.tz)) for i, r in items]
         spans = [(i, r, s, e) for i, r, s, e in spans if s]
@@ -928,6 +1158,82 @@ def violations(rows: list, c: Constraints) -> list:
                 if best < int(req):
                     out.append(_v("days_off", items[0][0], items[0][1],
                                   f"{len(off)} day{'s' if len(off) != 1 else ''} off, longest run {best} — the rule is {int(req)} together"))
+    return out
+
+
+def close_minutes(c: Constraints, day: str):
+    """The close on `day` as minutes past that day's midnight — a close in
+    the small hours ("12:00am", "1:30am") is the NEXT morning, past 24h. It
+    was read as minute 0, so a midnight close never flagged a bartender
+    leaving at 9pm under "stays an hour after close" (NS5 L14)."""
+    m = parse_minutes((c.close_times or {}).get(day, ""))
+    if m is None:
+        return None
+    return m + 24 * 60 if m < _OVERNIGHT_LATEST_BEFORE else m
+
+
+def end_minutes(row):
+    """A row's end as minutes past its own date's midnight: an end at or
+    before its start crosses midnight."""
+    s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
+    if e is None:
+        return None
+    if s is not None and e <= s:
+        return e + 24 * 60
+    return e
+
+
+def _coverage_violations(rows: list, c: Constraints) -> list:
+    """coverage_floor, keyholder_until_close and nobody_at_close — rules
+    about who is on a day, not about one person's row. Each is pinned to a
+    row of that day (the review and the publish gate name a row), and none
+    is something a different person on that row would fix, so the fix pass
+    leaves them for the owner. Only days with shifts on them are judged: a
+    day with nobody at all is visibly empty, and a closed day has none."""
+    from shift_quality import present_dayparts as _present
+    out = []
+    by_date = {}
+    for i, r in enumerate(rows or []):
+        if r.get("date") and (r.get("employee") or "").strip():
+            by_date.setdefault(r["date"], []).append((i, r))
+    for d, items in sorted(by_date.items()):
+        if d in (c.closed_dates or set()):
+            continue
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        # role floors, per daypart, counted by who is on the floor for it
+        for role, spec in (c.role_floors or {}).items():
+            role_low = role.strip().lower()
+            mine = [(i, r) for i, r in items if (r.get("role") or "").strip().lower() == role_low]
+            for part in ("morning", "night"):
+                need = floor_for(c.role_floors, role, day, part)
+                if need <= 0:
+                    continue
+                on = {(r.get("employee") or "").strip().lower() for _i, r in mine if part in _present(r)}
+                if len(on) < need:
+                    i0, r0 = (mine or items)[0]
+                    word = "lunch/day" if part == "morning" else "dinner/night"
+                    out.append(_v("coverage_floor", i0, r0,
+                                  f"{len(on)} {role} on for {word} {day}, your floor is {need}"))
+        ends = [(end_minutes(r), i, r) for i, r in items]
+        ends = [(e, i, r) for e, i, r in ends if e is not None]
+        if not ends:
+            continue
+        close_m = close_minutes(c, day)
+        e_last, i_last, r_last = max(ends, key=lambda t: t[0])
+        target = close_m if close_m is not None else e_last
+        if close_m is not None and e_last < close_m - 15:
+            out.append(_v("nobody_at_close", i_last, r_last,
+                          f"the last shift {day} ends {r_last.get('shift_end')}, you close at {_fmt_minutes(close_m % (24 * 60))}"))
+        if c.compliance.get("keyholder_until_close", True) and c.keyholders:
+            covered = any(e >= target - 15 for e, _i, r in ends
+                          if (r.get("employee") or "").strip().lower() in c.keyholders)
+            if not covered:
+                out.append(_v("keyholder_until_close", i_last, r_last,
+                              f"no keyholder or closer on {day} until {'close' if close_m is not None else 'the last shift ends'}"
+                              f" ({_fmt_minutes(target % (24 * 60))})"))
     return out
 
 
@@ -1005,9 +1311,16 @@ def prompt_block(c: Constraints) -> str:
                      + (f"; part-time staff {int(comp['part_time_days_off'])}." if comp.get("part_time_days_off") else "."))
     if comp.get("manager_on_duty"):
         lines.append("- Every open daypart has somebody authorised to close or holding a manager/keyholder certification on it.")
+    if comp.get("keyholder_until_close", True) and c.keyholders:
+        lines.append("- Every open day has somebody authorised to close or holding a manager/keyholder certification on until close.")
+    if c.role_floors:
+        lines.append("- The staffing floors below are hard: a day under a floor is flagged to the owner.")
     pack = comp.get("_pack") or {}
     if pack.get("applied"):
-        lines.append(f"- {pack.get('label')} rules apply: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
+        # Starting values from a pack, never "the law": the Illinois pack's
+        # 10-hour rest is the Chicago ordinance's, not the state's (NS5 L13).
+        lines.append(f"- Starting values from the {pack.get('label')} pack (set in Cavnar, not a statement of the law): "
+                     + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
     if c.role_requirements:
         lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
     if c.close_mins and c.close_times:
@@ -1018,8 +1331,21 @@ def prompt_block(c: Constraints) -> str:
             bits.append(f"{role} {abs(off)} min {'before' if off < 0 else 'after'} open" if off else f"{role} at open")
         lines.append("- Arrival times by role: " + "; ".join(bits) + " — nobody starts earlier than their role's arrival.")
     if c.minors:
-        names = ", ".join(sorted({n for n in c.roster_names if n.lower() in c.minors}))
-        lines.append(f"- MINORS ({names}): no later than {comp.get('minor_latest_end')} and at most {float(comp.get('minor_max_daily_hours') or 8):g} hours a day.")
+        # The limits Cavnar CHECKS, said as that — not as the law. Minors
+        # with an age band carry the band's federal floor (NS5 H4).
+        lines.append("- MINORS — the limits the code checks (starting values, not legal advice):")
+        for n in sorted({n for n in c.roster_names if n.lower() in c.minors}):
+            band = c.minor_bands.get(n.lower())
+            br = minor_rules(band, c.jurisdiction)
+            if br.get("earliest_start"):
+                lines.append(f"  {n} (age {band}): start no earlier than {br['earliest_start']}; finish by "
+                             f"{br['latest_end_school']} ({br['latest_end_summer']} June 1 to Labor Day); at most "
+                             f"{br['max_daily_school_day']:g}h on a school day and {br['max_weekly_school_week']:g}h in a "
+                             f"school week, {br['max_daily_other_day']:g}h a day and {br['max_weekly_other_week']:g}h a week "
+                             f"otherwise. Treat every weekday outside June 1 to Labor Day as a school day.")
+            else:
+                lines.append(f"  {n}" + (f" (age {band})" if band else "") + f": finish by {comp.get('minor_latest_end')}, "
+                             f"at most {float(comp.get('minor_max_daily_hours') or 8):g} hours a day.")
     per_person = []
     for n in c.roster_names:
         key = n.lower()

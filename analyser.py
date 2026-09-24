@@ -274,7 +274,9 @@ STRONG_HEALTH_KEYWORDS = (
     "food poison", "foodborne", "sick after", "got sick", "felt sick", "vomit", "threw up", "throw up",
     "diarrhea", "nausea after", "ill after", "health department", "health inspector", "cockroach", "roach",
     "rodent", "bug in ", "insect in", "foreign object", "glass in", "metal in", "hair in", "raw chicken",
-    "undercooked chicken", "salmonella", "ecoli", "e. coli")
+    "undercooked chicken", "salmonella", "ecoli", "e. coli",
+    # An allergic reaction is a safety report in any wording that names it (NS5 H5).
+    "anaphyla", "epipen", "epi-pen", "allergic reaction")
 LOW_RATING_ESCALATES = 2
 
 

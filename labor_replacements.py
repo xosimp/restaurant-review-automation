@@ -29,7 +29,33 @@ def _date_for(restaurant_id, weekday, on_date):
     return today + _td(days=(names.index(weekday) - today.weekday()) % 7)
 
 
-def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, on_date=None):
+def _gap_row(restaurant_id, day, role, excluded, shift, db_path):
+    """(rows, index) of the published week holding `day` and the row being
+    covered — `shift` ({employee, shift_start}) when the caller knows it,
+    else the day's row of `role` held by someone in `excluded` (the person
+    missing). (None, None) when there is no published row to judge by."""
+    try:
+        import intraday
+        from schedule_versions import rows_from_csv
+        rows = rows_from_csv(intraday._published_csv(restaurant_id, day, db_path))
+    except Exception:
+        return None, None
+    iso = day.isoformat()
+    want = (role or "").strip().lower()
+    for i, r in enumerate(rows):
+        if (r.get("date") or "")[:10] != iso:
+            continue
+        who = (r.get("employee") or "").strip().lower()
+        if shift:
+            if who == str(shift.get("employee") or "").strip().lower() and \
+                    (not shift.get("shift_start") or r.get("shift_start") == shift.get("shift_start")):
+                return rows, i
+        elif who in excluded and (not want or (r.get("role") or "").strip().lower() == want):
+            return rows, i
+    return None, None
+
+
+def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, on_date=None, shift=None):
     """Best fits for `role` on `weekday` who are not in `exclude` (the person
     missing and everyone already on today's schedule). Rated people first,
     by score; unrated after, by name — never invented, never a score for
@@ -76,7 +102,24 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
                 continue
         out.append({"name": key, "score": scores.get(key)})
     out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
-    return out[:limit]
+    # Every suggestion is a move an open-shift claim would allow: the same
+    # replacement_is_legal check, on the published week with the missing
+    # person's row. It named a minor for a shift ending 11:30pm that the
+    # claim itself refuses, and "Ask to cover" then texted them (NS5 M9).
+    rows, idx = (None, None)
+    if day is not None:
+        rows, idx = _gap_row(restaurant_id, day, role, excluded, shift, db_path)
+    if rows is None:
+        return out[:limit]
+    import schedule_engine as _se
+    legal = []
+    for m in out:
+        if len(legal) >= limit:
+            break
+        ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, m["name"])
+        if ok:
+            legal.append(m)
+    return legal
 
 
 def sentence(fits):

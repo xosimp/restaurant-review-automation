@@ -1911,11 +1911,16 @@ final class LaborViewModel {
         // After a save of a PUBLISHED week: the people re-emailed because
         // their own shifts moved. Nil on a draft; empty when nobody's did.
         let changedSinceSent: [String]?
+        // A change inside the owner's notice window: premium pay may be
+        // owed where a predictive-scheduling law applies (NS5 H2). Nil
+        // from an older backend or when nothing changed inside it.
+        let lateChangeWarning: String?
         enum CodingKeys: String, CodingKey {
             case ok, quality, error, saved, violations, review
             case whatIf = "what_if"
             case pendingTimeOff = "pending_time_off"
             case changedSinceSent = "changed_since_sent"
+            case lateChangeWarning = "late_change_warning"
         }
     }
 
@@ -2735,6 +2740,9 @@ final class LaborViewModel {
                     saveNotice = changed.isEmpty
                         ? "Saved; nobody's shifts changed."
                         : "Updated schedule sent to \(changed.joined(separator: ", "))."
+                }
+                if let warning = response.lateChangeWarning, !warning.isEmpty {
+                    saveNotice = [saveNotice, warning].compactMap { $0 }.joined(separator: " ")
                 }
                 Haptic.success()
                 savedTick += 1
