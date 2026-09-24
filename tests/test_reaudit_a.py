@@ -478,6 +478,18 @@ def test_a14_the_win_push_claims_no_cause_and_reaches_only_who_may_see_it(monkey
     assert permissions.LOSS_VIEW in loss
 
 
+def test_a14_a5_a_result_the_value_figures_set_aside_is_not_announced(monkeypatch):
+    rid, (sales, lab) = _sales_lift_world()
+    sent = []
+    monkeypatch.setattr(strategy_jobs, "_reach", lambda rid_, kind, title, body, data, db, subject=None, **k:
+                        sent.append(title) or 1)
+    rows = [dict(outcomes.get_outcome(lab["id"]), restaurant_id=rid)]
+    assert strategy_jobs._tell_owners_what_worked(rows, models.DB_PATH) == 0 and sent == []
+    rows.append(dict(outcomes.get_outcome(sales["id"]), restaurant_id=rid))
+    assert strategy_jobs._tell_owners_what_worked(rows, models.DB_PATH) == 1
+    assert "revenue, not profit" in sent[0]
+
+
 # ── A15 / K7 a disowned result carries no dollars ───────────────────────────
 
 def test_a15_k7_the_summary_of_a_disowned_result_names_no_dollars():

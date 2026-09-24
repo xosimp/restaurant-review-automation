@@ -2171,6 +2171,14 @@ def _selected(restaurant_id, db_path, since, denied, exclude_metrics, exclude_id
     return evaluated, tracking, kept
 
 
+def counted_ids(restaurant_id, db_path=DB_PATH) -> set:
+    """The evaluated trackers total_value counts (savings and sales lift
+    alike) after the family and sales rules — what a win announcement may
+    quote, so it never quotes a result the value figures set aside."""
+    _e, _t, kept = _selected(restaurant_id, db_path, None, set(), None, None)
+    return {r["id"] for r in kept}
+
+
 def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None, exclude_metrics=None,
                 exclude_ids=None):
     """What measured moves are worth, per month, with the honest denominator

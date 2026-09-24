@@ -164,7 +164,8 @@ def _tell_owners_what_worked(results, db_path):
     pushes on the same morning is how a win becomes noise.
     """
     import ops, push
-    best = {}
+    import outcomes as _oc
+    best, kept = {}, {}
     for row in results:
         if not isinstance(row, dict) or row.get("verdict") != "improved":
             continue
@@ -176,6 +177,14 @@ def _tell_owners_what_worked(results, db_path):
         rid = row.get("restaurant_id")
         if rid is None:
             continue
+        if row.get("id") is not None:
+            # Only a result the value figures count: not a narrower reading
+            # of a family the broader one already measured, and not a labor
+            # share that fell only because sales rose (re-audit A5, A7).
+            if rid not in kept:
+                kept[rid] = _oc.counted_ids(rid, db_path=db_path)
+            if row["id"] not in kept[rid]:
+                continue
         if abs(float(dollars)) > abs(float(best.get(rid, {}).get("dollars_monthly") or 0)):
             best[rid] = row
     told = 0
