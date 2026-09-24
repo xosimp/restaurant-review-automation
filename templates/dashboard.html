@@ -3076,7 +3076,7 @@ svg:hover .hb-xh{opacity:1}
               ['co-maint','Maintenance','Leak under the bar sink',e.maintenance],
               ['co-shift','Shift notes','Short a busser from 7',e.shift_notes],
               ['co-notes','General notes','New menu cards arrived',e.general_notes],
-              ['co-why','Why the day went how it did','Rain kept the patio empty',e.influence]];
+              ['co-why','Influence — what was going on','Cubs home game, Bears on TV, the World Cup, a private event',e.influence]];
     var moreHtml='',anyMore=false;
     for(var i=0;i<more.length;i++){moreHtml+=field(more[i][0],more[i][1],more[i][2],more[i][3]);if(more[i][3])anyMore=true;}
     return '<div class="hb-sh"><div><div class="k dim">End of the night</div><h2>Close-out <small>'+mdy(c.business_date)+(e.created_at?' · filed by '+esc(e.submitted_by||'a manager'):'')+'</small></h2></div></div>'
@@ -3088,7 +3088,7 @@ svg:hover .hb-xh{opacity:1}
          + field('co-86','What we ran out of','Salmon, house red',e.eighty_sixed)
          + field('co-call','Who didn\'t make it','Dana — called out',e.callouts)
          + '</div>'
-         + '<details class="co-more"'+(anyMore?' open':'')+'><summary>For the daily report <small>equipment, VIPs, maintenance, notes, and why the day went how it did</small></summary>'
+         + '<details class="co-more"'+(anyMore?' open':'')+'><summary>For the daily report <small>equipment, VIPs, maintenance, notes, and what was going on</small></summary>'
          + '<div class="co-grid">'+moreHtml+'</div></details>'
          + '<div style="margin-top:14px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbSaveCloseout(this)">'+(e.created_at?'Update the handoff':'Hand off the night')+'</button></div>'
          + '</section>';
@@ -4205,8 +4205,19 @@ svg:hover .hb-xh{opacity:1}
     get('/api/recs/timeline?limit=25&before='+encodeURIComponent(st.next)).then(function(d){
       done();st.loading=false;
       if(!d||!d.ok){var e=el('rh-tl-err');if(e)e.textContent=(d&&d.error)||'Couldn’t load more.';return;}
-      st.items=st.items.concat(d.items||[]);st.next=d.next_before||null;renderTimeline();
+      st.items=st.items.concat(d.items||[]);st.next=d.next_before||null;renderTimeline();linked();
     }).catch(function(){done();st.loading=false;});
+  }
+  // The results the timeline links to that the newest-50 list did not carry
+  // (an older recommendation's tracker), asked for by id.
+  function linked(){
+    var miss=[],seen={},i,t;
+    for(i=0;i<st.items.length;i++){t=st.items[i]&&st.items[i].tracker_id;if(t&&!st.out[t]&&!seen[t]){seen[t]=1;miss.push(t);}}
+    if(!miss.length)return;
+    get('/api/outcomes?ids='+miss.slice(0,200).join(',')).then(function(d){
+      var rows=(d&&d.ok&&d.outcomes)||[];for(var j=0;j<rows.length;j++)st.out[rows[j].id]=rows[j];
+      if(rows.length)renderTimeline();
+    }).catch(function(){});
   }
 
   // ── rendering ───────────────────────────────────────────────────────────
@@ -4221,7 +4232,7 @@ svg:hover .hb-xh{opacity:1}
     if(cks.length){h+='<div class="hb-sh"><div><div class="k">Check in</div><h2>Did you make these changes? <small>'+cks.length+' result'+(cks.length===1?'':'s')+' landed</small></h2></div></div>';
       for(var c=0;c<cks.length&&c<5;c++)h+=recCheckinHtml(cks[c],'home');}
     h+='<div class="hb-sh"><div><div class="k dim">Everything shown</div><h2>Every recommendation <small>newest first</small></h2></div></div><section class="hb-card" aria-label="Every recommendation"><div id="rh-tl"></div><div class="rh-err" id="rh-tl-err"></div></section>';
-    b.innerHTML=h;renderTimeline();
+    b.innerHTML=h;renderTimeline();linked();
   }
   function worked(w){
     if(!w||!w.ok)return '';
