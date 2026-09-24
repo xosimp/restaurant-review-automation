@@ -575,7 +575,7 @@ def test_trim_day_tolerates_days_with_no_sales_percentage():
 def test_places_only_reviews_take_the_coverage_share_when_measured(db, monkeypatch):
     import fetcher
     rid = _rid(db)
-    row = {"id": rid, "reviews_live": 1,
+    row = {"id": rid, "reviews_live": 1, "google_place_id": "ChIJtest",
            "last_fetched_at": (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")}
     monkeypatch.setattr(fetcher, "places_coverage", lambda r: {"share": 0.4, "sampled": True}, raising=False)
     st = data_freshness.source_state(row, "reviews", db_path=db, now=datetime.now(timezone.utc))

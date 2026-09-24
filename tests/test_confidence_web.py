@@ -199,17 +199,19 @@ def test_the_explain_listener_logs_the_surface_the_line_names():
 def test_every_j1_surface_draws_the_shared_component():
     src = _src()
     # Home rec cards, attention rows, the one-thing hero.
-    assert "cavConfLine(c,{key:r.key,surface:'home'" in src
-    assert "cavConfLine(a.confidence,{key:a.rec_key||a.key,surface:'home'" in src
-    assert "cavConfLine(fconf,{key:fkey,surface:'home'" in src
+    # Each prefers `confidence_detail` (the K1 object) where the server keeps
+    # `confidence` as the band word for older builds (group E).
+    assert "cavConfLine(c,{key:r.key,surface:'home'" in src and "var c=r.confidence_detail||r.confidence" in src
+    assert "cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home'" in src
+    assert "cavConfLine(fconf,{key:fkey,surface:'home'" in src and "fconf=ff.confidence_detail||ff.confidence" in src
     # Diagnosis blocks: reviews, food, labor + marketing (renderDiagnosis).
-    assert "cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'reviews'" in src
-    assert "cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:'food'" in src
-    assert "cavConfLine(dg.confidence||'low',{key:dg.rec_key,surface:dsurf" in src
+    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'reviews'" in src
+    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'food'" in src
+    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:dsurf" in src
     # Food drivers, Ask, the daily report's actions.
-    assert "cavConfLine(x.confidence,{key:x.rec_key||x.key,surface:'food'" in src
-    assert "cavConfLine(d.confidence, {surface: 'ask'" in src
-    assert "cavConfLine(x.confidence,{key:rk,surface:'dsr'" in src
+    assert "cavConfLine(x.confidence_detail||x.confidence,{key:x.rec_key||x.key,surface:'food'" in src
+    assert "cavConfLine(d.confidence_detail || d.confidence, {surface: 'ask'" in src
+    assert "cavConfLine(x.confidence_detail||x.confidence,{key:rk,surface:'dsr'" in src
     # Schedule recommendations (an object with its confidence, on the dark panel).
     assert "cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule'" in src
 
