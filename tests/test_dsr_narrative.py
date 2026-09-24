@@ -619,10 +619,18 @@ def test_a_link_or_injection_tell_in_any_line_drops_it(monkeypatch, rest, db_pat
 
 # ── answers the owner already gave ──────────────────────────────────────────
 
+def _viewed(rest, db_path, out):
+    """The owner reads the report: the view presents what it shows (the
+    narrative itself never presents — dsr.deliver.present_shown)."""
+    from dsr import deliver
+    return deliver.present_shown(rest.id, {"narrative": out["narrative"]}, "dsr", db_path=db_path)
+
+
 def test_not_for_us_is_never_re_proposed(monkeypatch, rest, db_path):
     out, _ = _run(monkeypatch, rest, db_path, weak_night(), weak_reply())
     key = "dsr_action:control_hours:labor"
     assert key in [a["key"] for a in out["narrative"]["actions_tomorrow"]]
+    _viewed(rest, db_path, out)                  # answered from the report it was shown in
     assert rec_ledger.record(rest.id, key, "dismissed", surface="dsr",
                              meta={"kind": "not_for_us", "module": "labor"}, db_path=db_path)
     # Tomorrow the model proposes the same thing in other words, citing other labor figures.
@@ -674,11 +682,19 @@ def test_keys_carry_a_named_thing_only_when_the_facts_name_it(monkeypatch, rest,
 
 def test_the_same_action_on_two_nights_is_one_key_and_one_episode(monkeypatch, rest, db_path):
     out1, _ = _run(monkeypatch, rest, db_path, weak_night("2026-09-22"), weak_reply())
+    # Writing the narrative presents nothing: it is shown later, when read.
+    conn = __import__("models").get_conn(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM rec_instances").fetchone()[0] == 0
+    finally:
+        conn.close()
+    _viewed(rest, db_path, out1)
     r = weak_reply()
     r["actions_tomorrow"][0] = _act("Trim a server from weeknight dinners.",
                                     "Labor hit 34.8% on $5,211 of net sales.", "control_hours",
                                     ["sales.net", "labor.pct"], urgency="next_schedule", effort="medium")
     out2, _ = _run(monkeypatch, rest, db_path, weak_night("2026-09-23"), r)
+    _viewed(rest, db_path, out2)
     k1 = [a["key"] for a in out1["narrative"]["actions_tomorrow"]]
     k2 = [a["key"] for a in out2["narrative"]["actions_tomorrow"]]
     assert "dsr_action:control_hours:labor" in k1 and "dsr_action:control_hours:labor" in k2

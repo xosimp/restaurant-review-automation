@@ -53,8 +53,9 @@ WHAT IS CHECKED, deterministically, on what comes back:
   * actions: an action's dollars_monthly must equal a cited monthly figure
     (a night is never multiplied into a month); an action the owner already
     silenced or said "not for us" to is dropped; the rest are ranked by
-    home_brief's urgency × dollars × ease rule and presented to rec_ledger
-    on the "dsr" surface under a stable key,
+    home_brief's urgency × dollars × ease rule under a stable key, and
+    presented to rec_ledger when a reader is SHOWN them (the report view on
+    "dsr", the email on "dsr_email" — ledger_items), never at generation,
         dsr_action:<kind>:<block>[/<entity>]
     — the kind from a closed vocabulary, the block the action is about
     (the kind's home block when cited, else the most-cited block) and an
@@ -853,8 +854,9 @@ def _norm_title(t):
 
 
 def settle_actions(actions, F, ctx, declined, dropped):
-    """Key, drop the answered, rank and present. Returns the survivors in
-    rank order, each with its `key` and `rank_score`."""
+    """Key, drop the answered, and rank. Returns the survivors in rank
+    order, each with its `key` and `rank_score`. Presenting is the
+    reader's (ledger_items)."""
     silenced, nfu_keys, nfu_titles = declined
     keyed, seen = [], set()
     for a in actions:
@@ -889,23 +891,31 @@ def settle_actions(actions, F, ctx, declined, dropped):
         if s.get("quiet"):
             a["quiet"] = True
         ranked.append(a)
-    ids = {}
-    try:
-        import rec_ledger
-        batch = [{"key": a["key"], "module": _MODULE[action_block(a)], "kind": "dsr_action",
-                  "title": a["text"][:200], "position": i, "dollar_value": a["dollars_monthly"],
-                  "evidence_sources": sorted({_MODULE[c.split(".", 1)[0]] for c in a["cites"]}),
-                  "model_written": True} for i, a in enumerate(ranked)]
-        ids = rec_ledger.present_many(ctx.restaurant_id, batch, SURFACE, db_path=ctx.db_path)
-    except Exception as e:
-        _capture(e, ctx.restaurant_id, "present_many")
+    # Not presented here. Writing the narrative is not showing it: the
+    # report is read later (the DSR view) or mailed (dsr.deliver), and each
+    # of those presents what that reader was actually shown — on "dsr" and
+    # "dsr_email" — through ledger_items() below. The answered check above
+    # (silenced keys) is what keeps an answered action out of the report.
+    return ranked
+
+
+def ledger_items(actions) -> list:
+    """rec_ledger.present_many items for the actions a reader was shown —
+    the attributes the episode is created with (module from the action's
+    block, the modules its cites come from, model-written)."""
     out = []
-    for a in ranked:
-        if a["key"] in ids and ids[a["key"]] is None:
-            dropped.append({"field": "actions_tomorrow", "text": a["text"], "why": "the owner already answered this",
-                            "key": a["key"]})
+    for i, a in enumerate(actions or []):
+        if not isinstance(a, dict) or not a.get("key"):
             continue
-        out.append(a)
+        cites = [c for c in (a.get("cites") or []) if isinstance(c, str)]
+        try:
+            module = _MODULE.get(action_block(a), "ops") if a.get("kind") in ACTION_KINDS and cites else "ops"
+        except Exception:
+            module = "ops"
+        out.append({"key": a["key"], "module": module, "kind": "dsr_action", "title": str(a.get("text") or "")[:200],
+                    "position": i, "dollar_value": a.get("dollars_monthly"),
+                    "evidence_sources": sorted({_MODULE.get(c.split(".", 1)[0], "ops") for c in cites}) or None,
+                    "model_written": True})
     return out
 
 

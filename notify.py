@@ -543,16 +543,19 @@ def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH
         return True
 
 
-def alert_url(alert_type=None, review_id=None) -> str:
-    """The dashboard URL that answers this alert."""
+def alert_url(alert_type=None, review_id=None, rec=None, src=None) -> str:
+    """The dashboard URL that answers this alert. `rec`/`src` name the
+    recommendation it carries and the channel it was read on, so opening it
+    is recorded as `opened` on that key (rec_delivery.link; #32)."""
+    import rec_delivery
     base = config.base_url()
     tab = ALERT_TAB.get(alert_type or "")
     if not tab:
-        return base
+        return rec_delivery.link(base + "/", rec, src) if rec else base
     url = f"{base}/?tab={tab}"
     if review_id and tab == "reviews":
         url += f"&review={int(review_id)}"
-    return url
+    return rec_delivery.link(url, rec, src)
 
 
 # The CTA href is stamped in at DELIVERY, not at build: the alert type and
@@ -561,8 +564,31 @@ def alert_url(alert_type=None, review_id=None) -> str:
 CTA_PLACEHOLDER = "https://cavnar.invalid/cta"
 
 
-def _resolve_cta(html: str, alert_type: str = None, review_id: int = None) -> str:
-    return (html or "").replace(CTA_PLACEHOLDER, alert_url(alert_type, review_id))
+def _resolve_cta(html: str, alert_type: str = None, review_id: int = None, rec: str = None) -> str:
+    return (html or "").replace(CTA_PLACEHOLDER, alert_url(alert_type, review_id, rec=rec,
+                                                           src="alert_email" if rec else None))
+
+
+# The bare dashboard address an alert SMS ends on ("Respond now ·
+# dashboard.cavnar.ai"). At delivery it becomes the keyed link.
+SMS_CTA_TOKEN = "dashboard.cavnar.ai"
+
+
+def keyed_sms_text(sms_text: str, rec: str = None) -> str:
+    """The SMS with its closing dashboard address naming the recommendation
+    it carries (…/?rec=<key>&src=alert_sms), so a tap is recorded as
+    `opened` on that key when the dashboard loads (#32). Only the LAST bare
+    address is replaced — a guest's words never carry one (_sms_safe_excerpt
+    strips URLs) — and nothing changes without a key. No scheme: the SMS has
+    always shown the bare host, which phones link."""
+    if not rec or not sms_text or SMS_CTA_TOKEN not in sms_text:
+        return sms_text
+    import rec_delivery
+    keyed = rec_delivery.link(SMS_CTA_TOKEN + "/", rec, "alert_sms")
+    head, _, tail = sms_text.rpartition(SMS_CTA_TOKEN)
+    if tail.startswith("/"):
+        return sms_text                 # already a path: leave it alone
+    return head + keyed + tail
 
 
 def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None, cta_url: str = None) -> str:
@@ -1440,7 +1466,7 @@ def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
 
 
 def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path: str = DB_PATH,
-                 review_id: int = None, covered_types=None):
+                 review_id: int = None, covered_types=None, rec: str = None):
     """Send an alert email unless the morning brief already covered it on the
     owner's phone today. Returns True when it sent.
 
@@ -1459,7 +1485,7 @@ def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path:
         if skip and all(str(a).strip().lower() in skip for a in alert_recipients(owner_email, restaurant_id)):
             print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
             return False
-    resolved = _resolve_cta(html, alert_type, review_id)
+    resolved = _resolve_cta(html, alert_type, review_id, rec=rec)
     if skip:
         return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id, skip=skip)
     return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id)
@@ -1580,15 +1606,20 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     # no-op anyway if the owner never registered a device.
     via_push  = _on(push_col, 1)
     channels = []
+    # The recommendation this alert leads with: its links (SMS, the email's
+    # button) and the push name it, so an open lands on its trail (#32).
+    import rec_delivery
+    lead_rec = next((r["key"] for r in recs if rec_delivery.presentable(r["key"])), None)
     if via_sms and contacts:
         texted = False
+        text_out = keyed_sms_text(sms_text, lead_rec)
         for c in contacts:
-            texted = bool(send_sms(c["phone"], sms_text)) or texted
+            texted = bool(send_sms(c["phone"], text_out)) or texted
         if texted:
             channels.append("sms")
     if via_email and owner_email:
         if _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path,
-                        review_id=review_id, covered_types=covered_types):
+                        review_id=review_id, covered_types=covered_types, rec=lead_rec):
             channels.append("email")
     # Logged BEFORE the push, not after: the push payload now carries the
     # app-icon badge, which is this login's unread count over alert_log. A
@@ -1610,7 +1641,11 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
                 # the notification it answers (#39).
                 _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
                     data={"alert_type": alert_type, "review_id": review_id, "alert_id": alert_id,
-                          "rec_key": recs[0]["key"] if recs else None},
+                          "rec_key": recs[0]["key"] if recs else None,
+                          # The ledger surface a tap is an open on, and
+                          # whether the app may offer Done / Not for us.
+                          "surface": "alert_push",
+                          "answerable": bool(recs) and rec_delivery.answerable(recs[0]["key"])},
                     db_path=db_path, user_ids=audience)
                 if audience or _has_devices(restaurant_id, db_path):
                     channels.append("push")

@@ -298,7 +298,13 @@ def login_required(f):
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user:
-            return redirect(url_for("auth.login", next=request.path))
+            # The query survives sign-in: an emailed or texted link's ?ask=
+            # (the question it asks) and ?rec=/&src= (the recommendation it
+            # came from) were dropped here, so a signed-out owner who tapped
+            # one landed on a bare Home. safe_next_url still holds the
+            # redirect to a path on this site.
+            nxt = request.full_path if request.query_string else request.path
+            return redirect(url_for("auth.login", next=nxt))
         from auth import _console_denied as _cd_shell
         if _cd_shell(user):
             return redirect(url_for("staff.portal_home"))
@@ -349,6 +355,10 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 def index(current_user):
     if current_user.get("is_admin"):
         return redirect("/admin")
+    # A link from an email or a text that names a recommendation (rec=,
+    # src=) is an "opened" on it (#32).
+    import rec_delivery
+    rec_delivery.record_link_open(current_user, request.args)
     from labor import analyse_shifts_for_restaurant
     from marketing import CONTENT_TYPES
     rid     = current_user["restaurant_id"]

@@ -959,6 +959,18 @@ def report_paragraph(text: str) -> str:
             f'margin:0">{text}</p>')
 
 
+def report_ask_link(prompt: str, rec: str = None, src: str = None, label: str = "Ask about this") -> str:
+    """"Ask about this →" under a recommendation: opens the dashboard with
+    the question asked (dashboard.html reads ?ask=) and names the
+    recommendation (rec=) and the email it was read in (src=), so the click
+    lands on the ledger as `opened` for that key — the morning brief's
+    pattern (rec_delivery.ask_url)."""
+    import rec_delivery
+    url = rec_delivery.ask_url(prompt, rec, src)
+    return (f'<div style="margin-top:8px"><a href="{esc(url)}" style="font-family:{_SANS};font-size:13px;'
+            f'color:{BRAND["ember"]};text-decoration:none">{esc(label)} &rarr;</a></div>')
+
+
 def report_bullets(items, accent: str = None) -> str:
     """One sentence per line on a thin rule — report_lines without the
     label, for a list whose eyebrow already says what it is (the DSR's went
@@ -1064,11 +1076,16 @@ def dsr_email(d: dict):
                             + report_bullets([esc(t) for t in d["needs_attention"]], BRAND["warn"]))
         actions = d.get("actions") or []
         if actions:
+            # Each action links to Ask about it, naming its rec_ledger key
+            # (src=dsr_email) so the click is recorded as opened (#32).
+            def _ask(a):
+                return report_ask_link(f"Walk me through this: {a['text']}", a.get("key"), "dsr_email")
             first = esc(actions[0]["text"])
             if actions[0].get("why"):
                 first += (f'<div style="font-family:{_SANS};font-size:12.5px;font-weight:400;'
                           f'color:{BRAND["body"]};margin-top:6px">{esc(actions[0]["why"])}</div>')
-            rest = report_bullets([esc(a["text"]) for a in actions[1:]])
+            first += _ask(actions[0])
+            rest = report_bullets([esc(a["text"]) + _ask(a) for a in actions[1:]])
             sections.append(report_action("Tomorrow", first)
                             + (f'<div style="margin-top:14px">{rest}</div>' if rest else ""))
         missing = list(d.get("missing") or [])
@@ -2018,6 +2035,32 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         print(f"send_reactivation_email failed: {e}")
 
 
+def _one_thing_block(out, fix_first, src, when):
+    """"If you only do one thing" — the cross-module one thing
+    (business_intelligence.pick_one_thing) with a keyed "Ask about this"
+    link. Appends to `out` and returns the fix_first it rendered, or None.
+    Never raises."""
+    import html as _html
+    try:
+        if not fix_first or not fix_first.get("what"):
+            return None
+        money = (f" — about ${fix_first['dollars_monthly']:,.0f}/month"
+                 if fix_first.get("dollars_monthly") else "")
+        why = str(fix_first.get("why") or "").strip()
+        block = (report_eyebrow(f"If you only do one thing {when}")
+                 + report_paragraph(f"<strong>{_html.escape(str(fix_first['what']))}</strong>{_html.escape(money)}"))
+        if why:
+            block += report_paragraph(_html.escape(why[:1].upper() + why[1:]))
+        import rec_delivery
+        key = fix_first.get("key") if rec_delivery.presentable(fix_first.get("key")) else None
+        block += report_ask_link(f"Walk me through this: {fix_first['what']}", key, src)
+        out.append(block)
+        return fix_first
+    except Exception as e:
+        print(f"[review email] one-thing block failed: {e}")
+        return None
+
+
 def _weekly_review_sections(restaurant_id):
     """The week read as a business week rather than a review count.
 
@@ -2065,6 +2108,10 @@ def _weekly_review_sections(restaurant_id):
                                           f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
     except Exception as e:
         print(f"[weekly] results block failed: {e}")
+    # The one thing, rendered — it used to be logged as shown in this email
+    # without ever appearing in it. Staged, with the priorities below, and
+    # presented only once the digest is delivered (rec_delivery).
+    shown_first = _one_thing_block(out, review.get("fix_first"), "weekly_email", "this week")
     try:
         if review.get("priorities"):
             def _money(p):
@@ -2084,11 +2131,17 @@ def _weekly_review_sections(restaurant_id):
     # One link only. `correlations` returns [] far more often than not, and
     # a week with three is a week where the section would read as a list of
     # theories rather than the one thing worth a look.
+    shown_link = None
     try:
         import business_intelligence as _bi
-        links = _bi.correlations(restaurant_id) or []
+        import review_common as _rc
+        silenced = _rc.silenced(restaurant_id)
+        # One "no" everywhere: a link the owner answered on Home is not this
+        # week's finding here.
+        links = [l for l in (_bi.correlations(restaurant_id) or []) if _bi.link_key(l) not in silenced]
         if links:
             link = links[0]
+            lkey = _bi.link_key(link)
             block = (report_eyebrow("What connects")
                      + report_paragraph(f'<strong>{_html.escape(link["headline"])}</strong>')
                      + report_paragraph(_list(link.get("evidence") or [])))
@@ -2100,9 +2153,21 @@ def _weekly_review_sections(restaurant_id):
             if caution:
                 block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'{_html.escape(caution)}</span>')
+            block += report_ask_link(f"Tell me more about this: {link['headline']}", lkey, "weekly_email")
             out.append(block)
+            # The same link can also be the one thing above: shown twice,
+            # staged once.
+            if not (shown_first and shown_first.get("key") == lkey):
+                shown_link = dict(link, key=lkey)
     except Exception as e:
         print(f"[weekly] cross-module block failed: {e}")
+    try:
+        import rec_delivery
+        import review_common as _rc
+        rec_delivery.stage(restaurant_id, "weekly_email",
+                           _rc.impressions(review.get("priorities"), shown_first, shown_link))
+    except Exception as e:
+        print(f"[weekly] impressions not staged: {e}")
     # Records, streaks, and complaints that stopped. Everything else in this
     # email is a problem or a target.
     try:
@@ -2171,6 +2236,14 @@ def _monthly_review_sections(restaurant_id, months=1):
                        + report_paragraph(_list(_g.summarise(x) for x in review["goals"][:4])))
     except Exception as e:
         print(f"[monthly] goals block failed: {e}")
+    shown_first = _one_thing_block(out, review.get("fix_first"), "monthly_email",
+                                   "next quarter" if review.get("months", 1) > 1 else "next month")
+    try:
+        import rec_delivery
+        import review_common as _rc
+        rec_delivery.stage(restaurant_id, "monthly_email", _rc.impressions(review.get("priorities"), shown_first))
+    except Exception as e:
+        print(f"[monthly] impressions not staged: {e}")
     try:
         if review.get("priorities"):
             def _money(p):
@@ -2345,19 +2418,25 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         lines_section = report_lines(lines)
 
         # ── One action, chosen from what's genuinely outstanding ───────────
-        action = None
+        # Each is a recommendation with a stable key (monthly_move:<what>),
+        # presented on the monthly email only once it is delivered.
+        action, action_key = None, None
         if r_reviews and pending:
             action = (f"Approve the {pending} drafted repl{'y' if pending == 1 else 'ies'} "
                       "sitting in Reviews — it takes about five minutes.")
+            action_key = "monthly_move:approve_replies"
         elif r_labor and not usage.get("has_schedule"):
             action = ("Generate next month's opening schedule in Labor"
                       + (f" — your {pos_name} history is already there." if pos_name
                          else " once your POS is connected under Account → Connections."))
+            action_key = "monthly_move:first_schedule"
         elif r_inventory and not ingredients:
             action = ("Add the fifteen or twenty items you buy most weeks in Food Cost. "
                       "That's enough for it to start flagging waste.")
+            action_key = "monthly_move:first_count"
         elif r_marketing and not used.get("marketing"):
             action = "Generate one post in Marketing — the first one takes about thirty seconds to approve."
+            action_key = "monthly_move:first_post"
         action_section = report_action("Your next move", action) if action else ""
 
         # ── Opening line, personalised on the real numbers above ───────────
@@ -2382,21 +2461,31 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         summary_paragraph = generate_email_personalization(
             ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True)
 
-        deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
-            "from": sender("will"),
-            "to": [to_email],
-            "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
-            "preheader": _monthly_preheader(restaurant_id),
-            "html": report_shell(
-                kicker="Monthly Review",
-                title=restaurant_name,
-                subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
-                sections=([report_paragraph(summary_paragraph)]
-                          + _monthly_review_sections(restaurant_id)
-                          + [stats_section, lines_section, action_section]),
-                cta_label="Open your dashboard →",
-            ),
-        })
+        import rec_delivery
+        with rec_delivery.collect() as shown:
+            sections = _monthly_review_sections(restaurant_id)
+            if action_key:
+                rec_delivery.stage(restaurant_id, "monthly_email",
+                                   [{"key": action_key, "module": "home", "title": action[:200]}])
+            result = deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
+                "from": sender("will"),
+                "to": [to_email],
+                "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
+                "preheader": _monthly_preheader(restaurant_id),
+                "html": report_shell(
+                    kicker="Monthly Review",
+                    title=restaurant_name,
+                    subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
+                    sections=([report_paragraph(summary_paragraph)]
+                              + sections
+                              + [stats_section, lines_section, action_section]),
+                    cta_label="Open your dashboard →",
+                ),
+            })
+        # Shown only when it went out (a suppressed or failed send showed
+        # nobody anything).
+        if getattr(result, "ok", False):
+            shown.flush()
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
 
@@ -2418,24 +2507,28 @@ def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants
         sections = [report_paragraph(
             f"Here is {month_name} across your {len(restaurants)} locations, each read against its own "
             f"month before. Nothing is added up across them — a location's number is its own.")]
-        for r in restaurants:
-            body = _monthly_review_sections(r.id)
-            sections.append(report_eyebrow(r.name))
-            if body:
-                sections.extend(body)
-            else:
-                sections.append(report_paragraph("Not enough measured data in this location for a month-over-month read yet."))
-        html = report_shell(
-            kicker="Monthly Review",
-            title=f"{len(restaurants)} locations",
-            subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
-            sections=sections, cta_label="Open your dashboard →")
-        names = ", ".join(r.name for r in restaurants[:3]) + ("…" if len(restaurants) > 3 else "")
-        deliver(email_type="send_monthly_summary_email", restaurant_id=restaurants[0].id, payload={
-            "from": sender("will"), "to": [to_email],
-            "subject": f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary",
-            "preheader": names, "html": html,
-        })
+        import rec_delivery
+        with rec_delivery.collect() as shown:
+            for r in restaurants:
+                body = _monthly_review_sections(r.id)
+                sections.append(report_eyebrow(r.name))
+                if body:
+                    sections.extend(body)
+                else:
+                    sections.append(report_paragraph("Not enough measured data in this location for a month-over-month read yet."))
+            html = report_shell(
+                kicker="Monthly Review",
+                title=f"{len(restaurants)} locations",
+                subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
+                sections=sections, cta_label="Open your dashboard →")
+            names = ", ".join(r.name for r in restaurants[:3]) + ("…" if len(restaurants) > 3 else "")
+            result = deliver(email_type="send_monthly_summary_email", restaurant_id=restaurants[0].id, payload={
+                "from": sender("will"), "to": [to_email],
+                "subject": f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary",
+                "preheader": names, "html": html,
+            })
+        if getattr(result, "ok", False):
+            shown.flush()
         for r in restaurants[1:]:
             try:
                 from models import log_email as _log_email
@@ -2871,21 +2964,27 @@ def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name
     try:
         import html as _h
         import monthly_review
+        import rec_delivery
         review = monthly_review.build(restaurant_id, months=3)
-        sections = _monthly_review_sections(restaurant_id, months=3)
-        if not sections:
-            print(f"[quarterly] nothing to report for {restaurant_id}")
-            return
-        head = f"Your quarter — {review['month']}"
-        deliver(email_type="send_quarterly_summary", restaurant_id=restaurant_id, payload={
-            "from": sender("client"),
-            "to": [to_email],
-            "subject": f"{head} — {restaurant_name}",
-            "preheader": _h.escape(monthly_review.headline(review)),
-            "html": report_shell(kicker="Quarterly review", title=head,
-                                 subtitle=_h.escape(restaurant_name), sections=sections,
-                                 cta_label="Open your dashboard →"),
-        })
+        with rec_delivery.collect() as shown:
+            sections = _monthly_review_sections(restaurant_id, months=3)
+            if not sections:
+                print(f"[quarterly] nothing to report for {restaurant_id}")
+                return
+            head = f"Your quarter — {review['month']}"
+            result = deliver(email_type="send_quarterly_summary", restaurant_id=restaurant_id, payload={
+                "from": sender("client"),
+                "to": [to_email],
+                "subject": f"{head} — {restaurant_name}",
+                "preheader": _h.escape(monthly_review.headline(review)),
+                "html": report_shell(kicker="Quarterly review", title=head,
+                                     subtitle=_h.escape(restaurant_name), sections=sections,
+                                     cta_label="Open your dashboard →"),
+            })
+        # The quarterly is the monthly review over three months: the same
+        # surface in the ledger.
+        if getattr(result, "ok", False):
+            shown.flush()
         print(f"Quarterly summary sent to {to_email}")
     except Exception as e:
         print(f"send_quarterly_summary_email failed: {e}")

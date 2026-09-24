@@ -370,14 +370,22 @@ def diagnose(analysis: dict) -> dict:
                         {"module": "labor", "metric": "person-weeks over 40h", "value": str(len(ot))}))
     # 3. one role carrying the cost
     roles = a.get("role_summary") or {}
+    role_subject = ""
     if roles and a.get("total_labor_cost"):
         top = max(roles.items(), key=lambda kv: kv[1].get("labor_cost") or 0)
         share = (top[1].get("labor_cost") or 0) / float(a["total_labor_cost"])
         if share >= 0.45 and len(roles) > 1:
+            role_subject = str(top[0])
             drivers.append(("role", (share - 0.45) * 10,
                             f"{top[0]} is {share:.0%} of labor cost across {top[1].get('headcount', 0)} people.",
                             {"module": "labor", "metric": f"{top[0]} share of labor cost", "value": f"{share:.0%}"}))
     drivers.sort(key=lambda d: d[1], reverse=True)
+    # What the lead driver is ABOUT, as a stable subject — the weekday, the
+    # role, or overtime — so the diagnosis's check has one recommendation
+    # key however the percentages move day to day (diag_labor:<driver>).
+    subjects = {"weekday": (worst_day[0] if worst_day else ""),
+                "role": role_subject,
+                "overtime": ""}
     if not drivers or overall <= target:
         return {"available": True, "cause": None,
                 "summary": f"Labor ran {overall}% against {target:g}% over {period} days — nothing over target to diagnose.",
@@ -395,10 +403,12 @@ def diagnose(analysis: dict) -> dict:
     }[cause[0]]
     margin = overall - target
     confidence = "high" if period >= 14 and margin > 3 else ("medium" if period >= 7 else "low")
+    subject = str(subjects.get(cause[0]) or "").strip().lower()
     return {"available": True, "cause": cause[2],
             "alternative_cause": alt[2] if alt else "Sales ran under the period's norm, which raises the percentage without any change in staffing.",
             "what_would_confirm": confirm, "operational_evidence": evidence, "confidence": confidence,
-            "summary": f"Labor ran {overall}% against {target:g}% over {period} days."}
+            "summary": f"Labor ran {overall}% against {target:g}% over {period} days.",
+            "driver": f"{cause[0]}:{subject}" if subject else cause[0]}
 
 
 def _covers_guidance(analysis: dict) -> str:
@@ -1201,8 +1211,19 @@ def _analysis_fingerprint(analysis: dict) -> str:
 
 
 def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
-    """get_claude_insights, once per (restaurant, data fingerprint)."""
-    key = (restaurant_id, _analysis_fingerprint(analysis))
+    """get_claude_insights, once per (restaurant, data fingerprint, the
+    lines the owner has answered) — an answer changes the prompt (its
+    ALREADY ANSWERED block), so it has to change the key too, or the note
+    that repeats the answered line is served until the data moves."""
+    answered = ()
+    try:
+        import insight_store as _ist_note
+        answered = tuple(_ist_note.answered_lines(restaurant_id, ("insight_labor", "diag_labor")))
+    except Exception:
+        answered = ()
+    import hashlib
+    key = (restaurant_id, _analysis_fingerprint(analysis)
+           + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else ""))
     hit = _NOTE_CACHE.get(key)
     if hit is not None:
         return hit
@@ -1371,6 +1392,17 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         "genuinely supported by the data given."
     ) if has_trend else ""
 
+    # The Labor read's lines are recommendations on the ledger now
+    # (insight_labor:<hash>, answered on web and iOS like Food's): what the
+    # owner answered is not suggested again in other words (M-8).
+    answered_block = ""
+    if restaurant_id:
+        try:
+            import insight_store as _ist_lab
+            answered_block = _ist_lab.do_not_repeat_block(restaurant_id, ("insight_labor", "diag_labor"))
+        except Exception:
+            answered_block = ""
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}{upload_context}{holiday_context}
@@ -1399,7 +1431,7 @@ Tone: warm, direct, human — but terse, like a text message from a sharp consul
 Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400).
 Do NOT use markdown, asterisks, bold, or special characters.
 There must be EXACTLY 3 numbered recommendations and nothing after number 3.
-The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}"""
+The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}{answered_block}"""
 
     msg = create_with_retry(
         get_client(),

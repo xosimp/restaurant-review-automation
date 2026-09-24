@@ -317,7 +317,10 @@ def digest(payload, restaurant, kind=FIRST):
         lead_missing = str(notes["reason"])
     went = [t for t in (_text(x) for x in narrative.get("went_well") or []) if t]
     needs = [t for t in (_text(x) for x in narrative.get("needs_attention") or []) if t]
-    actions = [{"text": _text(a), "why": (a.get("why") or "").strip() or None}
+    # `key` is the action's rec_ledger key (dsr_action:…): the email's
+    # "Ask about this" link names it, and a delivered email presents it.
+    actions = [{"text": _text(a), "why": (a.get("why") or "").strip() or None,
+                "key": a.get("key") if isinstance(a.get("key"), str) else None}
                for a in narrative.get("actions_tomorrow") or [] if _text(a)]
     withheld = [access.BLOCK_LABELS.get(n, n) for n in facts.get("withheld") or []]
     fiscal = (payload.get("fiscal") or {}).get("label")
@@ -377,12 +380,35 @@ def _render(report, user, restaurant, db):
     return access.render(report, user, restaurant, versions=versions)
 
 
+def present_shown(restaurant_id, payload, surface, user_id=None, db_path=None):
+    """The actions a reader was shown in one rendered report (the output of
+    dsr.access.render for THEIR view), into rec_ledger on `surface`. Returns
+    {key: rec_id or None}; never raises. Called where the report is really
+    seen — a delivered email ("dsr_email"), the report view ("dsr") — never
+    when the narrative is written."""
+    try:
+        from dsr import narrative as _narr
+        import rec_ledger
+        acts = ((payload or {}).get("narrative") or {}).get("actions_tomorrow") or []
+        items = _narr.ledger_items(acts)
+        if not items:
+            return {}
+        return rec_ledger.present_many(restaurant_id, items, surface, user_id=user_id, db_path=_db(db_path))
+    except Exception as e:
+        log.warning("dsr: actions not presented rid=%s surface=%s: %s", restaurant_id, surface, e)
+        return {}
+
+
 def _send_email(db, row_id, restaurant, report, user, kind):
     import emails
-    d = digest(_render(report, user, restaurant, db), restaurant, kind)
+    payload = _render(report, user, restaurant, db)
+    d = digest(payload, restaurant, kind)
     result = emails.send_dsr_email(user["email"], d, restaurant_id=restaurant.id)
     if getattr(result, "ok", False):
         _finish(db, row_id, SENT)
+        # The "Updated" notice shows no actions; the first notice does.
+        if kind == FIRST:
+            present_shown(restaurant.id, payload, "dsr_email", user_id=user.get("id"), db_path=db)
         return SENT
     # Never attempted (a suppressed address, no key): a decision, not a failure.
     status = FAILED if getattr(result, "attempts", 0) else SKIPPED

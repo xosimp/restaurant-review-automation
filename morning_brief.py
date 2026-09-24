@@ -280,7 +280,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     import loss_detection
     ls = _safe(loss_detection.signals, restaurant_id, today=today, db_path=db_path) if sees_loss else None
     for f in ((ls or {}).get("flagged") or [])[:1]:
-        lines.append({"key": "loss", "tone": "bad",
+        lines.append({"key": "loss", "tone": "bad", "rec": f.get("key"),
                       "text": f"Worth reviewing: {f['headline']}.",
                       "ask": "Show me the comp and void pattern from last week."})
 
@@ -430,6 +430,15 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                           "text": "Nothing needs you this morning. "
                                   + _watching_text(watching) + ".",
                           "ask": "What are you watching for me right now?"})
+    # The contract every payload carrying a recommendation shares
+    # (API_REFERENCE.md → Recommendation fields): a keyed line names its key
+    # and whether Done / Not for us / Track apply to it — false for the
+    # money ranking and the owed replies, which no surface can answer.
+    import rec_delivery
+    for l in lines:
+        if l.get("rec"):
+            l["rec_key"] = l["rec"]
+            l["answerable"] = rec_delivery.answerable(l["rec"])
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
 
 
@@ -491,20 +500,26 @@ def _dedupe(restaurant_id, brief, db_path=DB_PATH):
 
 
 def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
-    """Every keyed line this brief showed, into rec_ledger (never raises)."""
+    """Every keyed line this brief showed, into rec_ledger (never raises).
+    A line keyed only so an answer elsewhere can silence it — the money
+    ranking (money:*), the owed replies (urgent_reviews) — is not a
+    recommendation anyone can answer and is not presented
+    (rec_delivery.presentable)."""
     import rec_ledger
+    import rec_delivery
     items = [{"key": k, "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
               "position": i}
              for i, l in enumerate(brief.get("lines") or []) if l.get("rec")
              # A line that stands for several (running low: one key per item)
              # shows each of them.
              for k in ([l["rec"]] + [x for x in (l.get("recs") or []) if x != l["rec"]])]
+    items = rec_delivery.only_presentable(items)
     if items:
         rec_ledger.present_many(restaurant_id, items, surface, user_id=user_id, db_path=db_path)
 
 
 _LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "labor",
-                "money": "home", "fix_first": "home"}
+                "money": "home", "fix_first": "home", "loss": "ops"}
 
 
 _UNLOCK = {
@@ -628,13 +643,11 @@ def _ask_url(prompt, rec=None):
     """A link that opens the dashboard and asks that question — the email's
     version of the push's one-tap into Ask (dashboard.html reads ?ask=).
     `rec` carries the line's ledger key, so the open is recorded against the
-    recommendation it came from (dashboard.html posts it as "opened")."""
-    from urllib.parse import quote
-    base = config.base_url()
-    url = f"{base}/?ask={quote(prompt or '', safe='')}"
-    if rec:
-        url += f"&rec={quote(str(rec), safe='')}&src=brief_email"
-    return url
+    recommendation it came from (dashboard.html posts it as "opened"). A key
+    that is never presented (rec_delivery.presentable) is not carried: an
+    open with no episode behind it records nothing."""
+    import rec_delivery
+    return rec_delivery.ask_url(prompt, rec if rec_delivery.presentable(rec) else None, "brief_email")
 
 
 def _email_html(brief, restaurant_name):
@@ -747,6 +760,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     Returns counts."""
     from models import get_restaurant
     import push
+    import rec_delivery
     restaurant = restaurant or get_restaurant(restaurant_id)
     name = restaurant.location_name or restaurant.name
     people = recipients(restaurant_id, db_path)
@@ -788,10 +802,15 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             # History first: the push payload carries this login's unread
             # badge, counted over alert_log.
             import notify as _notify
-            _notify.record_notification(restaurant_id, "morning_brief", db_path=db_path)
-            data = {"ask_prompt": lead["ask"]}
-            if lead.get("rec"):
+            alert_id = _notify.record_notification(restaurant_id, "morning_brief", db_path=db_path)
+            # `surface` names this push in the ledger: a tap is an "opened"
+            # on brief_push, not on alert_push (notifications/opened).
+            data = {"ask_prompt": lead["ask"], "surface": "brief_push"}
+            if alert_id:
+                data["alert_id"] = alert_id
+            if lead.get("rec") and rec_delivery.presentable(lead["rec"]):
                 data["rec_key"] = lead["rec"]      # the tap is recorded as "opened" (notifications/opened)
+                data["answerable"] = rec_delivery.answerable(lead["rec"])
             push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
                            data=data, db_path=db_path, user_ids={u["id"]})
             _safe(_present, restaurant_id, brief, "brief_push", u["id"], db_path)

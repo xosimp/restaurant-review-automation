@@ -655,13 +655,16 @@ def _follow_through_sections(restaurant_id, owner_view=False):
         log.warning("digest slow-day block failed: %s", e)
     try:
         import loss_detection
+        # Owner-only (LOSS_VIEW): the signal can name an approving manager.
         ls = (loss_detection.signals(restaurant_id) or {}) if owner_view else {}
-        flagged = ls.get("flagged") or []
+        flagged = [f for f in (ls.get("flagged") or []) if not f.get("key") or f["key"] not in silenced][:3]
         if flagged:
             out.append(report_eyebrow("Comps & voids — worth a look", BRAND["bad"]) + report_paragraph(
-                _list(f"{f['headline']}. Could also be {f['alternative']}." for f in flagged[:3]))
+                _list(f"{f['headline']}. Could also be {f['alternative']}." for f in flagged))
                 + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                    f'{_html.escape(ls.get("note") or "")}</span>'))
+            shown += [{"key": f["key"], "module": "ops", "title": f["headline"][:200]}
+                      for f in flagged if f.get("key")]
     except Exception as e:
         log.warning("digest loss block failed: %s", e)
     _digest_impressions(restaurant_id, shown)
@@ -669,16 +672,24 @@ def _follow_through_sections(restaurant_id, owner_view=False):
 
 
 def _digest_impressions(restaurant_id, items):
-    """The digest's recommendation blocks, into rec_ledger — only when the
-    digest is being SENT (outside a web request), not previewed."""
+    """The digest's recommendation blocks, STAGED for rec_ledger: presented
+    only when the send rendering this digest succeeds (rec_delivery —
+    scheduler.run_weekly_digests flushes after delivery). A preview renders
+    the same blocks and records nothing."""
     try:
-        from flask import has_request_context
-        if not items or has_request_context():
-            return
-        import rec_ledger
-        rec_ledger.present_many(restaurant_id, [dict(it, position=i) for i, it in enumerate(items)], "digest")
+        import rec_delivery
+        rec_delivery.stage(restaurant_id, "digest", [dict(it, position=i) for i, it in enumerate(items or [])])
     except Exception as e:
-        log.warning("digest impressions not recorded: %s", e)
+        log.warning("digest impressions not staged: %s", e)
+
+
+def digest_move_key(text) -> str:
+    """The digest's "This week's move" — a model-written action — as a
+    recommendation key. The same words (ignoring case and punctuation) are
+    the same recommendation, as for every model-written line
+    (insight_store.line_key)."""
+    import insight_store
+    return insight_store.line_key("digest_move", text or "")
 
 
 def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
@@ -892,7 +903,25 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     sections.extend(_follow_through_sections(restaurant_id or report.restaurant_id, owner_view=owner_view))
 
     if ai_summary.get("action"):
-        sections.append(report_action("This week's move", _html.escape(ai_summary["action"])))
+        # A real recommendation (model-written, its figures checked against
+        # its input): keyed, with an "Ask about this" link that records the
+        # click, and staged so it is presented only once the digest is sent.
+        # A move the owner already answered is not said again.
+        from emails import report_ask_link
+        _rid_mv = restaurant_id or report.restaurant_id
+        move_key = digest_move_key(ai_summary["action"])
+        import review_common as _rc_mv
+        if move_key not in _rc_mv.silenced(_rid_mv):
+            sections.append(report_action("This week's move", _html.escape(ai_summary["action"])
+                                          + report_ask_link(f"Walk me through this: {ai_summary['action']}",
+                                                            move_key, "digest")))
+            try:
+                import rec_delivery
+                rec_delivery.stage(_rid_mv, "digest",
+                                   [{"key": move_key, "module": "home", "title": ai_summary["action"][:200],
+                                     "model_written": True, "kind": "digest_move"}])
+            except Exception as e:
+                print(f"[digest] move not staged: {e}")
 
     # Modules this client pays for that reported nothing this week. The digest
     # used to instruct the model to write a line for these anyway ("always

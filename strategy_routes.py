@@ -1797,6 +1797,24 @@ def _starting_points(rid) -> dict:
     return _staffing.payload(_staffing.starting_headcount(rid, roster_roles=_roster_roles(rid)))
 
 
+def _present_calibration(u, cal):
+    """A ready weight suggestion is shown on this screen with its own Apply:
+    presented under "calibration:weights" (the key the Apply records as
+    accepted — a bookkeeping prefix, so it stays out of acceptance figures)
+    with `rec_key` and `answerable` (false: Apply is its answer, not Done /
+    Not for us). Never fails the route."""
+    try:
+        if isinstance(cal, dict) and cal.get("ready") and cal.get("suggested_weights"):
+            import rec_ledger
+            import rec_delivery
+            rec_ledger.present(_rid(u), "calibration:weights", "schedule", "labor",
+                               title="Suggested Shift Quality weights", user_id=u.get("id"))
+            cal = dict(cal, rec_key="calibration:weights", answerable=rec_delivery.answerable("calibration:weights"))
+    except Exception as e:
+        print(f"[schedule] calibration not presented rid={_rid(u)}: {e}")
+    return cal
+
+
 def _do_schedule_intel(u):
     """The record behind the draft: outcomes by daypart, the rotation
     ledger, what staff keep dropping and claiming, who could hold a
@@ -1827,7 +1845,7 @@ def _do_schedule_intel(u):
             # outcomes (suggested weights, never applied), and no-show rates
             # by weekday.
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
-            "weight_calibration": _safe(lambda: _sl.calibrate_weights(rid), {"ready": False}),
+            "weight_calibration": _present_calibration(u, _safe(lambda: _sl.calibrate_weights(rid), {"ready": False})),
             # Schedule learning (#42, #46, #48, #43): how well the edit
             # predictor would have done on past drafts, the multi-week
             # rotation, the sales-per-labor-hour targets, and — for a
@@ -1969,7 +1987,33 @@ def _do_loss_signals(u):
         return _forbidden("Comps & voids are visible to the owner, or to a manager the owner has "
                           "given access.")
     import loss_detection
-    return {"ok": True, **loss_detection.signals(_rid(u))}, 200
+    sig = loss_detection.signals(_rid(u))
+    _present_loss_flags(u, sig)
+    return {"ok": True, **sig}, 200
+
+
+def _present_loss_flags(u, sig):
+    """A comp/void flag is a recommendation — review these tickets — and
+    only this login's view (LOSS_VIEW, checked by the caller) ever sees it:
+    presented on "home", the surface both Homes show it on (#41), with
+    `rec_key` / `answerable` on each flag, and a flag the owner already
+    answered (or whose issue was resolved — the same key) left out of
+    `flagged`. Never fails the route."""
+    try:
+        import rec_delivery
+        import rec_ledger
+        flagged = [f for f in (sig or {}).get("flagged") or [] if f.get("key")]
+        for f in flagged:
+            f["rec_key"] = f["key"]
+            f["answerable"] = rec_delivery.answerable(f["key"])
+        ids = rec_ledger.present_many(_rid(u), [{"key": f["key"], "module": "ops", "title": f.get("headline"),
+                                                 "position": i} for i, f in enumerate(flagged)],
+                                      "home", user_id=u.get("id")) if flagged else {}
+        if ids:
+            sig["flagged"] = [f for f in sig.get("flagged") or []
+                              if not (f.get("key") in ids and ids[f["key"]] is None)]
+    except Exception as e:
+        print(f"[loss] presentation failed rid={_rid(u)}: {e}")
 
 
 def _do_cross_module(u):
@@ -1999,12 +2043,62 @@ def _do_cross_module(u):
     # from here means both surfaces ask Cavnar the same thing.
     links = [dict(l, ask=f"Tell me more about this: {l.get('headline', '')}")
              for l in (brief.get("links") or [])]
+    fix_first, links = _present_cross_module(u, brief.get("fix_first"), links)
     return {"ok": True,
             "links": links,
-            "fix_first": brief.get("fix_first"),
+            "fix_first": fix_first,
             "modules_consulted": brief.get("modules_consulted") or [],
             "modules_off": brief.get("modules_off") or [],
             "unanswered": brief.get("unanswered") or []}, 200
+
+
+def _present_cross_module(u, fix_first, links):
+    """Home's "one thing" and its "What connects" links, into rec_ledger on
+    the surface that shows them (#26): their keys existed (the one thing's
+    own key, business_intelligence.link_key) and this route — the one both
+    Homes read — never presented them, so the page that leads with them was
+    the one place they were never counted.
+
+    Each carries the contract fields: `rec_key`, and `answerable` — true
+    where Done / Not for us / Track apply (rec_delivery.answerable; the owed
+    replies and the money ranking are not). A link the owner has already
+    answered is left out, as every other surface leaves an answered
+    recommendation out; the one thing is already filtered
+    (pick_one_thing). Returns (fix_first, links). Never fails the route."""
+    import business_intelligence as bi
+    import rec_delivery
+    try:
+        ff = dict(fix_first) if fix_first else None
+        items, seen = [], set()
+        if ff and ff.get("key"):
+            ff["rec_key"] = ff["key"]
+            ff["answerable"] = rec_delivery.answerable(ff["key"])
+            items.append({"key": ff["key"], "module": "home", "title": ff.get("what"), "position": 0,
+                          "dollar_value": ff.get("dollars_monthly"),
+                          "evidence_sources": ff.get("modules") or None,
+                          "cross_module": len(ff.get("modules") or []) > 1})
+            seen.add(ff["key"])
+        out_links = []
+        for l in links or []:
+            key = bi.link_key(l)
+            l = dict(l, rec_key=key, answerable=rec_delivery.answerable(key))
+            out_links.append(l)
+            if key not in seen:
+                seen.add(key)
+                items.append({"key": key, "module": "home", "title": l.get("headline"), "position": len(items),
+                              "evidence_sources": l.get("modules") or None, "cross_module": True})
+        items = rec_delivery.only_presentable(items)
+        ids = {}
+        if items:
+            import rec_ledger
+            ids = rec_ledger.present_many(_rid(u), items, "home", user_id=u.get("id")) or {}
+        out_links = [l for l in out_links if not (l["rec_key"] in ids and ids[l["rec_key"]] is None)]
+        if ff and ff.get("key") in ids and ids[ff["key"]] is None:
+            ff = None           # answered between the pick and the showing
+        return ff, out_links
+    except Exception as e:
+        print(f"[cross-module] presentation failed rid={_rid(u)}: {e}")
+        return fix_first, links
 
 
 def _do_good_news(u):
@@ -2424,8 +2518,46 @@ def _do_dsr_get(u, day):
     report = store.get_report(_rid(u), d, version=version)
     if not report:
         return {"ok": False, "error": "There's no report for that night yet."}, 404
-    return {"ok": True, **access.render(report, u, restaurant=get_restaurant(_rid(u)),
-                                        versions=store.versions(_rid(u), d))}, 200
+    payload = access.render(report, u, restaurant=get_restaurant(_rid(u)), versions=store.versions(_rid(u), d))
+    _dsr_present_view(u, d, payload)
+    return {"ok": True, **payload}, 200
+
+
+# A report read this many days after its night is history, not advice: its
+# actions are not presented again (that would open a fresh episode for last
+# month's "tomorrow"). The same window dsr.deliver announces a night within.
+DSR_VIEW_PRESENT_DAYS = 3
+
+
+def _dsr_present_view(u, day, payload):
+    """The report view is where the actions are SEEN: present what this
+    login's view shows on the "dsr" surface (the narrative no longer
+    presents at generation — dsr.narrative.ledger_items), and give every
+    action the contract fields: `rec_key` (its dsr_action key),
+    `answerable` (Done / Not for us / Track apply) and `answered` (the owner
+    already answered it — the report keeps the line, the controls go).
+    Never fails the view."""
+    try:
+        import rec_delivery
+        from dsr import deliver as _dsr_deliver
+        acts = ((payload or {}).get("narrative") or {}).get("actions_tomorrow") or []
+        if not acts:
+            return
+        recent = (_local_today(u) - day).days <= DSR_VIEW_PRESENT_DAYS
+        ids = _dsr_deliver.present_shown(_rid(u), payload, "dsr", user_id=u.get("id")) if recent else {}
+        silenced = set()
+        if not recent:
+            import rec_ledger
+            silenced = rec_ledger.silenced_keys(_rid(u))
+        for a in acts:
+            if not isinstance(a, dict) or not a.get("key"):
+                continue
+            answered = (a["key"] in ids and ids[a["key"]] is None) if recent else a["key"] in silenced
+            a["rec_key"] = a["key"]
+            a["answered"] = bool(answered)
+            a["answerable"] = rec_delivery.answerable(a["key"]) and not answered
+    except Exception as e:
+        print(f"[dsr] view presentation failed rid={_rid(u)}: {e}")
 
 
 def _do_dsr_status(u, day):

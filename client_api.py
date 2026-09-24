@@ -672,13 +672,17 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
         _intro, recs, _fc, _unv = parse_insight_sections(text or "")
     except Exception:
         return []
+    # `rec_key` / `answerable` are the contract every payload carrying a
+    # recommendation shares (API_REFERENCE.md → Recommendation fields);
+    # `key` / `controls` stay for the clients that read them already.
     items = [{"index": i, "key": insight_store.line_key(prefix, r), "text": r} for i, r in enumerate(recs)]
     if not items or not promote:
-        return [dict(it, rec_id=None, answered=False, controls=False) for it in items]
+        return [dict(it, rec_id=None, answered=False, controls=False, rec_key=it["key"], answerable=False)
+                for it in items]
     kept = {k["key"]: k for k in insight_store.present_recs(
         rid, module, surface, [dict(it, title=it["text"], model_written=True) for it in items], user_id=user_id)}
     return [dict(it, rec_id=(kept.get(it["key"]) or {}).get("rec_id"), answered=it["key"] not in kept,
-                 controls=True) for it in items]
+                 controls=True, rec_key=it["key"], answerable=it["key"] in kept) for it in items]
 
 
 def diagnosis_rec_key(prefix, diag):
@@ -2389,23 +2393,238 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         _msg_mkt, _status_mkt = _insight_err_mkt(e, "Marketing brief unavailable — check back shortly.")
         return {"insight": _msg_mkt}, _status_mkt
 
-def _labor_diagnosis_safe(rid, analysis=None):
+def _labor_diagnosis_safe(rid, analysis=None, user_id=None):
     """labor.diagnose over the current analysis — deterministic, so it is
-    never cached with the model's prose and never fails the route."""
+    never cached with the model's prose and never fails the route. Its check
+    (what_would_confirm) is presented to the ledger as a recommendation
+    (present_labor_diagnosis)."""
     try:
         from labor import analyse_shifts_for_restaurant, diagnose
-        return diagnose(analysis or analyse_shifts_for_restaurant(rid))
+        return present_labor_diagnosis(rid, diagnose(analysis or analyse_shifts_for_restaurant(rid)),
+                                       user_id=user_id)
     except Exception:
         return {"available": False, "reason": "could not read the shifts"}
+
+
+def present_labor_diagnosis(rid, diag, user_id=None):
+    """The labor diagnosis's one step — what_would_confirm, the check behind
+    its cause — keyed on what the cause is ABOUT (labor.diagnose's `driver`:
+    "diag_labor:weekday:saturday"), so the same finding tomorrow with other
+    percentages is the same recommendation. Presented on the "labor"
+    surface like Food's and Reviews' diagnoses (#25), with the contract
+    fields `rec_key`, `answerable` and `answered` (an answered check keeps
+    its evidence and loses its controls). Never raises."""
+    if not diag or not diag.get("available") or not diag.get("cause") or not diag.get("what_would_confirm"):
+        return diag
+    try:
+        import insight_store
+        import rec_ledger
+        d = dict(diag)
+        key = (rec_ledger.rec_key("diag_labor", d["driver"]) if d.get("driver")
+               else insight_store.line_key("diag_labor", d["cause"]))
+        kept = {k["key"] for k in insight_store.present_recs(
+            rid, "labor", "labor", [{"key": key, "text": d["what_would_confirm"], "model_written": False,
+                                     "confidence_band": d.get("confidence"), "expected_metric": "labor_pct"}],
+            user_id=user_id)}
+        d["rec_key"] = key
+        d["answered"] = key not in kept
+        d["answerable"] = not d["answered"]
+        return d
+    except Exception as e:
+        print(f"[labor] diagnosis not presented rid={rid}: {e}")
+        return diag
+
+
+def labor_insight_items(rid, text, user_id=None):
+    """The Labor read's numbered recommendations, keyed and presented on the
+    "labor" surface exactly like Food's and Marketing's (insight_rec_items,
+    "insight_labor:<hash>") — the read's three lines never reached the
+    ledger (#25). An UNVERIFIED read offers no controls and logs nothing."""
+    return insight_rec_items(rid, text or "", "insight_labor", "labor", "labor", user_id=user_id,
+                             promote="UNVERIFIED:" not in (text or ""))
+
+
+def present_calendar_ideas(rid, ideas, user_id=None):
+    """This week's content-calendar ideas as recommendations (#41): each
+    carries `rec_key` (marketing.calendar_idea_key), `answered` and
+    `answerable`; the ones still open — not written from, not answered —
+    are presented on the "marketing" surface when served. Writing from an
+    idea records it as accepted (marketing.mark_calendar_idea_used). Every
+    idea stays in the list: the week rail shows all seven days. Mutates and
+    returns `ideas`; never raises."""
+    if not ideas:
+        return ideas
+    try:
+        import rec_ledger
+        from marketing import calendar_idea_key
+        for idea in ideas:
+            if isinstance(idea, dict):
+                idea["rec_key"] = calendar_idea_key(idea.get("angle") or idea.get("topic") or "")
+        open_ideas = [i for i in ideas if isinstance(i, dict) and not i.get("written") and (i.get("angle") or i.get("topic"))]
+        ids = rec_ledger.present_many(rid, [{"key": i["rec_key"], "module": "marketing", "kind": "content_idea",
+                                             "title": str(i.get("angle") or i.get("topic"))[:200],
+                                             "model_written": True, "position": n}
+                                            for n, i in enumerate(open_ideas)],
+                                      "marketing", user_id=user_id) if open_ideas else {}
+        silenced = None
+        for idea in ideas:
+            if not isinstance(idea, dict):
+                continue
+            key = idea["rec_key"]
+            if key in ids:
+                answered = ids[key] is None
+            else:
+                if silenced is None:
+                    silenced = rec_ledger.silenced_keys(rid)
+                answered = key in silenced
+            idea["answered"] = bool(answered or idea.get("written"))
+            idea["answerable"] = not idea["answered"]
+    except Exception as e:
+        print(f"[calendar] ideas not presented rid={rid}: {e}")
+    return ideas
+
+
+# The AI-visibility roadmap (#41). It was built in the browser
+# (dashboard.html renderAIVisibility) from the payload's own figures, so
+# nothing it recommended ever reached the ledger. The same four cards, the
+# same done rules and the same order, built here from the same payload.
+AIV_ROADMAP_IMPACT_RANK = {"Highest impact": 0, "High impact": 1, "Fast win": 2}
+
+
+def ai_visibility_roadmap(d) -> list:
+    """The roadmap cards for one AI-visibility payload: [{key, rec_key,
+    title, why, detail, action, impact, done}], open cards first, then by
+    impact. Pure — no presenting (present_ai_visibility_roadmap)."""
+    d = d or {}
+    raw = d.get("presence_score") if d.get("presence_score") is not None else d.get("gbp_score")
+    gbp = int(round(float(raw))) if raw is not None else None
+    checklist = d.get("checklist") or []
+    reviews_done = any("google review" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
+    response_done = any("response rate" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
+    missing = sum(1 for c in checklist if not c.get("done"))
+    posts = int(d.get("social_posts_30d") or 0)
+    total = int(d.get("review_total") or 0)
+    rate = int(round(float(d.get("resp_rate") or 0)))
+    gbp_pct = f"{gbp}%" if gbp is not None else "not measured"
+    cards = [
+        {"key": "aiv_roadmap:reviews", "title": "Get more Google reviews", "impact": "Highest impact",
+         "action": "Send a review request", "module": "reviews", "done": reviews_done,
+         "why": (f"You have {total} review{'' if total == 1 else 's'} right now. Review count and recency are the "
+                 "most visible public signal about your restaurant, and the one you can move fastest."),
+         "detail": (f"{total} reviews — past the 50-review AI threshold" if reviews_done
+                    else f"{total} of 50 reviews — {max(50 - total, 0)} more to go")},
+        {"key": "aiv_roadmap:responses", "title": "Respond to every review", "impact": "High impact",
+         "action": "Go to review queue", "module": "reviews", "done": response_done,
+         "why": (f"You're currently responding to {rate}% of your reviews. Replies are published on your public "
+                 "listing, so a guest reading it sees an owner who answers."),
+         "detail": (f"{rate}% response rate — excellent" if response_done
+                    else f"{rate}% response rate — {max(75 - rate, 0)}% more gets you to 75%")},
+        {"key": "aiv_roadmap:gbp", "title": "Complete your Google Business Profile", "impact": "Fast win",
+         "action": "Open GBP settings", "module": "account", "done": bool(gbp is not None and gbp >= 80),
+         "why": (f"Your public listing and review record score {gbp_pct}. This covers what someone finds when they "
+                 "look you up: your description, hours, phone, website, and how many recent reviews you have."),
+         "detail": (f"{gbp_pct} complete — {missing} item{'' if missing == 1 else 's'} left" if missing
+                    else f"{gbp_pct} complete")},
+        {"key": "aiv_roadmap:social", "title": "Post consistently on social", "impact": "Long-term",
+         "action": "Go to marketing", "module": "marketing", "done": posts >= 8,
+         "why": (f"You've logged {posts} marketing piece{'' if posts == 1 else 's'} this month. Posts that name "
+                 "your restaurant, neighbourhood and cuisine give search engines more text about you to index."),
+         "detail": (f"{posts} posts this month — great pace" if posts >= 8
+                    else ("No marketing pieces logged this month yet" if posts == 0
+                          else f"{posts} post{'' if posts == 1 else 's'} this month — aim for 8+"))},
+    ]
+    cards.sort(key=lambda c: (c["done"], AIV_ROADMAP_IMPACT_RANK.get(c["impact"], 3)))
+    for c in cards:
+        c["rec_key"] = c["key"]
+    return cards
+
+
+def present_ai_visibility_roadmap(rid, payload, user_id=None):
+    """Put the roadmap on the payload and present its open cards on the
+    "intel" surface — only where a person is looking at it (the web and
+    iOS AI-visibility routes), never when Ask reads the same payload.
+    Each card carries `rec_key`, `answered` and `answerable`; a done card is
+    not a recommendation and is not presented. Never raises."""
+    if not isinstance(payload, dict) or not payload.get("ok", True) or "checklist" not in payload:
+        return payload
+    try:
+        import rec_ledger
+        cards = ai_visibility_roadmap(payload)
+        todo = [c for c in cards if not c["done"]]
+        ids = rec_ledger.present_many(rid, [{"key": c["key"], "module": "intel", "kind": "aiv_roadmap",
+                                             "title": c["title"], "position": i} for i, c in enumerate(todo)],
+                                      "intel", user_id=user_id) if todo else {}
+        for c in cards:
+            c["answered"] = bool(c["key"] in ids and ids[c["key"]] is None)
+            c["answerable"] = (not c["done"]) and not c["answered"]
+        payload["roadmap"] = cards
+    except Exception as e:
+        print(f"[aivis] roadmap not presented rid={rid}: {e}")
+    return payload
+
+
+def present_schedule_result(rid, result, user_id=None):
+    """A generated draft's own recommendations, presented when the draft is
+    DELIVERED to the person who asked for it (the status poll that returns
+    it), on "schedule_review" (#41): the standby picks
+    ("standby:<date>:<name>", the key the on-call ask answers — a
+    bookkeeping prefix, so it stays out of acceptance figures) and the
+    first-pass overtime moves with a named candidate
+    ("overtime_move:<employee>:<date>", the key the validate route already
+    presents them under). Predicted edits and the what-if comparison are a
+    forecast of the manager's own edits and the evidence behind "Improve
+    with Cavnar" — not recommendations — and are not presented. Each item
+    gains `rec_key` and `answerable`. Never raises."""
+    if not isinstance(result, dict):
+        return result
+    try:
+        import rec_ledger
+        import rec_delivery
+        items = []
+        for d in result.get("standby_days") or []:
+            who = ((d or {}).get("standby") or {}).get("employee")
+            if who and d.get("date"):
+                d["rec_key"] = rec_ledger.rec_key("standby", f"{d['date']}:{str(who).strip().lower()}")
+                d["answerable"] = rec_delivery.answerable(d["rec_key"])
+                items.append({"key": d["rec_key"], "module": "schedule", "kind": "standby",
+                              "title": f"Standby on {d.get('day') or d['date']}: {who}"[:200]})
+        for f in result.get("overtime_forecast") or []:
+            cand = (f or {}).get("candidate") or {}
+            if f.get("employee") and cand.get("date"):
+                f["rec_key"] = rec_ledger.rec_key("overtime_move", f"{f['employee']}:{cand.get('date')}")
+                f["answerable"] = rec_delivery.answerable(f["rec_key"])
+                items.append({"key": f["rec_key"], "module": "schedule", "kind": "overtime_move",
+                              "title": str(f.get("text") or "")[:160], "dollar_value": cand.get("saves"),
+                              "cavnar_completes": True})
+        if items:
+            rec_ledger.present_many(rid, items, "schedule_review", user_id=user_id)
+    except Exception as e:
+        print(f"[schedule] draft recommendations not presented rid={rid}: {e}")
+    return result
+
+
+def _labor_insight_out(rid, text, user_id=None):
+    """The web route's insight fields: the HTML (answered lines left out,
+    each remaining line with Done / Not for us / Track), `rec_items` and
+    the flat `recs` Food Cost's payload carries."""
+    recs = labor_insight_items(rid, text, user_id=user_id)
+    return {"insight": format_insight_html(text, rec_items=recs, surface="labor", module="labor"),
+            "rec_items": recs,
+            "recs": [{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
+                     for r in recs if r.get("controls") and not r.get("answered")]}
 
 
 @client_bp.route("/api/labor-insight")
 @login_required
 def labor_insight_api(current_user):
     rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    # The cache holds the model's TEXT, not rendered HTML: the lines are
+    # keyed and answered per request, so an answer given a minute ago drops
+    # its line from the next load rather than after the cache expires.
     cached = _cache_get("labor-insight:" + str(rid))
     if cached:
-        return jsonify(insight=cached, diagnosis=_labor_diagnosis_safe(rid))
+        return jsonify(diagnosis=_labor_diagnosis_safe(rid, user_id=uid), **_labor_insight_out(rid, cached, uid))
     try:
         from labor import analyse_shifts_for_restaurant, get_claude_insights
         from models import get_restaurant
@@ -2418,14 +2637,14 @@ def labor_insight_api(current_user):
         from labor import labor_note
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=_staff_notes_labor if _staff_notes_labor else None)
-        formatted = format_insight_html(insight)
-        _cache_set("labor-insight:" + str(rid), formatted)
-        return jsonify(insight=formatted, diagnosis=_labor_diagnosis_safe(rid, analysis))
+        _cache_set("labor-insight:" + str(rid), insight)
+        return jsonify(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid),
+                       **_labor_insight_out(rid, insight, uid))
     except Exception as e:
         import traceback; traceback.print_exc()
         stale = _insight_cache.get("labor-insight:" + str(rid))
         if stale:
-            return jsonify(insight=stale[1])
+            return jsonify(**_labor_insight_out(rid, stale[1], uid))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its
@@ -2722,7 +2941,7 @@ def content_calendar(current_user):
         # sees it — it counts attempts, not generations.
         just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
         if just_made:
-            return jsonify(ideas=just_made)
+            return jsonify(ideas=present_calendar_ideas(rid, just_made, current_user.get("id")))
         if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
             return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
     # An empty week always comes with a reason (AI-26): a cut-off or
@@ -2739,7 +2958,7 @@ def content_calendar(current_user):
         return jsonify(ideas=[], error=msg), status
     if not ideas:
         return jsonify(ideas=[], error="Couldn't build this week's calendar — try Generate again.")
-    return jsonify(ideas=ideas)
+    return jsonify(ideas=present_calendar_ideas(rid, ideas, current_user.get("id")))
 
 def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
@@ -3003,6 +3222,8 @@ def schedule_status(current_user, job_id):
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
+        if job["status"] == "done":
+            present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
         return jsonify(result)
     except Exception as e:
         return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
@@ -4213,6 +4434,9 @@ def gbp_listing_update(current_user):
 @login_required
 def ai_visibility(current_user):
     payload, status = _do_ai_visibility(current_user["restaurant_id"])
+    # The roadmap is built and presented here, where a person sees it — not
+    # in _do_ai_visibility, which Ask's read_ai_visibility tool calls too.
+    payload = present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
     return jsonify(**payload), status
 
 

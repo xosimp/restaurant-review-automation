@@ -589,13 +589,23 @@ def test_h19_the_monthly_review_hides_food_cost_dollars_from_a_login_without_foo
 
 
 def test_h19_monthly_impressions_are_logged_as_the_monthly_email(db_path, monkeypatch):
-    import monthly_review, review_common
+    """The monthly email's priorities and one thing are staged on the
+    monthly_email surface by the email that renders them — and building the
+    review (the month-ready push, the subject line) stages nothing (audit
+    #6: shown is recorded at delivery, never at build)."""
+    import emails, monthly_review, rec_delivery
     rid = _rid(db_path)
-    seen = {}
-    monkeypatch.setattr(review_common, "present", lambda *a, **k: seen.update(k))
-    monkeypatch.setattr(bi, "executive_brief", lambda *a, **k: {})
-    monthly_review.build(rid, today=date(2026, 9, 1), db_path=db_path)
-    assert seen.get("surface") == "monthly_email"
+    ff = {"key": "cut_waste:Salmon", "what": "Cut salmon waste", "modules": ["food_cost"]}
+    monkeypatch.setattr(bi, "executive_brief", lambda *a, **k: {"fix_first": ff})
+    with rec_delivery.collect() as shown:
+        monthly_review.build(rid, today=date(2026, 9, 1), db_path=db_path)
+    assert shown.groups == []
+    monkeypatch.setattr(monthly_review, "build", lambda *a, **k: {
+        "month": "August 2026", "months": 1, "metrics": [], "results": [], "goals": [], "compared_with": "July",
+        "priorities": [], "fix_first": ff})
+    with rec_delivery.collect() as shown:
+        emails._monthly_review_sections(rid)
+    assert [(g[1], [i["key"] for i in g[2]]) for g in shown.groups] == [("monthly_email", ["cut_waste:Salmon"])]
     assert "monthly_email" in rec_ledger.SURFACES
 
 

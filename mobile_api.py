@@ -1518,12 +1518,38 @@ def mobile_mark_notification_opened(current_user):
     if rec_key:
         try:
             import rec_ledger
-            rec_ledger.record(rid, rec_key, "opened", surface="alert_push", user_id=current_user.get("id"),
+            from datetime import datetime as _dt_open
+            # One open per notification (its alert_log id) and login; a push
+            # with no history row is one open per type, login and day — a
+            # bare type made the first brief tap the only one ever recorded
+            # for that key.
+            ref = (f"open:{alert_id}:{current_user.get('id')}" if alert_id else
+                   f"open:{data.get('type')}:{_dt_open.utcnow().strftime('%Y-%m-%d')}:{current_user.get('id')}")
+            rec_ledger.record(rid, rec_key, "opened", surface=notification_open_surface(data),
+                              user_id=current_user.get("id"),
                               meta={"alert_id": alert_id, "alert_type": (data.get("type") or "")[:64]},
-                              source_ref=f"open:{alert_id or data.get('type')}:{current_user.get('id')}")
-        except Exception:
-            pass
+                              source_ref=ref)
+        except Exception as e:
+            print(f"[notifications] open not recorded rid={rid}: {e}")
     return jsonify(ok=True)
+
+
+# The push surfaces a tap can be an "opened" on, and the surface a push type
+# is when an older app (or payload) does not say. The morning brief's taps
+# were all filed as alert_push (#7).
+_PUSH_OPEN_SURFACES = ("alert_push", "brief_push")
+_PUSH_TYPE_SURFACE = {"morning_brief": "brief_push"}
+
+
+def notification_open_surface(data) -> str:
+    """Which ledger surface a notification tap is an open on: the payload's
+    own `surface` when it names a push surface (every push this server sends
+    carries one), else the one its type implies, else alert_push."""
+    data = data or {}
+    sf = str(data.get("surface") or "").strip()
+    if sf in _PUSH_OPEN_SURFACES:
+        return sf
+    return _PUSH_TYPE_SURFACE.get(str(data.get("type") or "").strip(), "alert_push")
 
 
 @mobile_bp.route("/notifications/engagement")
@@ -2579,9 +2605,15 @@ def mobile_labor_insight(current_user):
     from labor import analyse_shifts_for_restaurant, get_claude_insights
     from models import get_restaurant, get_staff_notes
     rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    # The read's lines are keyed and presented like Food's (#25):
+    # insight_rec_keys runs beside insight_recommendations, an answered line
+    # is left out, and rec_items carries the contract fields.
     cached = _capi._cache_get("mobile-labor-insight:" + str(rid))
     if cached:
-        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid), **_insight_json(cached))
+        _recs = _capi.labor_insight_items(rid, cached, user_id=uid)
+        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, user_id=uid),
+                       rec_items=_recs, **_insight_json(cached, _recs))
     try:
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
@@ -2592,8 +2624,9 @@ def mobile_labor_insight(current_user):
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=staff_notes if staff_notes else None)
         _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
-        return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis),
-                       **_insight_json(insight))
+        _recs = _capi.labor_insight_items(rid, insight, user_id=uid)
+        return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
+                       rec_items=_recs, **_insight_json(insight, _recs))
     except Exception as e:
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e)
@@ -2660,6 +2693,8 @@ def mobile_schedule_status(job_id, current_user):
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
+        if job["status"] == "done":
+            _capi.present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=_safe_err(e)), 500
@@ -2876,7 +2911,8 @@ def _do_mobile_marketing(restaurant_id):
     return {
         "ok": True,
         "stats": stats,
-        "calendar": _annotate_written(restaurant_id, get_cached_calendar(restaurant_id) or []),
+        "calendar": _capi.present_calendar_ideas(restaurant_id,
+                                                 _annotate_written(restaurant_id, get_cached_calendar(restaurant_id) or [])),
         "guest_textable": _guest_textable_count(restaurant_id),
         # Served rather than hardcoded in the app, which had drifted to five
         # types with different labels and no descriptions.
@@ -2909,7 +2945,8 @@ def mobile_generate_calendar(current_user):
     # impatient taps locked the button for five minutes having generated once.
     just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
     if just_made:
-        return jsonify(ok=True, calendar=_annotate_written(rid, just_made)), 200
+        return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+            rid, _annotate_written(rid, just_made), current_user.get("id"))), 200
 
     if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
         return jsonify(ok=False, error="Too many calendar regenerations — try again in a few minutes."), 429
@@ -2923,10 +2960,12 @@ def mobile_generate_calendar(current_user):
         # back an error and an empty screen.
         existing = get_cached_calendar(rid)
         if existing:
-            return jsonify(ok=True, calendar=_annotate_written(rid, existing), stale=True), 200
+            return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+                rid, _annotate_written(rid, existing), current_user.get("id")), stale=True), 200
         return jsonify(ok=False,
                        error="Couldn't build a calendar right now — try again in a moment."), 200
-    return jsonify(ok=True, calendar=_annotate_written(rid, ideas)), 200
+    return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+        rid, _annotate_written(rid, ideas), current_user.get("id"))), 200
 
 
 def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calendar=False):
@@ -4252,6 +4291,7 @@ def mobile_ai_visibility(current_user):
     the same 3-call/60s rate limit as the web route since each call fires
     real, billable Perplexity queries."""
     payload, status = _capi._do_ai_visibility(current_user["restaurant_id"])
+    payload = _capi.present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
     return jsonify(**payload), status
 
 

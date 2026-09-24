@@ -37,7 +37,7 @@ TERMINAL = {"accepted": "accepted", "completed": "completed", "dismissed": "dism
 MODULES = ("reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops", "home", "ask")
 SURFACES = ("home", "brief_email", "brief_push", "weekly_email", "alert_sms", "alert_email", "alert_push",
             "queue", "ask", "schedule_review", "labor", "reviews", "food", "marketing", "intel", "issue_sms",
-            "digest", "monthly_email", "ios", "web", "auto", "unknown", "dsr")
+            "digest", "monthly_email", "ios", "web", "auto", "unknown", "dsr", "dsr_email")
 # What each surface is called where a person reads it (the admin console's
 # "by surface" breakdown). Every surface has one; a test holds them in step.
 SURFACE_LABELS = {
@@ -46,7 +46,7 @@ SURFACE_LABELS = {
     "ask": "ask", "schedule_review": "schedule review", "labor": "labor", "reviews": "reviews", "food": "food",
     "marketing": "marketing", "intel": "intel", "issue_sms": "issue text", "digest": "digest",
     "monthly_email": "monthly email", "ios": "ios", "web": "web", "auto": "automatic", "unknown": "unknown",
-    "dsr": "daily report",
+    "dsr": "daily report", "dsr_email": "daily report email",
 }
 
 

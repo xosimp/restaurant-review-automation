@@ -810,21 +810,28 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
                 body += " " + move["text"]
             alert_id = notify.record_notification(r.id, "intraday_pulse", db_path=db_path,
                                                   value=move["dollars"] if move else None)
-            data = {"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?", "alert_id": alert_id}
-            recs = [{"key": f"intraday_pulse:{local.date().isoformat()}", "module": "labor",
-                     "title": f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}"}]
+            data = {"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?", "alert_id": alert_id,
+                    "surface": "alert_push"}
+            # "X% behind a typical Friday" is news, not a recommendation —
+            # nothing to answer, so it is not presented (rec_delivery). The
+            # staffing move is: it carries its key and `answerable`, for the
+            # app to offer Done / Not for us on the pulse.
+            recs = []
             if move:
-                data["staffing_move"] = move
+                import rec_delivery
+                data["staffing_move"] = dict(move, rec_key=move["key"], answerable=True)
                 recs.append({"key": move["key"], "module": "labor", "title": move["text"],
                              "dollar_value": move["dollars"]})
                 data["rec_key"] = move["key"]
+                data["answerable"] = rec_delivery.answerable(move["key"])
             push.fire_push(
                 r.id, "intraday_pulse",
                 f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}", body,
                 data=data, db_path=db_path, user_ids=audience)
             try:
-                import rec_ledger
-                rec_ledger.present_many(r.id, recs, "alert_push", db_path=db_path)
+                if recs:
+                    import rec_ledger
+                    rec_ledger.present_many(r.id, recs, "alert_push", db_path=db_path)
             except Exception as le:
                 ops.capture(le, job="pre_dinner_pulse_rec", context=f"restaurant_id={r.id}")
             sent += 1
@@ -1035,12 +1042,18 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     for token in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True) or []):
         devices.setdefault(int(token.get("user_id") or 0), []).append(token)
 
+    import rec_delivery
+    if rec and not rec_delivery.presentable(rec.get("key")):
+        rec = None
     alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path)
     pushed = {u["id"] for u in people if devices.get(u["id"])}
     if pushed:
         # The history row's id rides the payload so the open can name it
-        # (#39); the recommendation key too, when this is one.
-        data = dict(data or {}, alert_id=alert_id, **({"rec_key": rec["key"]} if rec else {}))
+        # (#39); the recommendation key too, when this is one, with the
+        # ledger surface a tap is an open on and whether the app may offer
+        # Done / Not for us on it.
+        data = dict(data or {}, alert_id=alert_id, surface="alert_push",
+                    **({"rec_key": rec["key"], "answerable": rec_delivery.answerable(rec["key"])} if rec else {}))
         # Inside the owner's quiet hours it still arrives, but silently —
         # no sound, no banner break (push.py "quiet"). A catch-up pass after
         # an outage used to fire these with sound late at night (A-10).
@@ -1061,12 +1074,16 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id)
         name = (restaurant.location_name or restaurant.name) if restaurant else "your restaurant"
+        # With a recommendation behind it the email links to the dashboard
+        # naming it (rec=, src=alert_email), so an open is recorded (#32).
         body_html = _emails.report_shell(
             kicker=name,
             title=title,
             subtitle="",
             sections=[_emails.report_paragraph(_h.escape(line))
                       for line in (lines or [body])],
+            **({"cta_label": "Open your dashboard →",
+                "cta_url": _h.escape(rec_delivery.dashboard_url(rec["key"], "alert_email"))} if rec else {}),
         )
         for user in emailed:
             result = _emails.deliver(
@@ -1325,7 +1342,10 @@ def run_demand_opportunity(db_path=DB_PATH):
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
                 data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted,
-                      "alert_id": alert_id, "rec_key": rec["key"]},
+                      "alert_id": alert_id, "rec_key": rec["key"], "surface": "alert_push",
+                      # Approving the drafted fill in Marketing is the
+                      # answer the app can offer beside Not for us.
+                      "answerable": True},
                 db_path=db_path, user_ids=audience)
             try:
                 import rec_ledger

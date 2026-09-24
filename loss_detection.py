@@ -150,6 +150,10 @@ def signals(restaurant_id, today=None, db_path=DB_PATH):
                   if baseline > 0 else f"${amount:,.0f} after {weeks_seen:.0f} weeks with none")
             entry["flags"].append({
                 "type": "spike",
+                # Its rec_ledger key: the week and the kind, the same shape
+                # the concentration issue files under, so it is owner-only
+                # everywhere decisions.py reads it (the "loss:" prefix).
+                "key": f"loss:{week_start.isoformat()}:{kind}:spike",
                 "headline": f"{kind.capitalize()}s ran {vs}",
                 "alternative": ALTERNATIVES[kind]})
         # Who approved them.
@@ -169,6 +173,9 @@ def signals(restaurant_id, today=None, db_path=DB_PATH):
                     and len(who) > 1:
                 entry["flags"].append({
                     "type": "concentration", "approver": top,
+                    # The key strategy_jobs._loss_flags_to_issues files the
+                    # issue under: resolving the issue answers this flag.
+                    "key": f"loss:{week_start.isoformat()}:{kind}:{top}",
                     "headline": f"One manager (POS id {top}) approved {share:.0%} of this week's "
                                 f"{kind} dollars ({stats['events']} of {events})",
                     "alternative": "they may simply have worked the busiest shifts, or be the "

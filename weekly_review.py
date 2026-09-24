@@ -104,7 +104,10 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
                            "monthly_high": t.get("monthly_high"),
                            "is_range": t.get("is_range")})
     fix_first = brief.get("fix_first")
-    _rc.present(restaurant_id, priorities, fix_first, db_path)
+    # Nothing is presented here: a build is not a delivery. The digest's
+    # preheader and fallback headline build this too, and neither shows a
+    # priority. emails._weekly_review_sections stages what it renders and
+    # the digest send presents it once the email went out (rec_delivery).
 
     # Dates an owner reads are M/D/YY (DESIGN_SYSTEM.md → Dates and times).
     from time_utils import mdy_range

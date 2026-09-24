@@ -73,22 +73,29 @@ def silenced(restaurant_id, db_path=None) -> set:
         return set()
 
 
-def present(restaurant_id, priorities, fix_first, db_path=None, surface="weekly_email"):
-    """Record the priorities and the one thing as shown in the periodic
-    email. Only outside a web request: inside one, the review is being
-    VIEWED on Home or previewed, and Home records its own impressions."""
-    try:
-        from flask import has_request_context
-        if has_request_context():
-            return
-        import rec_ledger
-        from models import DB_PATH
-        items = [{"key": p["key"], "module": "home", "title": p.get("label"), "position": i + 1,
-                  "dollar_value": p.get("monthly")} for i, p in enumerate(priorities or []) if p.get("key")]
-        if fix_first and fix_first.get("key"):
-            items.insert(0, {"key": fix_first["key"], "module": "home", "title": fix_first.get("what"),
-                             "position": 0, "dollar_value": fix_first.get("dollars_monthly")})
-        if items:
-            rec_ledger.present_many(restaurant_id, items, surface, db_path=db_path or DB_PATH)
-    except Exception as e:
-        print(f"[review] impressions not recorded: {e}")
+def impressions(priorities=None, fix_first=None, link=None) -> list:
+    """The ledger items for what a periodic email RENDERED — the one thing
+    first, then the priorities (rec_ledger.present_many shape). Pure: the
+    email stages these (rec_delivery.stage) and the send presents them only
+    once it was delivered. Recording at build logged the weekly email's
+    priorities three times per digest and the monthly email's on every
+    month-ready push, and logged the one thing on emails that never
+    rendered it.
+
+    Only what was rendered is passed in: an email that does not show
+    fix_first passes None for it. `link` (a cross-module link the email
+    showed) is included under its own key."""
+    items = []
+    if fix_first and fix_first.get("key"):
+        items.append({"key": fix_first["key"], "module": "home", "title": fix_first.get("what"),
+                      "position": 0, "dollar_value": fix_first.get("dollars_monthly"),
+                      "evidence_sources": fix_first.get("modules") or None})
+    for i, p in enumerate(priorities or []):
+        if p.get("key"):
+            items.append({"key": p["key"], "module": "home", "title": p.get("label"), "position": i + 1,
+                          "dollar_value": p.get("monthly")})
+    if link and link.get("key"):
+        items.append({"key": link["key"], "module": "home", "title": link.get("headline"),
+                      "position": len(items) + 1, "evidence_sources": link.get("modules") or None,
+                      "cross_module": True})
+    return items

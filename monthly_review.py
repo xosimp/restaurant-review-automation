@@ -126,7 +126,10 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
         priorities.append({"key": t.get("key"), "label": t.get("label"), "monthly": t.get("monthly"),
                            "monthly_low": t.get("monthly_low"), "monthly_high": t.get("monthly_high"),
                            "is_range": t.get("is_range"), "basis": t.get("basis")})
-    review_common.present(restaurant_id, priorities, brief.get("fix_first"), db_path, surface="monthly_email")
+    # Nothing is presented here: the month-ready push, the subject line and
+    # the web view all build this, and none of them is the monthly email.
+    # emails._monthly_review_sections stages what it renders; the send
+    # presents it once delivered (rec_delivery).
 
     label = (last_start.strftime("%B %Y") if months == 1
              else f"{last_start.strftime('%B')}–{last_end.strftime('%B %Y')}")

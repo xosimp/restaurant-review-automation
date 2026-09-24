@@ -532,9 +532,30 @@ def generate_content(content_type: str, topic: str,
     return result
 
 
+def calendar_idea_key(angle) -> str:
+    """A content-calendar idea's rec_ledger key: its angle, normalised
+    (insight_store.line_key) — the same idea in another week's draw is the
+    same recommendation, and an answer to it holds."""
+    import insight_store
+    return insight_store.line_key("content_idea", angle or "")
+
+
 def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
-    """Track which calendar ideas were actually generated — feeds back into future calendar quality."""
+    """Track which calendar ideas were actually generated — feeds back into
+    future calendar quality — and record the idea as taken on the
+    recommendation trail: writing from an idea is the owner's answer to it
+    (#41)."""
     log_content(restaurant_id, f"calendar_{content_type}", topic)
+    if restaurant_id and topic:
+        try:
+            import rec_ledger
+            from datetime import date as _date
+            key = calendar_idea_key(topic)
+            rec_ledger.record(restaurant_id, key, "accepted", surface="marketing",
+                              meta={"module": "marketing", "via": "wrote_from_calendar"},
+                              source_ref=f"calendar:{key}:{_date.today().isoformat()}")
+        except Exception as e:
+            print(f"[marketing] calendar acceptance not recorded rid={restaurant_id}: {e}")
 
 
 # A forced regeneration inside this window returns what was just built

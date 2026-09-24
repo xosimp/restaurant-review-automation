@@ -826,25 +826,32 @@ def run_weekly_digests():
             if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
                 continue
             try:
+                import rec_delivery
                 owner_name = _emails.greeting_name(first_rest)
-                if len(items) == 1:
-                    html = render_html(first_rep, first_rest.name, owner_name=owner_name,
-                                       restaurant_id=first_rest.id, owner_view=True)
-                    subject = f"Your week at {first_rest.name}"
-                    preheader = _emails.digest_preheader(first_rep, first_rest)
-                else:
-                    html = render_group_html(items, owner_name=owner_name,
-                                             group_name=getattr(first_rest, "location_group", None))
-                    subject = f"Your week across {len(items)} locations"
-                    preheader = "Every location, one email — strongest and weakest first."
-                result = _emails.deliver(email_type="digest", restaurant_id=first_rest.id, payload={
-                    "from": _emails.sender("client"),
-                    "to": [bucket["to"]],
-                    "subject": subject,
-                    "preheader": preheader,
-                    "html": _html_doc(html),
-                })
+                # What the digest renders is staged while it is built and
+                # presented to rec_ledger only once Resend accepted it — a
+                # failed or suppressed send showed nobody anything
+                # (rec_delivery; the weekly_email and digest surfaces).
+                with rec_delivery.collect() as shown:
+                    if len(items) == 1:
+                        html = render_html(first_rep, first_rest.name, owner_name=owner_name,
+                                           restaurant_id=first_rest.id, owner_view=True)
+                        subject = f"Your week at {first_rest.name}"
+                        preheader = _emails.digest_preheader(first_rep, first_rest)
+                    else:
+                        html = render_group_html(items, owner_name=owner_name,
+                                                 group_name=getattr(first_rest, "location_group", None))
+                        subject = f"Your week across {len(items)} locations"
+                        preheader = "Every location, one email — strongest and weakest first."
+                    result = _emails.deliver(email_type="digest", restaurant_id=first_rest.id, payload={
+                        "from": _emails.sender("client"),
+                        "to": [bucket["to"]],
+                        "subject": subject,
+                        "preheader": preheader,
+                        "html": _html_doc(html),
+                    })
                 if getattr(result, "ok", False):
+                    shown.flush()
                     _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
