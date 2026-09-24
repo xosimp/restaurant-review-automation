@@ -109,7 +109,42 @@ def _scalar(conn, sql, args):
 
 # ── 1. Delivered: measured, realised, caveated ──────────────────────────────
 
-def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
+def _scope_args(scope, denied_modules):
+    """outcomes' viewer filters from a viewer_scope() (or just the denied
+    modules a caller passed)."""
+    if scope is None:
+        return {"denied_modules": set(denied_modules or ())}
+    return {"denied_modules": set(scope.get("denied_modules") or ()),
+            "exclude_metrics": tuple(scope.get("exclude_metrics") or ()),
+            "exclude_ids": set(scope.get("exclude_ids") or ())}
+
+
+def viewer_scope(restaurant_id, user, db_path: str = DB_PATH) -> dict:
+    """What one login may see of the measured value, applied BEFORE anything
+    is summed (re-audit A26) — the same line owner_report draws:
+
+      denied_modules   modules it may not open (viewer_denied)
+      exclude_metrics  comps and voids without LOSS_VIEW (a comp result can
+                       name the manager approving them)
+      exclude_ids      trackers whose recommendation it may not see
+                       (rec_learning.viewer_sees: owner-only, a loss, a
+                       module it lacks)
+
+    A manager's /value used to hand back the owner-only and comp results as
+    the biggest win and inside every total. None or an admin: nothing."""
+    if user is None or user.get("is_admin"):
+        return {"denied_modules": set(), "exclude_metrics": (), "exclude_ids": set()}
+    import outcomes
+    return {"denied_modules": viewer_denied(user),
+            "exclude_metrics": tuple(m for m in outcomes.LOSS_METRICS if not outcomes.metric_visible_to(user, m)),
+            "exclude_ids": outcomes.hidden_tracker_ids(restaurant_id, user, db_path=db_path)}
+
+
+def _restaurant_wide(scope) -> bool:
+    return not (scope.get("denied_modules") or scope.get("exclude_metrics") or scope.get("exclude_ids"))
+
+
+def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None, scope=None) -> dict:
     """What measured improvements are worth per month, and the honest
     denominator beside it.
 
@@ -117,13 +152,15 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
     between "two things worked" and "two of eleven things worked", and an
     owner shown only the first stops trusting the second time.
 
-    `denied_modules` is applied inside outcomes.total_value, BEFORE the sum.
-    Filtering the breakdown and leaving the total alone would hand a manager
-    without FOOD_COST_VIEW the margin dollars back by subtraction.
+    `denied_modules` — or a whole viewer_scope() — is applied inside
+    outcomes.total_value, BEFORE the sum. Filtering the breakdown and
+    leaving the total alone would hand a manager without FOOD_COST_VIEW the
+    margin dollars back by subtraction.
     """
     import outcomes
-    v = outcomes.total_value(restaurant_id, db_path=db_path, denied_modules=denied_modules)
-    best = outcomes.best_ever(restaurant_id, db_path=db_path, denied_modules=denied_modules)
+    f = _scope_args(scope, denied_modules)
+    v = outcomes.total_value(restaurant_id, db_path=db_path, **f)
+    best = outcomes.best_ever(restaurant_id, db_path=db_path, **f)
     return {
         # `monthly` stays the improvements alone (what every surface already
         # renders); the changes that got worse sit BESIDE it and `net_monthly`
@@ -131,11 +168,12 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
         # surfaced or opportunity.
         "monthly": v["monthly"],
         "annual": v["annual"],
+        "annual_basis": v.get("annual_basis"),
         "wins": v["wins"],
         "wins_measured": v.get("wins_measured", v["wins"]),
         "wins_by_module": v.get("wins_by_module", {}),
         "unpriced_wins": v.get("unpriced_wins", []),
-        "worsened": v.get("worsened", {"count": 0, "monthly": 0.0}),
+        "worsened": v.get("worsened", {"count": 0, "monthly": 0.0, "priced_count": 0}),
         "net_monthly": v.get("net_monthly", v["monthly"]),
         "net_note": v.get("net_note"),
         "net_by_module": v.get("net_by_module", v["by_module"]),
@@ -147,7 +185,11 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
         "unmeasurable": v["unmeasurable"],
         "no_clear_change": v["no_clear_change"],
         "by_module": v["by_module"],
-        "cumulative": outcomes.cumulative(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+        # Gross revenue measured before and after — never added to the
+        # savings above (re-audit A6); `sales_pricing` says so in the payload.
+        "sales_lift": v.get("sales_lift"),
+        "sales_pricing": v.get("sales_pricing", "separate"),
+        "cumulative": outcomes.cumulative(restaurant_id, db_path=db_path, **f),
         "rates": rates(),
         "biggest": ({"title": best["title"],
                      "monthly": round(abs(float(best["dollars_monthly"])), 2),
@@ -325,16 +367,19 @@ def surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH, denied_
         return {"days": days, "items": [], "dollars": 0.0, "alerts": 0}
 
 
-def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
+def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None, scope=None) -> dict:
     """All four figures, never summed. Every Home surface reads this.
 
     `denied_modules` is threaded into each one rather than applied to the
     result, so a login without FOOD_COST_VIEW never receives a margin dollar
     in any figure — including inside a total it could otherwise subtract
-    its way back through.
+    its way back through. `scope` (viewer_scope) also drops the results this
+    login may not see from the delivered figure, before it is summed.
     """
+    if scope is not None:
+        denied_modules = set(scope.get("denied_modules") or ())
     return {
-        "delivered": delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+        "delivered": delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules, scope=scope),
         "avoided": avoided(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "opportunity": opportunity(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "surfaced": surfaced(restaurant_id, db_path=db_path, denied_modules=denied_modules),
@@ -370,41 +415,118 @@ def headline(restaurant_id: int, user=None, db_path: str = DB_PATH) -> dict:
     improvements, labelled as such (it read "since you started" on the web
     and "since you joined" on the phone, so one $420/month win read as $420
     in total). `by_module` is where it came from, largest first. The
-    viewer's denied modules are applied before the sum, as /api/value does,
-    so a manager without Food Cost never sees margin dollars here either.
-    `restaurant_wide` is False when anything was filtered: that figure is
-    not the restaurant's, so it is never written as the day's snapshot."""
-    denied = viewer_denied(user)
-    d = delivered(restaurant_id, db_path=db_path, denied_modules=denied)
-    parts = sorted(((m, float(v)) for m, v in (d.get("by_module") or {}).items() if v),
+    viewer's scope (viewer_scope: denied modules, comps and voids without
+    LOSS_VIEW, results whose recommendation it may not see) is applied
+    before the sum, as /api/value does, so a manager never sees margin or
+    owner-only dollars here either. `restaurant_wide` is False when anything
+    was filtered: that figure is not the restaurant's, so it is never
+    written as the day's snapshot.
+
+    Contract K4 (the web Home `value` block and the mobile Home `value`
+    object): `net_monthly`, `worsened` {count, monthly, priced_count},
+    `cumulative` (outcomes.cumulative — dollars summed over days actually
+    measured), `unpriced_wins` and `sales_lift` ride beside `monthly`;
+    a surface shows the net when worsened.count > 0.
+
+    Light on purpose (re-audit A35): total_value and the SQL-summed
+    cumulative only — no best-ever, no rates, no second cumulative."""
+    import outcomes
+    scope = viewer_scope(restaurant_id, user, db_path=db_path)
+    f = _scope_args(scope, None)
+    v = outcomes.total_value(restaurant_id, db_path=db_path, **f)
+    cum = outcomes.cumulative(restaurant_id, db_path=db_path, **f)
+    parts = sorted(((m, float(x)) for m, x in (v.get("by_module") or {}).items() if x),
                    key=lambda x: -x[1])
+    lift = v.get("sales_lift") or {}
     return {
-        "monthly": int(round(d["monthly"] or 0)),
+        "monthly": int(round(v["monthly"] or 0)),
         # Beside the improvements, never folded into them (rec-ROI #1): what
         # got worse and the net, so a surface can show both.
-        "net_monthly": int(round(d.get("net_monthly", d["monthly"]) or 0)),
-        "worsened": d.get("worsened") or {"count": 0, "monthly": 0.0},
-        "by_module": [{"module": m, "label": MODULE_VALUE_LABELS.get(m, m), "monthly": round(v, 2)}
-                      for m, v in parts],
-        "wins": d.get("wins"),
+        "net_monthly": int(round(v.get("net_monthly", v["monthly"]) or 0)),
+        "worsened": v.get("worsened") or {"count": 0, "monthly": 0.0, "priced_count": 0},
+        "by_module": [{"module": m, "label": MODULE_VALUE_LABELS.get(m, m), "monthly": round(x, 2)}
+                      for m, x in parts],
+        "wins": v.get("wins"),
+        "unpriced_wins": v.get("unpriced_wins") or [],
+        "cumulative": cum,
+        "sales_lift": {"monthly": lift.get("monthly", 0.0), "net_monthly": lift.get("net_monthly", 0.0),
+                       "wins": lift.get("wins", 0), "basis": lift.get("basis")},
         "label": "measured, per month",
-        "caveat": d.get("caveat"),
-        "restaurant_wide": not denied,
+        "caveat": v.get("caveat"),
+        "restaurant_wide": _restaurant_wide(scope),
     }
 
 
+def home_block(vh, history=None) -> dict:
+    """The `value` object both Homes carry (web /api/home/brief, mobile
+    /mobile/api/home), from one headline() — contract K4:
+
+      total          the improvements, per month (what `monthly` always was)
+      net_monthly    total less what got worse — shown when worsened.count > 0
+      worsened       {count, monthly, priced_count}
+      cumulative     outcomes.cumulative: dollars summed over measured days
+      unpriced_wins  wins with no honest dollar figure (a rating that rose)
+      sales_lift     gross revenue measured, never added to the savings
+    plus the history (net, per day snapshotted), the label and by_module."""
+    vh = vh or {}
+    return {"total": vh.get("monthly", 0), "net_monthly": vh.get("net_monthly", vh.get("monthly", 0)),
+            "worsened": vh.get("worsened") or {"count": 0, "monthly": 0.0, "priced_count": 0},
+            "cumulative": vh.get("cumulative"), "unpriced_wins": vh.get("unpriced_wins") or [],
+            "sales_lift": vh.get("sales_lift"), "history": history or [], "per": "month",
+            "label": vh.get("label"), "by_module": vh.get("by_module") or [], "caveat": vh.get("caveat")}
+
+
+def value_lines(d) -> list:
+    """The delivered figure as plain sentences, for the emails (monthly
+    review, lifecycle): net of what got worse, the ×12 figure called a
+    projection, the sum over measured days, and the sales lift apart from
+    the savings (re-audit A29, A6). `d` is delivered()'s dict. [] when
+    nothing was measured."""
+    out = []
+    wins = int(d.get("wins") or 0)
+    worse = d.get("worsened") or {}
+    net = float(d.get("net_monthly", d.get("monthly")) or 0)
+    if wins or worse.get("priced_count"):
+        s = (f"Measured results: ${float(d.get('monthly') or 0):,.0f}/month from {wins} "
+             f"change{'' if wins == 1 else 's'} that improved")
+        if worse.get("priced_count"):
+            n = int(worse["priced_count"])
+            tail = f"${net:,.0f}/month net" if net >= 0 else f"${abs(net):,.0f}/month below zero, net"
+            s += f", less ${float(worse.get('monthly') or 0):,.0f}/month from {n} that got worse — {tail}"
+        s += "."
+        if net > 0:
+            s += f" If that holds for a year, about ${net * 12:,.0f} — a projection, not a measurement."
+        out.append(s)
+    cum = d.get("cumulative") or {}
+    if cum.get("total") is not None and cum.get("measured_days"):
+        total = float(cum["total"])
+        out.append(f"Summed over the {int(cum['measured_days'])} days actually measured so far: "
+                   f"{'$' if total >= 0 else 'minus $'}{abs(total):,.0f}, net of anything that got worse.")
+    lift = d.get("sales_lift") or {}
+    if lift.get("wins"):
+        n = int(lift["wins"])
+        out.append(f"Sales rose about ${float(lift.get('monthly') or 0):,.0f}/month across {n} "
+                   f"change{'' if n == 1 else 's'} — gross revenue, not profit, so it is not added to the "
+                   f"savings.")
+    return out
+
+
 def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) -> int:
-    """The headline figure: measured monthly dollars, and nothing else.
+    """The headline figure: measured monthly dollars, NET of what got worse
+    (re-audit A29), and nothing else.
 
     Kept under its original name because the web banner, the mobile Home
     payload and the value snapshots all call it. What changed is what it
     MEANS — it is now only what was measured, so it is a number that can be
     defended line by line, and for most restaurants it starts at zero and
     grows as trackers close. That is the true state, and the old figure's
-    only advantage was that it was never true.
+    only advantage was that it was never true. total_value alone: no
+    cumulative, no best-ever (re-audit A35).
     """
     try:
-        return int(round(delivered(restaurant_id, db_path=db_path)["monthly"]))
+        import outcomes
+        v = outcomes.total_value(restaurant_id, db_path=db_path)
+        return int(round(v.get("net_monthly", v["monthly"]) or 0))
     except Exception as e:
         # Fails to 0 rather than 500ing the Home page, but never silently:
         # this swallow hid a TypeError for a whole test run once already.
@@ -417,7 +539,8 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
 
 
 def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = DB_PATH):
-    """Upserts today's total — called opportunistically from the Home
+    """Upserts today's total — the NET monthly figure (headline's
+    net_monthly, re-audit A29) — called opportunistically from the Home
     endpoints, so the first Home load of each day records that day's figure.
     No separate scheduled job: a restaurant whose owner never opens the app
     that day simply doesn't get a data point, which is fine for a "how's

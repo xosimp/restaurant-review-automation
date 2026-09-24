@@ -761,6 +761,35 @@ def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_p
     assert row["total_value"] == data["total_value_delivered"]
 
 
+def test_home_carries_the_k4_value_object(client, db_path):
+    """Contract K4: the phone's Home carries the net, what got worse, the
+    dollars summed over measured days and the unpriced wins beside
+    total_value_delivered — the same `value` object web Home carries — and
+    the day's snapshot is the NET figure (re-audit A29)."""
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    for title, metric, dollars, verdict in (("Trim", "labor_pct", 400.0, "improved"),
+                                            ("Cheese", "food_cost_pct", -150.0, "worsened")):
+        conn.execute("INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
+                     "baseline_value, started_on, evaluate_on, after_value, after_start, after_end, verdict, delta, "
+                     "dollars_monthly, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'evaluated')",
+                     (rid, "ask", f"ask:{title}", title, metric, 30.0, "2026-06-01", "2026-06-29", 28.0,
+                      "2026-06-01", "2026-06-28", verdict, -2.0, dollars))
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    v = data["value"]
+    assert {"net_monthly", "worsened", "cumulative", "unpriced_wins", "total"} <= set(v)
+    assert v["total"] == data["total_value_delivered"] == 400
+    assert v["net_monthly"] == 250 and v["worsened"]["count"] == 1 and v["worsened"]["priced_count"] == 1
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')",
+                       (rid,)).fetchone()
+    conn.close()
+    assert row["total_value"] == 250
+
+
 def test_home_value_snapshot_upserts_not_duplicates_same_day(client, db_path):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)

@@ -22,8 +22,9 @@ that gamifies — no streaks of app-opening, no points, no badges, no levels.
 Every milestone must satisfy three rules:
 
   1. IT IS TRUE AND MEASURED. The dollar milestones read
-     `outcomes.total_value`, which counts only before-and-after measured
-     results. Nothing here can fire off an estimate or an opportunity.
+     `outcomes.cumulative` — dollars summed over the days before-and-after
+     measured results held, net of any that got worse. Nothing here can
+     fire off an estimate, an opportunity or a ×12 projection.
 
   2. IT FIRES ONCE, EVER. Not once a month, not once a browser.
 
@@ -38,9 +39,9 @@ from models import DB_PATH, get_conn
 
 log = logging.getLogger(__name__)
 
-# Measured-dollar thresholds, ascending. Read from outcomes.total_value —
-# the before-and-after figure — never from the opportunity or avoided ones,
-# which are not money anybody made.
+# Measured-dollar thresholds, ascending. Read from outcomes.cumulative —
+# the before-and-after dollars summed over measured days — never from the
+# opportunity or avoided ones, which are not money anybody made.
 SAVINGS_TIERS = (1000, 5000, 10000, 25000, 50000, 100000)
 
 # Months of service worth marking. 1 is deliberately absent: a first month
@@ -141,23 +142,34 @@ def mark_notified(restaurant_id, key, db_path=DB_PATH):
 
 # ── the detectors ────────────────────────────────────────────────────────────
 
+def _measured_total(restaurant_id, db_path):
+    """Dollars actually measured so far, net of what got worse: the SUM over
+    measured days (outcomes.cumulative), savings only — never a monthly
+    figure × 12, and never a sales lift (gross revenue). None when nothing
+    has been measured."""
+    import outcomes
+    cum = outcomes.cumulative(restaurant_id, db_path=db_path) or {}
+    return None if cum.get("total") is None else float(cum["total"])
+
+
 def check_savings(restaurant_id, db_path=DB_PATH):
     """Crossed a measured-dollar threshold.
 
-    `outcomes.total_value` is annualised measured dollars — before-and-after
-    results only. It deliberately does NOT include cost avoidance, surfaced
-    alert dollars or opportunity, because none of those is money the
-    restaurant made (see value_delivered.py).
+    The tiers are read from dollars ACTUALLY MEASURED — outcomes.cumulative,
+    summed over the days each change was measured and held, net of changes
+    that got worse (re-audit A29/A36). They used to read total_value's
+    `annual`: the improvements' monthly run-rate × 12, gross of losses — a
+    projection celebrated as "measured $X a year". It deliberately does NOT
+    include cost avoidance, surfaced alert dollars, opportunity or a sales
+    lift, because none of those is money the restaurant saved (see
+    value_delivered.py).
     """
-    import outcomes
     try:
-        # total_value returns the honest shape (monthly, annual, and the
-        # denominator of what could not be measured), never a bare number.
-        # The tiers are annual, which is the figure an owner recognises.
-        total = float((outcomes.total_value(restaurant_id, db_path=db_path) or {})
-                      .get("annual") or 0)
+        total = _measured_total(restaurant_id, db_path)
     except Exception as e:
         log.warning("milestones.check_savings: %s", e)
+        return None
+    if total is None or total <= 0:
         return None
     fired = None
     for tier in SAVINGS_TIERS:
@@ -165,9 +177,10 @@ def check_savings(restaurant_id, db_path=DB_PATH):
             break
         m = fire(restaurant_id, "savings", f"savings:{tier}",
                  f"${tier:,} in measured results",
-                 body=(f"Across the changes you tracked, Cavnar AI has measured "
-                       f"${total:,.0f} a year in improvement. Every dollar of that came "
-                       f"from a before-and-after on your own numbers — not an estimate."),
+                 body=(f"Across the changes you tracked, Cavnar AI has measured ${total:,.0f}, summed over "
+                       f"the days each change was measured and held, net of any that got worse. Every "
+                       f"dollar came from a before-and-after on your own numbers — measured, not an "
+                       f"estimate, and not proof the change alone caused it."),
                  value=float(tier), db_path=db_path)
         if m:
             fired = m                     # keep the highest newly crossed tier
@@ -196,12 +209,15 @@ def check_anniversary(restaurant_id, restaurant=None, today=None, db_path=DB_PAT
                                            else f"{months} months")
     body = f"You have been running on Cavnar AI for {label}."
     try:
-        import outcomes
-        total = float(outcomes.total_value(restaurant_id, db_path=db_path) or 0)
-        if total > 0:
-            body += f" Measured results in that time: ${total:,.0f} a year."
-    except Exception:
-        pass
+        # float(the whole total_value dict) raised here, every time, and the
+        # line was never written (re-audit A29). Dollars measured, summed —
+        # not a run-rate × 12 (A36).
+        total = _measured_total(restaurant_id, db_path)
+        if total is not None and total > 0:
+            body += (f" Measured results in that time: ${total:,.0f}, summed over the days each change "
+                     f"was measured, net of any that got worse.")
+    except Exception as e:
+        log.warning("milestones.check_anniversary total: %s", e)
     return fire(restaurant_id, "anniversary", f"anniversary:{months}",
                 f"{label.capitalize()} with Cavnar AI", body=body,
                 value=float(months), db_path=db_path)

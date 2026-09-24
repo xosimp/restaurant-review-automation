@@ -5569,12 +5569,13 @@ def _track_campaign_outcome(rid, data, result, user_id):
             ops.capture(e, job="campaign_implemented", context=f"restaurant_id={rid}")
     try:
         import outcomes
-        from datetime import date as _d
         # Credited to Marketing (the campaign is marketing's recommendation,
         # rec-ROI #5), and refused while that weekday is already measured
         # (#3) — a second campaign on the same Tuesdays would read the same
         # lift twice. A refusal is an answer, not a failure.
-        return outcomes.start(rid, "slow_day_campaign", f"campaign:{day}:{_d.today().isoformat()}",
+        # The restaurant's own date in the key, not the server's UTC one
+        # (re-audit A8).
+        return outcomes.start(rid, "slow_day_campaign", f"campaign:{day}:{outcomes.local_today(rid).isoformat()}",
                               f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
                               module="marketing", gate="metric")
     except Exception as e:
@@ -5918,7 +5919,7 @@ _NOTIFICATION_LABELS = {
     "staff_signin":     "Staff portal sign-in",
     "issue":            "An issue was opened",
     "issue_escalated":  "An issue was escalated",
-    "outcome_achieved": "A change you made paid off",
+    "outcome_achieved": "A measured result improved",   # never a claim of cause (re-audit A14)
     "demand_opportunity": "A quiet night worth filling",
     "morning_brief":    "Morning brief",
     "daily_briefing":   "Your day, in one place",

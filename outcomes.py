@@ -42,6 +42,8 @@ FAMILY is being measured, and related metrics measured over the same weeks
 count as one result.
 """
 import json
+import sqlite3
+import time
 from datetime import date, datetime, timedelta
 
 import metrics
@@ -85,6 +87,17 @@ LY_OFFSET_DAYS = 364              # 52 weeks: the same weekday last year
 # A move of at least this many noise bands, with nothing else changing on
 # the same number, is "consistent" rather than "associated".
 CONSISTENT_MULTIPLE = 2.0
+# A window counted in trading days (metrics.COVERAGE_METRICS) is read only
+# when at least this share of its trading days was measured: one day before
+# and one day after was a verdict, a grade and a monthly figure (re-audit
+# A2). Below it the reading is unknown — baseline, after-window, re-check
+# and each day's accrual window alike.
+MIN_COVERAGE = 0.7
+# Starts no owner pressed a button for — a schedule published, an order
+# sent, a month's reprices, a guest-text campaign, a schedule review
+# accepted, Home's Done — are refused while ANYTHING in the metric's family
+# is being measured, not only the same metric (re-audit A18).
+AUTOMATIC_SOURCES = ("observed", "reprice", "slow_day_campaign", "schedule")
 
 BASELINE_KINDS = ("prior window", "matched weekdays", "same weeks last year")
 ATTRIBUTION = ("none", "associated", "consistent", "held")
@@ -113,6 +126,55 @@ def _iso(v):
 
 def _day(v):
     return date.fromisoformat(_iso(v))
+
+
+def local_today(restaurant_id, db_path=DB_PATH) -> date:
+    """The restaurant's own calendar date (re-audit A8). The server runs on
+    UTC: a Pacific owner pressing Track at 5pm was on "tomorrow", so the
+    day the change started sat inside its own baseline window."""
+    from time_utils import restaurant_now
+    try:
+        rest = _models_mod.get_restaurant(restaurant_id, db_path)
+    except Exception as e:
+        print(f"[outcomes] restaurant {restaurant_id} unreadable for its local date: {e}")
+        rest = None
+    return restaurant_now(rest, naive=True).date()
+
+
+def metric_visible_to(viewer, metric) -> bool:
+    """Whether a login may see results on `metric`: food cost and waste need
+    FOOD_COST_VIEW, comps and voids LOSS_VIEW (a comp result can name the
+    manager approving them — re-audit A26/A27). No viewer is an internal
+    caller; an admin sees everything. Fails closed."""
+    if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
+        return True
+    base = metrics.parse(metric)[0]
+    try:
+        from permissions import has_permission, FOOD_COST_VIEW, LOSS_VIEW
+        if base in ("food_cost_pct", "weekly_waste"):
+            return has_permission(viewer, FOOD_COST_VIEW)
+        if base in LOSS_METRICS:
+            return has_permission(viewer, LOSS_VIEW)
+        return True
+    except Exception as e:
+        print(f"[outcomes] metric visibility check failed closed: {e}")
+        return False
+
+
+LOSS_METRICS = ("comp_rate", "void_rate")
+
+
+def _measure(restaurant_id, metric, start, end, db_path=DB_PATH):
+    """metrics.measure with the coverage floor (MIN_COVERAGE): a window
+    counted in trading days is unknown unless enough of it was measured."""
+    value, detail = metrics.measure(restaurant_id, metric, _iso(start), _iso(end), db_path)
+    if value is None:
+        return value, detail
+    cov = metrics.coverage(restaurant_id, metric, _iso(start), _iso(end), db_path)
+    if cov and cov["expected"] and cov["share"] < MIN_COVERAGE:
+        return None, (f"only {cov['measured']} of {cov['expected']} trading days in this window were "
+                      f"measured")
+    return value, detail
 
 
 def _lower_first(label) -> str:
@@ -169,7 +231,8 @@ def _row(r):
         # had its window checked for other changes, so it can be at most
         # "associated" — never "consistent" on a check that did not happen.
         if not d.get("attribution"):
-            d["attribution"] = grade(d.get("verdict"), None, conc, checked=conc is not None)
+            d["attribution"] = grade(d.get("verdict"), None, conc, checked=conc is not None,
+                                     checkin=_checkin_of(d))
     else:
         d["attribution"] = None
     d["owner_checkin"] = _checkin_of(d)
@@ -268,13 +331,45 @@ def _dsr_block_module(key):
         return None
 
 
+# Recommendation kinds whose module and metric are theirs whatever surface
+# presented them (re-audit A11): "Fill Tuesdays" is a guest-text
+# recommendation aimed at Tuesdays' sales. The brief and the weekly email
+# filed it under Labor, so its Track started a labor tracker (or none) and
+# it read as a change on labor cost for every labor tracker in its weeks.
+KIND_MODULE = {"slow_day": "marketing"}
+
+
+# Kinds that are about one number by definition, whatever surface showed
+# them (re-audit A30): Home's "N people over 40h this week" card and the
+# schedule review's overtime moves are overtime recommendations. They were
+# presented with no metric, and "schedule" is not a module Track has a
+# fallback number for, so taking one measured nothing.
+KIND_METRIC = {"overtime": "overtime_hours", "overtime_move": "overtime_hours"}
+
+
+def _kind_metric(key):
+    """The metric a recommendation kind carries by definition, or None."""
+    kind, _, param = str(key or "").partition(":")
+    if kind == "slow_day":
+        day = param.strip().capitalize()
+        m = f"weekday_sales:{day}"
+        return m if metrics.known(m) else None
+    return KIND_METRIC.get(kind)
+
+
 def resolve_module(restaurant_id, source, source_key, metric, module=None, db_path=DB_PATH) -> str:
-    """The module a new tracker is credited to, most specific first: the
-    caller's, the recommendation's own (rec_instances, by key), a DSR
-    action's block, the source's, then the metric's."""
-    vm = value_module(module)
-    if vm:
-        return vm
+    """The module a new tracker is credited to, most specific first: what
+    the recommendation's kind says (KIND_MODULE), the recommendation's own
+    (rec_instances, by key), a DSR action's block, the caller's, the
+    source's, then the metric's.
+
+    The caller's module used to come first — and iOS sends the SCREEN a
+    Track was pressed on, so a guest-text recommendation answered on the
+    Labor tab was credited to Labor (re-audit A25). A caller's module now
+    names the module only for a tracker no recommendation stands behind."""
+    kind = str(source_key or "").split(":", 1)[0]
+    if kind in KIND_MODULE:
+        return KIND_MODULE[kind]
     rec = _latest_rec(restaurant_id, source_key, db_path)
     if rec is not None:
         vm = value_module(rec["module"])
@@ -284,6 +379,9 @@ def resolve_module(restaurant_id, source, source_key, metric, module=None, db_pa
         vm = _dsr_block_module(source_key)
         if vm:
             return vm
+    vm = value_module(module)
+    if vm:
+        return vm
     if source in SOURCE_MODULE:
         return SOURCE_MODULE[source]
     key = str(source_key or "")
@@ -317,21 +415,35 @@ DSR_ACTION_METRICS = {
 }
 
 
-def metric_for_rec(restaurant_id, key, body_metric=None, db_path=DB_PATH):
+def metric_for_rec(restaurant_id, key, body_metric=None, db_path=DB_PATH, viewer=None):
     """(metric or None, authoritative) — the metric this recommendation
     CARRIES. A DSR action's kind is authoritative: "reorder" carries none
-    and nothing may be substituted for it. Otherwise the metric the
+    and nothing may be substituted for it; so is a kind that names its own
+    number (a slow day is that weekday's sales). Otherwise the metric the
     recommendation was presented with (rec_instances.expected_metric), else
-    one the client sent, else None."""
+    one the client sent, else None.
+
+    `viewer` (a route's login): a metric that login may not see is never
+    started from its answer (re-audit A27) — a client-sent one is ignored,
+    and a carried one refuses (None, authoritative) rather than measuring
+    food cost or comps for a login that cannot read them."""
     key = str(key or "")
+
+    def _seen(m):
+        return m if (m and metric_visible_to(viewer, m)) else None
     if key.startswith("dsr_action:"):
         parts = key.split(":")
-        return DSR_ACTION_METRICS.get(parts[1] if len(parts) > 1 else ""), True
+        m = DSR_ACTION_METRICS.get(parts[1] if len(parts) > 1 else "")
+        return _seen(m), True
+    m = _kind_metric(key)
+    if m:
+        return _seen(m), True
     rec = _latest_rec(restaurant_id, key, db_path)
     if rec is not None and rec["expected_metric"] and metrics.known(rec["expected_metric"]):
-        return rec["expected_metric"], False
-    if body_metric and metrics.known(body_metric):
-        return body_metric, False
+        m = metrics.normalize(rec["expected_metric"])
+        return (m, False) if _seen(m) else (None, True)
+    if body_metric and metrics.known(body_metric) and _seen(body_metric):
+        return metrics.normalize(body_metric), False
     return None, False
 
 
@@ -416,7 +528,9 @@ def no_metric_reply() -> dict:
 
 def not_measurable_reply(metric, detail=None) -> dict:
     label = metrics.describe(metric)["label"] if metrics.known(metric) else str(metric)
-    why = f" ({detail})" if detail else ""
+    # A detail can carry a date ("within 7 days of 2026-09-01"): M/D/YY for
+    # the owner (re-audit A34).
+    why = f" ({owner_title(detail)})" if detail else ""
     return {"code": "not_measurable", "in_flight_until": None,
             "reason": f"{label} can't be read right now{why}, so there is nothing to measure it against yet"}
 
@@ -436,10 +550,13 @@ def _live_on(conn, restaurant_id, metric, family=False, include_informational=Fa
     rows = conn.execute("SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND status='tracking' "
                         "ORDER BY id", (restaurant_id,)).fetchall()
     fam = metrics.family(metric)
+    want = metrics.normalize(metric)
     for r in rows:
         if not include_informational and str(r["source_key"] or "").startswith(INFORMATIONAL_PREFIX):
             continue
-        if (metrics.family(r["metric"]) == fam) if family else (r["metric"] == metric):
+        # Normalised both sides: a row written before keys were normalised
+        # still blocks its own number (re-audit A17).
+        if (metrics.family(r["metric"]) == fam) if family else (metrics.normalize(r["metric"]) == want):
             return r
     return None
 
@@ -474,20 +591,34 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
     if not spec:
         return None
     metric, title = spec
-    today = today or date.today()
+    today = today or local_today(restaurant_id, db_path)
     # An informational tracker (an alert opened) never counts, so it must
     # not block a real owner action on the same metric either; any tracker
-    # blocks a second informational one.
-    live = in_flight_on(restaurant_id, metric, db_path=db_path,
+    # blocks a second informational one. Automatic, so the FAMILY gate
+    # (re-audit A18): a schedule published while overtime is measured
+    # would read the same labor dollars twice.
+    live = in_flight_on(restaurant_id, metric, db_path=db_path, family=True,
                         include_informational=action.startswith("alert_"))
     if live:
         return None
     key = f"observed:{action}:{today.strftime('%Y-%m')}"
+    # Once per metric per calendar month, whatever became of the first:
+    # the month's key was unique only while tracking, so a schedule
+    # published on the 30th started a second August tracker the day after
+    # the first was evaluated (re-audit A19).
+    conn = get_conn(db_path)
+    try:
+        seen = conn.execute("SELECT 1 FROM recommendation_outcomes WHERE restaurant_id=? AND source_key=? LIMIT 1",
+                            (restaurant_id, key)).fetchone()
+    finally:
+        conn.close()
+    if seen:
+        return None
     if detail:
         title = f"{title} — {str(detail)[:80]}"
     try:
         return record(restaurant_id, "observed", key, title, metric, user_id=user_id,
-                      db_path=db_path, today=today)
+                      db_path=db_path, today=today, gate="family")
     except TrackerRefused:
         return None
 
@@ -519,9 +650,10 @@ def _seasonal_shift(restaurant_id, metric, base_window, win_window, db_path):
     out = []
     for s, e in (base_window, win_window):
         ls, le = _day(s) - timedelta(days=LY_OFFSET_DAYS), _day(e) - timedelta(days=LY_OFFSET_DAYS)
-        n = metrics.days_with_data(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
-        span = (le - ls).days + 1
-        if n is not None and n < LY_MIN_COVERAGE * span:
+        # Coverage in TRADING days: a restaurant closed two days a week
+        # measured 20 of 28 calendar days and was never adjusted at all.
+        cov = metrics.coverage(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
+        if cov is not None and (not cov["expected"] or cov["share"] < LY_MIN_COVERAGE):
             return None
         v, _ = metrics.measure(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
         if v is None:
@@ -553,7 +685,7 @@ def _baseline(restaurant_id, metric, today, window, db_path):
         b_end = today - timedelta(days=1)
         b_start = b_end - timedelta(days=window - 1)
         kind = "prior window"
-    raw, detail = metrics.measure(restaurant_id, metric, b_start.isoformat(), b_end.isoformat(), db_path)
+    raw, detail = _measure(restaurant_id, metric, b_start.isoformat(), b_end.isoformat(), db_path)
     value = raw
     if raw is not None and seasonal:
         a_end = today + timedelta(days=window - 1)
@@ -604,27 +736,49 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     measures anything in its family (the automatic starts, #18), None
     skips it. A refusal raises TrackerRefused; start() turns it into a
     reply. `module` is who the recommendation was (resolve_module when None).
+
+    Two starts at the same moment (web and phone, a double tap) both passed
+    the gate before either inserted, and a second start on the same key
+    500'd on the unique index (re-audit A16): the gate is checked again
+    inside BEGIN IMMEDIATE, so the second waits for the first and is
+    answered by it.
     """
     if not metrics.known(metric):
         raise ValueError(f"unknown metric {metric}")
-    today = today or date.today()
+    metric = metrics.normalize(metric)
+    today = today or local_today(restaurant_id, db_path)
     info = metrics.describe(metric)
     window = int(window_days or info["default_window_days"])
+    if metrics.parse(metric)[0] in metrics.WEEKDAY_MIX_METRICS:
+        # Whole weeks (re-audit A21): a 30-day window holds two extra
+        # weekdays, so its re-check and each day's accrual window held a
+        # different weekday mix from its baseline — a Friday-heavy restaurant
+        # read "worse" with nothing changed.
+        window = max(7, int(round(window / 7.0)) * 7)
+    if gate == "metric" and source in AUTOMATIC_SOURCES:
+        gate = "family"
+    informational = str(source_key or "").startswith(INFORMATIONAL_PREFIX)
 
-    conn = get_conn(db_path)
-    try:
+    def _gate(conn):
         existing = conn.execute(
             "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND source_key=? "
             "AND status='tracking'", (restaurant_id, source_key)).fetchone()
         if existing:
-            return _row(existing)
+            return existing
         if gate:
             live = _live_on(conn, restaurant_id, metric, family=(gate == "family"),
-                            include_informational=str(source_key or "").startswith(INFORMATIONAL_PREFIX))
+                            include_informational=informational)
             if live is not None:
                 raise TrackerRefused(_row(live), metric)
+        return None
+
+    conn = get_conn(db_path)
+    try:
+        existing = _gate(conn)
     finally:
         conn.close()
+    if existing:
+        return _row(existing)
 
     # The baseline ends before today: today is part of the "after", and a
     # baseline that includes the day the change started is contaminated by it.
@@ -634,14 +788,34 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
 
     conn = get_conn(db_path)
     try:
-        cur = conn.execute(
-            "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
-            "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
-            "started_on, evaluate_on, status, created_by, module) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?)",
-            (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
-             b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
-             user_id, mod))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = _gate(conn)
+        except TrackerRefused:
+            conn.rollback()
+            raise
+        if existing:
+            conn.rollback()
+            return _row(existing)
+        try:
+            cur = conn.execute(
+                "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
+                "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
+                "started_on, evaluate_on, status, created_by, module) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?)",
+                (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
+                 b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
+                 user_id, mod))
+        except sqlite3.IntegrityError:
+            # The same key started by another connection that got there
+            # first (a database without the lock's guarantee): answered by it.
+            conn.rollback()
+            existing = conn.execute(
+                "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND source_key=? "
+                "AND status='tracking'", (restaurant_id, source_key)).fetchone()
+            if existing:
+                return _row(existing)
+            raise
         conn.commit()
         row = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=?",
                            (cur.lastrowid,)).fetchone()
@@ -678,8 +852,13 @@ def start(restaurant_id, source, source_key, title, metric, user_id=None, window
 # recommendations count when they are on the same family.
 _VOLUME_FAMILIES = {"labor_cost", "food_cost", "sales", "comps", "voids"}
 _PRICE_FAMILIES = {"labor_cost", "food_cost", "sales"}
+# Numbers that are a share of sales: a sales move alone moves them (re-audit
+# A5). Labor % fell four points on a 15% sales lift with labor dollars flat,
+# and was read — and paid — as a labor saving.
+_COST_FAMILIES = {"labor_cost", "food_cost", "comps", "voids"}
 _REC_MODULE_FAMILY = {"labor": "labor_cost", "schedule": "labor_cost", "food": "food_cost",
                       "reviews": "guest_rating", "marketing": "sales", "guests": "sales"}
+_DISOWNED_LIKE = '%"did_it": "no"%'
 
 
 def _rec_family(key, module, expected_metric):
@@ -687,6 +866,9 @@ def _rec_family(key, module, expected_metric):
     if key.startswith("dsr_action:"):
         m = DSR_ACTION_METRICS.get(key.split(":")[1] if ":" in key else "")
         return metrics.family(m) if m else None
+    m = _kind_metric(key)
+    if m:
+        return metrics.family(m)
     if expected_metric and metrics.known(expected_metric):
         return metrics.family(expected_metric)
     return _REC_MODULE_FAMILY.get(module or "")
@@ -704,21 +886,69 @@ def _holidays_between(s, e):
     return {d: n for d, n in names.items() if _iso(s) <= d <= _iso(e)}
 
 
+def _next_day(iso):
+    return (_day(iso) + timedelta(days=1)).isoformat()
+
+
+def _sales_move(r, a, b, db_path):
+    """A concurrent-change entry when sales per day moved past their own
+    band between the tracker's baseline window and [a, b], else None. For a
+    "same weeks last year" tracker the sales expectation is moved the way
+    the same weeks moved last year first, as its own baseline was."""
+    if not (r.get("baseline_start") and r.get("baseline_end")):
+        return None
+    rid = r["restaurant_id"]
+    before, _ = _measure(rid, "sales", r["baseline_start"], r["baseline_end"], db_path)
+    after, _ = _measure(rid, "sales", a, b, db_path)
+    if before is None or after is None:
+        return None
+    expected = before
+    if (r.get("baseline_kind") or "") == "same weeks last year":
+        shift = _seasonal_shift(rid, "sales", (r["baseline_start"], r["baseline_end"]), (a, b), db_path)
+        if shift:
+            expected = _apply_shift("sales", before, *shift) or before
+    cmp = metrics.compare("sales", expected, after)
+    if cmp["verdict"] not in _MOVED:
+        return None
+    pct = abs(cmp.get("delta_pct") or 0)
+    word = "rose" if cmp["delta"] > 0 else "fell"
+    return {"kind": "sales_move", "label": f"Sales per day {word} {pct:.0f}% in the same weeks", "date": _iso(a)}
+
+
+def _ly_holiday_gaps(a, b):
+    """Holidays in [a, b] with no holiday of the same NAME in the same weeks
+    last year, and the reverse: a "same weeks last year" baseline holds last
+    year's holidays, and Easter moves (re-audit A12)."""
+    now = _holidays_between(a, b)
+    ly = _holidays_between((_day(a) - timedelta(days=LY_OFFSET_DAYS)).isoformat(),
+                           (_day(b) - timedelta(days=LY_OFFSET_DAYS)).isoformat())
+    out = [{"kind": "holiday", "label": n, "date": d} for d, n in sorted(now.items())
+           if n not in set(ly.values())]
+    out += [{"kind": "holiday", "label": f"{n} (in last year's comparison weeks, not this year's)", "date": d}
+            for d, n in sorted(ly.items()) if n not in set(now.values())]
+    return out
+
+
 def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
     """Every other change that could move this tracker's number:
     [{kind, label, date}] with kind one of tracker | accepted_rec |
-    price_change | event | holiday | closure. Any one of them caps the
-    attribution at "associated" (grade).
+    price_change | event | holiday | closure | sales_move. Any one of them
+    caps the attribution at "associated" (grade).
 
     Lasting changes (another tracker, an accepted recommendation, a price)
     count anywhere in [start, end]. One-day ones (an event, a holiday, a
     closure) count only inside the windows actually read — `read_windows`,
     default [(start, end)] — since a party between the evaluation and the
-    re-check moved neither reading."""
+    re-check moved neither reading. A number that is a share of sales
+    (labor %, food cost %, comps, voids) also lists a sales move past its
+    band in a read window, and any sales tracker over the same weeks
+    (re-audit A5). A change the owner said they never made (a disowned
+    tracker) is not a change (re-audit A23)."""
     fam = metrics.family(r["metric"])
     rid = r["restaurant_id"]
     s, e = _iso(start), _iso(end)
     windows = [(_iso(a), _iso(b)) for a, b in (read_windows or [(s, e)])]
+    cost = fam in _COST_FAMILIES
 
     def _read(d):
         return any(a <= d <= b for a, b in windows)
@@ -727,31 +957,41 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
     try:
         tracker_keys = set()
         for o in conn.execute(
-                "SELECT id, source_key, title, metric, started_on, evaluate_on, after_end FROM "
+                "SELECT id, source_key, title, metric, started_on, evaluate_on, after_end, owner_checkin FROM "
                 "recommendation_outcomes WHERE restaurant_id=? AND id!=? AND status IN ('tracking','evaluated') "
                 "AND started_on<=?", (rid, r.get("id") or 0, e)).fetchall():
             if str(o["source_key"] or "").startswith(INFORMATIONAL_PREFIX):
                 continue        # reading an alert is not a change
-            if metrics.family(o["metric"]) != fam:
+            ofam = metrics.family(o["metric"])
+            if ofam != fam and not (cost and ofam == "sales"):
                 continue
             o_end = _iso(o["after_end"]) or (_day(o["evaluate_on"]) - timedelta(days=1)).isoformat()
             if o_end < s:
                 continue
             tracker_keys.add(o["source_key"])
+            if disowned(dict(o)):
+                continue        # the owner said this change was never made
             out.append({"kind": "tracker", "label": owner_title(o["title"]), "date": _iso(o["started_on"])})
         try:
+            # A range on the stored timestamp, not date(e.at): the index on
+            # (restaurant_id, event, at) can serve it (re-audit A37).
             events = conn.execute(
                 "SELECT e.key, e.at, i.module, i.expected_metric, i.title FROM rec_events e "
                 "LEFT JOIN rec_instances i ON i.rec_id = e.rec_id WHERE e.restaurant_id=? "
-                "AND e.event IN ('accepted','completed') AND date(e.at)>=? AND date(e.at)<=? "
-                "ORDER BY e.at", (rid, s, e)).fetchall()
+                "AND e.event IN ('accepted','completed') AND e.at>=? AND e.at<? "
+                "ORDER BY e.at", (rid, s, _next_day(e))).fetchall()
         except Exception as ex:
             print(f"[outcomes] rec events unreadable for {rid}: {ex}")
             events = []
         seen = set()
+        reprice = r.get("source") == "reprice"
         for ev in events:
             key = ev["key"]
             if key == r.get("source_key") or key in tracker_keys or key in seen:
+                continue
+            if reprice and str(key or "").split(":", 1)[0] == "reprice":
+                # The month's reprice tracker IS its repricing: its own
+                # accepted reprices are not another change (re-audit A10).
                 continue
             if _rec_family(key, ev["module"], ev["expected_metric"]) != fam:
                 continue
@@ -760,11 +1000,11 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                         "date": _iso(ev["at"])})
         # The reprice tracker IS the price change; every other tracker on a
         # price-moved number sees the prices that moved under it.
-        if fam in _PRICE_FAMILIES and r.get("source") != "reprice":
+        if fam in _PRICE_FAMILIES and not reprice:
             try:
                 for p in conn.execute("SELECT dish, created_at FROM reprice_decisions WHERE restaurant_id=? "
-                                      "AND date(created_at)>=? AND date(created_at)<=? ORDER BY created_at",
-                                      (rid, s, e)).fetchall():
+                                      "AND created_at>=? AND created_at<? ORDER BY created_at",
+                                      (rid, s, _next_day(e))).fetchall():
                     out.append({"kind": "price_change", "label": f"{p['dish'] or 'A dish'} repriced",
                                 "date": _iso(p["created_at"])})
             except Exception as ex:
@@ -782,10 +1022,13 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
         conn.close()
     if fam in _VOLUME_FAMILIES:
         # A holiday is a confounder only when the comparison did not already
-        # hold one: a "same weeks last year" baseline has the same holidays
-        # in it, and a read window with no more holidays than the baseline
-        # window is balanced.
-        if (r.get("baseline_kind") or "prior window") != "same weeks last year":
+        # hold one. A "same weeks last year" baseline holds last year's —
+        # compared by NAME, since Easter moves; any other baseline is
+        # balanced when a read window holds no more holidays than it does.
+        if (r.get("baseline_kind") or "prior window") == "same weeks last year":
+            for a, b in windows:
+                out.extend(_ly_holiday_gaps(a, b))
+        else:
             before = (_holidays_between(r["baseline_start"], r["baseline_end"])
                       if r.get("baseline_start") and r.get("baseline_end") else {})
             for a, b in windows:
@@ -801,6 +1044,15 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                         out.append({"kind": "closure", "label": "Closed", "date": d})
         except Exception as ex:
             print(f"[outcomes] closures unreadable for {rid}: {ex}")
+    if cost:
+        for a, b in windows:
+            try:
+                mv = _sales_move(r, a, b, db_path)
+            except Exception as ex:
+                print(f"[outcomes] sales move unreadable for {rid}: {ex}")
+                mv = None
+            if mv:
+                out.append(mv)
     seen, unique = set(), []
     for c in sorted(out, key=lambda c: (c["date"], c["kind"], c["label"] or "")):
         k = (c["kind"], c["date"], c["label"])
@@ -810,28 +1062,106 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
     return unique
 
 
+# ── a trend already under way (re-audit A13) ────────────────────────────────
+
+TREND_LABEL = "Already moving this way before the change"
+
+
+def pre_trend(r, verdict, after_value, db_path=DB_PATH):
+    """A concurrent-change entry (kind "trend") when the number was already
+    moving the way it moved, before the change started, by enough to
+    explain the move — else None.
+
+    Sales drifting up 0.4% a day into summer, with nothing changed, read as
+    "improved clearly" and then "held" at 90 days (re-audit A13). The
+    baseline window is read in two halves (whole weeks where it can be);
+    the half-to-half move is carried forward to the after-window's middle,
+    and when the after reading is not past the noise band beyond that
+    projection, the move is the trend's as much as the change's. A "same
+    weeks last year" baseline is already moved by last year's same weeks
+    and is not tested again."""
+    if verdict not in _MOVED or after_value is None:
+        return None
+    if (r.get("baseline_kind") or "prior window") == "same weeks last year":
+        return None
+    if not (r.get("baseline_start") and r.get("baseline_end") and r.get("started_on")):
+        return None
+    base = r.get("baseline_raw") if r.get("baseline_raw") is not None else r.get("baseline_value")
+    if base is None:
+        return None
+    bs, be = _day(r["baseline_start"]), _day(r["baseline_end"])
+    n = (be - bs).days + 1
+    if n < 14:
+        return None
+    half = (n // 14) * 7 if n % 7 == 0 else n // 2
+    first = (bs, bs + timedelta(days=half - 1))
+    second = (be - timedelta(days=half - 1), be)
+    rid = r["restaurant_id"]
+    v1, _ = _measure(rid, r["metric"], first[0].isoformat(), first[1].isoformat(), db_path)
+    v2, _ = _measure(rid, r["metric"], second[0].isoformat(), second[1].isoformat(), db_path)
+    if v1 is None or v2 is None or v2 == v1:
+        return None
+    moved_up = float(after_value) > float(base)
+    if (v2 > v1) != moved_up:
+        return None             # it was moving the other way, if at all
+    step = (second[0] - first[0]).days
+    window = _window_days(r)
+    base_mid = bs + timedelta(days=(n - 1) / 2.0)
+    after_mid = _day(r["started_on"]) + timedelta(days=(window - 1) / 2.0)
+    lead = (after_mid - base_mid).total_seconds() / 86400.0
+    projected = float(base) + (float(v2) - float(v1)) * (lead / step if step else 0.0)
+    _exp, scale, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
+    if metrics.compare(r["metric"], projected, after_value, band_scale=scale)["verdict"] == verdict:
+        return None             # past the band beyond the trend: not explained by it
+    return {"kind": "trend", "label": TREND_LABEL, "date": _iso(r["baseline_start"])}
+
+
 # ── attribution: how strongly a move can be tied to the change (#23) ────────
 
-def grade(verdict, multiple, concurrent, recheck_verdict=None, checked=True) -> str:
+def grade(verdict, multiple, concurrent, recheck_verdict=None, checked=True, checkin=None) -> str:
     """none | associated | consistent | held. Never a claim of cause.
 
     none        no clear change, or nothing could be measured.
     associated  past the noise band once — or any size of move with another
                 change on the same number in the window (a concurrent change
-                caps it here), or a window never checked for one.
+                caps it here), or a window never checked for one, or a result
+                the owner's check-in says can't be separated (they said
+                something else changed, or that they never made the change).
     consistent  at least CONSISTENT_MULTIPLE bands, nothing else changing on
                 the same number in the window.
     held        still past the band when re-checked, nothing else changing.
+
+    THE one grading rule (re-audit A4): evaluate, recheck and apply_checkin
+    all grade through here with the check-in in hand. A check-in saying
+    conditions changed used to be undone by the 90-day re-check ("held"),
+    a "no" still read validated, and a check-in given while the tracker was
+    running was ignored by its evaluation.
     """
     if verdict not in _MOVED:
         return "none"
-    if concurrent or not checked:
+    ck = checkin if isinstance(checkin, dict) else {}
+    if concurrent or not checked or ck.get("conditions_changed") or ck.get("did_it") == "no":
         return "associated"
     if recheck_verdict == "held":
         return "held"
     if multiple is not None and multiple >= CONSISTENT_MULTIPLE:
         return "consistent"
     return "associated"
+
+
+def regrade(r, db_path=DB_PATH):
+    """A stored result's grade, recomputed from what is stored: its first
+    reading's size in noise bands, the other changes found, its re-check and
+    the owner's check-in. A tracking row keeps what it has (None)."""
+    if r.get("status") != "evaluated":
+        return r.get("attribution")
+    if r.get("verdict") not in _MOVED:
+        return "none"
+    first, scale, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
+    cmp = metrics.compare(r["metric"], first, r.get("after_value"), band_scale=scale)
+    conc = _concurrent_list(r)
+    return grade(r["verdict"], cmp["multiple"], conc, recheck_verdict=r.get("recheck_verdict"),
+                 checked=conc is not None, checkin=_checkin_of(r))
 
 
 def attribution_label(r) -> str:
@@ -863,10 +1193,17 @@ def attribution_label(r) -> str:
         s = (f"{moved} alongside the change, but you said something else changed in the same weeks, so it "
              f"can't be separated from that. {CAUSATION_CAVEAT}")
     elif conc:
-        names = ", ".join(c.get("label") or c.get("kind") for c in conc[:2])
-        more = f" and {len(conc) - 2} more" if len(conc) > 2 else ""
-        s = (f"{moved} alongside the change, but other changes on this number fell in the same weeks "
-             f"({names}{more}), so it can't be separated from them. {CAUSATION_CAVEAT}")
+        trend = [c for c in conc if c.get("kind") == "trend"]
+        others = [c for c in conc if c.get("kind") != "trend"]
+        parts = []
+        if others:
+            names = ", ".join(c.get("label") or c.get("kind") for c in others[:2])
+            more = f" and {len(others) - 2} more" if len(others) > 2 else ""
+            parts.append(f"other changes on this number fell in the same weeks ({names}{more})")
+        if trend:
+            parts.append("it was already moving this way in the weeks before the change started")
+        s = (f"{moved} alongside the change, but {' and '.join(parts)}, so it can't be separated from "
+             f"{'them' if others else 'that'}. {CAUSATION_CAVEAT}")
     else:
         s = f"{moved} alongside the change, past normal variation. {CAUSATION_CAVEAT}"
     rv = r.get("recheck_verdict")
@@ -884,7 +1221,7 @@ def is_validated(r) -> bool:
     """A measured win whose re-check held with nothing else changing on its
     family (audit #34)."""
     return (r.get("status") == "evaluated" and r.get("verdict") == "improved"
-            and r.get("attribution") == "held" and not is_informational(r))
+            and r.get("attribution") == "held" and not is_informational(r) and not disowned(r))
 
 
 def counts_in_delivered(r) -> bool:
@@ -924,12 +1261,28 @@ def recheck_on_for(r):
     return max(started + timedelta(days=RECHECK_DAYS), ev + timedelta(days=_window_days(r))).isoformat()
 
 
+def _aligned_window(r, end_limit):
+    """(start, end) dates of the latest window of the tracker's own length
+    ending on or before `end_limit`. A whole-weeks window holds the same
+    weekday mix wherever it falls; a window of another length (a manual
+    30-day tracker from before whole weeks, re-audit A21) is placed a whole
+    number of weeks from the after-window's start, so it holds the weekdays
+    the after-window — and its matched baseline — held."""
+    window = _window_days(r)
+    end_limit = end_limit if isinstance(end_limit, date) else _day(end_limit)
+    if window % 7 == 0 or metrics.parse(r["metric"])[0] not in metrics.WEEKDAY_MIX_METRICS:
+        return end_limit - timedelta(days=window - 1), end_limit
+    started = _day(r["started_on"])
+    k = max(0, ((end_limit - timedelta(days=window - 1)) - started).days // 7)
+    start = started + timedelta(days=7 * k)
+    return start, start + timedelta(days=window - 1)
+
+
 def evaluate(outcome_id, db_path=DB_PATH, today=None):
     """Re-measure one tracker whose window has closed and store the verdict,
     the after-value and % change, the other changes in the window, the
     attribution grade and the re-check date; then accrue the window's
     measured dollars (outcome_value_days)."""
-    today = today or date.today()
     conn = get_conn(db_path)
     try:
         r = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=?", (outcome_id,)).fetchone()
@@ -938,19 +1291,25 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
     if not r or r["status"] != "tracking":
         return None
     r = dict(r)
+    today = today or local_today(r["restaurant_id"], db_path)
     started = _day(r["started_on"])
     ev = _day(r["evaluate_on"])
     if today < ev:
         return None
     after_start, after_end = started, ev - timedelta(days=1)
-    after, after_detail = metrics.measure(r["restaurant_id"], r["metric"], after_start.isoformat(),
-                                          after_end.isoformat(), db_path)
+    after, after_detail = _measure(r["restaurant_id"], r["metric"], after_start.isoformat(),
+                                   after_end.isoformat(), db_path)
     expected, scale, _kind = expected_for(r, after_start.isoformat(), after_end.isoformat(), db_path)
     cmp = metrics.compare(r["metric"], expected, after, band_scale=scale)
-    dollars = (metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path)
+    # Priced on the after-window's own sales and trading days (re-audit A1).
+    dollars = (metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path,
+                                       window=(after_start.isoformat(), after_end.isoformat()))
                if cmp["verdict"] in _MOVED else None)
     concurrent = find_concurrent(r, after_start.isoformat(), after_end.isoformat(), db_path)
-    attribution = grade(cmp["verdict"], cmp["multiple"], concurrent)
+    trend = pre_trend(r, cmp["verdict"], after, db_path)
+    if trend:
+        concurrent.append(trend)
+    attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r))
     recheck_on = recheck_on_for(r) if (cmp["verdict"] in _MOVED and not is_informational(r)) else None
     conn = get_conn(db_path)
     try:
@@ -969,22 +1328,40 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
     return get_outcome(outcome_id, db_path=db_path)
 
 
-def evaluate_due(restaurant_id=None, db_path=DB_PATH, today=None):
-    """Evaluate every tracker whose window has closed. Scheduler entry point."""
-    today = today or date.today()
+def evaluate_due(restaurant_id=None, db_path=DB_PATH, today=None, max_seconds=None):
+    """Evaluate every tracker whose window has closed. Scheduler entry point
+    (strategy_jobs.run_outcome_evaluations calls it once per restaurant,
+    bounded and resumable, with that restaurant's own date).
+
+    Without a restaurant, `today` defaults to the latest local date anywhere
+    (a day ahead of UTC at most) and each tracker is still only evaluated
+    once ITS restaurant's date has reached evaluate_on. `max_seconds` bounds
+    one pass by wall clock; oldest first, and an evaluated tracker leaves
+    the set, so the next pass carries on from where this one stopped."""
+    local = today or (local_today(restaurant_id, db_path) if restaurant_id is not None
+                      else date.today() + timedelta(days=1))
     conn = get_conn(db_path)
     try:
-        sql = ("SELECT id FROM recommendation_outcomes WHERE status='tracking' AND evaluate_on<=?")
-        args = [today.isoformat()]
+        sql = ("SELECT id, restaurant_id FROM recommendation_outcomes WHERE status='tracking' AND evaluate_on<=?")
+        args = [local.isoformat()]
         if restaurant_id is not None:
             sql += " AND restaurant_id=?"
             args.append(restaurant_id)
-        ids = [r["id"] for r in conn.execute(sql, args).fetchall()]
+        rows = [(r["id"], r["restaurant_id"]) for r in conn.execute(sql + " ORDER BY id", args).fetchall()]
     finally:
         conn.close()
     done = []
-    for oid in ids:
+    began = time.monotonic()
+    for oid, rid in rows:
+        if max_seconds is not None and time.monotonic() - began > max_seconds:
+            break
         try:
+            if today is None and restaurant_id is None:
+                # Each tracker on its own restaurant's calendar (re-audit A8).
+                out = evaluate(oid, db_path=db_path, today=local_today(rid, db_path))
+                if out:
+                    done.append(out)
+                continue
             out = evaluate(oid, db_path=db_path, today=today)
             if out:
                 done.append(out)
@@ -1005,8 +1382,9 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     same way; faded: back inside it; reversed: past it the other way;
     unknown: not measurable. A win that faded or reversed stops counting in
     Delivered and stops accruing. The window's other changes are checked
-    again over the whole span, for rows evaluated before they were recorded."""
-    today = today or date.today()
+    again over the whole span, for rows evaluated before they were recorded.
+    The grade goes through grade() with the owner's check-in, so a "held"
+    re-check never lifts a result the owner said can't be separated."""
     conn = get_conn(db_path)
     try:
         r = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=?", (outcome_id,)).fetchone()
@@ -1015,14 +1393,12 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     if not r:
         return None
     r = dict(r)
+    today = today or local_today(r["restaurant_id"], db_path)
     if (r["status"] != "evaluated" or r["verdict"] not in _MOVED or r.get("recheck_verdict")
             or not r.get("recheck_on") or today < _day(r["recheck_on"]) or is_informational(r)):
         return None
-    window = _window_days(r)
-    end = _day(r["recheck_on"]) - timedelta(days=1)
-    start = end - timedelta(days=window - 1)
-    value, _detail = metrics.measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(),
-                                     db_path)
+    start, end = _aligned_window(r, _day(r["recheck_on"]) - timedelta(days=1))
+    value, _detail = _measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(), db_path)
     expected, scale, _kind = expected_for(r, start.isoformat(), end.isoformat(), db_path)
     cmp = metrics.compare(r["metric"], expected, value, band_scale=scale)
     if cmp["verdict"] == "unknown":
@@ -1039,9 +1415,13 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     concurrent = find_concurrent(r, r["started_on"], end.isoformat(), db_path,
                                  read_windows=[(r["started_on"], _after_end(r)),
                                                (start.isoformat(), end.isoformat())])
+    trend = pre_trend(r, r["verdict"], r.get("after_value"), db_path)
+    if trend:
+        concurrent.append(trend)
     first, _s, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
     eval_cmp = metrics.compare(r["metric"], first, r.get("after_value"), band_scale=_s)
-    attribution = grade(r["verdict"], eval_cmp["multiple"], concurrent, recheck_verdict=rv)
+    attribution = grade(r["verdict"], eval_cmp["multiple"], concurrent, recheck_verdict=rv,
+                        checkin=_checkin_of(r))
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE recommendation_outcomes SET recheck_value=?, recheck_verdict=?, rechecked_at=?, "
@@ -1056,7 +1436,7 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
 
 def recheck_due(restaurant_id=None, db_path=DB_PATH, today=None):
     """Re-check every measured move whose recheck_on has come. Daily job."""
-    today = today or date.today()
+    today = today or (local_today(restaurant_id, db_path) if restaurant_id is not None else date.today())
     conn = get_conn(db_path)
     try:
         sql = ("SELECT id FROM recommendation_outcomes WHERE status='evaluated' AND verdict IN "
@@ -1084,16 +1464,23 @@ def recheck_due(restaurant_id=None, db_path=DB_PATH, today=None):
 # ── cumulative measured value (#14) ─────────────────────────────────────────
 # outcome_value_days holds one row per tracker per measured day. `dollars`
 # is signed (a win's day positive, a worsened change's day negative) and 0
-# on a measured day the move did not hold. Only ONE row per restaurant,
-# family, direction and day is `counted`: waste and food cost improving over
-# the same days are one saving, not two (#4), so the larger stands.
+# on a measured day the move did not hold. ONE row per restaurant, family
+# and day is `counted` — the broadest reading of the family (metrics.BREADTH)
+# that held, then the largest: waste and food cost improving over the same
+# days are one saving, not two (#4), and a labor % win with an overtime loss
+# over the same days is the labor % reading, not the win less the overtime
+# premium a second time (re-audit A7). cumulative() elects the same way at
+# read time, so a row's `counted` and the sum can never disagree.
 
-def _unit_amount(r, monthly):
-    """A monthly figure as one measured day's share. A weekday metric's day
-    is one of that weekday — its monthly figure recurs WEEKS_PER_MONTH times."""
-    base, _ = metrics.parse(r["metric"])
-    per = metrics.WEEKS_PER_MONTH if base == "weekday_sales" else metrics.DAYS_PER_MONTH
-    return round(float(monthly) / per, 4)
+def _unit_amount(r, monthly, per=None):
+    """A monthly figure as one measured day's share. `per` is how many of the
+    metric's days make a month (metrics.days_per_month): trading days for a
+    sales-priced metric (re-audit A1), one weekday's recurrences for a
+    weekday metric, calendar days otherwise."""
+    if per is None:
+        base, _ = metrics.parse(r["metric"])
+        per = metrics.WEEKS_PER_MONTH if base == "weekday_sales" else metrics.DAYS_PER_MONTH
+    return round(float(monthly) / float(per), 4)
 
 
 def _accrues(r) -> bool:
@@ -1102,9 +1489,13 @@ def _accrues(r) -> bool:
             and not disowned(r))
 
 
+def _breadth(metric) -> int:
+    return metrics.BREADTH.get(metrics.parse(metric)[0], 0)
+
+
 def _put_day(conn, r, day, amount, held, basis):
-    """One measured day for one tracker, counted only if it is the largest
-    held reading of its family and direction that day."""
+    """One measured day for one tracker, counted only if it is the broadest,
+    then the largest, held reading of its family that day."""
     if conn.execute("SELECT 1 FROM outcome_value_days WHERE outcome_id=? AND day=?",
                     (r["id"], day)).fetchone():
         return False
@@ -1112,15 +1503,17 @@ def _put_day(conn, r, day, amount, held, basis):
     sign = 1 if r["verdict"] == "improved" else -1
     counted = 0
     if held and amount:
-        cur = conn.execute("SELECT outcome_id, dollars FROM outcome_value_days WHERE restaurant_id=? AND "
-                           "family=? AND sign=? AND day=? AND counted=1",
-                           (r["restaurant_id"], fam, sign, day)).fetchone()
-        if cur is None:
+        cur = conn.execute("SELECT outcome_id, metric, dollars FROM outcome_value_days WHERE restaurant_id=? AND "
+                           "family=? AND day=? AND counted=1",
+                           (r["restaurant_id"], fam, day)).fetchall()
+        if not cur:
             counted = 1
-        elif abs(float(amount)) > abs(float(cur["dollars"] or 0)):
-            conn.execute("UPDATE outcome_value_days SET counted=0 WHERE outcome_id=? AND day=?",
-                         (cur["outcome_id"], day))
-            counted = 1
+        else:
+            mine = (_breadth(r["metric"]), -abs(float(amount)))
+            if all(mine < (_breadth(c["metric"]), -abs(float(c["dollars"] or 0))) for c in cur):
+                conn.execute("UPDATE outcome_value_days SET counted=0 WHERE restaurant_id=? AND family=? "
+                             "AND day=? AND counted=1", (r["restaurant_id"], fam, day))
+                counted = 1
     conn.execute("INSERT INTO outcome_value_days (outcome_id, restaurant_id, day, module, metric, family, "
                  "sign, dollars, held, counted, basis) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                  (r["id"], r["restaurant_id"], day, module_of_row(r), r["metric"], fam, sign,
@@ -1128,10 +1521,23 @@ def _put_day(conn, r, day, amount, held, basis):
     return True
 
 
+def _measured_days(r, start, end, db_path):
+    """The days in [start, end] a move on r's metric was measured on
+    (metrics.accrual_days) — every calendar day for a metric read over
+    calendar days."""
+    days = metrics.accrual_days(r["restaurant_id"], r["metric"], _iso(start), _iso(end), db_path)
+    if days is None:
+        s = _day(start)
+        days = [(s + timedelta(days=i)).isoformat() for i in range((_day(end) - s).days + 1)]
+    return days
+
+
 def accrue_window(r, db_path=DB_PATH):
     """Accrue an evaluated move's after-window: each measured day of it at
-    the evaluated monthly figure's daily share. A per-day metric's days
-    without data were not measured and accrue nothing."""
+    the evaluated monthly figure's daily share. A day without data — a
+    closed Monday, a day comps were never synced — was not measured and
+    accrues nothing, and a sales-priced figure's share is per TRADING day,
+    so the window sums to what the days actually moved (re-audit A1)."""
     if not r or r.get("status") != "evaluated":
         return 0
     after_end = _after_end(r)
@@ -1139,13 +1545,12 @@ def accrue_window(r, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         if _accrues(r):
-            days = metrics.data_days(r["restaurant_id"], r["metric"], r["started_on"], after_end, db_path)
-            if days is None:
-                s = _day(r["started_on"])
-                days = [(s + timedelta(days=i)).isoformat() for i in range((_day(after_end) - s).days + 1)]
-            amount = _unit_amount(r, r["dollars_monthly"])
-            for d in days:
-                written += 1 if _put_day(conn, r, d, amount, True, "window") else 0
+            days = _measured_days(r, r["started_on"], after_end, db_path)
+            per = metrics.days_per_month(r["restaurant_id"], r["metric"], r["started_on"], after_end, db_path)
+            if days and per:
+                amount = _unit_amount(r, r["dollars_monthly"], per)
+                for d in days:
+                    written += 1 if _put_day(conn, r, d, amount, True, "window") else 0
         conn.execute("UPDATE recommendation_outcomes SET accrued_through=? WHERE id=? "
                      "AND (accrued_through IS NULL OR accrued_through<?)", (after_end, r["id"], after_end))
         conn.commit()
@@ -1156,36 +1561,38 @@ def accrue_window(r, db_path=DB_PATH):
 
 def _read_day(r, d, db_path):
     """(held, amount) for one day after the window, from the trailing window
-    ending that day, or None when the day was not measured."""
-    base, param = metrics.parse(r["metric"])
+    ending that day (whole weeks, _aligned_window), or None when the day was
+    not measured or its window was too thinly measured (MIN_COVERAGE)."""
     day = d.isoformat()
-    if base in metrics.PER_DAY_METRICS and not metrics.data_days(r["restaurant_id"], r["metric"], day, day,
-                                                                 db_path):
+    measured = metrics.accrual_days(r["restaurant_id"], r["metric"], day, day, db_path)
+    if measured is not None and not measured:
         return None
-    start = (d - timedelta(days=_window_days(r) - 1)).isoformat()
-    expected, scale, _k = expected_for(r, start, day, db_path)
-    value, _ = metrics.measure(r["restaurant_id"], r["metric"], start, day, db_path)
+    s, e = _aligned_window(r, d)
+    start, end = s.isoformat(), e.isoformat()
+    expected, scale, _k = expected_for(r, start, end, db_path)
+    value, _ = _measure(r["restaurant_id"], r["metric"], start, end, db_path)
     cmp = metrics.compare(r["metric"], expected, value, band_scale=scale)
     if cmp["verdict"] == "unknown":
         return None
     if cmp["verdict"] != r["verdict"]:
         return (False, 0.0)
-    monthly = metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path)
-    if monthly is None:
+    monthly = metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path, window=(start, end))
+    per = metrics.days_per_month(r["restaurant_id"], r["metric"], start, end, db_path)
+    if monthly is None or not per:
         return None
     # Never more than the evaluated figure: a number that kept moving after
     # the window is more likely something else than more of the change.
     capped = min(abs(float(monthly)), abs(float(r["dollars_monthly"])))
-    return (True, _unit_amount(r, capped if r["verdict"] == "improved" else -capped))
+    return (True, _unit_amount(r, capped if r["verdict"] == "improved" else -capped, per))
 
 
 def accrue_daily(r, db_path=DB_PATH, today=None):
     """Accrue the days after the window, one measured day at a time, while
     the move still holds that day — up to ACCRUAL_HORIZON_DAYS from the
     start, and never past a failed re-check. Returns rows written."""
-    today = today or date.today()
     if not _accrues(r) or not r.get("accrued_through"):
         return 0
+    today = today or local_today(r["restaurant_id"], db_path)
     base, param = metrics.parse(r["metric"])
     stop = min(today - timedelta(days=1),
                _day(r["started_on"]) + timedelta(days=ACCRUAL_HORIZON_DAYS - 1))
@@ -1223,7 +1630,7 @@ def accrue_due(restaurant_id, db_path=DB_PATH, today=None):
     """One accrual pass for one restaurant: any evaluated move whose window
     was never accrued (evaluated before this existed) is accrued first, then
     every move is read forward day by day. Daily job."""
-    today = today or date.today()
+    today = today or local_today(restaurant_id, db_path)
     written = 0
     for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path):
         if not _accrues(r):
@@ -1243,7 +1650,25 @@ def _denied_row(r, denied) -> bool:
     return bool(denied) and (module_of_row(r) in denied or module_of(r.get("metric")) in denied)
 
 
-def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, exclude_metrics=None) -> dict:
+def _hidden_row(r, denied=None, exclude_metrics=None, exclude_ids=None) -> bool:
+    """A result a viewer may not see: a denied module, a metric it may not
+    read (comps and voids without LOSS_VIEW), or a tracker whose
+    recommendation it may not see (value_delivered.viewer_scope). Applied
+    BEFORE anything is summed (re-audit A26)."""
+    if _denied_row(r, denied):
+        return True
+    if exclude_metrics and metrics.parse(r.get("metric"))[0] in {metrics.parse(m)[0] for m in exclude_metrics}:
+        return True
+    return bool(exclude_ids) and r.get("id") in set(exclude_ids)
+
+
+_BASE_SQL = "CASE WHEN instr(v.metric, ':') > 0 THEN substr(v.metric, 1, instr(v.metric, ':') - 1) ELSE v.metric END"
+SALES_LIFT_BASIS = ("gross revenue — sales through the till, not profit — measured before and after; kept apart "
+                    "from the savings and never added to them")
+
+
+def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, exclude_metrics=None,
+               exclude_ids=None) -> dict:
     """Measured dollars accrued so far, net of changes that got worse: a SUM
     of measured days, never a monthly figure times months. `total` is None
     when no day has been measured yet (nothing measured is not $0).
@@ -1251,39 +1676,89 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None, since=None, 
     day read. `since` (ISO date) keeps only the days on or after it — the
     owner report's "over the past 6 months" (owner_report.what_worked);
     `exclude_metrics` drops metrics a viewer may not read (comps and voids
-    without LOSS_VIEW) before anything is summed."""
+    without LOSS_VIEW) and `exclude_ids` trackers whose recommendation it
+    may not see, before anything is summed.
+
+    Summed in SQL (re-audit A35), electing at read time one reading per
+    family and day — the broadest that held, then the largest (_put_day's
+    rule) — from trackers the owner has not disowned. Two more rules:
+      * SALES ARE NOT SAVINGS (re-audit A6). A sales lift is gross revenue;
+        it is summed apart, in `sales_lift`, and never into `total`.
+      * A SALES MOVE IS NOT A COST SAVING (re-audit A5). A labor, food-cost,
+        comp or void day is not counted on a day a sales reading of the same
+        direction is: the share of sales fell because sales rose.
+    """
     denied = set(denied_modules or ())
-    excluded = {str(m).split(":", 1)[0] for m in (exclude_metrics or ())}
-    sql = "SELECT day, module, metric, dollars, held, counted FROM outcome_value_days WHERE restaurant_id=?"
-    args = [restaurant_id]
+    excluded = {metrics.parse(m)[0] for m in (exclude_metrics or ())}
+    denied_bases = {b for b, m in METRIC_MODULE.items() if m in denied}
+    where = ["v.restaurant_id=?", "(o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE ?)"]
+    args = [restaurant_id, _DISOWNED_LIKE]
     if since:
-        sql += " AND day >= ?"
+        where.append("v.day >= ?")
         args.append(str(since)[:10])
+    if denied:
+        where.append(f"COALESCE(v.module, 'other') NOT IN ({','.join('?' for _ in denied)})")
+        args += sorted(denied)
+    bases = sorted(excluded | denied_bases)
+    if bases:
+        where.append(f"{_BASE_SQL} NOT IN ({','.join('?' for _ in bases)})")
+        args += bases
+    ids = sorted({int(i) for i in (exclude_ids or ()) if i is not None})
+    if ids:
+        where.append(f"v.outcome_id NOT IN ({','.join('?' for _ in ids)})")
+        args += ids
+    narrow = sorted(metrics.BREADTH)
+    cost = sorted(_COST_FAMILIES)
+    cte = (
+        "WITH v AS (SELECT v.day, COALESCE(v.module, 'other') AS module, v.family, v.dollars, v.held, "
+        f"v.outcome_id, CASE WHEN {_BASE_SQL} IN ({','.join('?' for _ in narrow)}) THEN 1 ELSE 0 END AS rk "
+        "FROM outcome_value_days v JOIN recommendation_outcomes o ON o.id = v.outcome_id "
+        f"WHERE {' AND '.join(where)}), "
+        "pick AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY family, day ORDER BY rk, ABS(dollars) DESC, "
+        "outcome_id) AS rn FROM v WHERE held = 1 AND dollars <> 0), "
+        "chosen AS (SELECT * FROM pick WHERE rn = 1), "
+        f"final AS (SELECT c.* FROM chosen c WHERE NOT (c.family IN ({','.join('?' for _ in cost)}) AND EXISTS "
+        "(SELECT 1 FROM chosen s WHERE s.family = 'sales' AND s.day = c.day AND (s.dollars > 0) = (c.dollars > 0)))) ")
+    cargs = narrow + args + cost
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(sql + " ORDER BY day", args).fetchall()
+        measured = {bool(r["sl"]): dict(r) for r in conn.execute(
+            cte + "SELECT family = 'sales' AS sl, COUNT(DISTINCT day) AS n, MIN(day) AS a, MAX(day) AS b "
+                  "FROM v GROUP BY sl", cargs).fetchall()}
+        sums = [dict(r) for r in conn.execute(
+            cte + "SELECT family = 'sales' AS sl, module, ROUND(SUM(CASE WHEN dollars > 0 THEN dollars ELSE 0 END), 4) "
+                  "AS g, ROUND(SUM(CASE WHEN dollars < 0 THEN -dollars ELSE 0 END), 4) AS l, MIN(day) AS a, "
+                  "MAX(day) AS b FROM final GROUP BY sl, module", cargs).fetchall()]
+        counted_days = {bool(r["sl"]): r["n"] for r in conn.execute(
+            cte + "SELECT family = 'sales' AS sl, COUNT(DISTINCT day) AS n FROM final GROUP BY sl", cargs).fetchall()}
     finally:
         conn.close()
-    rows = [dict(r) for r in rows if not _denied_row(dict(r), denied)
-            and str(r["metric"] or "").split(":", 1)[0] not in excluded]
-    counted = [r for r in rows if r["counted"]]
-    by_module = {}
-    for r in counted:
-        by_module[r["module"] or "other"] = round(by_module.get(r["module"] or "other", 0.0) + r["dollars"], 2)
-    gained = sum(r["dollars"] for r in counted if r["dollars"] > 0)
-    lost = sum(-r["dollars"] for r in counted if r["dollars"] < 0)
-    return {
-        "total": round(gained - lost, 2) if rows else None,
-        "gained": round(gained, 2), "lost": round(lost, 2),
-        "since": counted[0]["day"] if counted else (rows[0]["day"] if rows else None),
-        "until": counted[-1]["day"] if counted else (rows[-1]["day"] if rows else None),
-        "days": len({r["day"] for r in counted}),
-        "measured_days": len({r["day"] for r in rows}),
-        "by_module": by_module,
-        "basis": ("summed over days actually measured, only while each change held, net of changes that got "
-                  f"worse; related numbers over the same days count once; each change for up to "
-                  f"{ACCRUAL_HORIZON_DAYS} days from when it started"),
-    }
+
+    def _part(sl):
+        m = measured.get(sl)
+        rows = [s for s in sums if bool(s["sl"]) == sl]
+        gained = sum(float(s["g"] or 0) for s in rows)
+        lost = sum(float(s["l"] or 0) for s in rows)
+        by_module = {s["module"]: round(float(s["g"] or 0) - float(s["l"] or 0), 2) for s in rows}
+        firsts = [s["a"] for s in rows if s["a"]]
+        lasts = [s["b"] for s in rows if s["b"]]
+        return {
+            "total": round(gained - lost, 2) if m else None,
+            "gained": round(gained, 2), "lost": round(lost, 2),
+            "since": min(firsts) if firsts else (m["a"] if m else None),
+            "until": max(lasts) if lasts else (m["b"] if m else None),
+            "days": int(counted_days.get(sl) or 0),
+            "measured_days": int(m["n"]) if m else 0,
+            "by_module": by_module,
+        }
+    out = _part(False)
+    lift = _part(True)
+    out["sales_lift"] = dict(lift, basis=SALES_LIFT_BASIS) if lift["measured_days"] else None
+    out["basis"] = ("summed over days actually measured, only while each change held, net of changes that got "
+                    f"worse; related numbers over the same days count once; each change for up to "
+                    f"{ACCRUAL_HORIZON_DAYS} days from when it started; sales lifts are kept apart, and a cost "
+                    f"share that fell only because sales rose is not counted as a saving")
+    return out
 
 
 def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path=DB_PATH, at=None):
@@ -1296,11 +1771,12 @@ def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path
       day is counted instead (the one-per-family rule, #4).
     - conditions_changed: the grade is capped at "associated", like any other
       change in the same weeks (#31).
-    - "yes"/"partly" after a "no": the days are re-accrued by the next pass
-      and the grade before the check-in is restored (still capped when
-      conditions changed).
-    Returns the updated row, or None when the tracker is not this
-    restaurant's."""
+    - "yes"/"partly" after a "no": the days are re-accrued by the next pass.
+    The grade is recomputed from the stored result by the one grading rule
+    (regrade -> grade, re-audit A4/A22): a "yes" after a "held" re-check is
+    held again, and a check-in given while the tracker was still running is
+    read by its evaluation. Returns the updated row, or None when the
+    tracker is not this restaurant's."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=? AND restaurant_id=?",
@@ -1310,12 +1786,10 @@ def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path
         r = dict(row)
         before = _checkin_of(r) or {}
         was_disowned = before.get("did_it") == "no"
-        base_grade = before.get("attribution_before", r.get("attribution"))
         ck = {"did_it": did_it, "conditions_changed": bool(conditions_changed),
-              "at": at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "attribution_before": base_grade}
-        grade_now = r.get("attribution")
-        if r.get("status") == "evaluated" and r.get("verdict") in _MOVED:
-            grade_now = "associated" if (conditions_changed and base_grade in ("consistent", "held")) else base_grade
+              "at": at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}
+        r["owner_checkin"] = ck
+        grade_now = regrade(r, db_path) if r.get("status") == "evaluated" else r.get("attribution")
         conn.execute("UPDATE recommendation_outcomes SET owner_checkin=?, attribution=? WHERE id=?",
                      (json.dumps(ck), grade_now, r["id"]))
         if did_it == "no" and not was_disowned:
@@ -1332,19 +1806,20 @@ def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path
 
 def _release_days(conn, r):
     """Stop counting a disowned change's measured days, and on each day it was
-    the counted row of its family and direction, count the next-largest
-    held reading instead."""
-    days = conn.execute("SELECT day, family, sign FROM outcome_value_days WHERE outcome_id=? AND counted=1",
+    the counted row of its family, count the next one instead — the
+    broadest, then the largest, held reading of a change still owned."""
+    days = conn.execute("SELECT day, family FROM outcome_value_days WHERE outcome_id=? AND counted=1",
                         (r["id"],)).fetchall()
     conn.execute("UPDATE outcome_value_days SET counted=0 WHERE outcome_id=?", (r["id"],))
     for d in days:
-        nxt = conn.execute(
-            "SELECT outcome_id FROM outcome_value_days v JOIN recommendation_outcomes o ON o.id=v.outcome_id "
-            "WHERE v.restaurant_id=? AND v.family=? AND v.sign=? AND v.day=? AND v.held=1 AND v.outcome_id<>? "
-            "AND (o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE '%\"did_it\": \"no\"%') "
-            "ORDER BY ABS(v.dollars) DESC LIMIT 1",
-            (r["restaurant_id"], d["family"], d["sign"], d["day"], r["id"])).fetchone()
-        if nxt:
+        rows = conn.execute(
+            "SELECT v.outcome_id, v.metric, v.dollars FROM outcome_value_days v "
+            "JOIN recommendation_outcomes o ON o.id=v.outcome_id "
+            "WHERE v.restaurant_id=? AND v.family=? AND v.day=? AND v.held=1 AND v.dollars<>0 AND v.outcome_id<>? "
+            "AND (o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE ?)",
+            (r["restaurant_id"], d["family"], d["day"], r["id"], _DISOWNED_LIKE)).fetchall()
+        if rows:
+            nxt = min(rows, key=lambda x: (_breadth(x["metric"]), -abs(float(x["dollars"] or 0)), x["outcome_id"]))
             conn.execute("UPDATE outcome_value_days SET counted=1 WHERE outcome_id=? AND day=?",
                          (nxt["outcome_id"], d["day"]))
 
@@ -1355,7 +1830,7 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
     """Interim reading for trackers still running: the metric since the start
     date, against the baseline. Labelled as partial by callers — a window that
     is a week old is a hint, not a result."""
-    today = today or date.today()
+    today = today or local_today(restaurant_id, db_path)
     out = []
     for r in list_outcomes(restaurant_id, status="tracking", db_path=db_path):
         started = _day(r["started_on"])
@@ -1429,6 +1904,70 @@ def checkin_keys(restaurant_id, tracker_ids, db_path=DB_PATH) -> dict:
     return out
 
 
+def tracking_for_key(restaurant_id, source_key, db_path=DB_PATH):
+    """The tracker running on this key, or None."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND source_key=? "
+                           "AND status='tracking'", (restaurant_id, source_key)).fetchone()
+    finally:
+        conn.close()
+    return _row(row) if row else None
+
+
+def linked_episodes(restaurant_id, db_path=DB_PATH) -> dict:
+    """{tracker id: the rec_instances episode that names it}, newest first."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND tracker_id IS NOT NULL "
+                            "ORDER BY rec_id DESC", (restaurant_id,)).fetchall()
+    except Exception as e:
+        print(f"[outcomes] linked episodes unreadable for {restaurant_id}: {e}")
+        return {}
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["tracker_id"], dict(r))
+    return out
+
+
+def visible_to(viewer, r, linked=None, db_path=DB_PATH) -> bool:
+    """Whether a login may see one tracker (re-audit A26/A28): its metric
+    (metric_visible_to), and the recommendation behind it — the linked
+    episode, else the source key read as one — by rec_learning.viewer_sees
+    (owner-only, a loss, a module it lacks). No viewer: an internal caller."""
+    if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
+        return True
+    if not metric_visible_to(viewer, r.get("metric")):
+        return False
+    if linked is None:
+        linked = linked_episodes(r.get("restaurant_id"), db_path=db_path)
+    ep = linked.get(r.get("id")) or {"key": r.get("source_key"), "module": None}
+    try:
+        import rec_learning
+        return rec_learning.viewer_sees(viewer, ep)
+    except Exception as e:
+        print(f"[outcomes] viewer check failed closed: {e}")
+        return False
+
+
+def hidden_tracker_ids(restaurant_id, viewer, db_path=DB_PATH) -> set:
+    """The trackers of this restaurant a login may not see (visible_to) —
+    dropped from every value figure before it is summed."""
+    if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
+        return set()
+    linked = linked_episodes(restaurant_id, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r, restaurant_id=restaurant_id) for r in conn.execute(
+            "SELECT id, source_key, metric FROM recommendation_outcomes WHERE restaurant_id=?",
+            (restaurant_id,)).fetchall()]
+    finally:
+        conn.close()
+    return {r["id"] for r in rows if not visible_to(viewer, r, linked=linked, db_path=db_path)}
+
+
 def abandon(restaurant_id, outcome_id, db_path=DB_PATH):
     """Stop tracking — the owner reversed the change or it no longer applies."""
     conn = get_conn(db_path)
@@ -1449,15 +1988,17 @@ def recent_results(restaurant_id, days=7, db_path=DB_PATH, today=None):
     The window is (today - days, today]: `days` whole days ending today, so
     consecutive sends never overlap. It used to include both ends — with
     days=1 a verdict due today, evaluated at 6am before the 7am brief, was
-    in today's brief and again in tomorrow's."""
-    today = today or date.today()
+    in today's brief and again in tomorrow's. The restaurant's own date,
+    as evaluate_on is (re-audit A8)."""
+    today = today or local_today(restaurant_id, db_path)
     since = (today - timedelta(days=days)).isoformat()
     until = today.isoformat()
     return [r for r in list_outcomes(restaurant_id, status="evaluated", db_path=db_path)
             if since < str(r.get("evaluate_on") or "")[:10] <= until]
 
 
-def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
+def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None, exclude_metrics=None,
+             exclude_ids=None):
     """Every evaluated tracker that actually IMPROVED, carries dollars and
     still counts (not an alert read, not faded or reversed at its re-check).
 
@@ -1470,9 +2011,9 @@ def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     to happen HERE rather than on the way out: filtering a breakdown while
     leaving the total intact hands a manager the food-cost dollars back by
     subtraction. A row is dropped when either the module it is credited to
-    or its metric's module is denied.
+    or its metric's module is denied — and, per viewer, a metric it may not
+    read or a tracker whose recommendation it may not see (_hidden_row).
     """
-    denied = set(denied_modules or ())
     rows = []
     for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path):
         if r.get("verdict") != "improved" or not r.get("dollars_monthly"):
@@ -1481,7 +2022,7 @@ def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
             continue          # an alert READ, or a win that no longer holds
         if since and (r.get("evaluate_on") or "") < str(since)[:10]:
             continue
-        if _denied_row(r, denied):
+        if _hidden_row(r, set(denied_modules or ()), exclude_metrics, exclude_ids):
             continue
         rows.append(r)
     return rows
@@ -1494,41 +2035,89 @@ def _after_window(r):
     return str(start)[:10], str(end)[:10]
 
 
+def _overlaps(a, b) -> bool:
+    sa, ea = _after_window(a)
+    sb, eb = _after_window(b)
+    return sa <= eb and sb <= ea
+
+
+def _weight(r) -> float:
+    # A tiny weight for an unpriced result, so a rating win that overlaps
+    # nothing is still kept.
+    return abs(float(r.get("dollars_monthly") or 0)) + 1e-6
+
+
+def _max_weight_set(rows):
+    """The non-overlapping rows of largest total dollars (weighted interval
+    scheduling). Grouping by chains of overlap kept one row where two did
+    not overlap each other at all (A overlaps B, B overlaps C, A and C are
+    separate weeks — re-audit A20)."""
+    rows = sorted(rows, key=lambda r: (_after_window(r)[1], _after_window(r)[0], r.get("id") or 0))
+    n = len(rows)
+    best = [0.0] * (n + 1)
+    took = [False] * (n + 1)
+    prev = [0] * (n + 1)
+    for i in range(1, n + 1):
+        start = _after_window(rows[i - 1])[0]
+        j = i - 1
+        while j > 0 and _after_window(rows[j - 1])[1] >= start:
+            j -= 1
+        prev[i] = j
+        take = best[j] + _weight(rows[i - 1])
+        if take > best[i - 1]:
+            best[i], took[i] = take, True
+        else:
+            best[i] = best[i - 1]
+    out, i = [], n
+    while i > 0:
+        if took[i]:
+            out.append(rows[i - 1])
+            i = prev[i]
+        else:
+            i -= 1
+    return out[::-1]
+
+
 def distinct(rows):
     """One result per piece of work: moves in the same metric FAMILY whose
     after-windows overlap measured the same before/after change, so they are
     one result, not two (AI-18, rec-ROI #4) — waste and food cost over the
-    same weeks, labor % and overtime, one weekday's sales and sales. Each
-    overlapping group keeps its largest dollar reading. Separate windows in
-    one family, and overlapping windows in different families, stay
-    separate. Callers pass one direction at a time (wins, or losses)."""
+    same weeks, labor % and overtime, one weekday's sales and sales.
+
+    Within a family, a narrower reading that overlaps a broader one
+    (metrics.BREADTH) is the broader one's: labor % already holds the
+    overtime premium, so a labor % win and an overtime loss over the same
+    weeks are the labor % result, not the win less the premium a second
+    time (re-audit A7) — wins and losses are netted this way per family
+    before anything is summed. Of what remains, the non-overlapping set of
+    largest dollars is kept (_max_weight_set, re-audit A20). Separate
+    windows in one family, and overlapping windows in different families,
+    stay separate."""
     out = []
     by_family = {}
     for r in rows:
         by_family.setdefault(metrics.family(r.get("metric")), []).append(r)
-
-    def _size(g):
-        return abs(float(g.get("dollars_monthly") or 0))
-    for group_rows in by_family.values():
-        group_rows = sorted(group_rows, key=lambda r: _after_window(r)[0])
-        group, group_end = [], ""
-        for r in group_rows:
-            start, end = _after_window(r)
-            if group and start <= group_end:
-                group.append(r)
-                group_end = max(group_end, end)
-                continue
-            if group:
-                out.append(max(group, key=_size))
-            group, group_end = [r], end
-        if group:
-            out.append(max(group, key=_size))
+    for group in by_family.values():
+        broad = [r for r in group
+                 if not any(_breadth(o.get("metric")) < _breadth(r.get("metric")) and _overlaps(o, r)
+                            for o in group)]
+        out.extend(_max_weight_set(broad))
     return out
 
 
 def distinct_wins(wins):
     """distinct() over wins — kept under the name value callers know."""
     return distinct(wins)
+
+
+def _drop_sales_artifacts(rows):
+    """A labor, food-cost, comp or void move is not counted beside an
+    overlapping sales move the same way (re-audit A5): a cost share of sales
+    falls when sales rise, with not a dollar of cost saved."""
+    sales = [r for r in rows if metrics.family(r.get("metric")) == "sales"]
+    return [r for r in rows
+            if not (metrics.family(r.get("metric")) in _COST_FAMILIES
+                    and any(s.get("verdict") == r.get("verdict") and _overlaps(s, r) for s in sales))]
 
 
 def result_line(r) -> str:
@@ -1544,42 +2133,59 @@ def result_line(r) -> str:
     return f"{label} {_fmt(r['metric'], r.get('baseline_value'))} → {_fmt(r['metric'], r.get('after_value'))}, {word}"
 
 
-def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
+PROJECTION_NOTE = "a projection — this month's measured figure × 12, if it holds — not a measurement"
+
+
+def _selected(restaurant_id, db_path, since, denied, exclude_metrics, exclude_ids):
+    """(evaluated rows this viewer may see, tracking rows, the counted moves
+    kept after the family and sales rules)."""
+    evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path)
+                 if (not since or (r.get("evaluate_on") or "") >= str(since)[:10])
+                 and not _hidden_row(r, denied, exclude_metrics, exclude_ids) and not r.get("informational")]
+    tracking = [r for r in list_outcomes(restaurant_id, status="tracking", limit=500, db_path=db_path)
+                if not _hidden_row(r, denied, exclude_metrics, exclude_ids) and not r.get("informational")]
+    kept = _drop_sales_artifacts(distinct([r for r in evaluated if r.get("verdict") in _MOVED and r.get("counts")]))
+    return evaluated, tracking, kept
+
+
+def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None, exclude_metrics=None,
+                exclude_ids=None):
     """What measured moves are worth, per month, with the honest denominator
     alongside.
 
-    Deliberately NOT one bare number. `monthly` is the improvements (one per
-    family per overlapping window, only those still holding); `worsened` is
-    the changes that got worse, counted the same way; `net_monthly` is the
-    one less the other and may be below zero — it says so rather than
-    stopping at zero. `validated_monthly` is the part that held at its
-    re-check with nothing else changing on its number. `tracked` and
-    `unmeasurable` say how much of what the owner committed to could be read
-    at all, because $400 from two results means something different when
-    eight other trackers came back unknown.
+    Deliberately NOT one bare number. `monthly` is the SAVINGS that improved
+    (one per family per overlapping window, only those still holding);
+    `worsened` is the savings that got worse, counted the same way
+    (`priced_count` of them carry dollars); `net_monthly` is the one less
+    the other and may be below zero — it says so rather than stopping at
+    zero. `validated_monthly` is the part that held at its re-check with
+    nothing else changing on its number. `tracked` and `unmeasurable` say
+    how much of what the owner committed to could be read at all, because
+    $400 from two results means something different when eight other
+    trackers came back unknown.
+
+    `sales_lift` is kept apart and never added in (re-audit A6): a sales
+    rise is gross revenue — money through the till, not profit — and
+    adding it to a labor saving summed two different kinds of dollar.
+    `annual` is `monthly` × 12, a projection (PROJECTION_NOTE).
 
     Summing here is legitimate where business_intelligence.money_at_stake
     refuses to: these are all the same claim kind (measured, before/after,
-    per month) over the same restaurant, not a measured cost added to an
-    elasticity forecast.
+    per month, cost saved) over the same restaurant, not a measured cost
+    added to an elasticity forecast.
     """
     denied = set(denied_modules or ())
+    evaluated, tracking, kept = _selected(restaurant_id, db_path, since, denied, exclude_metrics, exclude_ids)
 
-    def _visible(r):
-        return not _denied_row(r, denied)
-
-    evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path)
-                 if (not since or (r.get("evaluate_on") or "") >= str(since)[:10]) and _visible(r)
-                 and not r.get("informational")]
-    tracking = [r for r in list_outcomes(restaurant_id, status="tracking", limit=500,
-                                         db_path=db_path) if _visible(r) and not r.get("informational")]
+    def _is_sales(r):
+        return metrics.family(r.get("metric")) == "sales"
+    savings = [r for r in kept if not _is_sales(r)]
+    sales = [r for r in kept if _is_sales(r)]
     # Distinct work only (CLAUDE.md: "counts distinct work, never rows").
-    all_wins = distinct([r for r in evaluated if r.get("verdict") == "improved" and r.get("counts")])
-    wins = distinct([r for r in evaluated if r.get("verdict") == "improved" and r.get("counts")
-                     and r.get("dollars_monthly")])
-    all_worse = distinct([r for r in evaluated if r.get("verdict") == "worsened" and r.get("counts")])
-    worse = distinct([r for r in evaluated if r.get("verdict") == "worsened" and r.get("counts")
-                      and r.get("dollars_monthly")])
+    all_wins = [r for r in kept if r.get("verdict") == "improved"]
+    wins = [r for r in savings if r.get("verdict") == "improved" and r.get("dollars_monthly")]
+    all_worse = [r for r in savings if r.get("verdict") == "worsened"]
+    worse = [r for r in all_worse if r.get("dollars_monthly")]
     validated = [r for r in wins if r.get("validated")]
     monthly = round(sum(abs(float(r["dollars_monthly"])) for r in wins), 2)
     worse_monthly = round(sum(abs(float(r["dollars_monthly"])) for r in worse), 2)
@@ -1601,18 +2207,30 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None)
         net_note = (f"${monthly:,.0f}/month of improvements less ${worse_monthly:,.0f}/month from changes "
                     f"that got worse.")
     else:
-        net_note = (f"More was measured getting worse than improving: ${worse_monthly:,.0f}/month worse "
-                    f"against ${monthly:,.0f}/month better. The figure is below zero because that is what "
-                    f"was measured.")
+        net_note = (f"More dollars were measured getting worse than improving: ${worse_monthly:,.0f}/month "
+                    f"worse against ${monthly:,.0f}/month better. The figure is below zero because that is "
+                    f"what was measured.")
+    lift_wins = [r for r in sales if r.get("verdict") == "improved" and r.get("dollars_monthly")]
+    lift_worse = [r for r in sales if r.get("verdict") == "worsened" and r.get("dollars_monthly")]
+    lift = round(sum(abs(float(r["dollars_monthly"])) for r in lift_wins), 2)
+    lift_down = round(sum(abs(float(r["dollars_monthly"])) for r in lift_worse), 2)
+    lift_by_module = {}
+    for r in lift_wins:
+        m = module_of_row(r)
+        lift_by_module[m] = round(lift_by_module.get(m, 0.0) + abs(float(r["dollars_monthly"])), 2)
+    for r in lift_worse:
+        m = module_of_row(r)
+        lift_by_module[m] = round(lift_by_module.get(m, 0.0) - abs(float(r["dollars_monthly"])), 2)
     return {
         "monthly": monthly,
         "annual": round(monthly * 12, 2),
+        "annual_basis": PROJECTION_NOTE,
         "wins": len(wins),
         "wins_measured": len(all_wins),
         "wins_by_module": wins_by_module,
         "unpriced_wins": [{"title": r.get("title"), "module": module_of_row(r), "line": r.get("result_line")}
                           for r in all_wins if not r.get("dollars_monthly")],
-        "worsened": {"count": len(all_worse), "monthly": worse_monthly},
+        "worsened": {"count": len(all_worse), "monthly": worse_monthly, "priced_count": len(worse)},
         "net_monthly": net,
         "net_note": net_note,
         "net_by_module": net_by_module,
@@ -1625,19 +2243,33 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None)
         "unmeasurable": len([r for r in evaluated if r.get("verdict") in (None, "unknown")]),
         "no_clear_change": len([r for r in evaluated if r.get("verdict") == "no_clear_change"]),
         "by_module": by_module,
+        # Sales per month measured before and after — gross revenue, not
+        # profit, never added to the savings (re-audit A6).
+        "sales_lift": {"monthly": lift, "wins": len(lift_wins),
+                       "worsened": {"count": len([r for r in sales if r.get("verdict") == "worsened"]),
+                                    "monthly": lift_down},
+                       "net_monthly": round(lift - lift_down, 2), "by_module": lift_by_module,
+                       "basis": SALES_LIFT_BASIS},
+        "sales_pricing": "separate",
         "caveat": CAUSATION_CAVEAT,
     }
 
 
-def best_ever(restaurant_id, db_path=DB_PATH, denied_modules=None):
-    """The single biggest measured win that still counts, all time — the
-    answer to "which recommendation created the biggest impact".
+def best_ever(restaurant_id, db_path=DB_PATH, denied_modules=None, exclude_metrics=None, exclude_ids=None):
+    """The single biggest measured SAVING that still counts, all time — the
+    answer to "which recommendation created the biggest impact". Chosen
+    from what total_value counts (the family and sales rules applied), so
+    the biggest is never a reading total_value set aside, and never a sales
+    lift (gross revenue, kept apart).
 
     strategy_jobs picks the biggest of ONE daily pass to notify on; that is
     a different question and deliberately stays where it is. This one has
     no time window and no dollar floor.
     """
-    wins = realised(restaurant_id, db_path=db_path, denied_modules=denied_modules)
+    _e, _t, kept = _selected(restaurant_id, db_path, None, set(denied_modules or ()), exclude_metrics,
+                             exclude_ids)
+    wins = [r for r in kept if r.get("verdict") == "improved" and r.get("dollars_monthly")
+            and metrics.family(r.get("metric")) != "sales"]
     if not wins:
         return None
     return max(wins, key=lambda r: abs(float(r["dollars_monthly"])))
@@ -1665,7 +2297,10 @@ def win_message(r) -> str:
 
 
 def summarise(r) -> str:
-    """One honest sentence for a finished tracker."""
+    """One honest sentence for a finished tracker. A result the owner said
+    they never made carries no dollars (re-audit A15, contract K7): it is
+    said, and said not to count — the money was quoted beside "doesn't
+    count" on Home."""
     from time_utils import mdy
     label = r.get("metric_label") or r["metric"]
     unit = r.get("unit") or ""
@@ -1678,10 +2313,14 @@ def summarise(r) -> str:
     if is_informational(r):
         # Reading an alert is not a change: what followed is shown, never priced.
         return f"{r['title']}: {moved} in the weeks after — for information, not counted as value."
+    word = "improved" if r["verdict"] == "improved" else "got worse"
+    if disowned(r):
+        return f"{r['title']}: {moved} — {word}, but it isn't counted: you said the change wasn't made."
     money = ""
     if r.get("dollars_monthly"):
         money = f", roughly ${abs(r['dollars_monthly']):,.0f}/month"
-    word = "improved" if r["verdict"] == "improved" else "got worse"
+        if metrics.family(r.get("metric")) == "sales":
+            money += " in sales (revenue, not profit)"
     out = f"{r['title']}: {moved} — {word}{money}."
     if r.get("recheck_verdict") in _FAILED_RECHECK:
         when = mdy(r.get("rechecked_at") or r.get("recheck_on"))

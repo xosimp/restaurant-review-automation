@@ -88,6 +88,10 @@ def _tracking(db_path, rid):
 
 def test_3_a_second_track_on_the_same_metric_is_answered_not_started(db_path):
     rid = _rid(db_path)
+    # Shown on Home first: a Track answers a recommendation that was shown
+    # (contract K2).
+    rec_ledger.present_many(rid, [dict(key="trim_day:Monday", module="labor"),
+                                  dict(key="trim_day:Tuesday", module="labor")], "home")
     first, st = _route(strategy_routes._do_outcome_record, rid,
                        {"source": "recommendation", "source_key": "trim_day:Monday", "title": "Trim Monday",
                         "metric": "labor_pct"})
@@ -109,6 +113,7 @@ def test_3_a_second_track_on_the_same_metric_is_answered_not_started(db_path):
 
 def test_3_tracking_the_same_recommendation_twice_returns_the_same_tracker(db_path):
     rid = _rid(db_path)
+    rec_ledger.present(rid, "trim_day:Monday", "labor", "home")
     body = {"source": "recommendation", "source_key": "trim_day:Monday", "title": "Trim Monday",
             "metric": "labor_pct"}
     a, _ = _route(strategy_routes._do_outcome_record, rid, body)
@@ -278,7 +283,15 @@ def test_3_a_second_campaign_on_the_same_weekday_is_refused(db_path):
                     "weekday_sales:Tuesday", today=TODAY - timedelta(days=3))
     got = client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True}, 1)
     assert got["tracker_refused"]["code"] == "in_flight"
-    # A different weekday is a different number.
+    # A campaign is an automatic start, so the FAMILY gate (re-audit A18):
+    # another weekday's sales is the same sales money while Tuesdays are
+    # measured, and the family rule would count only one of the two anyway.
+    wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True}, 1)
+    assert wed["tracker_refused"]["code"] == "in_flight"
+    conn = get_conn(db_path)
+    conn.execute("UPDATE recommendation_outcomes SET status='abandoned' WHERE restaurant_id=?", (rid,))
+    conn.commit()
+    conn.close()
     wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True}, 1)
     assert wed["tracker"]["metric"] == "weekday_sales:Wednesday" and wed["tracker"]["module"] == "marketing"
 
@@ -348,7 +361,7 @@ def test_contract_value_payload(db_path):
     assert st == 200
     d = out["delivered"]
     assert {"net_monthly", "worsened", "validated_monthly", "cumulative", "rates"} <= set(d)
-    assert set(d["worsened"]) == {"count", "monthly"}
+    assert set(d["worsened"]) == {"count", "monthly", "priced_count"}
     assert {"total", "since", "days", "by_module"} <= set(d["cumulative"])
     assert d["cumulative"]["total"] is None                       # nothing measured yet
     assert d["rates"]["reply_rate"] == value_delivered.REPLY_RATE == out["rates"]["reply_rate"]

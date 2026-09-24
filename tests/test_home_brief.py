@@ -162,6 +162,8 @@ def test_route_requires_login_and_returns_brief(db_path, monkeypatch):
     assert r.headers.get("Cache-Control") == "no-store"
     for key in ("brief", "attention", "wins", "snapshot", "recommendations", "changes", "alerts", "quick_actions", "ask_suggestions", "upcoming", "value", "receipts", "freshness"):
         assert key in d
+    # Contract K4: the value block carries the net beside the improvements.
+    assert {"total", "net_monthly", "worsened", "cumulative", "unpriced_wins", "history"} <= set(d["value"])
 
 
 def test_home_panel_markup_is_es5_and_wired():

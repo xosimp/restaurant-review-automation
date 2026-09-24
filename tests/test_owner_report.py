@@ -193,8 +193,11 @@ def test_the_full_paragraph_matches_its_sources(db):
     assert ot["results"] == 3 and (ot["improved"], ot["worsened"]) == (2, 1)
     assert ot["mean_delta_pct"] == round((-20.0 + -10.0 + 20.0) / 3, 1)
     line = next(x for x in s if "overtime" in x)
-    assert f"{abs(ot['mean_delta_pct']):.1f}% reduction in overtime hours per week" in line
-    assert "3 measured results that didn't overlap" in line and "associated with" in line
+    # Two improved and one got worse: the results disagree, so no direction
+    # is quoted from their average (re-audit A32).
+    assert ot["consistent_direction"] is False
+    assert "3 measured results that didn't overlap" in line and "no consistent direction" in line
+    assert "reduction" not in line and "increase" not in line
     # Measured dollars: the window's days only, net.
     cum = outcomes.cumulative(rid, since=out["facts"]["since"])
     assert out["facts"]["measured"]["total"] == cum["total"] == 500.0
@@ -216,7 +219,10 @@ def test_the_most_effective_subject_is_named_from_the_summary(db):
     out = owner_report.what_worked(rid, days=180)
     best = out["facts"]["most_effective"]
     assert best == rec_learning.summary(rid, days=180)["most_effective"]
-    line = next(x for x in out["sentences"] if "most consistently effective" in x)
+    # What the count says, not an effect a before-and-after cannot show
+    # (re-audit B13).
+    line = next(x for x in out["sentences"] if "most often been followed by an improvement" in x)
+    assert "most consistently effective" not in " ".join(out["sentences"])
     assert "weekend staffing" in line
     row = next(t for t in rec_learning.summary(rid, days=180)["by_tag"] if t["tag"] == best["tag"])
     assert f"{row['improved']} of {row['measured']} measured results improved" in line
@@ -243,7 +249,8 @@ def test_worse_than_better_is_said_as_measured(db):
         _day(db, rid, tid, date.today() - timedelta(days=10 + n), -40.0)
     out = owner_report.what_worked(rid, days=90)
     line = next(x for x in out["sentences"] if "measured days" in x)
-    assert "more got worse than improved" in line and "$600 less over 15 measured days" in line
+    # It is dollars that went the wrong way, and it says dollars (re-audit A33).
+    assert "more dollars were lost than gained" in line and "$600 less over 15 measured days" in line
 
 
 # ── redaction: a manager sees what /recs/summary shows them ────────────────

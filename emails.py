@@ -2280,10 +2280,12 @@ def _monthly_review_sections(restaurant_id, months=1):
         v = _vd.breakdown(restaurant_id)
         d, av = v["delivered"], v["avoided"]
         bits = []
-        if d["wins"]:
-            bits.append(f"Measured results: ${d['monthly']:,.0f}/month across "
-                        f"{d['wins']} change{'' if d['wins'] == 1 else 's'}"
-                        + (f" — about ${d['annual']:,.0f} a year if they hold." if d["annual"] else "."))
+        # Net of what got worse, the ×12 figure called a projection, the
+        # sum over measured days, and the sales lift kept apart from the
+        # savings (re-audit A29, A6) — value_delivered.value_lines.
+        measured = _vd.value_lines(d)
+        if measured:
+            bits.extend(measured)
             if d.get("biggest"):
                 bits.append(f"Biggest so far: {d['biggest']['summary']}")
         elif d["in_flight"]:
@@ -2312,7 +2314,9 @@ def _monthly_review_sections(restaurant_id, months=1):
         if cmp.get("available"):
             lines_ = _p.lines(cmp)
             if lines_:
-                out.append(report_eyebrow(f"Your audit, {cmp['audit_date']}")
+                from time_utils import mdy as _mdy
+                # M/D/YY, never the stored ISO date (re-audit A34).
+                out.append(report_eyebrow(f"Your audit, {_mdy(cmp['audit_date'])}")
                            + report_paragraph(_list(lines_))
                            + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                               f'{_html.escape(cmp["caveat"])}</span>'))
@@ -2913,13 +2917,14 @@ def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_na
             sections.append(report_eyebrow("What got better")
                             + report_paragraph("<br><br>".join(_h.escape(n["summary"]) for n in f["news"])))
 
-        # What the tracked changes did.
-        if delivered.get("wins"):
-            line = (f"<strong>${delivered['monthly']:,.0f} a month</strong> measured across "
-                    f"{delivered['wins']} change{'s' if delivered['wins'] != 1 else ''}")
-            if delivered.get("annual"):
-                line += f" — about ${delivered['annual']:,.0f} a year if it holds"
-            sections.append(report_eyebrow("Measured results") + report_paragraph(line + ".")
+        # What the tracked changes did: net of what got worse, the ×12
+        # figure called a projection, the sum over measured days, and any
+        # sales lift apart from the savings (re-audit A29, A6).
+        import value_delivered as _vd_lines
+        measured = _vd_lines.value_lines(delivered)
+        if measured:
+            sections.append(report_eyebrow("Measured results")
+                            + report_paragraph("<br>".join(_h.escape(m) for m in measured))
                             + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                                f'{_h.escape(delivered.get("caveat") or "")}</span>'))
         elif day == 60:

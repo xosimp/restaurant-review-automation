@@ -150,11 +150,19 @@ def _complaints(rid, start, end, param, db_path):
     return round(hits / total * 100, 1), f"{hits} of {total} reviews"
 
 
+# A waste reading is priced only when nearly every event in it carries a
+# unit cost. Waste logged on an ingredient with no cost used to price at $0
+# (the column's DEFAULT), so a window of uncosted waste read as a measured
+# "$0 a week" — and "$0 → $0" as worse (re-audit A9).
+WASTE_MIN_COSTED_SHARE = 0.9
+
+
 def _weekly_waste(rid, start, end, param, db_path):
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT COALESCE(SUM(e.qty * COALESCE(i.unit_cost,0)),0) AS cost, COUNT(*) AS n "
+            "SELECT COALESCE(SUM(CASE WHEN COALESCE(i.unit_cost,0) > 0 THEN e.qty * i.unit_cost END),0) AS cost, "
+            "COUNT(*) AS n, SUM(CASE WHEN COALESCE(i.unit_cost,0) > 0 THEN 1 ELSE 0 END) AS costed "
             "FROM ingredient_stock_events e JOIN ingredients i ON i.id=e.ingredient_id "
             "AND i.restaurant_id=e.restaurant_id WHERE e.restaurant_id=? AND e.event_type='waste' "
             "AND e.event_date>=? AND e.event_date<=?", (rid, _d(start), _d(end))).fetchone()
@@ -162,8 +170,15 @@ def _weekly_waste(rid, start, end, param, db_path):
         conn.close()
     if not row or not row["n"]:
         return None, "no waste logged in this window"
+    n, costed = int(row["n"]), int(row["costed"] or 0)
+    if costed < WASTE_MIN_COSTED_SHARE * n:
+        return None, (f"{n - costed} of {n} waste events are on ingredients with no unit cost, "
+                      f"so the waste can't be priced")
     days = (date.fromisoformat(_d(end)) - date.fromisoformat(_d(start))).days + 1
-    return round(_f(row["cost"]) / max(days, 1) * 7, 2), f"{row['n']} waste events, per week"
+    detail = f"{n} waste events, per week"
+    if costed < n:
+        detail += f" ({n - costed} without a unit cost not priced)"
+    return round(_f(row["cost"]) / max(days, 1) * 7, 2), detail
 
 
 def _loss_rate(kind):
@@ -179,29 +194,37 @@ def _loss_rate(kind):
     changed. The denominator is the same labor_daily_history sales every
     other metric here uses, so "comps are 2% of sales" means the same 2%
     the labor percentage is measured against.
+
+    Numerator and denominator are read over the SAME days: the days the POS
+    was asked about comps (loss_detection writes a row for every day it
+    asks, zero included). A comp sync that stopped ten days into a window
+    while sales kept syncing divided ten days of comps by the whole
+    window's sales — a fall that never happened (re-audit A3). A day asked
+    about with no comps is a measured zero; no day asked at all is unknown.
     """
     def fn(rid, start, end, param, db_path):
         conn = get_conn(db_path)
         try:
             row = conn.execute(
-                "SELECT COALESCE(SUM(amount),0) AS amt, COALESCE(SUM(events),0) AS n "
-                "FROM pos_loss_daily WHERE restaurant_id=? AND kind=? "
-                "AND business_date>=? AND business_date<=?",
+                "SELECT COALESCE(SUM(p.amount),0) AS amt, COALESCE(SUM(p.events),0) AS n, "
+                "COUNT(*) AS days, SUM(l.sales) AS s FROM pos_loss_daily p "
+                "JOIN labor_daily_history l ON l.restaurant_id=p.restaurant_id AND l.date=p.business_date "
+                "AND l.sales IS NOT NULL AND l.sales > 0 "
+                "WHERE p.restaurant_id=? AND p.kind=? AND p.business_date>=? AND p.business_date<=?",
                 (rid, kind, _d(start), _d(end))).fetchone()
-            sales = conn.execute(
-                "SELECT SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
-                "WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0",
-                (rid, _d(start), _d(end))).fetchone()
+            asked = conn.execute(
+                "SELECT COUNT(*) AS n FROM pos_loss_daily WHERE restaurant_id=? AND kind=? "
+                "AND business_date>=? AND business_date<=?", (rid, kind, _d(start), _d(end))).fetchone()
         finally:
             conn.close()
         # No synced loss rows at all is unknown, not zero: a POS that does
         # not report comps looks identical to a restaurant with none.
-        if not row or not (row["n"] or 0):
+        if not asked or not (asked["n"] or 0):
             return None, f"no {kind} data synced in this window"
-        if not sales or not _f(sales["s"]):
-            return None, "no sales in this window to measure against"
-        return round(_f(row["amt"]) / _f(sales["s"]) * 100, 2), \
-            f"{int(row['n'])} {kind}s over {sales['n']} days of sales"
+        if not row or not (row["days"] or 0) or not _f(row["s"]):
+            return None, f"no sales on the days {kind}s were synced to measure against"
+        return round(_f(row["amt"]) / _f(row["s"]) * 100, 2), \
+            f"{int(row['n'])} {kind}s over {int(row['days'])} days of sales"
     return fn
 
 
@@ -336,7 +359,10 @@ _RELATIVE_NOISE = {"sales", "weekday_sales", "weekly_waste", "overtime_hours", "
 # The smallest band a relative metric can have, in its own unit. A relative
 # band on a baseline near zero is no band at all: 15% of half an overtime
 # hour would call a half-hour move a result.
-_NOISE_FLOOR = {"overtime_hours": 2.0, "response_hours": 2.0}
+_NOISE_FLOOR = {"overtime_hours": 2.0, "response_hours": 2.0,
+                # $10 a week: a relative band on a near-zero waste baseline
+                # called a cent's move "worse" (re-audit A9).
+                "weekly_waste": 10.0}
 
 # Metric FAMILIES: numbers that measure the same money or the same guest
 # experience, so one change moving both is one result, not two (rec-ROI
@@ -356,6 +382,13 @@ FAMILIES = {
 FAMILY_LABELS = {"labor_cost": "labor cost", "food_cost": "food cost", "sales": "sales",
                  "guest_rating": "guest rating", "reply_speed": "reply time",
                  "comps": "comps", "voids": "voids"}
+# The broader reading of a family first (re-audit A7): labor % already holds
+# the overtime premium in its labor dollars, food cost % holds the waste,
+# sales holds every weekday, the average rating the complaints. Where two
+# readings of one family overlap, the broader one is the family's money —
+# netting an overtime loss against a labor % win subtracted the premium a
+# second time.
+BREADTH = {"overtime_hours": 1, "weekly_waste": 1, "weekday_sales": 1, "complaints": 1}
 # Measured per trading day (labor_daily_history): a day with no row is a day
 # not measured. Every other metric is read over its window as a whole.
 PER_DAY_METRICS = {"labor_pct", "sales", "weekday_sales"}
@@ -363,6 +396,20 @@ PER_DAY_METRICS = {"labor_pct", "sales", "weekday_sales"}
 # year of history allows, adjusted by what the same weeks did last year
 # (outcomes.record, audit #30).
 SEASONAL_METRICS = {"labor_pct", "food_cost_pct", "sales"}
+# Metrics whose dollars are a share of sales, so a month of them is a month
+# of TRADING days, not 30.33 calendar days (re-audit A1): a restaurant
+# closed Mondays trades 26 days a month, and pricing it on 30.33 overstated
+# every labor, food-cost, comp and sales result by a sixth.
+SALES_PRICED = {"labor_pct", "food_cost_pct", "comp_rate", "void_rate", "sales"}
+# Metrics whose reading depends on which weekdays a window holds (a Friday
+# is not a Tuesday): their tracker windows are whole weeks (re-audit A21).
+WEEKDAY_MIX_METRICS = {"labor_pct", "food_cost_pct", "comp_rate", "void_rate", "sales", "weekly_waste"}
+# Metrics whose window coverage can be counted in trading days, and so
+# carry a coverage floor in outcome tracking (re-audit A2).
+COVERAGE_METRICS = {"labor_pct", "sales", "weekday_sales", "comp_rate", "void_rate"}
+# How far back the trading weekdays are read from when a window's coverage
+# is judged: eight weeks, so a closed day is told apart from a missed sync.
+TRADING_REFERENCE_DAYS = 56
 
 # ONE calendar. A per-day figure was being annualised at 30 days a month
 # while a per-week figure used 52/12 weeks — which is 30.33 days. Two
@@ -379,6 +426,24 @@ def parse(key):
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def normalize(key):
+    """One spelling per metric key (re-audit A17). "weekday_sales:tuesday",
+    "weekday_sales: Tuesday" and "weekday_sales:Tuesday" are one number, and
+    the one-tracker-per-number rule compared the raw strings — three
+    trackers on Tuesdays' sales at once. Complaint categories fold the same
+    way reviews store them ("food quality" -> "food_quality")."""
+    base, param = parse(str(key or "").strip())
+    base = base.strip()
+    if param is None:
+        return base
+    param = param.strip()
+    if base == "weekday_sales":
+        param = param.capitalize()
+    elif base == "complaints":
+        param = _category_id(param)
+    return f"{base}:{param}" if param else base
 
 
 def known(key) -> bool:
@@ -452,7 +517,10 @@ def compare(key, before, after, band_scale=1.0):
     delta_pct = round(delta / before * 100, 1) if before else None
     threshold = info["noise"] * abs(before) if info["relative_noise"] else info["noise"]
     threshold = max(threshold, info["noise_floor"]) * float(band_scale or 1.0)
-    if abs(delta) < threshold:
+    # A move of nothing is never a move: with a relative band on a zero
+    # baseline the band is zero too, and "$0 -> $0" read as "worsened"
+    # (re-audit A9).
+    if delta == 0 or abs(delta) < threshold:
         verdict = "no_clear_change"
     else:
         better = (delta < 0) if info["lower_is_better"] else (delta > 0)
@@ -498,6 +566,136 @@ def days_with_data(restaurant_id, key, start, end, db_path=DB_PATH):
     return None if days is None else len(days)
 
 
+# ── trading days (re-audit A1, A2) ──────────────────────────────────────────
+
+def sales_days(restaurant_id, start, end, db_path=DB_PATH):
+    """ISO dates in [start, end] with sales on them — the days traded."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT DISTINCT date FROM labor_daily_history WHERE restaurant_id=? AND date>=? "
+                            "AND date<=? AND sales IS NOT NULL AND sales > 0",
+                            (restaurant_id, _d(start), _d(end))).fetchall()
+    finally:
+        conn.close()
+    return sorted(str(r["date"])[:10] for r in rows)
+
+
+def _weekday(iso):
+    return date.fromisoformat(iso).weekday()
+
+
+def trading_weekdays(restaurant_id, start, end, db_path=DB_PATH) -> set:
+    """The weekdays (0 = Monday) the restaurant traded on in [start, end]."""
+    return {_weekday(d) for d in sales_days(restaurant_id, start, end, db_path)}
+
+
+def _closures(restaurant_id, db_path):
+    """(closed weekday numbers, closed ISO dates) the owner has stated
+    (schedule_rules.closures) — empty when none or unreadable."""
+    try:
+        import models
+        import schedule_rules
+        rest = models.get_restaurant(restaurant_id, db_path)
+        if rest is None:
+            return set(), set()
+        c = schedule_rules.closures(rest)
+        return {_WEEKDAYS.index(d) for d in c["closed_weekdays"] if d in _WEEKDAYS}, set(c["closed_dates"])
+    except Exception as ex:
+        print(f"[metrics] closures unreadable for {restaurant_id}: {ex}")
+        return set(), set()
+
+
+def _trading_set(restaurant_id, start, end, db_path):
+    """The weekdays the restaurant trades on: those with sales in [start,
+    end], less any weekday the owner has said it is closed."""
+    closed_weekdays, _dates = _closures(restaurant_id, db_path)
+    return trading_weekdays(restaurant_id, start, end, db_path) - closed_weekdays
+
+
+def days_per_month(restaurant_id, key, start=None, end=None, db_path=DB_PATH):
+    """How many of a metric's days make a month, stated once.
+
+    A sales-priced metric (SALES_PRICED) is worth its per-trading-day figure
+    on each TRADING day: the weekdays the restaurant trades on times
+    WEEKS_PER_MONTH — 26 for a restaurant closed Mondays, not 30.33. The
+    weekdays are read over the window and the TRADING_REFERENCE_DAYS ending
+    with it (default the 28 days ending today), the same reference coverage()
+    uses, so four Mondays that failed to sync are a gap, not a closure. One
+    weekday's sales recur WEEKS_PER_MONTH times a month. Everything else is
+    a calendar figure. None when a sales-priced metric has no trading day."""
+    base, _ = parse(key)
+    if base == "weekday_sales":
+        return WEEKS_PER_MONTH
+    if base not in SALES_PRICED:
+        return DAYS_PER_MONTH
+    e = date.fromisoformat(_d(end)) if end is not None else date.today()
+    s = date.fromisoformat(_d(start)) if start is not None else e - timedelta(days=27)
+    ref_start = min(s, e - timedelta(days=TRADING_REFERENCE_DAYS - 1))
+    n = len(_trading_set(restaurant_id, ref_start, e, db_path))
+    return n * WEEKS_PER_MONTH if n else None
+
+
+def accrual_days(restaurant_id, key, start, end, db_path=DB_PATH):
+    """The ISO dates in [start, end] a move on this metric was measured on,
+    for cumulative accrual: a per-day metric's days with data; a comp or
+    void rate's days the POS was asked about AND that traded; food cost's
+    trading days. None for a metric read over calendar days (waste per
+    week, overtime per payroll week, ratings, reply time)."""
+    base, param = parse(key)
+    if base in PER_DAY_METRICS:
+        return data_days(restaurant_id, key, start, end, db_path)
+    if base in ("comp_rate", "void_rate"):
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT p.business_date AS d FROM pos_loss_daily p JOIN labor_daily_history l "
+                "ON l.restaurant_id=p.restaurant_id AND l.date=p.business_date AND l.sales IS NOT NULL "
+                "AND l.sales > 0 WHERE p.restaurant_id=? AND p.kind=? AND p.business_date>=? "
+                "AND p.business_date<=?", (restaurant_id, base.split("_")[0], _d(start), _d(end))).fetchall()
+        finally:
+            conn.close()
+        return sorted(str(r["d"])[:10] for r in rows)
+    if base == "food_cost_pct":
+        return sales_days(restaurant_id, start, end, db_path)
+    return None
+
+
+def coverage(restaurant_id, key, start, end, db_path=DB_PATH):
+    """{measured, expected, share} for a window of a metric counted in
+    trading days (COVERAGE_METRICS), else None.
+
+    `expected` is the window's dates on the weekdays the restaurant trades
+    (read from the TRADING_REFERENCE_DAYS ending with the window, so a
+    closed Monday is not a missed Monday), less the dates the owner marked
+    closed (schedule_rules.closures). One day of data in a 28-day window was
+    a verdict, a grade and a monthly figure (re-audit A2); outcome tracking
+    reads a window only when enough of it was measured."""
+    base, param = parse(key)
+    if base not in COVERAGE_METRICS:
+        return None
+    s, e = date.fromisoformat(_d(start)), date.fromisoformat(_d(end))
+    if e < s:
+        return None
+    ref_start = min(s, e - timedelta(days=TRADING_REFERENCE_DAYS - 1))
+    closed_weekdays, closed = _closures(restaurant_id, db_path)
+    traded = trading_weekdays(restaurant_id, ref_start, e, db_path) - closed_weekdays
+    if base == "weekday_sales":
+        day = (param or "").strip().capitalize()
+        wanted = {_WEEKDAYS.index(day)} & traded if day in _WEEKDAYS else set()
+    else:
+        wanted = traded
+    expected = 0
+    d = s
+    while d <= e:
+        if d.weekday() in wanted and d.isoformat() not in closed:
+            expected += 1
+        d += timedelta(days=1)
+    days = accrual_days(restaurant_id, key, s.isoformat(), e.isoformat(), db_path) or []
+    measured = len([x for x in days if x not in closed])
+    share = round(measured / expected, 3) if expected else 0.0
+    return {"measured": measured, "expected": expected, "share": share}
+
+
 # The overtime premium: the extra half of time-and-a-half, the same
 # (labor.OVERTIME_MULTIPLIER - 1) labor.analyse_shifts adds to the cost of
 # every hour past 40. Only the premium is priced: an overtime hour moved to
@@ -531,24 +729,38 @@ def overtime_premium_per_hour(restaurant_id, db_path=DB_PATH):
     return round(float(rate) * (labor.OVERTIME_MULTIPLIER - 1.0), 4)
 
 
-def monthly_dollars(restaurant_id, key, delta, db_path=DB_PATH):
+def monthly_dollars(restaurant_id, key, delta, db_path=DB_PATH, window=None):
     """Rough monthly dollar value of a move, or None when it has no honest
-    dollar reading. Always an estimate, and labelled as one by callers."""
+    dollar reading. Always an estimate, and labelled as one by callers.
+
+    `window` is the (start, end) the move was read over; a sales-priced
+    move is priced on that window's sales per trading day and its trading
+    days (days_per_month), default the 28 days ending today."""
     if delta is None:
         return None
     base, _ = parse(key)
+    start, end = (window or (None, None))
     if base in ("labor_pct", "food_cost_pct", "comp_rate", "void_rate"):
         # A point of labor, food cost, comps or voids is worth a point of
-        # monthly sales. Comps and voids are already a share of the same
-        # sales denominator, so they convert identically.
-        s = trailing(restaurant_id, "sales", days=28, db_path=db_path)["value"]
-        if s is None:
+        # monthly sales: sales per trading day x trading days a month. Comps
+        # and voids are already a share of the same sales denominator, so
+        # they convert identically.
+        if window:
+            s = measure(restaurant_id, "sales", _d(start), _d(end), db_path)[0]
+        else:
+            s = trailing(restaurant_id, "sales", days=28, db_path=db_path)["value"]
+        per = days_per_month(restaurant_id, key, start, end, db_path)
+        if s is None or per is None:
             return None
         info = describe(key)
         sign = -1 if info["lower_is_better"] else 1
-        return round(sign * delta / 100 * s * DAYS_PER_MONTH, 2)
+        return round(sign * delta / 100 * s * per, 2)
     if base == "sales":
-        return round(delta * DAYS_PER_MONTH, 2)
+        # Sales per trading day, over the trading days of a month.
+        per = days_per_month(restaurant_id, key, start, end, db_path)
+        if per is None:
+            return None
+        return round(delta * per, 2)
     if base == "weekday_sales":
         # One weekday recurs WEEKS_PER_MONTH times a month, not DAYS.
         return round(delta * WEEKS_PER_MONTH, 2)
