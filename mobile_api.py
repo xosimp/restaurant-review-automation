@@ -6285,12 +6285,6 @@ def mobile_score_schedule(current_user):
     try:
         inputs = quality_inputs_from_db(rid, daily_target_hours=targets, week_rows=rows)
         quality, what_if = _score_schedule_quality(rid, rows, inputs)
-        if isinstance(quality, dict):
-            try:
-                import rec_trust as _rt_sq
-                quality["recommendation_items"] = _rt_sq.schedule_quality_items(rid, quality)
-            except Exception as _rtx:
-                print(f"[schedule] recommendation confidence failed: {_rtx}")
         # The same rule sweep generation runs, so an edit that breaks a rule
         # is named on screen before it is saved or sent.
         violations, review = [], None

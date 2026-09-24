@@ -2427,6 +2427,13 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         # is shown, on every client.
         quality["recommendations"] = kept[:SHOWN_RECOMMENDATIONS]
         quality["recommendation_items"] = items[:SHOWN_RECOMMENDATIONS]
+        # Each served item carries its K1 confidence (confidence audit):
+        # evidence from this read's own measured completeness.
+        try:
+            import rec_trust as _rt_sq
+            _rt_sq.attach_schedule_confidence(restaurant_id, quality, quality["recommendation_items"])
+        except Exception as _rtx:
+            print(f"[schedule] recommendation confidence failed: {_rtx}")
         if hidden:
             quality["suppressed_recommendation_kinds"] = sorted(hidden)
     except Exception as _rx:
@@ -3237,12 +3244,6 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     # later rescore from a client that never held them (iOS)
                     # is judged on the same targets (stored_daily_targets).
                     _quality["daily_target_hours"] = result.get("daily_target_hours") or {}
-                if isinstance(_quality, dict):
-                    try:
-                        import rec_trust as _rt_sq
-                        _quality["recommendation_items"] = _rt_sq.schedule_quality_items(restaurant_id, _quality)
-                    except Exception as _rtx:
-                        print(f"[schedule] recommendation confidence failed: {_rtx}")
                 result["quality"] = _quality
                 result["what_if"] = _whatif
                 from models import capability_version as _capver
