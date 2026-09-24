@@ -13665,7 +13665,9 @@ function renderQualityWarnings(quality) {
     lines.push(_qTitle(b) + ' came in at ' + b.score + ', under the ' + b.min_quality
                + ' this ' + (b.label || 'shift').toLowerCase() + ' expects.');
   }
-  var recs = quality.recommendations || [];
+  // recommendation_items carries each sentence with its K1 confidence;
+  // an older server sends only the sentences.
+  var recs = quality.recommendation_items || quality.recommendations || [];
   var hidden = quality.suppressed_recommendation_kinds || [];
   if (!lines.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
   var html = '<div style="padding:12px 14px;border-radius:10px;background:rgba(242,153,74,.07)">';

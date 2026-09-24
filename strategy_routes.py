@@ -2267,6 +2267,10 @@ def _do_schedule_intel(u):
             "suggested_pairs": _safe(lambda: _si.chemistry_suggestions_shown(rid, user_id=u.get("id")), []),
             "splh": _safe(lambda: _econ.splh_by_daypart(rid), {}),
             "revenue": _safe(lambda: _econ.projected_weekly_revenue(rid), {}),
+            # K8: the demand forecast's and the frozen weekly projection's
+            # measured record, so the web labor intel says how far off they ran.
+            "demand_accuracy": _safe(lambda: __import__("demand").demand_accuracy(rid), None),
+            "week_projection_accuracy": _safe(lambda: __import__("demand").week_projection_accuracy(rid), None),
             # What the engine is learning: how much of each draft survives to
             # the published week, how the quality dimensions tracked real
             # outcomes (suggested weights, never applied), and no-show rates

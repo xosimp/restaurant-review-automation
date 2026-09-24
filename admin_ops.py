@@ -931,6 +931,9 @@ def integrations():
             rows.append({"restaurant_id": r["id"], "restaurant": r["name"], "brand": r["brand"], "location_name": r["location_name"],
                          "integration": i["key"], "label": i["label"], "state": i["state"], "auth": i["auth"],
                          "last_success": i.get("last_success"), "error": i["error"],
+                         # The per-location list's POS reading (CA3 F6), carried to the
+                         # fleet list too so both say the same thing.
+                         "sync_state": i.get("sync_state"), "age_days": i.get("age_days"),
                          "freshness": ("never" if i["state"] == "connected" and age is None else ("stale" if age is not None and age > 3 else "fresh")) if i["state"] != "off" else "—",
                          "health": r["health"]})
     systemic = {}

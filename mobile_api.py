@@ -2198,6 +2198,12 @@ def mobile_food_cost_analytics(current_user):
             waste_rate_pct=analysis.get("waste_rate_pct", 0),
             benchmark_label=analysis.get("benchmark_label", "—"),
             benchmark_detail=analysis.get("benchmark_detail", ""),
+            # "not_measured" when nothing was logged — never a good result —
+            # and the recoverable figure is an opportunity with its basis
+            # (confidence audit I8; the web already had them).
+            benchmark_state=analysis.get("benchmark_state"),
+            recoverable_kind=analysis.get("recoverable_kind"),
+            annual_recoverable_basis=analysis.get("annual_recoverable_basis"),
             total_stock_value=analysis.get("total_stock_value", 0),
             total_items=analysis.get("total_items", 0),
             week_start=analysis.get("week_start", ""),
@@ -2684,6 +2690,19 @@ def mobile_labor_insight(current_user):
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
                        rec_items=_recs, **_insight_json(insight, _recs))
     except Exception as e:
+        # The web twin's stale fallback (H15, CA1 L6): serve the last read
+        # with its age rather than an error, and say how old it is.
+        stale = _capi._insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
+        if stale:
+            from ai_guard import freshness as _fresh_lab
+            _age = _fresh_lab(stale[0].isoformat(timespec="seconds"), stale_after_days=0)
+            _recs = _capi.labor_insight_items(rid, stale[1], user_id=uid)
+            return jsonify(ok=True, insight=stale[1], diagnosis=_capi._labor_diagnosis_safe(rid, user_id=uid),
+                           rec_items=_recs, stale=True, as_of=_age.get("as_of"), as_of_iso=_age.get("as_of_iso"),
+                           age_days=_age.get("age_days"),
+                           stale_note=(f"From a read on {_age['as_of']} — the latest one couldn't be written."
+                                       if _age.get("as_of") else "From an earlier read — the latest one couldn't be written."),
+                           **_insight_json(stale[1], _recs))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e)
         return jsonify(ok=False, insight=_msg_lab,
@@ -6266,6 +6285,12 @@ def mobile_score_schedule(current_user):
     try:
         inputs = quality_inputs_from_db(rid, daily_target_hours=targets, week_rows=rows)
         quality, what_if = _score_schedule_quality(rid, rows, inputs)
+        if isinstance(quality, dict):
+            try:
+                import rec_trust as _rt_sq
+                quality["recommendation_items"] = _rt_sq.schedule_quality_items(rid, quality)
+            except Exception as _rtx:
+                print(f"[schedule] recommendation confidence failed: {_rtx}")
         # The same rule sweep generation runs, so an edit that breaks a rule
         # is named on screen before it is saved or sent.
         violations, review = [], None

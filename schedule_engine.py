@@ -3150,6 +3150,14 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     result["review"]["lines"].append(_le["text"])
             except Exception as _lex:
                 print(f"[schedule] likely-edit read failed: {_lex}")
+            # How far this restaurant's demand forecasts have been off (K8):
+            # the draft is staffed to that forecast, so the review says it.
+            try:
+                import demand as _demand_acc
+                result["demand_accuracy"] = _demand_acc.demand_accuracy(restaurant_id)
+                result["week_projection_accuracy"] = _demand_acc.week_projection_accuracy(restaurant_id)
+            except Exception as _dax:
+                print(f"[schedule] demand accuracy read failed: {_dax}")
             # Sales per labor hour against the objective the draft was
             # written to, and the borrowed starting headcount, said.
             try:
@@ -3229,6 +3237,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     # later rescore from a client that never held them (iOS)
                     # is judged on the same targets (stored_daily_targets).
                     _quality["daily_target_hours"] = result.get("daily_target_hours") or {}
+                if isinstance(_quality, dict):
+                    try:
+                        import rec_trust as _rt_sq
+                        _quality["recommendation_items"] = _rt_sq.schedule_quality_items(restaurant_id, _quality)
+                    except Exception as _rtx:
+                        print(f"[schedule] recommendation confidence failed: {_rtx}")
                 result["quality"] = _quality
                 result["what_if"] = _whatif
                 from models import capability_version as _capver
@@ -3441,6 +3455,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             overtime_forecast=result.get("overtime_forecast") or [],
             standby_days=result.get("standby_days") or [],
             likely_edits=result.get("likely_edits") or [],
+            demand_accuracy=result.get("demand_accuracy"),
+            week_projection_accuracy=result.get("week_projection_accuracy"),
             # What schedule learning set the draft against: the rotation
             # plan, the sales-per-labor-hour objective and how the draft
             # landed on it, and a borrowed starting headcount (new accounts).

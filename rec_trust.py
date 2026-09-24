@@ -197,3 +197,39 @@ def snapshot_fields(conf) -> dict:
 def band_of(conf) -> str:
     """The band word for an older client's string field."""
     return (conf or {}).get("band") or "low"
+
+
+def schedule_quality_items(restaurant_id, quality, db_path=None, ctx=None) -> list:
+    """Shift Quality's recommendations as [{text, kind, rec_key, confidence}]
+    — K1 on each (confidence audit, integration). Evidence Strength is the
+    Shift Quality read's own measured completeness (shift_quality.confidence:
+    100 less a stated penalty per missing input — unrated staff, no shift
+    history, no demand history, no availability), since every suggestion is
+    built from that read; accuracy is this restaurant's record for the
+    suggestion's kind; freshness is the labor data it rests on. The plain
+    `recommendations` strings stay as they are for older builds. Never
+    raises: a failure returns the texts with no confidence."""
+    recs = [r for r in ((quality or {}).get("recommendations") or []) if isinstance(r, str) and r.strip()]
+    if not recs:
+        return []
+    try:
+        import shift_quality
+        import schedule_intel
+        qc = (quality or {}).get("confidence") or {}
+        sc = qc.get("score")
+        reasons = [str(x) for x in (qc.get("reasons") or []) if x]
+        basis = ("Shift Quality read with every input on file" if not reasons
+                 else "Shift Quality read — " + reasons[0].rstrip("."))
+        ctx = ctx or Context(restaurant_id, db_path=db_path)
+        out = []
+        for text in recs[:10]:
+            kind = shift_quality.recommendation_kind(text)
+            key = schedule_intel.schedule_rec_key(kind, text)
+            ev = ({"n": 1, "n_full": 1, "coverage": max(0.0, min(1.0, float(sc) / 100.0)), "basis": basis}
+                  if isinstance(sc, (int, float)) else {"n": None, "basis": "The read's completeness wasn't measured"})
+            out.append({"text": text, "kind": kind, "rec_key": key,
+                        "confidence": assess(restaurant_id, key, evidence=ev, sources=("labor",), ctx=ctx)})
+        return out
+    except Exception as e:
+        print(f"[rec_trust] schedule items unavailable for {restaurant_id}: {e}")
+        return [{"text": t} for t in recs[:10]]
