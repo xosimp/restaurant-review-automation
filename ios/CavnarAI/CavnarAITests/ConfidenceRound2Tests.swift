@@ -47,8 +47,10 @@ final class ConfidenceRound2Tests: XCTestCase {
     func testWhySaysTheSampleAndThePullTowardEven() throws {
         let d = ConfidenceDisplay(try decode(TrustConfidence.self, Self.k1))
         XCTAssertEqual(d.rows[0].detail, "Sample: 12")
-        XCTAssertEqual(d.rows[1].note,
-                       "Reads 75%, not 100%: a short record is pulled toward 50% until more results are in")
+        // Group P: accuracy is the lift against doing nothing — the "pulled
+        // toward 50%" note described the shrink-to-even it replaced.
+        XCTAssertNil(d.rows[1].note)
+        XCTAssertTrue(d.rows[1].detail?.contains("likely to beat doing nothing") ?? false)
         XCTAssertTrue(d.footer.contains("Data under 50% fresh holds it at 49% or below"))
         var capped = try decode(TrustConfidence.self, Self.k1)
         capped.caps = TrustConfidence.Caps(noTrackRecord: 65, stale: 45, staleBelow: 55)

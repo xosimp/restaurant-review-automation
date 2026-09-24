@@ -39,20 +39,26 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         /// Evidence only: how many observations make a full sample, when the
         /// server sends it (confidence_engine.N_FULL).
         var nFull: Int?
+        /// Accuracy only: "N% likely to beat doing nothing" — what the
+        /// accuracy % means since the support-score decision (9/24/26).
+        var beatsLabel: String?
 
         enum CodingKeys: String, CodingKey {
             case pct, basis, n, improved, source, low, high, stalest
             case asOf = "as_of"
             case asOfISO = "as_of_iso"
             case nFull = "n_full"
+            case beatsLabel = "beats_label"
         }
 
         init(pct: Int? = nil, basis: String? = nil, n: Int? = nil, improved: Int? = nil,
              source: String? = nil, low: Int? = nil, high: Int? = nil,
-             asOf: String? = nil, asOfISO: String? = nil, stalest: String? = nil, nFull: Int? = nil) {
+             asOf: String? = nil, asOfISO: String? = nil, stalest: String? = nil, nFull: Int? = nil,
+             beatsLabel: String? = nil) {
             self.pct = pct; self.basis = basis; self.n = n; self.improved = improved
             self.source = source; self.low = low; self.high = high
             self.asOf = asOf; self.asOfISO = asOfISO; self.stalest = stalest; self.nFull = nFull
+            self.beatsLabel = beatsLabel
         }
 
         init(from decoder: Decoder) throws {
@@ -68,6 +74,7 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             asOfISO = TrustConfidence.text(c, .asOfISO)
             stalest = TrustConfidence.text(c, .stalest)
             nFull = TrustConfidence.integer(c, .nFull)
+            beatsLabel = TrustConfidence.text(c, .beatsLabel)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -83,6 +90,7 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             try c.encodeIfPresent(asOfISO, forKey: .asOfISO)
             try c.encodeIfPresent(stalest, forKey: .stalest)
             try c.encodeIfPresent(nFull, forKey: .nFull)
+            try c.encodeIfPresent(beatsLabel, forKey: .beatsLabel)
         }
 
         /// Sample or demo data: evidence scored 0 with nothing counted
@@ -107,10 +115,18 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         var noTrackRecord: Int?
         var stale: Int?
         var staleBelow: Int?
+        /// Group P: a record that doesn't yet beat doing nothing, one that
+        /// leans against the advice, and freshness nothing could date.
+        var recordUnproven: Int? = nil
+        var recordAgainst: Int? = nil
+        var freshnessUnmeasured: Int? = nil
         enum CodingKeys: String, CodingKey {
             case stale
             case noTrackRecord = "no_track_record"
             case staleBelow = "stale_below"
+            case recordUnproven = "record_unproven"
+            case recordAgainst = "record_against"
+            case freshnessUnmeasured = "freshness_unmeasured"
         }
     }
 
@@ -144,19 +160,29 @@ struct TrustConfidence: Codable, Hashable, Sendable {
     var version: Int?
     var thresholds: Thresholds?
     var caps: Caps?
+    /// What the % means: "How well supported this is — not the chance it
+    /// works" (the owner's support-score decision, 9/24/26). The Why? sheet
+    /// leads with it.
+    var meaning: String?
+    /// The ceilings that set the figure, in the engine's order
+    /// ("no_track_record", "record_unproven", "record_against", "stale",
+    /// "freshness_unmeasured").
+    var capsApplied: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case pct, band, label, reason, score, caution, dimensions, version, thresholds, caps
+        case pct, band, label, reason, score, caution, dimensions, version, thresholds, caps, meaning
+        case capsApplied = "caps_applied"
     }
 
     init(pct: Int? = nil, band: String? = nil, label: String? = nil, reason: String? = nil,
          score: Double? = nil, caution: String? = nil, dimensions: Dimensions? = nil, version: Int? = nil,
-         thresholds: Thresholds? = nil, caps: Caps? = nil) {
+         thresholds: Thresholds? = nil, caps: Caps? = nil, meaning: String? = nil, capsApplied: [String]? = nil) {
         self.pct = pct.map { max(0, min(100, $0)) }
         self.band = TrustConfidence.normalisedBand(band)
         self.label = label; self.reason = reason; self.score = score
         self.caution = caution; self.dimensions = dimensions; self.version = version
         self.thresholds = thresholds; self.caps = caps
+        self.meaning = meaning; self.capsApplied = capsApplied
     }
 
     /// A bare legacy band ("high", "moderate", …).
@@ -186,7 +212,9 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             dimensions: try? c.decodeIfPresent(Dimensions.self, forKey: .dimensions),
             version: Self.integer(c, .version),
             thresholds: (try? c.decodeIfPresent(Thresholds.self, forKey: .thresholds)) ?? nil,
-            caps: (try? c.decodeIfPresent(Caps.self, forKey: .caps)) ?? nil
+            caps: (try? c.decodeIfPresent(Caps.self, forKey: .caps)) ?? nil,
+            meaning: Self.text(c, .meaning),
+            capsApplied: (try? c.decodeIfPresent([String].self, forKey: .capsApplied)) ?? nil
         )
     }
 
@@ -202,6 +230,8 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         try c.encodeIfPresent(version, forKey: .version)
         try c.encodeIfPresent(thresholds, forKey: .thresholds)
         try c.encodeIfPresent(caps, forKey: .caps)
+        try c.encodeIfPresent(meaning, forKey: .meaning)
+        try c.encodeIfPresent(capsApplied, forKey: .capsApplied)
     }
 
     /// The object a view draws: `detail` (confidence_detail), else a
@@ -304,6 +334,11 @@ struct ConfidenceDisplay: Equatable {
     let meterFraction: Double?
     /// Whether there is anything to draw at all.
     let isRenderable: Bool
+    /// What the figure means — the Why? sheet's first line (group P). The
+    /// engine's words when an older server sent none.
+    let meaning: String?
+
+    static let engineMeaning = "How well supported this is \u{2014} not the chance it works"
 
     static let footerBase = "The overall figure combines all three \u{2014} the weakest pulls it down most."
     static let footerNoTrackRecord = " Without a track record here it stays at 70% or below."
@@ -383,6 +418,7 @@ struct ConfidenceDisplay: Equatable {
                            ?? "Sample data \u{2014} not measurable until your own data is in") : c.reason
         caution = c.caution
         meterFraction = Self.fraction(shownPct)
+        meaning = c.meaning ?? (measured ? Self.engineMeaning : nil)
 
         guard let dims = c.dimensions else {
             showsWhy = false
@@ -393,20 +429,30 @@ struct ConfidenceDisplay: Equatable {
         showsWhy = true
         rows = [Self.evidenceRow(dims.evidence, at: at, sample: sample), Self.accuracyRow(dims.accuracy, at: at),
                 Self.freshnessRow(dims.freshness, at: at)]
-        footer = Self.footer(dims: dims, caps: c.caps)
+        footer = Self.footer(dims: dims, caps: c.caps, applied: c.capsApplied ?? [])
     }
 
     /// What holds the overall figure down, in plain words (B4 M7): the two
     /// ceilings confidence_engine.overall applies, from the payload's caps
     /// when sent, else the engine's.
-    static func footer(dims: TrustConfidence.Dimensions, caps: TrustConfidence.Caps?) -> String {
+    static func footer(dims: TrustConfidence.Dimensions, caps: TrustConfidence.Caps?,
+                       applied: [String] = []) -> String {
         let ntr = caps?.noTrackRecord ?? 70
         let staleCap = caps?.stale ?? 49
         let staleBelow = caps?.staleBelow ?? 50
         var s = footerBase
         if dims.accuracy?.pct == nil { s += " Without a track record here it stays at \(ntr)% or below." }
+        if applied.contains("record_unproven") {
+            s += " Until its record here shows it beats doing nothing, it stays at \(caps?.recordUnproven ?? ntr)% or below."
+        }
+        if applied.contains("record_against") {
+            s += " Its record here leans against it, which holds it at \(caps?.recordAgainst ?? 49)% or below."
+        }
         if let f = dims.freshness?.pct, f < staleBelow {
             s += " Data under \(staleBelow)% fresh holds it at \(staleCap)% or below."
+        }
+        if applied.contains("freshness_unmeasured") {
+            s += " Nothing dates the data under it, which holds it at \(caps?.freshnessUnmeasured ?? 49)% or below."
         }
         return s
     }
@@ -440,24 +486,18 @@ struct ConfidenceDisplay: Equatable {
                        basis: d.basis ?? "Not enough history yet (\(d.n ?? 0) measured, needs 5)",
                        detail: nil, meterFraction: nil)
         }
-        var parts: [String] = []
-        if let improved = d.improved, let n = d.n { parts.append("\(improved) of \(n) measured") }
-        if let low = d.low, let high = d.high { parts.append("likely \(low)\u{2013}\(high)%") }
-        var detail: String? = parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+        // The lift against doing nothing (group P): the basis is the lift
+        // sentence ("improved 4 of 6 times vs 1 of 6 when not acted on"),
+        // the % how likely this kind beats doing nothing here — not a rate
+        // shrunk toward even, so no "pulled toward 50%" note.
+        var parts: [String] = [d.beatsLabel ?? "\(pct)% likely to beat doing nothing"]
+        if let low = d.low, let high = d.high { parts.append("improved-rate range \(low)\u{2013}\(high)%") }
+        var detail = parts.joined(separator: " \u{00B7} ")
         if d.source == "cohort" {
-            detail = "At restaurants like yours" + (detail.map { " \u{00B7} " + $0 } ?? "")
-        }
-        // The pull toward even, in words: 5 of 5 reads 75%, not 100%
-        // (confidence_engine.shrink; B4 M7).
-        var note: String? = nil
-        if let improved = d.improved, let n = d.n, n > 0 {
-            let raw = Int((100.0 * Double(improved) / Double(n)).rounded())
-            if abs(raw - pct) >= 1 {
-                note = "Reads \(pct)%, not \(raw)%: a short record is pulled toward 50% until more results are in"
-            }
+            detail = "At restaurants like yours \u{00B7} " + detail
         }
         return Row(title: title, value: percentText(pct), tone: tone(pct: pct, at: at),
-                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct), note: note)
+                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct))
     }
 
     static func freshnessRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine) -> Row {

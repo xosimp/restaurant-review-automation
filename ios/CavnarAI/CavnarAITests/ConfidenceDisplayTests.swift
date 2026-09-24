@@ -54,7 +54,8 @@ final class ConfidenceDisplayTests: XCTestCase {
         XCTAssertEqual(d.rows.map(\.tone), [.good, .good, .good])
         XCTAssertEqual(d.rows[0].basis, "12 reviews in 90 days · 26 of 28 days with sales")
         XCTAssertEqual(d.rows[1].basis, "3 of 4 measured changes like this improved here")
-        XCTAssertEqual(d.rows[1].detail, "3 of 4 measured · likely 41–94%")
+        // Group P: the lift against doing nothing, not a rate pulled toward 50%.
+        XCTAssertEqual(d.rows[1].detail, "75% likely to beat doing nothing · improved-rate range 41–94%")
         XCTAssertEqual(d.rows[2].detail, "as of 9/23/26")
         XCTAssertEqual(d.footer, "The overall figure combines all three — the weakest pulls it down most.")
         XCTAssertEqual(d.accessibilityLabel,
@@ -110,7 +111,7 @@ final class ConfidenceDisplayTests: XCTestCase {
     func testCohortAccuracySaysSo() {
         let row = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "At restaurants like yours: 12 of 15 improved",
                                                       n: 15, improved: 12, source: "cohort", low: 60, high: 91))
-        XCTAssertEqual(row.detail, "At restaurants like yours · 12 of 15 measured · likely 60–91%")
+        XCTAssertEqual(row.detail, "At restaurants like yours · 80% likely to beat doing nothing · improved-rate range 60–91%")
     }
 
     func testMissingDimensionReadsNotMeasured() throws {

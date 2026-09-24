@@ -255,58 +255,123 @@ and then ignored.
 
 ## Recommendation Confidence (`confidence_engine`, `rec_trust`, `data_freshness`)
 
-Every recommendation-bearing payload — Home cards and attention items, the
-one-thing hero, the review / food / labor / campaign diagnosis blocks, food
-cost drivers, Ask answers, DSR actions — carries ONE confidence object
-(contract K1). The owner reads percentages (Will, 9/24/26), so every
-percentage is computed; below a floor a dimension is `null` with a basis
-saying what is needed, never a stand-in.
+**What the percentage means (the owner's decision, 9/24/26 — "support
+score").** "72% confidence" is how well SUPPORTED the advice is — evidence ×
+track record × freshness, every part measured. It is NOT the chance the
+recommendation works, and nothing may present it as one: every K1 object
+carries `meaning` ("How well supported this is — not the chance it
+works"), and the Why? panel leads with it. Historical Accuracy is shown as
+LIFT against doing nothing. The admin view checks that a higher % really
+goes with better results (an ORDER check, below) and flags it when it
+doesn't. Percentages stay; every % is a computed measure; below a floor a
+dimension is `null` ("—") with a basis saying what is needed.
+
+Every recommendation-bearing payload — Home cards and the attention items
+that are advice or measured findings, the one-thing hero, the review /
+food / labor / campaign diagnosis blocks, food cost drivers, Shift Quality
+(its panel and each suggestion), Ask answers, DSR actions — carries ONE
+confidence object (contract K1). A FACT carries none (below).
 
 ```
 {"pct": 72 | null, "band": "low|medium|high", "label": "72% confidence" | "Confidence not yet measurable",
- "reason": "<the weakest dimension's basis>", "score": 0.72 (0.0 when null), "caution": null | "...",
- "dimensions": {"evidence": {pct, basis, n, kind},
-                "accuracy": {pct|null, basis, n, improved, source: own|cohort|none, low, high},
-                "freshness": {pct|null, basis, as_of (M/D/YY), as_of_iso, stalest}},
- "version": 1}
+ "reason": "<the cap that set the figure, else the weakest dimension's basis>",
+ "score": 0.72 (0.0 when null), "caution": null | "...", "version": 2,
+ "meaning": "How well supported this is — not the chance it works",
+ "thresholds": {"high": 75, "medium": 50},
+ "caps": {"no_track_record": 70, "record_unproven": 70, "record_against": 49, "stale": 49,
+          "stale_below": 50, "freshness_unmeasured": 49, "beats_at": 95, "against_below": 50, "max": 99},
+ "caps_applied": ["no_track_record", ...], "sample": false,
+ "dimensions": {"evidence": {pct, basis, n, n_full, kind, corroborating},
+                "accuracy": {pct|null, basis, n, improved, source: own|cohort|none, low, high,
+                             p_beats, beats_label, lift: {improved, n, rate, untaken_improved, untaken_n,
+                             do_nothing_rate, source}, prior: {source, centre, weight, ...}},
+                "freshness": {pct|null, basis, as_of (M/D/YY), as_of_iso, stalest, stalest_basis, errors}}}
 ```
 
-Where an older client decodes a field named `confidence` as a STRING (the
+Every change from version 1 is additive; `version` 2 marks the support-score
+meaning, so a snapshot's `trust_version` says which meaning its % had. Where
+an older client decodes a field named `confidence` as a STRING (the
 diagnosis blocks, food drivers, Ask's answer), that field stays the band
 word and the object rides beside it as `confidence_detail`.
 
-- **Evidence Strength** = 100 × min(1, n ÷ `N_FULL[kind]`) × coverage ×
-  quality. `N_FULL` is one table with a reason per kind (reviews 8,
-  weekdays 4, weeks 8, waste weeks 4, price weeks 4, trading days 28,
-  posts / campaigns 4, competitors 3, evidence items 3, night facts 3, a
-  direct count 1). Coverage is the share of the window measured. Caps:
-  coverage under `MIN_COVERAGE` (0.7) → ≤ 49; any partial-data flag
-  (days missing sales, estimated hours, gross missing, conflicting sales,
-  inferred, sampled, provisional, period too short) → ≤ 74; any unverified
-  figure → ≤ 35; a model's own band only lowers it (medium ≤ 65, low ≤ 35);
-  sample or demo data → 0 and labelled sample. The owner's "don't trust
-  the data" answer (`dont_trust_data`) caps that kind's evidence at 49 for
-  30 days.
-- **Historical Accuracy** = `rec_learning.kind_record`: this restaurant's
-  shown AND taken episodes of the kind, read only through
-  `learned_verdict` (disowned, conditions-changed, informational, faded
-  and reversed results are never wins), one result per overlapping window,
-  improved ÷ measured shrunk toward even (k = 5), with its 90% Wilson
-  range. Shown only at `MIN_MEASURED_FOR_RATE` (5) own results; else the
-  anonymous cohort's (this restaurant excluded, `cohort_ok`,
-  `assert_anonymous`) at `PRIOR_MIN_MEASURED` (10), labelled "At
-  restaurants like yours"; else `null`. `kind_record` also carries
-  (confidence re-audit round 2, group Q — additive; group P decides their
-  use): `base_rate` / `base_rate_source` / `base_rate_n` /
-  `base_rate_basis` — the success rate DOING NOTHING gives for the kind
-  here (`rec_learning.base_rate`: the kind's untaken results, one per
-  window, shrunk toward the chance rate; else half the mean false-alarm
-  rate of this restaurant's own noise bands; else half the stated 10% →
-  0.05; held to 0.02–0.5), the value to shrink toward instead of 0.5; and
-  `rate_recent` / `rate_recent_n_eff` / `recent_half_life_days` — the own
-  improved share with each result weighted 0.5^(age / 90 days) from its
-  evaluation, at the same floor as `rate`. Its cohort figures are the
-  capped counts (`prior_measured_raw` / `prior_improved_raw` keep the raw).
+- **Evidence Strength** = 100 × min(1, n ÷ `N_FULL[kind]` × corroboration) ×
+  coverage × quality. `N_FULL` is one table, each entry the point where one
+  more observation stops moving the figure by more than its decision can
+  tolerate (B1 M4, B4 M3 — "one row is the whole sample" is gone from every
+  recommendation): reviews 8 (one review moves a theme's share 1/n — 12.5
+  points at 8); weekdays 4 (a weekday's labor % swings ~3 points night to
+  night, so the mean of 4 has a 1.5-point standard error, half the 3-point
+  over-target line); weeks 8 (the fewest where a weekly slope's t-test has
+  6 degrees of freedom); waste weeks 4 and price weeks 4 (one bad week in 8
+  is chance, 4 a pattern; one price reading's error is the whole change);
+  trading days 28 (the 28-day mean's standard error is ~0.6 points, inside
+  the smallest move the outcome band reads); posts / campaigns 4;
+  competitors 3; supplier quotes 3 (a sourcing driver: three quotes before
+  a spread is a market price); recounts 4 (a portion driver: one recount's
+  gap can be a miscount); evidence items 3 (Ask's distinct live reads that
+  back a stated figure, R3); nights 8 (a daily-report action: the nights
+  of observation behind its traced figures — tonight is one, a figure read
+  against the demand forecast adds the forecast's same-weekday samples,
+  one against last week / yesterday / last year one each; 8 is the
+  forecast's own window, so one night is an anecdote). `night_facts` 3 and
+  `count` 1 remain only for a stored or older caller's input. Menu drivers
+  count their reviewed recipe lines out of all of them (`n_full` per dish).
+  **Corroboration** (B4 M2): each other module whose verified figure agrees
+  adds `CORROBORATION_STEP` 0.25 to the sample factor, for at most
+  `CORROBORATION_MAX` 2 modules (×1.5) — bounded because one restaurant's
+  modules share its weeks; the "inferred" cap still holds causal wording
+  under high. It reaches the food and review diagnoses (distinct verified
+  modules — `rec_trust.verified_evidence_count` counts MODULES, not
+  entries) and cross-module links (modules − 1). Coverage is the share of
+  the window measured. Caps: coverage under `MIN_COVERAGE` (0.7) → ≤ 49;
+  any partial-data flag (days missing sales, estimated hours, gross
+  missing, conflicting sales, inferred, sampled, provisional, period too
+  short) → ≤ 74; any unverified figure → ≤ 35; a model's own band only
+  lowers it (medium ≤ 65, low ≤ 35) — and the band read is the validator's
+  CAPPED `confidence`, never the raw `model_confidence` (R9); a caller's
+  documented `cap` (the Shift Quality read's completeness, a campaign with
+  no holdout) with its reason; sample or demo data → 0 and `sample: true`.
+  The owner's "don't trust the data" answer (`dont_trust_data`) caps that
+  kind's evidence at 49 for 30 days.
+- **Historical Accuracy** = how likely this kind of advice beats DOING
+  NOTHING here — `pct = round(100 × P(p_taken > p_nothing))`, held to 1–99.
+  The record is `rec_learning.kind_record`: this restaurant's shown AND
+  taken episodes of the kind, read only through `learned_verdict`
+  (disowned, conditions-changed, informational, faded, reversed,
+  baseline-overlap and confounded results are never wins), one result per
+  overlapping window. `p_taken` ~ Beta(m·k + improved, (1−m)·k + measured −
+  improved) with k = `SHRINK_K` 5 and the prior centre m = the do-nothing
+  rate. `p_nothing` is the kind's untaken record when it has 5 results
+  (`base_rate` from untaken — the untaken share shrunk by 5 toward chance —
+  held as Beta(base_rate·(n+5), …)), else the chance rate (half the false-
+  alarm rate of this restaurant's own noise bands, else half the stated 10%
+  → 5%) held as loosely as `STATED_RATE_K` 20 results: the do-nothing
+  improved rates measured end to end ran 3–10% against the stated 5% (B2 p2
+  S1/S2, Q's S1/S4), and Beta(1, 19)'s 90% range, 0.3–14%, covers them —
+  a stated departure from "compared against the do-nothing rate" as a
+  point, because as a point 2 of 5 cleared it (96%) and the owner's rule is
+  that 2 of 5 may not lift a card above the no-record cap (B2 #4). The
+  integral is numeric (Simpson's rule under x = t^s, within 0.01 of a
+  60,000-draw Monte Carlo — `test_confidence_round2_p`). The basis is the
+  lift sentence — "improved 4 of 6 times vs 1 of 6 when not acted on", or
+  "vs about 5% by chance" with no untaken record — and `beats_label` says
+  "93% likely to beat doing nothing"; `low` / `high` stay the 90% Wilson
+  range of the improved rate. Shown only at `MIN_MEASURED_FOR_RATE` (5) own
+  results. **The cohort** (the anonymous record of restaurants like this
+  one, this restaurant excluded, `cohort_ok`, `assert_anonymous`, no one
+  restaurant over a third of it — Q) is only the prior's centre: its share,
+  shrunk toward the do-nothing rate, replaces m ONLY when it is lower (peers
+  saw the kind do worse than chance). It never produces a figure on its
+  own and never lifts one (B1 H9, B2 #3: 4 own results all worsened and a
+  10-of-12 cohort read 86% high); below the own floor the basis names it
+  ("at restaurants like yours: 10 of 12 improved — not counted until your
+  own are in") and the figure is `null`. `kind_record` fills the cohort's
+  `prior_*` counts at any own count for this. Its other additive fields
+  (group Q): `base_rate`, `base_rate_source`, `base_rate_n`,
+  `base_rate_basis`, `untaken`, `rate_recent` / `rate_recent_n_eff` /
+  `recent_half_life_days` (not used by the figure: a recency-weighted rate
+  would re-inflate a short recent run the Beta read deliberately holds
+  back).
 - **Data Freshness** = 100 × the minimum over the card's sources of
   recency × completeness (`data_freshness.SOURCES`, one threshold table:
   recency is 1 within `grace` days of the expected lag, then falls to 0
@@ -328,11 +393,71 @@ word and the object rides beside it as `confidence_detail`.
   and `weather` under the schedule and demand; `TOOL_SOURCES` maps the Ask
   tools whose module names no source. `pos_health`'s current / aging /
   stale is this table's `pos` row (`age_pct`), one POS rule everywhere;
-  "connected" is credentials only.
-- **Overall** = the geometric mean of the measured dimensions; no evidence
-  → not measurable. No track record here (accuracy null) → at most 70, with
-  a caution. Freshness under 50 → at most 49. Band: ≥ 75 high, 50–74
-  medium, else low.
+  "connected" is credentials only. `errors` names every source whose sync
+  failed.
+- **Overall** = the geometric mean of the measured dimensions (any 0 → 0;
+  no evidence → not measurable; never above `MAX_OVERALL` 99 — a support
+  score never reads certain), with freshness folded in AFTER the record's
+  ceiling: the evidence × record part is held to its cap (a/b) first, then
+  freshness weighs on the held figure, and the cap holds the result — so
+  with no record, freshness 100 / 79 read 70 but 60 reads 65 and 50 reads
+  59 (every level from 50 to 100 read the same 70 before, B3 #2). Uncapped
+  it is exactly the geometric mean of the three. The caps IN THIS ORDER, each named in
+  `caps_applied` and — the last that bound — in the line's `reason` (B1 M5:
+  "70% confidence — a count of 3 drafts" hid the cap that set the 70):
+  a. **no track record** (accuracy null) → ≤ `NO_TRACK_RECORD_CAP` 70, with
+     the no-track-record caution;
+  b. **a record that does not clear doing nothing** — under `BEATS_AT` 95%
+     likely to beat it, i.e. the lower end of its 90% range does not clear
+     it → ≤ `UNPROVEN_RECORD_CAP` 70; and one more likely than not NOT to
+     beat it (under `AGAINST_BELOW` 50%) → ≤ `RECORD_AGAINST_CAP` 49 with a
+     caution. Applied at ANY record length, not only a short one (a stated
+     departure: a long record of advice that does nothing would otherwise
+     read ~79%, the do-nothing simulation in `test_confidence_round2_p`);
+  c. **stale data** — freshness under `STALE_BELOW` 50 → ≤ `STALE_CAP` 49
+     with the out-of-date caution, ALWAYS, after (a)/(b), so a broken POS
+     never reads the same as a healthy one (B3 #2); a failing source
+     carries a caution even when the cap doesn't bind;
+  d. **freshness nothing could date** → ≤ `FRESHNESS_UNMEASURED_CAP` 49,
+     with a caution: an unmeasured dimension never raises the figure (B1
+     H1b: an undated card read 87% where the same card 60% fresh read 77%).
+  Band: ≥ 75 high, 50–74 medium, else low — `thresholds` in every payload,
+  the clients read them from there (tests pin the engine constants).
+  Measured on the audit's probes: with full, fresh evidence, no record → 70;
+  0 of 5 → 49 (was 63); 2 of 5 → 70 (was 77); 3 of 5 → 99; 0 of 10 → 49
+  (was 55); B2 p4's expected support over 20 results — do nothing 60, a
+  drifting do-nothing kind 68.5, a real −1 pt labor effect 72.5, a kind that
+  improves 35% of the time 95.6 (a drifting do-nothing kind outranked the
+  real one before).
+
+**Facts carry no confidence** (B4 H5, B1 C1): a setup or health nudge, a
+failing sync, reviews or drafts waiting, a response rate, items critically
+low or running low, people over 40 hours, the schedule not built, urgent
+reviews (`home_brief.HOME_FACT_KEYS`, the one-thing hero's `fact`
+candidates, the group view, the morning brief) carry `confidence: null` —
+not a "70%" from a default "1 row counted". Only recommendations and
+measured findings (a rating slip, a negative-share rise, labor over
+target) get one.
+
+**One confidence per key per build** (B1 H3, B4 M1): `rec_trust.assess`
+memoises on its `Context` by recommendation key (a key with a subject), so
+within one build — Home, the cross-module read (the hero and every What
+connects card share one Context), a DSR — the second surface to assess a
+key gets the first one's object. Across builds the same diagnosis reads
+ONE evidence input: `rec_trust.review_diagnosis_input` (Reviews tab, Home
+card, hero: the theme's `mention_count`, the Places "sampled" flag, the
+capped band, corroborating modules) and `rec_trust.food_diagnosis_input`
+(Food Cost card, Home, hero: weeks of inventory counts in the last 8 plus
+corroborating modules). The web hero leaves its own key out of the card
+grid.
+
+**Shift Quality** (B4 H3/H4, B1 H2): the read's completeness score
+(`shift_quality.confidence`) is a documented Evidence `cap` —
+`rec_trust.schedule_evidence`, never `coverage` (which printed a false
+"only 62% of the window measured"); the panel carries its own K1 as
+`quality.confidence_detail` (key `schedule_quality:read`) beside each
+suggestion's, so the pill and the items agree; the sources are everything
+a schedule rests on — shifts, the POS, sales and the weather.
 
 At delivery `rec_ledger.present_many` snapshots it on the episode
 (`confidence_pct`, `evidence_pct`, `accuracy_pct`, `accuracy_n`,
@@ -340,10 +465,28 @@ At delivery `rec_ledger.present_many` snapshots it on the episode
 event, noting a move of 10+ points between showings (`confidence_moved`).
 A surface that shows no confidence yet still gets accuracy and freshness
 snapshotted. `feedback.sync` fills `intel_rec_events.confidence_at` from
-the snapshot. The admin calibration view (`/admin/api/calibration`) scores
-the stated % against learned verdicts: reliability by decile with Wilson
-ranges and a Brier score, per kind and per dimension, each withheld below
-its floor (20; 5 per kind).
+the snapshot.
+
+**The admin check** (`/admin/api/calibration`, `admin_ops.confidence_
+calibration`): because the % is not a probability it is checked for
+ORDER, not for "72% comes true 72% of the time" (B2 #1, #9).
+`confidence_engine.ordering` puts measured results in support bands
+(0–49, 50–74, 75–100) with the improved share and its 90% Wilson range; a
+higher band whose range sits wholly below a lower band's is a violation,
+and each becomes an admin alert row (`alerts` — never an SMS), overall,
+per kind (floor 5) and per dimension (floor 20). Spearman's rho between
+the % and the result rides beside it. Only support-score snapshots
+(`trust_version` ≥ 2) are judged; older ones measured something else and
+are counted apart (`versions`). Each result is scored on the confidence
+the owner TOOK it at — the latest showing at or before the first
+acceptance — when one carried a snapshot, else the first showing
+(`scored_on`); results are counted by the learning rule (`learned_verdict`
+with the tracker's `concurrent` and `baseline_overlaps_trigger`, i.e.
+`outcomes.result_counts`) and one per overlapping window per restaurant
+and kind (`rec_learning._one_per_window`). The decile reliability table
+and the Brier score stay, labelled "not the meaning of the %".
+`admin_ops.recommendation_calibration` (the dollar pairs) reads verdicts by
+the same rule.
 
 ## The per-restaurant effectiveness model (`rec_learning`)
 
@@ -429,7 +572,9 @@ re-derived on the client:
 - **A cross-module link** uses one input on the one-thing card and the
   What connects card (`business_intelligence.link_evidence_input`).
 - **A fact** — reviews waiting, a failing sync, the schedule not built,
-  unacknowledged issues — carries no confidence (B4 H5).
+  unacknowledged issues, items critically low or running low, people over
+  40 hours — carries no confidence (B4 H5; group P took the running-low
+  brief line and the group view's counts off it too).
 - **Outbound** (emails, pushes): one line, `rec_trust.outbound_label` —
   "72% confidence · data through 9/23/26" — the K1 label and the stalest
   source's date.

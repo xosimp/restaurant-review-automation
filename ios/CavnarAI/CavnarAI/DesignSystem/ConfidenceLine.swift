@@ -184,6 +184,14 @@ struct ConfidenceWhySheet: View {
     private func hero(_ d: ConfidenceDisplay) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             AccountKicker(text: "How sure is this")
+            // What the figure means, first (the owner's support-score
+            // decision, 9/24/26): how well supported — not the chance it works.
+            if let meaning = d.meaning {
+                Text(meaning + ".")
+                    .font(.cavnarBody(13.5, weight: 500))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let pct = d.pct {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(pct)%")

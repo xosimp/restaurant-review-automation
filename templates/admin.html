@@ -721,17 +721,44 @@ function patStrength(p){
   const v = (p && p.strength_pct != null) ? p.strength_pct : (p && p.confidence != null ? Math.round(p.confidence*100) : null);
   return v == null ? '—' : v + '%';
 }
+// The support score is NOT a probability (the owner's decision, 9/24/26:
+// "how well supported this is — not the chance it works"), so the check that
+// matters is ORDER: the share that improved must not fall as the band rises.
+// k.ordering is confidence_engine.ordering — bands 0-49 / 50-74 / 75-100 with
+// the observed rate and its 90% range, `ordered`, the violations and
+// Spearman's rho. k.alerts are the rows to act on (never an SMS).
+function _ordTable(o, floor, id){
+  if(!o || !Array.isArray(o.bands) || !o.bands.length) return '<div class="empty">Nothing measured yet.</div>';
+  const f = v => { const x = _calPct(v); return x==null ? '—' : Math.round(x)+'%'; };
+  return table([
+    {h:'Support', key:'range', cell:r=>`<span class="num">${esc(r.range||'')}%</span>`},
+    {h:'n', key:'n', r:true, cell:r=>`<span class="num${(r.n||0)<floor?' dim':''}">${fmtN(r.n)}</span>`},
+    {h:'Improved', key:'observed_rate', r:true, cell:r=>!r.enough ? `<span class="dim">n&lt;${floor}</span>` : `<span class="num">${f(r.observed_rate)}</span> <span class="dim num">${f(r.low)}–${f(r.high)}</span>`}], o.bands, {id, sort:'range'});
+}
+function _ordVerdict(o){
+  if(!o || o.ordered==null) return '<span class="dim">not enough in two bands yet</span>';
+  return o.ordered ? '<span style="color:var(--green)">in order</span>' : '<span style="color:var(--red)">out of order</span>';
+}
 function confidenceCalibration(k){
   if(!k || k.ok === false || !Array.isArray(k.bands)) return `<div class="card"><div class="ch"><h2>Confidence calibration</h2></div><div class="cb"><div class="empty">No calibration yet — it needs recommendations shown with a confidence percentage and measured since.</div></div></div>`;
   const floor = k.floor_n || 20, dims = k.by_dimension || {};
   const brier = (k.brier==null || !isFinite(+k.brier)) ? '—' : (+k.brier).toFixed(3);
+  const ord = k.ordering || null, alerts = Array.isArray(k.alerts) ? k.alerts : [];
+  const rho = (ord && ord.spearman!=null && isFinite(+ord.spearman)) ? (+ord.spearman).toFixed(2) : '—';
+  const alertRows = alerts.map(a=>`<div class="alert-row" style="border-left:3px solid var(--red);padding:8px 12px;margin-bottom:8px;background:var(--paper3);border-radius:0 8px 8px 0"><strong>${esc(a.title||'')}</strong><div class="dim" style="white-space:normal">${esc(a.detail||'')}</div></div>`).join('');
+  const kindOrd = (k.ordering_by_kind||[]).filter(o=>o.n);
+  const orderBlock = ord ? `<div class="k" style="margin:0 0 6px">Does higher support go with better results? ${_ordVerdict(ord)} <span class="dim">· Spearman ${rho} · ${fmtN(ord.n||0)} support-score results</span></div>${_ordTable(ord, floor, 'cal-order')}
+    ${kindOrd.length ? `<div class="k" style="margin:12px 0 6px">By kind</div>` + table([{h:'Kind',key:'kind',cell:r=>esc(r.kind||'')},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},{h:'Order',key:'ordered',cell:r=>_ordVerdict(r)},{h:'Spearman',key:'spearman',r:true,cell:r=>`<span class="num">${r.spearman==null?'—':(+r.spearman).toFixed(2)}</span>`}], kindOrd, {id:'cal-order-kind', sort:'n'}) : ''}` : '';
   // by_dimension[key] is {bands, brier, n} (admin_ops.confidence_calibration);
   // a bare list is read too, for an older server.
   const dimRows = key => { const d = dims[key]; return Array.isArray(d) ? d : ((d && Array.isArray(d.bands)) ? d.bands : []); };
   const dimBrier = key => { const d = dims[key]; return (d && !Array.isArray(d) && d.brier!=null && isFinite(+d.brier)) ? ` <span class="dim">Brier ${(+d.brier).toFixed(3)}</span>` : ''; };
   const dimBlock = (key, label) => dimRows(key).length ? `<div class="k" style="margin:12px 0 6px">${esc(label)}${dimBrier(key)}</div>${_calTable(dimRows(key), floor, 'cal-dim-'+key)}` : '';
-  return `<div class="card"><div class="ch"><h2>Confidence calibration</h2><span class="sub">Shown confidence against the share that improved, measured. The tick is what was shown, the dot what happened, the band its 90% range — green when the tick sits inside it. Rows under ${floor} are dimmed.</span></div><div class="cb">
-    <div class="grid g3" style="margin-bottom:12px">${kpi(brier,'Brier score', '', 'lower is better · 0.25 is a coin flip')}${kpi(fmtN((k.bands||[]).reduce((a,b)=>a+(b.n||0),0)),'Measured')}${kpi(fmtN(floor),'Floor per row')}</div>
+  return `<div class="card"><div class="ch"><h2>Confidence calibration</h2><span class="sub">${esc(k.meaning || 'How well supported this is — not the chance it works')}. So the check is order: a higher support band must not improve less often than a lower one. Scored on the confidence at acceptance where a showing before it carried one (${fmtN((k.scored_on||{}).acceptance||0)} at acceptance, ${fmtN((k.scored_on||{}).first_shown||0)} first shown). Rows under ${floor} are dimmed.</span></div><div class="cb">
+    ${alertRows}
+    ${orderBlock}
+    <div class="k" style="margin:14px 0 6px">For the record — not the meaning of the %</div>
+    <div class="grid g3" style="margin-bottom:12px">${kpi(brier,'Brier score', '', 'read as a probability, which the support score is not')}${kpi(fmtN((k.bands||[]).reduce((a,b)=>a+(b.n||0),0)),'Measured')}${kpi(fmtN(floor),'Floor per row')}</div>
     ${_calTable(k.bands, floor, 'cal-bands')}
     ${(k.by_kind && k.by_kind.length) ? `<div class="k" style="margin:12px 0 6px">By kind</div>${_calTable(k.by_kind, floor, 'cal-kind', {h:'Kind', key:'kind', cell:r=>esc(r.kind||r.range||'')})}` : ''}
     ${dimBlock('evidence','Evidence strength')}${dimBlock('accuracy','Historical accuracy')}${dimBlock('freshness','Data freshness')}
