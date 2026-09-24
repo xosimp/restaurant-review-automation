@@ -121,11 +121,59 @@ def _as_date(v):
         return None
 
 
-def _stamp(v):
-    """A stored timestamp as an aware UTC datetime (ISO with or without an
-    offset; SQLite's UTC 'YYYY-MM-DD HH:MM:SS'; a bare date)."""
+# ── adapters onto the data-quality group's helpers ─────────────────────────
+#
+# Group G (confidence audit, data quality at the source) adds
+# time_utils.parse_stamp, fetcher.places_coverage and admin_ops.review_source.
+# Each is read through one adapter here, with a fallback for a tree that does
+# not have it yet, so wiring them is a change to these bodies only.
+
+def _stamp(v, naive_tz="UTC"):
+    """A stored timestamp as an aware UTC datetime, or None.
+    time_utils.parse_stamp when present (one parser for every stamp style,
+    CA3 F15); else pos_health's, which reads a naive stamp as UTC."""
+    try:
+        import time_utils
+        if hasattr(time_utils, "parse_stamp"):
+            return time_utils.parse_stamp(v, naive_tz=naive_tz)
+    except Exception:
+        pass
     import pos_health
     return pos_health.parse_stamp(v)
+
+
+def _review_fetched_at(raw):
+    """restaurants.last_fetched_at (Chicago local with a 'T', or SQLite UTC)
+    as an aware datetime, or None."""
+    import admin_ops
+    return admin_ops.fetched_at_ct(raw)
+
+
+def _review_sampling(r):
+    """(sampled, completeness or None, label) for the review source: Places
+    returns five reviews at a time, so a Places-only connection is a sample;
+    its completeness is fetcher.places_coverage's share of Google's own count
+    growth when that helper exists (CA3 F13)."""
+    sampled = bool(_get(r, "reviews_live")) and not _get(r, "gmb_refresh_token")
+    label = "Google reviews (sampled — Places returns 5 at a time)" if sampled else "Google Business Profile"
+    try:
+        import admin_ops
+        if hasattr(admin_ops, "review_source"):
+            kind, label = admin_ops.review_source(r)
+            sampled = kind == "places_sampled"
+    except Exception:
+        pass
+    share = None
+    if sampled:
+        try:
+            import fetcher
+            if hasattr(fetcher, "places_coverage"):
+                cov = fetcher.places_coverage(_rid(r)) or {}
+                if cov.get("share") is not None:
+                    share = max(0.0, min(1.0, float(cov["share"])))
+        except Exception:
+            share = None
+    return sampled, share, label
 
 
 def _result(key, pct=None, as_of_iso=None, basis="", state=None, error=None, **extra):
@@ -243,17 +291,18 @@ def _reviews(r, conn, today, now, ctx):
         return _result("reviews", None, None, "Google not connected", state="not_connected")
     import admin_ops
     raw = _get(r, "last_fetched_at")
-    at = admin_ops.fetched_at_ct(raw)
+    at = _review_fetched_at(raw)
     if at is None:
         return _result("reviews", 0, None, "Reviews never fetched", state="unknown")
     missed = admin_ops.fetch_slots_missed(raw)
     err = (f"{missed} review fetches missed" if (missed or 0) >= REVIEW_SLOTS_MISSED_AT else None)
     age = max(0.0, (now - at.astimezone(timezone.utc)).total_seconds() / 86400.0)
-    pct = _score("reviews", age, 1.0, bool(err))
-    sampled = bool(_get(r, "reviews_live")) and not _get(r, "gmb_refresh_token")
+    sampled, share, label = _review_sampling(r)
+    pct = _score("reviews", age, share if share is not None else 1.0, bool(err))
     day = at.date().isoformat()
     basis = f"Reviews fetched {ce._mdy(day)}" + (f" — {err}" if err else "") + (
-        " · Google reviews sampled (Places returns 5 at a time)" if sampled else "")
+        f" · {label}" if sampled else "") + (
+        f" · {int(round(share * 100))}% of Google's new reviews stored" if share is not None else "")
     return _result("reviews", pct, day, basis, error=err, sampled=sampled)
 
 

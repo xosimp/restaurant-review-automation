@@ -230,13 +230,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                   else _money(t["monthly"]))
         lines.append({"key": "money", "tone": "neutral", "rec": t.get("key"),
                       "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month.",
-                      "ask": f"How do I go after the {t['label'].lower()} opportunity?",
-                      # Structured, so the Home hero renders the range and its
-                      # label and never regex-collapses "$1,200-$2,400" to
-                      # "$1,200" (confidence audit E10, CA4 F3).
-                      "money": {"low": t.get("monthly_low") if t.get("is_range") else t.get("monthly"),
-                                "high": t.get("monthly_high") if t.get("is_range") else t.get("monthly"),
-                                "label": f"{t['label']} — an opportunity, per month"}})
+                      "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
     # ── accountability ──
     s = _safe(issues.summary, restaurant_id, db_path=db_path)

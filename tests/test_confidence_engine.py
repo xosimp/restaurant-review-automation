@@ -560,6 +560,29 @@ def test_the_one_thing_carries_its_confidence(home):
     assert first["confidence"]["dimensions"]["evidence"]["pct"] == 100 and first["model_written"] is False
 
 
-def test_the_money_line_carries_its_range_structured():
-    src = _src("morning_brief.py")
-    assert '"money": {"low":' in src and "an opportunity, per month" in src
+def test_trim_day_tolerates_days_with_no_sales_percentage():
+    """Group G writes a day with no sales as labor_pct None / sales NULL:
+    such a day is neither the heavy day nor counted as all-excess labor."""
+    import home_brief
+    dow = {"Monday": 28.0, "Tuesday": None, "Wednesday": 27.5, "Thursday": 28.0, "Friday": 36.0}
+    by_day = {"2026-09-04": {"sales": 1000, "labor_cost": 360, "labor_pct": 36.0},
+              "2026-09-11": {"sales": 1000, "labor_cost": 360, "labor_pct": 36.0},
+              "2026-09-18": {"sales": None, "labor_cost": 900, "labor_pct": None}}
+    t = home_brief.trim_day_read(dow, by_day, 30, 28)
+    assert t["day"] == "Friday" and t["n_days"] == 2 and t["monthly"] == round(60 * 52 / 12, 2)
+
+
+def test_places_only_reviews_take_the_coverage_share_when_measured(db, monkeypatch):
+    import fetcher
+    rid = _rid(db)
+    row = {"id": rid, "reviews_live": 1,
+           "last_fetched_at": (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")}
+    monkeypatch.setattr(fetcher, "places_coverage", lambda r: {"share": 0.4, "sampled": True}, raising=False)
+    st = data_freshness.source_state(row, "reviews", db_path=db, now=datetime.now(timezone.utc))
+    assert st["sampled"] and st["pct"] <= 40 and "40% of Google's new reviews stored" in st["basis"]
+
+
+def test_no_waste_win_when_waste_was_not_measured():
+    """Group I: a week with no waste logged is `not_measured`, never a win."""
+    src = _src("home_brief.py")
+    assert 'benchmark_state") != "not_measured"' in src

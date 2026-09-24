@@ -1630,7 +1630,10 @@ def _build(current_user, present=True):
                     "tone": "bad" if _over else "good", "module": "inventory"})
             elif recoverable > 0:
                 brief_lines.append({"text": f"${recoverable:,.0f}/month of recoverable food waste, led by {top.get('item') if top else 'a few items'}.", "tone": "warn", "module": "inventory"})
-            if recoverable <= 0 and fc_pct is None:
+            # A week with no waste logged is not_measured (inventory), never a
+            # win: nothing recorded is not "under control" (CA4 F11).
+            _waste_measured = inv.get("benchmark_state") != "not_measured"
+            if recoverable <= 0 and fc_pct is None and _waste_measured:
                 add_win("waste_low", "Waste is under control", f"{inv.get('benchmark_label') or 'Low'} waste rate" + (f" ({waste_rate}%)" if waste_rate is not None else "") + " this week.", "inventory")
             elif fc_target is not None and fc_pct is not None and fc_pct <= fc_target:
                 add_win("food_cost_on_target", f"Food cost {fc_pct}% — on target",
@@ -1646,7 +1649,7 @@ def _build(current_user, present=True):
                           "good": fc_pct <= fc_target}
             elif waste_rate is not None:
                 _delta = {"value": f"{waste_rate}% waste", "label": inv.get("benchmark_label") or "",
-                          "good": inv.get("benchmark_tone") in ("good", None)}
+                          "good": _waste_measured and inv.get("benchmark_tone") in ("good", None)}
             _secondary = [{"label": "Critical low", "value": str(len(crit))},
                           {"label": "Reorder soon", "value": str(len(reorder))},
                           {"label": "Stock value", "value": f"${float(inv.get('total_stock_value') or 0):,.0f}"}]
@@ -1665,10 +1668,10 @@ def _build(current_user, present=True):
                                  cfo_why["cause"] if cfo_why else
                                  (f"{drivers[0]['label']} is the largest driver "
                                   f"(${drivers[0]['dollars_monthly']:,.0f}/month)." if drivers else
-                                  (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else "No waste flagged this week."))),
+                                  (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else ("No waste flagged this week." if _waste_measured else "No waste logged this week — not measured.")))),
                              "why_confidence": (cfo_why or {}).get("confidence"),
                              "why_confidence_detail": (cfo_why or {}).get("confidence_detail"),
-                             "state": "bad" if (crit or (fc_target and fc_pct and fc_pct > fc_target)) else ("warn" if recoverable > 0 else "good"),
+                             "state": "bad" if (crit or (fc_target and fc_pct and fc_pct > fc_target)) else ("warn" if recoverable > 0 else ("good" if (_waste_measured or fc_pct is not None) else "neutral")),
                              "spark": [], "spark_label": None,
                              "attention": bool(crit) or recoverable >= 200 or bool(fc_target and fc_pct and fc_pct > fc_target),
                              "sample": False, "last_data": _inv_state.get("as_of_iso")})
