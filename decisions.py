@@ -14,7 +14,8 @@ the agent a short, dated history — so Ask reasons from *this restaurant's
 decisions*, not only its numbers. Nothing here is generated; every field
 is read from a row a person or a job wrote.
 """
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
 
 MAX_CONTEXT_LINES = 12
 
@@ -51,7 +52,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
     the approving manager), as issues.list_issues does — for anything a
     manager may read, including a narrative that renders into the manager's
     view of the daily report."""
-    conn = get_conn(db_path)
+    conn = _conn(db_path)
     recs = {}
 
     def rec(key, title=None, kind="recommendation", when=None):
