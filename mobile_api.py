@@ -3142,7 +3142,8 @@ def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calenda
             mark_calendar_idea_used(restaurant_id, content_type, topic)
         except Exception:
             pass
-    return {"ok": True, "content": result, "tags": _capi._post_tags_safe(restaurant_id, topic, result)}, 200
+    return {"ok": True, "content": result, "tags": _capi._post_tags_safe(restaurant_id, topic, result),
+            "validation": _rv_of(result)}, 200
 
 
 @mobile_bp.route("/marketing/generate-content", methods=["POST"])
@@ -3225,7 +3226,7 @@ def mobile_guest_campaign_draft(current_user):
         from guest_marketing import draft_campaign_message
         restaurant = get_restaurant(rid)
         message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
-        return jsonify(ok=True, message=message)
+        return jsonify(ok=True, message=message, validation=_rv_of(message))
     except ValueError as e:
         # The guard refused the copy (an invented offer, a link, too long):
         # say which, so the owner knows why nothing came back (M-24).

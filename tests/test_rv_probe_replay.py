@@ -180,7 +180,9 @@ def _plan(monkeypatch, db_path, text):
     import strategy_jobs
     import time_utils
     from datetime import datetime
-    _rid(db_path, weekly_plan_enabled=1)
+    rid = _rid(db_path)
+    models.update_restaurant(rid, {"weekly_plan_enabled": 1}, db_path=db_path)
+    _rid(db_path, "Gia Mia")
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 21, 8, 0))
     item = [{"title": "Friday plan", "why": text, "owner": "owner", "due_days": 3}]
     meta = {"unverified_figures": [], "unverified_all": [], "unsupported_causes": [], "unsupported_names": []}
@@ -256,6 +258,8 @@ PROBES = [
      "bring on.", lambda out: out == "FALLBACK COPY" or "ahead of most" not in out),
     ("weekly_plan", "NS2 p9 plan caused + will fix", "Tuesday ran 38% labor, which caused the rating drop; this will fix it.",
      lambda filed: not filed or all("will fix" not in json.dumps(f) and "caused" not in json.dumps(f) for f in filed)),
+    ("weekly_plan", "NS6 B other tenant in a filed item", "Tuesday ran 38% labor, twice what Gia Mia runs.",
+     lambda filed: all("Gia Mia" not in json.dumps(f) for f in filed)),
 ]
 
 
@@ -264,3 +268,32 @@ def test_probe(site, probe, text, check, monkeypatch, db_path):
     out = DRIVERS[site](monkeypatch, db_path, text)
     if _record(site, probe, text, out):
         assert check(out), f"{site} / {probe}: shown {out!r}"
+
+
+# ── the structured verdict reaches the route payloads ───────────────────────
+
+def test_generated_content_and_regenerated_drafts_carry_the_validation_object(db_path, monkeypatch):
+    if REPORT:
+        return
+    import client_api
+    import drafter
+    import marketing
+    import mobile_api
+    rid = _rid(db_path, module_marketing=1, module_reviews=1)
+    monkeypatch.setattr(marketing, "get_client", lambda *a, **k: object(), raising=False)
+    monkeypatch.setattr(marketing, "create_with_retry", lambda client, **kw: _msg("Pizza night is back this Friday."))
+    monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
+    out, status = mobile_api._do_mobile_generate_content(rid, "instagram_post", "pizza night")
+    assert status == 200 and out["validation"]["verdict"] == "pass"
+    conn = models.get_conn()
+    review_id = conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, "
+                             "review_date, fetched_at, processed, sentiment) VALUES (?,?,?,?,?,?,?,datetime('now'),"
+                             "1,'positive')", (rid, "google", "probe-2", "Ann", 5, "Lovely pasta.",
+                                               "2026-09-20")).lastrowid
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(drafter, "get_client", lambda *a, **k: object(), raising=False)
+    monkeypatch.setattr(drafter, "create_with_retry", lambda client, **kw: _msg("Thanks Ann, glad you enjoyed it."))
+    out, _ = client_api._do_regenerate_draft(review_id, rid)
+    assert out["ok"], out
+    assert set(out["validation"]) == {"verdict", "caveats", "controls", "codes", "version"}

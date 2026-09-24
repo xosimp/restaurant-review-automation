@@ -3561,7 +3561,8 @@ def gen_content(current_user):
             mark_calendar_idea_used(rid, content_type, topic)
         except Exception:
             pass
-    return jsonify(content=result, tags=_post_tags_safe(rid, topic, result))
+    from response_validation import validation_of as _rv_gc
+    return jsonify(content=result, tags=_post_tags_safe(rid, topic, result), validation=_rv_gc(result))
 
 
 def _post_tags_safe(rid, topic, body):
@@ -3837,7 +3838,9 @@ def _do_regenerate_draft(review_id, restaurant_id):
         conn.close()
         return {"ok": True, "draft": new_draft,
                 "needs_review": bool(flag and flag["draft_needs_review"]),
-                "review_reason": (flag["draft_review_reason"] if flag and flag["draft_needs_review"] else None)}, 200
+                "review_reason": (flag["draft_review_reason"] if flag and flag["draft_needs_review"] else None),
+                # The Response Validation Layer's verdict on the new draft.
+                "validation": getattr(new_draft, "validation", None)}, 200
     except DraftNotReplaced:
         return {"ok": False, "error": "This reply was sent while the new one was being written. "
                                       "Retract it before replacing it."}, 409
