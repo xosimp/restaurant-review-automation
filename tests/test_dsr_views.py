@@ -102,6 +102,19 @@ def test_the_list_carries_net_and_the_lead_as_this_login_may_read_it(client, db,
         ("2026-09-16", 5000.0, "Net sales were $5,000.", None)]
 
 
+def test_each_version_says_when_it_went_out_on_the_restaurant_s_clock(client, db, monkeypatch):
+    r = _ejs(db)
+    _night(db, r.id, WED, 5000.0, 5300.0, {"Food": 5000.0})
+    conn = models.get_conn(db)
+    conn.execute("UPDATE dsr_reports SET finalized_at='2026-09-17 09:10:00', created_at='2026-09-17 09:00:00' "
+                 "WHERE restaurant_id=?", (r.id,))
+    conn.commit()
+    conn.close()
+    _as(monkeypatch, r.id, "manager")
+    v = client.get("/api/dsr/2026-09-16").get_json()["versions"][0]
+    assert (v["finalized_at_local"], v["created_at_local"]) == ("2026-09-17T04:10", "2026-09-17T04:00")   # Chicago, CDT
+
+
 def test_a_night_whose_sales_are_not_ready_has_no_net_never_zero(client, db, monkeypatch):
     r = _ejs(db)
     rep = store.create_report(r.id, WED, trigger="sweep", db_path=db)

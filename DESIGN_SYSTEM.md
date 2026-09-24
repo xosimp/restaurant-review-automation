@@ -321,7 +321,7 @@ primary button is the iOS value, `#d4583a` (`--cb-accent`, pinned by
 ## 10. Empty, loading and error states
 
 **Loading is the sliding ember pulse — never a spinner and never "…".**
-- Web: `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas
+- Web: `.dr-pulse` (a 3px track with an ember light sliding across, `pulseBarSlide`) for a quick page load or a running job, `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas
   (`data-orb-state`: `working` / `searching` / `shaping` / `composing` /
   `solving` exists on iOS only), `cbtnBusy()` inside a button.
 - iOS: `CavnarSkeletonBar`, `CavnarSkeletonLines(widths:)`,
@@ -434,7 +434,7 @@ Rules:
 ## 11b. Home order (web and iOS, identical)
 
 Fixed by role so the owner learns where things live: header strip (module
-pulse, AI activity) → value delivered → **the day** (morning brief with open
+pulse, AI activity) → value delivered → **the day** (last night's daily report card, then the morning brief with open
 issues; the close-out takes the slot after 8pm local, the weekly receipts
 lead it on Monday) → needs attention → the one cross-module thing → what
 Cavnar AI recommends → readiness (leads the page instead when nothing is
@@ -504,6 +504,21 @@ day is a short page.
 | Person facts | `.rst-more` — an `.rul-sw` "Experienced — knows the job" switch (`experienced` on the staff settings POST; iOS: an `AccountSwitchRow` in the person sheet), `.k` kickers over certification chips, `.said` (the person's own stated preferences, read-only here: "prefers nights · wants 30h a week"), and `.rst-up` green chips for stations they are trained up on (`could_hold`, from `/api/labor/intel`) |
 | Suggested pair | `.lb2-pairs .pr.sug` — the pair, an ember `.kd`, `.acts` Add (`cbtn-soft`, the existing pairs POST) / Ignore (text, local dismiss), `.ev` evidence line. Never applied on its own |
 | Learned pattern | `.lrn-row` — the engine's own sentence in `.tx`, `.n` state (`in use` green / `seen once` / `not used`), one text button "Stop using this" / "Use again" → `POST /api/labor/learned-patterns`; `.off` strikes a dismissed one through |
+| Daily report page | `#panel-dsr` (`dr-*`), a Home sub-page with no tab of its own (the Home tab stays lit). `.dr-nav` = "← Home" text button + the `.dr-views` Night / Week / Period toggle; `.dr-head` = `.hb-kicker` + Clash `.hb-h1` (weekday + M/D/YY) + prev/next night buttons; `.dr-meta` = status pill, version `.ac-select`, provenance ("Closed by the POS", "Went out 9/23/26 · 7:10am"), and the page's one action. Hash routes `#dsr`, `#dsr/YYYY-MM-DD` (the email link), `#dsr/week/…`, `#dsr/period/…`. iOS: the same order as expandable cards |
+| Segmented view toggle | `.dr-views` — `cbtn cbtn-secondary cbtn-sm` buttons with `aria-pressed`; the pressed one takes the ember hairline and `--hb-tint`. For switching views of one thing, never for filters |
+| Status pill | `.dr-pill` + `.final` (green) / `.provisional` / `.awaiting` (amber) / `.failed` (red) / `.running` (ember, with a breathing `i` dot) / `.est` (quiet "Estimated"). Uppercase 11.5px, pill radius, the `-bg` token behind the status colour |
+| Older version | `.hb-card.rail.dr-old` — "You're reading version 1 of 2, as it went out at …" + "Read the latest". An older version is shown exactly as it went out; the same strip holds the owner's "Re-run" confirmation |
+| Morning read | `.hb-card.hero.hb-focus.dr-read` — the one hero card on the report; `.lead` at 19–23px Clash because it is a paragraph, not a headline. With no narrative: `.hb-card.quiet` with the server's reason, never an empty box |
+| Calls | `.dr-calls .dr-call` — recessed tiles, an `--ember2` kicker ("Highest priority", "Biggest risk"…), the sentence; duplicates of the same sentence are shown once |
+| Block section | `details.dr-sec` — the ember-triangle disclosure (as `.co-more`) on a card; `summary` = Clash `.ttl`, `.src` source, a `.dr-pill` only when the block is not ready, a one-figure `.sum` on the right. A block that isn't ready shows its reason (`.dr-why`), never tiles of zeros; a block the view withholds is named once in `.dr-withheld` |
+| KPI hero | `.lb2-hero.dr-hero` — the report's one big graph (and the only cursor light): `.big` figure in the number face, `.subl` lines, `.dr-cmp` comparison rows (`.l` label, `.p` signed % green/red, `.b` the baseline or why there is none), then `.dr-hours` |
+| Hour bars | `.dr-hours .c` — HTML bars (crisp at any width) on an ember→ember2 gradient at 62%, the peak hour at full strength with a glow and its figure above it (`b`), hour labels in the number face; grow-in staggered 45ms, still under reduced motion |
+| Share bars | `.dr-bar` — name, an 8px track with an ember gradient fill (`cmBar` grow-in), dollars, share; `.un` for an unmapped department (ink3, labelled "unmapped", never folded into a category) |
+| Progress checklist | `.dr-prog` card with `.dr-pulse.wide` (the sliding ember pulse) over `.dr-step` rows — `.done` green tick, `.now` breathing ember dot, `.gap` amber "!" with the block's reason, `.todo` dim — each with the server's own local time (`.at`, "10:14pm"). Polled every 5s, skipped while `document.hidden`, caught up on `visibilitychange` |
+| Weekly grid | `.dr-gridbox` (its own horizontal scroll, `.fc2-table-scroll`) around `table.dr-grid` — a `tr.grp` group row (Sales by category · Sales · Budget · Last year · Labor · The day, `--ember2`), right-aligned tabular figures, the day column sticky (`.day`, status dot, the date a text button to that night), `—` in `.dr-dim` for anything unmeasured, `small` under a variance for its %, `tfoot` week and period-to-date rows. Budget columns only in the owner's view. The .xlsx export (`dsr.xlsx`) has the same columns |
+| Week budget editor | `.hb-card.dr-bud` (hidden until "Edit budget") — `.dr-bud-grid` of night · gross · net `.ac-input`s, one `cbtn-primary` Save and a Cancel; blank means no budget |
+| Import card | `.hb-card.quiet.dr-imp` — what the import is for, a template link, a file `.ac-input` + secondary button, an `.ac-status` result line and `.dr-imp-err` rows the server rejected |
+| Last night card | `.hb-card.dr-home` at the top of Home's day — "Last night · 9/22/26" + status pill, net sales in the number face (or why there is none), the summary's lead clamped to three lines (or why there is none), "Open report" / "The week's grid" |
 | Record card | `.lb2-srow.s8` "What the record says" — `.int-rev` (projected weekly revenue in the number face + `.src` basis), `.int-tbl` weekday × daypart outcomes (`.cell.trbl` carries a red rail and a `.flag` "troubled"), `.int-bars .int-bar` sales-per-labor-hour bars (ember gradient, glow, `cmBar` grow-in), `.int-cols` two columns of `.int-ledger` (most / fewest weekends and closes) and `.int-say` sentences ("Ana keeps asking to drop Sunday nights"), `.rst-up` trained-up chips, the suggested-pairs block, `.int-supp` for hidden recommendation kinds. Every section has its own `.hb-empty` sentence |
 
 **iOS** (`Features/…` + `DesignSystem/`)

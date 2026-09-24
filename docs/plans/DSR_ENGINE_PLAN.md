@@ -1,7 +1,11 @@
 # End-of-Day Closeout & Daily Sales Report (DSR) Engine — the plan
 
-Status: phases 1–4 built (Sep 23 2026) — `dsr/` runs every night on its own,
-with no screen yet; phases 5–6 not started. First customer: Simple EJ's
+Status: phases 1–4 built (Sep 23 2026) — `dsr/` runs every night on its own.
+Phase 5, web: the Daily report screen (`#dsr/YYYY-MM-DD`, Home's "Last
+night" card, progressive checklist, Close day / owner re-run of the last 7
+nights), the weekly grid and period with the .xlsx export, and the owner's
+budget / category / calendar settings are built; email, push and iOS views
+are other work in flight; phase 6 not started. First customer: Simple EJ's
 (Erik and Jim), on their **official** account, not the test account.
 
 ## 0. What Erik actually runs today
