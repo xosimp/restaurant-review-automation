@@ -172,14 +172,15 @@ def test_p1_labor_pct_28d_is_sales_weighted_and_skips_missing_days(db_path):
     rid = _rid(db_path)
     c = get_conn(db_path)
     today = date.today()
-    # Two slow days at 60% on $500, two big days at 20% on $5,000, and two
-    # days whose sales never arrived (legacy 0 and new NULL).
-    for i, (s, p) in enumerate([(500, 60.0), (500, 60.0), (5000, 20.0), (5000, 20.0), (0.0, 0.0), (None, None)]):
+    # Seven slow days at 60% on $500, seven big days at 20% on $5,000 (14
+    # costed days: features.MIN_MEASURED_DAYS, re-audit B3 #11), and two days
+    # whose sales never arrived (legacy 0 and new NULL).
+    for i, (s, p) in enumerate([(500, 60.0)] * 7 + [(5000, 20.0)] * 7 + [(0.0, 0.0), (None, None)]):
         c.execute("INSERT INTO labor_daily_history (restaurant_id, date, labor_pct, labor_cost, sales, total_hours) "
                   "VALUES (?,?,?,?,?,?)", (rid, (today - timedelta(days=i + 1)).isoformat(), p, 300, s, 20))
     c.commit(); c.close()
     f = features.compute(rid, today=today, db_path=db_path)
-    assert f["labor_pct_28d"] == round((60 * 500 * 2 + 20 * 5000 * 2) / 11000, 2)     # 23.64, not 40 or 26.67
+    assert f["labor_pct_28d"] == round((60 * 500 * 7 + 20 * 5000 * 7) / 38500, 2)     # 23.64, not 40 or 26.67
 
 
 def test_reviews_30d_is_unmeasured_without_a_review_source(db_path):

@@ -1116,9 +1116,12 @@ _DISOWNED_LIKE = '%"did_it": "no"%'
 _CHANGED_LIKE = '%"conditions_changed": true%'
 # The SQL twin of result_counts for a joined tracker `o` (cumulative and
 # _release_days): not disowned, no "something else changed" check-in, not
-# measured against its trigger window. Two ? — _DISOWNED_LIKE, _CHANGED_LIKE.
+# measured against its trigger window, nothing else found moving the number
+# (confounded: the stored concurrent list is empty — evaluate writes '[]').
+# Two ? — _DISOWNED_LIKE, _CHANGED_LIKE.
 _COUNTS_SQL = ("(o.owner_checkin IS NULL OR (o.owner_checkin NOT LIKE ? AND o.owner_checkin NOT LIKE ?)) "
-               "AND COALESCE(o.baseline_overlaps_trigger, 0) = 0")
+               "AND COALESCE(o.baseline_overlaps_trigger, 0) = 0 "
+               "AND (o.concurrent IS NULL OR TRIM(o.concurrent) IN ('', '[]'))")
 
 
 def _rec_family(key, module, expected_metric):
@@ -1376,6 +1379,62 @@ def pre_trend(r, verdict, after_value, db_path=DB_PATH):
     return {"kind": "trend", "label": TREND_LABEL, "date": _iso(r["baseline_start"])}
 
 
+# ── a level shift inside the trigger window (confidence re-audit B2 #10) ────
+
+LEVEL_SHIFT_LABEL = "Already at this level before the change started"
+# The share of the after-window's move the trigger window must already hold
+# before the move is read as the trigger's level carried on.
+LEVEL_SHIFT_MIN_SHARE = 0.5
+
+
+def level_shift(r, verdict, after_value, db_path=DB_PATH):
+    """A concurrent-change entry (kind "level_shift") when the number had
+    already moved to where it was read, inside the window that PROMPTED the
+    recommendation — before the change started — else None.
+
+    A triggered tracker is read against the mirror of the after-window
+    about its trigger window (TRIGGER_BASELINE_KIND), which assumes the
+    number returns to where it was. A lasting step at the trigger (a wage
+    rise, a new lease on a cost) never returns: with nothing changed, 35.5%
+    of such trackers read "worsened" (probe B2 p2 S7). The step test: the
+    trigger window's reading already sits on the move's side of the
+    baseline, holding at least LEVEL_SHIFT_MIN_SHARE of the move, and the
+    after-window is not past the noise band beyond the trigger reading —
+    the number did not move after the change, it stayed where the trigger
+    put it. Such a result is shown and never counted (result_counts)."""
+    if verdict not in _MOVED or after_value is None:
+        return None
+    tv = r.get("trigger_value")
+    if tv is None or not r.get("trigger_start"):
+        return None
+    expected, scale, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
+    if expected is None:
+        return None
+    move = float(after_value) - float(expected)
+    held = float(tv) - float(expected)
+    if move == 0 or (held > 0) != (move > 0) or abs(held) < LEVEL_SHIFT_MIN_SHARE * abs(move):
+        return None
+    if _cmp(r, tv, after_value, scale)["verdict"] == verdict:
+        return None             # moved on past the trigger's level: the after-window moved by itself
+    return {"kind": "level_shift", "label": LEVEL_SHIFT_LABEL, "date": _iso(r["trigger_start"])}
+
+
+def _own_confounders(r, verdict, after_value, db_path=DB_PATH):
+    """The confounders read from the tracker's own series — a trend already
+    under way (pre_trend) and a level shift at the trigger (level_shift) —
+    as concurrent-change entries. evaluate and recheck both append them."""
+    out = []
+    for fn in (pre_trend, level_shift):
+        try:
+            c = fn(r, verdict, after_value, db_path)
+        except Exception as ex:
+            print(f"[outcomes] {fn.__name__} unreadable for tracker {r.get('id')}: {ex}")
+            c = None
+        if c:
+            out.append(c)
+    return out
+
+
 def _cmp(r, expected, value, scale=1.0):
     """metrics.compare for one tracker, with the restaurant's own noise band
     stored on it at the start (CA2 #3); a row from before bands were stored
@@ -1466,7 +1525,8 @@ def attribution_label(r) -> str:
              f"can't be separated from that. {CAUSATION_CAVEAT}")
     elif conc:
         trend = [c for c in conc if c.get("kind") == "trend"]
-        others = [c for c in conc if c.get("kind") != "trend"]
+        shift = [c for c in conc if c.get("kind") == "level_shift"]
+        others = [c for c in conc if c.get("kind") not in ("trend", "level_shift")]
         parts = []
         if others:
             names = ", ".join(c.get("label") or c.get("kind") for c in others[:2])
@@ -1474,8 +1534,11 @@ def attribution_label(r) -> str:
             parts.append(f"other changes on this number fell in the same weeks ({names}{more})")
         if trend:
             parts.append("it was already moving this way in the weeks before the change started")
+        if shift:
+            parts.append("it was already at this level in the weeks that prompted the recommendation, "
+                         "before the change started")
         s = (f"{moved} alongside the change, but {' and '.join(parts)}, so it can't be separated from "
-             f"{'them' if others else 'that'}. {CAUSATION_CAVEAT}")
+             f"{'them' if others else 'that'} and isn't counted either way. {CAUSATION_CAVEAT}")
     else:
         s = f"{moved} alongside the change, past normal variation. {CAUSATION_CAVEAT}"
     rv = r.get("recheck_verdict")
@@ -1511,16 +1574,32 @@ def conditions_changed(r) -> bool:
     return bool(c and c.get("conditions_changed"))
 
 
+def confounded(r) -> bool:
+    """Something besides the recommendation could have moved this number in
+    the weeks it was read (confidence re-audit B2 #5, #10): another change
+    on the same number (find_concurrent — a tracker, an accepted
+    recommendation, a price, an event, a holiday, a closure, a sales move),
+    a trend already under way (pre_trend) or a level shift at the trigger
+    (level_shift). Read from the stored `concurrent` list, as evaluate and
+    recheck wrote it; a row never checked (NULL) is not confounded by this
+    rule (its grade is capped at "associated" instead)."""
+    conc = _concurrent_list(r or {})
+    return bool(conc and any(isinstance(c, dict) for c in conc))
+
+
 def result_counts(r) -> bool:
     """Whether an evaluated result is admitted as a measurement of the
     recommendation at all — THE rule learning (rec_learning.learned_verdict)
     and value (counts_in_delivered) share (CA2 #7): not an alert read, a
     routine order or advice not taken (informational), not a change the
     owner said they never made or that something else changed alongside
-    (their check-in), and not one measured against the window that
-    triggered it (baseline_overlaps_trigger)."""
+    (their check-in), not one measured against the window that triggered it
+    (baseline_overlaps_trigger), and not one read alongside another change
+    on the same number, a trend already under way or a level shift at the
+    trigger (confounded — re-audit B2 #5: 46 of 89 "wins" on a do-nothing
+    drifting restaurant carried the trend flag and still counted)."""
     return ((r or {}).get("status") == "evaluated" and not is_informational(r) and not disowned(r)
-            and not conditions_changed(r) and not overlaps_trigger(r))
+            and not conditions_changed(r) and not overlaps_trigger(r) and not confounded(r))
 
 
 def counts_in_delivered(r) -> bool:
@@ -1632,9 +1711,7 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
                                        window=(after_start.isoformat(), after_end.isoformat()))
                if cmp["verdict"] in _MOVED else None)
     concurrent = find_concurrent(r, after_start.isoformat(), after_end.isoformat(), db_path)
-    trend = pre_trend(r, cmp["verdict"], after, db_path)
-    if trend:
-        concurrent.append(trend)
+    concurrent.extend(_own_confounders(r, cmp["verdict"], after, db_path))
     attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r),
                         overlaps=overlaps_trigger(r))
     recheck_on = recheck_on_for(r) if (cmp["verdict"] in _MOVED and not is_informational(r)) else None
@@ -1751,9 +1828,7 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
     concurrent = find_concurrent(r, r["started_on"], end.isoformat(), db_path,
                                  read_windows=[(r["started_on"], _after_end(r)),
                                                (start.isoformat(), end.isoformat())])
-    trend = pre_trend(r, r["verdict"], r.get("after_value"), db_path)
-    if trend:
-        concurrent.append(trend)
+    concurrent.extend(_own_confounders(r, r["verdict"], r.get("after_value"), db_path))
     first, _s, _k = expected_for(r, r["started_on"], _after_end(r), db_path)
     eval_cmp = _cmp(r, first, r.get("after_value"), _s)
     attribution = grade(r["verdict"], eval_cmp["multiple"], concurrent, recheck_verdict=rv,

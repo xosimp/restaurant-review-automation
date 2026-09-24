@@ -231,7 +231,10 @@ def test_a_worse_result_downweights_the_key_and_kind_and_decays(db):
 def test_estimates_that_ran_high_are_weighed_down_once_there_are_enough_pairs(db):
     rid = _rid(db)
     for i, d in enumerate(("Monday", "Tuesday", "Wednesday", "Thursday")):
-        _taken(db, rid, f"cut_waste:Item{i}", "improved", dollars=100.0, predicted=400.0, module="food")
+        # Windows 40 days apart: one result per change (re-audit B2 #7) —
+        # four trackers over the same weeks on one number are one pair.
+        _taken(db, rid, f"cut_waste:Item{i}", "improved", dollars=100.0, predicted=400.0, module="food",
+               days_ago=40 + 40 * i)
     m = rec_learning.effectiveness(rid, db_path=db)
     assert len(m.calibration["cut_waste"]) == 4
     w, why = m("cut_waste:Item9")
@@ -247,27 +250,33 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     def fake(kind, cohort=None, restaurant_id=None, db_path=None, exclude_restaurant_id=None):
         calls.append((cohort, exclude_restaurant_id))
         return {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 6, "available": True,
-                "answered": 40, "measured": 20, "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
+                "answered": 40, "measured": 20, "improved": 14, "measured_capped": 20.0, "improved_capped": 14.0,
+                "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
     monkeypatch.setattr(intelligence, "recommendation_success", fake)
     m = rec_learning.effectiveness(rid, db_path=db)
     # The cohort without this restaurant: its own record is never inside its own prior (re-audit B3).
-    assert m.prior("trim_day") == (0.8, 0.7) and calls == [("pizza", rid)]
-    # below the floor, or carrying an identity, the prior is even
+    # Its success rate is the capped count shrunk toward the do-nothing base
+    # rate (re-audit B2 #3, #7), not toward even: (14 + 0.05 × 5) / (20 + 5).
+    base = rec_learning.BASE_RATE_STATED
+    acc, suc = m.prior("trim_day")
+    assert acc == 0.8 and abs(suc - (14 + base * rec_learning.SHRINK_K) / (20 + rec_learning.SHRINK_K)) < 1e-9
+    assert calls == [("pizza", rid)]
+    # below the floor, or carrying an identity: even acceptance, the base rate for success
     monkeypatch.setattr(intelligence, "recommendation_success",
                         lambda *a, **k: {"restaurants": 4, "answered_restaurants": 4, "measured_restaurants": 4,
                                          "available": False, "answered": 9, "measured": 9})
-    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, 0.5)
+    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, base)
     monkeypatch.setattr(intelligence, "recommendation_success",
                         lambda *a, **k: {"restaurants": 9, "answered_restaurants": 9, "available": True,
                                          "restaurant_id": 3, "answered": 9})
-    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, 0.5)
+    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, base)
     # Each rate over its OWN population: seven restaurants answered, one measured —
-    # the acceptance prior is the cohort's, the success prior stays even.
+    # the acceptance prior is the cohort's, the success prior stays the base rate.
     monkeypatch.setattr(intelligence, "recommendation_success",
                         lambda *a, **k: {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 1,
                                          "available": True, "answered": 30, "measured": 10,
                                          "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.95})
-    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.8, 0.5)
+    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.8, base)
 
 
 def test_home_orders_by_the_learned_weight_and_says_why():

@@ -144,6 +144,65 @@ def _age_days(stamp):
 # alert). tests/test_forecast_log.py pins it against the real function.
 TREND_DIRECTIONS = ("improving", "declining", "flat")
 
+RATING_SLOPE_SHRINK_SE = 2.0
+
+
+def rating_next_week(values):
+    """Next week's rating from the solid weeks (oldest first), or None below
+    WEEKS_FOR_TREND of them: the fitted line carried one week on, with its
+    slope shrunk by how clearly the weeks show it — slope × max(0, 1 −
+    (RATING_SLOPE_SHRINK_SE × se / |slope|)²) — so a slope within two
+    standard errors of nothing adds nothing and the forecast is the weeks'
+    own mean. Clamped to the star scale.
+
+    It replaces "latest week + slope" (client_api, confidence re-audit B2
+    #11): on a steady rating that forecast missed by 0.455★ a week, worse
+    than the 8-week mean (0.304★) and last week alone (0.428★) — probe B2
+    p9. Replayed under the new trend gate (tests/test_confidence_round2_q.py):
+    on a steady rating this misses by ~0.36★ (last week ~0.47★, the mean
+    ~0.30★ — nothing beats the mean of a series that is not moving, and
+    forecast_log withholds a record with negative skill); on a real
+    0.10-0.15★/week slide it beats both (~0.38-0.42★ against 0.43-0.56★).
+    Pure."""
+    from waste_trend import WEEKS_FOR_TREND
+    vals = [float(v) for v in (values or []) if v is not None]
+    n = len(vals)
+    if n < WEEKS_FOR_TREND:
+        return None
+    mx = (n - 1) / 2.0
+    my = sum(vals) / n
+    sxx = sum((i - mx) ** 2 for i in range(n))
+    slope = sum((i - mx) * (vals[i] - my) for i in range(n)) / sxx if sxx else 0.0
+    sse = sum((vals[i] - (my + slope * (i - mx))) ** 2 for i in range(n))
+    se = (sse / (n - 2) / sxx) ** 0.5 if (n > 2 and sxx) else None
+    if slope and se is not None and se > 0:
+        shrink = max(0.0, 1.0 - (RATING_SLOPE_SHRINK_SE * se / abs(slope)) ** 2)
+    else:
+        shrink = 1.0 if slope else 0.0      # an exact line, or no slope at all
+    return round(min(5.0, max(1.0, my + slope * shrink * (n - mx))), 2)
+
+
+def rating_forecast(restaurant_id, trend, db_path: str = DB_PATH):
+    """The review_rating_week forecast the review insight states and logs,
+    or None: only with a direction called at high or medium, from
+    rating_next_week, and withheld while this restaurant's scored record of
+    it reads no better than the naive baselines or often wide
+    (forecast_log.accuracy `withheld`, re-audit B2 #11). One decimal."""
+    t = trend or {}
+    if t.get("direction") not in ("improving", "declining") or t.get("confidence") not in ("high", "medium"):
+        return None
+    nxt = t.get("next_week")
+    if nxt is None:
+        return None
+    try:
+        import forecast_log
+        if forecast_log.accuracy(restaurant_id, "review_rating_week", db_path=db_path).get("withheld"):
+            return None
+    except Exception as e:
+        print(f"[review_intelligence] rating forecast record unreadable for {restaurant_id}: {e}")
+    return round(float(nxt), 1)
+
+
 def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> dict:
     """The weekly rating series with a direction, a confidence and anomalies.
 
@@ -159,7 +218,7 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
     helpers are reused verbatim here rather than reimplemented, so ratings and
     waste can never disagree about what "medium confidence" means.
     """
-    from waste_trend import _confidence, _anomalies, WEEKS_FOR_TREND
+    from waste_trend import _confidence, _anomalies, WEEKS_FOR_TREND, trend_strength
     conn = get_conn(db_path)
     rows = _rows_raw(conn, f"""
         SELECT strftime('%Y-W%W', {_AXIS}) AS week,
@@ -191,6 +250,7 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
         # KeyError after the model call and got the error panel every time.
         "direction": None, "confidence": None, "slope": None, "change": None,
         "first": None, "latest": None, "anomalies": [],
+        "trend_strength_pct": None, "trend_p_value": None, "trend_consistency": None, "next_week": None,
         # Why there is no direction, when there isn't one — so the UI and the
         # prompt can both say the honest thing instead of showing a blank.
         "reason": None,
@@ -222,6 +282,7 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
         direction = "flat"
     else:
         direction = "improving" if slope > 0 else "declining"
+    _strength = trend_strength(values, slope)
     out.update({
         "direction": direction,
         "slope": round(slope, 3),
@@ -234,6 +295,14 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
         # unchanged — it is measuring how consistently the series moves one
         # way, not whether that way is good.
         "confidence": _confidence(values, slope),
+        # The measured figure behind that band (waste_trend.trend_strength,
+        # re-audit B1 H8 / B4 L2): clients show this percentage, not the word.
+        "trend_strength_pct": _strength["trend_strength_pct"],
+        "trend_p_value": _strength["p_value"],
+        "trend_consistency": _strength["consistency"],
+        # Next week's rating as the review insight states it (rating_forecast
+        # decides whether it is shown).
+        "next_week": rating_next_week(values),
         "anomalies": [
             {"week": solid[i]["week"], "kind": flag, "avg_rating": values[i],
              "count": solid[i]["count"]}
@@ -895,10 +964,10 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     improved, worsened = [], []
     if trend["direction"] == "improving":
         improved.append({"what": f"Rating up {abs(trend['change']):.2f}★ over {trend['weeks_above_floor']} weeks",
-                         "confidence": trend["confidence"]})
+                         "confidence": trend["confidence"], "trend_strength_pct": trend.get("trend_strength_pct")})
     elif trend["direction"] == "declining":
         worsened.append({"what": f"Rating down {abs(trend['change']):.2f}★ over {trend['weeks_above_floor']} weeks",
-                         "confidence": trend["confidence"]})
+                         "confidence": trend["confidence"], "trend_strength_pct": trend.get("trend_strength_pct")})
     if stats.get("response_rate", 0) >= 80:
         # The band from the count it rests on (confidence_engine), not a
         # hand-set "high" (confidence audit E2).
@@ -923,6 +992,7 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         # it renders this — direction, confidence, the move and what it rests
         # on — instead.
         "trend": {"direction": trend["direction"], "confidence": trend["confidence"],
+                  "trend_strength_pct": trend.get("trend_strength_pct"),
                   "reason": trend["reason"], "first": trend.get("first"), "latest": trend.get("latest"),
                   "change": trend.get("change"), "weeks": trend.get("weeks_above_floor"),
                   "reviews": sum(int(w.get("count") or 0) for w in (trend.get("series") or [])

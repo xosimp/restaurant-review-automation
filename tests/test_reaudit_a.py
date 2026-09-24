@@ -292,7 +292,10 @@ def test_a5_a_sales_rise_is_listed_beside_a_labor_share_and_never_counted_as_a_s
     assert v["monthly"] == 0 and v["wins"] == 0              # labor dollars never moved
     assert v["sales_lift"]["monthly"] == sales["dollars_monthly"]
     cum = outcomes.cumulative(rid)
-    assert cum["total"] == 0.0 and cum["sales_lift"]["total"] > 0
+    # The labor share was read alongside a sales move and another tracker:
+    # confounded, so it accrues nothing at all (re-audit B2 #5) — nothing
+    # measured, not $0.
+    assert cum["total"] in (None, 0.0) and cum["sales_lift"]["total"] > 0
 
 
 def test_a6_the_sales_lift_is_reported_apart_and_the_payload_says_so():

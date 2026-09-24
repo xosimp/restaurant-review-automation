@@ -243,18 +243,79 @@ def _direction(values):
     return {"direction": direction, "slope": round(slope, 2), "change_pct": change_pct}
 
 
-def _confidence(values, slope):
-    """How much to trust the direction call: more weeks, and consecutive
-    moves that mostly agree with the fitted slope, earn more confidence."""
+# How strong a trend is, measured (confidence re-audit B1 H8, B4 L2). The
+# old band gave "medium" to ANY five weeks whatever they did: the zig-zag
+# [4.5, 3.9, 4.6, 3.8, 4.3] read "declining, medium" and cleared the
+# negative-trend alert. trend_strength_pct is
+#     R² × sample adequacy
+# where R² is the share of the weeks' spread the fitted line explains (a
+# zig-zag explains almost none; eight weeks of pure noise explain about
+# 1/7 on average) and sample adequacy = min(1, n / TREND_FULL_WEEKS). The
+# band words are read off it with two more tests: the least-squares slope's
+# two-sided p-value (Student's t, n − 2 degrees of freedom) and the share of
+# week-over-week moves agreeing with the slope (`consistency`). "high" needs
+# TREND_HIGH_WEEKS weeks, p < TREND_P_HIGH, TREND_STRENGTH_HIGH and
+# TREND_CONSISTENCY_HIGH; "medium" p < TREND_P_MEDIUM, TREND_STRENGTH_MEDIUM
+# and TREND_CONSISTENCY_MEDIUM; anything else is "low".
+TREND_P_HIGH = 0.05
+TREND_P_MEDIUM = 0.10
+TREND_STRENGTH_HIGH = 50
+TREND_STRENGTH_MEDIUM = 25
+TREND_CONSISTENCY_HIGH = 0.6
+TREND_CONSISTENCY_MEDIUM = 0.5
+TREND_HIGH_WEEKS = 8
+TREND_FULL_WEEKS = 8
+
+
+def trend_strength(values, slope=None) -> dict:
+    """{trend_strength_pct, r_squared, consistency, p_value, significant, n}
+    for a series (oldest first) — trend_strength_pct None below
+    WEEKS_FOR_TREND weeks (not measurable, never 0). See the note above.
+    Pure."""
     n = len(values)
+    out = {"trend_strength_pct": None, "r_squared": None, "consistency": None, "p_value": None,
+           "significant": False, "n": n}
     if n < WEEKS_FOR_TREND:
-        return None
+        return out
+    xs = list(range(n))
+    xm, ym = _mean(xs), _mean(values)
+    sxx = sum((x - xm) ** 2 for x in xs) or 1.0
+    b = sum((x - xm) * (y - ym) for x, y in zip(xs, values)) / sxx
+    if slope is None:
+        slope = b
+    resid = [y - (ym + b * (x - xm)) for x, y in zip(xs, values)]
+    sse = sum(r * r for r in resid)
+    sst = sum((y - ym) ** 2 for y in values)
+    r2 = max(0.0, min(1.0, 1.0 - sse / sst)) if sst > 0 else 0.0
+    if b == 0:
+        p = 1.0
+    elif sse <= 1e-12 * max(1.0, sum(v * v for v in values)):
+        p = 0.0                      # an exact line: no noise to mistake it for
+    else:
+        import metrics
+        se = math.sqrt(sse / (n - 2) / sxx)
+        p = 2.0 * (1.0 - metrics.t_cdf(abs(b) / se, n - 2))
     deltas = [values[i] - values[i - 1] for i in range(1, n)]
     agree = sum(1 for d in deltas if (d > 0) == (slope > 0) or d == 0)
-    consistency = agree / len(deltas) if deltas else 0
-    if n >= 8 and consistency >= 0.6:
+    c = agree / len(deltas) if deltas else 0.0
+    adequacy = min(1.0, n / float(TREND_FULL_WEEKS))
+    out.update(trend_strength_pct=int(round(100.0 * r2 * adequacy)), r_squared=round(r2, 3),
+               consistency=round(c, 3), p_value=round(p, 4), significant=p < TREND_P_MEDIUM)
+    return out
+
+
+def _confidence(values, slope):
+    """How much to trust the direction call, as a band read off
+    trend_strength (the measured figure clients show): None below
+    WEEKS_FOR_TREND weeks, else high / medium / low."""
+    ts = trend_strength(values, slope)
+    pct, p, n, c = ts["trend_strength_pct"], ts["p_value"], ts["n"], ts["consistency"]
+    if pct is None:
+        return None
+    if (n >= TREND_HIGH_WEEKS and p < TREND_P_HIGH and pct >= TREND_STRENGTH_HIGH
+            and c >= TREND_CONSISTENCY_HIGH):
         return "high"
-    if n >= 5 or (n >= 4 and consistency >= 0.66):
+    if p < TREND_P_MEDIUM and pct >= TREND_STRENGTH_MEDIUM and c >= TREND_CONSISTENCY_MEDIUM:
         return "medium"
     return "low"
 
@@ -303,6 +364,7 @@ def waste_trend_stats(weeks, target_weekly=None):
         "best": None, "worst": None,
         "largest_increase": None, "largest_decrease": None,
         "direction": None, "change_pct": 0.0, "slope": 0.0, "confidence": None,
+        "trend_strength_pct": None, "trend_p_value": None,
         "anomalies": [],
         "target_weekly": round(target_weekly, 2) if target_weekly else None,
         "above_target": None, "gap_weekly": None, "weeks_over_target": None,
@@ -352,6 +414,9 @@ def waste_trend_stats(weeks, target_weekly=None):
         stats["change_pct"] = d["change_pct"]
         stats["slope"] = d["slope"]
         stats["confidence"] = _confidence(values, d["slope"])
+        ts = trend_strength(values, d["slope"])
+        stats["trend_strength_pct"] = ts["trend_strength_pct"]
+        stats["trend_p_value"] = ts["p_value"]
 
     flags = _anomalies(values)
     stats["anomalies"] = [{"index": i, "kind": k, "label": weeks[i]["label"], "week_end": weeks[i]["week_end"],
@@ -401,21 +466,21 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
     n = stats.get("weeks") or 0
     if not n:
         return out
-    conf = stats.get("confidence")
-    conf_note = {"high": f"high confidence · {n} weeks", "medium": f"moderate confidence · {n} weeks",
-                 "low": f"early read · {n} weeks"}.get(conf)
+    # The measured trend strength, not a band word (re-audit B4 L2).
+    strength = stats.get("trend_strength_pct")
+    conf_note = f"{strength}% trend strength · {n} weeks" if strength is not None else None
 
     if stats.get("direction") and n >= WEEKS_FOR_TREND:
         pct = abs(stats["change_pct"])
         if stats["direction"] == "worsening":
             out.append({"text": f"Waste is trending up about {pct:g}% across the last {n} weeks.",
-                        "tone": "bad", "confidence": conf_note})
+                        "tone": "bad", "confidence": conf_note, "trend_strength_pct": strength})
         elif stats["direction"] == "improving":
             out.append({"text": f"Waste is trending down about {pct:g}% across the last {n} weeks — the current direction is the right one.",
-                        "tone": "good", "confidence": conf_note})
+                        "tone": "good", "confidence": conf_note, "trend_strength_pct": strength})
         else:
             out.append({"text": f"Waste is holding steady across the last {n} weeks — no clear trend either way.",
-                        "tone": "neutral", "confidence": conf_note})
+                        "tone": "neutral", "confidence": conf_note, "trend_strength_pct": strength})
 
     if stats.get("wow_delta") is not None:
         d, p = stats["wow_delta"], stats["wow_pct"]

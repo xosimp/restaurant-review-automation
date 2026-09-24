@@ -2676,6 +2676,16 @@ def init_db(db_path: str = DB_PATH):
         # Signed error, for the calibration loop (food_cost_intelligence).
         # After the CREATE, so a fresh database gets the column too.
         "ALTER TABLE forecast_log ADD COLUMN signed_error_pct REAL",
+        # What two naive forecasts said for the same period when it was frozen
+        # (the latest closed period, the mean of up to 8), filled at scoring —
+        # forecast_log.accuracy's skill (confidence re-audit B2 #11) — and
+        # naive_n how many closed periods they rest on (NULL = not read yet).
+        "ALTER TABLE forecast_log ADD COLUMN naive_last REAL",
+        "ALTER TABLE forecast_log ADD COLUMN naive_mean REAL",
+        "ALTER TABLE forecast_log ADD COLUMN naive_n INTEGER",
+        # Set when a closed period's actual still could not be measured
+        # forecast_log.UNSCORABLE_AFTER_DAYS later: never retried (B6 #11).
+        "ALTER TABLE forecast_log ADD COLUMN unscorable_at TEXT",
     ]
     try:
         for m in migrations:

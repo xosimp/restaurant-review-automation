@@ -1456,13 +1456,12 @@ def _do_review_insight(rid):
                          and _trend["confidence"] in ("high", "medium"))
         has_diag = bool(_diags)
         # "Next week" is computed here, not asked of the model (H8): the
-        # model wrote a projection nothing checked or scored. One week of the
-        # fitted slope on from the latest week that cleared the floor,
-        # clamped to the star scale, and logged to forecast_log once per ISO
-        # week so it can be scored against the week that closes.
-        _rating_next = None
-        if has_trend and _trend.get("latest") is not None:
-            _rating_next = round(min(5.0, max(1.0, float(_trend["latest"]) + float(_trend.get("slope") or 0))), 1)
+        # model wrote a projection nothing checked or scored. The fitted line
+        # one week on with its slope shrunk by its standard error
+        # (review_intelligence.rating_forecast; withheld while its scored
+        # record has no skill over last week or the 8-week mean), logged to
+        # forecast_log once per ISO week so it is scored when the week closes.
+        _rating_next = _ri.rating_forecast(rid, _trend) if has_trend else None
         forecast_line = ""
         why_line = (
             "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
@@ -1630,7 +1629,7 @@ def _do_review_insight(rid):
             "confidence": _trend.get("confidence"),
             "trend": {k: _trend[k] for k in
                       ("direction", "confidence", "change", "first", "latest",
-                       "weeks_above_floor", "reason", "anomalies")},
+                       "weeks_above_floor", "reason", "anomalies", "trend_strength_pct")},
             "diagnosis": _diags[0] if _diags else None,
             "diagnoses": _diags[:3],
             "revenue_at_risk": _money,

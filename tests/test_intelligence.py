@@ -132,15 +132,19 @@ def test_features_are_ratios_from_own_rows_and_none_when_unmeasured(db_path):
     conn.commit(); conn.close()
     f = features.compute(rid, today=now, db_path=db_path)
     assert f["reviews_30d"] == 6 and f["avg_rating_30d"] == 4.0
-    assert f["reply_rate_30d"] == 0.5 and f["response_24h_rate_30d"] == 1.0
+    # Three timed replies are under MIN_REVIEWS_FOR_RATIO (re-audit B3 #11):
+    # a 24-hour rate from three replies is not a measured ratio.
+    assert f["reply_rate_30d"] == 0.5 and f["response_24h_rate_30d"] is None
     assert f["labor_pct_28d"] == round(sum(30 + (i % 3) for i in range(28)) / 28, 2) and f["labor_pct_sd_28d"] is not None
     assert f["food_cost_pct_28d"] is None and f["campaign_tap_rate_28d"] is None        # unmeasured, never 0
     assert "sales" not in f and not any(k.endswith("_cost") for k in f)               # ratios only
     week = features.store(rid, f, today=now, db_path=db_path)
     latest = features.latest(rid, db_path=db_path)
     assert latest["week"] == week and 0 < latest["completeness"] < 1
-    # the other restaurant's row never touched this one
-    assert features.compute(other, today=now, db_path=db_path)["avg_rating_30d"] == 1.0
+    # the other restaurant's row never touched this one — its one review is
+    # counted, and one review is under the ratio floor (re-audit B3 #11)
+    other_f = features.compute(other, today=now, db_path=db_path)
+    assert other_f["reviews_30d"] == 1 and other_f["avg_rating_30d"] is None
 
 
 # ── level 1: feedback derived from the tables that already record answers ────

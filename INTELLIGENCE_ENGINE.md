@@ -123,6 +123,15 @@ Ask, the queue, decisions and the ledger share (legacy
    tap and return rates, posts per 28 days and cadence, specials rotation,
    recommendations presented / done / declined, outcomes improved rate,
    and `completeness` (share of feature keys that could be measured).
+   Every ratio has a measured floor before it is non-null (re-audit B3
+   #11): a 28-day day-based ratio (labor %, its day-to-day spread, weekend
+   share, hours per $1k, food cost %, waste as % of sales) needs
+   `features.MIN_MEASURED_DAYS` (14) days carrying its data; a daypart
+   ratio 14 schedule-outcome days; a review ratio `MIN_REVIEWS_FOR_RATIO`
+   (5) reviews (and timed replies); a campaign rate `MIN_SENT_FOR_RATE` (20)
+   messages; a post rate `MIN_POSTS_FOR_RATE` (3) posts. Below it the
+   feature is None, so it neither enters benchmarks nor counts in
+   completeness (one day at 61% used to publish `labor_pct_28d` = 61.0).
 2. **Feedback** — every recommendation's life, derived from the tables
    that already record it.
 3. **Discovery** — for each cohort (and platform-wide), each hypothesis
@@ -191,7 +200,27 @@ restaurant and key — never per event row):
   `rec_learning.learned_verdict` — the one mapping the engine and the
   owner's record share: the owner saying they did not make the change, or
   that something else changed, is `unknown`; a move that faded or reversed
-  at its re-check is `no_clear_change`, never a win (B9).
+  at its re-check is `no_clear_change`, never a win (B9); a result read
+  alongside another change, a trend or a level shift is `unknown` (B2 #5).
+- A measured result is filed **one per episode** (re-audit B2 #3): the
+  `measured` row's key is `<source_key>#o<tracker id>`
+  (`feedback.measured_key`), so a key measured three times is three
+  results — the unique (restaurant, key, action) row used to be overwritten
+  in place, improved then worsened then improved reading as one result
+  flipping. On one number (restaurant, metric) only the earliest of
+  overlapping after-windows counts; the others are filed `unknown`
+  (`feedback._counted_tracker_ids`, the own record's `_one_per_window`).
+  Rows written the old way are dropped once
+  (`intelligence_feedback_repair:episodes_v1`) and re-derived.
+- **No one restaurant carries a cohort figure** (re-audit B2 #3): every
+  cross-restaurant summary adds `measured_capped` / `improved_capped` /
+  `success_rate_capped` — each restaurant's clear results scaled so it
+  holds at most `scoring.MAX_RESTAURANT_SHARE` (1/3) of the capped total
+  (`scoring.capped_counts`, the fixed point c = ⅓ × Σ min(n_r, c)). Every
+  prior reads the capped counts: `kind_record`'s cohort stand-in needs
+  `PRIOR_MIN_MEASURED` (10) CAPPED results (one peer's 8 of 12 now leaves
+  6, and the cohort does not stand in), and `Effectiveness.prior` uses
+  them.
 
 **The floor, per figure (re-audit B3).** A cross-restaurant rate is a fact
 only over `MIN_COHORT` restaurants that contributed **to that rate**:
@@ -266,7 +295,18 @@ word and the object rides beside it as `confidence_detail`.
   range. Shown only at `MIN_MEASURED_FOR_RATE` (5) own results; else the
   anonymous cohort's (this restaurant excluded, `cohort_ok`,
   `assert_anonymous`) at `PRIOR_MIN_MEASURED` (10), labelled "At
-  restaurants like yours"; else `null`.
+  restaurants like yours"; else `null`. `kind_record` also carries
+  (confidence re-audit round 2, group Q — additive; group P decides their
+  use): `base_rate` / `base_rate_source` / `base_rate_n` /
+  `base_rate_basis` — the success rate DOING NOTHING gives for the kind
+  here (`rec_learning.base_rate`: the kind's untaken results, one per
+  window, shrunk toward the chance rate; else half the mean false-alarm
+  rate of this restaurant's own noise bands; else half the stated 10% →
+  0.05; held to 0.02–0.5), the value to shrink toward instead of 0.5; and
+  `rate_recent` / `rate_recent_n_eff` / `recent_half_life_days` — the own
+  improved share with each result weighted 0.5^(age / 90 days) from its
+  evaluation, at the same floor as `rate`. Its cohort figures are the
+  capped counts (`prior_measured_raw` / `prior_improved_raw` keep the raw).
 - **Data Freshness** = 100 × the minimum over the card's sources of
   recency × completeness (`data_freshness.SOURCES`, one threshold table:
   recency is 1 within `grace` days of the expected lag, then falls to 0
@@ -306,14 +346,23 @@ the last 365 days of episodes.
   shrunk rate for the kind, the cohort **without this restaurant**, each
   rate **only when its own population clears `MIN_COHORT`** (answering
   restaurants for acceptance, measuring restaurants for success — through
-  `intelligence.recommendation_success`, asserted anonymous), otherwise
-  even (0.5). With nothing learned the weight is exactly 1.0. The model
-  reads a year of episodes without their `shown` rows (only whether each
-  has one — B18).
+  `intelligence.recommendation_success`, asserted anonymous; the success
+  prior from the CAPPED counts shrunk toward the base rate), otherwise
+  even (0.5) for acceptance and the kind's **base rate** for success
+  (`rec_learning.base_rate`, re-audit B2 #7: a success prior of 0.5 ranked
+  a never-measured kind above one that measurably worked — 2 of 10
+  improved weighed 0.867 against 1.0). Measured results are counted one
+  per tracker and one per overlapping after-window on a number, the rule
+  `kind_record` uses; the worse-result penalties and dollar pairs come
+  from the same set. With nothing learned the weight is exactly 1.0. The
+  model reads a year of episodes without their `shown` rows (only whether
+  each has one — B18).
 - weight = 1 + mean over the kind and its tags of
   0.2 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
   dollar calibration (median measured ÷ predicted, ≥ 3 pairs, shrunk toward
-  1, held to 0.8–1.2), **bounded below at 0.75 and above by a ceiling that
+  1, held to 0.8–1.2 — from `CALIBRATION_WIDE_PAIRS` (8) pairs to 0–1.2:
+  2 of 10 realising $1,000 and 8 realising $0 on $1,000 estimates showed
+  $800 under the floor, $231 now, B2 #8), **bounded below at 0.75 and above by a ceiling that
   scales with measured success**: 1 + 0.25 × (Wilson 90% lower bound of the
   kind's — or its best tag's — own improved ÷ measured, above the prior,
   over the prior's headroom). No measured result, no lift above 1.0; 3 of 3
@@ -327,7 +376,9 @@ the last 365 days of episodes.
   `dollars_adjusted` is None below 3 measured pairs, otherwise the figure ×
   the ratio with the note "adjusted from N measured results".
   `rec_learning.attach_dollar_calibration` puts `dollars_adjusted`,
-  `calibration_n` and `calibration_note` on every Home card, the one-thing
+  `calibration_n`, `calibration_note` and `realised_mean` (the mean monthly
+  dollars the kind's measured results actually realised, no clear change =
+  $0; None below 3 pairs — shown beside the estimate) on every Home card, the one-thing
   hero and every DSR action; clients show the adjusted figure when it is
   non-null. The raw `dollars_monthly` stays on the item and is what the
   ledger snapshots as `dollar_value` — the ratio is realised ÷ dollar_value,
@@ -373,9 +424,14 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
 - **Noise bands per restaurant (CA2 #3).** `metrics.noise_band` estimates
   this restaurant's spread of the metric over its own non-overlapping
   windows of the comparison's length (≥4 windows over up to a year, else ≥6
-  whole weeks scaled by √(7/L) for a per-day metric, else the stated band
-  alone): band = max(stated, 1.645 × σ_L × √(1 + L/B)), a two-sided 10%
-  false-alarm rate that the stated floor only lowers. The tracker stores
+  whole weeks for a per-day metric, else the stated band alone): band =
+  max(stated, 1.645 × σ_L × √(1 + L/B)), a two-sided 10% false-alarm rate
+  that the stated floor only lowers. The weekly path (days 42–111 of
+  history) corrects for persistence (re-audit B2 #6): with ρ the weeks'
+  bias-corrected lag-1 autocorrelation, held to [`AUTOCORR_FLOOR` 0.5,
+  0.95], σ_L = s₇ / √(E[s²]/σ²) × √(VIF(ρ, L/7) / (L/7)) — weeks read as
+  independent had 28.7% of do-nothing trackers "move" while stating 10%
+  (probe p2 S3); now 11.0% against 10% (`noise_band` also returns `rho`). The tracker stores
   `noise_band`, `noise_sigma`, `false_alarm_rate` and `band_basis` at its
   start and every read of it (evaluation, re-check, accrual, the grade, the
   interim reading) uses it. A 7-day caller passes `window_days=7`.
@@ -388,8 +444,21 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
   the only mapping; `outcomes.result_counts` is its value twin (not an alert
   read, a routine supplier order or advice not taken; not disowned; no
   "something else changed" check-in; not measured against its trigger
-  window) and a result counts in learning exactly when it counts in
-  delivered value (the learning == value test). `features.
+  window; not **confounded** — `outcomes.confounded`, re-audit B2 #5: a
+  stored `concurrent` entry of any kind, another change on the same
+  number, a trend already under way or a level shift) and a result counts
+  in learning exactly when it counts in delivered value (the learning ==
+  value test; `_COUNTS_SQL` holds the same rule for accrual). Probe p2 S4
+  (a drifting restaurant, nothing changed) read 29.7% improved, all
+  counted; now 9.8% of what counts.
+- **A level shift at the trigger (re-audit B2 #10).** A lasting step inside
+  the trigger window (a wage rise) never returns to the mirror baseline, so
+  doing nothing read "worsened" 35.5% of the time (probe p2 S7).
+  `outcomes.level_shift` — the trigger reading already on the move's side
+  of the baseline with at least half the move, and the after-window not
+  past the band beyond the trigger reading — adds a `level_shift`
+  concurrent entry ("Already at this level before the change started");
+  the result is shown and never counted (3.0% now). `features.
   outcomes_improved_rate_90d` reads through it — `CLEAR_VERDICTS`
   denominator, one result per number per overlapping window, None below
   `MIN_MEASURED_FOR_RATE` (5); `recs_*_28d` come from the ledger, every

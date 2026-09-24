@@ -24,9 +24,16 @@ This module is the one place those rules live, for every kind:
                   per kind, and never scores against a missing measurement.
   accuracy()      the record for one kind: one row per period, the last
                   ACCURACY_WINDOW of them, mean absolute error and signed
-                  bias over the SAME denominator (the actual), a reading, and
-                  `withheld` when the record reads "often wide" — a forecast
-                  with that record is not shown.
+                  bias over the SAME denominator (the actual), a reading, its
+                  SKILL against two naive forecasts (the last closed period,
+                  the mean of up to 8 — each as it stood when the forecast
+                  was frozen, stored at scoring), and `withheld` when the
+                  record reads "often wide" or does worse than either naive
+                  forecast — a forecast with that record is not shown. No
+                  reading and no withholding before MIN_SCORED_FOR_READING
+                  (4) periods are scored (confidence re-audit B2 #11, B1 L2).
+  A period still unmeasurable UNSCORABLE_AFTER_DAYS after it closed is
+  marked `unscorable_at` and never retried (re-audit B6 #11).
   calibration() / calibrated()
                   the bias correction, from the same rows.
 
@@ -73,9 +80,24 @@ KINDS = {
 }
 
 # How many closed periods the record reads, and how many it needs before it
-# says anything. Two is the floor the Food Cost accuracy line always used.
+# says anything — a reading ("close") or a verdict (withheld). Two periods
+# said "close" about a record two coin flips could make (re-audit B1 L2).
 ACCURACY_WINDOW = 8
-MIN_SCORED_FOR_READING = 2
+MIN_SCORED_FOR_READING = 4
+# Skill against the naive forecasts (re-audit B2 #11): 1 − MAE(forecast) /
+# MAE(naive) over the scored periods that carry the naive figure, at least
+# MIN_SCORED_FOR_SKILL of them. `skill` is the lower of the two (vs the last
+# period, vs the mean of up to NAIVE_MEAN_PERIODS); below 0 the forecast has
+# done worse than saying nothing new, and the next one is withheld.
+MIN_SCORED_FOR_SKILL = 4
+NAIVE_MEAN_PERIODS = 8
+NAIVE_MEAN_MIN = 3             # closed periods before the naive mean exists
+NO_SKILL_READING = "no better than a simple average"
+# A closed period whose actual still cannot be measured this many days after
+# it closed is given up on (`unscorable_at`), not retried every night.
+UNSCORABLE_AFTER_DAYS = 21
+# Scored rows whose naive figures are filled in per pass (older rows).
+NAIVE_BACKFILL_PER_PASS = 50
 # Mean absolute error bands for the reading. "often wide" withholds the next
 # forecast of that kind: a module that has been 40% out four times running
 # does not get to state a fifth figure as if it had not.
@@ -299,52 +321,133 @@ def errors(predicted, actual):
     return abs(signed), signed
 
 
+def _shift_months(d, k):
+    """The first of the month k months before d's month."""
+    y, m = d.year, d.month - k
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, 1)
+
+
+def _prior_periods(kind, known_on, n=NAIVE_MEAN_PERIODS):
+    """[(first, last)] of the n periods of `kind` that had CLOSED before
+    `known_on` (the day the forecast was frozen), newest first."""
+    known_on = _day(known_on)
+    first_open = period_bounds(kind, known_on)[0]
+    out = []
+    for k in range(1, n + 1):
+        if KINDS[kind]["period"] == "month":
+            out.append(month_bounds(_shift_months(first_open, k)))
+        else:
+            out.append(week_bounds(first_open - timedelta(days=7 * k)))
+    # The period holding known_on closes only after it: never known then.
+    return [p for p in out if p[1] < known_on]
+
+
+def naive_forecasts(restaurant_id, kind, row, db_path=DB_PATH) -> dict:
+    """{"last", "mean", "n"}: what two naive forecasts would have said for
+    the period of `row` when it was frozen — the latest closed period's
+    actual, and the mean of up to NAIVE_MEAN_PERIODS closed periods (None
+    below NAIVE_MEAN_MIN of them). Read through the kind's own resolver; a
+    revenue week sums the same weekdays it projected, shifted back whole
+    weeks. Never raises."""
+    out = {"last": None, "mean": None, "n": 0}
+    try:
+        known_on = _day(str(row.get("created_at") or row.get("horizon_end"))[:10])
+        target_first = period_bounds(kind, row["horizon_end"])[0]
+        try:
+            basis = json.loads(row.get("basis") or "")
+        except Exception:
+            basis = None
+        vals = []
+        for first, last in _prior_periods(kind, known_on):
+            prow = dict(row)
+            if kind == "revenue_week" and isinstance(basis, dict) and basis.get("days"):
+                shift = target_first - first
+                prow["basis"] = json.dumps({"days": [(_day(d) - shift).isoformat() for d in basis["days"]]})
+            v = actual_for(restaurant_id, kind, last, row=prow, db_path=db_path)
+            if v is not None:
+                vals.append(float(v))
+        out["n"] = len(vals)
+        if vals:
+            out["last"] = round(vals[0], 2)
+        if len(vals) >= NAIVE_MEAN_MIN:
+            out["mean"] = round(sum(vals) / len(vals), 2)
+    except Exception as e:
+        print(f"[forecast_log] naive forecasts unavailable for {restaurant_id}/{kind}: {e}")
+    return out
+
+
 def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
-    """Fill in the actual for every forecast whose period has closed.
-    Returns {"scored": n, "unmeasurable": k}."""
+    """Fill in the actual for every forecast whose period has closed, with
+    the two naive forecasts it is judged against (naive_forecasts). A row
+    still unmeasurable UNSCORABLE_AFTER_DAYS after its period closed is
+    marked `unscorable_at` and never read again (re-audit B6 #11). Scored
+    rows from before the naive figures existed get them, a bounded number
+    per pass. Returns {"scored": n, "unmeasurable": k, "gave_up": g}."""
     today = _day(today or date.today())
     conn = get_conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, kind, horizon_end, predicted, basis FROM forecast_log "
-            "WHERE restaurant_id=? AND actual IS NULL AND horizon_end < ?",
+            "SELECT id, kind, horizon_end, predicted, basis, created_at FROM forecast_log "
+            "WHERE restaurant_id=? AND actual IS NULL AND unscorable_at IS NULL AND horizon_end < ?",
             (restaurant_id, today.isoformat())).fetchall()]
+        backfill = [dict(r) for r in conn.execute(
+            "SELECT id, kind, horizon_end, predicted, basis, created_at FROM forecast_log "
+            "WHERE restaurant_id=? AND actual IS NOT NULL AND naive_n IS NULL "
+            "ORDER BY horizon_end DESC LIMIT ?", (restaurant_id, NAIVE_BACKFILL_PER_PASS)).fetchall()]
     finally:
         conn.close()
-    scored = unmeasurable = 0
-    updates = []
+    scored = unmeasurable = gave_up = 0
+    updates, give_up, naive = [], [], []
     for r in rows:
         if r["kind"] not in KINDS or not is_closed(r["kind"], r["horizon_end"], today):
             continue
         actual = actual_for(restaurant_id, r["kind"], r["horizon_end"], row=r, db_path=db_path)
         if actual is None:
             unmeasurable += 1
+            closed_on = period_bounds(r["kind"], r["horizon_end"])[1]
+            if (today - closed_on).days > UNSCORABLE_AFTER_DAYS:
+                give_up.append((today.isoformat(), r["id"]))
             continue
         err, signed = errors(r["predicted"], actual)
-        updates.append((round(actual, 2), err, signed, r["id"]))
-    if updates:
+        nv = naive_forecasts(restaurant_id, r["kind"], r, db_path=db_path)
+        updates.append((round(actual, 2), err, signed, nv["last"], nv["mean"], nv["n"], r["id"]))
+    for r in backfill:
+        if r["kind"] not in KINDS:
+            continue
+        nv = naive_forecasts(restaurant_id, r["kind"], r, db_path=db_path)
+        naive.append((nv["last"], nv["mean"], nv["n"], r["id"]))
+    if updates or give_up or naive:
         conn = get_conn(db_path)
         try:
             for u in updates:
-                conn.execute("UPDATE forecast_log SET actual=?, error_pct=?, signed_error_pct=?, "
-                             "scored_at=datetime('now') WHERE id=?", u)
+                conn.execute("UPDATE forecast_log SET actual=?, error_pct=?, signed_error_pct=?, naive_last=?, "
+                             "naive_mean=?, naive_n=?, scored_at=datetime('now') WHERE id=?", u)
                 scored += 1
+            for g in give_up:
+                conn.execute("UPDATE forecast_log SET unscorable_at=? WHERE id=? AND actual IS NULL", g)
+                gave_up += 1
+            for n_ in naive:
+                conn.execute("UPDATE forecast_log SET naive_last=?, naive_mean=?, naive_n=? WHERE id=?", n_)
             conn.commit()
         finally:
             conn.close()
-    return {"scored": scored, "unmeasurable": unmeasurable}
+    return {"scored": scored, "unmeasurable": unmeasurable, "gave_up": gave_up}
 
 
 def restaurants_due(today=None, db_path: str = DB_PATH) -> list:
     """Restaurant ids holding at least one unscored forecast dated before
-    today — the set the nightly scoring pass walks, whatever modules they
-    have on (a labor or review forecast is scored with no Food Cost)."""
+    today that has not been given up on (unscorable_at) — the set the
+    nightly scoring pass walks, whatever modules they have on (a labor or
+    review forecast is scored with no Food Cost)."""
     today = _day(today or date.today())
     conn = get_conn(db_path)
     try:
         return [r[0] for r in conn.execute(
-            "SELECT DISTINCT restaurant_id FROM forecast_log WHERE actual IS NULL AND horizon_end < ? "
-            "ORDER BY restaurant_id", (today.isoformat(),)).fetchall()]
+            "SELECT DISTINCT restaurant_id FROM forecast_log WHERE actual IS NULL AND unscorable_at IS NULL "
+            "AND horizon_end < ? ORDER BY restaurant_id", (today.isoformat(),)).fetchall()]
     finally:
         conn.close()
 
@@ -357,10 +460,17 @@ def _scored_periods(restaurant_id, kind, db_path, limit=ACCURACY_WINDOW):
     that week — the one that was a forecast rather than a later reading."""
     conn = get_conn(db_path)
     try:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT horizon_end, predicted, actual, error_pct, signed_error_pct, created_at FROM forecast_log "
-            "WHERE restaurant_id=? AND kind=? AND actual IS NOT NULL ORDER BY created_at ASC, id ASC",
-            (restaurant_id, kind)).fetchall()]
+        rows = None
+        for cols in (", naive_last, naive_mean", ""):
+            try:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT horizon_end, predicted, actual, error_pct, signed_error_pct, created_at" + cols +
+                    " FROM forecast_log WHERE restaurant_id=? AND kind=? AND actual IS NOT NULL "
+                    "ORDER BY created_at ASC, id ASC", (restaurant_id, kind)).fetchall()]
+                break
+            except Exception:
+                continue
+        rows = rows or []
     except Exception:
         rows = []
     finally:
@@ -381,14 +491,50 @@ def _period_word(kind, n):
     return w if n == 1 else w + "s"
 
 
+def skill(rows) -> dict:
+    """{"skill_vs_last", "skill_vs_mean", "skill", "skill_pct", "n_skill"}
+    over scored rows carrying the naive figures: 1 − MAE(forecast) /
+    MAE(naive), each over the rows that have that naive figure, with at
+    least MIN_SCORED_FOR_SKILL of them; `skill` is the lower of the two
+    (the forecast must beat both), `skill_pct` it as a whole percent. Pure."""
+    out = {"skill_vs_last": None, "skill_vs_mean": None, "skill": None, "skill_pct": None, "n_skill": 0}
+    for name, col in (("skill_vs_last", "naive_last"), ("skill_vs_mean", "naive_mean")):
+        pairs = [(_f(r.get("predicted")), _f(r.get("actual")), _f(r.get(col))) for r in rows]
+        pairs = [p for p in pairs if None not in p]
+        out["n_skill"] = max(out["n_skill"], len(pairs))
+        if len(pairs) < MIN_SCORED_FOR_SKILL:
+            continue
+        mae_f = sum(abs(p - a) for p, a, _n in pairs) / len(pairs)
+        mae_n = sum(abs(nv - a) for _p, a, nv in pairs) / len(pairs)
+        if mae_n > 0:
+            out[name] = round(1.0 - mae_f / mae_n, 3)
+        elif mae_f == 0:
+            out[name] = 0.0
+        else:
+            out[name] = -1.0              # the naive forecast was exact and this one was not
+    got = [v for v in (out["skill_vs_last"], out["skill_vs_mean"]) if v is not None]
+    if got:
+        out["skill"] = min(got)
+        out["skill_pct"] = int(round(100 * out["skill"]))
+    return out
+
+
 def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
     """How this kind of forecast has held up here (contract K8).
 
     {"available", "kind", "scored", "n_periods", "n_weeks" | "n_months",
-     "mean_error_pct", "bias_pct", "reading", "withheld", "reason"}.
+     "mean_error_pct", "bias_pct", "reading", "withheld", "reason",
+     "skill_vs_last", "skill_vs_mean", "skill", "skill_pct", "n_skill",
+     "beats_naive"}.
+    `skill` (see skill()) is the evidence input for a recommendation built on
+    this forecast; `beats_naive` is True/False once it is measured, else
+    None. Withheld when the record reads "often wide" or its skill is below
+    0 (reading NO_SKILL_READING). Nothing below MIN_SCORED_FOR_READING.
     Never raises."""
     base = {"available": False, "kind": kind, "scored": 0, "n_periods": 0,
-            "mean_error_pct": None, "bias_pct": None, "reading": None, "withheld": False}
+            "mean_error_pct": None, "bias_pct": None, "reading": None, "withheld": False,
+            "skill_vs_last": None, "skill_vs_mean": None, "skill": None, "skill_pct": None, "n_skill": 0,
+            "beats_naive": None}
     unit_key = "n_months" if KINDS.get(kind, {}).get("period") == "month" else "n_weeks"
     base[unit_key] = 0
     try:
@@ -405,15 +551,27 @@ def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
     mean_err = sum(errs) / len(errs)
     reading = ("close" if mean_err <= READING_CLOSE_PCT else
                "roughly right" if mean_err <= READING_ROUGH_PCT else WITHHOLD_READING)
+    sk = skill(rows)
+    base.update(sk)
+    reason = None
+    if reading == WITHHOLD_READING:
+        reason = (f"past forecasts here missed by {mean_err:.0f}% on average over {len(errs)} "
+                  f"{_period_word(kind, len(errs))}, so the next one is not shown")
+    elif sk["skill"] is not None and sk["skill"] < 0:
+        reading = NO_SKILL_READING
+        what = ("the last " + _period_word(kind, 1) + "'s figure"
+                if sk["skill_vs_last"] is not None and sk["skill_vs_last"] == sk["skill"]
+                else f"the average of the {_period_word(kind, 2)} before")
+        reason = (f"past forecasts here missed by more than simply repeating {what} did, over "
+                  f"{sk['n_skill']} {_period_word(kind, sk['n_skill'])}, so the next one is not shown")
     base.update({
         "available": True,
         "mean_error_pct": round(mean_err, 1),
         "bias_pct": round(sum(signed) / len(signed), 1) if signed else None,
         "reading": reading,
-        "withheld": reading == WITHHOLD_READING,
-        "reason": (f"past forecasts here missed by {mean_err:.0f}% on average over {len(errs)} "
-                   f"{_period_word(kind, len(errs))}, so the next one is not shown"
-                   if reading == WITHHOLD_READING else None),
+        "withheld": reason is not None,
+        "reason": reason,
+        "beats_naive": (sk["skill"] > 0) if sk["skill"] is not None else None,
     })
     return base
 

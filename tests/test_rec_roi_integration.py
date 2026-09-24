@@ -161,13 +161,18 @@ def test_the_win_push_names_what_moved_never_a_cause(db_path, monkeypatch):
     sent = []
     monkeypatch.setattr(strategy_jobs, "_reach", lambda rid, kind, title, body, *a, **k: sent.append((title, body)) or 1)
     rid = _rid(db_path)
-    oid = _insert(db_path, rid, "Trim", "labor_pct", 400.0, "2026-06-01", attribution="associated",
-                  concurrent=json.dumps([{"kind": "price_change", "label": "a menu price change", "date": "2026-06-05"}]))
+    # A result read alongside another change on the same number is not a
+    # win at all (re-audit B2 #5): it counts neither way, and is not announced.
+    tangled = _insert(db_path, rid, "Trim", "labor_pct", 400.0, "2026-06-01", attribution="associated",
+                      concurrent=json.dumps([{"kind": "price_change", "label": "a menu price change",
+                                              "date": "2026-06-05"}]))
+    assert outcomes.get_outcome(tangled, db_path=db_path)["counts"] is False
+    assert strategy_jobs._tell_owners_what_worked([outcomes.get_outcome(tangled, db_path=db_path)], db_path) == 0
+    oid = _insert(db_path, rid, "Trim", "labor_pct", 400.0, "2026-07-01", attribution="associated")
     row = outcomes.get_outcome(oid, db_path=db_path)
     assert strategy_jobs._tell_owners_what_worked([row], db_path) == 1
     title, body = sent[0]
     assert "worked" not in title.lower() and title.startswith("Labor %")
-    assert "a menu price change" in body
     # A disowned result is not announced at all.
     outcomes.apply_checkin(rid, oid, "no", False, db_path=db_path)
     sent.clear()
