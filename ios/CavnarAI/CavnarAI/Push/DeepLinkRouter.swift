@@ -17,6 +17,10 @@ final class DeepLinkRouter {
     /// whose lines each carry the question an owner would ask about them.
     /// Prefilled, never auto-sent: the owner decides whether to ask it.
     var pendingAskPrompt: String?
+    /// A Daily Sales Report to open on Home's stack — set by a `dsr` push
+    /// (`business_date` → that night) or its row in the notification list
+    /// (no date there → the list of nights). HomeView consumes it.
+    var pendingDailyReport: DailyReportRoute?
     /// Bumped each time a tap switched the active location, so Home reloads
     /// for the location it now shows.
     var locationSwitches = 0
@@ -34,28 +38,41 @@ final class DeepLinkRouter {
     /// found" inside B and the open is recorded against B (re-audit A-14).
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil,
                                alertId: Int? = nil, recKey: String? = nil,
-                               module: String? = nil, restaurantId: Int? = nil) {
+                               module: String? = nil, restaurantId: Int? = nil,
+                               businessDate: String? = nil) {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
                 if await switchLocation(target) { locationSwitches += 1 }
                 route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-                      alertId: alertId, recKey: recKey, module: module)
+                      alertId: alertId, recKey: recKey, module: module, businessDate: businessDate)
             }
             return
         }
         route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-              alertId: alertId, recKey: recKey, module: module)
+              alertId: alertId, recKey: recKey, module: module, businessDate: businessDate)
     }
 
     private func route(alertType: String, reviewId: Int?, askPrompt: String?,
-                       alertId: Int?, recKey: String?, module: String?) {
+                       alertId: Int?, recKey: String?, module: String?, businessDate: String?) {
         // What the product knew was how many notifications it SENT. Whether
         // any of them were worth sending had no answer anywhere — not for
         // the owner, not for Will. Best effort: a failure here must never
         // interfere with actually opening the thing.
         if !alertType.isEmpty {
             Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey) }
+        }
+        // The nightly Daily Sales Report opens on Home's stack: that night
+        // when the push names it, the list of nights when it doesn't (a row
+        // in the notification history carries no date). Checked before the
+        // module map so it can't fall through to Reviews, whatever
+        // `module` an older server sends for it.
+        if Self.isDailyReport(alertType: alertType, module: module) {
+            pendingTab = .home
+            pendingModuleKey = nil
+            pendingReviewID = nil
+            pendingDailyReport = DSRFormat.isISODate(businessDate) ? .report(date: businessDate) : .list
+            return
         }
         // Both of these are cross-module reads that arrive WITH a question
         // (data.ask_prompt), so they open the assistant on it rather than
@@ -123,6 +140,17 @@ final class DeepLinkRouter {
     func consumePendingReviewID() -> Int? {
         defer { pendingReviewID = nil }
         return pendingReviewID
+    }
+
+    /// The nightly report's push type is `dsr`; a server that maps it in
+    /// push.NOTIFICATION_MODULE may send `module: "dsr"` as well.
+    static func isDailyReport(alertType: String, module: String?) -> Bool {
+        alertType == "dsr" || module == "dsr"
+    }
+
+    func consumePendingDailyReport() -> DailyReportRoute? {
+        defer { pendingDailyReport = nil }
+        return pendingDailyReport
     }
 
     func consumePendingModuleKey() -> String? {

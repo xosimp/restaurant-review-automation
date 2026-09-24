@@ -21,11 +21,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             heldTap = nil
             router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt,
                                          alertId: tap.alertId, recKey: tap.recKey,
-                                         module: tap.module, restaurantId: tap.restaurantId)
+                                         module: tap.module, restaurantId: tap.restaurantId,
+                                         businessDate: tap.businessDate)
         }
     }
     private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?, alertId: Int?, recKey: String?,
-                          module: String?, restaurantId: Int?)?
+                          module: String?, restaurantId: Int?, businessDate: String?)?
 
     /// Whether the phone will actually show anything. A denial is permanent
     /// and silent: the app never asked, so an owner who tapped "Don't Allow"
@@ -319,8 +320,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // Extract only Sendable values before crossing to the main actor —
         // the notification objects themselves must not cross.
         let userInfo = response.notification.request.content.userInfo
-        guard let cavnar = userInfo["cavnar"] as? [String: Any] else { return }
-        let alertType = cavnar["alert_type"] as? String ?? ""
+        // Every push.py payload nests its data under "cavnar". The daily
+        // report's is specified as {"type": "dsr", "business_date": ...};
+        // read that shape too — nested or at the top level — so the tap
+        // routes whichever way the delivery side ends up sending it.
+        guard let cavnar = Self.cavnarPayload(userInfo) else { return }
+        let alertType = Self.alertType(cavnar)
+        let businessDate = Self.businessDate(cavnar)
         // Reject nonsense ids before they become a URL path component. The
         // backend is still the authority on whether this review belongs to
         // this account; this is shape validation, not authorization (audit 1.9).
@@ -346,13 +352,38 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
             guard let router else {
-                heldTap = (alertType, reviewId, askPrompt, alertId, recKey, module, restaurantId)
+                heldTap = (alertType, reviewId, askPrompt, alertId, recKey, module, restaurantId, businessDate)
                 return
             }
             router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
                                          alertId: alertId, recKey: recKey,
-                                         module: module, restaurantId: restaurantId)
+                                         module: module, restaurantId: restaurantId,
+                                         businessDate: businessDate)
         }
+    }
+
+    /// The payload's data: push.py's nested "cavnar" dictionary, or — for a
+    /// payload that carries `type` at the top level (the DSR's specified
+    /// shape) — the top level itself. Nil for anything that is neither.
+    nonisolated static func cavnarPayload(_ userInfo: [AnyHashable: Any]) -> [String: Any]? {
+        if let nested = userInfo["cavnar"] as? [String: Any] { return nested }
+        guard userInfo["type"] is String else { return nil }
+        var flat: [String: Any] = [:]
+        for (k, v) in userInfo { if let key = k as? String, key != "aps" { flat[key] = v } }
+        return flat
+    }
+
+    /// push.py sends `alert_type`; the DSR spec names it `type`.
+    nonisolated static func alertType(_ cavnar: [String: Any]) -> String {
+        let raw = (cavnar["alert_type"] as? String) ?? (cavnar["type"] as? String) ?? ""
+        return String(raw.prefix(64))
+    }
+
+    /// A YYYY-MM-DD business date, or nil — shape-checked before it can
+    /// become a URL path component; the server decides whose night it is.
+    nonisolated static func businessDate(_ cavnar: [String: Any]) -> String? {
+        let raw = (cavnar["business_date"] as? String)?.trimmingCharacters(in: .whitespaces)
+        return DSRFormat.isISODate(raw) ? raw : nil
     }
 
     /// A positive review id, whether the payload carried it as a JSON

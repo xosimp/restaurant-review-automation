@@ -380,6 +380,12 @@ struct RootView: View {
         // Observed on the prompt itself rather than the tab: a second brief
         // tapped while Ask is already selected doesn't change pendingTab, so
         // a tab observer would silently drop it.
+        // Same reason as the prompt below: a second daily-report tap while
+        // pendingTab is already .home wouldn't change it, so observe the
+        // report itself. HomeView pushes it.
+        .onChange(of: deepLinkRouter.pendingDailyReport) { _, route in
+            if route != nil { selectedTab = .home }
+        }
         .onChange(of: deepLinkRouter.pendingAskPrompt) { _, prompt in
             guard let prompt else { return }
             selectedTab = .ask

@@ -1,0 +1,2598 @@
+{
+ "runs": [
+  {
+   "action": "retry",
+   "version": 1,
+   "status": "collecting",
+   "awaiting": [
+    "sales"
+   ],
+   "required_missing": null
+  },
+  {
+   "action": "provisional",
+   "version": 1,
+   "status": "provisional",
+   "awaiting": [
+    "sales"
+   ],
+   "required_missing": [
+    "sales"
+   ]
+  },
+  {
+   "action": "final",
+   "version": 2,
+   "status": "final",
+   "awaiting": [],
+   "required_missing": []
+  }
+ ],
+ "owner": {
+  "view": "owner",
+  "business_date": "2026-09-22",
+  "label": "9/22/26",
+  "fiscal": {
+   "week_start": "2026-09-16",
+   "week_end": "2026-09-22",
+   "fiscal_year": 2026,
+   "period": 9,
+   "week": 4,
+   "label": "Period 9 \u00b7 Week 4"
+  },
+  "version": 2,
+  "status": "final",
+  "provisional": false,
+  "trigger": "late_data",
+  "finalized_at": "2026-09-24 01:01:45",
+  "facts": {
+   "schema": 1,
+   "restaurant_id": 1,
+   "business_date": "2026-09-22",
+   "blocks": {
+    "sales": {
+     "status": "ready",
+     "source": "rpower",
+     "reason": null,
+     "metrics": {
+      "gross": 7415.0,
+      "net": 6975.0,
+      "transactions": 212.0,
+      "guests": 288.0,
+      "avg_ticket": 32.9,
+      "per_guest": 24.22,
+      "discounts": 260.0,
+      "comps": 180.0,
+      "voids": 95.0,
+      "refunds": 0.0,
+      "tax": 589.0,
+      "yesterday_net": 6450.0,
+      "vs_yesterday": 525.0,
+      "vs_yesterday_pct": 8.1,
+      "last_week_net": 7110.0,
+      "vs_last_week": -135.0,
+      "vs_last_week_pct": -1.9,
+      "last_year_net": 6720.0,
+      "vs_last_year": 255.0,
+      "vs_last_year_pct": 3.8,
+      "forecast_net": null,
+      "vs_forecast": null,
+      "vs_forecast_pct": null,
+      "budget_gross": 7800.0,
+      "vs_budget_gross": -385.0,
+      "vs_budget_gross_pct": -4.9,
+      "budget_net": 7300.0,
+      "vs_budget_net": -325.0,
+      "vs_budget_net_pct": -4.5,
+      "cat:Food": 4610.0,
+      "cat:Liquor": 1045.0,
+      "cat:Beer": 612.0,
+      "cat:Wine": 488.0,
+      "cat:Retail": 64.0,
+      "cat:NA Beverage": 156.0,
+      "evening_share_pct": 58.7
+     },
+     "detail": {
+      "provider": "rpower",
+      "closed_by": "pos",
+      "definition": {
+       "gross": "items at the price rung, before discounts and comps; no tax, tips, gift cards, refunds or voids",
+       "net_deductions": [
+        "discounts",
+        "comps"
+       ]
+      },
+      "baselines": {
+       "yesterday": {
+        "date": "2026-09-21",
+        "net": 6450.0,
+        "source": "pos_sync"
+       },
+       "last_week": {
+        "date": "2026-09-15",
+        "net": 7110.0,
+        "source": "pos_sync"
+       },
+       "last_year": {
+        "date": "2025-09-23",
+        "net": 6720.0,
+        "source": "pos_sync"
+       },
+       "forecast": {
+        "net": null,
+        "source": null
+       }
+      },
+      "budget": {
+       "gross": 7800.0,
+       "net": 7300.0
+      },
+      "hourly": [
+       {
+        "hour": "11",
+        "net": 310.0
+       },
+       {
+        "hour": "12",
+        "net": 690.0
+       },
+       {
+        "hour": "13",
+        "net": 420.0
+       },
+       {
+        "hour": "14",
+        "net": 190.0
+       },
+       {
+        "hour": "15",
+        "net": 160.0
+       },
+       {
+        "hour": "16",
+        "net": 330.0
+       },
+       {
+        "hour": "17",
+        "net": 780.0
+       },
+       {
+        "hour": "18",
+        "net": 1210.0
+       },
+       {
+        "hour": "19",
+        "net": 1320.0
+       },
+       {
+        "hour": "20",
+        "net": 870.0
+       },
+       {
+        "hour": "21",
+        "net": 460.0
+       },
+       {
+        "hour": "22",
+        "net": 235.0
+       }
+      ],
+      "categories": [
+       {
+        "category": "Food",
+        "net": 4610.0,
+        "departments": [
+         "FOOD"
+        ],
+        "share_pct": 66.1
+       },
+       {
+        "category": "Liquor",
+        "net": 1045.0,
+        "departments": [
+         "LIQUOR"
+        ],
+        "share_pct": 15.0
+       },
+       {
+        "category": "Beer",
+        "net": 612.0,
+        "departments": [
+         "BEER"
+        ],
+        "share_pct": 8.8
+       },
+       {
+        "category": "Wine",
+        "net": 488.0,
+        "departments": [
+         "WINE"
+        ],
+        "share_pct": 7.0
+       },
+       {
+        "category": "Retail",
+        "net": 64.0,
+        "departments": [
+         "RETAIL"
+        ],
+        "share_pct": 0.9
+       },
+       {
+        "category": "NA Beverage",
+        "net": 156.0,
+        "departments": [
+         "NA BEV"
+        ],
+        "share_pct": 2.2
+       }
+      ],
+      "unmapped": [],
+      "unallocated": null,
+      "top_items": [
+       {
+        "name": "EJ's Burger",
+        "department": "FOOD",
+        "qty": 96,
+        "net": 1536.0
+       },
+       {
+        "name": "Fish Fry",
+        "department": "FOOD",
+        "qty": 41,
+        "net": 779.0
+       },
+       {
+        "name": "Old Style",
+        "department": "BEER",
+        "qty": 88,
+        "net": 440.0
+       },
+       {
+        "name": "Wedge Salad",
+        "department": "FOOD",
+        "qty": 30,
+        "net": 360.0
+       },
+       {
+        "name": "Kids Tenders",
+        "department": "FOOD",
+        "qty": 4,
+        "net": 36.0
+       }
+      ],
+      "bottom_items": [
+       {
+        "name": "Pie of the Day",
+        "department": "FOOD",
+        "qty": 3,
+        "net": 21.0
+       }
+      ],
+      "source_checks": {}
+     }
+    },
+    "labor": {
+     "status": "ready",
+     "source": "rpower",
+     "reason": null,
+     "metrics": {
+      "cost": 1912.0,
+      "pct": 27.4,
+      "hours": 124.5,
+      "overtime_hours": 0.0,
+      "target_pct": 26.0,
+      "vs_target_pts": 1.4,
+      "hours_after_6pm": null,
+      "hours_after_6pm_share_pct": null,
+      "sales_after_6pm_share_pct": null,
+      "no_shows": null,
+      "late_arrivals": null,
+      "shift_quality": null
+     },
+     "detail": {
+      "pct_basis": "labor_history",
+      "overtime_source": "rpower",
+      "coverage": {
+       "measured": false,
+       "no_shows": [],
+       "late": [],
+       "reason": "The POS has no live clock-in feed"
+      },
+      "shift_quality": null,
+      "observations": [
+       {
+        "key": "vs_target",
+        "facts": [
+         "labor.pct",
+         "labor.target_pct"
+        ],
+        "text": "Labor was 27.4% of sales, over the 26% target."
+       }
+      ]
+     }
+    },
+    "food": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "est_food_cost": 447.62,
+      "est_food_cost_pct": 19.3,
+      "recipe_coverage_pct": 100.0,
+      "waste_logged": 204.1,
+      "waste_counted": 14.7,
+      "waste_inferred": 189.4,
+      "critical_low": 3.0,
+      "low_stock": 0.0,
+      "recoverable_monthly": 756.0,
+      "variance_cost": 176.4,
+      "variance_items": 1.0
+     },
+     "detail": {
+      "estimate": {
+       "estimated": true,
+       "label": "Estimated \u2014 what 9/22/26's dishes should have cost by their recipes, at current ingredient prices. Not a count of what was actually used.",
+       "units_sold": 137.0,
+       "units_with_recipe": 137.0,
+       "coverage_basis": "share of units sold (by dish) that had a fully costed recipe",
+       "pct_basis": "theoretical cost over menu price, on the dishes sold that have both a recipe and a price",
+       "without_recipe": [],
+       "without_recipe_count": 0,
+       "scope": "dishes in your menu list; items the POS sold that aren't in it yet aren't counted"
+      },
+      "waste": {
+       "total": 204.1,
+       "counted": 14.7,
+       "inferred": 189.4,
+       "counts_taken": 1,
+       "inferred_basis": "inferred = what the ledger expected minus what was counted: waste, portioning or a miscount \u2014 a count can't tell them apart",
+       "top_inferred": [
+        {
+         "ingredient": "Cod",
+         "cost": 176.4,
+         "gap_qty": 18.0,
+         "unit": "lb"
+        },
+        {
+         "ingredient": "Ground chuck",
+         "cost": 13.0,
+         "gap_qty": 2.5,
+         "unit": "lb"
+        }
+       ]
+      },
+      "stock": {
+       "critical": [
+        {
+         "item": "Cod",
+         "days_remaining": 0.0,
+         "current_stock": 0.0,
+         "unit": "lb",
+         "count_stale": false
+        },
+        {
+         "item": "Ground chuck",
+         "days_remaining": 0.7,
+         "current_stock": 14.0,
+         "unit": "lb",
+         "count_stale": false
+        },
+        {
+         "item": "Brioche bun",
+         "days_remaining": 0.8,
+         "current_stock": 70.0,
+         "unit": "ea",
+         "count_stale": false
+        }
+       ],
+       "critical_count": 3,
+       "low": [],
+       "low_count": 0,
+       "as_of": "stock at the time of this report",
+       "basis": "Stock figures rest on counts taken 1 day ago.",
+       "count_stale": false
+      },
+      "recoverable": {
+       "total_monthly": 756.0,
+       "basis": "no ingredient appears in more than one driver",
+       "per": "month",
+       "complete": true,
+       "degraded_sources": [],
+       "note": null,
+       "top": [
+        {
+         "label": "Cod usage over recipe",
+         "dollars_monthly": 756.0,
+         "confidence": "medium"
+        }
+       ]
+      },
+      "variance": {
+       "window": "9/16/26 \u2013 9/22/26",
+       "last_count": "9/22/26",
+       "basis": "Gap between recipe-theoretical usage and physical counts over 7 days. Reported when the gap is at least 8% of theoretical usage AND at least $15. A gap is over-portioning, prep loss or shrink \u2014 it is not counted waste.",
+       "items": [
+        {
+         "ingredient": "Cod",
+         "cost": 176.4,
+         "variance_pct": 87.8,
+         "gap_qty": 18.0,
+         "unit": "lb",
+         "dish": "Fish Fry"
+        }
+       ]
+      },
+      "unavailable_parts": []
+     }
+    },
+    "reviews": {
+     "status": "ready",
+     "source": "google",
+     "reason": null,
+     "metrics": {
+      "received": 4.0,
+      "avg_rating": 4.0,
+      "positive": 3.0,
+      "negative": 1.0,
+      "not_analysed": 0.0,
+      "urgent": 1.0,
+      "drafts_awaiting": 0.0,
+      "replies_posted": 0.0
+     },
+     "detail": {
+      "window": {
+       "start": "9/22/26 \u00b7 5:00am",
+       "end": "9/23/26 \u00b7 5:00am"
+      },
+      "sync": {
+       "state": "complete",
+       "fetched_through": "9/23/26 \u00b7 8:05am",
+       "note": null
+      },
+      "reviews": [
+       {
+        "id": 1,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Best fish fry in town, server was great",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 2,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Patio was perfect tonight",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 3,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 2,
+        "sentiment": "negative",
+        "summary": "Waited 40 minutes for burgers",
+        "urgent": true,
+        "status": "pending"
+       },
+       {
+        "id": 4,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 4,
+        "sentiment": "positive",
+        "summary": "Great burger",
+        "urgent": false,
+        "status": "pending"
+       }
+      ],
+      "themes": {
+       "positive": [
+        {
+         "theme": "food",
+         "reviews": 2
+        },
+        {
+         "theme": "atmosphere",
+         "reviews": 1
+        },
+        {
+         "theme": "service",
+         "reviews": 1
+        }
+       ],
+       "negative": [
+        {
+         "theme": "food",
+         "reviews": 1
+        },
+        {
+         "theme": "wait time",
+         "reviews": 1
+        }
+       ],
+       "basis": "the categories stored when each review was analysed"
+      },
+      "urgent": [
+       {
+        "id": 3,
+        "rating": 2,
+        "summary": "Waited 40 minutes for burgers",
+        "status": "pending"
+       }
+      ],
+      "drafts": {
+       "publishable": 0,
+       "held": 0,
+       "as_of": "the reply queue at the time of this report",
+       "held_basis": "urgent or flagged drafts a person reads one at a time"
+      },
+      "unavailable_parts": []
+     }
+    },
+    "marketing": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "posts_published": 1.0,
+      "posts_failed": 0.0,
+      "reach": 1840.0,
+      "engagement": 131.0,
+      "engagement_rate": 7.1,
+      "campaigns_sent": 1.0,
+      "texts_sent": 212.0,
+      "campaign_clicks": null,
+      "campaign_visits": null,
+      "scheduled_next_7d": 0.0,
+      "drafts_awaiting": 0.0
+     },
+     "detail": {
+      "posts": {
+       "count": 1,
+       "reach": 1840,
+       "engagement": 131,
+       "engagement_rate": 7.1,
+       "items": [
+        {
+         "topic": "Tuesday fish fry",
+         "platform": "instagram",
+         "at": "9/22/26 \u00b7 4:00pm",
+         "reach": 1840,
+         "engagement": 131
+        }
+       ],
+       "measured": 1,
+       "basis": "posts published through Cavnar; reach and engagement as Meta last reported them"
+      },
+      "failed_posts": [],
+      "campaigns": {
+       "texts": [
+        {
+         "message": "Fish fry is back tonight \u2014 $5 off with this text",
+         "segment": null,
+         "sent": 212,
+         "failed": 3,
+         "clicks": null,
+         "visits_matched": null,
+         "attributed_through": null,
+         "sent_at": "9/22/26 \u00b7 3:00pm"
+        }
+       ],
+       "newsletters": [],
+       "earlier_results": [],
+       "clicks": null,
+       "visits": null,
+       "texts_sent": 212,
+       "basis": "clicks on a tracked link, and guests the POS matched on a check after the text \u2014 partial by nature, and never a sales estimate"
+      },
+      "upcoming": {
+       "scheduled": [],
+       "scheduled_count": 0,
+       "drafts": [],
+       "drafts_count": 0,
+       "winback": null,
+       "holidays": [],
+       "horizon_days": 7
+      },
+      "unavailable_parts": []
+     }
+    },
+    "intel": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "weather_high_f": 71.0,
+      "weather_low_f": 58.0,
+      "weather_precip_pct": 10.0,
+      "events_listed": 1.0,
+      "reservations_covers": null,
+      "competitor_moves": null
+     },
+     "detail": {
+      "weather": {
+       "basis": "forecast",
+       "source": "National Weather Service forecast",
+       "period": "day",
+       "summary": "Partly Sunny \u00b7 high 71\u00b0 \u00b7 10% rain",
+       "short_forecast": "Partly Sunny",
+       "high_f": 71,
+       "low_f": 58,
+       "precip_pct": 10,
+       "note": "Forecast, not observed \u2014 Cavnar has no source for the weather that actually happened."
+      },
+      "events": {
+       "summary": "Cubs home game (7:05pm)",
+       "items": [
+        {
+         "label": "Cubs home game (7:05pm)",
+         "kind": "event",
+         "covers": null,
+         "source": "manual"
+        }
+       ],
+       "reservations_covers": null,
+       "basis": "events and reservations you entered for the date, and the holiday calendar"
+      },
+      "competitors": {
+       "tracked": false,
+       "note": "Competitors aren't tracked for this location yet."
+      },
+      "unavailable_parts": []
+     }
+    },
+    "closeout": {
+     "status": "ready",
+     "source": "manager",
+     "reason": null,
+     "metrics": {
+      "filed": 1.0,
+      "fields_written": 8.0
+     },
+     "detail": {
+      "filed": true,
+      "written_by": "manager",
+      "verbatim": true,
+      "submitted_by": "Jim",
+      "user_id": null,
+      "filed_at_utc": "2026-09-24 01:01:26",
+      "filed_at_label": "9/23/26 \u00b7 8:01pm",
+      "fields": {
+       "went_well": "Fish fry sold out the second batch by 8. Patio full 6\u20138:30.",
+       "went_wrong": "Burger tickets hit 40 min around 7:15 when the Cubs crowd came in; grill was one cook short.",
+       "eighty_sixed": "Cod at 8:40pm",
+       "callouts": "Marco (line) called out sick",
+       "equipment": "Ice machine slow again \u2014 third night",
+       "vip_guests": "The Hendersons, table 12",
+       "maintenance": null,
+       "shift_notes": "Jim closed. Comped two burgers for the 40-min wait.",
+       "general_notes": null,
+       "influence": "Cubs game pulled a late rush; nice weather filled the patio."
+      },
+      "labels": {
+       "went_well": "What went well",
+       "went_wrong": "What went wrong",
+       "eighty_sixed": "What we ran out of",
+       "callouts": "Who didn't make it",
+       "equipment": "Equipment",
+       "vip_guests": "VIP guests",
+       "maintenance": "Maintenance",
+       "shift_notes": "Shift notes",
+       "general_notes": "General notes",
+       "influence": "Why the day went how it did"
+      },
+      "order": [
+       "went_well",
+       "went_wrong",
+       "eighty_sixed",
+       "callouts",
+       "equipment",
+       "vip_guests",
+       "maintenance",
+       "shift_notes",
+       "general_notes",
+       "influence"
+      ]
+     }
+    }
+   },
+   "fiscal": {
+    "week_start": "2026-09-16",
+    "week_end": "2026-09-22",
+    "fiscal_year": 2026,
+    "period": 9,
+    "week": 4,
+    "label": "Period 9 \u00b7 Week 4"
+   },
+   "missing": [],
+   "withheld": []
+  },
+  "narrative": {
+   "schema": 1,
+   "model": "claude-sonnet-5",
+   "business_date": "2026-09-22",
+   "executive_summary": {
+    "text": "Net sales came in at $6,975, up 8.1% over yesterday and 3.8% over last year, but 4.5% below budget, driven by a strong food and beer night that included a sold-out fish fry batch. Labor ran 27.4% of sales, 1.4 points over the 26% target, and a review flags a long burger wait during the Cubs rush when the grill was short a cook. Watch the grill staffing on event nights and the ice machine, now slow for a third night.",
+    "cites": [
+     "sales.net",
+     "sales.vs_yesterday_pct",
+     "sales.vs_last_year_pct",
+     "sales.vs_budget_net_pct",
+     "labor.pct",
+     "labor.vs_target_pts",
+     "reviews.urgent",
+     "labor.target_pct"
+    ]
+   },
+   "went_well": [
+    {
+     "text": "Net sales beat yesterday by $525 (8.1%) and topped last year by $255 (3.8%).",
+     "cites": [
+      "sales.vs_yesterday",
+      "sales.vs_yesterday_pct",
+      "sales.vs_last_year",
+      "sales.vs_last_year_pct"
+     ]
+    },
+    {
+     "text": "Food led all categories at $4,610 in net sales, with the fish fry among the top sellers at 41 orders and $779.",
+     "cites": [
+      "sales.cat:Food",
+      "sales.top_items"
+     ]
+    },
+    {
+     "text": "Overtime stayed at zero across 124.5 labor hours.",
+     "cites": [
+      "labor.overtime_hours",
+      "labor.hours"
+     ]
+    },
+    {
+     "text": "The marketing text campaign reached 212 guests with a 7.1% engagement rate on the one post published.",
+     "cites": [
+      "marketing.texts_sent",
+      "marketing.engagement_rate",
+      "marketing.posts_published"
+     ]
+    }
+   ],
+   "needs_attention": [
+    {
+     "text": "Labor ran 27.4% of sales, 1.4 points over the 26% target.",
+     "cites": [
+      "labor.pct",
+      "labor.vs_target_pts",
+      "labor.target_pct"
+     ]
+    },
+    {
+     "text": "Net sales still missed budget by $325 (4.5%) despite the gain over yesterday.",
+     "cites": [
+      "sales.vs_budget_net",
+      "sales.vs_budget_net_pct"
+     ]
+    },
+    {
+     "text": "One of four reviews was urgent, a 2-star report of a long wait on burgers.",
+     "cites": [
+      "reviews.urgent",
+      "reviews.negative"
+     ]
+    },
+    {
+     "text": "Food variance cost came in at $176.40 against one item, worth checking against the $756 in monthly recoverable waste identified.",
+     "cites": [
+      "food.variance_cost",
+      "food.variance_items",
+      "food.recoverable_monthly"
+     ]
+    }
+   ],
+   "biggest_risk": {
+    "text": "Labor is running 1.4 points over target while a review points to a service breakdown from being short-staffed on the grill during a rush.",
+    "cites": [
+     "labor.vs_target_pts",
+     "reviews.urgent"
+    ]
+   },
+   "biggest_win": {
+    "text": "Net sales beat yesterday by 8.1% and last year by 3.8%, led by strong food and fish fry sales.",
+    "cites": [
+     "sales.vs_yesterday_pct",
+     "sales.vs_last_year_pct",
+     "sales.cat:Food"
+    ]
+   },
+   "biggest_financial_opportunity": {
+    "text": "The kitchen has $756 a month in recoverable waste identified against tonight's $176 variance on one item.",
+    "cites": [
+     "food.recoverable_monthly",
+     "food.variance_cost"
+    ]
+   },
+   "biggest_staffing_concern": {
+    "text": "Labor ran 27.4% of sales, 1.4 points over the 26% target, on a night that already needed more grill coverage.",
+    "cites": [
+     "labor.pct",
+     "labor.vs_target_pts",
+     "labor.target_pct"
+    ]
+   },
+   "highest_priority_issue": {
+    "text": "A review reports a long burger wait during the Cubs rush, and labor is already over target, so grill staffing for event nights needs a fix before the next one.",
+    "cites": [
+     "reviews.urgent",
+     "labor.vs_target_pts"
+    ]
+   },
+   "largest_money_saving": {
+    "text": "The $756 monthly recoverable waste figure is the largest identified saving against tonight's $176 variance.",
+    "cites": [
+     "food.recoverable_monthly",
+     "food.variance_cost"
+    ]
+   },
+   "largest_guest_experience": {
+    "text": "One of four reviews tonight was urgent, a 2-star report tied to a long burger wait.",
+    "cites": [
+     "reviews.urgent",
+     "reviews.negative"
+    ]
+   },
+   "largest_staffing": {
+    "text": "Labor hours reached 124.5 with zero overtime, but the cost still ran 1.4 points over the 26% target.",
+    "cites": [
+     "labor.hours",
+     "labor.overtime_hours",
+     "labor.vs_target_pts",
+     "labor.target_pct"
+    ]
+   },
+   "actions_tomorrow": [
+    {
+     "text": "Reply to the urgent 2-star review about the burger wait and note the comp already given.",
+     "why": "One of four reviews tonight was flagged urgent with a negative sentiment score.",
+     "dollars_monthly": null,
+     "urgency": "this_week",
+     "effort": "low",
+     "kind": "respond_reviews",
+     "subject": null,
+     "cites": [
+      "reviews.urgent",
+      "reviews.negative"
+     ],
+     "key": "dsr_action:respond_reviews:reviews",
+     "rank_score": 85.0
+    },
+    {
+     "text": "Investigate the $176 food cost variance on the single flagged item before adjusting orders.",
+     "why": "Variance cost of $176.40 against one item is worth confirming before it's treated as waste or theft.",
+     "dollars_monthly": null,
+     "urgency": "this_week",
+     "effort": "low",
+     "kind": "investigate",
+     "subject": null,
+     "cites": [
+      "food.variance_cost",
+      "food.variance_items"
+     ],
+     "key": "dsr_action:investigate:food",
+     "rank_score": 85.0
+    },
+    {
+     "text": "Add a second grill cook for the next event-night shift, especially with a Cubs game or similar draw on the calendar.",
+     "why": "Burger tickets backed up when the grill ran one cook short during the Cubs rush, and labor is already 1.4 points over target so this must be a targeted add, not blanket overtime.",
+     "dollars_monthly": null,
+     "urgency": "next_schedule",
+     "effort": "medium",
+     "kind": "adjust_staffing",
+     "subject": "grill",
+     "cites": [
+      "labor.pct",
+      "labor.vs_target_pts",
+      "intel.events_listed"
+     ],
+     "key": "dsr_action:adjust_staffing:labor",
+     "rank_score": 51.0
+    }
+   ],
+   "missing": [],
+   "verification": {
+    "rule": "every figure traces to a fact the line cites; a line that fails is dropped, never repaired",
+    "checked": 20,
+    "kept": 20,
+    "dropped": []
+   }
+  },
+  "checklist": {
+   "business_date": "2026-09-22",
+   "label": "9/22/26",
+   "version": 2,
+   "status": "final",
+   "status_label": "Ready",
+   "provisional": false,
+   "stages": [
+    {
+     "key": "scheduled",
+     "label": "Scheduled",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "awaiting_close",
+     "label": "Closeout in progress \u2014 waiting for the POS to close the day",
+     "at": null,
+     "at_local": null,
+     "done": false,
+     "current": false
+    },
+    {
+     "key": "collecting",
+     "label": "Collecting",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "writing",
+     "label": "Writing the summary",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "final",
+     "label": "Ready",
+     "at": "2026-09-24 01:01:45",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": true
+    }
+   ],
+   "blocks": [
+    {
+     "name": "sales",
+     "label": "Sales",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "labor",
+     "label": "Labor",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "food",
+     "label": "Food",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "reviews",
+     "label": "Reviews",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "marketing",
+     "label": "Marketing",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "intel",
+     "label": "Intel",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "closeout",
+     "label": "Manager closeout",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    }
+   ],
+   "narrative": {
+    "status": "written",
+    "reason": null
+   },
+   "closed_by": "pos",
+   "next_attempt_at": null,
+   "missing": []
+  },
+  "versions": [
+   {
+    "version": 1,
+    "status": "provisional",
+    "trigger": "sweep",
+    "provisional": true,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:26"
+   },
+   {
+    "version": 2,
+    "status": "final",
+    "trigger": "late_data",
+    "provisional": false,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:45"
+   }
+  ]
+ },
+ "manager": {
+  "view": "manager",
+  "business_date": "2026-09-22",
+  "label": "9/22/26",
+  "fiscal": {
+   "week_start": "2026-09-16",
+   "week_end": "2026-09-22",
+   "fiscal_year": 2026,
+   "period": 9,
+   "week": 4,
+   "label": "Period 9 \u00b7 Week 4"
+  },
+  "version": 2,
+  "status": "final",
+  "provisional": false,
+  "trigger": "late_data",
+  "finalized_at": "2026-09-24 01:01:45",
+  "facts": {
+   "schema": 1,
+   "restaurant_id": 1,
+   "business_date": "2026-09-22",
+   "blocks": {
+    "sales": {
+     "status": "ready",
+     "source": "rpower",
+     "reason": null,
+     "metrics": {
+      "gross": 7415.0,
+      "net": 6975.0,
+      "transactions": 212.0,
+      "guests": 288.0,
+      "avg_ticket": 32.9,
+      "per_guest": 24.22,
+      "discounts": 260.0,
+      "tax": 589.0,
+      "yesterday_net": 6450.0,
+      "vs_yesterday": 525.0,
+      "vs_yesterday_pct": 8.1,
+      "last_week_net": 7110.0,
+      "vs_last_week": -135.0,
+      "vs_last_week_pct": -1.9,
+      "last_year_net": 6720.0,
+      "vs_last_year": 255.0,
+      "vs_last_year_pct": 3.8,
+      "forecast_net": null,
+      "vs_forecast": null,
+      "vs_forecast_pct": null,
+      "cat:Food": 4610.0,
+      "cat:Liquor": 1045.0,
+      "cat:Beer": 612.0,
+      "cat:Wine": 488.0,
+      "cat:Retail": 64.0,
+      "cat:NA Beverage": 156.0,
+      "evening_share_pct": 58.7
+     },
+     "detail": {
+      "provider": "rpower",
+      "closed_by": "pos",
+      "definition": {
+       "gross": "items at the price rung, before discounts and comps; no tax, tips, gift cards, refunds or voids",
+       "net_deductions": [
+        "discounts",
+        "comps"
+       ]
+      },
+      "baselines": {
+       "yesterday": {
+        "date": "2026-09-21",
+        "net": 6450.0,
+        "source": "pos_sync"
+       },
+       "last_week": {
+        "date": "2026-09-15",
+        "net": 7110.0,
+        "source": "pos_sync"
+       },
+       "last_year": {
+        "date": "2025-09-23",
+        "net": 6720.0,
+        "source": "pos_sync"
+       },
+       "forecast": {
+        "net": null,
+        "source": null
+       }
+      },
+      "hourly": [
+       {
+        "hour": "11",
+        "net": 310.0
+       },
+       {
+        "hour": "12",
+        "net": 690.0
+       },
+       {
+        "hour": "13",
+        "net": 420.0
+       },
+       {
+        "hour": "14",
+        "net": 190.0
+       },
+       {
+        "hour": "15",
+        "net": 160.0
+       },
+       {
+        "hour": "16",
+        "net": 330.0
+       },
+       {
+        "hour": "17",
+        "net": 780.0
+       },
+       {
+        "hour": "18",
+        "net": 1210.0
+       },
+       {
+        "hour": "19",
+        "net": 1320.0
+       },
+       {
+        "hour": "20",
+        "net": 870.0
+       },
+       {
+        "hour": "21",
+        "net": 460.0
+       },
+       {
+        "hour": "22",
+        "net": 235.0
+       }
+      ],
+      "categories": [
+       {
+        "category": "Food",
+        "net": 4610.0,
+        "departments": [
+         "FOOD"
+        ],
+        "share_pct": 66.1
+       },
+       {
+        "category": "Liquor",
+        "net": 1045.0,
+        "departments": [
+         "LIQUOR"
+        ],
+        "share_pct": 15.0
+       },
+       {
+        "category": "Beer",
+        "net": 612.0,
+        "departments": [
+         "BEER"
+        ],
+        "share_pct": 8.8
+       },
+       {
+        "category": "Wine",
+        "net": 488.0,
+        "departments": [
+         "WINE"
+        ],
+        "share_pct": 7.0
+       },
+       {
+        "category": "Retail",
+        "net": 64.0,
+        "departments": [
+         "RETAIL"
+        ],
+        "share_pct": 0.9
+       },
+       {
+        "category": "NA Beverage",
+        "net": 156.0,
+        "departments": [
+         "NA BEV"
+        ],
+        "share_pct": 2.2
+       }
+      ],
+      "unmapped": [],
+      "unallocated": null,
+      "top_items": [
+       {
+        "name": "EJ's Burger",
+        "department": "FOOD",
+        "qty": 96,
+        "net": 1536.0
+       },
+       {
+        "name": "Fish Fry",
+        "department": "FOOD",
+        "qty": 41,
+        "net": 779.0
+       },
+       {
+        "name": "Old Style",
+        "department": "BEER",
+        "qty": 88,
+        "net": 440.0
+       },
+       {
+        "name": "Wedge Salad",
+        "department": "FOOD",
+        "qty": 30,
+        "net": 360.0
+       },
+       {
+        "name": "Kids Tenders",
+        "department": "FOOD",
+        "qty": 4,
+        "net": 36.0
+       }
+      ],
+      "bottom_items": [
+       {
+        "name": "Pie of the Day",
+        "department": "FOOD",
+        "qty": 3,
+        "net": 21.0
+       }
+      ]
+     }
+    },
+    "labor": {
+     "status": "ready",
+     "source": "rpower",
+     "reason": null,
+     "metrics": {
+      "cost": 1912.0,
+      "pct": 27.4,
+      "hours": 124.5,
+      "overtime_hours": 0.0,
+      "target_pct": 26.0,
+      "vs_target_pts": 1.4,
+      "hours_after_6pm": null,
+      "hours_after_6pm_share_pct": null,
+      "sales_after_6pm_share_pct": null,
+      "no_shows": null,
+      "late_arrivals": null,
+      "shift_quality": null
+     },
+     "detail": {
+      "pct_basis": "labor_history",
+      "overtime_source": "rpower",
+      "coverage": {
+       "measured": false,
+       "no_shows": [],
+       "late": [],
+       "reason": "The POS has no live clock-in feed"
+      },
+      "shift_quality": null,
+      "observations": [
+       {
+        "key": "vs_target",
+        "facts": [
+         "labor.pct",
+         "labor.target_pct"
+        ],
+        "text": "Labor was 27.4% of sales, over the 26% target."
+       }
+      ]
+     }
+    },
+    "reviews": {
+     "status": "ready",
+     "source": "google",
+     "reason": null,
+     "metrics": {
+      "received": 4.0,
+      "avg_rating": 4.0,
+      "positive": 3.0,
+      "negative": 1.0,
+      "not_analysed": 0.0,
+      "urgent": 1.0,
+      "drafts_awaiting": 0.0,
+      "replies_posted": 0.0
+     },
+     "detail": {
+      "window": {
+       "start": "9/22/26 \u00b7 5:00am",
+       "end": "9/23/26 \u00b7 5:00am"
+      },
+      "sync": {
+       "state": "complete",
+       "fetched_through": "9/23/26 \u00b7 8:05am",
+       "note": null
+      },
+      "reviews": [
+       {
+        "id": 1,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Best fish fry in town, server was great",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 2,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Patio was perfect tonight",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 3,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 2,
+        "sentiment": "negative",
+        "summary": "Waited 40 minutes for burgers",
+        "urgent": true,
+        "status": "pending"
+       },
+       {
+        "id": 4,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 4,
+        "sentiment": "positive",
+        "summary": "Great burger",
+        "urgent": false,
+        "status": "pending"
+       }
+      ],
+      "themes": {
+       "positive": [
+        {
+         "theme": "food",
+         "reviews": 2
+        },
+        {
+         "theme": "atmosphere",
+         "reviews": 1
+        },
+        {
+         "theme": "service",
+         "reviews": 1
+        }
+       ],
+       "negative": [
+        {
+         "theme": "food",
+         "reviews": 1
+        },
+        {
+         "theme": "wait time",
+         "reviews": 1
+        }
+       ],
+       "basis": "the categories stored when each review was analysed"
+      },
+      "urgent": [
+       {
+        "id": 3,
+        "rating": 2,
+        "summary": "Waited 40 minutes for burgers",
+        "status": "pending"
+       }
+      ],
+      "drafts": {
+       "publishable": 0,
+       "held": 0,
+       "as_of": "the reply queue at the time of this report",
+       "held_basis": "urgent or flagged drafts a person reads one at a time"
+      },
+      "unavailable_parts": []
+     }
+    },
+    "marketing": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "posts_published": 1.0,
+      "posts_failed": 0.0,
+      "reach": 1840.0,
+      "engagement": 131.0,
+      "engagement_rate": 7.1,
+      "campaigns_sent": 1.0,
+      "texts_sent": 212.0,
+      "campaign_clicks": null,
+      "campaign_visits": null,
+      "scheduled_next_7d": 0.0,
+      "drafts_awaiting": 0.0
+     },
+     "detail": {
+      "posts": {
+       "count": 1,
+       "reach": 1840,
+       "engagement": 131,
+       "engagement_rate": 7.1,
+       "items": [
+        {
+         "topic": "Tuesday fish fry",
+         "platform": "instagram",
+         "at": "9/22/26 \u00b7 4:00pm",
+         "reach": 1840,
+         "engagement": 131
+        }
+       ],
+       "measured": 1,
+       "basis": "posts published through Cavnar; reach and engagement as Meta last reported them"
+      },
+      "failed_posts": [],
+      "campaigns": {
+       "texts": [
+        {
+         "message": "Fish fry is back tonight \u2014 $5 off with this text",
+         "segment": null,
+         "sent": 212,
+         "failed": 3,
+         "clicks": null,
+         "visits_matched": null,
+         "attributed_through": null,
+         "sent_at": "9/22/26 \u00b7 3:00pm"
+        }
+       ],
+       "newsletters": [],
+       "earlier_results": [],
+       "clicks": null,
+       "visits": null,
+       "texts_sent": 212,
+       "basis": "clicks on a tracked link, and guests the POS matched on a check after the text \u2014 partial by nature, and never a sales estimate"
+      },
+      "upcoming": {
+       "scheduled": [],
+       "scheduled_count": 0,
+       "drafts": [],
+       "drafts_count": 0,
+       "winback": null,
+       "holidays": [],
+       "horizon_days": 7
+      },
+      "unavailable_parts": []
+     }
+    },
+    "intel": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "weather_high_f": 71.0,
+      "weather_low_f": 58.0,
+      "weather_precip_pct": 10.0,
+      "events_listed": 1.0,
+      "reservations_covers": null,
+      "competitor_moves": null
+     },
+     "detail": {
+      "weather": {
+       "basis": "forecast",
+       "source": "National Weather Service forecast",
+       "period": "day",
+       "summary": "Partly Sunny \u00b7 high 71\u00b0 \u00b7 10% rain",
+       "short_forecast": "Partly Sunny",
+       "high_f": 71,
+       "low_f": 58,
+       "precip_pct": 10,
+       "note": "Forecast, not observed \u2014 Cavnar has no source for the weather that actually happened."
+      },
+      "events": {
+       "summary": "Cubs home game (7:05pm)",
+       "items": [
+        {
+         "label": "Cubs home game (7:05pm)",
+         "kind": "event",
+         "covers": null,
+         "source": "manual"
+        }
+       ],
+       "reservations_covers": null,
+       "basis": "events and reservations you entered for the date, and the holiday calendar"
+      },
+      "competitors": {
+       "tracked": false,
+       "note": "Competitors aren't tracked for this location yet."
+      },
+      "unavailable_parts": []
+     }
+    },
+    "closeout": {
+     "status": "ready",
+     "source": "manager",
+     "reason": null,
+     "metrics": {
+      "filed": 1.0,
+      "fields_written": 8.0
+     },
+     "detail": {
+      "filed": true,
+      "written_by": "manager",
+      "verbatim": true,
+      "submitted_by": "Jim",
+      "user_id": null,
+      "filed_at_utc": "2026-09-24 01:01:26",
+      "filed_at_label": "9/23/26 \u00b7 8:01pm",
+      "fields": {
+       "went_well": "Fish fry sold out the second batch by 8. Patio full 6\u20138:30.",
+       "went_wrong": "Burger tickets hit 40 min around 7:15 when the Cubs crowd came in; grill was one cook short.",
+       "eighty_sixed": "Cod at 8:40pm",
+       "callouts": "Marco (line) called out sick",
+       "equipment": "Ice machine slow again \u2014 third night",
+       "vip_guests": "The Hendersons, table 12",
+       "maintenance": null,
+       "shift_notes": "Jim closed. Comped two burgers for the 40-min wait.",
+       "general_notes": null,
+       "influence": "Cubs game pulled a late rush; nice weather filled the patio."
+      },
+      "labels": {
+       "went_well": "What went well",
+       "went_wrong": "What went wrong",
+       "eighty_sixed": "What we ran out of",
+       "callouts": "Who didn't make it",
+       "equipment": "Equipment",
+       "vip_guests": "VIP guests",
+       "maintenance": "Maintenance",
+       "shift_notes": "Shift notes",
+       "general_notes": "General notes",
+       "influence": "Why the day went how it did"
+      },
+      "order": [
+       "went_well",
+       "went_wrong",
+       "eighty_sixed",
+       "callouts",
+       "equipment",
+       "vip_guests",
+       "maintenance",
+       "shift_notes",
+       "general_notes",
+       "influence"
+      ]
+     }
+    }
+   },
+   "fiscal": {
+    "week_start": "2026-09-16",
+    "week_end": "2026-09-22",
+    "fiscal_year": 2026,
+    "period": 9,
+    "week": 4,
+    "label": "Period 9 \u00b7 Week 4"
+   },
+   "missing": [],
+   "withheld": [
+    "food"
+   ]
+  },
+  "narrative": {
+   "schema": 1,
+   "went_well": [
+    {
+     "text": "Net sales beat yesterday by $525 (8.1%) and topped last year by $255 (3.8%).",
+     "cites": [
+      "sales.vs_yesterday",
+      "sales.vs_yesterday_pct",
+      "sales.vs_last_year",
+      "sales.vs_last_year_pct"
+     ]
+    },
+    {
+     "text": "Food led all categories at $4,610 in net sales, with the fish fry among the top sellers at 41 orders and $779.",
+     "cites": [
+      "sales.cat:Food",
+      "sales.top_items"
+     ]
+    },
+    {
+     "text": "Overtime stayed at zero across 124.5 labor hours.",
+     "cites": [
+      "labor.overtime_hours",
+      "labor.hours"
+     ]
+    },
+    {
+     "text": "The marketing text campaign reached 212 guests with a 7.1% engagement rate on the one post published.",
+     "cites": [
+      "marketing.texts_sent",
+      "marketing.engagement_rate",
+      "marketing.posts_published"
+     ]
+    }
+   ],
+   "needs_attention": [
+    {
+     "text": "Labor ran 27.4% of sales, 1.4 points over the 26% target.",
+     "cites": [
+      "labor.pct",
+      "labor.vs_target_pts",
+      "labor.target_pct"
+     ]
+    },
+    {
+     "text": "One of four reviews was urgent, a 2-star report of a long wait on burgers.",
+     "cites": [
+      "reviews.urgent",
+      "reviews.negative"
+     ]
+    }
+   ],
+   "biggest_risk": {
+    "text": "Labor is running 1.4 points over target while a review points to a service breakdown from being short-staffed on the grill during a rush.",
+    "cites": [
+     "labor.vs_target_pts",
+     "reviews.urgent"
+    ]
+   },
+   "biggest_win": {
+    "text": "Net sales beat yesterday by 8.1% and last year by 3.8%, led by strong food and fish fry sales.",
+    "cites": [
+     "sales.vs_yesterday_pct",
+     "sales.vs_last_year_pct",
+     "sales.cat:Food"
+    ]
+   },
+   "biggest_staffing_concern": {
+    "text": "Labor ran 27.4% of sales, 1.4 points over the 26% target, on a night that already needed more grill coverage.",
+    "cites": [
+     "labor.pct",
+     "labor.vs_target_pts",
+     "labor.target_pct"
+    ]
+   },
+   "highest_priority_issue": {
+    "text": "A review reports a long burger wait during the Cubs rush, and labor is already over target, so grill staffing for event nights needs a fix before the next one.",
+    "cites": [
+     "reviews.urgent",
+     "labor.vs_target_pts"
+    ]
+   },
+   "largest_guest_experience": {
+    "text": "One of four reviews tonight was urgent, a 2-star report tied to a long burger wait.",
+    "cites": [
+     "reviews.urgent",
+     "reviews.negative"
+    ]
+   },
+   "largest_staffing": {
+    "text": "Labor hours reached 124.5 with zero overtime, but the cost still ran 1.4 points over the 26% target.",
+    "cites": [
+     "labor.hours",
+     "labor.overtime_hours",
+     "labor.vs_target_pts",
+     "labor.target_pct"
+    ]
+   },
+   "actions_tomorrow": [
+    {
+     "text": "Reply to the urgent 2-star review about the burger wait and note the comp already given.",
+     "why": "One of four reviews tonight was flagged urgent with a negative sentiment score.",
+     "urgency": "this_week",
+     "effort": "low",
+     "kind": "respond_reviews",
+     "cites": [
+      "reviews.urgent",
+      "reviews.negative"
+     ],
+     "key": "dsr_action:respond_reviews:reviews",
+     "rank_score": 85.0
+    },
+    {
+     "text": "Add a second grill cook for the next event-night shift, especially with a Cubs game or similar draw on the calendar.",
+     "why": "Burger tickets backed up when the grill ran one cook short during the Cubs rush, and labor is already 1.4 points over target so this must be a targeted add, not blanket overtime.",
+     "urgency": "next_schedule",
+     "effort": "medium",
+     "kind": "adjust_staffing",
+     "subject": "grill",
+     "cites": [
+      "labor.pct",
+      "labor.vs_target_pts",
+      "intel.events_listed"
+     ],
+     "key": "dsr_action:adjust_staffing:labor",
+     "rank_score": 51.0
+    }
+   ],
+   "missing": [],
+   "verification": {
+    "checked": 20,
+    "kept": 20,
+    "dropped": []
+   }
+  },
+  "checklist": {
+   "business_date": "2026-09-22",
+   "label": "9/22/26",
+   "version": 2,
+   "status": "final",
+   "status_label": "Ready",
+   "provisional": false,
+   "stages": [
+    {
+     "key": "scheduled",
+     "label": "Scheduled",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "awaiting_close",
+     "label": "Closeout in progress \u2014 waiting for the POS to close the day",
+     "at": null,
+     "at_local": null,
+     "done": false,
+     "current": false
+    },
+    {
+     "key": "collecting",
+     "label": "Collecting",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "writing",
+     "label": "Writing the summary",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "final",
+     "label": "Ready",
+     "at": "2026-09-24 01:01:45",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": true
+    }
+   ],
+   "blocks": [
+    {
+     "name": "sales",
+     "label": "Sales",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "labor",
+     "label": "Labor",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "reviews",
+     "label": "Reviews",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "marketing",
+     "label": "Marketing",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "intel",
+     "label": "Intel",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "closeout",
+     "label": "Manager closeout",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    }
+   ],
+   "narrative": {
+    "status": "written",
+    "reason": null
+   },
+   "closed_by": "pos",
+   "next_attempt_at": null,
+   "missing": []
+  },
+  "versions": [
+   {
+    "version": 1,
+    "status": "provisional",
+    "trigger": "sweep",
+    "provisional": true,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:26"
+   },
+   {
+    "version": 2,
+    "status": "final",
+    "trigger": "late_data",
+    "provisional": false,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:45"
+   }
+  ]
+ },
+ "v1_owner": {
+  "view": "owner",
+  "business_date": "2026-09-22",
+  "label": "9/22/26",
+  "fiscal": {
+   "week_start": "2026-09-16",
+   "week_end": "2026-09-22",
+   "fiscal_year": 2026,
+   "period": 9,
+   "week": 4,
+   "label": "Period 9 \u00b7 Week 4"
+  },
+  "version": 1,
+  "status": "provisional",
+  "provisional": true,
+  "trigger": "sweep",
+  "finalized_at": "2026-09-24 01:01:26",
+  "facts": {
+   "schema": 1,
+   "restaurant_id": 1,
+   "business_date": "2026-09-22",
+   "blocks": {
+    "sales": {
+     "status": "awaiting",
+     "source": "rpower",
+     "reason": "The POS closed the day but its tickets haven't arrived yet",
+     "metrics": {},
+     "detail": {
+      "waiting_for": "tickets",
+      "closed_by": "pos"
+     }
+    },
+    "labor": {
+     "status": "ready",
+     "source": "rpower",
+     "reason": null,
+     "metrics": {
+      "cost": 1912.0,
+      "pct": 27.4,
+      "hours": 124.5,
+      "overtime_hours": 0.0,
+      "target_pct": 26.0,
+      "vs_target_pts": 1.4,
+      "hours_after_6pm": null,
+      "hours_after_6pm_share_pct": null,
+      "sales_after_6pm_share_pct": null,
+      "no_shows": null,
+      "late_arrivals": null,
+      "shift_quality": null
+     },
+     "detail": {
+      "pct_basis": "labor_history",
+      "overtime_source": "rpower",
+      "coverage": {
+       "measured": false,
+       "no_shows": [],
+       "late": [],
+       "reason": "The POS has no live clock-in feed"
+      },
+      "shift_quality": null,
+      "observations": [
+       {
+        "key": "vs_target",
+        "facts": [
+         "labor.pct",
+         "labor.target_pct"
+        ],
+        "text": "Labor was 27.4% of sales, over the 26% target."
+       }
+      ]
+     }
+    },
+    "food": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "est_food_cost": 447.62,
+      "est_food_cost_pct": 19.3,
+      "recipe_coverage_pct": 100.0,
+      "waste_logged": 204.1,
+      "waste_counted": 14.7,
+      "waste_inferred": 189.4,
+      "critical_low": 3.0,
+      "low_stock": 0.0,
+      "recoverable_monthly": 756.0,
+      "variance_cost": 176.4,
+      "variance_items": 1.0
+     },
+     "detail": {
+      "estimate": {
+       "estimated": true,
+       "label": "Estimated \u2014 what 9/22/26's dishes should have cost by their recipes, at current ingredient prices. Not a count of what was actually used.",
+       "units_sold": 137.0,
+       "units_with_recipe": 137.0,
+       "coverage_basis": "share of units sold (by dish) that had a fully costed recipe",
+       "pct_basis": "theoretical cost over menu price, on the dishes sold that have both a recipe and a price",
+       "without_recipe": [],
+       "without_recipe_count": 0,
+       "scope": "dishes in your menu list; items the POS sold that aren't in it yet aren't counted"
+      },
+      "waste": {
+       "total": 204.1,
+       "counted": 14.7,
+       "inferred": 189.4,
+       "counts_taken": 1,
+       "inferred_basis": "inferred = what the ledger expected minus what was counted: waste, portioning or a miscount \u2014 a count can't tell them apart",
+       "top_inferred": [
+        {
+         "ingredient": "Cod",
+         "cost": 176.4,
+         "gap_qty": 18.0,
+         "unit": "lb"
+        },
+        {
+         "ingredient": "Ground chuck",
+         "cost": 13.0,
+         "gap_qty": 2.5,
+         "unit": "lb"
+        }
+       ]
+      },
+      "stock": {
+       "critical": [
+        {
+         "item": "Cod",
+         "days_remaining": 0.0,
+         "current_stock": 0.0,
+         "unit": "lb",
+         "count_stale": false
+        },
+        {
+         "item": "Ground chuck",
+         "days_remaining": 0.7,
+         "current_stock": 14.0,
+         "unit": "lb",
+         "count_stale": false
+        },
+        {
+         "item": "Brioche bun",
+         "days_remaining": 0.8,
+         "current_stock": 70.0,
+         "unit": "ea",
+         "count_stale": false
+        }
+       ],
+       "critical_count": 3,
+       "low": [],
+       "low_count": 0,
+       "as_of": "stock at the time of this report",
+       "basis": "Stock figures rest on counts taken 1 day ago.",
+       "count_stale": false
+      },
+      "recoverable": {
+       "total_monthly": 756.0,
+       "basis": "no ingredient appears in more than one driver",
+       "per": "month",
+       "complete": true,
+       "degraded_sources": [],
+       "note": null,
+       "top": [
+        {
+         "label": "Cod usage over recipe",
+         "dollars_monthly": 756.0,
+         "confidence": "medium"
+        }
+       ]
+      },
+      "variance": {
+       "window": "9/16/26 \u2013 9/22/26",
+       "last_count": "9/22/26",
+       "basis": "Gap between recipe-theoretical usage and physical counts over 7 days. Reported when the gap is at least 8% of theoretical usage AND at least $15. A gap is over-portioning, prep loss or shrink \u2014 it is not counted waste.",
+       "items": [
+        {
+         "ingredient": "Cod",
+         "cost": 176.4,
+         "variance_pct": 87.8,
+         "gap_qty": 18.0,
+         "unit": "lb",
+         "dish": "Fish Fry"
+        }
+       ]
+      },
+      "unavailable_parts": []
+     }
+    },
+    "reviews": {
+     "status": "ready",
+     "source": "google",
+     "reason": null,
+     "metrics": {
+      "received": 4.0,
+      "avg_rating": 4.0,
+      "positive": 3.0,
+      "negative": 1.0,
+      "not_analysed": 0.0,
+      "urgent": 1.0,
+      "drafts_awaiting": 0.0,
+      "replies_posted": 0.0
+     },
+     "detail": {
+      "window": {
+       "start": "9/22/26 \u00b7 5:00am",
+       "end": "9/23/26 \u00b7 5:00am"
+      },
+      "sync": {
+       "state": "complete",
+       "fetched_through": "9/23/26 \u00b7 8:05am",
+       "note": null
+      },
+      "reviews": [
+       {
+        "id": 1,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Best fish fry in town, server was great",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 2,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 5,
+        "sentiment": "positive",
+        "summary": "Patio was perfect tonight",
+        "urgent": false,
+        "status": "pending"
+       },
+       {
+        "id": 3,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 2,
+        "sentiment": "negative",
+        "summary": "Waited 40 minutes for burgers",
+        "urgent": true,
+        "status": "pending"
+       },
+       {
+        "id": 4,
+        "platform": "google",
+        "author": "Guest",
+        "rating": 4,
+        "sentiment": "positive",
+        "summary": "Great burger",
+        "urgent": false,
+        "status": "pending"
+       }
+      ],
+      "themes": {
+       "positive": [
+        {
+         "theme": "food",
+         "reviews": 2
+        },
+        {
+         "theme": "atmosphere",
+         "reviews": 1
+        },
+        {
+         "theme": "service",
+         "reviews": 1
+        }
+       ],
+       "negative": [
+        {
+         "theme": "food",
+         "reviews": 1
+        },
+        {
+         "theme": "wait time",
+         "reviews": 1
+        }
+       ],
+       "basis": "the categories stored when each review was analysed"
+      },
+      "urgent": [
+       {
+        "id": 3,
+        "rating": 2,
+        "summary": "Waited 40 minutes for burgers",
+        "status": "pending"
+       }
+      ],
+      "drafts": {
+       "publishable": 0,
+       "held": 0,
+       "as_of": "the reply queue at the time of this report",
+       "held_basis": "urgent or flagged drafts a person reads one at a time"
+      },
+      "unavailable_parts": []
+     }
+    },
+    "marketing": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "posts_published": 1.0,
+      "posts_failed": 0.0,
+      "reach": 1840.0,
+      "engagement": 131.0,
+      "engagement_rate": 7.1,
+      "campaigns_sent": 1.0,
+      "texts_sent": 212.0,
+      "campaign_clicks": null,
+      "campaign_visits": null,
+      "scheduled_next_7d": 0.0,
+      "drafts_awaiting": 0.0
+     },
+     "detail": {
+      "posts": {
+       "count": 1,
+       "reach": 1840,
+       "engagement": 131,
+       "engagement_rate": 7.1,
+       "items": [
+        {
+         "topic": "Tuesday fish fry",
+         "platform": "instagram",
+         "at": "9/22/26 \u00b7 4:00pm",
+         "reach": 1840,
+         "engagement": 131
+        }
+       ],
+       "measured": 1,
+       "basis": "posts published through Cavnar; reach and engagement as Meta last reported them"
+      },
+      "failed_posts": [],
+      "campaigns": {
+       "texts": [
+        {
+         "message": "Fish fry is back tonight \u2014 $5 off with this text",
+         "segment": null,
+         "sent": 212,
+         "failed": 3,
+         "clicks": null,
+         "visits_matched": null,
+         "attributed_through": null,
+         "sent_at": "9/22/26 \u00b7 3:00pm"
+        }
+       ],
+       "newsletters": [],
+       "earlier_results": [],
+       "clicks": null,
+       "visits": null,
+       "texts_sent": 212,
+       "basis": "clicks on a tracked link, and guests the POS matched on a check after the text \u2014 partial by nature, and never a sales estimate"
+      },
+      "upcoming": {
+       "scheduled": [],
+       "scheduled_count": 0,
+       "drafts": [],
+       "drafts_count": 0,
+       "winback": null,
+       "holidays": [],
+       "horizon_days": 7
+      },
+      "unavailable_parts": []
+     }
+    },
+    "intel": {
+     "status": "ready",
+     "source": "cavnar",
+     "reason": null,
+     "metrics": {
+      "weather_high_f": 71.0,
+      "weather_low_f": 58.0,
+      "weather_precip_pct": 10.0,
+      "events_listed": 1.0,
+      "reservations_covers": null,
+      "competitor_moves": null
+     },
+     "detail": {
+      "weather": {
+       "basis": "forecast",
+       "source": "National Weather Service forecast",
+       "period": "day",
+       "summary": "Partly Sunny \u00b7 high 71\u00b0 \u00b7 10% rain",
+       "short_forecast": "Partly Sunny",
+       "high_f": 71,
+       "low_f": 58,
+       "precip_pct": 10,
+       "note": "Forecast, not observed \u2014 Cavnar has no source for the weather that actually happened."
+      },
+      "events": {
+       "summary": "Cubs home game (7:05pm)",
+       "items": [
+        {
+         "label": "Cubs home game (7:05pm)",
+         "kind": "event",
+         "covers": null,
+         "source": "manual"
+        }
+       ],
+       "reservations_covers": null,
+       "basis": "events and reservations you entered for the date, and the holiday calendar"
+      },
+      "competitors": {
+       "tracked": false,
+       "note": "Competitors aren't tracked for this location yet."
+      },
+      "unavailable_parts": []
+     }
+    },
+    "closeout": {
+     "status": "ready",
+     "source": "manager",
+     "reason": null,
+     "metrics": {
+      "filed": 1.0,
+      "fields_written": 8.0
+     },
+     "detail": {
+      "filed": true,
+      "written_by": "manager",
+      "verbatim": true,
+      "submitted_by": "Jim",
+      "user_id": null,
+      "filed_at_utc": "2026-09-24 01:01:26",
+      "filed_at_label": "9/23/26 \u00b7 8:01pm",
+      "fields": {
+       "went_well": "Fish fry sold out the second batch by 8. Patio full 6\u20138:30.",
+       "went_wrong": "Burger tickets hit 40 min around 7:15 when the Cubs crowd came in; grill was one cook short.",
+       "eighty_sixed": "Cod at 8:40pm",
+       "callouts": "Marco (line) called out sick",
+       "equipment": "Ice machine slow again \u2014 third night",
+       "vip_guests": "The Hendersons, table 12",
+       "maintenance": null,
+       "shift_notes": "Jim closed. Comped two burgers for the 40-min wait.",
+       "general_notes": null,
+       "influence": "Cubs game pulled a late rush; nice weather filled the patio."
+      },
+      "labels": {
+       "went_well": "What went well",
+       "went_wrong": "What went wrong",
+       "eighty_sixed": "What we ran out of",
+       "callouts": "Who didn't make it",
+       "equipment": "Equipment",
+       "vip_guests": "VIP guests",
+       "maintenance": "Maintenance",
+       "shift_notes": "Shift notes",
+       "general_notes": "General notes",
+       "influence": "Why the day went how it did"
+      },
+      "order": [
+       "went_well",
+       "went_wrong",
+       "eighty_sixed",
+       "callouts",
+       "equipment",
+       "vip_guests",
+       "maintenance",
+       "shift_notes",
+       "general_notes",
+       "influence"
+      ]
+     }
+    }
+   },
+   "fiscal": {
+    "week_start": "2026-09-16",
+    "week_end": "2026-09-22",
+    "fiscal_year": 2026,
+    "period": 9,
+    "week": 4,
+    "label": "Period 9 \u00b7 Week 4"
+   },
+   "missing": [
+    "The POS closed the day but its tickets haven't arrived yet"
+   ],
+   "withheld": []
+  },
+  "narrative": null,
+  "checklist": {
+   "business_date": "2026-09-22",
+   "label": "9/22/26",
+   "version": 1,
+   "status": "provisional",
+   "status_label": "Provisional \u2014 some data is still syncing",
+   "provisional": true,
+   "stages": [
+    {
+     "key": "scheduled",
+     "label": "Scheduled",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "awaiting_close",
+     "label": "Closeout in progress \u2014 waiting for the POS to close the day",
+     "at": null,
+     "at_local": null,
+     "done": false,
+     "current": false
+    },
+    {
+     "key": "collecting",
+     "label": "Collecting",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": false
+    },
+    {
+     "key": "writing",
+     "label": "Writing the summary",
+     "at": null,
+     "at_local": null,
+     "done": false,
+     "current": false
+    },
+    {
+     "key": "provisional",
+     "label": "Provisional \u2014 some data is still syncing",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01",
+     "done": true,
+     "current": true
+    }
+   ],
+   "blocks": [
+    {
+     "name": "sales",
+     "label": "Sales",
+     "status": "awaiting",
+     "reason": "The POS closed the day but its tickets haven't arrived yet",
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "labor",
+     "label": "Labor",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "food",
+     "label": "Food",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "reviews",
+     "label": "Reviews",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "marketing",
+     "label": "Marketing",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "intel",
+     "label": "Intel",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    },
+    {
+     "name": "closeout",
+     "label": "Manager closeout",
+     "status": "ready",
+     "reason": null,
+     "at": "2026-09-24 01:01:26",
+     "at_local": "2026-09-23T20:01"
+    }
+   ],
+   "narrative": {
+    "status": "skipped",
+    "reason": "Not enough data tonight for a summary \u2014 sales are still syncing"
+   },
+   "closed_by": "pos",
+   "next_attempt_at": null,
+   "missing": [
+    "The POS closed the day but its tickets haven't arrived yet"
+   ]
+  },
+  "versions": [
+   {
+    "version": 1,
+    "status": "provisional",
+    "trigger": "sweep",
+    "provisional": true,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:26"
+   },
+   {
+    "version": 2,
+    "status": "final",
+    "trigger": "late_data",
+    "provisional": false,
+    "created_at": "2026-09-24 01:01:26",
+    "finalized_at": "2026-09-24 01:01:45"
+   }
+  ]
+ },
+ "checklist_v2": {
+  "business_date": "2026-09-22",
+  "label": "9/22/26",
+  "version": 2,
+  "status": "final",
+  "status_label": "Ready",
+  "provisional": false,
+  "stages": [
+   {
+    "key": "scheduled",
+    "label": "Scheduled",
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01",
+    "done": true,
+    "current": false
+   },
+   {
+    "key": "awaiting_close",
+    "label": "Closeout in progress \u2014 waiting for the POS to close the day",
+    "at": null,
+    "at_local": null,
+    "done": false,
+    "current": false
+   },
+   {
+    "key": "collecting",
+    "label": "Collecting",
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01",
+    "done": true,
+    "current": false
+   },
+   {
+    "key": "writing",
+    "label": "Writing the summary",
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01",
+    "done": true,
+    "current": false
+   },
+   {
+    "key": "final",
+    "label": "Ready",
+    "at": "2026-09-24 01:01:45",
+    "at_local": "2026-09-23T20:01",
+    "done": true,
+    "current": true
+   }
+  ],
+  "blocks": [
+   {
+    "name": "sales",
+    "label": "Sales",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "labor",
+    "label": "Labor",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "food",
+    "label": "Food",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "reviews",
+    "label": "Reviews",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "marketing",
+    "label": "Marketing",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "intel",
+    "label": "Intel",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   },
+   {
+    "name": "closeout",
+    "label": "Manager closeout",
+    "status": "ready",
+    "reason": null,
+    "at": "2026-09-24 01:01:26",
+    "at_local": "2026-09-23T20:01"
+   }
+  ],
+  "narrative": {
+   "status": "written",
+   "reason": null
+  },
+  "closed_by": "pos",
+  "next_attempt_at": null,
+  "missing": []
+ }
+}
