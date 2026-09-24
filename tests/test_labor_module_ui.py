@@ -96,7 +96,7 @@ def test_the_schedule_and_upload_buttons_moved_off_the_header():
     header_end = panel.index('"lb2-bignums"')
     assert 'class="lb2-actions"' not in panel[:header_end], \
         "the action buttons are still up in the header"
-    sched_heading = panel.index("Next week, built by Cavnar")
+    sched_heading = panel.index("Next week, drafted by Cavnar")
     actions_idx = panel.index('class="lb2-actions"', header_end)
     assert sched_heading < actions_idx < panel.index("sched-tbody"), (
         "Generate schedule / Upload shifts CSV should sit with the "
@@ -260,10 +260,14 @@ def test_the_headline_numbers_are_opted_into_the_count_up_mechanism():
     ]
     for pattern in expected:
         assert re.search(pattern, panel), "not opted into count-up: " + pattern
-    # both the "if optimised" and the "vs industry average" branches carry
-    # a pair each — only one branch renders per request, but both exist
-    # in the template source
-    assert panel.count('class="x good stat-n"') == 4
+    # the gap-to-target and the under-industry branches carry a pair each
+    # — only one branch renders per request, but both exist in the
+    # template source. Neither is ever the green "good" tone: the gap is an
+    # opportunity and the industry figure a benchmark gap (never-say C,
+    # NS1 #22), so the gap takes the warn tone and the rest stay neutral.
+    assert panel.count('class="x good stat-n"') == 0
+    assert panel.count('class="x warn stat-n"') == 1
+    assert panel.count('class="x stat-n"') == 3
     assert 'class="x stat-n {{' in panel  # overtime premium, tone varies
 
 
@@ -280,15 +284,21 @@ def test_the_async_populated_numbers_dont_depend_on_animation_frames_firing():
 def test_vs_industry_is_toned_by_whether_its_actually_good():
     """It read "excellent" in the same color the page uses for "needs
     attention" — the label carries no information if it's one flat color
-    regardless of which word it is."""
+    regardless of which word it is. A good word and the green tone need the
+    positive-status contract (_status_ok: live, complete, long enough), and
+    the verdict is against the owner's target, which the heading now says
+    (never-say C, NS1 #4, NS4 L7)."""
     panel = _labor_panel()
     m = re.search(
-        r"<i class=\"\{% if _lp <= _lt %\}good\{% elif _lp <= _lt \+ 3 %\}warn\{% else %\}bad\{% endif %\}\">"
-        r"\{% if _lp <= _lt - 3 %\}excellent\{% elif _lp <= _lt %\}on target\{% elif _lp <= _lt \+ 3 %\}slightly over"
-        r"\{% elif _lp <= _lt \+ 8 %\}above target\{% else %\}needs attention\{% endif %\}</i>",
+        r"<i class=\"\{% if _lp > _lt \+ 3 %\}bad\{% elif _lp > _lt %\}warn\{% elif _status_ok %\}good\{% endif %\}\">"
+        r"\{% if _lp > _lt \+ 8 %\}needs attention\{% elif _lp > _lt \+ 3 %\}above target\{% elif _lp > _lt %\}slightly over"
+        r"\{% elif not labor.is_live %\}sample\{% elif not _status_ok %\}— partial data"
+        r"\{% elif _lp <= _lt - 3 %\}well under target\{% else %\}on target\{% endif %\}</i>",
         panel,
     )
     assert m, "Vs industry's <i> label has no tone class"
+    assert "<span>Vs your target · industry</span>" in panel
+    assert "excellent" not in m.group(0)
     css = _src()
     assert ".lb2-sg .k i.good{color:var(--hb-good)}" in css
     assert ".lb2-sg .k i.bad{color:var(--hb-bad)}" in css

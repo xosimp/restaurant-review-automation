@@ -82,7 +82,9 @@ def test_lb2_sched_no_longer_draws_its_own_divider():
 # ── the heading text ─────────────────────────────────────────────────────────
 
 def test_schedule_heading_says_cavnar_ai():
-    assert "Next week, built by Cavnar AI<small>" in _src()
+    # "drafted", never "optimized" (never-say C, NS1 #11).
+    assert "Next week, drafted by Cavnar AI<small>" in _src()
+    assert "optimized to your" not in _src()
 
 
 # ── buttons moved under the heading ──────────────────────────────────────────
