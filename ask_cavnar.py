@@ -1667,6 +1667,12 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
         causes = unsupported_causes_in(answer, corpus)
     except Exception:
         causes = []
+    # And a name nothing it read holds (R11, B5 #11).
+    try:
+        from ai_guard import unsupported_names
+        names = unsupported_names(answer, "\n".join(str(c) for c in corpus))
+    except Exception:
+        names = []
     # What the answer rests on: the modules the tool names imply, plus the
     # ones a tool reported reading on its own (read_business_snapshot reads
     # every module in one call, and its name says none of them).
@@ -1687,7 +1693,7 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # modules read. `confidence` stays the band string both shipped clients
     # decode; the K1 object rides in `confidence_detail`.
     detail = _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id,
-                                causes=causes)
+                                causes=causes, names=names)
     return {
         "modules_consulted": modules,
         "tools_used": list(dict.fromkeys(tools_used)),
@@ -1696,6 +1702,7 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
         "confidence_detail": detail,
         "unverified_figures": unverified[:5],
         "unsupported_causes": causes[:3],
+        "unsupported_names": names[:3],
         # The whole list (R6): the weekly plan's unattended gate read the
         # five above and filed an item carrying the sixth.
         "unverified_all": list(unverified),
@@ -1806,7 +1813,7 @@ def unsupported_causes_in(answer, corpus) -> list:
     return unsupported_causes(answer or "", anchors)
 
 
-def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id, causes=()):
+def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id, causes=(), names=()):
     """The K1 confidence of one Ask answer. Never raises.
 
     Evidence is the number of distinct live reads that back a figure the
@@ -1853,7 +1860,10 @@ def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaura
             basis += f"; {checked} of {len(claims)} figures checked against your data"
         if causes:
             basis += f"; {len(causes)} cause{'s' if len(causes) != 1 else ''} nothing it read states"
-        ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []) + len(causes or []),
+        if names:
+            basis += f"; {len(names)} name{'s' if len(names) != 1 else ''} nothing it read holds"
+        ev = {"n": n, "kind": "evidence_items",
+              "unverified": len(unverified or []) + len(causes or []) + len(names or []),
               "basis": basis,
               "sample": bool(tools_used) and not reads and bool(sample)}
         return rec_trust.assess(restaurant_id, "ask_answer", evidence=ev,

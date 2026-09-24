@@ -207,7 +207,17 @@ _COMMITMENT_RE = re.compile(
     # A process promise without a subject: "Going forward, every order will
     # be double-checked", "From now on all plates will be".
     r"(?:going|moving)\s+forward,?\s+[^.!?\n]{0,80}?\bwill\b"
-    r"|from\s+now\s+on,?\s+[^.!?\n]{0,80}?\bwill\b"
+    r"|from\s+now\s+on\b"
+    # R13 (B5 #15 / p10): the passive voice ("the server involved has been
+    # retrained", "the issue is fixed") and "our team is now …-ing".
+    r"|(?:the|our|your|that)\s+" + _STAFF + r"\s+(?:\w+\s+){0,2}?(?:has|have)\s+been\s+"
+    r"(?:retrained|re-trained|replaced|fired|let\s+go|terminated|disciplined|spoken\s+to|talked\s+to|"
+    r"written\s+up|coached|reprimanded|suspended|dealt\s+with)"
+    r"|(?:the|this|that|your)\s+(?:issue|problem|matter|situation|mistake|error)\s+(?:is|was|has\s+been|"
+    r"have\s+been)\s+(?:now\s+)?(?:fixed|resolved|addressed|corrected|sorted(?:\s+out)?|handled|"
+    r"taken\s+care\s+of|dealt\s+with)"
+    r"|(?:our|the)\s+(?:\w+\s+)?(?:team|staff|kitchen|crew|servers?|cooks?|managers?|chefs?)\s+(?:is|are)\s+"
+    r"now\s+[\w-]+ing"
     r"|(?:this|that|it)\s+will\s+(?:never|not)\s+happen\s+again"
     r"|(?:every|each|all)\s+(?:order|plate|dish|meal|ticket|table|delivery)s?\s+will\s+(?:now\s+)?be\s+\w+"
     + r"|"
@@ -902,6 +912,10 @@ def _fact_numbers(values) -> set:
     return out
 
 
+_DAY_ABBR = {"monday": ("mon",), "tuesday": ("tue", "tues"), "wednesday": ("wed", "weds"),
+             "thursday": ("thu", "thur", "thurs"), "friday": ("fri",), "saturday": ("sat",), "sunday": ("sun",)}
+
+
 def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: str = None,
                     restaurant_id=None) -> list:
     """Money, percentage and rating figures stated in a sentence about a
@@ -917,36 +931,63 @@ def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: st
         if len(n) >= 3:
             names.setdefault(n.lower(), set()).update(_fact_numbers(vals))
     glob = _fact_numbers(global_facts)
-    pats = {n: re.compile(r"(?<![\w])" + re.escape(n) + r"s?(?![\w])", re.I) for n in names}
+
+    def _pat(n):
+        # A weekday is matched by its abbreviations too (R13, B5 #14): "Wed
+        # ran 38%" escaped a Wednesday fact.
+        alts = [re.escape(n)] + [re.escape(a) for a in _DAY_ABBR.get(n, ())]
+        return re.compile(r"(?<![\w])(?:" + "|".join(alts) + r")(?:s|'s|\.)?(?![\w])", re.I)
+    pats = {n: _pat(n) for n in names}
     out = []
-    for s in sentences(generated):
-        about = [n for n, p in pats.items() if p.search(s)]
-        if not about:
-            continue
-        pool = set(glob)
-        for n in about:
-            pool |= names[n]
-        for c in figure_claims(normalise_numbers(s)):
+    last = None
+    for raw in sentences(generated):
+        s = normalise_numbers(raw)
+        mentions = sorted((m.start(), n) for n, p in pats.items() for m in p.finditer(s))
+        if not mentions:
+            # "Wednesday was the problem. It ran 38%." — a sentence opening
+            # on a pronoun is about the entity the last one named (R13).
+            if last and re.match(r"^\s*(?:it|its|that|this|they|there|that day|the day|he|she)\b", s, re.I):
+                mentions = [(-1, last)]
+            else:
+                last = None
+                continue
+        last = mentions[-1][1]
+        # Clauses: a figure is bound to the entities of ITS clause, or the
+        # nearest one named before it (R13): "Unlike Friday, Wednesday ran
+        # 38%" pooled both days' figures and passed Friday's 38%.
+        bounds = [0] + [m.end() for m in re.finditer(r"[,;:]\s+|\s+(?:but|while|whereas|unlike)\s+", s, re.I)] + [len(s)]
+        for c in figure_claims(s):
             if c["kind"] not in ("money", "pct", "star") or c["year"]:
                 continue
+            lo = max(b for b in bounds if b <= c["start"])
+            hi = min(b for b in bounds if b > c["start"]) if any(b > c["start"] for b in bounds) else len(s)
+            here = {n for pos, n in mentions if lo <= pos < hi}
+            if not here:
+                before = [n for pos, n in mentions if pos < c["start"]]
+                here = {before[-1]} if before else {mentions[0][1]}
+            pool = set(glob)
+            for n in here:
+                pool |= names[n]
             v = abs(c["value"])
             tol = (0.051 if c["kind"] == "star" else
                    max(0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0), 0.005 * v) + 1e-9)
             if not any(abs(v - abs(k)) <= tol for k in pool):
-                out.append(f"{c['raw']} (about {about[0]})")
+                out.append(f"{c['raw']} (about {sorted(here)[0]})")
     if out and job:
         _capture(f"{job} attached figures to the wrong fact: {out[:4]}", job, restaurant_id)
     return out
 
 
-def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
+def unverified_note(figures=(), causes=(), bindings=(), names=()) -> str | None:
     """The one UNVERIFIED line an insight carries, or None when clean. With
     only figures it is the long-standing "$145, 38%" form every client
-    already parses; causes and misattached figures say what they are."""
+    already parses; causes, misattached figures and names nobody gave it
+    (R11) say what they are."""
     figures, causes, bindings = list(figures or []), list(causes or []), list(bindings or [])
-    if not (figures or causes or bindings):
+    names = list(names or [])
+    if not (figures or causes or bindings or names):
         return None
-    if figures and not causes and not bindings:
+    if figures and not causes and not bindings and not names:
         return ", ".join(str(u) for u in figures[:5])
     parts = []
     if figures:
@@ -955,6 +996,8 @@ def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
         parts.append("figures attached to the wrong day or item: " + ", ".join(str(b) for b in bindings[:4]))
     if causes:
         parts.append("a cause no stored diagnosis supports (\"" + str(causes[0])[:120] + "\")")
+    if names:
+        parts.append("a name that is not in the data: " + ", ".join(str(n) for n in names[:3]))
     return "; ".join(parts)
 
 
@@ -963,7 +1006,25 @@ def unverified_note(figures=(), causes=(), bindings=()) -> str | None:
 _NAME_SKIP = {"google", "yelp", "monday", "tuesday", "wednesday", "thursday",
               "friday", "saturday", "sunday", "january", "february", "march",
               "april", "may", "june", "july", "august", "september", "october",
-              "november", "december", "cavnar", "respond", "review", "reviews"}
+              "november", "december", "cavnar", "respond", "review", "reviews",
+              # common nouns a sentence opens on ("Service was slow")
+              "service", "food", "kitchen", "staff", "labor", "sales", "waste", "the", "this", "that",
+              "everything", "nothing", "lunch", "dinner", "brunch", "breakfast", "delivery", "parking",
+              "music", "everyone", "someone", "nobody", "team", "management", "manager", "each", "every",
+              "prep", "front", "back", "floor", "bar", "patio", "weekend", "weekends", "tonight", "today",
+              "tomorrow", "yesterday", "last", "next", "overtime", "schedule", "shift", "shifts",
+              # role titles ("Have Chef Marco…" names Marco, not Chef)
+              "chef", "sous", "server", "servers", "cook", "cooks", "host", "hostess", "bartender", "busser",
+              "runner", "waiter", "waitress", "owner", "expo", "lead", "supervisor", "cashier", "dishwasher"}
+# Roles a name can follow ("Chef Marco", "server Tina") or stand in
+# apposition to ("Marco, the new weekend server"), and the imperatives an
+# owner is told to do something to a person with ("ask Marco", "pull Tina").
+_ROLE_WORDS = (r"(?:chef|sous(?:\s+chef)?|cook|line\s+cook|server|waiter|waitress|bartender|barback|host|hostess|"
+               r"manager|gm|busser|runner|dishwasher|cashier|owner|expo|supervisor|lead)")
+_PERSON_VERBS = (r"(?:ask|tell|call|have|let|get|remind|thank|text|email|pull|move|schedule|put|coach|train|"
+                 r"praise|talk\s+to|speak\s+(?:to|with)|check\s+(?:in\s+)?with|pair|send)")
+_PERSON_STATES = (r"(?:rude|late|slow|absent|sick|out|off|short|dismissive|unfriendly|friendly|careless|"
+                  r"missing|drunk|yelling|new|overwhelmed|understaffed|behind|on\s+(?:the\s+)?(?:phone|break))")
 
 
 def unsupported_names(generated: str, context: str) -> list:
@@ -979,6 +1040,13 @@ def unsupported_names(generated: str, context: str) -> list:
         r"\b(?:from|by|to|for|with)\s+([A-Z][a-z]{2,})\b",   # "respond to Amanda"
         r"\b([A-Z][a-z]{2,})\s+[A-Z]\.",                       # "Amanda L."
         r"\b([A-Z][a-z]{2,})'s\b",                             # "Amanda's review"
+        # R11 (B5 #11 / p03, p09, p15): "Chef Marco", "server Tina",
+        # "Marco, the new weekend server", "Marco was rude", "ask Marco".
+        r"(?i:\b" + _ROLE_WORDS + r")\s+([A-Z][a-z]{2,})\b",
+        r"\b([A-Z][a-z]{2,}),\s+(?:the|our|your|a|an)\s+(?:\w+\s+){0,3}?(?i:" + _ROLE_WORDS + r")\b",
+        r"\b([A-Z][a-z]{2,})\s+(?:was|is|has\s+been|had\s+been|seemed|seems|kept|keeps)\s+(?i:"
+        + _PERSON_STATES + r")\b",
+        r"(?i:\b" + _PERSON_VERBS + r")\s+([A-Z][a-z]{2,})\b",
     )
     for pat in patterns:
         for m in re.finditer(pat, generated or ""):

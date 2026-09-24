@@ -1194,6 +1194,14 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None):
                                   out["what_would_confirm"], out["recommended_action"],
                                   out["expected_outcome"]) if v)
     bad = verify_figures(joined, prompt, "review_diagnosis", restaurant_id, check_counts=True)
+    # A person it was never handed (R11, B5 #11 / p15): "Marco, the new
+    # weekend server" and "Chef Luis" were kept though neither was in the
+    # input. A root cause pinned on an invented person is refused whole —
+    # the previous diagnosis stands.
+    from ai_guard import unsupported_names
+    names = unsupported_names(joined, prompt)
+    if names:
+        raise ValueError(f"diagnosis named {names[:3]}, who are not in its input")
     if bad:
         # Not dropped: an owner reading a cause with one unverified number is
         # better served by seeing it flagged than by seeing a hole. The flag

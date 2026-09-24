@@ -75,7 +75,7 @@ from datetime import datetime
 from itertools import combinations
 
 import dsr as _dsr
-from ai_guard import figure_claims, injection_residue, unsupported_causes, wrap_untrusted
+from ai_guard import figure_claims, injection_residue, unsupported_causes, unsupported_names, wrap_untrusted
 
 SCHEMA_VERSION = 1
 PURPOSE = "dsr_narrative"          # ai_utils.MODELS key and the ai_usage action
@@ -434,6 +434,19 @@ class Facts:
     def echoes(self, text):
         return bool(self.untrusted and (_shingles(text) & self.untrusted))
 
+    def name_context(self):
+        """Every word tonight's measured facts hold (their keys and the
+        strings in their detail lists) — the names a line may use. Never
+        the closeout or a guest's words: a name only people wrote is not
+        one the report may put in an owner's action (R11)."""
+        if getattr(self, "_name_ctx", None) is None:
+            parts = list(self.metrics) + list(self.details)
+            for block, strings in self.block_strings.items():
+                if block not in ("closeout", "reviews"):
+                    parts += list(strings)
+            self._name_ctx = " ".join(p.replace(".", " ").replace("_", " ") for p in parts)
+        return self._name_ctx
+
     def cause_anchors(self, cites):
         """What a cause in a line citing `cites` may name (R5): the things
         those facts measure — each key's words ("overtime", "hours", "no
@@ -785,6 +798,10 @@ def check_item(item, F, action=False, lead=False):
         causes = unsupported_causes(text, F.cause_anchors(cites))
         if causes:
             return f"states a cause nothing it cites supports (\"{causes[0][:100]}\")"
+        # A person the facts never name (R11, B5 #11).
+        names = unsupported_names(text, F.name_context())
+        if names:
+            return f"names {', '.join(names[:3])}, who is not in tonight's facts"
         est = F.estimate_quoted(text, cites)
         if est and not _ESTIMATE_WORDS.search(text):
             # The footer says every figure traced to a MEASURED fact; a line

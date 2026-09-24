@@ -1397,6 +1397,11 @@ def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None
                                   out["what_would_confirm"], out["recommended_action"],
                                   out["expected_outcome"]) if v)
     bad = verify_figures(joined, prompt, "food_cost_diagnosis", restaurant_id)
+    # A person it was never handed is refused whole (R11), as for reviews.
+    from ai_guard import unsupported_names
+    names = unsupported_names(joined, prompt)
+    if names:
+        raise ValueError(f"diagnosis named {names[:3]}, who are not in its input")
     if bad:
         out["unsupported_figures"] = bad
     out["confidence"] = cap_band(conf, verified_evidence=len(op), unverified_figures=bad)
