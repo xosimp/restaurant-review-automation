@@ -468,7 +468,13 @@ def test_intel_top_actions_no_longer_duplicate_the_aiv_section_button():
     start = s.index('<h1 class="hb-h1">Intel. ')
     top = s[start:s.index('<div class="hb-pulse">', start)]
     assert "Check AI visibility" not in top
-    assert 'onclick="in2Jump(\'in2-neighbors\')' in top, "the other 2 top actions should be untouched"
+    # Refresh competitors and Track a competitor went too (9/24/26): the
+    # neighbors section has its own Refresh and search box, and the empty
+    # state its own Fetch button, so the header row duplicated both.
+    assert "lb2-actions" not in top and "refreshCompetitorIntel" not in top and "Track a competitor" not in top
+    neighbors = s[s.index('id="intel-search"') - 600:s.index('id="intel-search"')]
+    assert "refreshCompetitorIntel(this)" in neighbors
+    assert s.count('<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary cbtn-lg">Fetch competitor data</button>') == 1
     # The real button stays exactly once.
     assert s.count("Check AI visibility") == 1
     assert 'id="aiv-run-btn"' in s and 'cbtn-primary cbtn-lg' in s

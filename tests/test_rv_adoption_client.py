@@ -443,3 +443,39 @@ def test_a_plain_string_insight_carries_a_null_validation(db_path, monkeypatch, 
     _web_login(monkeypatch, rid)
     body = web.get("/api/inv-insight").get_json()
     assert "validation" in body and body["validation"] is None
+
+
+# ── The read's own greeting is not an invented business (9/24/26) ─────────
+
+def test_the_greeting_to_the_owner_is_not_an_invented_business(monkeypatch):
+    """The prompt opens the read with "Hi <owner>, here is...". "Hi Erik"
+    read as a two-word business that isn't a competitor, so every read for
+    an owner with a name was held back with "names a business that is not
+    in your competitor list: Hi Erik"."""
+    monkeypatch.setattr(competitor, "ANTHROPIC_KEY", "fake", raising=False)
+    monkeypatch.setattr(competitor, "get_client", lambda timeout=None: object())
+    monkeypatch.setattr(competitor, "create_with_retry",
+                        lambda client, **kw: _msg(_INTEL.replace("Hi,", "Hi Erik,")))
+    out = competitor.generate_competitor_insight("Test Cafe", copy.deepcopy(_COMPS), owner_name="Erik")
+    assert "UNVERIFIED" not in out and "Hi Erik" not in str(out.validation.get("caveats"))
+    assert out.validation["intel_check"] == competitor.INTEL_CHECK
+
+
+def test_a_read_held_back_for_the_greeting_is_checked_again_and_released(db_path, monkeypatch):
+    """A stored read the old check held back — same engine version, no
+    intel_check — is checked again on its next open, with no model call,
+    and its recommendations come back."""
+    rid = _rid(db_path, name="Test Cafe", owner_name="Erik")
+    text = (_INTEL.replace("Hi,", "Hi Erik,")
+            + "\n\nUNVERIFIED: names a business that is not in your competitor list: Hi Erik.")
+    blob = {"competitors": copy.deepcopy(_COMPS), "insight": text, "generated_at": "2026-09-24",
+            "validation": {"version": rv.VERSION, "verdict": "withhold", "controls": False, "codes": ["N1"]}}
+    update_restaurant(rid, {"competitor_intel": json.dumps(blob)}, db_path=db_path)
+    monkeypatch.setattr(competitor, "create_with_retry",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
+    monkeypatch.setattr(models, "DB_PATH", db_path, raising=False)
+    fresh = competitor.current_intel(rid, blob, persist=False)
+    assert "UNVERIFIED" not in fresh["insight"] and fresh["validation"]["intel_check"] == competitor.INTEL_CHECK
+    import competitor_intel_format as fmt
+    parsed = fmt.parse_competitor_intel(fresh["insight"])
+    assert parsed["withheld_recommendations"] == 0 and parsed["recommendations"] and not parsed["unverified"]

@@ -521,3 +521,15 @@ def test_s17_portfolio_reads_last_fetched_at_as_chicago_local():
     st = data_freshness.review_fetch_state({"id": 1, "gmb_refresh_token": "x",
                                             "last_fetched_at": ct.isoformat(timespec="seconds")}, now=now)
     assert abs(st["age_days"] - 2 / 24.0) < 0.01
+
+
+def test_campaign_read_on_link_taps_says_so_in_its_caution(db):
+    """A campaign read on link taps alone (flagged partial) rests on no dated
+    POS data: it stays at 49% or below, and its caution says it is based on
+    link taps only — never that "nothing dates the data" (9/24/26)."""
+    import guest_marketing
+    out = guest_marketing._with_confidence(
+        1, {}, {"n": 12, "kind": "campaigns", "flags": ("partial",), "basis": "x"}, db_path=db)
+    conf = out["confidence_detail"]
+    assert conf["pct"] <= 49 and "freshness_unmeasured" in conf["caps_applied"]
+    assert "based on link taps only" in (conf.get("caution") or "")

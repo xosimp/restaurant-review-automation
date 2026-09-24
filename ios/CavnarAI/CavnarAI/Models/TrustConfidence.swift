@@ -452,7 +452,7 @@ struct ConfidenceDisplay: Equatable {
             s += " Data under \(staleBelow)% fresh holds it at \(staleCap)% or below."
         }
         if applied.contains("freshness_unmeasured") {
-            s += " Nothing dates the data under it, which holds it at \(caps?.freshnessUnmeasured ?? 49)% or below."
+            s += " No connected source confirms the data under it is current, which holds it at \(caps?.freshnessUnmeasured ?? 49)% or below."
         }
         return s
     }

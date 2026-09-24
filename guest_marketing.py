@@ -1183,8 +1183,10 @@ def _with_confidence(restaurant_id, out, ev_in, db_path=DB_PATH):
         # M12 — it passed no sources, so it was never measured): guests who
         # came back are matched through the POS's orders; a read on link
         # taps (flagged partial) rests on no dated POS data.
-        srcs = () if "partial" in (ev_in.get("flags") or ()) else data_freshness.sources_for(["campaigns"])
-        conf = rec_trust.assess(restaurant_id, "diag_campaign", evidence=ev_in, sources=srcs, db_path=db_path)
+        taps_only = "partial" in (ev_in.get("flags") or ())
+        srcs = () if taps_only else data_freshness.sources_for(["campaigns"])
+        conf = rec_trust.assess(restaurant_id, "diag_campaign", evidence=ev_in, sources=srcs, db_path=db_path,
+                                rests_on="link taps only" if taps_only else None)
     except Exception as e:
         print(f"[guest_marketing] campaign confidence unavailable: {e}")
         import confidence_engine

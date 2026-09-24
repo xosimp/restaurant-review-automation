@@ -217,13 +217,15 @@ def _kind(key):
 
 
 def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_path=None, now=None,
-           ctx=None) -> dict:
+           ctx=None, rests_on=None) -> dict:
     """The K1 confidence object for recommendation `key`.
 
     `evidence` is confidence_engine.evidence's keyword arguments: n, kind,
     coverage, flags, model_band, unverified, sample, basis, n_full, cap,
     cap_reason. `sources` are data_freshness keys (default: none — the
-    freshness dimension is then not measurable). Deterministic for the same
+    freshness dimension is then not measurable). `rests_on` names what the
+    card rests on when no connected source dates it ("link taps only"), so
+    the caution says what is true instead of that nothing dates it. Deterministic for the same
     rows; never raises; `score` always a number."""
     try:
         # One confidence per recommendation key per build (B4 M1, B1 H3):
@@ -245,7 +247,7 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
             ev_in["cap_reason"] = f"you said you don't trust the data behind this ({ce._mdy(seen)})"
         ev = ce.evidence(**ev_in)
         acc = ce.accuracy(ctx.record(kind))
-        fr = ce.freshness(ctx.sources(tuple(sources or ())))
+        fr = ce.freshness(ctx.sources(tuple(sources or ())), rests_on=rests_on)
         out = ce.assemble(ev, acc, fr)
         if memo:
             ctx._confs[key] = copy.deepcopy(out)

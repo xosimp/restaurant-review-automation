@@ -137,7 +137,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   silently no-op — `tests/test_models.py` now asserts every `al_*`/`alert_*`
   dataclass field is whitelisted.
 - **Targeted tests by default.** Run the full suite once before pushing, or
-  when asked — not after every edit.
+  when asked — not after every edit — and always in parallel:
+  `python3 -m pytest -q -p no:warnings -n auto --dist loadfile` (~3 min;
+  a serial run is 10+). One suite at a time: two at once halve each other.
 - **`get_restaurant()` is memoised per Flask request**, and only per request —
   outside one (scheduler, tests, scripts) it is uncached, deliberately, so a
   long-running job sees rows change under it. Any new write path to

@@ -659,7 +659,15 @@ _NOT_A_BUSINESS = {
     "WHAT", "PRICE", "POSITIONING", "COMPETITORS", "RECOMMENDATIONS", "DOING",
     "WELL", "POORLY", "UNVERIFIED", "GOOGLE", "YELP", "AI", "THE", "THIS",
     "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
+    "HI", "HELLO", "HEY",
 }
+
+# The version of the checks below that a stored read was shown under. A read
+# checked by an older version is checked again on its next open
+# (current_intel), even when the engine's own version has not moved. 2: the
+# prompt's own greeting ("Hi Erik, here is...") read as an invented
+# business and held every recommendation back (9/24/26).
+INTEL_CHECK = 2
 
 
 def _invented_competitors(text: str, competitors: list) -> list:
@@ -986,7 +994,10 @@ def _checked_intel(checked, ctx, competitors, restaurant_name="", own_price_leve
     # A named restaurant that was never in the competitor list is an invented
     # competitor, the single worst thing this module can produce. The
     # restaurant's own name is not one.
-    invented = _invented_competitors(text, list(competitors or []) + [{"name": restaurant_name or ""}])
+    # Every name the read may use — the competitors, the restaurant and its
+    # owner (the prompt opens the read with "Hi <owner>") — is a known name.
+    allowed = [{"name": n} for n in (getattr(ctx, "names_allowed", None) or ()) if n]
+    invented = _invented_competitors(text, list(competitors or []) + [{"name": restaurant_name or ""}] + allowed)
     if invented:
         notes.append("names a business that is not in your competitor list: " + ", ".join(invented[:3]))
         validation.update({
@@ -996,6 +1007,7 @@ def _checked_intel(checked, ctx, competitors, restaurant_name="", own_price_leve
             "caveats": list(validation.get("caveats") or []) + [f"A name here isn't in the data: {invented[0]}."]})
     if notes and rv.mode_for(ctx.surface) == "enforce":
         text = text.rstrip() + "\n\nUNVERIFIED: " + "; ".join(notes) + "."
+    validation["intel_check"] = INTEL_CHECK
     return rv.Validated(text, validation=validation, verdict=verdict)
 
 
@@ -1056,7 +1068,8 @@ def current_intel(restaurant_id, blob, persist=True):
             return blob
         val = blob.get("validation")
         text = blob.get("insight") or ""
-        if (isinstance(val, dict) and val.get("version") == rv.VERSION) or not str(text).strip():
+        if (isinstance(val, dict) and val.get("version") == rv.VERSION
+                and val.get("intel_check") == INTEL_CHECK) or not str(text).strip():
             return blob
         comps = [c for c in (blob.get("competitors") or []) if isinstance(c, dict)]
         restaurant_name, owner_name = "", None

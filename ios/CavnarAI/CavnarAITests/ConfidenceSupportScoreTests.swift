@@ -64,6 +64,6 @@ final class ConfidenceSupportScoreTests: XCTestCase {
     func testUndatedDataIsExplainedInTheFooter() throws {
         var c = try decode(TrustConfidence.self, Self.k1)
         c.capsApplied = ["freshness_unmeasured"]
-        XCTAssertTrue(ConfidenceDisplay(c).footer.contains("Nothing dates the data under it, which holds it at 49% or below."))
+        XCTAssertTrue(ConfidenceDisplay(c).footer.contains("No connected source confirms the data under it is current, which holds it at 49% or below."))
     }
 }

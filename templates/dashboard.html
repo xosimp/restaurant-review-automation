@@ -779,8 +779,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
      ai        — anything Cavnar AI wrote: warm surface, ember hairline,
                  and the ember thread (the signature motif) tying it to
                  the evidence above it. */
-:root{--sf-ai:linear-gradient(135deg,rgba(200,75,47,.09),rgba(200,75,47,.02) 62%);--sf-ai-line:rgba(200,75,47,.16);--sf-recess:rgba(14,12,10,.035);--glow-ember:0 0 0 1px rgba(200,75,47,.10),0 22px 56px -30px rgba(200,75,47,.45);--elev-card:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);--elev-hero:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28),0 40px 90px -40px rgba(200,75,47,.28);--elev-float:0 2px 6px rgba(14,12,10,.08),0 30px 80px -30px rgba(14,12,10,.38);--ambient:rgba(200,75,47,.13)}
-[data-theme="dark"]{--sf-ai:linear-gradient(135deg,rgba(224,100,68,.15),rgba(224,100,68,.03) 62%);--sf-ai-line:rgba(224,100,68,.22);--sf-recess:rgba(255,255,255,.045);--glow-ember:0 0 0 1px rgba(224,100,68,.18),0 22px 56px -30px rgba(224,100,68,.55);--elev-card:var(--elev-1);--elev-hero:var(--elev-2),0 40px 90px -40px rgba(224,100,68,.35);--elev-float:0 2px 6px rgba(0,0,0,.3),0 30px 80px -30px rgba(0,0,0,.75);--ambient:rgba(224,100,68,.17)}
+:root{--sf-ai:linear-gradient(135deg,rgba(200,75,47,.09),rgba(200,75,47,.02) 62%);--sf-ai-line:rgba(200,75,47,.16);--sf-recess:rgba(14,12,10,.035);--glow-ember:0 0 0 1px rgba(200,75,47,.10),0 18px 40px -30px rgba(200,75,47,.18);--elev-card:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);--elev-hero:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28),0 40px 90px -40px rgba(200,75,47,.28);--elev-float:0 2px 6px rgba(14,12,10,.08),0 30px 80px -30px rgba(14,12,10,.38);--ambient:rgba(200,75,47,.13)}
+[data-theme="dark"]{--sf-ai:linear-gradient(135deg,rgba(224,100,68,.15),rgba(224,100,68,.03) 62%);--sf-ai-line:rgba(224,100,68,.22);--sf-recess:rgba(255,255,255,.045);--glow-ember:0 0 0 1px rgba(224,100,68,.16),0 18px 40px -30px rgba(224,100,68,.2);--elev-card:var(--elev-1);--elev-hero:var(--elev-2),0 40px 90px -40px rgba(224,100,68,.35);--elev-float:0 2px 6px rgba(0,0,0,.3),0 30px 80px -30px rgba(0,0,0,.75);--ambient:rgba(224,100,68,.17)}
 /* hero: the module's focal point */
 .rv2-hero,.lb2-hero{position:relative;padding:26px 28px 24px;border-radius:20px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-hero);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
 [data-theme="dark"] .rv2-hero,[data-theme="dark"] .lb2-hero{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
@@ -2106,7 +2106,7 @@ svg:hover .hb-xh{opacity:1}
       +(ap.indexOf('record_unproven')>=0?' Until its record here shows it beats doing nothing, it stays at '+(isNum(cp.record_unproven)?cp.record_unproven:ntr)+'% or below.':'')
       +(ap.indexOf('record_against')>=0?' Its record here leans against it, which holds it at '+(isNum(cp.record_against)?cp.record_against:49)+'% or below.':'')
       +(fp!=null&&fp<stb?' Data under '+stb+'% fresh holds it at '+stc+'% or below.':'')
-      +(ap.indexOf('freshness_unmeasured')>=0?' Nothing dates the data under it, which holds it at '+(isNum(cp.freshness_unmeasured)?cp.freshness_unmeasured:49)+'% or below.':'');
+      +(ap.indexOf('freshness_unmeasured')>=0?' No connected source confirms the data under it is current, which holds it at '+(isNum(cp.freshness_unmeasured)?cp.freshness_unmeasured:49)+'% or below.':'');
   }
   function panel(n){
     var h='<div class="cf-p">';
@@ -8147,10 +8147,6 @@ svg:hover .hb-xh{opacity:1}
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
-      <div class="lb2-actions">
-        {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Fetch competitor data</button>{% endif %}
-        <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
-      </div>
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ comp_count }}</span></span><span class="l">tracked</span></span>

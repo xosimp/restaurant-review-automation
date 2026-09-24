@@ -1,6 +1,6 @@
 # Testing — Cavnar AI
 
-About 160 test files and 3,400 tests (`python3 -m pytest --collect-only -q | tail -1` is the count; do not type one into a doc), about 4 minutes to run in full in parallel (about 15 serially). **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing 10+ minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need 1,900 tests re-run to prove it's safe.
+About 160 test files and 3,400 tests (`python3 -m pytest --collect-only -q | tail -1` is the count; do not type one into a doc), about 3 minutes to run in full in parallel (well over 10 serially — never run it without `-n auto`). **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing 10+ minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need 1,900 tests re-run to prove it's safe.
 
 ## Default verification (most tasks)
 
@@ -30,7 +30,10 @@ python3 -m pytest tests/test_shift_quality.py::test_a_specific_case -q
 # (pytest-xdist, in requirements-dev.txt); --dist loadfile keeps a file's
 # tests on one worker, so module-scoped fixtures such as the app
 # subprocesses boot once per file. Each worker imports conftest on its own
-# and gets its own throwaway default database.
+# and gets its own throwaway default database. The db_path fixture copies
+# one database per worker built by the real init_db() + ensure_columns()
+# (conftest._db_template) instead of migrating a fresh file per test —
+# ~230 ms a test, which was most of a full run.
 python3 -m pytest -q -p no:warnings -n auto --dist loadfile
 
 # Color lint — template/CSS color changes only

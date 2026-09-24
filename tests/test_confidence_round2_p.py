@@ -225,7 +225,27 @@ def test_p2_b1_h1b_an_unmeasured_freshness_never_raises_the_overall():
     unmeasured = ce.assemble(FULL, ce.accuracy(rec), ce.freshness([]))
     sixty = ce.assemble(FULL, ce.accuracy(rec), {"pct": 60, "basis": "x", "errors": []})
     assert unmeasured["pct"] <= ce.FRESHNESS_UNMEASURED_CAP < sixty["pct"]
-    assert unmeasured["caps_applied"] == ["freshness_unmeasured"] and "Nothing dates" in unmeasured["caution"]
+    assert unmeasured["caps_applied"] == ["freshness_unmeasured"]
+    assert unmeasured["caution"] == "No connected source confirms this is current, so it can't read above 49%."
+
+
+def test_the_undated_caution_says_what_the_card_rests_on():
+    """The undated caution names what is true — what the card rests on, or
+    which sources aren't connected — never "nothing dates the data", which
+    read as broken (9/24/26)."""
+    rec = _own(5, 5)
+    taps = ce.assemble(FULL, ce.accuracy(rec), ce.freshness([], rests_on="link taps only"))
+    assert taps["pct"] <= ce.FRESHNESS_UNMEASURED_CAP
+    assert taps["caution"] == ("This is based on link taps only; no connected source confirms it's current, "
+                               "so it can't read above 49%.")
+    off = [{"key": "pos", "label": "POS", "pct": None, "state": "not_connected"},
+           {"key": "marketing", "label": "Marketing", "pct": None, "state": "not_connected"}]
+    two = ce.assemble(FULL, ce.accuracy(rec), ce.freshness(off))
+    assert two["caution"] == "POS and Marketing aren't connected to confirm this is current, so it can't read above 49%."
+    one = ce.assemble(FULL, ce.accuracy(rec), ce.freshness(off[:1]))
+    assert one["caution"].startswith("POS isn't connected")
+    for c in (taps, two, one):
+        assert "Nothing dates" not in c["caution"] and c["caps_applied"] == ["freshness_unmeasured"]
 
 
 def test_p2_the_k1_object_carries_its_meaning_thresholds_and_caps():

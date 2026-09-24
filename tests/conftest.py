@@ -194,15 +194,36 @@ def _no_real_email_or_sms(monkeypatch):
     yield
 
 
+_DB_TEMPLATE = None
+
+
+def _db_template():
+    """One database per test process built by the real boot migrations —
+    init_db() AND ensure_columns(), the two separate paths hosted_dashboard
+    runs (skipping ensure_columns once meant tests had a schema production
+    never has) — which every db_path copies. Building it per test cost
+    ~230 ms each, most of a full run; a copy costs well under 1 ms and is
+    byte-for-byte what the migrations produce."""
+    global _DB_TEMPLATE
+    if _DB_TEMPLATE is None:
+        import sqlite3
+        path = os.path.join(_tempfile.mkdtemp(prefix="cavnar-test-template-"), "template.db")
+        init_db(db_path=path)
+        ensure_columns(db_path=path)
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        _DB_TEMPLATE = path
+    return _DB_TEMPLATE
+
+
 @pytest.fixture
 def db_path(tmp_path):
+    import shutil
     path = str(tmp_path / "test_reviews.db")
-    init_db(db_path=path)
-    # Real app boot (hosted_dashboard.py) calls both init_db() AND
-    # ensure_columns() — they're two separate migration paths (the latter
-    # covers columns like alert_quiet_start/alert_max_per_day). Skipping
-    # ensure_columns() here meant tests had a schema real production never has.
-    ensure_columns(db_path=path)
+    shutil.copyfile(_db_template(), path)
     return path
 
 

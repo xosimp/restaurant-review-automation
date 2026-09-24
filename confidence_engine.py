@@ -494,17 +494,37 @@ def recency(lag_days, grace_days, horizon_days):
     return max(0.0, 1.0 - (lag - grace_days) / float(horizon_days))
 
 
-def freshness(sources) -> dict:
+def _unmeasured_why(sources, rests_on=None) -> str:
+    """Why nothing confirms a card's data is current, in the owner's words:
+    what it rests on when the caller knows (\"link taps only\"), else the
+    sources it would read that aren't connected, else that none is."""
+    if rests_on:
+        return f"This is based on {rests_on}; no connected source confirms it's current"
+    labels = []
+    for s in (sources or []):
+        lab = str((s or {}).get("label") or (s or {}).get("key") or "").strip()
+        if lab and (s or {}).get("state") == "not_connected" and lab not in labels:
+            labels.append(lab)
+    if labels:
+        names = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+        verb = "isn't" if len(labels) == 1 else "aren't"
+        return f"{names} {verb} connected to confirm this is current"
+    return "No connected source confirms this is current"
+
+
+def freshness(sources, rests_on=None) -> dict:
     """{pct, basis, as_of, as_of_iso, stalest, stalest_basis, errors} — Data
     Freshness over the sources a card rests on (data_freshness.source_state
     dicts). The minimum, not an average: one stale source cannot hide behind
     a fresh one. A source that does not apply (not connected) carries pct
-    None and is left out; `errors` names every source whose sync failed."""
+    None and is left out; `errors` names every source whose sync failed.
+    With no connected source, `basis` says what the card rests on instead
+    (`rests_on`, from the caller) or which sources aren't connected."""
     live = [s for s in (sources or []) if s and s.get("pct") is not None]
     errors = [str(s.get("label") or s.get("key")) for s in (sources or []) if s and s.get("error")]
     if not live:
-        return {"pct": None, "basis": "No connected source dates this", "as_of": None, "as_of_iso": None,
-                "stalest": None, "stalest_basis": None, "errors": errors}
+        return {"pct": None, "basis": _unmeasured_why(sources, rests_on), "as_of": None, "as_of_iso": None,
+                "stalest": None, "stalest_basis": None, "errors": errors, "unmeasured": True}
     worst = min(live, key=lambda s: (s["pct"], s.get("as_of_iso") or ""))
     basis = " · ".join(str(s.get("basis") or "").strip() for s in live if s.get("basis"))
     return {"pct": int(round(worst["pct"])), "basis": basis or "dated",
@@ -589,13 +609,14 @@ def _combine(ev, acc, fr) -> dict:
         cautions.append(f"The data under this is out of date ({(fr or {}).get('basis') or 'stale'}).")
     elif f is None:
         apply("freshness_unmeasured", FRESHNESS_UNMEASURED_CAP,
-              "nothing dates the data under it, so it can't read higher")
-        cautions.append(f"Nothing dates the data under this, so it can't read above "
-                        f"{FRESHNESS_UNMEASURED_CAP}%.")
+              "no connected source confirms the data under it is current")
+        why = str((fr or {}).get("basis") or "").strip() if (fr or {}).get("unmeasured") else ""
+        cautions.append(f"{why or 'No connected source confirms this is current'}, "
+                        f"so it can't read above {FRESHNESS_UNMEASURED_CAP}%.")
     if errs and not any("out of date" in c for c in cautions):
         cautions.append(f"A data source is failing ({', '.join(errs)}) — figures may stop updating.")
     # The data caution leads: it is the one an owner acts on first.
-    cautions.sort(key=lambda c: 0 if ("out of date" in c or "failing" in c or "Nothing dates" in c) else 1)
+    cautions.sort(key=lambda c: 0 if ("out of date" in c or "failing" in c or "confirms" in c) else 1)
     out["pct"] = int(round(pct))
     out["caution"] = cautions[0] if cautions else None
     return out
