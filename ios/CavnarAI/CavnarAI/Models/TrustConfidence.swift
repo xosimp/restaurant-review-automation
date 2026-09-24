@@ -494,7 +494,7 @@ struct ConfidenceDisplay: Equatable {
         if let low = d.low, let high = d.high { parts.append("improved-rate range \(low)\u{2013}\(high)%") }
         var detail = parts.joined(separator: " \u{00B7} ")
         if d.source == "cohort" {
-            detail = "At restaurants like yours \u{00B7} " + detail
+            detail = "From other restaurants on Cavnar \u{00B7} " + detail
         }
         return Row(title: title, value: percentText(pct), tone: tone(pct: pct, at: at),
                    basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct))

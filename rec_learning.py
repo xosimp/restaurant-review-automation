@@ -1053,6 +1053,13 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
                            prior_measured_raw=int(s.get("measured") or 0),
                            prior_improved_raw=int(s.get("improved") or 0),
                            prior_restaurants=int(s.get("measured_restaurants") or 0))
+                # The label of the cohort ACTUALLY read (NS4 H4): never "like
+                # yours" when it is the whole platform.
+                try:
+                    from intelligence import benchmarks as _bm
+                    out["prior_label"] = _bm.cohort_label(cohort)
+                except Exception:
+                    out["prior_label"] = "other restaurants on Cavnar"
                 if not own:
                     out.update(rate=pi / pm, source="cohort")
                     out["low"], out["high"] = wilson(pi, pm)

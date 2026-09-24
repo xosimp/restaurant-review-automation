@@ -452,7 +452,7 @@ def accuracy(record) -> dict:
             (r.get("source") == "cohort" and measured < MIN_MEASURED):
         basis = f"Not enough history yet — {measured} measured, needs {MIN_MEASURED}"
         if c_centre is not None:
-            basis += f" (at restaurants like yours: {pi} of {pm} improved — not counted until your own are in)"
+            basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar'}: {pi} of {pm} improved — not counted until your own are in)"
         return {"pct": None, "basis": basis, "n": measured, "improved": improved,
                 "source": "cohort" if c_centre is not None else "none", "low": None, "high": None,
                 "lift": None, "prior": None}

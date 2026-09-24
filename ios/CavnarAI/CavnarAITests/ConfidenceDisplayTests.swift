@@ -109,9 +109,9 @@ final class ConfidenceDisplayTests: XCTestCase {
     }
 
     func testCohortAccuracySaysSo() {
-        let row = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "At restaurants like yours: 12 of 15 improved",
+        let row = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "Mexican on Cavnar: 12 of 15 improved",
                                                       n: 15, improved: 12, source: "cohort", low: 60, high: 91))
-        XCTAssertEqual(row.detail, "At restaurants like yours · 80% likely to beat doing nothing · improved-rate range 60–91%")
+        XCTAssertEqual(row.detail, "From other restaurants on Cavnar · 80% likely to beat doing nothing · improved-rate range 60–91%")
     }
 
     func testMissingDimensionReadsNotMeasured() throws {

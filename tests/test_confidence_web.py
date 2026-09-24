@@ -181,7 +181,7 @@ def test_cohort_accuracy_says_where_it_comes_from():
     c["dimensions"]["accuracy"] = {"pct": 80, "basis": "12 of 15 improved", "n": 15, "improved": 12,
                                    "source": "cohort", "low": 58, "high": 92}
     acc = _eval("C.rows(C.norm(c))[1]", c=c)
-    assert acc["detail"].startswith("From restaurants like yours")
+    assert acc["detail"].startswith("From other restaurants on Cavnar")
 
 
 def test_a_missing_dimension_is_not_measured_not_zero():

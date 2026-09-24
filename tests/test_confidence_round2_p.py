@@ -153,7 +153,7 @@ def test_p1_b2_p6_a_cohort_never_stands_in_for_the_restaurants_own_record():
     rec = {"source": "cohort", "measured": 4, "improved": 0, "prior_measured": 12, "prior_improved": 10}
     a = ce.accuracy(rec)
     k1 = _overall(rec)
-    assert a["pct"] is None and "at restaurants like yours: 10 of 12" in a["basis"]
+    assert a["pct"] is None and "10 of 12 improved" in a["basis"] and "like yours" not in a["basis"]
     assert k1["pct"] == ce.NO_TRACK_RECORD_CAP and k1["band"] == "medium" and "No track record" in k1["caution"]
     own = ce.accuracy(_own(0, 5))
     with_good_peers = ce.accuracy(_own(0, 5, prior_measured=12, prior_improved=10))

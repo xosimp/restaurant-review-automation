@@ -2078,7 +2078,7 @@ svg:hover .hb-xh{opacity:1}
       det.push(str(a.beats_label)||(p+'% likely to beat doing nothing'));
       if(isNum(a.low)&&isNum(a.high))det.push('improved-rate range '+Math.round(a.low)+'–'+Math.round(a.high)+'%');
       // An older server's cohort stand-in says where it comes from.
-      if(a.source==='cohort'&&!/like yours/i.test(bs))det.unshift('From restaurants like yours');
+      if(a.source==='cohort'&&!/on Cavnar/i.test(bs))det.unshift('From other restaurants on Cavnar');
       out.push({key:'accuracy',title:'Historical accuracy',pct:p,tone:tone(p,at),value:p+'%',basis:bs,detail:det.join(' · ')});
     }else{
       var nn=a&&isNum(a.n)?a.n:0;

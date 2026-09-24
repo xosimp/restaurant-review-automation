@@ -113,7 +113,7 @@ def test_no_accuracy_percentage_below_the_own_floor_or_the_cohort_floor():
     # Group P (B1 H9, B2 #3): the cohort alone never produces a figure — it
     # is labelled, and waits for the restaurant's own five results.
     c = ce.accuracy({"measured": 1, "source": "cohort", "prior_measured": 15, "prior_improved": 12})
-    assert c["source"] == "cohort" and c["pct"] is None and "restaurants like yours: 12 of 15" in c["basis"]
+    assert c["source"] == "cohort" and c["pct"] is None and "12 of 15 improved" in c["basis"] and "like yours" not in c["basis"]
 
 
 def test_five_worsened_results_read_low_accuracy_never_one_hundred():
