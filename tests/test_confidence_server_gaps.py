@@ -47,9 +47,14 @@ def test_schedule_quality_items_each_carry_k1(monkeypatch):
                         seen.append((key, evidence, sources)) or {"pct": 60, "dimensions": {}})
     rec_trust.attach_schedule_confidence(1, q, items)
     assert items[0]["confidence"]["pct"] == 60 and "confidence" not in items[1]
-    key, ev, src = seen[0]
-    assert key == "schedule_coverage:x" and ev["coverage"] == 0.8 and src == ("labor",)
-    assert "Operational Score" in ev["basis"]
+    # Group P item 7: the panel's own K1 first, then each item; the read's
+    # completeness is a documented CAP (never `coverage`, which printed a
+    # false "window"), and the sources are everything a schedule rests on.
+    import data_freshness
+    assert q["confidence_detail"]["pct"] == 60 and seen[0][0] == rec_trust.SCHEDULE_PANEL_KEY
+    key, ev, src = seen[1]
+    assert key == "schedule_coverage:x" and "coverage" not in ev and ev["cap"] == 80.0
+    assert src == data_freshness.sources_for(["schedule"]) and "Operational Score" in ev["cap_reason"]
 
 
 def test_the_item_builder_attaches_the_confidence():

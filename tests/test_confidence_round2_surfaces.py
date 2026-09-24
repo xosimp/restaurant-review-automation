@@ -233,7 +233,12 @@ def test_t1_brief_lines_carry_confidence_into_push_email_and_ledger(db):
               "text": "Running low: Salmon."},
              {"key": "reviews", "tone": "bad", "rec": "no_response", "text": "3 reviews waiting on a reply."}]
     morning_brief._attach_confidence(rid, lines, db)
-    assert _is_k1(lines[0]["confidence"]) and "confidence" not in lines[1]     # a fact carries none
+    # Group P item 3: the items running low on the last counts are a FACT,
+    # like the replies waiting — neither carries a confidence.
+    assert "confidence" not in lines[0] and "confidence" not in lines[1]
+    slow = [{"key": "slow_day", "rec": "slow_day:Tuesday", "_samples": 6, "text": "Tuesday runs slow."}]
+    morning_brief._attach_confidence(rid, slow, db)
+    assert _is_k1(slow[0]["confidence"])
     brief = {"date": "2026-09-24", "restaurant_id": rid,
              "lines": [dict(lines[0], confidence=_k1()), lines[1]]}
     push = morning_brief.push_text(brief, "R")
@@ -268,8 +273,10 @@ def test_t1_group_attention_advice_carries_confidence_and_facts_none(db):
               {"severity": "critical", "text": "2 urgent reviews unanswered", "module": "reviews"}]
     home_brief._group_issue_confidence(rid, issues, {"overtime": 0}, {"critical_low": 2}, {"n30": 9},
                                        {"n": 20, "kind": "trading_days", "basis": "20 days"})
-    assert all(_is_k1(i["confidence"]) for i in issues[:3])
-    assert "confidence" not in issues[3]
+    # Items critically low are a FACT, as on the location's own Home (group
+    # P item 3): no confidence; labor over target and a rating slip keep it.
+    assert _is_k1(issues[0]["confidence"]) and _is_k1(issues[2]["confidence"])
+    assert "confidence" not in issues[1] and "confidence" not in issues[3]
     src = inspect.getsource(home_brief._location_record)
     assert "_group_issue_confidence(rid, issues" in src
 

@@ -1130,13 +1130,46 @@ def settle_actions(actions, F, ctx, declined, dropped):
     return ranked
 
 
+_ONE_NIGHT_BASELINES = ("yesterday", "last_week", "last_year")
+
+
+def nights_behind(cites, F) -> int:
+    """How many nights of observation stand behind the figures an action's
+    traced cites carry (confidence round 2, group P — B2 #12, B4 M3: three
+    facts of one night scored a full sample, and one night is an anecdote).
+    Tonight is one night. A sales figure read against a baseline adds that
+    baseline's nights: the demand forecast's own samples (the same weekday
+    over up to 8 weeks, sales.detail.baselines.forecast.samples — which
+    already include last week's), or one night each for yesterday, last week
+    and last year. Every other figure is tonight's alone. Pure."""
+    base = ((F.details.get("sales.baselines") if F is not None else None) or {})
+    base = base if isinstance(base, dict) else {}
+    extra, forecast = set(), 0
+    for c in cites or []:
+        if not isinstance(c, str) or not c.startswith("sales."):
+            continue
+        k = c.split(".", 1)[1]
+        if "forecast" in k:
+            try:
+                forecast = max(forecast, int(((base.get("forecast") or {}).get("samples")) or 1))
+            except (TypeError, ValueError):
+                forecast = max(forecast, 1)
+            continue
+        for b in _ONE_NIGHT_BASELINES:
+            if b in k:
+                extra.add(b)
+    if forecast:
+        extra.discard("last_week")      # the forecast's same-weekday nights include it
+    return 1 + forecast + len(extra)
+
+
 def action_confidence(action, F, ctx, tctx=None) -> dict:
     """The K1 confidence of one DSR action: Evidence Strength from the
-    measured facts of the night it cites (N_FULL "night_facts" — the most a
-    line may cite), weakened when the sales block had no gross figure and
-    it cites sales; Historical Accuracy from this restaurant's record of
-    dsr_action; Data Freshness from the sources of the blocks it cites.
-    Never raises."""
+    NIGHTS of observation behind the figures its traced cites carry
+    (nights_behind, N_FULL "nights" — one night is an anecdote), weakened
+    when the sales block had no gross figure and it cites sales; Historical
+    Accuracy from this restaurant's record of dsr_action; Data Freshness
+    from the sources of the blocks it cites. Never raises."""
     try:
         import rec_trust
         import data_freshness
@@ -1150,9 +1183,12 @@ def action_confidence(action, F, ctx, tctx=None) -> dict:
         blocks = sorted({c.split(".", 1)[0] for c in measured})
         gross_missing = bool(F.details.get("sales.gross_missing") or F.metrics.get("sales.gross_missing"))
         flags = ("gross_missing",) if (gross_missing and "sales" in blocks) else ()
-        ev = {"n": len(measured), "kind": "night_facts", "flags": flags,
-              "basis": f"{len(measured)} measured figure{'s' if len(measured) != 1 else ''} from the night"
-                       + (f" ({', '.join(blocks)})" if blocks else "")}
+        nights = nights_behind(measured, F) if measured else None
+        ev = {"n": nights, "kind": "nights", "flags": flags,
+              "basis": (f"{len(measured)} measured figure{'s' if len(measured) != 1 else ''}"
+                        + (f" ({', '.join(blocks)})" if blocks else "")
+                        + (f" resting on {nights} night{'s' if nights != 1 else ''} of observation"
+                           if nights else ""))}
         mods = [{"sales": "labor", "labor": "labor", "food": "inventory"}.get(b, _MODULE.get(b, b)) for b in blocks]
         return rec_trust.assess(ctx.restaurant_id, action.get("key") or "dsr_action", evidence=ev,
                                 sources=data_freshness.sources_for(mods), db_path=ctx.db_path, ctx=tctx)

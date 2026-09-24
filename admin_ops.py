@@ -1435,6 +1435,12 @@ def _episodes(conn, since, restaurant_id=None):
                     "measured": verdict in _CLEAR, "verdict": verdict,
                     # The confidence it was shown with (K3 snapshot).
                     **{c: _col_or_none(i, c) for c in _SNAPSHOT_COLS},
+                    # ...and the one it carried when the owner TOOK it: the
+                    # latest showing at or before the first acceptance (each
+                    # `shown` meta carries the snapshot) — what calibration
+                    # scores when there is one (group P item 8, B2 #9).
+                    **_at_acceptance(es, first_act),
+                    "tracker": trackers.get(i.get("tracker_id")) or {},
                     "reason_codes": sorted({(_meta_of(e) or {}).get("reason_code") for e in es
                                             if (_meta_of(e) or {}).get("reason_code")}),
                     "hours_to_act": hours, "responder_role": next((e["role"] for e in es if e["event"] in (
@@ -1445,8 +1451,35 @@ def _episodes(conn, since, restaurant_id=None):
 _CLEAR = ("improved", "worsened", "no_clear_change")
 _SNAPSHOT_COLS = ("confidence_pct", "evidence_pct", "accuracy_pct", "accuracy_n", "freshness_pct",
                   "freshness_as_of", "trust_version")
+# The tracker columns learned_verdict reads — concurrent and
+# baseline_overlaps_trigger included, so an admin result is counted by the
+# rule learning counts it by (outcomes.result_counts; group P item 8: the
+# calibration pairs could include confounded results).
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
-                 "after_end, recheck_verdict, owner_checkin, source_key")
+                 "after_end, recheck_verdict, owner_checkin, source_key, concurrent, baseline_overlaps_trigger")
+_TRACKER_COLS_OLD = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
+                     "after_end, recheck_verdict, owner_checkin, source_key")
+
+
+def _at_acceptance(events, first_act):
+    """{confidence_at_accept, evidence_at_accept, accuracy_at_accept,
+    freshness_at_accept, trust_version_at_accept} from the latest `shown`
+    event at or before `first_act` whose meta carries a snapshot — all None
+    when there is none (the episode's first snapshot is used instead)."""
+    out = {"confidence_at_accept": None, "evidence_at_accept": None, "accuracy_at_accept": None,
+           "freshness_at_accept": None, "trust_version_at_accept": None}
+    if not first_act:
+        return out
+    for e in events or []:
+        if e.get("event") != "shown" or str(e.get("at") or "") > str(first_act):
+            continue
+        m = _meta_of(e) or {}
+        if m.get("confidence_pct") is None:
+            continue
+        out.update(confidence_at_accept=m.get("confidence_pct"), evidence_at_accept=m.get("evidence_pct"),
+                   accuracy_at_accept=m.get("accuracy_pct"), freshness_at_accept=m.get("freshness_pct"),
+                   trust_version_at_accept=m.get("trust_version"))
+    return out
 
 
 def _col_or_none(row, name):
@@ -1469,13 +1502,15 @@ def _trackers(conn, tids):
     for n in range(0, len(tids), 400):
         chunk = tids[n:n + 400]
         marks = ",".join("?" for _ in chunk)
-        try:
-            rows = _rows_dict(conn, f"SELECT {_TRACKER_COLS} FROM recommendation_outcomes WHERE id IN ({marks})",
-                              tuple(chunk))
-        except Exception:
-            rows = _rows_dict(conn, f"SELECT id, status, verdict, dollars_monthly, evaluate_on FROM "
-                                    f"recommendation_outcomes WHERE id IN ({marks})", tuple(chunk))
-        for r in rows:
+        rows = None
+        for cols in (_TRACKER_COLS, _TRACKER_COLS_OLD, "id, status, verdict, dollars_monthly, evaluate_on"):
+            try:
+                rows = _rows_dict(conn, f"SELECT {cols} FROM recommendation_outcomes WHERE id IN ({marks})",
+                                  tuple(chunk))
+                break
+            except Exception:
+                continue
+        for r in rows or []:
             out[r["id"]] = r
     return out
 
@@ -1647,11 +1682,21 @@ def recommendation_calibration(days=365, restaurant_id=None):
     conn = models.get_conn()
     try:
         try:
-            rows = _rows_dict(conn, "SELECT i.rec_id, i.kind, i.key, i.status, i.dollar_value, o.verdict, "
-                                    "o.dollars_monthly, o.id AS tracker_id, o.status AS tracker_status, "
-                                    "o.recheck_verdict, o.owner_checkin, o.source_key "
-                                    "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
-                                    f"WHERE {where} AND o.status='evaluated'", tuple(args))
+            rows = None
+            # concurrent / baseline_overlaps_trigger: the result rule learning
+            # counts by (learned_verdict ≡ outcomes.result_counts, group P
+            # item 8); an older database without them reads as before.
+            for extra in (", o.concurrent, o.baseline_overlaps_trigger", ""):
+                try:
+                    rows = _rows_dict(conn, "SELECT i.rec_id, i.kind, i.key, i.status, i.dollar_value, o.verdict, "
+                                            "o.dollars_monthly, o.id AS tracker_id, o.status AS tracker_status, "
+                                            "o.recheck_verdict, o.owner_checkin, o.source_key" + extra + " "
+                                            "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
+                                            f"WHERE {where} AND o.status='evaluated'", tuple(args))
+                    break
+                except Exception:
+                    if not extra:
+                        raise
             _ck = {}
             for n in range(0, len(rows), 400):
                 chunk = [r["rec_id"] for r in rows[n:n + 400]]
@@ -1674,7 +1719,9 @@ def recommendation_calibration(days=365, restaurant_id=None):
         # faded or reversed one realised nothing.
         r["verdict"] = rec_learning.learned_verdict(
             r["verdict"], {"recheck_verdict": r.get("recheck_verdict"), "owner_checkin": r.get("owner_checkin"),
-                           "source_key": r.get("source_key")}, _ck.get(r.get("rec_id")))
+                           "source_key": r.get("source_key"), "concurrent": r.get("concurrent"),
+                           "baseline_overlaps_trigger": r.get("baseline_overlaps_trigger")},
+            _ck.get(r.get("rec_id")))
         k = by.setdefault(r["kind"] or (r["key"] or "").split(":", 1)[0], {"pairs": [], "unpriced": 0})
         if r["verdict"] == "no_clear_change":
             k["pairs"].append((float(r["dollar_value"]), 0.0))
@@ -1712,12 +1759,52 @@ def recommendation_calibration(days=365, restaurant_id=None):
 CALIBRATION_FLOOR_N = RAS_MIN_N     # a band's observed rate below this is noise
 
 
+def _calibration_scored(eps):
+    """The taken, measured episodes calibration scores, counted by the rule
+    learning counts by: the verdict already read through learned_verdict
+    (confounded and baseline-overlap results unknown — the tracker carries
+    concurrent / baseline_overlaps_trigger), and ONE result per overlapping
+    after-window on a number per restaurant and kind (rec_learning.
+    _one_per_window, kind_record's rule — two recommendations read over the
+    same weeks on the same number are one change). Each carries the figure
+    it is scored on: the confidence at ACCEPTANCE when a showing before it
+    carried one, else the episode's first snapshot (`scored_on`)."""
+    import rec_learning
+    taken = [e for e in eps if (e["accepted"] or e["completed"] or e.get("implemented")) and e.get("measured")]
+    groups = {}
+    for e in taken:
+        groups.setdefault((e["restaurant_id"], e["kind"]), []).append(e)
+    kept = []
+    for items in groups.values():
+        kept.extend(rec_learning._one_per_window(items))
+    for e in kept:
+        at_accept = e.get("confidence_at_accept") is not None
+        e["scored_on"] = "acceptance" if at_accept else "first_shown"
+        for dim in ("confidence", "evidence", "accuracy", "freshness"):
+            e[f"score_{dim}"] = e.get(f"{dim}_at_accept") if at_accept else e.get(f"{dim}_pct")
+        e["score_version"] = (e.get("trust_version_at_accept") if at_accept else e.get("trust_version"))
+    return kept
+
+
 def confidence_calibration(days=365, restaurant_id=None):
-    """{bands:[{range, n, predicted_mean, observed_rate, low, high}], brier,
-    by_kind:[{kind, n, predicted_mean, observed_rate, enough}],
-    by_dimension:{evidence, accuracy, freshness}, floor_n, distrust:{n, by_kind}}.
-    Owners never see a probability; this is Will's view of whether "72%"
-    means 72%."""
+    """Will's view of whether a higher support score really goes with better
+    results (the owner's decision, 9/24/26: the % is how well SUPPORTED the
+    advice is — never a probability — so it is checked for ORDER, not for
+    "72% comes true 72% of the time"):
+      {ordering: {bands, ordered, violations, spearman, n} (confidence_engine.
+       ordering: the observed improved rate by support band, with its 90%
+       Wilson range, must not decrease — a higher band whose range sits
+       wholly below a lower one's is a violation),
+       ordering_by_kind: [{kind, ...ordering}], ordering_by_dimension:
+       {evidence, accuracy, freshness}, alerts: [{severity, title, detail}]
+       (an admin row, never an SMS), meaning, scored_on {acceptance,
+       first_shown}, versions {version: n},
+       bands, brier (decile reliability and the Brier score, kept for the
+       record — NOT the meaning of the %), by_kind, by_dimension, floor_n,
+       kind_floor_n, distrust:{n, by_kind}}.
+    Only snapshots of the support-score meaning (trust_version ≥ 2) are
+    judged for order; older ones measured something else and are counted
+    apart. Owners never see this."""
     import models
     import confidence_engine as ce
     days = max(1, min(int(days or 365), 730))
@@ -1731,40 +1818,82 @@ def confidence_calibration(days=365, restaurant_id=None):
             eps = []
     finally:
         conn.close()
-    scored = [e for e in eps if (e["accepted"] or e["completed"] or e.get("implemented")) and e.get("measured")]
+    scored = _calibration_scored(eps)
 
-    def pairs(field):
-        return [(e.get(field), 1 if e["improved"] else 0) for e in scored if e.get(field) is not None]
+    def current(e):
+        try:
+            return int(e.get("score_version") or 0) >= ce.VERSION
+        except (TypeError, ValueError):
+            return False
 
-    overall = pairs("confidence_pct")
-    by_kind = []
+    def pairs(field, only_current=False, rows=None):
+        return [(e.get(field), 1 if e["improved"] else 0) for e in (scored if rows is None else rows)
+                if e.get(field) is not None and (current(e) or not only_current)]
+
+    overall = pairs("score_confidence")
+    support = pairs("score_confidence", only_current=True)
+    by_kind, order_by_kind = [], []
     groups = {}
-    for p, y, kind in ((e.get("confidence_pct"), 1 if e["improved"] else 0, e["kind"]) for e in scored
-                       if e.get("confidence_pct") is not None):
-        groups.setdefault(kind, []).append((p, y))
-    for kind, ps in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+    for e in scored:
+        if e.get("score_confidence") is not None:
+            groups.setdefault(e["kind"], []).append(e)
+    for kind, es in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        ps = pairs("score_confidence", rows=es)
         enough = len(ps) >= CALIBRATION_MIN_N
         by_kind.append({"kind": kind, "n": len(ps), "predicted_mean": round(sum(p for p, _ in ps) / len(ps), 1),
                         "observed_rate": round(100.0 * sum(y for _, y in ps) / len(ps), 1) if enough else None,
                         "enough": enough})
+        o = ce.ordering(pairs("score_confidence", only_current=True, rows=es), CALIBRATION_MIN_N)
+        order_by_kind.append(dict(o, kind=kind))
+    ordering = ce.ordering(support, CALIBRATION_FLOOR_N)
+    order_dims = {dim: ce.ordering(pairs(f"score_{dim}", only_current=True), CALIBRATION_FLOOR_N)
+                  for dim in ("evidence", "accuracy", "freshness")}
+    # The flag: a higher band doing worse than a lower one beyond its
+    # interval. An admin row on this view, never an SMS.
+    alerts = []
+
+    def flag(where, o):
+        for v in o.get("violations") or []:
+            alerts.append({"severity": "warning", "where": where,
+                           "title": f"Higher support is doing worse{'' if where == 'overall' else ' — ' + where}",
+                           "detail": (f"Recommendations shown at {v['higher']}% improved at most "
+                                      f"{v['higher_high']:g}% of the time (90% range), below the "
+                                      f"{v['lower_low']:g}% floor of those shown at {v['lower']}%.")})
+    flag("overall", ordering)
+    for o in order_by_kind:
+        flag(o["kind"], o)
+    for dim, o in order_dims.items():
+        flag(f"{dim} dimension", o)
+    versions = {}
+    for e in scored:
+        v = str(e.get("score_version") or "none")
+        versions[v] = versions.get(v, 0) + 1
     # The owner's "don't trust the data" answers, counted (E14).
     distrust = [e for e in eps if "dont_trust_data" in (e.get("reason_codes") or [])]
     dk = {}
     for e in distrust:
         dk[e["kind"]] = dk.get(e["kind"], 0) + 1
     return {"ok": True, "days": days, "restaurant_id": restaurant_id, "floor_n": CALIBRATION_FLOOR_N,
-            "kind_floor_n": CALIBRATION_MIN_N, "n": len(overall),
+            "kind_floor_n": CALIBRATION_MIN_N, "n": len(overall), "meaning": ce.MEANING,
+            "ordering": ordering, "ordering_by_kind": order_by_kind, "ordering_by_dimension": order_dims,
+            "alerts": alerts,
+            "scored_on": {"acceptance": sum(1 for e in scored if e["scored_on"] == "acceptance"),
+                          "first_shown": sum(1 for e in scored if e["scored_on"] == "first_shown")},
+            "versions": versions, "support_n": len(support),
             "bands": ce.reliability(overall, CALIBRATION_FLOOR_N),
             "brier": ce.brier(overall, CALIBRATION_FLOOR_N),
+            "brier_note": "Kept for the record: the support score is not a probability, so this is not its test.",
             "by_kind": by_kind,
-            "by_dimension": {dim: {"bands": ce.reliability(pairs(f"{dim}_pct"), CALIBRATION_FLOOR_N),
-                                   "brier": ce.brier(pairs(f"{dim}_pct"), CALIBRATION_FLOOR_N),
-                                   "n": len(pairs(f"{dim}_pct"))}
+            "by_dimension": {dim: {"bands": ce.reliability(pairs(f"score_{dim}"), CALIBRATION_FLOOR_N),
+                                   "brier": ce.brier(pairs(f"score_{dim}"), CALIBRATION_FLOOR_N),
+                                   "n": len(pairs(f"score_{dim}"))}
                              for dim in ("evidence", "accuracy", "freshness")},
             "distrust": {"n": len(distrust),
                          "by_kind": sorted(({"kind": k, "n": v} for k, v in dk.items()), key=lambda x: -x["n"])},
-            "rule": ("taken recommendations with a clear verdict read through learned_verdict; improved = 1; "
-                     "an observed rate only at the floor")}
+            "rule": ("taken recommendations with a clear verdict read through learned_verdict (confounded and "
+                     "baseline-overlap results unknown), one result per window per restaurant and kind, scored "
+                     "on the confidence at acceptance when a showing before it carried one; improved = 1; an "
+                     "observed rate only at the floor; order judged on support-score snapshots only")}
 
 
 def missed_detections(days=30, restaurant_id=None, limit=200):

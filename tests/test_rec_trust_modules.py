@@ -559,7 +559,11 @@ def test_the_waste_driver_says_when_it_is_one_week(db_path, monkeypatch):
     # (confidence audit E2) — and with no track record here the driver's
     # confidence is capped at 70%: medium, never "high" on a first reading.
     assert w["weeks_of_data"] == 3 and w["confidence_detail"]["dimensions"]["evidence"]["pct"] == 75
-    assert w["confidence_detail"]["pct"] == 70 and w["confidence"] == "medium"
+    # No source dates this test's counts, and since group P an undated card
+    # is held at 49 (an unmeasured dimension never raises the figure) —
+    # below the no-record 70 it would otherwise read.
+    assert w["confidence_detail"]["pct"] == 49 and w["confidence"] == "low"
+    assert w["confidence_detail"]["caps_applied"] == ["no_track_record", "freshness_unmeasured"]
 
 
 def test_the_menu_driver_uses_the_restaurants_target_and_recipe_provenance(db_path, monkeypatch):
@@ -586,10 +590,11 @@ def test_the_menu_driver_uses_the_restaurants_target_and_recipe_provenance(db_pa
     monkeypatch.setattr(il, "inferred_variance", lambda r: {"material": []})
     out = fci.cost_drivers(rid, db_path=db_path)
     m = [d for d in out["drivers"] if d["kind"] == "menu"][0]
-    # Half the recipe is an unreviewed draft: the plate cost's coverage is
-    # 50%, under the 70% floor — low, measured (confidence audit E2).
+    # Half the recipe is an unreviewed draft: 1 of its 2 recipe lines is
+    # reviewed — its sample (group P: recipe lines, not "1 row") — low.
     assert m["target_pct"] == 28 and m["confidence"] == "low" and m["recipe_unreviewed_lines"] == 1
-    assert m["confidence_detail"]["dimensions"]["evidence"]["pct"] == 49
+    assert m["confidence_detail"]["dimensions"]["evidence"]["pct"] == 50
+    assert m["confidence_detail"]["dimensions"]["evidence"]["kind"] == "recipe_lines"
     assert "accepted unedited" in m["evidence"] and sorted(m["ingredients"]) == ["Eggs", "Flour"]
 
 

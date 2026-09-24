@@ -575,7 +575,9 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
             """SELECT i.id, i.name, i.unit, COALESCE(i.unit_cost,0) AS unit_cost,
                       COALESCE(SUM(CASE WHEN e.event_type='waste' AND e.source='inferred'
                                         THEN e.qty END),0) AS gap_qty,
-                      COALESCE(SUM(CASE WHEN e.event_type='depletion' THEN e.qty END),0) AS theoretical_qty
+                      COALESCE(SUM(CASE WHEN e.event_type='depletion' THEN e.qty END),0) AS theoretical_qty,
+                      COUNT(DISTINCT CASE WHEN e.event_type='waste' AND e.source='inferred'
+                                          THEN e.event_date END) AS recounts
                  FROM ingredients i
                  JOIN ingredient_stock_events e
                    ON e.ingredient_id=i.id AND e.restaurant_id=i.restaurant_id
@@ -599,6 +601,10 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
                 "theoretical_qty": round(theo, 3),
                 "variance_pct": pct, "cost": cost,
                 "monthly_cost": round(cost * (30.0 / days), 2),
+                # The recounts (days) that showed a gap — the portion
+                # driver's Evidence Strength (confidence_engine N_FULL
+                # "recounts"): one recount's gap can be a miscount.
+                "recounts": int(r["recounts"] or 0),
                 "material": bool(pct is not None and pct >= MIN_VARIANCE_PCT
                                  and cost >= MIN_VARIANCE_DOLLARS),
             })

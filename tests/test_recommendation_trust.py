@@ -342,7 +342,12 @@ def test_top_issue_uses_the_diagnosis_recommended_action_and_alternative(db_path
     rec = next(r for r in p["recommendations"] if r["key"] == "diag_review:service")
     assert rec["title"] == "Add a second server on Friday from 6 to 9"
     assert rec["alternative"] == "The kitchen is slow on Fridays."
-    assert rec["confidence"]["band"] == "medium" and rec["model_written"]
+    # Its evidence is THE review diagnosis input (12 reviews on the theme,
+    # the capped "medium" band ≤ 65); no Google source dates it here, so the
+    # unmeasured freshness holds it at 49 and says so (group P item 2d).
+    ev = rec["confidence"]["dimensions"]["evidence"]
+    assert ev["n"] == 12 and ev["pct"] == 65 and rec["model_written"]
+    assert rec["confidence"]["caps_applied"] == ["freshness_unmeasured"] and rec["confidence"]["pct"] == 49
     assert "most-mentioned complaint" not in rec["title"]
 
 

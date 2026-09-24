@@ -1504,18 +1504,17 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
         import rec_trust
         import data_freshness
         _ctx = rec_trust.Context(restaurant_id, db_path=db_path)
-        # The Places "sampled" flag from the one helper Home, Do-today and
-        # the hero read too (re-audit B3#7, B4 M1).
-        _rv_flags = data_freshness.review_evidence_flags(_ctx.row())
+        _row = _ctx.row()
         for d in out:
-            n_rv = int(d.get("mention_count") or 0)
-            # The band the evidence reads is the CAPPED one (R9, B5 #9): the
-            # raw model band let a diagnosis with no cross-check read "high".
-            d["confidence_detail"] = rec_trust.diagnosis_confidence(
-                restaurant_id, f"diag_review:{d.get('category')}", dict(d, model_confidence=d["confidence"]),
-                n_rv, "reviews",
-                f"{n_rv} reviews on this theme over {d.get('window_days') or 90} days",
-                sources=("reviews",), flags=_rv_flags, ctx=_ctx)
+            # THE review diagnosis input (rec_trust.review_diagnosis_input):
+            # the reviews on its theme, the Places "sampled" flag, the
+            # CAPPED band (R9) and its corroborating modules — the same
+            # input Home's card and the one-thing hero read, so one
+            # diagnosis shows one figure (B1 H3, B4 M1, B3#7).
+            d["confidence_detail"] = rec_trust.assess(
+                restaurant_id, f"diag_review:{d.get('category')}",
+                evidence=rec_trust.review_diagnosis_input(d, _row),
+                sources=data_freshness.sources_for(["reviews"]), ctx=_ctx)
     except Exception as e:
         print(f"[review_intelligence] diagnosis confidence unavailable: {e}")
     return out

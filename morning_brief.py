@@ -497,28 +497,22 @@ STOCK_NAMED = 3
 
 def _attach_confidence(restaurant_id, lines, db_path=DB_PATH):
     """Each recommendation line's K1 `confidence` (confidence round 2, T1),
-    from what the line itself rests on: the running-low items it names (a
-    direct count of items below par, the inventory's freshness) and the
-    slow weekday (how many of that weekday the average is over, the sales'
-    freshness). The one thing carries the pick's own (set where it is
-    built). A fact — reviews waiting, the schedule not built, a result, a
-    goal — carries none: it is not advice with a probability. Never raises."""
+    from what the line itself rests on: the slow weekday (how many of that
+    weekday the average is over, the sales' freshness). The one thing
+    carries the pick's own (set where it is built). A fact — reviews
+    waiting, the schedule not built, the items running low on the last
+    counts (Home's critical_low, HOME_FACT_KEYS), a result, a goal —
+    carries none: it is not advice whose support can be weighed (group P,
+    B4 H5). Never raises."""
     try:
         import rec_trust
-        import data_freshness
         ctx = rec_trust.Context(restaurant_id, db_path=db_path)
     except Exception as e:
         log.warning("morning_brief: confidence unavailable: %s", e)
         return lines
     for l in lines:
         try:
-            if l.get("key") == "stock" and l.get("rec"):
-                n = len(l.get("recs") or [l["rec"]])
-                l["confidence"] = rec_trust.assess(
-                    restaurant_id, l["rec"], sources=data_freshness.sources_for(["inventory"]), ctx=ctx,
-                    evidence={"n": n, "kind": "count",
-                              "basis": f"{n} item{'s' if n != 1 else ''} below par on the last counts"})
-            elif l.get("key") == "slow_day" and l.get("rec"):
+            if l.get("key") == "slow_day" and l.get("rec"):
                 n = l.pop("_samples", None)
                 l["confidence"] = rec_trust.assess(
                     restaurant_id, l["rec"], sources=("sales",), ctx=ctx,

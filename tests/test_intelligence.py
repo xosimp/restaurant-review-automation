@@ -342,7 +342,10 @@ def test_home_recommendations_carry_confidence_without_changing_their_shape(db_p
     c = home_brief.card_confidence(ctx, "trim_day:Monday", {"n": 4, "kind": "weekdays",
                                                             "basis": "4 Mondays in your shift data"})
     assert c["dimensions"]["evidence"]["pct"] == 100 and c["dimensions"]["accuracy"]["pct"] is None
-    assert c["pct"] == 70 and c["band"] == "medium" and c["label"] == "70% confidence"
+    # No source dates it (group P: an unmeasured freshness holds it at 49,
+    # below the no-record 70 — it never raises the figure).
+    assert c["pct"] == 49 and c["band"] == "low" and c["label"] == "49% confidence"
+    assert c["caps_applied"] == ["no_track_record", "freshness_unmeasured"]
     assert isinstance(c["score"], float) and c["caution"]
     monkeypatch.setattr(rec_learning, "kind_record", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     c = home_brief.card_confidence(rec_trust.Context(rid, db_path=db_path), "x:y", {"n": 9, "kind": "reviews"})

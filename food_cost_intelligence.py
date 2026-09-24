@@ -338,6 +338,9 @@ def supplier_comparison(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "dearest_supplier": high["supplier"], "dearest_price": high["unit_cost"],
             "spread_pct": round(spread_pct, 1),
             "spread_per_unit": round(high["unit_cost"] - low["unit_cost"], 4),
+            # How many suppliers quote this unit — the sourcing driver's
+            # Evidence Strength (N_FULL "supplier_quotes").
+            "n_suppliers": len(suppliers),
         })
     out.sort(key=lambda e: e["spread_pct"], reverse=True)
     return {"available": bool(out), "comparisons": out[:6],
@@ -425,23 +428,35 @@ def driver_evidence(d: dict) -> dict:
         return {"n": weeks, "kind": "waste_weeks",
                 "basis": ("one week of waste counts projected to a month" if weeks == 1 else
                           f"an offender in {weeks} of the last 8 weeks of waste counts")}
+    # Every kind counts what its own measurement rests on — never "1 row"
+    # (confidence round 2, B4 M3: menu and sourcing drivers read 100% and
+    # 80% on n=1 "count").
     if kind == "portion":
-        return {"n": 1, "kind": "count", "flags": ("inferred",),
-                "basis": "physical counts against recipes — portioning, prep loss or a miscount all fit"}
+        n = int(d.get("recounts") or 0) or None
+        return {"n": n, "kind": "recounts", "flags": ("inferred",),
+                "basis": ((f"a gap between recipes and counts at {n} recount{'s' if n != 1 else ''} — "
+                           "portioning, prep loss or a miscount all fit") if n else
+                          "the recounts behind the gap were not read")}
     if kind == "price":
         weeks = int(d.get("price_weeks") or 1)
         return {"n": weeks, "kind": "price_weeks",
                 "basis": f"{weeks} weekly price reading{'s' if weeks != 1 else ''} of this ingredient"}
     if kind == "sourcing":
-        return {"n": 1, "kind": "count", "flags": ("list_prices",),
-                "basis": "two suppliers' prices on file for the same unit"}
+        n = int(d.get("n_suppliers") or 2)
+        return {"n": n, "kind": "supplier_quotes", "flags": ("list_prices",),
+                "basis": f"{n} suppliers' list prices on file for the same unit"}
     if kind == "menu":
+        # The plate cost is only as good as its recipe: the reviewed lines
+        # of the dish's recipe out of all of them (a Cavnar draft accepted
+        # unedited is unconfirmed) — the sample, with the lines as the full
+        # read. No recipe lines on file: not measurable.
         lines = int(d.get("recipe_lines") or 0)
         unreviewed = int(d.get("recipe_unreviewed_lines") or 0)
-        return {"n": 1, "kind": "count",
-                "coverage": ((lines - unreviewed) / float(lines)) if lines else None,
-                "basis": ("this dish's plate cost against its own sales"
-                          + (f"; {unreviewed} of its {lines} recipe lines are an unreviewed draft" if unreviewed else ""))}
+        if not lines:
+            return {"n": None, "basis": "no recipe lines on file behind this plate cost"}
+        return {"n": max(0, lines - unreviewed), "kind": "recipe_lines", "n_full": lines,
+                "basis": (f"{lines - unreviewed} of {lines} recipe lines reviewed behind this plate cost"
+                          + (f"; {unreviewed} are an unreviewed draft" if unreviewed else ""))}
     return {"n": None, "basis": "the ledger"}
 
 
@@ -643,6 +658,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                                 if dish else "")),
                 "if_ignored": "every plate keeps costing more than the recipe says it does",
                 "item": v["ingredient"], "dish": dish,
+                "recounts": int(v.get("recounts") or 0),
             })
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "portion", _e))
@@ -704,6 +720,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                              f"({c['spread_pct']}% apart, same unit)"),
                 "if_ignored": "the spread is paid on every delivery",
                 "item": c["ingredient"],
+                "n_suppliers": int(c.get("n_suppliers") or 2),
             })
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "sourcing", _e))
@@ -1647,12 +1664,14 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
     try:
         import rec_trust
         import data_freshness
-        # One served entry per corroborating module (R1), and the band the
-        # evidence reads is the CAPPED one (R9).
-        n_ev = rec_trust.verified_evidence_count(out)
-        out["confidence_detail"] = rec_trust.diagnosis_confidence(
-            restaurant_id, "diag_food", dict(out, model_confidence=out["confidence"]), n_ev, "evidence_items",
-            f"{n_ev} other module{'s' if n_ev != 1 else ''} cross-checked against the ledger",
+        # THE food diagnosis input (rec_trust.food_diagnosis_input): the
+        # weeks of counts it was read over, raised boundedly by each other
+        # module whose verified figure agrees (R1: one entry per module),
+        # capped by the CAPPED band (R9) — Home and the hero read the same
+        # input, so the card no longer reads 0% beside prose saying "medium"
+        # (B1 H4).
+        out["confidence_detail"] = rec_trust.assess(
+            restaurant_id, "diag_food", evidence=rec_trust.food_diagnosis_input(restaurant_id, out, db_path=db_path),
             sources=data_freshness.sources_for(["inventory"]), db_path=db_path)
     except Exception as e:
         print(f"[food_cost_intelligence] diagnosis confidence unavailable: {e}")

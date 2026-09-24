@@ -669,7 +669,8 @@ def test_actions_are_ranked_by_urgency_times_dollars_times_ease(monkeypatch, res
     for a in acts:
         # ...weighed by each action's measured confidence (confidence audit
         # E16), which every action now carries.
-        assert a["confidence"]["version"] == 1
+        import confidence_engine
+        assert a["confidence"]["version"] == confidence_engine.VERSION
         assert a["rank_score"] == home_brief.rank_score(
             {"timeframe": narrative.URGENCIES[a["urgency"]], "dollars_monthly": a["dollars_monthly"],
              "effort": a["effort"], "confidence": a["confidence"]})

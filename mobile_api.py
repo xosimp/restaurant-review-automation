@@ -1125,8 +1125,13 @@ def _do_mobile_home(current_user):
                 "severity": a.get("severity"),
                 "evidence": a.get("evidence"),
                 # The item's measured confidence (K1/K4) — the same object
-                # web Home carries; older builds ignore the key.
+                # web Home carries; older builds ignore the key. None on a
+                # fact (home_brief.HOME_FACT_KEYS): facts carry no confidence.
                 "confidence": a.get("confidence"),
+                # What the item's dollar figure covers (U3) — the remap
+                # dropped it, so iOS could not say it (group P item 10).
+                "dollars_weekly": a.get("dollars_weekly"),
+                "dollars_basis": a.get("dollars_basis"),
                 # The key an answer is recorded against (rec_ledger), and
                 # whether this item may be hidden at all — a critical
                 # health item may not.

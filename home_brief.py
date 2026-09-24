@@ -435,9 +435,23 @@ def invalidate_user(user_id):
 
 
 def diagnosis_evidence(dg, n, kind, basis, flags=(), coverage=None):
-    """rec_trust.diagnosis_evidence — a stored diagnosis's evidence input."""
+    """rec_trust.diagnosis_evidence — a stored diagnosis's evidence input.
+    Home's cards read rec_trust.review_diagnosis_input /
+    food_diagnosis_input now (group P); no caller remains — candidate for
+    future cleanup after additional verification."""
     import rec_trust
     return rec_trust.diagnosis_evidence(dg, n, kind, basis, flags=flags, coverage=coverage)
+
+
+def _mkt_evidence(rid) -> dict:
+    """client_api.marketing_read_evidence — posts with measured performance
+    in the last 8 weeks. Never raises."""
+    try:
+        import client_api
+        return client_api.marketing_read_evidence(rid)
+    except Exception as e:
+        print(f"[home] marketing evidence unavailable for {rid}: {e}")
+        return {"n": None, "basis": "the posts could not be read"}
 
 
 def card_confidence(ctx, key, evidence, sources=()):
@@ -624,6 +638,15 @@ SAME_NEWS = {"publish_drafts": "no_response"}
 HOME_SETUP_KEYS = {"google_not_connected": "reviews", "reviews_stale": "reviews", "toast_sync": "labor",
                    "pos_sync": "labor",
                    "inventory_stale": "food", "post_failed": "marketing", "social_not_connected": "marketing"}
+# Attention items and cards that state a FACT about what is on file — the
+# setup and health nudges, reviews and drafts waiting, a response rate, the
+# items below par, the people over 40 hours — not advice whose support can
+# be weighed. They carry no confidence at all (B4 H5, B1 C1, B6 low): a
+# "70% confidence" on "3 drafts waiting" told the owner nothing and invited
+# them to doubt a fact. Only recommendations and measured findings get one.
+HOME_FACT_KEYS = frozenset(set(HOME_SETUP_KEYS) | {
+    "urgent_reviews", "stale_low_reviews", "awaiting_approval", "low_response_rate", "critical_low", "overtime",
+    "publish_drafts"})
 
 
 def attention_answerable(a) -> bool:
@@ -1090,17 +1113,21 @@ def _build(current_user, present=True):
 
     def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None,
                  rec_key=None, ev=None, sources=None, **extra):
-        """Every attention item carries the `evidence` line it rests on and
-        ONE measured confidence (K4). `ev` is its Evidence Strength input
-        (confidence_engine.evidence); a setup or health nudge — a fact about
-        the product's own state — is a direct count and reads no data
-        source."""
-        ev = ev or {"n": 1, "kind": "count", "basis": evidence or "the state on file"}
-        srcs = sources if sources is not None else (() if key in HOME_SETUP_KEYS else sources_of(module))
+        """Every attention item carries the `evidence` line it rests on. A
+        RECOMMENDATION or a measured finding carries ONE measured confidence
+        (K4) from `ev`, its Evidence Strength input (confidence_engine.
+        evidence). A FACT (HOME_FACT_KEYS — a setup or health nudge, a
+        failing sync, reviews or drafts waiting, a critical count) carries
+        none: `confidence` is None, never a default "1 row counted" that read
+        a permanent 70% (B4 H5, B1 C1)."""
+        conf = None
+        if ev is not None and key not in HOME_FACT_KEYS:
+            srcs = sources if sources is not None else sources_of(module)
+            conf = card_confidence(trust_ctx, rec_key or ledger_key(key), ev, srcs)
         item = {"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
                 "action": {"label": action_label, "kind": action, "module": module},
                 "since": since, "evidence": evidence, "location": restaurant.location_name or None,
-                "confidence": card_confidence(trust_ctx, rec_key or ledger_key(key), ev, srcs)}
+                "confidence": conf}
         item.update(extra)
         attention.append(item)
 
@@ -1139,8 +1166,11 @@ def _build(current_user, present=True):
                      # suggested price), else None and the card opens its module.
                      "action": action,
                      "evidence_sources": evidence_sources or [module], "model_written": bool(model_written),
-                     "confidence": card_confidence(trust_ctx, key, ev,
-                                                   sources if sources is not None else sources_of(module))})
+                     # A card that acts on a fact (the drafts waiting)
+                     # carries no confidence (HOME_FACT_KEYS, B4 H5).
+                     "confidence": (None if key in HOME_FACT_KEYS else
+                                    card_confidence(trust_ctx, key, ev,
+                                                    sources if sources is not None else sources_of(module)))})
 
     def add_change(text, tone, module, at=None):
         changes.append({"text": text, "tone": tone, "module": module, "at": at})
@@ -1177,16 +1207,12 @@ def _build(current_user, present=True):
         if urgent:
             add_attn("urgent_reviews", "critical", f"{_plural(urgent, 'urgent review')} unanswered",
                      "Low-star reviews mentioning something serious are still waiting on a reply.", "reviews", "Reply now",
-                     evidence=f"{urgent} of {total} reviews flagged urgent",
-                     ev={"n": urgent, "kind": "count", "basis": f"{urgent} reviews flagged urgent on file"},
-                     sources=_rv_src)
+                     evidence=f"{urgent} of {total} reviews flagged urgent")
         if (stale_unanswered.get("n") or 0) > 0 and not urgent:
             n = stale_unanswered["n"]
             add_attn("stale_low_reviews", "important", f"{_plural(n, 'low-star review')} unanswered for 2+ days",
                      "Guests read how you respond. A 48-hour reply keeps the thread on your side.", "reviews", "Answer them",
-                     since="48h+", evidence=f"{n} reviews at 3 stars or below, unanswered 48h+",
-                     ev={"n": n, "kind": "count", "basis": f"{n} unanswered low-star reviews on file"},
-                     sources=_rv_src)
+                     since="48h+", evidence=f"{n} reviews at 3 stars or below, unanswered 48h+")
         if awaiting:
             add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply', 'replies')} drafted, waiting for you",
                      "Replies to reviews from the last 30 days, written in your voice. Approve them in one click and "
@@ -1197,9 +1223,7 @@ def _build(current_user, present=True):
                      action="publish_replies",
                      evidence=f"{awaiting} drafted"
                      + (f" · {awaiting_held} urgent or flagged held for you to read" if awaiting_held else "")
-                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
-                     ev={"n": awaiting, "kind": "count", "basis": f"a count of {awaiting} drafts on file"},
-                     sources=_rv_src)
+                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""))
             # The tap publishes exactly what the label counts (approve-all
             # takes a limit, newest first) — not 25 including the history.
             attention[-1]["action"]["count"] = min(awaiting, 25)
@@ -1208,9 +1232,7 @@ def _build(current_user, present=True):
             # guest-count effect of answering reviews that had no source (#46).
             add_attn("low_response_rate", "watch", f"Response rate at {rate:.0f}%",
                      f"{int(rstats.get('responded') or 0)} of {total} reviews have a reply.", "reviews", "Answer reviews",
-                     evidence=f"{int(rstats.get('responded') or 0)} of {total} answered",
-                     ev={"n": total, "kind": "reviews", "basis": f"{total} reviews on file", "flags": _rv_flags},
-                     sources=_rv_src)
+                     evidence=f"{int(rstats.get('responded') or 0)} of {total} answered")
         if not google_connected and total == 0:
             add_attn("google_not_connected", "important", "Google Business isn't connected",
                      "Nothing flows in until it is — reviews, drafts, alerts all start here.", "account", "Connect Google",
@@ -1297,8 +1319,7 @@ def _build(current_user, present=True):
                     f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered"
                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
                     "Reputation · response rate", "reviews", "Today", "Publish now",
-                    metric=None, ev={"n": awaiting, "kind": "count", "basis": f"a count of {awaiting} drafts on file"},
-                    sources=_rv_src,
+                    metric=None,
                     if_ignored="those guests, and everyone who reads their reviews, see no reply",
                     effort="low", action={"kind": "publish_replies", "count": min(awaiting, 25)})
         if top_issues and total >= 10:
@@ -1332,8 +1353,11 @@ def _build(current_user, present=True):
                                if dg.get("stale") else ""),
                             "Reviews · rating", "reviews", "This week",
                             "See the reviews", metric=f"complaints:{cat}",
-                            ev=diagnosis_evidence(dg, cnt, "reviews", f"a diagnosis read from {cnt} reviews",
-                                                  flags=_rv_flags),
+                            # THE review diagnosis input — the Reviews tab's
+                            # and the hero's too, so one diagnosis shows one
+                            # figure (B1 H3, B4 M1): its mention_count, not
+                            # this card's top-issue count.
+                            ev=rec_trust.review_diagnosis_input(dg, r),
                             sources=_rv_src,
                             if_ignored=f"{lbl.lower()} stays the most-mentioned complaint",
                             effort="medium", alternative=dg.get("alternative_cause"), model_written=True)
@@ -1458,10 +1482,7 @@ def _build(current_user, present=True):
                           f"{ot_now['hours']:g} hours past 40" if prem is not None else
                           f"{ot_now['hours']:g} hours past 40 so far")
                          + (" (from scheduled hours — no clock-ins on file)." if ot_now["estimated"] else "."),
-                         "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n),
-                         ev={"n": n_ot, "kind": "count", "flags": ("hours_are_estimated",) if ot_now["estimated"] else (),
-                             "basis": f"{n_ot} people's hours this payroll week"
-                                      + (" (scheduled, no clock-ins)" if ot_now["estimated"] else "")})
+                         "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n))
             # day-of-week recommendation
             if len(dow) >= 4:
                 trim = trim_day_read(dow, labor.get("by_day") or {}, labor_target, period_days)
@@ -1562,9 +1583,7 @@ def _build(current_user, present=True):
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:CRITICAL_LOW_NAMED]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon",
-                         rec_key=stock_key(crit[0].get("item")),
-                         ev={"n": len(crit), "kind": "count",
-                             "basis": f"{len(crit)} items below par on the last counts and depletion"})
+                         rec_key=stock_key(crit[0].get("item")))
                 # Only the items the card NAMES (its detail lists the
                 # first four) are shown on it: presenting ten logged items
                 # nobody read (re-audit C4). A count, not a ranking.
@@ -1644,12 +1663,11 @@ def _build(current_user, present=True):
                         (_dg.get("cause") or "").strip() or "From the stored food cost diagnosis.",
                         _dg.get("headline") or "", "Food cost · margin", "inventory", "This week",
                         "See the numbers", metric="food_cost_pct", dollars=_dg.get("dollars_at_stake"),
-                        # The data behind it: its verified operational
-                        # evidence entries; the model's own band only lowers
-                        # it (E3, CA4 F2) — Home no longer prefers it.
-                        ev=diagnosis_evidence(_dg, len([e for e in (_dg.get("operational_evidence") or [])
-                                                        if isinstance(e, dict) and e.get("verified", True)]),
-                                              "evidence_items", "a diagnosis of this restaurant's own ledger"),
+                        # THE food diagnosis input (the Food Cost card's and
+                        # the hero's too): weeks of counts behind it plus its
+                        # corroborating modules, capped by the CAPPED band
+                        # (B1 H3/H4, R9) — one figure everywhere.
+                        ev=rec_trust.food_diagnosis_input(rid, _dg),
                         if_ignored="food cost stays where it is", effort="medium",
                         alternative=_dg.get("alternative_cause"), model_written=True)
 
@@ -1755,8 +1773,12 @@ def _build(current_user, present=True):
             # reach" had no source here — reach is not measured.
             add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days.",
                     f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "Draft a post",
-                    ev={"n": 1, "kind": "count", "flags": ("partial",),
-                        "basis": "the posting gap is measured; what a post does for reach is not"},
+                    # What the advice claims is that a post does something:
+                    # its sample is the posts whose performance was measured
+                    # (the Marketing read's own input, N_FULL "posts"), not
+                    # "1 row" for the gap (B1 C1) — partial, since reach
+                    # itself is not measured here.
+                    ev=dict(_mkt_evidence(rid), flags=("partial",)),
                     if_ignored="nothing new goes out to your followers", effort="low")
         elif mkt.get("last_at") is None:
             add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "Generate a post",
@@ -2335,11 +2357,12 @@ def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
     """Each group-view attention item that is advice carries its K1
     `confidence` (confidence round 2, T1) from the same evidence the
     location's own Home reads for it: labor over target from the days of
-    shifts with sales (labor.diagnosis_evidence_input), overtime and
-    critically-low items as direct counts, a rating slip from the smaller of
-    the two 30-day samples. A fact about the location's state — urgent
-    reviews unanswered, a failing sync, unacknowledged issues — carries
-    none (B4 H5: facts carry no confidence). Never raises."""
+    shifts with sales (labor.diagnosis_evidence_input), a rating slip from
+    the smaller of the two 30-day samples. A fact about the location's
+    state — urgent reviews unanswered, a failing sync, unacknowledged
+    issues, the people over 40 hours, the items critically low — carries
+    none, as on the location's own Home (HOME_FACT_KEYS; B4 H5: facts carry
+    no confidence). Never raises."""
     try:
         import rec_trust
         import data_freshness
@@ -2352,14 +2375,6 @@ def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
         try:
             if kind == "labor_over" and lab_ev:
                 ev, srcs = dict(lab_ev), data_freshness.sources_for(["labor"])
-            elif kind == "overtime" and labor:
-                n = int(labor.get("overtime") or 0)
-                ev, srcs = ({"n": n, "kind": "count", "basis": f"{n} people's hours this payroll week"},
-                            data_freshness.sources_for(["labor"]))
-            elif kind == "critical_low" and inv:
-                n = int(inv.get("critical_low") or 0)
-                ev, srcs = ({"n": n, "kind": "count", "basis": f"{n} items below par on the last counts"},
-                            data_freshness.sources_for(["inventory"]))
             elif kind == "rating_drop":
                 n = min(int(rs.get("n30") or 0), int(rs.get("n_prev") or rs.get("n30") or 0))
                 ev, srcs = ({"n": n, "kind": "reviews", "basis": f"{int(rs.get('n30') or 0)} reviews in the last 30 days"},

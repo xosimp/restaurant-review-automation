@@ -44,6 +44,12 @@ def _rid(db, **kw):
     return create_restaurant(Restaurant(**fields), db_path=db)
 
 
+def _fresh():
+    """A dated, current source: since group P an undated card is capped at
+    FRESHNESS_UNMEASURED_CAP, so a test about something else dates it."""
+    return ce.freshness([{"key": "reviews", "pct": 100, "as_of_iso": "2026-09-24"}])
+
+
 def _ep(key, verdict, i, status="completed"):
     return {"rec_id": f"r{i}", "key": key, "kind": key.split(":")[0], "shown": True, "state": status,
             "verdict": verdict, "tracker": {}}
@@ -104,8 +110,10 @@ def test_no_accuracy_percentage_below_the_own_floor_or_the_cohort_floor():
     # a mislabelled source never slips a figure through under the floor
     assert ce.accuracy({"measured": 3, "improved": 3, "source": "own"})["pct"] is None
     assert ce.accuracy({"measured": 0, "source": "cohort", "prior_measured": 9, "prior_improved": 9})["pct"] is None
+    # Group P (B1 H9, B2 #3): the cohort alone never produces a figure — it
+    # is labelled, and waits for the restaurant's own five results.
     c = ce.accuracy({"measured": 1, "source": "cohort", "prior_measured": 15, "prior_improved": 12})
-    assert c["source"] == "cohort" and c["pct"] is not None and "restaurants like yours: 12 of 15" in c["basis"]
+    assert c["source"] == "cohort" and c["pct"] is None and "restaurants like yours: 12 of 15" in c["basis"]
 
 
 def test_five_worsened_results_read_low_accuracy_never_one_hundred():
@@ -249,7 +257,7 @@ def test_dont_trust_data_caps_that_kinds_evidence_for_thirty_days(db):
 
 def test_present_many_snapshots_the_confidence_and_logs_moves(db):
     rid = _rid(db)
-    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), ce.freshness([]))
+    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), _fresh())
     rec_ledger.present_many(rid, [{"key": "top_issue:service", "module": "reviews", "confidence": conf},
                                   {"key": "post_this_week", "module": "marketing"}], "home", db_path=db)
     c = models.get_conn(db)
@@ -265,7 +273,7 @@ def test_present_many_snapshots_the_confidence_and_logs_moves(db):
     assert meta["confidence_pct"] == 70 and meta["evidence_pct"] == 100
     c.close()
     # a later showing whose confidence moved 10+ points notes the move
-    lower = ce.assemble(ce.evidence(n=2, kind="reviews"), ce.accuracy(None), ce.freshness([]))
+    lower = ce.assemble(ce.evidence(n=2, kind="reviews"), ce.accuracy(None), _fresh())
     rec_ledger.present_many(rid, [{"key": "top_issue:service", "module": "reviews", "confidence": lower}],
                             "brief_email", db_path=db)
     c = models.get_conn(db)
@@ -280,7 +288,7 @@ def test_present_many_snapshots_the_confidence_and_logs_moves(db):
 def test_feedback_sync_fills_confidence_at_from_the_snapshot(db):
     from intelligence import feedback
     rid = _rid(db)
-    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), ce.freshness([]))
+    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), _fresh())
     rec_ledger.present_many(rid, [{"key": "top_issue:service", "module": "reviews", "confidence": conf}], "home",
                             db_path=db)
     rec_ledger.record(rid, "top_issue:service", "accepted", db_path=db)
@@ -370,7 +378,7 @@ def test_reliability_and_brier_are_withheld_below_the_floor():
 def test_admin_calibration_reads_learned_verdicts_and_the_snapshot(db):
     import admin_ops
     rid = _rid(db)
-    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), ce.freshness([]))
+    conf = ce.assemble(ce.evidence(n=8, kind="reviews"), ce.accuracy(None), _fresh())
     keys = [f"top_issue:t{i}" for i in range(3)]
     rec_ledger.present_many(rid, [{"key": k, "module": "reviews", "confidence": conf} for k in keys], "home",
                             db_path=db)
@@ -560,8 +568,14 @@ def test_the_one_thing_carries_its_confidence(home):
     c.commit(); c.close()
     data = {"reviews": {"brief": {}, "diagnoses": []}, "labor": {}, "food_cost": None}
     first = bi.pick_one_thing(rid, bi.one_thing_candidates(rid, data, [], db_path=home), db_path=home)
-    assert first["key"] == "urgent_reviews" and first["confidence"]["version"] == ce.VERSION
-    assert first["confidence"]["dimensions"]["evidence"]["pct"] == 100 and first["model_written"] is False
+    # Replies owed are a FACT: the hero carries no confidence for it (group
+    # P item 3, B4 H5) — a recommendation candidate carries its K1.
+    assert first["key"] == "urgent_reviews" and first["confidence"] is None and first["model_written"] is False
+    rec = bi.pick_one_thing(rid, [{"key": "top_issue:service", "what": "Read the service complaints",
+                                   "modules": ["reviews"], "urgency": "normal", "score": 1.0,
+                                   "evidence_input": {"n": 8, "kind": "reviews", "basis": "8 reviews"}}],
+                            db_path=home)
+    assert rec["confidence"]["version"] == ce.VERSION and rec["confidence"]["dimensions"]["evidence"]["pct"] == 100
 
 
 def test_trim_day_tolerates_days_with_no_sales_percentage():

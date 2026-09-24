@@ -2468,13 +2468,21 @@ def _do_cross_module(u):
     # Built from what THIS login may see, the same way the brief is. A
     # manager without FOOD_COST_VIEW must not read a margin link.
     r = viewer_restaurant(get_restaurant(_rid(u)), u)
-    brief = bi.executive_brief(_rid(u), restaurant=r)
+    # ONE rec_trust.Context for the hero and every What connects card, so a
+    # link that is also the one thing shows one figure (group P, B4 M1).
+    _ctx = None
+    try:
+        import rec_trust
+        _ctx = rec_trust.Context(_rid(u))
+    except Exception as e:
+        print(f"[cross-module] trust context unavailable rid={_rid(u)}: {e}")
+    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
     links = [dict(l, ask=f"Tell me more about this: {l.get('headline', '')}")
              for l in (brief.get("links") or [])]
-    fix_first, links = _present_cross_module(u, brief.get("fix_first"), links)
+    fix_first, links = _present_cross_module(u, brief.get("fix_first"), links, ctx=_ctx)
     return {"ok": True,
             "links": links,
             "fix_first": fix_first,
@@ -2483,7 +2491,7 @@ def _do_cross_module(u):
             "unanswered": brief.get("unanswered") or []}, 200
 
 
-def _present_cross_module(u, fix_first, links):
+def _present_cross_module(u, fix_first, links, ctx=None):
     """Home's "one thing" and its "What connects" links, into rec_ledger on
     the surface that shows them (#26): their keys existed (the one thing's
     own key, business_intelligence.link_key) and this route — the one both
@@ -2514,7 +2522,7 @@ def _present_cross_module(u, fix_first, links):
                           "model_written": bool(ff.get("model_written"))})
             seen.add(ff["key"])
         out_links = []
-        _ctx = None
+        _ctx = ctx
         for l in links or []:
             key = bi.link_key(l)
             # Each link's measured confidence (T1) — the same input the

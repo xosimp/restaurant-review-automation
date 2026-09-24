@@ -152,7 +152,8 @@ def test_three_rows_in_order_with_their_bases():
     assert [r["title"] for r in rows] == ["Evidence strength", "Historical accuracy", "Data freshness"]
     assert [r["value"] for r in rows] == ["80%", "75%", "94%"]
     assert rows[0]["basis"].startswith("12 reviews in 90 days")
-    assert rows[1]["detail"] == "3 of 4 measured · likely 41–94%"
+    # Group P item 11: the lift, not "a short record pulled toward 50%".
+    assert rows[1]["detail"] == "75% likely to beat doing nothing · improved-rate range 41–94%"
     assert rows[2]["detail"] == "as of 9/23/26"
     assert [r["tone"] for r in rows] == ["good", "good", "good"]
 
@@ -405,7 +406,12 @@ def _k7_payload():
     overall = ([(74, 1)] * 29 + [(74, 0)] * 13 + [(45, 1)] * 3 + [(45, 0)] * 3
                + [(95, 1)] * 3 + [(95, 0)] * 27)
     ev = [(84, 1)] * 21 + [(84, 0)] * 9
-    return {"ok": True, "floor_n": 20, "bands": ce.reliability(overall, 20), "brier": ce.brier(overall, 20),
+    order = ce.ordering(overall, 20)
+    alerts = [{"severity": "warning", "where": "overall", "title": "Higher support is doing worse",
+               "detail": "x"}] if order["violations"] else []
+    return {"ok": True, "floor_n": 20, "meaning": ce.MEANING, "ordering": order, "alerts": alerts,
+            "ordering_by_kind": [dict(order, kind="trim_day")], "scored_on": {"acceptance": 3, "first_shown": 5},
+            "bands": ce.reliability(overall, 20), "brier": ce.brier(overall, 20),
             "by_kind": [{"kind": "trim_day", "n": 25, "predicted_mean": 71.0, "observed_rate": 40.0, "enough": True}],
             "by_dimension": {"evidence": {"bands": ce.reliability(ev, 20), "brier": ce.brier(ev, 20), "n": len(ev)},
                              "accuracy": {"bands": [], "brier": None, "n": 0},
@@ -414,7 +420,8 @@ def _k7_payload():
 
 def _admin_cal_js(payloads):
     a = open(ADMIN, encoding="utf-8").read()
-    fns = "".join(_fn_src(a, n) for n in ("_calPct", "_calBar", "_calTable", "confidenceCalibration"))
+    fns = "".join(_fn_src(a, n) for n in ("_calPct", "_calBar", "_calTable", "_ordTable", "_ordVerdict",
+                                          "confidenceCalibration"))
     return ("function esc(v){return String(v==null?'':v);}function fmtN(n){return String(n);}"
             "function kpi(v,l){return '<kpi>'+v+'|'+l+'</kpi>';}"
             "function table(cols,rows,o){return '<table id=\"'+((o&&o.id)||'')+'\">'+rows.map(function(r){return '<tr>'+cols.map(function(c)"
@@ -433,6 +440,11 @@ def test_admin_calibration_view_renders_k7():
     # The per-dimension table renders from {bands, brier, n} (B6#7).
     assert "Evidence strength" in html and 'id="cal-dim-evidence"' in html and "84%" in html
     assert "No calibration yet" in empty
+    # Group P item 8: the order check leads, the Brier score is labelled as
+    # not the meaning of the % — the payload built by the real functions.
+    assert "not the chance it works" in html and "not the meaning of the %" in html
+    assert "out of order" in html and 'id="cal-order"' in html and "Higher support is doing worse" in html
+    assert html.index("cal-order") < html.index("|Brier score")
 
 
 def test_admin_calibration_reads_every_figure_as_0_to_100():

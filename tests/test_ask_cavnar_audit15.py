@@ -535,7 +535,10 @@ def test_the_business_snapshot_reports_every_module_it_actually_read(db_path, mo
     # record here the measured confidence is capped at 70% (medium).
     d = meta["confidence_detail"]
     assert d["dimensions"]["evidence"]["pct"] == 100 and "3 live reads" in d["dimensions"]["evidence"]["basis"]
-    assert meta["confidence"] == d["band"] == "medium" and d["pct"] == 70
+    # ...and no source in this test world dates the reads, which since group
+    # P holds it at 49 (an unmeasured freshness never raises the figure).
+    assert meta["confidence"] == d["band"] == "low" and d["pct"] == 49
+    assert d["caps_applied"] == ["no_track_record", "freshness_unmeasured"]
 
 
 def test_untrusted_markers_never_reach_the_owners_screen(db_path, monkeypatch):

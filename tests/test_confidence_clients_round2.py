@@ -133,12 +133,15 @@ def test_why_shows_the_sample_and_explains_the_pull_toward_even():
     """B4 M7: the evidence count and the shrinkage were never said."""
     rows = _conf("C.rows(C.norm(c))", c=K1)
     assert rows[0]["detail"] == "Sample: 12"
-    assert "Reads 75%, not 100%" in rows[1]["note"] and "pulled toward 50%" in rows[1]["note"]
+    # Group P item 11: accuracy is the lift against doing nothing now — the
+    # "pulled toward 50%" note described the shrink-to-even it replaced.
+    assert "note" not in rows[1] and "likely to beat doing nothing" in rows[1]["detail"]
     with_full = json.loads(json.dumps(K1))
     with_full["dimensions"]["evidence"]["n_full"] = 8
     assert _conf("C.rows(C.norm(c))", c=with_full)[0]["detail"] == "Sample: 12 of the 8 a full read needs"
     panel = _text(_conf("C.panel(C.norm(c))", c=K1))
-    assert "Sample: 12" in panel and "pulled toward 50%" in panel
+    assert "Sample: 12" in panel and "pulled toward 50%" not in panel
+    assert panel.startswith("How well supported this is — not the chance it works.")
     # The stale ceiling is explained in words, from the payload's caps when sent.
     assert "Data under 50% fresh holds it at 49% or below" in panel
     capped = dict(K1, caps={"no_track_record": 65, "stale": 45, "stale_below": 55})

@@ -398,9 +398,16 @@ def diagnosis_evidence_input(analysis: dict, margin=None) -> dict:
 def _evidence_band(ev_in) -> str:
     """The band a first reading of this evidence earns: its Evidence Strength
     with no track record here yet (confidence_engine), as a word for the
-    older clients that decode `confidence` as a string."""
+    older clients that decode `confidence` as a string. Freshness is not
+    read here — the presenting route adds it (with the record) as the K1
+    `confidence_detail` — so this is the evidence under the no-record cap,
+    not an assembled figure (whose unmeasured freshness would cap it,
+    group P)."""
     import confidence_engine as ce
-    return ce.assemble(ce.evidence(**ev_in), ce.accuracy(None), ce.freshness(()))["band"]
+    ev = ce.evidence(**ev_in)
+    if ev.get("pct") is None:
+        return "low"
+    return ce.band(min(ev["pct"], ce.NO_TRACK_RECORD_CAP))
 
 
 def diagnose(analysis: dict) -> dict:

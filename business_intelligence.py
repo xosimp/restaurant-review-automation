@@ -862,7 +862,9 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                 "a guest who complained is waiting, and every later reader sees the silence",
                 ["reviews"], urgency="critical",
                 evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"],
-                evidence_input={"n": n, "kind": "count", "basis": f"{n} unanswered low-star reviews on file"})
+                # A fact — replies owed — carries no confidence (B4 H5):
+                # Home's urgent_reviews item carries none either.
+                fact=True)
 
     for top in (links or [])[:1]:
         # "link:<kind>:<subject>" — a bare "link:<kind>" meant one "Not for
@@ -895,13 +897,14 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             # silenced every future diagnosis (M-9, H-13).
             from client_api import diagnosis_rec_key
             import rec_trust
-            _n_ev = rec_trust.verified_evidence_count(dg)
             add(diagnosis_rec_key("diag_food", dg) or "food_diagnosis", dg["recommended_action"],
                 dg.get("cause"), ["food_cost"],
                 dollars=dg.get("dollars_at_stake"), evidence=[dg.get("headline")], claim_kind="inferred",
                 alternative=dg.get("alternative_cause"), model_written=True,
-                evidence_input=rec_trust.diagnosis_evidence(dg, _n_ev, "evidence_items",
-                                                            "a diagnosis of this restaurant's own ledger"))
+                # THE food diagnosis input — the Food Cost card's and
+                # Home's too (B1 H3/H4): weeks of counts, corroborating
+                # modules, the CAPPED band (R9).
+                evidence_input=rec_trust.food_diagnosis_input(restaurant_id, dg, db_path=db_path))
 
     rfx = reviews_brief.get("fix_first")
     if rfx and rfx.get("what"):
@@ -919,13 +922,14 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             # answer on either holds on both (M-9).
             from client_api import diagnosis_rec_key
             import rec_trust
-            _n_rv = int(dg.get("mention_count") or _mentions or 0)
             add(diagnosis_rec_key("diag_review", dg) or issue_key(cat), dg["recommended_action"],
                 dg.get("cause"), ["reviews"],
                 evidence=[rfx.get("evidence")], claim_kind="inferred",
                 alternative=dg.get("alternative_cause"), model_written=True,
-                evidence_input=rec_trust.diagnosis_evidence(dg, _n_rv, "reviews",
-                                                            f"a diagnosis read from {_n_rv} reviews"))
+                # THE review diagnosis input — the Reviews tab's and Home's
+                # too (B1 H3); the sampled flag is added in
+                # one_thing_confidence from the same helper.
+                evidence_input=rec_trust.review_diagnosis_input(dg))
         else:
             add(issue_key(cat), f"Read the {_cat(cat)} complaints and pick one fix for this week",
                 rfx.get("why"), ["reviews"], evidence=[rfx.get("evidence")], claim_kind="computed",
@@ -967,9 +971,13 @@ def link_evidence_input(link) -> dict:
     inference, never a measured cause: its evidence is the figures it cites,
     flagged inferred."""
     link = link or {}
+    mods = [m for m in (link.get("modules") or []) if m]
+    # Each module past the first is an independent reading that agrees —
+    # bounded corroboration (B4 M2); the inferred cap still holds the causal
+    # wording under "high".
     return {"n": len([e for e in (link.get("evidence") or []) if e]), "kind": "evidence_items",
-            "flags": ("inferred",),
-            "basis": f"{len(link.get('modules') or [])} modules moving together — an inference, "
+            "flags": ("inferred",), "corroborating": max(0, len(set(mods)) - 1),
+            "basis": f"{len(mods)} modules moving together — an inference, "
                      "not a measured cause"}
 
 
@@ -1010,7 +1018,10 @@ def _labor_evidence_input(labor):
 def one_thing_confidence(restaurant_id, c, db_path=DB_PATH, ctx=None):
     """The K1 confidence of a one-thing candidate (the Home hero, CA1 H8 —
     it carried none that any surface showed), from its own evidence input
-    and the sources of the modules it rests on. Never raises."""
+    and the sources of the modules it rests on. A FACT candidate (replies
+    owed) carries none: None (B4 H5). Never raises."""
+    if c.get("fact"):
+        return None
     try:
         import rec_trust
         import data_freshness
@@ -1031,7 +1042,7 @@ def one_thing_confidence(restaurant_id, c, db_path=DB_PATH, ctx=None):
         return confidence_engine.unknown()
 
 
-def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
+def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx=None):
     """The top candidate the owner has not already answered, and whose kind
     they have not stopped answering (decisions.quiet_kinds) — a "no" on Home
     is a no here too, and a kind ignored four times running never leads.
@@ -1116,7 +1127,9 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
         out = dict(c)
         # The hero carries its measured confidence (K4), and says whether
         # the model wrote it.
-        out["confidence"] = one_thing_confidence(restaurant_id, out, db_path=db_path)
+        # `ctx` is the build's rec_trust.Context when the caller has one, so
+        # the hero and What connects give one key one figure (B4 M1).
+        out["confidence"] = one_thing_confidence(restaurant_id, out, db_path=db_path, ctx=ctx)
         out["model_written"] = bool(out.get("model_written"))
         out["advice_signature"] = sig
         # Its dollars beside the calibrated figure, the rule Home cards
@@ -1132,7 +1145,7 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
 
 # ── the one brief ──────────────────────────────────────────────────────────
 
-def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
+def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH, ctx=None) -> dict:
     """One cross-module read: where the money is, what connects, what to do
     first, and what could not be answered.
 
@@ -1149,7 +1162,7 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH)
     # What to do first, across modules rather than within one: a concrete
     # action, never a module label, ranked by urgency x dollars.
     candidates = one_thing_candidates(restaurant_id, data, links, db_path=db_path)
-    first = pick_one_thing(restaurant_id, candidates, db_path=db_path)
+    first = pick_one_thing(restaurant_id, candidates, db_path=db_path, ctx=ctx)
 
     unanswered = []
     for m in data.get("modules_off", []):

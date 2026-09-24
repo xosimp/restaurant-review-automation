@@ -1262,6 +1262,11 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                 "price_level": d.get("price_level"),
                                 "match_basis": "added by you",
                                 "custom": True,
+                                # The same floor the discovered ones carry: a
+                                # rating on too few reviews is provisional
+                                # whoever added the place (B6 sub-audit).
+                                "rating_is_provisional": int(d.get("user_ratings_total") or 0)
+                                                         < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING,
                             })
                         elif d.get("name"):
                             print(f"[Competitor] custom competitor {d['name']} is {_status} — skipped")

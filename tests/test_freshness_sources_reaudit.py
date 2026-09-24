@@ -305,8 +305,12 @@ def test_s8_places_only_reviews_carry_the_sampled_flag_everywhere():
     home = ce.evidence(**rec_trust.diagnosis_evidence(dg, 12, "reviews", "home", flags=fl))
     page = ce.evidence(**rec_trust.diagnosis_evidence(dg, 12, "reviews", "page", flags=fl))
     assert home["pct"] == page["pct"] < 100
-    for path in ("home_brief.py", "review_intelligence.py", "client_api.py", "business_intelligence.py"):
+    for path in ("home_brief.py", "client_api.py", "business_intelligence.py", "rec_trust.py"):
         assert "review_evidence_flags(" in _src(path), path
+    # The Reviews tab, Home's card and the hero read ONE diagnosis input
+    # that carries the flag (group P item 5).
+    for path in ("home_brief.py", "review_intelligence.py", "business_intelligence.py"):
+        assert "review_diagnosis_input(" in _src(path), path
 
 
 # ── S9: day-1 floors ───────────────────────────────────────────────────────

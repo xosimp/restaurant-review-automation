@@ -980,7 +980,9 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     PRIOR_MIN_MEASURED measured results after no one restaurant is allowed
     more than scoring.MAX_RESTAURANT_SHARE of them (the capped counts —
     re-audit B2 #3; `prior_measured_raw` / `prior_improved_raw` are the
-    uncapped counts), else "none" and rate None.
+    uncapped counts), else "none" and rate None. The cohort's `prior_*`
+    counts are filled at ANY own count (group P): the confidence engine
+    reads them only as its prior's centre, which they may only lower.
 
     `rate_recent` (re-audit B2 #15) is the own improved share with each
     result weighted 0.5 ** (age / RECENT_HALF_LIFE_DAYS), beside `rate`, at
@@ -1021,12 +1023,17 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
                    base_rate_basis=br["basis"])
     except Exception as e:
         print(f"[rec_learning] base rate unavailable for {restaurant_id}/{kind}: {e}")
-    if out["measured"] >= MIN_MEASURED_FOR_RATE:
+    own = out["measured"] >= MIN_MEASURED_FOR_RATE
+    if own:
         out["rate"] = out["improved"] / out["measured"]
         out["low"], out["high"] = wilson(out["improved"], out["measured"])
         out["source"] = "own"
         out["rate_recent"], out["rate_recent_n_eff"] = recency_weighted_rate(measured, now=now)
-        return out
+    # The anonymous cohort is read at ANY own count now (confidence round 2,
+    # group P): it is the prior's centre in the engine's Beta read — which
+    # it may only pull DOWN — and never a figure on its own. Below the own
+    # floor it is labelled (source "cohort") but carries no percentage
+    # (B1 H9, B2 #3).
     try:
         import intelligence
         from intelligence import privacy
@@ -1045,9 +1052,10 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
                 out.update(prior_measured=int(round(pm)), prior_improved=int(round(pi)),
                            prior_measured_raw=int(s.get("measured") or 0),
                            prior_improved_raw=int(s.get("improved") or 0),
-                           prior_restaurants=int(s.get("measured_restaurants") or 0),
-                           rate=pi / pm, source="cohort")
-                out["low"], out["high"] = wilson(pi, pm)
+                           prior_restaurants=int(s.get("measured_restaurants") or 0))
+                if not own:
+                    out.update(rate=pi / pm, source="cohort")
+                    out["low"], out["high"] = wilson(pi, pm)
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
     return out

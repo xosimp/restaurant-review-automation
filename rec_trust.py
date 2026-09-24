@@ -22,6 +22,7 @@ each kind's record), so a Home page with seven cards reads the ledger once.
 Never raises: on any failure the answer is confidence_engine.unknown() —
 every dimension unmeasured and the low band, never "medium".
 """
+import copy
 from datetime import datetime, timedelta
 
 import confidence_engine as ce
@@ -45,6 +46,7 @@ class Context:
         self._sources = {}
         self._distrust = None
         self._row = None
+        self._confs = {}
 
     # the restaurant row the freshness readers want (dict of every column)
     def row(self):
@@ -126,34 +128,85 @@ class Context:
         return self._distrust
 
 
-def diagnosis_evidence(dg, n, kind, basis, flags=(), coverage=None) -> dict:
+def diagnosis_evidence(dg, n, kind, basis, flags=(), coverage=None, corroborating=None) -> dict:
     """Evidence Strength input for a stored model diagnosis (reviews, food,
-    campaign): the data count behind it, capped by the model's own band
-    (`model_confidence` when the validator kept it apart, else `confidence`)
-    — which only ever lowers it — and by any figure that failed
-    verification. A diagnosis over a week old is a stale read."""
+    campaign): the data count behind it, capped by the model's band as the
+    validator CAPPED it (`confidence` — ai_guard.cap_band over its verified
+    cross-checks; never `model_confidence`, the raw band that let a
+    diagnosis with no cross-check read "high": R9, B5 #9) — which only ever
+    lowers it — and by any figure that failed verification; raised,
+    boundedly, by the other modules whose verified figures agree
+    (`corroborating`, default the diagnosis's own distinct verified
+    modules — B4 M2). A diagnosis over a week old is a stale read."""
     dg = dg or {}
-    band = dg.get("model_confidence") or dg.get("confidence")
+    band = dg.get("confidence")
     unverified = (dg.get("unsupported_figures") or dg.get("unverified_figures") or dg.get("unverified") or [])
     fl = tuple(flags or ()) + (("stale_read",) if dg.get("stale") else ())
     return {"n": n, "kind": kind, "basis": basis + ("; written over a week ago" if dg.get("stale") else ""),
             "flags": fl, "coverage": coverage,
             "model_band": band if band in ce.MODEL_CAPS else None,
-            "unverified": len(unverified) if isinstance(unverified, (list, tuple)) else int(bool(unverified))}
+            "unverified": len(unverified) if isinstance(unverified, (list, tuple)) else int(bool(unverified)),
+            "corroborating": verified_evidence_count(dg) if corroborating is None else int(corroborating)}
 
 
 def verified_evidence_count(dg) -> int:
-    """How many operational_evidence entries a diagnosis carries that were
-    verified (K6: the validator marks each kept entry `verified: true` and
-    drops the rest; an entry from before that marking counts)."""
-    return len([e for e in ((dg or {}).get("operational_evidence") or [])
-                if isinstance(e, dict) and e.get("verified", True)])
+    """How many distinct MODULES a diagnosis's verified operational_evidence
+    comes from (K6: the validator marks each kept entry `verified: true` and
+    drops the rest; an entry from before that marking counts). One module's
+    figures cited twice are one corroboration, not two (R1 serves one entry
+    per module; this makes the count say so)."""
+    mods = set()
+    for i, e in enumerate((dg or {}).get("operational_evidence") or []):
+        if isinstance(e, dict) and e.get("verified", True):
+            mods.add(str(e.get("module") or e.get("source") or f"#{i}").strip().lower())
+    return len(mods)
+
+
+def review_diagnosis_input(dg, restaurant_row=None) -> dict:
+    """THE Evidence Strength input of a stored review diagnosis — the one
+    the Reviews tab, the Home card and the one-thing hero all read, so one
+    diagnosis shows one figure everywhere (B1 H3, B4 M1: 73% on the card vs
+    87% on the hero). The reviews behind its theme (`mention_count`), the
+    Places "sampled" flag (data_freshness.review_evidence_flags), the
+    capped band and its corroborating modules."""
+    import data_freshness
+    dg = dg or {}
+    n = int(dg.get("mention_count") or 0)
+    flags = data_freshness.review_evidence_flags(restaurant_row) if restaurant_row is not None else ()
+    return diagnosis_evidence(dg, n, "reviews",
+                              f"{n} reviews on this theme over {dg.get('window_days') or 90} days", flags=flags)
+
+
+def food_diagnosis_input(restaurant_id, dg, db_path=None) -> dict:
+    """THE Evidence Strength input of the stored food cost diagnosis —
+    read by the Food Cost card, Home and the one-thing hero alike (B1 H3/
+    H4). Its sample is the food data itself — the ISO weeks of inventory
+    counts in the last eight (waste_trend.load_waste_history, N_FULL
+    "weeks") — raised boundedly by each other module whose verified figure
+    agrees, capped by the validator's capped band. A diagnosis with no
+    cross-check used to read 0% while its prose said "medium" (B1 H4)."""
+    dg = dg or {}
+    try:
+        from waste_trend import load_waste_history
+        weeks, _t = load_waste_history(restaurant_id, 8, db_path=db_path)
+        n = len(weeks or [])
+    except Exception as e:
+        print(f"[rec_trust] food weeks unreadable for {restaurant_id}: {e}")
+        n = None
+    k = verified_evidence_count(dg)
+    basis = (f"{n} week{'s' if n != 1 else ''} of inventory counts" if n is not None
+             else "the counts could not be read")
+    return diagnosis_evidence(dg, n, "weeks", basis, corroborating=k)
 
 
 def diagnosis_confidence(restaurant_id, key, dg, n, kind, basis, sources=(), flags=(), db_path=None,
                          ctx=None) -> dict:
     """The K1 object for a stored diagnosis block (K6): evidence from the
-    data count, capped by the model's band and by unverified figures."""
+    data count, capped by the model's band and by unverified figures. The
+    Reviews tab and the Food Cost card now assess through
+    review_diagnosis_input / food_diagnosis_input (group P, one input per
+    diagnosis); no caller remains in the repo — candidate for future cleanup
+    after additional verification."""
     return assess(restaurant_id, key, evidence=diagnosis_evidence(dg, n, kind, basis, flags=flags),
                   sources=sources, db_path=db_path, ctx=ctx)
 
@@ -173,6 +226,16 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
     freshness dimension is then not measurable). Deterministic for the same
     rows; never raises; `score` always a number."""
     try:
+        # One confidence per recommendation key per build (B4 M1, B1 H3):
+        # within one Context — a Home page, a cross-module read, a DSR — the
+        # second surface to assess a key gets the first one's object, so the
+        # Home card, the hero and What connects can't show two figures for
+        # one piece of advice. Only a key with a subject ("kind:subject"):
+        # a bare fallback key ("dsr_action", "ask_answer") is shared by
+        # different items.
+        memo = ctx is not None and ":" in str(key or "") and isinstance(getattr(ctx, "_confs", None), dict)
+        if memo and key in ctx._confs:
+            return copy.deepcopy(ctx._confs[key])
         ctx = ctx or Context(restaurant_id, restaurant=restaurant, db_path=db_path, now=now)
         ev_in = dict(evidence or {})
         kind = _kind(key)
@@ -183,7 +246,10 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
         ev = ce.evidence(**ev_in)
         acc = ce.accuracy(ctx.record(kind))
         fr = ce.freshness(ctx.sources(tuple(sources or ())))
-        return ce.assemble(ev, acc, fr)
+        out = ce.assemble(ev, acc, fr)
+        if memo:
+            ctx._confs[key] = copy.deepcopy(out)
+        return out
     except Exception as e:
         print(f"[rec_trust] assess failed for {restaurant_id}/{key}: {e}")
         return ce.unknown()
@@ -212,28 +278,52 @@ def outbound_label(conf) -> str:
 
 
 
+SCHEDULE_PANEL_KEY = "schedule_quality:read"
+
+
+def schedule_evidence(quality) -> dict:
+    """The Evidence Strength input of the Shift Quality read and of every
+    suggestion built from it: the one read of this schedule (n 1 of 1),
+    held to the read's measured completeness as a documented CAP
+    (shift_quality.confidence: 100 less a stated penalty per missing input
+    — unrated staff, no shift history, no demand history, no availability).
+    Never `coverage`: the score is not a share of a trading window, and
+    passing it as one printed "only 62% of the window measured" (B4 H3,
+    B1 H2)."""
+    qc = (quality or {}).get("confidence") or {}
+    sc = qc.get("score")
+    reasons = [str(x) for x in (qc.get("reasons") or []) if x]
+    if not isinstance(sc, (int, float)) or isinstance(sc, bool):
+        return {"n": None, "basis": "The read's completeness wasn't measured"}
+    sc = max(0.0, min(100.0, float(sc)))
+    basis = "the Shift Quality read of this schedule"
+    why = ("every input on file" if not reasons else reasons[0].rstrip(".").rstrip())
+    return {"n": 1, "n_full": 1, "kind": "count", "basis": basis, "cap": sc,
+            "cap_reason": f"its inputs are {int(round(sc))}% complete — {why}"}
+
+
 def attach_schedule_confidence(restaurant_id, quality, items, db_path=None, ctx=None) -> list:
     """Put K1 `confidence` on each Shift Quality recommendation item
-    ({text, kind, key, rec_key}) in place (confidence audit, integration).
-    Evidence Strength is the Shift Quality read's own measured completeness
-    (shift_quality.confidence: 100 less a stated penalty per missing input —
-    unrated staff, no shift history, no demand history, no availability),
-    since every suggestion is built from that read; accuracy is this
-    restaurant's record for the suggestion's kind; freshness is the labor
-    data it rests on. Never raises; an item it can't score keeps no
-    confidence."""
+    ({text, kind, key, rec_key}) in place, and the read's own K1 on the
+    panel as `quality["confidence_detail"]` (B4 H3/H4, B1 H2: the pill said
+    "High confidence" at 85 while every item below read 70%). Evidence is
+    schedule_evidence (the read's completeness as a documented cap);
+    accuracy is this restaurant's record of each suggestion's kind (the
+    panel's own kind has none, so it is the no-record figure); freshness is
+    everything a schedule rests on — shifts, the POS, sales and the weather
+    (data_freshness.sources_for(["schedule"])), not labor alone. Never
+    raises; an item it can't score keeps no confidence."""
     try:
-        qc = (quality or {}).get("confidence") or {}
-        sc = qc.get("score")
-        reasons = [str(x) for x in (qc.get("reasons") or []) if x]
-        basis = ("Shift Quality read with every input on file" if not reasons
-                 else "Shift Quality read — " + reasons[0].rstrip("."))
-        ev = ({"n": 1, "n_full": 1, "coverage": max(0.0, min(1.0, float(sc) / 100.0)), "basis": basis}
-              if isinstance(sc, (int, float)) else {"n": None, "basis": "The read's completeness wasn't measured"})
+        import data_freshness
+        ev = schedule_evidence(quality)
+        srcs = data_freshness.sources_for(["schedule"])
         ctx = ctx or Context(restaurant_id, db_path=db_path)
+        if isinstance(quality, dict):
+            quality["confidence_detail"] = assess(restaurant_id, SCHEDULE_PANEL_KEY, evidence=dict(ev),
+                                                  sources=srcs, ctx=ctx)
         for it in items or []:
             if isinstance(it, dict) and it.get("key"):
-                it["confidence"] = assess(restaurant_id, it["key"], evidence=dict(ev), sources=("labor",), ctx=ctx)
+                it["confidence"] = assess(restaurant_id, it["key"], evidence=dict(ev), sources=srcs, ctx=ctx)
     except Exception as e:
         print(f"[rec_trust] schedule confidence unavailable for {restaurant_id}: {e}")
     return items
