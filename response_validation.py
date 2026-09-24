@@ -96,6 +96,7 @@ PROPERTIES (tests/test_response_validation.py): validate never adds a
 figure, never raises confidence (it only ever lowers a modal, a band or a
 causal level), and is idempotent (a second pass makes no new rewrites).
 """
+import bisect
 import hashlib
 import json
 import os
@@ -580,6 +581,11 @@ _OWN_LABEL_RE = re.compile(
     re.I)
 
 _POINT_WORDS = {"points", "point", "pts", "pt", "pp"}
+# A prompt's bare numeral that counts time or things — never a % (F8).
+_COUNTED_BARE_RE = re.compile(
+    r"(?<![\w.$])(\d[\d,]*(?:\.\d+)?)\s+(?:[A-Za-z-]+\s+)?(?:days?|nights?|weeks?|months?|years?|hours?|hrs|"
+    r"shifts?|reviews?|reviewers?|guests?|covers?|orders?|items?|posts?|people|staff|employees?|visits?|"
+    r"restaurants?|locations?|competitors?|mentions?|complaints?|tables?)\b", re.I)
 _HOUR_WORDS = {"hours", "hour", "hrs", "hr", "h"}
 _COUNT_NOUNS = set(_g.COUNT_NOUNS) | {"no-shows", "nights", "shifts", "tables"}
 _MULT_RE = re.compile(r"(?<![\w.$])(\d+(?:\.\d+)?)\s?(?:x|×|times)\b(?!\s*(?:a|per|each)\s+(?:day|week|month|night|"
@@ -1155,6 +1161,13 @@ class _Run:
         self.facts = _Facts(ctx.facts)
         self.typed = bool(ctx.facts)
         self.legacy = (not self.typed) and bool(ctx.context_text)
+        # Typed facts AND the prompt text (the adoption shape, workstream A):
+        # the typed facts carry the kinds, periods and entities that matter
+        # (money above all); a figure none of them holds may still be one the
+        # prompt stated, and is then read as a measured figure with the old
+        # presence semantics — never less strict than the check it replaced.
+        self.hybrid = self.typed and bool(ctx.context_text) and not ctx.policy.get("typed_only")
+        self._ctx_pool = None
         anchors = [a for a in ctx.cause_anchors if not _NEGATED_ANCHOR_RE.search(a["text"])]
         if self.public:
             anchors += [{"text": u, "strength": "likely"} for u in ctx.untrusted]
@@ -1476,6 +1489,10 @@ class _Run:
         direct = self.facts.direct(ctype, c["value"], tol)
         if direct:
             return direct, "direct", tol
+        if self.hybrid:
+            ctxf = self._context_facts(ctype, c["value"], tol)
+            if ctxf:
+                return ctxf, "direct", tol
         der = self.facts.derived(ctype, c["value"], tol)
         if der:
             fs = []
@@ -1483,6 +1500,76 @@ class _Run:
                 fs += list(pair)
             return fs, der[0][1], tol
         return [], None, tol
+
+    def _context_pool(self):
+        """The prompt's own figures, read once per call the way the old
+        presence check read them (ai_guard: fences removed, dates and years
+        blanked): money {value: {period}}, pct, bare, % differences, and
+        the directions the prompt states."""
+        if self._ctx_pool is None:
+            txt = self.ctx.context_text
+            known = _g._figures(txt)
+            # A bare numeral that counts days, reviews or shifts ("30 days",
+            # "212 reviews") never backs a % (F8); any other bare numeral —
+            # a JSON dump's "labor_pct": 38.2 — does, as it always did.
+            counted = set()
+            for m in _COUNTED_BARE_RE.finditer(_g._prepared(txt)):
+                try:
+                    counted.add(round(float(m.group(1).replace(",", "")), 2))
+                except ValueError:
+                    continue
+            pct_pool = sorted(set(known["pct"]) | (set(known["bare"]) - counted))[:4000]
+            self._ctx_pool = {
+                "money": _g._money_periods(txt), "pct": known["pct"], "bare": known["bare"],
+                "pct_pool": pct_pool, "dirs": _g._directions(txt)}
+        return self._ctx_pool
+
+    @staticmethod
+    def _near(sorted_vals, v, tol) -> list:
+        i = bisect.bisect_left(sorted_vals, v - tol)
+        out = []
+        while i < len(sorted_vals) and sorted_vals[i] <= v + tol:
+            out.append(sorted_vals[i])
+            i += 1
+        return out
+
+    def _context_facts(self, ctype, value, tol):
+        """Measured facts (source "context") for a figure only the prompt
+        text states, from the unit pools the old check used: money from money
+        or a bare numeral; % from a % only (F8 reads a % backed only by a bare
+        numeral); points from a %, a bare numeral or a difference of two %;
+        a rating, count, hours or ratio from a bare numeral. A money figure
+        keeps each period the prompt gave it (None when it gave none, which
+        F3 then leaves alone, as the old check did)."""
+        pool = self._context_pool()
+        v = abs(value)
+        hits = []
+        if ctype == "money":
+            for k, periods in pool["money"].items():
+                if abs(v - abs(k)) <= tol:
+                    hits += [(k, "$", p) for p in (periods or {None})]
+            if not hits:
+                hits = [(k, "", None) for k in pool["bare"] if abs(v - abs(k)) <= tol]
+        elif ctype == "pct":
+            hits = [(k, "%", None) for k in self._near(pool["pct_pool"], v, tol)]
+        elif ctype == "pts":
+            hits = [(k, "pts", None) for k in self._near(pool["pct_pool"], v, tol)]
+            if not hits:
+                # a move between two of the prompt's percentages
+                vals = pool["pct_pool"]
+                for x in vals:
+                    if self._near(vals, x + v, tol):
+                        hits = [(v, "pts", None)]
+                        break
+        else:
+            unit = {"star": "★", "count": "count", "h": "h", "x": "x"}.get(ctype, "")
+            hits = [(k, unit, None) for k in pool["bare"] if abs(v - abs(k)) <= tol]
+        out = []
+        for k, unit, period in hits[:4]:
+            dirs = pool["dirs"].get(("money" if ctype == "money" else "pct", k)) or set()
+            out.append(Fact(key="context", value=k, unit=unit, kind="measured", period=period,
+                            direction=next(iter(dirs)) if len(dirs) == 1 else None, source="context"))
+        return out
 
     def money_claims(self, s):
         if not (self.typed or self.legacy):
@@ -1656,7 +1743,8 @@ class _Run:
         matches one, or one of the facts' own key words."""
         t, claims = self._claims(text)
         for k, c in claims:
-            if self.facts.direct(k, c["value"], 0.051 if k == "star" else _g.precision_tolerance(c, True)):
+            tol = 0.051 if k == "star" else _g.precision_tolerance(c, True)
+            if self.facts.direct(k, c["value"], tol) or (self.hybrid and self._context_facts(k, c["value"], tol)):
                 return True
         roots = {_root(w) for w in re.findall(r"[A-Za-z][A-Za-z'’]{3,}", text)}
         return bool(roots & self.facts.words)
@@ -1843,6 +1931,16 @@ class _Run:
 
     def _period_checks(self, s, t, c, facts, period, rate, on_pace):
         kinds = {f.kind for f in facts}
+        if facts and all(f.source == "context" for f in facts):
+            # A figure only the prompt text holds keeps the old period rule:
+            # a stated period must be one the prompt gave that figure, where
+            # it gave one; a period-less prompt figure is left alone.
+            periods = {f.period for f in facts}
+            if period and None not in periods and not any(_compatible(period, p) for p in periods):
+                self.emit("F3", "withhold", "drop", c["raw"] + f" a {period}",
+                          f"stated per {period}; the data is per {'/'.join(sorted(periods))}",
+                          f"A figure here is stated for a different period than the data: {c['raw']}.")
+            return s
         if on_pace and not kinds & {"projection", "forecast"}:
             self.emit("F3", "withhold", "drop", on_pace.group(0), "a pace or run rate from a figure that is not one",
                       f"A figure here is stated as a pace it isn't: {c['raw']}.")
@@ -1915,7 +2013,10 @@ class _Run:
         # (a fact that is not a benchmark) or a benchmark's; only the latter
         # has to come from the registry.
         own = [c for _k, c in claims if any(f.kind != "benchmark" and abs(abs(f.value) - abs(c["value"])) <=
-                                            _g.precision_tolerance(c, True) for f in self.facts.all)]
+                                            _g.precision_tolerance(c, True) for f in self.facts.all)
+               or (self.hybrid and self._context_facts(_k, c["value"], _g.precision_tolerance(c, True))
+                   and not any(abs(abs(f.value) - abs(c["value"])) <= _g.precision_tolerance(c, True)
+                               for f in self.facts.benchmarks if f.value is not None))]
         bench_claims = [c for _k, c in claims if c not in own]
         matched = []
         for c in bench_claims:
@@ -2179,3 +2280,134 @@ def log(verdict: Verdict, ctx: ValidationContext, mode: str = None, original: st
         return True
     except Exception:
         return False
+
+
+# ── adoption helpers (workstream A) ─────────────────────────────────────────
+#
+# Every model call site runs the engine after parsing and before storing,
+# caching or sending (PROMPT_LIBRARY.md → Response Validation → Adoption):
+#
+#     out = response_validation.enforce(text, ctx)   # a str, with .validation
+#     store / return out
+#
+# `enforce` validates under the surface's mode, logs the verdict, and returns
+# the text to show as a `Validated` str carrying the structured `validation`
+# object ({verdict, caveats, controls, codes, version}) that payloads emit.
+# Until web and iOS read that object, the old "UNVERIFIED: …" line is kept
+# on the text whenever the verdict has a caveat or withholds controls (the
+# clients' promote / controls logic reads it); its words are the caveats.
+
+class Validated(str):
+    """The text an owner is shown, as a plain str (it serialises, compares
+    and concatenates as one), carrying the verdict it came from:
+    `.validation` (the payload dict) and `.verdict` (the Verdict, or None
+    for a text that was not validated in this process)."""
+    validation = None
+    verdict = None
+
+    def __new__(cls, text="", validation=None, verdict=None):
+        obj = super().__new__(cls, text or "")
+        obj.validation = validation
+        obj.verdict = verdict
+        return obj
+
+
+def payload(verdict: Verdict) -> dict:
+    """The structured `validation` object an API payload carries beside the
+    text: {verdict, caveats, controls, codes, version}."""
+    if verdict is None:
+        return None
+    return {"verdict": verdict.verdict, "caveats": list(verdict.actions.get("caveats") or []),
+            "controls": bool(verdict.actions.get("controls")), "codes": verdict.codes,
+            "version": verdict.version}
+
+
+def validation_of(text) -> dict:
+    """The `validation` object a text carries (a Validated str), or None."""
+    return getattr(text, "validation", None)
+
+
+_MARKER_RE = re.compile(r"(?is)\n*\s*UNVERIFIED:\s*.*$")
+
+
+def strip_marker(text) -> str:
+    """The text without a trailing "UNVERIFIED: …" line (a stored read from
+    before the engine, about to be re-validated)."""
+    return _MARKER_RE.sub("", str(text or "")).rstrip()
+
+
+def legacy_note(verdict: Verdict):
+    """The words of the legacy "UNVERIFIED:" line — the verdict's caveats —
+    or None when the verdict carries none and keeps its controls."""
+    if verdict is None or verdict.verdict in ("pass", "refuse"):
+        return None
+    cav = [c.rstrip(".") for c in verdict.actions.get("caveats") or [] if c]
+    if not cav:
+        cav = [RULES.get(code, code) for code in verdict.codes
+               if any(f["rule"] == code and f["severity"] in ("caveat", "withhold") for f in verdict.findings)]
+    return ("; ".join(dict.fromkeys(cav)) + ".") if cav else None
+
+
+def enforce(text: str, ctx: ValidationContext, *, marker: bool = True, log_it: bool = True) -> Validated:
+    """Validate `text` under its surface's mode, log the verdict, and return
+    the text to show (a Validated str with `.validation`). Refused → "" (the
+    caller shows its fixed copy or the previous read). With `marker`, a
+    verdict that carries caveats or withholds controls keeps the legacy
+    "UNVERIFIED: …" line (its caveats) until the clients read the object."""
+    shown, v = apply(text, ctx, log_it=log_it)
+    out = shown
+    if marker and shown and mode_for(ctx.surface) == "enforce":
+        note = legacy_note(v)
+        if note:
+            out = shown.rstrip() + "\n\nUNVERIFIED: " + note
+    return Validated(out, validation=payload(v), verdict=v)
+
+
+def entity_facts(entities, globals_=(), *, kind_map=None, data_days=None) -> list:
+    """Typed facts from a module's existing binding builder
+    ({entity: [values]}, [global values]) — labor_insight_facts,
+    food_insight_facts: a number is a fact of that entity in each unit it
+    could be written in ($, %, bare; the old binding check was unit-blind);
+    a dict is typed by its keys (facts_from_dict); a string's own figures
+    (a driver's evidence line) are facts of their written unit. Globals get
+    no entity (any sentence may quote them). Kinds default to measured —
+    money whose kind matters is passed as its own typed Fact beside these."""
+    out = []
+
+    def add(v, entity, prefix):
+        if isinstance(v, bool) or v is None:
+            return
+        if isinstance(v, (int, float)):
+            for u in ("$", "%", ""):
+                out.append(Fact(key=prefix, value=v, unit=u, kind="measured", entity=entity, data_days=data_days))
+        elif isinstance(v, dict):
+            out.extend(facts_from_dict(v, kind_map, entity=entity, prefix=prefix, data_days=data_days))
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                add(x, entity, prefix)
+        elif isinstance(v, str):
+            for c in _g.figure_claims(_g.normalise_numbers(v)):
+                if c.get("year"):
+                    continue
+                u = {"money": "$", "pct": "%", "star": "★"}.get(c["kind"], "")
+                out.append(Fact(key=prefix, value=c["value"], unit=u, kind="measured", entity=entity,
+                                data_days=data_days))
+
+    for name, vals in (entities or {}).items():
+        if name in (None, ""):
+            continue
+        add(list(vals) if isinstance(vals, (list, tuple, set)) else vals, str(name),
+            "entity." + re.sub(r"\W+", "_", str(name).lower()).strip("_"))
+    for v in globals_ or ():
+        add(v, None, "global")
+    return out
+
+
+def anchor(text, strength="likely") -> list:
+    """[{text, strength}] for one cause anchor, or [] when there is none.
+    The strengths every call site uses: a diagnosis's cause and a ranked
+    driver are "likely"; co-movement / operational evidence and an
+    alternative cause are "association"; a recommended action is never an
+    anchor."""
+    t = " ".join(str(text or "").split())
+    return [{"text": t, "strength": strength}] if t else []

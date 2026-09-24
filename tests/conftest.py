@@ -85,6 +85,17 @@ def _reset_labor_note_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_tenant_names_cache():
+    """models.other_tenant_names caches every restaurant's name per process
+    (the Response Validation Layer's T1 list); one test's restaurants must
+    not be another test's "other tenants"."""
+    import models
+    models._invalidate_tenant_names()
+    yield
+    models._invalidate_tenant_names()
+
+
+@pytest.fixture(autouse=True)
 def _reset_supplier_order_cooldown():
     """Same shape of problem as _reset_ai_rate_limiter above: the
     supplier-order send cooldown is a process-global keyed by restaurant_id,

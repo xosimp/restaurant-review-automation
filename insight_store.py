@@ -66,8 +66,26 @@ def fingerprint(*parts) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def get(restaurant_id, kind, fp, db_path=DB_PATH):
-    """The stored read for exactly this data, or None."""
+def _validation_version():
+    import response_validation
+    return response_validation.VERSION
+
+
+def _is_wrapped(stored) -> bool:
+    return isinstance(stored, dict) and "_rv" in stored and "out" in stored
+
+
+def get(restaurant_id, kind, fp, db_path=DB_PATH, revalidate=None):
+    """The stored read for exactly this data, or None.
+
+    A read stored with its model text (`put(..., raw=)`, every call site
+    that runs the Response Validation Layer) carries the engine version it
+    was validated under. When that version is no longer current, the stored
+    model text is re-validated with `revalidate(raw)` — no model call — and
+    the new result replaces the old one (its age unchanged); without a
+    `revalidate` it is not served. A read stored before the engine (no
+    version) is re-validated from its own text, its old "UNVERIFIED:" line
+    removed first, when `revalidate` is given."""
     row = _row(restaurant_id, kind, db_path)
     if not row or row["fingerprint"] != fp:
         return None
@@ -78,9 +96,61 @@ def get(restaurant_id, kind, fp, db_path=DB_PATH):
     except (TypeError, ValueError):
         return None
     try:
-        return json.loads(row["payload"])
+        stored = json.loads(row["payload"])
     except (TypeError, ValueError):
         return None
+    if _is_wrapped(stored):
+        if stored["_rv"] == _validation_version():
+            return _restore(stored)
+        if revalidate is None:
+            return None
+        raw = stored.get("raw")
+    elif revalidate is None:
+        return stored
+    elif isinstance(stored, str):
+        import response_validation
+        raw = response_validation.strip_marker(stored)
+    else:
+        return None           # a pre-engine structured read: regenerate it
+    try:
+        out = revalidate(raw)
+    except Exception as e:
+        print(f"[insight_store] re-validation failed: {e}")
+        return None
+    if out is None:
+        return None
+    _rewrap(restaurant_id, kind, raw, out, db_path)
+    return out
+
+
+def _restore(stored):
+    """The stored output, with its validation object back on a text."""
+    out = stored.get("out")
+    if isinstance(out, str):
+        import response_validation
+        return response_validation.Validated(out, validation=stored.get("validation"))
+    return out
+
+
+def _wrap(raw, out):
+    import response_validation
+    return {"_rv": _validation_version(), "raw": raw, "out": out,
+            "validation": response_validation.validation_of(out)}
+
+
+def _rewrap(restaurant_id, kind, raw, out, db_path):
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return
+    try:
+        conn.execute("UPDATE insight_cache SET payload=? WHERE restaurant_id=? AND kind=?",
+                     (json.dumps(_wrap(raw, out), default=str), restaurant_id, kind))
+        conn.commit()
+    except Exception as e:
+        print(f"[insight_store] re-validated write failed: {e}")
+    finally:
+        conn.close()
 
 
 def latest(restaurant_id, kind, db_path=DB_PATH):
@@ -90,9 +160,10 @@ def latest(restaurant_id, kind, db_path=DB_PATH):
     if not row:
         return None, None
     try:
-        return json.loads(row["payload"]), row["created_at"]
+        stored = json.loads(row["payload"])
     except (TypeError, ValueError):
         return None, None
+    return (_restore(stored) if _is_wrapped(stored) else stored), row["created_at"]
 
 
 def _row(restaurant_id, kind, db_path):
@@ -110,8 +181,13 @@ def _row(restaurant_id, kind, db_path):
         conn.close()
 
 
-def put(restaurant_id, kind, fp, payload, db_path=DB_PATH) -> bool:
-    """Store the read. Never raises: a cache write must not fail a page."""
+def put(restaurant_id, kind, fp, payload, db_path=DB_PATH, raw=None) -> bool:
+    """Store the read. Never raises: a cache write must not fail a page.
+    With `raw` (the model's text before validation), the read is stored
+    with the validation engine's version, so a later version re-validates
+    it from `raw` instead of serving the old verdict (see get)."""
+    if raw is not None:
+        payload = _wrap(raw, payload)
     try:
         conn = get_conn(db_path)
     except Exception:

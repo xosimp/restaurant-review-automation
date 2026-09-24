@@ -2897,6 +2897,73 @@ def _notify_restaurant_change(restaurant_id):
             print(f"[models] restaurant-change listener {getattr(fn, '__name__', fn)} failed: {e}")
 
 
+# Other tenants' names, for the Response Validation Layer's T1 rule (NS6 §B):
+# "Unlike Gia Mia down the street…" and "Restaurants like Simple EJ's…"
+# passed every check. One read of every restaurant's name per process,
+# dropped on any restaurant change and after _TENANT_NAMES_TTL (a new
+# restaurant is created outside update_restaurant).
+_TENANT_NAMES_TTL = 300
+_tenant_names_cache = {"key": None, "at": 0.0, "rows": ()}
+# Names too generic to be read as another tenant ("Pizza", "The Bar"), and
+# the platform's own name.
+_TENANT_GENERIC_NAMES = {"other", "bar", "pub", "cafe", "café", "grill", "kitchen", "pizza", "tavern", "bistro",
+                         "restaurant", "diner", "eatery", "lounge", "cantina", "demo", "test", "sample",
+                         "cavnar", "cavnar ai", "cavnar demo", "cavnar test", "the bar", "the kitchen"}
+
+
+def _invalidate_tenant_names(*_a):
+    _tenant_names_cache.update({"key": None, "at": 0.0, "rows": ()})
+
+
+on_restaurant_change(_invalidate_tenant_names)
+
+
+def other_tenant_names(restaurant_id, db_path: str = None) -> set:
+    """Every other Cavnar restaurant's name and location name — never this
+    restaurant's own, nor those of its own location group (same
+    location_group AND owner_email, the tenancy boundary used elsewhere).
+    Cached per process; never raises (an unreadable table denies nothing)."""
+    import time as _time
+    key = (db_path or DB_PATH, id(get_conn))
+    now = _time.time()
+    if _tenant_names_cache["key"] != key or now - _tenant_names_cache["at"] > _TENANT_NAMES_TTL:
+        rows = ()
+        try:
+            conn = get_conn(db_path) if db_path else get_conn()
+            try:
+                rows = tuple((r["id"], r["name"], r["location_name"], (r["location_group"] or "").strip().lower(),
+                              (r["owner_email"] or "").strip().lower())
+                             for r in conn.execute("SELECT id, name, location_name, location_group, owner_email "
+                                                   "FROM restaurants").fetchall())
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[models] tenant names unavailable: {e}")
+            rows = ()
+        _tenant_names_cache.update({"key": key, "at": now, "rows": rows})
+    rows = _tenant_names_cache["rows"]
+    try:
+        rid = int(restaurant_id) if restaurant_id is not None else None
+    except (TypeError, ValueError):
+        rid = None
+    me = next((r for r in rows if r[0] == rid), None)
+    own = set()
+    if me:
+        own |= {str(n).strip().lower() for n in (me[1], me[2]) if n}
+    out = set()
+    for r in rows:
+        if r[0] == rid:
+            continue
+        if me and me[3] and r[3] == me[3] and r[4] == me[4]:
+            continue          # a sibling location of the same owner
+        for n in (r[1], r[2]):
+            n = str(n or "").strip()
+            if len(n) < 4 or n.lower() in _TENANT_GENERIC_NAMES or n.lower() in own:
+                continue
+            out.add(n)
+    return out
+
+
 def expected_version_from(data) -> Optional[int]:
     """The `expected_version` a whole-form save carries, or None.
 
