@@ -21335,7 +21335,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
     ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
     ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],['max_consecutive_days','Days in a row, at most','days'],
-    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days']];
+    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days \u2014 a week inside it is held']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
@@ -21410,6 +21410,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     h+='</div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-mod"'+(rules.manager_on_duty?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Manager on duty<small>Every shift needs a manager or keyholder on it; the rules check names the ones without.</small></div></div>';
+    /* On by default (NS5 M8): once anyone is a keyholder or closer, one of
+       them stays until close every open day. */
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Keyholder until close<small>Someone who can close stays until close every open day. Checked once anyone is marked a keyholder or closer.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
     // Closed days: weekdays and dates the restaurant does not trade. The
     // draft writes no shifts on them and the week is not failed for it.
@@ -21510,6 +21513,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
     }
     var mod=document.getElementById('rul-mod');if(mod)rules.manager_on_duty=!!mod.checked;
+    var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
     var body={rules:rules,role_floors:floors};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
