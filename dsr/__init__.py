@@ -69,9 +69,22 @@ class Context:
 
     Collectors are `collect(ctx) -> block` in dsr/block_<name>.py; they never
     raise for missing data (they return a non-ready block with a reason) and
-    they never call a model."""
+    they never call a model.
 
-    def __init__(self, restaurant, business_date, db_path=None, now_utc=None):
+    Set by the pipeline (dsr.pipeline), read by collectors that need them:
+
+    trigger        what started this run: "sweep" | "manual" | "late_data"
+    day_closed     how the POS day is known to be over — "pos" (the POS's own
+                   close-day record), "close_time" (a POS with no such record,
+                   past close plus a grace period) or "manual" (someone pressed
+                   Close day) — False when it is known NOT to be, None when
+                   nobody has checked (a collector run on its own checks)
+    blocks         {name: block} collected so far tonight, in report order,
+                   so a later block can read an earlier one (labor % over
+                   tonight's net sales, labor hours after 6pm against the
+                   hourly sales curve)."""
+
+    def __init__(self, restaurant, business_date, db_path=None, now_utc=None, trigger=None):
         from datetime import date as _date, datetime as _dt
         from models import DB_PATH as _DB
         self.restaurant = restaurant
@@ -79,6 +92,9 @@ class Context:
         self.business_date = business_date if isinstance(business_date, _date) else _date.fromisoformat(str(business_date)[:10])
         self.db_path = db_path or _DB
         self.now_utc = now_utc or _dt.utcnow()
+        self.trigger = trigger
+        self.day_closed = None
+        self.blocks = {}
 
     @property
     def day(self) -> str:

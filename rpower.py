@@ -577,6 +577,237 @@ def fetch_menu_items(restaurant_id: int) -> list:
     } for r in rows if r.get("mid")]
 
 
+# ── the nightly DSR: one day's sales, and whether the store closed it ───────
+
+# A ticketsales line whose menu item, category or department is not in the
+# lookups is still money the store took; it is filed here rather than
+# dropped, and the DSR shows it as unmapped.
+UNASSIGNED_DEPARTMENT = "Unassigned"
+
+# How far back a closeday row may start and still cover the day asked about
+# (a store that missed a close and closed two days at once: from_date is the
+# earlier day, thru_date the later).
+CLOSEDAY_LOOKBACK_DAYS = 3
+
+# UNVERIFIED until the first live night — RPOWER's collection documents these
+# fields but not their semantics, and there is no sandbox to observe them:
+#   * a comp line's `sales`: the comped value, zero or negative? The day's
+#     comps take |sales|, else |regular_price x qty|, else |price x qty|, and
+#     gross counts that value once. If comp lines turn out to sit BESIDE a
+#     normal sale line for the same plate, gross double-counts the comp —
+#     net is right either way (it is the same revenue lines
+#     fetch_business_days sums). `source_checks` puts RPOWER's own per-ticket
+#     type_sale / type_comp / type_discnt totals beside ours to settle it.
+#   * a discount line's sign (negative in the ticket summary sample:
+#     discount -3.75, type_discnt -3.75).
+#   * whether a closeday row covering the date means every shift is closed
+#     (from_shift / thru_shift are read but not interpreted).
+DAY_SALES_UNVERIFIED = True
+
+
+def _line_kind(row: dict, types: dict) -> str:
+    """What one ticketsales line is to the day's sales:
+    sale | discount | comp | refund | void | excluded | unknown.
+
+    sale + discount are exactly the lines `_counts_as_revenue` keeps, so net
+    here and fetch_business_days' net are the same number by construction."""
+    if row.get("voided"):
+        return "void"
+    st = types.get(str(row.get("slstype_mid")))
+    if st is None:
+        return "unknown"
+    if st.get("type_comp"):
+        return "comp"
+    if st.get("type_refund") or st.get("type_return"):
+        return "refund"
+    if not _counts_as_revenue(row, types):
+        return "excluded"
+    if st.get("type_discnt") or st.get("type_promo"):
+        return "discount"
+    return "sale"
+
+
+def _line_value(row: dict) -> float:
+    """The dollar value of a comp, void or refund line (see
+    DAY_SALES_UNVERIFIED): |sales|, else the rung price times quantity."""
+    sales = float(row.get("sales") or 0)
+    if sales:
+        return abs(sales)
+    qty = abs(float(row.get("qty") or 1) or 1)
+    for key in ("regular_price", "price"):
+        unit = float(row.get(key) or 0)
+        if unit:
+            return abs(unit) * qty
+    return 0.0
+
+
+def _hour_of(raw) -> Optional[str]:
+    """"HH" from an RPOWER local wall-clock stamp ("2020-01-21T11:16:00").
+    RPOWER's "never set" is 2000-01-01, which is no hour at all."""
+    s = str(raw or "")
+    if len(s) < 13 or s.startswith("2000-01-01"):
+        return None
+    return s[11:13] if s[11:13].isdigit() else None
+
+
+def _parts():
+    return {"gross": 0.0, "discounts": 0.0, "comps": 0.0}
+
+
+def fetch_day_sales(restaurant_id: int, business_date) -> dict:
+    """One business date's sales in pos.fetch_day_sales' PARTS shape — pos
+    nets them by pos.NET_DEDUCTIONS, the one place gross becomes net.
+
+    Reads (all by business date, all paged):
+      ticketsales/getbybusinessdate  every line: the money, by sales type
+      ticket/getbybusinessdate       per ticket: guest_count, tax, open_dttm,
+                                     is_cancelled, and RPOWER's own type_*
+                                     totals for source_checks
+      salestype/getbycg              via sales_types(): what each line IS
+      menuitem/getbycg -> salescategory/getbycg -> salesdepartment/getbycg
+                                     the line's department (Erik's sheet
+                                     splits by these)
+
+    Every line goes through the same sales-type rules as the rest of this
+    module (`_line_kind` over `_counts_as_revenue`): gross is sale lines plus
+    the value of comped items; discounts are the discount/promo lines
+    (RPOWER rings them as negative lines, so the figure is their negation);
+    comps are the comp lines' value; voids and refunds are reported and never
+    in gross. A line whose sales type is missing from the lookup is counted
+    in source_checks, never guessed into revenue.
+
+    A transaction is a ticket with at least one sale line. Guests are the
+    sum of guest_count over those tickets, None when the store does not
+    record covers (all zero). Hours are the ticket's open hour, local wall
+    clock — the item's own time when the ticket is missing.
+    """
+    token, base = _ctx(restaurant_id)
+    day = _d(business_date)
+    types = sales_types(restaurant_id)
+    lines = _paged(token, "ticketsales/getbybusinessdate", {
+        **base, "startdate": day, "enddate": day, "sortorder": "date"})
+    tickets = _paged(token, "ticket/getbybusinessdate", {
+        **base, "startdate": day, "enddate": day, "sortorder": "date"})
+    menu = {str(r.get("mid")): r for r in _paged(token, "menuitem/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            if r.get("mid")}
+    cats = {str(r.get("mid")): r for r in _paged(token, "salescategory/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            if r.get("mid")}
+    deps = {str(r.get("mid")): r for r in _paged(token, "salesdepartment/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            if r.get("mid")}
+
+    def department(item):
+        cat = cats.get(str((item or {}).get("slscat_mid"))) or {}
+        dep = deps.get(str(cat.get("slsdep_mid"))) or {}
+        return (dep.get("name") or "").strip() or UNASSIGNED_DEPARTMENT
+
+    live = {}
+    for t in tickets:
+        if _biz_date(t.get("date")) != day or t.get("is_cancelled"):
+            continue
+        live[str(t.get("rid"))] = t
+
+    total = _parts()
+    voids = refunds = 0.0
+    by_dep, by_hour, items = {}, {}, {}
+    sale_tickets = set()
+    checks = {"lines": 0, "lines_sale": 0.0, "lines_discount": 0.0, "lines_comp_sales": 0.0,
+              "unknown_type_lines": 0, "unknown_type_sales": 0.0, "excluded_lines": 0}
+    for row in lines:
+        if _biz_date(row.get("date")) != day:
+            continue
+        checks["lines"] += 1
+        kind = _line_kind(row, types)
+        sales = float(row.get("sales") or 0)
+        if kind == "unknown":
+            checks["unknown_type_lines"] += 1
+            checks["unknown_type_sales"] = round(checks["unknown_type_sales"] + sales, 2)
+            continue
+        if kind == "excluded":
+            checks["excluded_lines"] += 1
+            continue
+        if kind == "void":
+            voids += _line_value(row)
+            continue
+        if kind == "refund":
+            refunds += _line_value(row)
+            continue
+        item = menu.get(str(row.get("menuitem_mid"))) or {}
+        dep = department(item)
+        ticket = live.get(str(row.get("ticket_rid")))
+        hour = _hour_of((ticket or {}).get("open_dttm")) or _hour_of(row.get("item_dttm"))
+        delta = _parts()
+        if kind == "sale":
+            delta["gross"] = sales
+            checks["lines_sale"] = round(checks["lines_sale"] + sales, 2)
+            sale_tickets.add(str(row.get("ticket_rid")))
+        elif kind == "discount":
+            delta["discounts"] = -sales
+            checks["lines_discount"] = round(checks["lines_discount"] + sales, 2)
+        else:  # comp
+            value = _line_value(row)
+            delta["gross"] = value
+            delta["comps"] = value
+            checks["lines_comp_sales"] = round(checks["lines_comp_sales"] + sales, 2)
+        buckets = [total, by_dep.setdefault(dep, _parts())]
+        if hour:
+            buckets.append(by_hour.setdefault(hour, _parts()))
+        if kind != "discount" and not item.get("is_mod"):
+            # A discount line is not something sold, and a modifier is part
+            # of the plate it modifies — both stay in the money, neither is
+            # an "item" in the top and bottom lists.
+            key = str(row.get("menuitem_mid") or "")
+            it = items.setdefault(key, {"name": (item.get("name") or "").strip() or "Unknown item",
+                                        "department": dep, "qty": 0.0, "parts": _parts()})
+            buckets.append(it["parts"])
+            if kind == "sale":
+                it["qty"] += float(row.get("qty") or 0)
+        for b in buckets:
+            for k, v in delta.items():
+                b[k] += v
+
+    counted = [live[t] for t in sale_tickets if t in live]
+    guests = sum(int(t.get("guest_count") or 0) for t in counted)
+    tax = round(sum(float(t.get("tax") or 0) for t in live.values()), 2) if live else None
+    for k in ("type_sale", "type_discnt", "type_promo", "type_comp"):
+        checks[f"ticket_{k}"] = round(sum(float(t.get(k) or 0) for t in live.values()), 2)
+    checks["tickets"] = len(live)
+    return {
+        "gross": total["gross"], "discounts": total["discounts"], "comps": total["comps"],
+        "voids": round(voids, 2), "refunds": round(refunds, 2), "tax": tax,
+        "transactions": len(sale_tickets),
+        # Tickets missing from the summary feed carry no guest count, so a
+        # partial feed cannot report covers honestly.
+        "guests": guests if guests and len(counted) == len(sale_tickets) else None,
+        "by_department": by_dep, "by_hour": by_hour,
+        # Sold at least once; an item that was only ever comped was served,
+        # not sold, and its value is already in comps.
+        "items": [it for it in items.values() if it["qty"] > 0],
+        "source_checks": checks,
+    }
+
+
+def fetch_day_closed(restaurant_id: int, business_date) -> bool:
+    """Whether the store has run its close for `business_date`: a
+    closeday/getbybusinessdate row whose from_date..thru_date covers it.
+
+    The DSR's trigger (plan §4): RPOWER writes this record when the store
+    closes the day, which is the moment its tickets for the day are final.
+    Asked over a few days either side, because a store that skipped a close
+    closes two days in one record (from_date is the earlier one)."""
+    token, base = _ctx(restaurant_id)
+    day = date.fromisoformat(_d(business_date))
+    rows = _paged(token, "closeday/getbybusinessdate", {
+        **base, "startdate": _d(day - timedelta(days=CLOSEDAY_LOOKBACK_DAYS)),
+        "enddate": _d(day + timedelta(days=1)), "sortorder": "from_date"})
+    want = day.isoformat()
+    for row in rows:
+        start = _biz_date(row.get("from_date"))
+        end = _biz_date(row.get("thru_date")) or start
+        if start and start <= want <= end:
+            return True
+    return False
+
+
 def fetch_time_entries(restaurant_id: int, start_date, end_date) -> list:
     """Timeclock punches over a date range.
 

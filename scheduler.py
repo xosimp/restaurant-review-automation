@@ -3044,6 +3044,15 @@ def scheduler_loop():
                 from strategy_jobs import run_demand_opportunity
                 _ops.run_job("demand_opportunity", run_demand_opportunity)
 
+            # Every tick, claimed per 10-minute slot — the nightly DSR
+            # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
+            # the POS close-day poll, block retries, the provisional
+            # deadline and late-data versions. Bounded and resumable inside;
+            # each night claims (restaurant, business date, version).
+            if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
+                from dsr.pipeline import run_sweep
+                _ops.run_job("dsr_sweep", run_sweep)
+
             # Every tick — scheduled posts, delayed actions whose undo window
             # closed, issue escalations, alerts held through a rush. Skipped
             # when a job's pulse ran them within the last interval.

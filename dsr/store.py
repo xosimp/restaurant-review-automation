@@ -183,24 +183,53 @@ def set_stage(report_id, stage, db_path=DB_PATH, error=None):
         conn.close()
 
 
-def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH):
-    """Count an attempt and set when the pipeline should look again."""
+def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
+    """Set when the pipeline should look again (None: never). `count`
+    counts it as a collection attempt — the backoff reads `attempts` — and
+    is False for the close-day poll and the late-data checks, which are
+    waiting, not retrying."""
     conn = get_conn(db_path)
     try:
-        conn.execute("UPDATE dsr_reports SET attempts=attempts+1, next_attempt_at=? WHERE id=?",
+        conn.execute(f"UPDATE dsr_reports SET attempts=attempts+{1 if count else 0}, next_attempt_at=? WHERE id=?",
                      (str(next_attempt_at)[:19] if next_attempt_at else None, report_id))
         conn.commit()
     finally:
         conn.close()
 
 
-def save_block(report_id, name, blk, db_path=DB_PATH):
-    """Store one block on the report and refresh its metrics in dsr_metrics."""
+# stages_json keys that are progress notes rather than stages: when each
+# block was collected, how the day was known closed, the narrative's outcome,
+# failure and crash counts, the version this one completes.
+NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes")
+
+
+def note(report_id, key, value, db_path=DB_PATH):
+    """Record a progress note beside the stage times (stages_json[key])."""
+    if key not in NOTE_KEYS:
+        raise ValueError(f"unknown note {key!r}")
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT stages_json FROM dsr_reports WHERE id=?", (report_id,)).fetchone()
+        if r is None:
+            raise KeyError(f"no dsr report {report_id}")
+        stages = json.loads(r["stages_json"] or "{}")
+        stages[key] = value
+        conn.execute("UPDATE dsr_reports SET stages_json=? WHERE id=?", (json.dumps(stages), report_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_block(report_id, name, blk, db_path=DB_PATH, stamped_at=None):
+    """Store one block on the report, stamp when it was collected
+    (stages_json["blocks"][name] — the progressive checklist's times) and
+    refresh its metrics in dsr_metrics. `stamped_at` carries a block's
+    original collection time into a later version that reuses it."""
     if name not in _dsr.BLOCKS:
         raise ValueError(f"unknown block {name!r}")
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT restaurant_id, business_date, facts_json FROM dsr_reports WHERE id=?",
+        r = conn.execute("SELECT restaurant_id, business_date, facts_json, stages_json FROM dsr_reports WHERE id=?",
                          (report_id,)).fetchone()
         if r is None:
             raise KeyError(f"no dsr report {report_id}")
@@ -209,7 +238,10 @@ def save_block(report_id, name, blk, db_path=DB_PATH):
             "business_date": r["business_date"], "blocks": {}}
         facts.setdefault("blocks", {})[name] = blk
         facts["missing"] = _dsr.missing_reasons(facts["blocks"])
-        conn.execute("UPDATE dsr_reports SET facts_json=? WHERE id=?", (json.dumps(facts), report_id))
+        stages = json.loads(r["stages_json"] or "{}")
+        stages.setdefault("blocks", {})[name] = str(stamped_at)[:19] if stamped_at else _now()
+        conn.execute("UPDATE dsr_reports SET facts_json=?, stages_json=? WHERE id=?",
+                     (json.dumps(facts), json.dumps(stages), report_id))
         for key, value in (blk.get("metrics") or {}).items():
             conn.execute(
                 "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source, report_id, updated_at) "
@@ -246,6 +278,19 @@ def save_narrative(report_id, narrative, db_path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
+
+
+def versions(restaurant_id, business_date, db_path=DB_PATH):
+    """Every version of one night, oldest first — what "Updated 7:10am:
+    sales now final" is read from."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT version, status, trigger, provisional, created_at, finalized_at FROM dsr_reports "
+                            "WHERE restaurant_id=? AND business_date=? ORDER BY version",
+                            (restaurant_id, str(business_date)[:10])).fetchall()
+    finally:
+        conn.close()
+    return [{**dict(r), "provisional": bool(r["provisional"])} for r in rows]
 
 
 def list_reports(restaurant_id, limit=30, before=None, db_path=DB_PATH):

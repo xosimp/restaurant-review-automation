@@ -462,6 +462,173 @@ def fetch_order_customers(restaurant_id: int, business_date: date) -> list:
     return customers
 
 
+# ── The nightly DSR: one business day's sales ─────────────────────────────────
+
+UNCATEGORISED = "Uncategorized"          # a selection with no sales category
+UNRESOLVED_CATEGORY = "Unknown category" # one whose category name Toast wouldn't give us
+
+
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _discount_total(obj) -> float:
+    return sum(_num(d.get("discountAmount")) for d in (obj.get("appliedDiscounts") or []) if isinstance(d, dict))
+
+
+def _sales_category_names(restaurant_id, token, guid, base) -> dict:
+    """{sales category guid: name} from Toast's configuration API. ordersBulk
+    names a selection's category by reference only. Best effort: a failure
+    leaves the names unresolved (the DSR shows them as unmapped) rather than
+    failing the whole day's figures."""
+    try:
+        resp = requests.get(f"{base}/config/v2/salesCategories", headers=_headers(token, guid), timeout=30)
+        resp.raise_for_status()
+        body = resp.json() or []
+        return {c.get("guid"): (c.get("name") or "").strip() for c in body if isinstance(c, dict) and c.get("guid")}
+    except Exception as e:
+        print(f"[toast] sales category names unavailable for {restaurant_id}: {e}")
+        return {}
+
+
+def fetch_day_sales(restaurant_id: int, business_date: date) -> dict:
+    """One business date's sales in pos.fetch_day_sales' PARTS shape — pos
+    nets them by pos.NET_DEDUCTIONS.
+
+    GET /orders/v2/ordersBulk?businessDate=YYYYMMDD, paged like
+    fetch_order_selections. Orders and checks that are voided or deleted are
+    not sales; their selections count as voids.
+
+      net (Toast's own)  check.amount — after discounts, before tax
+      discounts          check.appliedDiscounts + each selection's
+                         appliedDiscounts (discountAmount)
+      gross              amount + discounts — before any discount
+      comps              None: Toast rings a comp as a discount, so it is
+                         already inside discounts and cannot be separated
+      tax                check.taxAmount
+      by_department      selection.salesCategory (named through the config
+                         API), from selection.price plus its own discounts;
+                         check-level discounts are not on any selection, so
+                         the departments can sum to less than net — the DSR
+                         reports that difference as unallocated
+      by_hour            the order's openedDate, in the restaurant's zone
+      items              selection displayName, quantity and price
+      voids              voided selections' preDiscountPrice (else price)
+      refunds            selection.refundDetails.refundAmount
+
+    Field names are Toast's documented Orders API; the salesCategory
+    reference shape and refundDetails are not yet seen in a live response
+    from this account, so every read is defensive.
+    """
+    if _is_demo(restaurant_id):
+        raise NotImplementedError("Toast demo mode has no real day's sales to report")
+
+    from models import get_restaurant
+
+    r     = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    base  = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
+    tz    = _tz_for(restaurant_id)
+    business_date_str = business_date.strftime("%Y%m%d")
+
+    orders = []
+    page = 1
+    for _ in range(PAGE_LIMIT):
+        resp = requests.get(
+            f"{base}/orders/v2/ordersBulk",
+            headers=_headers(token, r.toast_restaurant_guid),
+            params={"businessDate": business_date_str, "page": page, "pageSize": 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        batch = resp.json() or []
+        if not batch:
+            break
+        orders.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    else:
+        # A partial day would under-report the night; refuse it.
+        raise ToastTruncated(f"Toast returned more than {PAGE_LIMIT * 100:,} orders for {business_date_str}")
+
+    names = None
+
+    def category(sel):
+        nonlocal names
+        ref = sel.get("salesCategory") or {}
+        if not isinstance(ref, dict) or not (ref.get("guid") or ref.get("name")):
+            return UNCATEGORISED
+        if (ref.get("name") or "").strip():
+            return ref["name"].strip()
+        if names is None:
+            names = _sales_category_names(restaurant_id, token, r.toast_restaurant_guid, base)
+        return names.get(ref.get("guid")) or UNRESOLVED_CATEGORY
+
+    def parts():
+        return {"gross": 0.0, "discounts": 0.0, "comps": None}
+
+    total = parts()
+    tax = voids = refunds = service = 0.0
+    guests, transactions = 0, 0
+    by_dep, by_hour, items = {}, {}, {}
+    for order in orders:
+        dead_order = bool(order.get("voided") or order.get("deleted"))
+        opened = _parse_toast_time(order.get("openedDate"))
+        hour = opened.astimezone(tz).strftime("%H") if opened and opened.tzinfo else (
+            opened.strftime("%H") if opened else None)
+        counted_order = False
+        for check in (order.get("checks") or []):
+            dead = dead_order or bool(check.get("voided") or check.get("deleted"))
+            live_sels = []
+            for sel in (check.get("selections") or []):
+                if dead or sel.get("voided"):
+                    voids += _num(sel.get("preDiscountPrice")) or _num(sel.get("price"))
+                    continue
+                live_sels.append(sel)
+                refunds += _num((sel.get("refundDetails") or {}).get("refundAmount"))
+            if dead:
+                continue
+            amount = _num(check.get("amount"))
+            disc = _discount_total(check) + sum(_discount_total(s) for s in live_sels)
+            tax += _num(check.get("taxAmount"))
+            service += sum(_num(c.get("chargeAmount")) for c in (check.get("appliedServiceCharges") or [])
+                           if isinstance(c, dict))
+            if live_sels:
+                transactions += 1
+                counted_order = True
+            delta = {"gross": amount + disc, "discounts": disc}
+            for b in ([total] + ([by_hour.setdefault(hour, parts())] if hour else [])):
+                b["gross"] += delta["gross"]
+                b["discounts"] += delta["discounts"]
+            for sel in live_sels:
+                dep = category(sel)
+                sel_disc = _discount_total(sel)
+                price = _num(sel.get("price"))
+                d = by_dep.setdefault(dep, parts())
+                d["gross"] += price + sel_disc
+                d["discounts"] += sel_disc
+                name = (sel.get("displayName") or "").strip() or "Unknown item"
+                key = ((sel.get("item") or {}).get("guid") or name, dep)
+                it = items.setdefault(key, {"name": name, "department": dep, "qty": 0.0, "parts": parts()})
+                it["qty"] += _num(sel.get("quantity"))
+                it["parts"]["gross"] += price + sel_disc
+                it["parts"]["discounts"] += sel_disc
+        if counted_order:
+            guests += int(_num(order.get("numberOfGuests")))
+    return {
+        "gross": total["gross"], "discounts": total["discounts"], "comps": None,
+        "voids": round(voids, 2), "refunds": round(refunds, 2), "tax": round(tax, 2),
+        "transactions": transactions, "guests": guests or None,
+        "by_department": by_dep, "by_hour": by_hour,
+        "items": [it for it in items.values() if it["qty"] > 0],
+        "source_checks": {"orders": len(orders), "service_charges": round(service, 2)},
+    }
+
+
 # ── Data normalisation ─────────────────────────────────────────────────────────
 
 _DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]

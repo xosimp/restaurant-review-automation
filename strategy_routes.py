@@ -1,7 +1,8 @@
 """
 strategy_routes.py — the HTTP surface for the strategic-foundation modules:
 issues, goals, outcome tracking, the dish scorecard and reprice suggestions,
-invoice scanning, the demand forecast, loss signals and the morning brief.
+invoice scanning, the demand forecast, loss signals, the morning brief and
+the nightly DSR (dsr/: the report, its progress, Close day).
 
 Every route exists twice, web (/api/...) and mobile (/mobile/api/...), and
 both halves call ONE shared body — the web/mobile-twin rule in CLAUDE.md. The
@@ -2363,6 +2364,113 @@ def _idempotent(body, route):
     return wrapped
 
 
+# ── the nightly DSR (dsr/) ────────────────────────────────────────────────────
+#
+# Any console login may read the night's report and press Close day, as with
+# the close-out it grows from: the person who closes is usually not the
+# owner. WHAT they read is decided by dsr.access.view_for — the Owner DSR for
+# an owner login at this location, the Manager DSR for every other console
+# login — and every payload is built from the one stored snapshot. A report
+# is always this session's restaurant's (_rid): a manager's session is their
+# location, so no id or date in a request can reach another tenant's night.
+
+def _dsr_view(u):
+    from dsr import access
+    return access.view_for(u)
+
+
+def _dsr_day(raw):
+    try:
+        return date.fromisoformat(str(raw or "")[:10]) if len(str(raw or "")) == 10 else None
+    except ValueError:
+        return None
+
+
+_NO_DSR = ({"ok": False, "error": "The daily report isn't part of your access."}, 403)
+
+
+def _do_dsr_list(u):
+    from dsr import access, store
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    try:
+        limit = max(1, min(90, int(request.args.get("limit") or 30)))
+    except ValueError:
+        return {"ok": False, "error": "limit must be a number"}, 400
+    before = _dsr_day(request.args.get("before")) if request.args.get("before") else None
+    rows = store.list_reports(_rid(u), limit=limit, before=before)
+    return {"ok": True, "view": _dsr_view(u), "reports": [access.summary(r, u) for r in rows]}, 200
+
+
+def _do_dsr_get(u, day):
+    from dsr import access, store
+    from models import get_restaurant
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    d = _dsr_day(day)
+    if d is None:
+        return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+    raw = request.args.get("version")
+    try:
+        version = int(raw) if raw else None
+    except ValueError:
+        return {"ok": False, "error": "version must be a number"}, 400
+    report = store.get_report(_rid(u), d, version=version)
+    if not report:
+        return {"ok": False, "error": "There's no report for that night yet."}, 404
+    return {"ok": True, **access.render(report, u, restaurant=get_restaurant(_rid(u)),
+                                        versions=store.versions(_rid(u), d))}, 200
+
+
+def _do_dsr_status(u, day):
+    from dsr import access, store
+    from models import get_restaurant
+    from time_utils import mdy
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    d = _dsr_day(day)
+    if d is None:
+        return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+    report = store.get_report(_rid(u), d)
+    if not report:
+        # Nothing started yet is an answer the progressive screen shows, not an error.
+        return {"ok": True, "view": _dsr_view(u), "exists": False, "business_date": d.isoformat(),
+                "label": mdy(d), "status": None}, 200
+    return {"ok": True, "view": _dsr_view(u), "exists": True,
+            **access.checklist(report, u, restaurant=get_restaurant(_rid(u)))}, 200
+
+
+def _do_dsr_close(u):
+    """Close day, now: the night runs on a background thread and the app
+    follows /dsr/<date>/status. Tonight's business date, or the one before
+    (a close pressed after the late-close window rolled over). `rerun`
+    re-runs a finished night as a new version — the owner's call only."""
+    from datetime import timedelta
+    from dsr import pipeline
+    from models import get_restaurant
+    from time_utils import mdy
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    r = get_restaurant(_rid(u))
+    if not r or not getattr(r, "dsr_enabled", 1):
+        return {"ok": False, "error": "The daily report is switched off for this location."}, 409
+    import closeout
+    from dsr import access
+    today = closeout.business_date_for(r)
+    body = _body()
+    raw = body.get("date")
+    d = _dsr_day(raw) if raw else today
+    if d is None or d not in (today, today - timedelta(days=1)):
+        return {"ok": False, "error": f"Only tonight ({mdy(today)}) or the night before can be closed here."}, 400
+    rerun = bool(body.get("rerun"))
+    if rerun and _dsr_view(u) != access.OWNER:
+        return {"ok": False, "error": "Only the owner can re-run a finished night."}, 403
+    if _limited(u, "dsr_close", 6, 600):
+        return _SLOW_DOWN
+    out = pipeline.start_manual(r, d, rerun=rerun)
+    return {"ok": True, "business_date": d.isoformat(), "label": mdy(d), **out}, (202 if out.get("started") else 200)
+
+
 def _forget(rid, route, key):
     from models import get_conn
     conn = get_conn()
@@ -2471,6 +2579,10 @@ _ROUTES = [
     ("/milestones/seen", ["POST"], _do_milestone_seen, "milestone_seen"),
     ("/morning-brief", ["GET"], _do_morning_brief, "morning_brief"),
     ("/morning-brief/settings", ["POST"], _do_morning_brief_settings, "morning_brief_settings"),
+    ("/dsr", ["GET"], _do_dsr_list, "dsr_list"),
+    ("/dsr/close", ["POST"], _do_dsr_close, "dsr_close"),
+    ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
+    ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
 ]
 
 
