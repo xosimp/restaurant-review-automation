@@ -142,8 +142,73 @@ python3 scripts/repo_inventory.py                     # every rule, by blueprint
   under the minimum-sample rule, and every pin in force.
 - `POST /admin/api/schedule-experiments/pin` `{restaurant_id, experiment, arm}` —
   pin a restaurant to an arm (`"off"` = the control) or unpin (`arm: null`).
+- `POST /admin/api/schedule-experiments/promote` `{experiment, arm, note?}` —
+  the reviewed step (ROI #46): refused unless the readout's verdict calls
+  exactly that arm the winner and nothing is promoted yet; recorded in
+  `schedule_experiment_promotions` with who and the verdict's words; every
+  restaurant then gets that arm (a pin, `pin_source: "promoted"`), even after
+  the experiment is retired in code. `POST …/revert` `{experiment}` ends it.
+  The readout's experiments carry `promotion` (in force or null) and
+  `promotions` (the trail).
 - No owner route returns an arm. The generation payload's `optimizer.solver`
   carries the solver's stats (status, proved optimal, seconds, slots), not the arm.
+
+## Recommendation record (`strategy_routes._ROUTES`: each at `/api/…` and `/mobile/api/…`)
+
+Restaurant-scoped and redacted per viewer (`rec_learning.viewer_sees`): a
+login never sees a recommendation about a module it cannot open (food →
+FOOD_COST_VIEW — a food kind filed under Home counts as food, and so does a
+DSR action on the Food block), a loss recommendation without LOSS_VIEW
+(`issues.viewer_sees_loss`), or an owner-only one (a DSR action resting on
+budget, prime cost or loss figures) unless it is a principal. Counts,
+rates and pages are computed after redaction.
+
+- `GET recs/summary?days=30|90|180` → `{ok, days, since (YYYY-MM-DD, UTC),
+  by_module: {<module>: {shown, answered, accepted, completed, implemented,
+  dismissed, ignored, n, accept_rate, accept_rate_low, accept_rate_high,
+  enough}}, by_tag: [{tag, label, module, measured, improved, worsened,
+  no_clear_change, unknown, success_rate, enough}], most_effective: {tag,
+  label, module, success_rate, measured} | null, min_settled, min_measured}`.
+  Episodes first shown in the window; superseded ones are not counted.
+  `answered` = accepted + completed + implemented + dismissed (a taken
+  episode whose change was made counts as implemented); `n` = answered +
+  ignored (expired unanswered — **in the denominator**); `accept_rate` =
+  (accepted + completed + implemented) ÷ n with a 90% Wilson interval;
+  `enough` = n ≥ 10. `by_tag` is over taken episodes with a result:
+  `measured` = improved + worsened + no_clear_change; `unknown` (not
+  measurable, or discounted by the owner's check-in) is never in the
+  denominator; `success_rate` = improved ÷ measured; `enough` = measured ≥
+  5. `most_effective` is the tag with `enough`, success ≥ 0.5 and the best
+  lower 90% bound. Any other `days` is a 400.
+- `GET recs/timeline?limit=30&before=<next_before>` → `{ok, items: [{key,
+  title, module, tags, first_shown_at, surfaces, answer, answered_at,
+  reason_code, reason, implemented_at, tracker_id}], next_before}` — newest
+  first; `answer` ∈ accepted | completed | implemented | dismissed | snoozed
+  | expired | superseded | open; `tracker_id` joins to `GET outcomes` for the
+  result; `limit` ≤ 100; `next_before` is null on the last page (`before`
+  also takes a plain UTC timestamp; anything else is a 400). Timestamps are
+  UTC `YYYY-MM-DD HH:MM:SS`; clients render M/D/YY.
+- `POST recs/checkin` `{key, did_it: "yes"|"no"|"partly",
+  conditions_changed: bool, note?}` → `{ok, recorded, checkin: {did_it,
+  conditions_changed, note, tracker_id, attribution: {implemented,
+  confounded, discount}}}`. Recorded as a `checkin` event on the key's
+  latest episode (`rec_ledger.checkin` documents the meta; an outcome
+  evaluation reads it through `rec_ledger.latest_checkin(rid, tracker_id)`):
+  `discount` is true for "no" or conditions_changed. "yes" also records the
+  episode implemented. 404 for a key this restaurant has no episode of, or
+  this login may not see; 400 for a malformed body.
+- **Structured reasons.** `POST recs/event` and `POST /api/home/dismiss`
+  (and `/mobile/api/home/dismiss`) take `reason_code` ∈ already_doing |
+  doesnt_fit | too_costly | bad_timing | dont_trust_data | other (plus the
+  free `reason`); stored on the answer's meta; any other code is a 400.
+  `recs/event` refuses the events the server writes itself (implemented,
+  superseded, checkin, abandoned, outcome, expired, shown). `GET decisions`
+  rows carry `reason_code`, and `answer` may be `implemented`.
+
+Admin only (internal): `GET /admin/api/recommendations/calibration?days=365`
+(predicted vs measured $ by kind, ROI #43) and `GET
+/admin/api/recommendations/missed?days=30` (problems with no recommendation
+before them, ROI #44); both take `restaurant_id`.
 
 ## Intelligence engine
 

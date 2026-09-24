@@ -1,13 +1,28 @@
 """Recommendation success: which kinds are accepted, which improve the
 metric they pointed at, and how long that takes — per cohort or
 platform-wide, always as rates over counts, never a restaurant.
+
+Counted per recommendation (restaurant, key), not per event row: one
+reprice answered "accepted", then "done", then "implemented" is ONE
+recommendation taken.
+
+  acceptance_rate  taken / (taken + declined + hidden + ignored). An ignored
+                   recommendation — shown, never answered, expired — stays
+                   in the denominator; a snooze ("Not today") is neither.
+  success_rate     improved / (improved + worsened + no_clear_change). A
+                   result that could not be measured (`unknown`) is NOT a
+                   failure: it is reported as `unknown` and kept out of the
+                   denominator (ROI audit #2 — it used to count as one).
+                   `no_clear_change` is reported on its own.
+  measured         results with a clear verdict (the success denominator).
 """
 from models import get_conn, DB_PATH
 from . import privacy
 from .stats import percentile, shrink
 
-_ACCEPT = ("done", "confirmed", "tracking", "auto")
+_ACCEPT = ("done", "confirmed", "tracking", "auto", "accepted", "implemented")
 _DECLINE = ("not_for_us", "dismissed")
+CLEAR = ("improved", "worsened", "no_clear_change")
 
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH) -> dict:
@@ -20,32 +35,49 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
         where.append("cohort=?"); args.append(cohort)
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(f"SELECT restaurant_id, action, outcome, days_to_effect FROM intel_rec_events "
+        rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect FROM intel_rec_events "
                             f"WHERE {' AND '.join(where)}", args).fetchall()
     finally:
         conn.close()
     return _summarise(rows, cross=restaurant_id is None)
 
 
+def _rec(r):
+    """The recommendation a row belongs to: (restaurant, key). Rows without
+    a key (a caller's own synthetic rows) count one each."""
+    try:
+        key = r["source_key"]
+    except (IndexError, KeyError):
+        key = None
+    return (r["restaurant_id"], key if key is not None else id(r))
+
+
 def _summarise(rows, cross=True) -> dict:
     restaurants = {r["restaurant_id"] for r in rows}
-    accepted = sum(1 for r in rows if r["action"] in _ACCEPT)
-    declined = sum(1 for r in rows if r["action"] in _DECLINE)
-    hidden = sum(1 for r in rows if r["action"] == "hidden")
+    accepted = len({_rec(r) for r in rows if r["action"] in _ACCEPT})
+    declined = len({_rec(r) for r in rows if r["action"] in _DECLINE})
+    hidden = len({_rec(r) for r in rows if r["action"] == "hidden"})
+    ignored = len({_rec(r) for r in rows if r["action"] == "ignored"})
+    snoozed = len({_rec(r) for r in rows if r["action"] == "snoozed"})
     answered = accepted + declined + hidden
-    measured = [r for r in rows if r["action"] == "measured"]
-    improved = sum(1 for r in measured if r["outcome"] == "improved")
-    worsened = sum(1 for r in measured if r["outcome"] == "worsened")
-    days = [r["days_to_effect"] for r in measured if r["outcome"] == "improved" and r["days_to_effect"] is not None]
+    results = [r for r in rows if r["action"] == "measured"]
+    clear = [r for r in results if r["outcome"] in CLEAR]
+    improved = sum(1 for r in clear if r["outcome"] == "improved")
+    worsened = sum(1 for r in clear if r["outcome"] == "worsened")
+    no_change = sum(1 for r in clear if r["outcome"] == "no_clear_change")
+    days = [r["days_to_effect"] for r in clear if r["outcome"] == "improved" and r["days_to_effect"] is not None]
+    denominator = answered + ignored
     out = {
         "restaurants": len(restaurants), "answered": answered, "accepted": accepted, "declined": declined,
-        "hidden": hidden, "acceptance_rate": round(accepted / answered, 3) if answered else None,
-        "measured": len(measured), "improved": improved, "worsened": worsened,
-        "success_rate": round(improved / len(measured), 3) if measured else None,
+        "hidden": hidden, "ignored": ignored, "snoozed": snoozed,
+        "acceptance_rate": round(accepted / denominator, 3) if denominator else None,
+        "measured": len(clear), "improved": improved, "worsened": worsened, "no_clear_change": no_change,
+        "unknown": len(results) - len(clear),
+        "success_rate": round(improved / len(clear), 3) if clear else None,
         "median_days_to_improvement": percentile(days, 50) if days else None,
     }
-    out["success_rate_shrunk"] = shrink(out["success_rate"], len(measured))
-    out["acceptance_rate_shrunk"] = shrink(out["acceptance_rate"], answered)
+    out["success_rate_shrunk"] = shrink(out["success_rate"], len(clear))
+    out["acceptance_rate_shrunk"] = shrink(out["acceptance_rate"], denominator)
     if cross and not privacy.cohort_ok(len(restaurants)):
         # Below the floor the rates are still computed for the engine's own
         # weighting, but nothing here may be shown as a cohort fact.
@@ -63,10 +95,11 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
     conn = get_conn(db_path)
     try:
         if cohort:
-            rows = conn.execute("SELECT rec_kind, restaurant_id, action, outcome, days_to_effect FROM intel_rec_events "
-                                "WHERE cohort=?", (cohort,)).fetchall()
+            rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect "
+                                "FROM intel_rec_events WHERE cohort=?", (cohort,)).fetchall()
         else:
-            rows = conn.execute("SELECT rec_kind, restaurant_id, action, outcome, days_to_effect FROM intel_rec_events").fetchall()
+            rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect "
+                                "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
     by_kind = {}
@@ -86,7 +119,8 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
 def platform_totals(db_path: str = DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, action, outcome, days_to_effect FROM intel_rec_events").fetchall()
+        rows = conn.execute("SELECT restaurant_id, source_key, action, outcome, days_to_effect "
+                            "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
     return _summarise(rows)

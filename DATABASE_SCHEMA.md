@@ -69,6 +69,9 @@ One row per published week, date and daypart: scheduled hours and people, the da
 ### `schedule_experiment_weeks` / `schedule_experiment_pins`
 The live A/B of schedule generation (`schedule_experiments`, admin-only). One row per generated week and experiment, keyed `(history_id, experiment)`: the `arm` (a hash of restaurant and week, so a regeneration keeps it), whether it was `pinned` (and by `env` or `restaurant` — pinned weeks stay out of the comparison), the draft's `quality_score`, and whether the solver's week was kept (`solver_applied`). `schedule_experiment_pins` pins one restaurant to an arm (`off` = the control), keyed `(restaurant_id, experiment)` — the per-restaurant kill switch; `SCHEDULE_EXPERIMENT_PIN` is the global one. Both created at boot by `init_db`.
 
+### `schedule_experiment_promotions`
+The reviewed step from a winning arm to every restaurant's default (ROI audit #46): `experiment`, `arm`, `flags_json` (the arm's flags, so the promotion holds after the experiment is retired in code), `verdict_text` (the readout's words it rested on), `note`, `promoted_by`/`promoted_at`, `reverted_by`/`reverted_at`. A partial unique index keeps one live (unreverted) promotion per experiment; reverted rows stay as the trail. `schedule_experiments.promote` refuses any arm the readout does not call the winner. Created at boot by `init_schedule_experiments`.
+
 ### `schedule_recommendation_events` / `schedule_pattern_dismissals` / `staff_first_seen`
 The accept/dismiss ledger for recommendations (a kind shown ten times and never accepted stops being shown); the owner's dismissed learned patterns; and the earliest date and most shifts ever seen per name, so tenure survives the rolling upload window.
 
@@ -140,7 +143,7 @@ Who gets alerted and on which channels (email/SMS/push), per restaurant — sepa
 APNs tokens per user/restaurant; delivery attempts and outcomes for push. `disabled_reason` PARKS a token rather than deleting it — `get_device_tokens(for_delivery=True)` skips it and the next app launch re-registers and clears it. Only Apple's own "this token is gone" (`_PERMANENT_FAILURE_REASONS`) deletes a row.
 
 ### `home_dismissals`
-Attention items a user has dismissed from the Home brief, so a handled issue doesn't keep resurfacing.
+Attention items a user has dismissed from the Home brief, so a handled issue doesn't keep resurfacing. Every answer here is also written to rec_ledger (see Recommendations below), which is what the rest of the product reads.
 
 ## Marketing
 
@@ -158,9 +161,19 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 - `pos_intraday` — PK (restaurant_id, business_date, captured_hour); net sales so far, and the same weekday/hour profile it builds for later weeks.
 - `restaurants` columns: `alert_hold_during_service` (default on), `preshift_nudge_hour` (0 = off).
 
+## Recommendations (rec_ledger)
+
+One identity and one event trail for every recommendation on every surface (`rec_ledger.py`, created at boot by `init_rec_ledger`; the owner-facing reads are `rec_learning.py`).
+
+- `rec_instances` — one **episode** per (restaurant, key): from the first time any surface shows a recommendation until it is answered, goes stale, or is replaced. `rec_id` (uuid hex), `key` (`kind:subject`, ≤160 chars — "trim_day:Saturday", "reprice:Carbonara"), `module`, `kind`, `title`, `status`, the attributes it was first shown with (`dollar_value` — the predicted $/month, `confidence_band`, `evidence_sources` JSON, `cross_module`, `model_written`, `cavnar_completes`, `expected_metric`, `expected_by`, `first_surface`, `first_position`, `target` — a price or % it asks for), `silenced_until` (an answer holding the key quiet everywhere), `snoozed_until`, `created_at`, `last_event_at`, `closed_at`; and, added after it shipped (ROI audit, boot ALTERs in `init_rec_ledger`): `tags` (JSON list from `rec_ledger.tags_for` — weekday/weekend, daypart, topic, focus, dish, item, review category, ingredient category; stored when shown, backfilled nightly by `backfill_tags`), `implemented_at`, `tracker_id` (the `recommendation_outcomes.id` measuring it — permanent), `owner_only` (rests on figures only an owner sees — the DSR sets it from its cites), `superseded_by` (the rec_id that replaced it).
+- `rec_events` — the trail: `event` ∈ shown · opened · evidence_viewed · accepted · dismissed · snoozed · completed · implemented · outcome · abandoned · checkin · superseded · expired, with `surface`, `user_id`, `role`, `meta` JSON and `at` (UTC). UNIQUE (rec_id, dedupe): a `shown` is one row per episode, surface and day; an answer carried from another table is recorded once per key across every episode (`dedupe = <event>:<source_ref>`). Meta worth knowing: `shown` carries `position` and the `dollar_value` it was shown with; `dismissed` carries `kind` (hide / not_for_us), `reason_code` (`rec_ledger.REASON_CODES`) and `reason`; `accepted` from Track carries `tracker_id`; `outcome` carries `{verdict: improved|worsened|no_clear_change|unknown, tracker_id}`; `abandoned` carries `tracker_id`; `superseded` carries `{why: figure_changed|target_changed|replaced, from, to, by}`; `checkin` carries `{did_it, conditions_changed, note, tracker_id, attribution: {implemented, confounded, discount}}` — `discount` true means a measured move on that tracker should not be read as the recommendation working (the owner did not do it, or something else changed).
+- `rec_missed_detections` — a problem that surfaced (an alert, an issue, a close-out 86) with no recommendation covering its subject shown in the `lookback_days` (14) before: `source`, `subject_key`, `module`, `detail`, `day`. UNIQUE (restaurant_id, source, subject_key, day). Admin-only (`admin_ops.missed_detections`).
+
+**Lifecycle.** `open` → `accepted` | `completed` | `implemented` | `dismissed` | `expired` | `superseded`. A snooze keeps it open with `snoozed_until`. An episode unanswered 14 days after it was CREATED closes `expired` (nightly `expire_stale`) — ignored, and in every acceptance denominator. An open episode re-shown with a materially different figure (±$25 and ±25%) or target, once it is 20 hours old, closes `superseded` and a new one begins; so does every other open key of a one-live-at-a-time kind (`REPLACING_KINDS`) when a new one is shown, and every open line of an old model read when a new read is presented (`present_many(replaces=…)`) — superseded is neither answered nor ignored and counts in no rate. `implemented` is set where the change is actually made (a price applied, a supplier order sent, a reply posted to Google, a campaign or win-back sent, a post published, a schedule edited to carry the recommendation out, a week published); it moves open / expired / accepted to `implemented` and stamps `implemented_at` on any status (Done stays `completed`). Answers silence the key everywhere (`SILENCE_DAYS`, `ACCEPTED_QUIET_DAYS`). The nightly `sync_existing` carries older ledgers' answers in, links every tracker to its episode and copies its verdict and abandonment — not windowed.
+
 ## Strategic foundations
 
-- `recommendation_outcomes` — one tracked change: metric, baseline window/value/detail, `evaluate_on`, verdict. Partial unique index on (restaurant_id, source_key) while `status='tracking'`.
+- `recommendation_outcomes` — one tracked change: metric, baseline window/value/detail, `evaluate_on`, verdict. Partial unique index on (restaurant_id, source_key) while `status='tracking'`. The episode it measures holds its id in `rec_instances.tracker_id`.
 - `owner_goals` — target per metric, one `active` per metric (older rows become `replaced`).
 - `ops_issues` — issue, assignee contact, status open→acknowledged→resolved, `escalation_contact_id`, `escalated_at`, `resolution_note`, `notify_suppressed` (filed with notify=False — `issues.tick` never texts it; reassigning by name lifts it), `meta_json` (e.g. a coverage issue's suggested covers and who was asked). Timestamps UTC `YYYY-MM-DD HH:MM:SS`.
 - `issue_links` — `token_hash` → (issue, contact, purpose). One link per person; tokens are never stored.
@@ -215,9 +228,13 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 `restaurants.category` (the cohort; inferred when unset), `intel_features`
 (one row per restaurant-week of ratios, rates and counts — the only table
 cross-restaurant learning reads; no dollars, names or people),
-`intel_rec_events` (every recommendation's presented / answered / measured
-events, derived from `home_dismissals`, `recommendation_outcomes`,
-`ask_cavnar_actions` and `delayed_actions`), `intel_patterns` (discovered
+`intel_rec_events` (every recommendation's answered / measured events,
+derived from rec_ledger's `rec_events` — every surface, read forward from
+`job_cursors['intelligence_feedback_ledger']` — and, for what predates the
+ledger, `home_dismissals`, `recommendation_outcomes`, `ask_cavnar_actions`
+(keyed `ask:<proposal id>`) and `delayed_actions`; UNIQUE (restaurant,
+key, action) keeps one row per answer whichever path reaches it; actions
+include `snoozed`, `accepted`, `implemented` and `ignored`), `intel_patterns` (discovered
 patterns with n, effect, p, q, confidence, status active|retired),
 `intel_benchmarks` (cohort × metric × week percentiles, n ≥ 5),
 `intel_confidence_log` (weekly acceptance and success by kind). Invariant:

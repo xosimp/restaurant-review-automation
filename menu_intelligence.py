@@ -407,6 +407,9 @@ def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_
                           db_path=db_path)
         rec_ledger.record(restaurant_id, key, "completed", surface="food", user_id=user_id, meta=meta,
                           db_path=db_path)
+        # The price actually changed on the menu: the recommendation was
+        # implemented, not only answered (ROI #27).
+        rec_ledger.implemented(restaurant_id, key, "food", user_id=user_id, meta=meta, db_path=db_path)
     except Exception as e:
         print(f"[menu_intelligence] reprice answer not recorded: {e}")
     return s

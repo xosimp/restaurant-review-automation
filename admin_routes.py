@@ -2489,6 +2489,61 @@ def admin_api_schedule_experiment_pin(current_user):
                                                            current_user.get("username") or "admin"))
 
 
+@admin_bp.route("/admin/api/schedule-experiments/promote", methods=["POST"])
+@admin_required
+def admin_api_schedule_experiment_promote(current_user):
+    """Make the readout's winning arm every restaurant's default — the
+    reviewed step (ROI #46), recorded with who did it. {experiment, arm,
+    note?}. Refused unless the verdict calls that arm now."""
+    import admin_ops
+    data = request.get_json(force=True, silent=True) or {}
+    return jsonify(**admin_ops.promote_schedule_experiment(
+        str(data.get("experiment") or ""), str(data.get("arm") or ""),
+        by=current_user.get("username") or "admin", note=data.get("note")))
+
+
+@admin_bp.route("/admin/api/schedule-experiments/revert", methods=["POST"])
+@admin_required
+def admin_api_schedule_experiment_revert(current_user):
+    """End a promotion: the experiment randomises again. {experiment}."""
+    import admin_ops
+    data = request.get_json(force=True, silent=True) or {}
+    return jsonify(**admin_ops.revert_schedule_experiment(str(data.get("experiment") or ""),
+                                                          by=current_user.get("username") or "admin"))
+
+
+def _admin_days_rid(default_days):
+    try:
+        days = int(request.args.get("days") or default_days)
+    except (TypeError, ValueError):
+        days = default_days
+    try:
+        rid = int(request.args.get("restaurant_id")) if request.args.get("restaurant_id") else None
+    except (TypeError, ValueError):
+        rid = None
+    return days, rid
+
+
+@admin_bp.route("/admin/api/recommendations/calibration")
+@admin_required
+def admin_api_recommendation_calibration(current_user):
+    """Predicted vs measured dollars by recommendation kind (ROI #43,
+    internal only). ?days=365&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(365)
+    return jsonify(**admin_ops.recommendation_calibration(days=days, restaurant_id=rid))
+
+
+@admin_bp.route("/admin/api/recommendations/missed")
+@admin_required
+def admin_api_missed_detections(current_user):
+    """Problems that surfaced with no recommendation before them (ROI #44,
+    internal only). ?days=30&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(30)
+    return jsonify(**admin_ops.missed_detections(days=days, restaurant_id=rid))
+
+
 @admin_bp.route("/admin/api/clients")
 @admin_required
 def admin_api_clients(current_user):

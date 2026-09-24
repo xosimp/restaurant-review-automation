@@ -151,6 +151,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `reservation_sync` | Wed 5am | `reservation_feeds.run_reservation_sync` — reservation feeds into demand_signals; no provider is live, unconfigured restaurants are counted and skipped |
 | `review_fetch` | 8am, 12pm, 4pm, 8pm (latest missed slot only) | `run_daily_fetch` — bounded pool, cursor in `job_cursors` |
 | `ops_digest` | 8am | `ops.send_failure_digest` (only if something failed) |
+| `rec_ledger` | 8am | `rec_ledger.repair_sync_replays` (a one-off), `sync_existing` (older ledgers' answers; every tracker linked to its episode for good, its verdict — `unknown` included — and its abandonment carried, not windowed), `expire_stale` (14 days unanswered → ignored), `backfill_tags` (bounded; the `tags IS NULL` filter is its cursor) |
 | `weekly_digest` | hourly → 9am *local* on the digest day | `run_weekly_digests` |
 | `monthly_summary`, `quarterly_summary` | hourly → 9am *local* on the restaurant's own 1st (`local_due(day=1)`) | `run_monthly_summaries`, `run_quarterly_summaries` |
 | `daily_alerts` | hourly → 10am *local* (`notify._gated_out`) | `run_daily_alert_checks` (the morning batch) |

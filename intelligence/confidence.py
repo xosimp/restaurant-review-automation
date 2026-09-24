@@ -90,11 +90,17 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         factors.append({"name": "restaurant_history", "value": round(v, 3), "note": note})
 
     plat = scoring.kind_stats(rec_kind, cohort=cohort, db_path=db_path) if cohort else None
+    scope = "cohort"
     if not plat or not plat["available"]:
         plat = scoring.kind_stats(rec_kind, db_path=db_path)
-    if plat["available"] and plat["measured"]:
-        factors.append({"name": "platform_evidence", "value": round(shrink(plat["success_rate"], plat["measured"]), 3),
-                        "note": f"{plat['improved']} of {plat['measured']} measured across {plat['restaurants']} restaurants improved"})
+        scope = "platform"
+    if plat["available"] and plat["measured"] and privacy.cohort_ok(plat["restaurants"]):
+        # A cross-restaurant figure: over MIN_COHORT restaurants (available),
+        # counts only, and asserted anonymous before a card may carry it.
+        factors.append(privacy.assert_anonymous({
+            "name": "platform_evidence", "value": round(shrink(plat["success_rate"], plat["measured"]), 3),
+            "note": f"{plat['improved']} of {plat['measured']} measured across {plat['restaurants']} restaurants improved",
+            "scope": scope, "measured": plat["measured"], "restaurants": plat["restaurants"]}))
 
     if cohort:
         conn = get_conn(db_path)
@@ -161,31 +167,58 @@ _BAND_LABEL = {"low": "Low confidence", "medium": "Medium confidence", "high": "
 # How far this restaurant's own measured record for a kind has to sit from
 # even before it moves a card's band.
 KIND_UP_AT, KIND_DOWN_AT = 0.75, 0.35
+# The cross-restaurant prior moves a band only when this restaurant has no
+# measured record of the kind yet, the figure stands on at least
+# privacy.MIN_COHORT restaurants (score() already requires it) and on this
+# many measured results across them.
+PRIOR_MIN_MEASURED = 10
 
 
 def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict = None) -> dict:
-    """{band, label, reason, adjusted} for one card.
+    """{band, label, reason, adjusted, basis} for one card.
 
     `evidence_band`/`evidence_reason` describe the card's own evidence;
-    `kind_score` is score()'s output for its kind (or None). Only the
-    restaurant_history factor adjusts, and only when it rests on measured
-    outcomes — a kind with no measured record here leaves the card's own
-    evidence alone."""
+    `kind_score` is score()'s output for its kind (or None). The band moves
+    by at most one step:
+
+      * by this restaurant's OWN measured record of the kind (the
+        restaurant_history factor, when it rests on measured outcomes);
+      * else, once the cohort floor is met, by what restaurants like this
+        one measured (the platform_evidence factor — ROI audit #45: it was
+        computed and then ignored). Counts only, never a name; the factor is
+        asserted anonymous where score() builds it and again here.
+
+    A kind with no measured record anywhere leaves the card's own evidence
+    alone. `basis` says which record moved it: own | cohort | platform."""
     band = evidence_band if evidence_band in BANDS else "medium"
     reason = (evidence_reason or "").strip().rstrip(".")
-    adjusted = None
-    own = next((f for f in (kind_score or {}).get("factors") or []
+    adjusted, basis = None, None
+    factors = (kind_score or {}).get("factors") or []
+    own = next((f for f in factors
                 if f.get("name") == "restaurant_history" and "measured" in str(f.get("note") or "")
                 and "none measured" not in str(f.get("note") or "")), None)
+    i = BANDS.index(band)
     if own is not None:
-        i = BANDS.index(band)
         if own["value"] >= KIND_UP_AT and i < 2:
-            band, adjusted = BANDS[i + 1], "up"
+            band, adjusted, basis = BANDS[i + 1], "up", "own"
             reason += f"; this kind of change has held here before ({own['note'].split(': ', 1)[-1]})"
         elif own["value"] <= KIND_DOWN_AT and i > 0:
-            band, adjusted = BANDS[i - 1], "down"
+            band, adjusted, basis = BANDS[i - 1], "down", "own"
             reason += f"; this kind of change has not held here before ({own['note'].split(': ', 1)[-1]})"
-    return {"band": band, "label": _BAND_LABEL[band], "reason": reason or None, "adjusted": adjusted,
+    else:
+        prior = next((f for f in factors if f.get("name") == "platform_evidence"), None)
+        if (prior is not None and privacy.cohort_ok(prior.get("restaurants"))
+                and int(prior.get("measured") or 0) >= PRIOR_MIN_MEASURED):
+            privacy.assert_anonymous(prior)
+            who = "restaurants like yours" if prior.get("scope") == "cohort" else "restaurants on Cavnar"
+            said = f"{who}: {prior['note']}"
+            if prior["value"] >= KIND_UP_AT and i < 2:
+                band, adjusted, basis = BANDS[i + 1], "up", prior.get("scope") or "platform"
+                reason += f"; this kind of change has held elsewhere ({said})"
+            elif prior["value"] <= KIND_DOWN_AT and i > 0:
+                band, adjusted, basis = BANDS[i - 1], "down", prior.get("scope") or "platform"
+                reason += f"; this kind of change has not held elsewhere ({said})"
+    return {"band": band, "label": _BAND_LABEL[band], "reason": reason or None, "adjusted": adjusted, "basis": basis,
             # Kept for older clients, which render `caution` under a low card.
             "caution": (f"Low confidence — {reason}. Treat it as a question to check."
                         if band == "low" and reason else None),

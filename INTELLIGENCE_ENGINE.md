@@ -51,16 +51,32 @@ other modules need.
 |---|---|---|
 | `restaurants.category` | the owner's or admin's category (taxonomy in `categories.py`); inferred from name/vibe/menu when unset and labelled so | own row |
 | `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
-| `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / confirmed / dismissed / auto), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
+| `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
 | `intel_patterns` | discovered patterns: cohort, behaviour, outcome, n with / n without, effect, p, q, confidence, sentence, status | counts and effects only |
 | `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean | aggregates over ≥ MIN_COHORT |
 | `intel_confidence_log` | per week × cohort × kind: mean confidence, acceptance, success | aggregates |
 | `job_cursors['intelligence_features']` | where the nightly feature pass stopped | — |
 
-No existing table changes shape. Feedback is **derived** from
-`home_dismissals`, `recommendation_outcomes`, `ask_cavnar_actions` and
-`delayed_actions` by a sync, so no existing write path changes; new callers
-may record events directly through `feedback.record`.
+No existing table changes shape. Feedback is **derived** by a sync, so no
+write path changes; new callers may record events directly through
+`feedback.record`. Since the ROI audit (Sep 2026) the sync's main input is
+**rec_ledger** (`rec_events`), which every surface writes — Home, the brief,
+Reviews, Food, Marketing, Intel, the DSR, the schedule, the queue, alerts
+and issues — read forward from a cursor
+(`job_cursors['intelligence_feedback_ledger']`), bounded per pass. The four
+older tables are still read for what predates the ledger:
+`home_dismissals`, `recommendation_outcomes` (the source of every measured
+verdict and its days to effect), `ask_cavnar_actions` and
+`delayed_actions`. Nothing is counted twice: the same answer reaches the
+same (restaurant, key, action) row from either path and UNIQUE keeps one;
+the ledger's Ask keys and outcome copies are skipped (their sources are
+read directly). Ledger mapping: dismissed → `not_for_us` | `hidden`;
+completed → `done`; accepted → `tracking` (a tracker named) | `accepted`;
+implemented → `implemented`; snoozed → `snoozed` (a "Not today" is not a
+no — it used to be learned as `hidden`, and old rows are repaired);
+expired → `ignored`. Ask answers are keyed `ask:<proposal id>`, the identity
+Ask, the queue, decisions and the ledger share (legacy
+`ask:<action>:<summary>` rows are re-keyed).
 
 ## Services (the `intelligence/` package)
 
@@ -146,6 +162,60 @@ either: one calm factor alone must never read as certainty. Each factor is
 
 Bands: high ≥ 0.70, medium ≥ 0.45, else low. Low confidence carries a
 caution sentence the surfaces render. Deterministic: same rows → same score.
+
+**Success and acceptance, as `scoring` counts them** (per recommendation —
+restaurant and key — never per event row):
+
+- `success_rate` = improved ÷ (improved + worsened + no clear change). A
+  result that could not be measured (`unknown`) is **not a failure**: it is
+  reported as `unknown` and kept out of the denominator (it used to count
+  as one). `no_clear_change` is reported on its own; `measured` is the
+  clear-verdict count.
+- `acceptance_rate` = taken ÷ (taken + declined + hidden + ignored). An
+  ignored recommendation — shown, never answered, expired — stays in the
+  denominator; a snooze is neither.
+
+**One confidence per card** (`card_confidence`): the card's own evidence
+sets its band; the kind's record may move it one step. This restaurant's
+own measured record of the kind comes first. Where it has none, the
+cross-restaurant figure (`platform_evidence` — the cohort's, else the
+platform's) may move it, only when it stands on at least `MIN_COHORT`
+restaurants and `PRIOR_MIN_MEASURED` (10) measured results; the factor is
+asserted anonymous where `score()` builds it and again before a card uses
+it, and the card says "restaurants like yours: X of Y measured … improved"
+— counts only (`basis`: own | cohort | platform). It used to be computed
+and then ignored.
+
+## The per-restaurant effectiveness model (`rec_learning`)
+
+What the ledger learned about ONE restaurant, read by every ranker — Home's
+card order (`home_brief.order_recommendations`), the cross-module "one
+thing" (`business_intelligence.pick_one_thing`) and the DSR's action order
+(`dsr/narrative.settle_actions`). Level 1: `WHERE restaurant_id = ?`, over
+the last 365 days of episodes.
+
+- Per kind and per subject tag (topic, focus such as "weekend staffing",
+  review category, dish, item, daypart): acceptance (taken ÷ settled, the
+  ignored included) and success (improved ÷ clear verdicts), each shrunk
+  toward its prior by 5 pseudo-observations. The prior is the cohort's own
+  shrunk rate for the kind **only when the cohort clears `MIN_COHORT`**
+  (through `intelligence.recommendation_success`, asserted anonymous),
+  otherwise even (0.5). With nothing learned the weight is exactly 1.0.
+- weight = 1 + mean over the kind and its tags of
+  0.5 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
+  dollar calibration (median measured ÷ predicted, ≥ 3 pairs, shrunk toward
+  1, held to 0.8–1.2), **bounded to 0.75–1.25**.
+- A worse result downweights that key (0.20 each, capped 0.30) and its kind
+  (0.08 each, capped 0.20), halving every 60 days; with the penalty the
+  weight never goes below 0.6.
+- It reorders only. Nothing is dropped, and nothing learned is applied to a
+  critical item: the one thing keeps every critical candidate exactly where
+  it was, and reorders only the candidates between them.
+
+The owner's own record of the same trail — what they followed by module,
+what worked by tag, the timeline, the check-in — is `rec_learning.summary`,
+`timeline` and the `/recs/*` routes (`API_REFERENCE.md`), redacted per
+viewer.
 
 ## Pattern-discovery architecture
 

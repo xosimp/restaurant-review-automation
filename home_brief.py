@@ -142,7 +142,7 @@ def times_hidden(conn, rid):
 
 
 def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
-            surface="home", role=None, _card=True):
+            surface="home", role=None, _card=True, reason_code=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -153,7 +153,9 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
 
     Every answer is also written to rec_ledger, which is what makes a "no"
     on Home a "no" in the brief, the weekly email, the digest and the queue
-    (they all read rec_ledger.silenced_keys)."""
+    (they all read rec_ledger.silenced_keys). `reason_code` is the owner's
+    one-tap why (rec_ledger.REASON_CODES — the route refuses any other),
+    stored on the ledger answer beside the free `reason`."""
     key = (key or "").strip()[:120]
     if not key:
         return {"ok": False, "error": "Missing key"}
@@ -175,14 +177,20 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     try:
         import rec_ledger
         from datetime import datetime as _dtl
+        code = reason_code if reason_code in rec_ledger.REASON_CODES else None
         if kind == "snooze":
             until = (_dtl.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            smeta = {"until": until, "days": days}
+            if code:
+                smeta["reason_code"] = code
             rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
-                              meta={"until": until, "days": days}, snooze_until=until)
+                              meta=smeta, snooze_until=until)
         else:
             meta = {"kind": _LEDGER_KIND[kind]}
             if reason:
                 meta["reason"] = reason
+            if code:
+                meta["reason_code"] = code
             rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
                               user_id=user_id, role=role, meta=meta, silence_days=days)
     except Exception as e:
@@ -193,7 +201,8 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
         quiet = _stock_quiet(rid)
         for k in _current_stock_keys(rid):
             if k != key and k not in quiet:
-                dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False)
+                dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False,
+                        reason_code=reason_code)
     # The why, remembered: "not doing X: the patio closes in October" is a
     # preference the assistant reads back in every future answer.
     if reason:
@@ -433,11 +442,27 @@ def rank_score(rec) -> float:
                  * _CONF_WEIGHT.get(((rec.get("confidence") or {}).get("band")), 0.85), 2)
 
 
-def order_recommendations(recs, quiet_kinds=()):
+def order_recommendations(recs, quiet_kinds=(), learned=None):
     """Highest rank first; a kind the owner has let expire unanswered four
-    times running (decisions.quiet_kinds) drops below the top three."""
+    times running (decisions.quiet_kinds) drops below the top three.
+
+    `learned` is this restaurant's effectiveness model
+    (rec_learning.effectiveness — callable key -> (weight, why)): what it
+    learned from this restaurant's own answers and measured results moves
+    each card's rank by a bounded weight (0.6–1.25×; ROI audit #24, #47,
+    #29). It reorders only — nothing is dropped — and a card with
+    `critical` severity is never weighed down."""
     for r in recs:
         r["rank_score"] = rank_score(r)
+        if learned is not None and r.get("severity") != "critical":
+            try:
+                w, why = learned(r["key"])
+            except Exception as e:
+                print(f"[home] learned weight unavailable for {r.get('key')}: {e}")
+                w, why = 1.0, []
+            if w != 1.0:
+                r["rank_score"] = round(r["rank_score"] * w, 2)
+                r["learned"] = {"weight": w, "why": why[:3]}
     ranked = sorted(recs, key=lambda r: -r["rank_score"])
     quiet = set(quiet_kinds or ())
     loud = [r for r in ranked if r["key"].split(":", 1)[0] not in quiet]
@@ -1562,7 +1587,15 @@ def _build(current_user):
         quiet = decisions.quiet_kinds(rid)
     except Exception:
         quiet = set()
-    recs = order_recommendations(recs, quiet)
+    # ...and what this restaurant's own answers and results taught the
+    # ledger weighs each card, within bounds (rec_learning, ROI #24/#47).
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(rid, restaurant=restaurant)
+    except Exception as e:
+        print(f"[home] effectiveness model unavailable for {rid}: {e}")
+        learned = None
+    recs = order_recommendations(recs, quiet, learned=learned)
     quieter = []
     for _r in recs:
         _k = _r["key"].split(":", 1)[0]
@@ -1593,7 +1626,11 @@ def _build(current_user):
                "position": 100 + i, "dollar_value": r.get("dollars_monthly"),
                "confidence_band": (r.get("confidence") or {}).get("band"),
                "evidence_sources": r.get("evidence_sources"), "model_written": r.get("model_written"),
-               "cavnar_completes": bool(r.get("action")), "expected_metric": r.get("metric")}
+               "cavnar_completes": bool(r.get("action")), "expected_metric": r.get("metric"),
+               # The price it asks for: a new one is a new recommendation
+               # (rec_ledger supersedes the open episode, ROI #37).
+               "target": ((r.get("action") or {}).get("price") if (r.get("action") or {}).get("kind") == "reprice"
+                          else None)}
               for i, r in enumerate(recs))], "home", user_id=current_user.get("id"))
     except Exception:
         shown = {}

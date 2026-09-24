@@ -510,6 +510,26 @@ def _present_alert(restaurant_id, recs, channels, db_path: str = DB_PATH):
         print(f"[notify] rec_ledger present failed for rid={restaurant_id}: {e}")
 
 
+def _note_missed(restaurant_id, alert_type, recs, channels, db_path: str = DB_PATH):
+    """A problem alert that went out with no recommendation about it shown
+    in the days before is a missed detection (rec_ledger.note_problem, ROI
+    #44) — logged for the admin console, never shown to an owner."""
+    if not channels or not recs:
+        return
+    try:
+        import rec_ledger
+        for r in recs:
+            # A morning batch (daily_briefing) carries each folded alert's
+            # own rec, whose kind is that alert's type (alert_rec).
+            t = r.get("kind") or alert_type
+            if t not in rec_ledger.PROBLEM_ALERTS:
+                continue
+            rec_ledger.note_problem(restaurant_id, "alert", r["key"], module=r.get("module"),
+                                    detail=f"{t}: {(r.get('title') or '')[:120]}", db_path=db_path)
+    except Exception as e:
+        print(f"[notify] missed-detection note failed for rid={restaurant_id}: {e}")
+
+
 def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH) -> bool:
     """Whether one more briefing may go to this owner today.
 
@@ -1617,6 +1637,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         except Exception as e:
             print(f"[notify] push for {alert_type} rid={restaurant_id} failed: {e}")
     _present_alert(restaurant_id, recs, channels, db_path)
+    _note_missed(restaurant_id, alert_type, recs, channels, db_path)
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)

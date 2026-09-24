@@ -278,6 +278,14 @@ def _attempt_google_post(rid, restaurant_id, google=None):
             from models import mark_posted
             mark_posted(rid)
             print(f"[GMB] Auto-posted review {rid} ✓")
+            # The reply is live on Google: the alert that asked for it
+            # (review:<id>) was implemented, not only approved (ROI #27).
+            try:
+                import rec_ledger as _rl_post
+                _rl_post.implemented(restaurant_id, _rl_post.rec_key("review", rid), "reviews",
+                                     source_ref=f"posted:{rid}", meta={"module": "reviews"})
+            except Exception as _rle:
+                print(f"[GMB] implementation not recorded for review {rid}: {_rle}")
             try:
                 from webhooks import fire_webhook as _fw2
                 _fw2(restaurant_id, "response.posted", {
@@ -5301,6 +5309,17 @@ def _track_campaign_outcome(rid, data, result, user_id):
     except Exception as e:
         import ops
         ops.capture(e, job="campaign_outcome", context=f"restaurant_id={rid}")
+    # The texts went out: "text your list before a slow <day>" was
+    # implemented (ROI #27) — recorded only if it was ever shown.
+    if (result or {}).get("sent"):
+        try:
+            import rec_ledger
+            from datetime import date as _d2
+            rec_ledger.implemented(rid, rec_ledger.rec_key("slow_day", day), "marketing", user_id=user_id,
+                                   source_ref=f"campaign:{day}:{_d2.today().isoformat()}",
+                                   meta={"module": "marketing", "sent": result.get("sent")})
+        except Exception as e:
+            print(f"[campaign] implementation not recorded for {rid}: {e}")
 
 
 @client_bp.route("/api/guest-winback")
@@ -6387,6 +6406,17 @@ def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="
         sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
                      "supplier_name": group.get("supplier_name") or "",
                      "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
+        # The order reached the supplier: every "running low" recommendation
+        # for an item on it was implemented, not just answered (ROI #27).
+        # Only items someone was shown are recorded (rec_ledger.implemented).
+        try:
+            import rec_ledger as _rl_po
+            _rl_po.implemented(rid, [_rl_po.rec_key("stock_low", str(it.get("item") or "").strip())
+                                     for it in group["items"] if str(it.get("item") or "").strip()],
+                               "food", user_id=actor.get("id"), source_ref=f"po:{po_number}",
+                               meta={"po_number": po_number, "source": source, "module": "food"})
+        except Exception as _rle:
+            print(f"[order] implementation not recorded on {po_number}: {_rle}")
 
     return sent, failed
 
@@ -6749,6 +6779,15 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     except Exception as _oe:
         import ops as _ops_o
         _ops_o.capture(_oe, job="observe_schedule", context=f"restaurant_id={rid}")
+    # The queue's "this week is built but not sent" is now carried out
+    # (rec_ledger implemented, ROI #27) — only if it was ever shown.
+    try:
+        import rec_ledger as _rl_pub
+        _rl_pub.implemented(rid, _rl_pub.rec_key("schedule_unsent", row["id"]), "schedule_review",
+                            user_id=actor.get("id"), source_ref=f"published:{row['id']}",
+                            meta={"module": "schedule"})
+    except Exception as _rle:
+        print(f"[publish] implementation not recorded for {rid}: {_rle}")
 
     sent, unreachable, failed, failed_tokens = [], [], [], []
     for name in employees_in_schedule(row["schedule_csv"]):
@@ -6951,10 +6990,16 @@ def home_dismiss_api(current_user):
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
         return jsonify(**home_brief.undismiss(rid, key))
+    # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
+    # refused, never stored as if it were one of the six.
+    import rec_ledger as _rl_codes
+    reason_code = data.get("reason_code")
+    if reason_code not in (None, "") and reason_code not in _rl_codes.REASON_CODES:
+        return jsonify(ok=False, error="reason_code must be one of " + ", ".join(_rl_codes.REASON_CODES)), 400
     kind = (data.get("kind") or "recommendation")[:40]
     out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
                              days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
-                             surface="home", role=current_user.get("role"))
+                             surface="home", role=current_user.get("role"), reason_code=reason_code or None)
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
@@ -6968,6 +7013,9 @@ def home_dismiss_api(current_user):
                                     str(data["title"])[:200], data["metric"],
                                     user_id=current_user.get("id"))
                 out["outcome"] = {"id": o.get("id"), "evaluate_on": o.get("evaluate_on")}
+                # The recommendation and the tracker measuring it, linked
+                # for good (rec_ledger, ROI #36).
+                _rl_codes.link_tracker(current_user["restaurant_id"], key, o.get("id"))
         except Exception as e:
             import ops
             ops.capture(e, job="home_dismiss_done", context=f"key={key}")

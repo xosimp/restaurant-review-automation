@@ -123,7 +123,8 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     written = 0
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, rec_kind, action, outcome, confidence_at, days_to_effect FROM intel_rec_events").fetchall()
+        rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, days_to_effect "
+                            "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
     groups = {}

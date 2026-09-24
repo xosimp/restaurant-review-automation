@@ -309,7 +309,26 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
             outcomes.observe(restaurant_id, "post_published", detail=(topic or "")[:60])
         except Exception:
             pass
+        post_went_live(restaurant_id, post_id)
     return row_id
+
+
+# The Home cards a published post carries out (home_brief "Get a post out
+# this week", "Generate your first post").
+POST_REC_KEYS = ("post_this_week", "first_post")
+
+
+def post_went_live(restaurant_id, post_id, db_path=None):
+    """A post is live: the posting recommendations were implemented, not only
+    answered (rec_ledger, ROI #27) — recorded only for one that was shown.
+    Never raises."""
+    try:
+        import rec_ledger
+        kw = {"db_path": db_path} if db_path else {}
+        rec_ledger.implemented(restaurant_id, list(POST_REC_KEYS), "marketing", source_ref=f"post:{post_id}",
+                               meta={"module": "marketing"}, **kw)
+    except Exception as e:
+        print(f"[marketing] implementation not recorded for {restaurant_id}: {e}")
 
 
 def _content_origin(content_type):

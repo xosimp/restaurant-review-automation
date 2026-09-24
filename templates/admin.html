@@ -571,7 +571,11 @@ let _recDays = 30;
 function recDays(n){ _recDays = n; route(); }
 async function recommendations(arg){
   const rid = arg ? parseInt(arg, 10) : null;
-  const d = await api('/admin/api/recommendations?days=' + _recDays + (rid ? '&restaurant_id=' + rid : ''));
+  const q = rid ? '&restaurant_id=' + rid : '';
+  const [d, cal, miss] = await Promise.all([
+    api('/admin/api/recommendations?days=' + _recDays + q),
+    api('/admin/api/recommendations/calibration?days=365' + q).catch(() => ({ok:false})),
+    api('/admin/api/recommendations/missed?days=' + _recDays + q).catch(() => ({ok:false}))]);
   if(!d.ok) throw new Error('recommendations failed');
   const T = d.total, pct = v => v==null ? '—' : Math.round(v*100)+'%';
   const ci = T.accept_ci90 ? `90%: ${pct(T.accept_ci90[0])}–${pct(T.accept_ci90[1])}` : '';
@@ -614,7 +618,25 @@ async function recommendations(arg){
       ${cmp('By who answered', d.by_role, 'rec-role')}
     </div>
     ${cmp('By kind', d.by_kind, 'rec-kind')}
-    ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}`;
+    ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><div class="ch"><h2>Calibration · 365d</h2><span class="sub">Predicted $/month (as shown) against what the tracker measured. No clear change counts as $0. A ratio needs ${cal.ok ? cal.min_n : 5}+ pairs.</span></div><div class="cb">
+        ${cal.ok && cal.by_kind.length ? table([
+          {h:'Kind',key:'kind'},
+          {h:'Pairs',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>${r.unpriced?` <span class="dim">+${fmtN(r.unpriced)} unpriced</span>`:''}`},
+          {h:'Predicted',key:'predicted',r:true,cell:r=>`<span class="num">$${fmtN(Math.round(r.predicted))}</span>`},
+          {h:'Measured',key:'realised',r:true,cell:r=>`<span class="num">$${fmtN(Math.round(r.realised))}</span>`},
+          {h:'Ratio',key:'ratio',r:true,cell:r=>r.enough && r.ratio!=null ? `<span class="num">${r.ratio}×</span>` : `<span class="dim">n&lt;${cal.min_n}</span>`},
+          {h:'Within ±50%',key:'within_half',r:true,cell:r=>`<span class="num">${pct(r.within_half)}</span>`}], cal.by_kind, {id:'rec-cal', sort:'n'}) : '<div class="empty">No measured recommendation carried a predicted figure yet.</div>'}
+      </div></div>
+      <div class="card"><div class="ch"><h2>Missed detections · ${d.days}d</h2><span class="sub">An alert, issue or close-out 86 with no recommendation about it shown in the ${miss.ok ? miss.lookback_days : 14} days before.</span></div><div class="cb">
+        ${miss.ok && miss.total ? `<div style="margin-bottom:8px">${miss.by_source.map(s=>`<span class="chip">${esc(s.source)} ${fmtN(s.n)}</span>`).join(' ')}</div>` + table([
+          {h:'When',key:'detected_at',cell:r=>`<span class="num">${fmtD(r.detected_at)}</span>`},
+          {h:'Restaurant',key:'restaurant',cell:r=>clientLink(r.restaurant_id, r.restaurant||('#'+r.restaurant_id))},
+          {h:'Source',key:'source'},{h:'Subject',key:'subject_key',wrap:true},
+          {h:'Detail',key:'detail',wrap:true,cell:r=>esc(r.detail||'')}], miss.rows, {id:'rec-miss', sort:'detected_at'}) : '<div class="empty">Every problem that surfaced had a recommendation before it.</div>'}
+      </div></div>
+    </div>`;
 }
 
 // ── Schedule experiments (internal only) ───────────────────────────────────
@@ -641,8 +663,12 @@ async function experiments(){
       {h:'Labor %',key:'lab',r:true,val:r=>r.labor_pct.mean,cell:r=>`<span class="num">${one(r.labor_pct.mean)}</span>${ci(r.labor_pct, one)}`},
       {h:'Shift Quality',key:'sq',r:true,val:r=>r.quality.mean,cell:r=>`<span class="num">${one(r.quality.mean)}</span>${ci(r.quality, one)}`}];
     const v = e.verdict || {};
+    const pr = e.promotion;
+    const promo = pr
+      ? `<div style="margin-bottom:10px"><span class="b ok nodot">promoted</span> ${esc(pr.arm)} is every restaurant's arm — by ${esc(pr.promoted_by||'admin')} on ${fmtD(pr.promoted_at)}${pr.note?' · '+esc(pr.note):''} <button class="cbtn btn s" onclick="expRevert('${esc(e.key)}')">Revert</button></div>`
+      : (v.state==='winner' && v.call ? `<div style="margin-bottom:10px"><button class="cbtn btn s" onclick="expPromote('${esc(e.key)}','${esc(v.call)}')">Promote ${esc(v.call)} to every restaurant</button> <span class="dim">A reviewed step: recorded with your name, reversible.</span></div>` : '');
     return `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>${esc(e.key)}</h2><span class="sub">${esc(e.question)}${e.started?' · since '+fmtD(e.started):''}${e.active?'':' · not running'}</span></div>
-      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>
+      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>${promo}
       ${table(cols, e.arms, {id:'exp-'+e.key, sort:'generated', empty:'No weeks recorded yet.'})}</div></div>`;
   };
   const pinCols = [
@@ -665,6 +691,19 @@ async function experiments(){
 async function expPin(rid, exp, arm){
   const d = await post('/admin/api/schedule-experiments/pin', {restaurant_id: rid, experiment: exp, arm: arm});
   toast(d.ok ? (arm ? 'Pinned' : 'Unpinned') : (d.error || 'Failed'), d.ok ? 'good' : 'bad');
+  if(d.ok) experiments();
+}
+async function expPromote(exp, arm){
+  const note = prompt('Promote ' + arm + ' to every restaurant for ' + exp + '? A note for the record (optional):', '');
+  if(note === null) return;
+  const d = await post('/admin/api/schedule-experiments/promote', {experiment: exp, arm: arm, note: note});
+  toast(d.ok ? 'Promoted' : (d.error || 'Failed'), d.ok ? 'good' : 'bad');
+  if(d.ok) experiments();
+}
+async function expRevert(exp){
+  if(!confirm('Revert the promotion for ' + exp + '? New weeks randomise again.')) return;
+  const d = await post('/admin/api/schedule-experiments/revert', {experiment: exp});
+  toast(d.ok ? 'Reverted' : (d.error || 'Failed'), d.ok ? 'good' : 'bad');
   if(d.ok) experiments();
 }
 function expPinForm(){

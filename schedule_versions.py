@@ -238,6 +238,22 @@ def _record_implied_acceptance(conn, restaurant_id, recs, before_rows, after_row
             conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) "
                          "VALUES (?,?,?,'accepted',?)", (restaurant_id, kind, key, (saved_by or "").strip()[:120] or None))
             written.append(rec)
+        # The edit carried the recommendation OUT: in the ledger it is
+        # implemented (ROI #27), on this same connection and savepoint — a
+        # second connection would wait on the lock this save holds.
+        if written:
+            conn.execute("SAVEPOINT implied_impl")
+            try:
+                import rec_ledger
+                from schedule_intel import schedule_rec_key
+                for rec in written:
+                    rec_ledger.implemented_on(conn, restaurant_id, schedule_rec_key(recommendation_kind(rec), rec),
+                                              "schedule_review", meta={"via": "schedule_edit", "module": "schedule"})
+                conn.execute("RELEASE SAVEPOINT implied_impl")
+            except Exception as e:      # neither the save nor the acceptance fails on the ledger
+                conn.execute("ROLLBACK TO SAVEPOINT implied_impl")
+                conn.execute("RELEASE SAVEPOINT implied_impl")
+                log.warning("implementation not recorded for restaurant %s: %s", restaurant_id, e)
         conn.execute("RELEASE SAVEPOINT implied_accept")
     except sqlite3.Error as e:
         conn.execute("ROLLBACK TO SAVEPOINT implied_accept")

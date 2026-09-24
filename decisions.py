@@ -46,7 +46,9 @@ def _is_loss(r):
 
 def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
     """Decision records, newest first. Each: {key, title, kind, asked_on,
-    answer, reason, times_hidden, outcome, issue}.
+    answer, reason, reason_code, times_hidden, outcome, issue}. `answer`
+    includes "implemented" (the change was actually made — rec_ledger);
+    `reason_code` is the owner's one-tap why (rec_ledger.REASON_CODES).
 
     `sees_loss=False` leaves out loss signals and loss issues (they name
     the approving manager), as issues.list_issues does — for anything a
@@ -59,7 +61,8 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
         r = recs.get(key)
         if r is None:
             r = recs[key] = {"key": key, "title": title or key, "kind": kind, "asked_on": when,
-                             "answer": None, "reason": None, "times_hidden": 0, "outcome": None, "issue": None}
+                             "answer": None, "reason": None, "reason_code": None, "times_hidden": 0,
+                             "outcome": None, "issue": None}
         if title and (r["title"] == key or not r["title"]):
             r["title"] = title
         if when and (not r["asked_on"] or when < r["asked_on"]):
@@ -90,20 +93,21 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
             for row in conn.execute(
                     "SELECT e.key, e.event, e.meta, e.at, i.title FROM rec_events e "
                     "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? "
-                    "AND e.event IN ('accepted','completed','dismissed') ORDER BY e.at DESC, e.id DESC LIMIT 400",
+                    "AND e.event IN ('accepted','completed','dismissed','implemented') "
+                    "ORDER BY e.at DESC, e.id DESC LIMIT 400",
                     (restaurant_id,)).fetchall():
                 key = row["key"] or ""
                 if key in seen or key.startswith("ask:") or not _rl.counts_in_acceptance(key):
                     continue
-                seen.add(key)
                 try:
                     meta = _json.loads(row["meta"] or "{}") or {}
                 except (TypeError, ValueError):
                     meta = {}
+                seen.add(key)
                 if row["event"] == "dismissed":
                     answer = "not for us" if meta.get("kind") == "not_for_us" else "hidden"
                 else:
-                    answer = "done" if row["event"] == "completed" else "accepted"
+                    answer = {"completed": "done", "implemented": "implemented"}.get(row["event"], "accepted")
                 day = str(row["at"] or "")[:10]
                 r = rec(key, title=row["title"] or _humanize(key), when=day)
                 if not r["answer"] or day > (r.get("answered_on") or ""):
@@ -111,6 +115,9 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
                     r["answered_on"] = day
                 if meta.get("reason") and not r.get("reason"):
                     r["reason"] = str(meta["reason"])[:200]
+                if meta.get("reason_code") in _rl.REASON_CODES and not r.get("reason_code"):
+                    # The owner's one-tap why (already doing it, too costly …).
+                    r["reason_code"] = meta["reason_code"]
         except Exception:
             pass
         # What happened after they acted (or after the product saw them act).
@@ -198,6 +205,17 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True):
     return out[:limit]
 
 
+def _reason_code_label(code):
+    """The owner's one-tap why, as words ("too costly"), or ""."""
+    if not code:
+        return ""
+    try:
+        import rec_ledger
+        return rec_ledger.reason_label(code)
+    except Exception:
+        return ""
+
+
 def _fmt_outcome(o):
     if not o:
         return ""
@@ -225,8 +243,9 @@ def context(restaurant_id, db_path=DB_PATH, sees_loss=True):
         line = f"- {r['title']}: {ans}"
         if r.get("times_hidden", 0) > 1:
             line += f" (hidden {r['times_hidden']}x)"
-        if r.get("reason"):
-            line += f" — because: {r['reason']}"
+        why = "; ".join(x for x in (_reason_code_label(r.get("reason_code")), r.get("reason")) if x)
+        if why:
+            line += f" — because: {why}"
         line += _fmt_outcome(r.get("outcome"))
         if r.get("issue") and r["issue"].get("note"):
             line += f" — resolved: {r['issue']['note'][:80]}"

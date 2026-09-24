@@ -203,6 +203,7 @@ def create_issue(restaurant_id, kind, title, detail=None, severity="normal", sou
         issue_id = cur.lastrowid
     finally:
         conn.close()
+    _note_missed(restaurant_id, kind, source_key or f"issue:{issue_id}", title, db_path)
     # Into the notification history whether or not a text goes out — an
     # issue the owner can't find in the bell may as well not exist, and the
     # SMS only ever reaches the routed manager. (`notify` is a bool
@@ -275,6 +276,27 @@ _KIND_MODULE = {"review": "reviews", "stock": "food", "labor": "labor", "coverag
 
 def _issue_key(r):
     return r["source_key"] or f"issue:{r['id']}"
+
+
+# Issues that are not a problem surfacing: a weekly plan item and a single
+# guest's review routed to a manager (no recommendation could precede one
+# review) — everything else is checked for a recommendation first.
+_NOT_A_MISS = ("plan", "review")
+
+
+def _note_missed(restaurant_id, kind, key, title, db_path=DB_PATH):
+    """An issue opened on a subject no recommendation covered in the days
+    before is a missed detection (rec_ledger.note_problem, ROI #44). A card
+    handed to someone (home_brief.assign) is its own recommendation and is
+    covered by construction. Never raises."""
+    if kind in _NOT_A_MISS or str(key or "").startswith("review:"):
+        return
+    try:
+        import rec_ledger
+        rec_ledger.note_problem(restaurant_id, "issue", key, module=_KIND_MODULE.get(kind),
+                                detail=str(title or "")[:200], db_path=db_path)
+    except Exception as e:
+        print(f"[issues] missed-detection note failed for {restaurant_id}: {e}")
 
 
 def _present(r, surface, db_path=DB_PATH):
