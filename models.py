@@ -4916,7 +4916,8 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("certifications", "TEXT"),        # ["alcohol", "food_handler", "manager"]
                        ("preferred_dayparts", "TEXT"),    # the employee's own: ["night"]
                        ("desired_hours", "REAL"),         # the employee's own weekly wish
-                       ("experienced", "INTEGER")):       # owner's word that they know the job, whatever the history shows
+                       ("experienced", "INTEGER"),        # owner's word that they know the job, whatever the history shows
+                       ("minor_age_band", "TEXT")):       # '14-15' | '16-17' | NULL — which minor rule table (schedule_rules.MINOR_BANDS)
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()
@@ -8698,6 +8699,14 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
           -- A draft flagged for stating an action the restaurant may not
           -- have taken is exactly what must not be published unread.
           AND COALESCE(draft_needs_review, 0) = 0
+          -- A 3-star review (the earned band) is only a candidate when it
+          -- was analysed and carries no complaint: a middling rating with a
+          -- specific thing that went wrong is a reply a person writes
+          -- (NS5 H5). 4 and 5 stars are unchanged.
+          AND (rating >= 4 OR (COALESCE(processed, 0) = 1
+               AND COALESCE(TRIM(specific_complaint), '') = ''
+               AND COALESCE(severity, 'minor') = 'minor'
+               AND COALESCE(sentiment, 'neutral') != 'negative'))
         -- Newest guest first: a first-connect backlog of years-old 5-stars
         -- used to spend the daily cap before this week's (MOD A1 R3 #9).
         ORDER BY COALESCE(review_date, fetched_at) DESC, id DESC
@@ -8711,7 +8720,7 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
         from notify import health_keyword_hits
     except Exception:
         return []            # cannot check: publish nothing unread
-    return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows
+    return [{"id": r["id"], "draft_response": r["draft_response"], "text": r["text"]} for r in rows
             if not health_keyword_hits(r["text"])]
 
 

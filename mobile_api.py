@@ -6405,9 +6405,19 @@ def mobile_score_schedule(current_user):
             # it went out. Nobody else hears about it. (This sat inside the
             # except above, so it only ran when logging failed — never.)
             try:
-                changed = _notify_changed_rows(rid, saved, csv_text, current_user)
+                _changed_dates = []
+                changed = _notify_changed_rows(rid, saved, csv_text, current_user, changed_dates=_changed_dates)
                 if changed is not None:
                     _resp_changed = changed
+                # A change to a week staff already have, inside the notice
+                # window: where a predictive-scheduling law applies the
+                # restaurant may owe premium pay for it. Said as that — a
+                # possibility to check, never a sum (NS5 H2).
+                if _changed_dates:
+                    import schedule_rules as _sr_w
+                    from time_utils import restaurant_now_by_id as _rnow_w
+                    _late_warning = _sr_w.late_change_warning(
+                        _sr_w.compliance(rid), _changed_dates, _rnow_w(rid, naive=True).date())
             except Exception as _nx:
                 print(f"[schedule] re-notify failed: {_nx}")
         # The rescored verdict is on the manager's screen: its
@@ -6419,6 +6429,7 @@ def mobile_score_schedule(current_user):
                        violations=violations or [], review=review,
                        history_id=saved or None,
                        changed_since_sent=locals().get("_resp_changed"),
+                       late_change_warning=locals().get("_late_warning"),
                        capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
@@ -6444,11 +6455,13 @@ def _mark_review_rows(rows, violations):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()
 
 
-def _notify_changed_rows(rid, history_id, csv_text, actor):
+def _notify_changed_rows(rid, history_id, csv_text, actor, changed_dates=None):
     """After an edit to a PUBLISHED week: diff against what was last sent,
     email each person whose own shifts changed (their new week, with the
     link they already have), stamp republished_at. Returns the list of
-    people told, or None when the week was never published."""
+    people told, or None when the week was never published. `changed_dates`,
+    when given, is filled with the dates whose shifts changed (the notice
+    window warning reads them)."""
     import schedule_versions as _sv
     from models import get_conn as _gc, get_staff_contacts, get_restaurant, _ensure_history_columns
     conn = _gc()
@@ -6473,6 +6486,11 @@ def _notify_changed_rows(rid, history_id, csv_text, actor):
     for r in d["retimed"]:
         people.add((r.get("employee") or "").strip())
     people.discard("")
+    if changed_dates is not None:
+        for r in d["added"] + d["removed"] + d["retimed"] + d["moved"]:
+            dd = (r.get("date") or (r.get("row") or {}).get("date") or "")[:10]
+            if dd and dd not in changed_dates:
+                changed_dates.append(dd)
     if not people:
         return []
     restaurant = get_restaurant(rid)

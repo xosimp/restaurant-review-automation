@@ -67,7 +67,20 @@ HEALTH_KEYWORDS = [
     "cockroach", "roach", "rat ", "rats ", "rodent", "bug in ", "insect in",
     "foreign object", "glass in", "metal in", "hair in", "mold", "mouldy",
     "raw chicken", "raw meat", "undercooked chicken", "salmonella", "ecoli", "e. coli",
+    # Allergies and undercooking (NS5 H5): "my son had a peanut reaction",
+    # "shellfish allergy… ignored" and "pink in the middle" scored zero, so
+    # a reply to them could auto-publish. "allerg" covers allergy, allergic
+    # and allergen; a reaction is matched in context (_REACTION_RE) because
+    # "my first reaction was wow" is not a health report.
+    "allerg", "anaphyla", "epipen", "epi-pen", "epi pen", "hives", "celiac", "coeliac",
+    "cross-contam", "cross contam", "undercooked", "under cooked", "under-cooked", "pink in the middle",
+    "raw in the middle", "not cooked through", "bloody chicken", "raw pork",
 ]
+
+_REACTION_RE = re.compile(
+    r"\breacted\s+to\b|\b(?:had|having|have|has|got)\s+(?:an?\s+)?(?:\w+\s+){0,2}reaction\b"
+    r"|\b(?:peanut|nut|shellfish|gluten|dairy|egg|soy|sesame|fish|allergic|bad)\s+reaction\b"
+    r"|\breaction\s+(?:to|after|from)\s+(?:the|my|our|a|an|some|something|eating)\b", re.I)
 
 
 _PHONE_EXTENSION = re.compile(r"\s*(?:x|ext\.?|extension|#)\s*\d+\s*$", re.IGNORECASE)
@@ -910,7 +923,11 @@ def health_keyword_hits(text: str) -> list:
     """The HEALTH_KEYWORDS a review's text contains (NFKC, lower-cased)."""
     import unicodedata
     t = unicodedata.normalize("NFKC", text or "").lower().strip()
-    return [kw for kw in HEALTH_KEYWORDS if kw in t]
+    hits = [kw for kw in HEALTH_KEYWORDS if kw in t]
+    m = _REACTION_RE.search(t)
+    if m:
+        hits.append(m.group(0).strip())
+    return hits
 
 
 # ops.capture job name for a keyword hit the analyser read as "normal" (H5).
@@ -1000,9 +1017,7 @@ def _is_health_alert(text: str, urgency: str = None, processed: bool = None, rat
         # Caller didn't say either way: preserve the old contract rather
         # than risk a keyword false positive on an analysed review.
         return str(urgency).strip().lower() == "high"
-    import unicodedata
-    t = unicodedata.normalize("NFKC", text or "").lower().strip()
-    return any(kw in t for kw in HEALTH_KEYWORDS)
+    return bool(health_keyword_hits(text))
 
 
 def _sms_safe_excerpt(raw_text: str, limit: int = 60) -> tuple:

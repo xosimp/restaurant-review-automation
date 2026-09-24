@@ -152,6 +152,10 @@ struct AskProposal: Decodable, Identifiable, Hashable {
     let details: [Detail]?
     let preview: String?
     let atStake: Double?
+    /// Every field the confirmed route will receive, labelled (NS5 C1): the
+    /// card shows all of them and confirm posts only these keys. Nil from
+    /// an older backend, when the whole body is posted as before.
+    let fieldsShown: [ShownField]?
 
     var id: String { proposalId.map { "p\($0)" } ?? (action + summary) }
 
@@ -165,10 +169,25 @@ struct AskProposal: Decodable, Identifiable, Hashable {
         let value: String
     }
 
+    struct ShownField: Decodable, Hashable {
+        let key: String
+        let label: String
+        let value: String
+    }
+
     enum CodingKeys: String, CodingKey {
         case action, summary, route, body, details, preview
         case proposalId = "proposal_id"
         case atStake = "at_stake"
+        case fieldsShown = "fields_shown"
+    }
+
+    /// What confirm posts: only the fields the card showed.
+    var postedBody: [String: AnyCodableValue] {
+        let all = body ?? [:]
+        guard let shown = fieldsShown else { return all }
+        let keys = Set(shown.map(\.key))
+        return all.filter { keys.contains($0.key) }
     }
 }
 
@@ -559,7 +578,7 @@ final class AskCavnarViewModel {
                 response = try await client.send(proposal.route.mobile)
             } else {
                 response = try await client.send(proposal.route.mobile, method: .post,
-                                                 body: proposal.body ?? [:])
+                                                 body: proposal.postedBody)
             }
             guard response.ok else {
                 errorBanner = response.error ?? "That didn't go through — nothing was sent."

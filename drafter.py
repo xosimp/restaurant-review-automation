@@ -296,12 +296,14 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     # differently"; the prompt no longer asks, and this still checks what it
     # wrote, so an invented remediation — staff retrained, a comp, a process
     # promise — never goes out unread as a statement the restaurant made.
-    from ai_guard import unsupported_commitments
-    claims = unsupported_commitments(draft)
-    if claims:
-        stored = update_draft(review_id, draft, needs_review=True,
-                              review_reason="states a specific action the restaurant may not have taken: "
-                                            + ", ".join(claims[:3]))
+    # The public-reply claims too (NS5 H5): an allergen promise, a fault
+    # admission, a comp, "won't happen again", a cause nobody gave. Flagged
+    # here so the owner sees why, and so no bulk or auto publish counts it.
+    from ai_guard import reply_review_reason
+    _said = " ".join(x for x in (voice_notes or "", text or "") if isinstance(x, str) and x)
+    reason = reply_review_reason(draft, _said)
+    if reason:
+        stored = update_draft(review_id, draft, needs_review=True, review_reason=reason)
     else:
         stored = update_draft(review_id, draft)
     if stored is False:

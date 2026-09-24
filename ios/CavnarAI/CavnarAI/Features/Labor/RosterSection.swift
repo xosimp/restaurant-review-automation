@@ -382,6 +382,7 @@ private struct RosterDetailSheet: View {
 
     @State private var active = true
     @State private var isMinor = false
+    @State private var minorAgeBand = ""
     @State private var experienced = false
     @State private var employmentType = "full"
     @State private var minHours = ""
@@ -639,9 +640,25 @@ private struct RosterDetailSheet: View {
                              detail: "Under 18 — the minor rules (latest end, daily hours) apply.",
                              isOn: Binding(get: { isMinor }, set: { newValue in
                                 isMinor = newValue
+                                if !newValue { minorAgeBand = "" }
                                 Task { await viewModel.updateSettings(.init(employeeName: name, isMinor: newValue)) }
                              }),
                              busy: busy, disabled: !editable, showsDivider: true)
+            // Which limits are checked depends on age (NS5 H4): 14-15 carries
+            // the federal school-day limits; 16-17 the restaurant's own rule.
+            if isMinor {
+                AccountKVRow(label: "Age", showsDivider: true) {
+                    HStack(spacing: 6) {
+                        ForEach(["14-15", "16-17"], id: \.self) { band in
+                            choiceChip(band.replacingOccurrences(of: "-", with: "–"),
+                                       on: minorAgeBand == band, enabled: editable) {
+                                minorAgeBand = band
+                                Task { await viewModel.updateSettings(.init(employeeName: name, minorAgeBand: band)) }
+                            }
+                        }
+                    }
+                }
+            }
             // The owner's word for it: counted by Experience balance
             // without waiting for twenty shifts of history on file.
             AccountSwitchRow(label: "Experienced — knows the job",
@@ -734,6 +751,7 @@ private struct RosterDetailSheet: View {
         let s = member.settings
         active = member.isActive
         isMinor = s?.isMinor ?? false
+        minorAgeBand = s?.minorAgeBand ?? ""
         experienced = s?.experienced ?? false
         employmentType = s?.employmentType ?? "full"
         minHours = s?.minHours.map(Self.hours) ?? ""

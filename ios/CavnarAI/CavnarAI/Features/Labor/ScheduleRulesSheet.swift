@@ -16,6 +16,8 @@ struct ScheduleRulesSheet: View {
     // The second batch's settings, all saved with the one Save button.
     @State private var jurisdiction: String = ""
     @State private var managerOnDuty = false
+    // A keyholder on until close every open day — on by default (NS5 M8).
+    @State private var keyholderUntilClose = true
     @State private var arrivals: [String: String] = [:]
     @State private var requirements: [String: [String]] = [:]
     @State private var fohRoles: [String] = []
@@ -36,7 +38,7 @@ struct ScheduleRulesSheet: View {
         ("min_consecutive_days_off", "Consecutive days off, at least", "days"),
         ("part_time_days_off", "Part-time days off a week", "days"),
         ("max_consecutive_days", "Days in a row, at most", "days"),
-        ("notice_days", "Notice before the week starts", "days"),
+        ("notice_days", "Notice before the week starts", "days — a week inside it is held"),
         ("minor_latest_end", "Minors finish by", "time"),
         ("minor_max_daily_hours", "Minors' longest day", "hours"),
     ]
@@ -185,7 +187,10 @@ struct ScheduleRulesSheet: View {
         AccountSection(kicker: "Leadership") {
             AccountSwitchRow(label: "Manager on duty",
                              detail: "Every shift needs a manager or keyholder on it. Flagged as a hard break when nobody is.",
-                             isOn: $managerOnDuty, showsDivider: false)
+                             isOn: $managerOnDuty, showsDivider: true)
+            AccountSwitchRow(label: "Keyholder until close",
+                             detail: "Someone who can close stays until close every open day. Checked once anyone is marked a keyholder or closer.",
+                             isOn: $keyholderUntilClose, showsDivider: false)
         }
     }
 
@@ -651,6 +656,8 @@ struct ScheduleRulesSheet: View {
         jurisdiction = viewModel.jurisdiction ?? ""
         if case .bool(let b) = viewModel.rules["manager_on_duty"] ?? .null { managerOnDuty = b }
         else if case .number(let n) = viewModel.rules["manager_on_duty"] ?? .null { managerOnDuty = n != 0 }
+        if case .bool(let b) = viewModel.rules["keyholder_until_close"] ?? .null { keyholderUntilClose = b }
+        else if case .number(let n) = viewModel.rules["keyholder_until_close"] ?? .null { keyholderUntilClose = n != 0 }
         arrivals = viewModel.roleArrivals.mapValues(String.init)
         requirements = viewModel.roleRequirements
         fohRoles = viewModel.fohRoles
@@ -667,6 +674,7 @@ struct ScheduleRulesSheet: View {
     private func patch() -> ScheduleSetupViewModel.RulesPatch {
         var rules = parsedRules()
         rules["manager_on_duty"] = .bool(managerOnDuty)
+        rules["keyholder_until_close"] = .bool(keyholderUntilClose)
         var arrivalMinutes: [String: Int] = [:]
         for (role, text) in arrivals {
             if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = n }

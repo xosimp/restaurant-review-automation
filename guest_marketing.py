@@ -190,6 +190,9 @@ def init_guest_marketing(db_path=DB_PATH):
 # that applies whether or not anyone configured anything, and it has to follow
 # the restaurant's own timezone — which is the closest proxy available for the
 # guest's, since a restaurant's guests are overwhelmingly local to it.
+# Known limitation (NS5 L16, MODULE_OVERVIEW.md → Marketing): a guest in
+# another zone, and a state with a narrower window for marketing texts, are
+# not modelled — this is one fixed floor, not a per-state rule table.
 GUEST_SMS_EARLIEST_HOUR = 8    # 8:00 AM local
 GUEST_SMS_LATEST_HOUR = 21     # 9:00 PM local — last send starts at 8:59 PM
 

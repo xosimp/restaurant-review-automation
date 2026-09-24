@@ -77,13 +77,14 @@ The accept/dismiss ledger for recommendations (a kind shown ten times and never 
 
 ### `staff_settings` (extended) / `shift_change_requests` (extended)
 `time_windows` (per-weekday earliest/latest), `certifications`, and the employee's own `preferred_dayparts` and `desired_hours`. Shift requests carry `kind` (drop | swap) and the target shift for a swap.
+`minor_age_band` (NS5 H4, 9/24/26) — `'14-15'`, `'16-17'` or NULL, added at boot by `init_staff_settings`. Picks the minor rule table `schedule_rules.minor_rules` applies as HARD rules (the federal floor for 14-15: no start before 7am, finish by 7pm — 9pm June 1 to Labor Day — 3h on a school day, 18h in a school week, 8h/40h otherwise; `JURISDICTION_MINOR_RULES` tightens it per pack and is deliberately empty until a value is checked at source). Setting a band marks the person a minor; switching `is_minor` off clears it. A minor with no band keeps the generic `minor_latest_end`/`minor_max_daily_hours` rule and carries a soft `minor_age_unknown` flag.
 
 ### `schedule_history` (extended)
 `quality_score`, `quality_band`, `quality_confidence` (the headline, so the list never parses the blob), `what_if_json`, `superseded_by` (a draft replaced by a newer draft of the same week), `republished_at` (an edit to a sent week re-notified the people whose shifts changed).
 
 ### `restaurants.compliance_json` / `restaurants.role_floors_json` and the new columns
 `jurisdiction` (a compliance pack code), `role_arrival_json`, `role_requirements_json`, `foh_roles_json`, `patio_roles_json`, `role_cross_training_json` (`{"Server": 40}` — the % of a role on a shift that should cover a second station; unset roles take `shift_quality.CROSS_TRAINING_DEFAULTS`), `trim_to_budget`, `reservation_provider`, `reservation_api_key`.
-The scheduling rules (`schedule_rules.DEFAULTS` keys) and the per-role, per-daypart staffing floors — the setting that replaced the compiled-in pizza-cook rule.
+The scheduling rules (`schedule_rules.DEFAULTS` keys) and the per-role, per-daypart staffing floors — the setting that replaced the compiled-in pizza-cook rule. Since NS5 (9/24/26): `notice_days` is enforced (a week published with less notice is a `notice_short` blocker — auto-publish never sends it, a person must acknowledge it), `keyholder_until_close` (default on) makes "a keyholder or closer on until close every open day" a hard rule once anyone is one, and the floors are a hard `coverage_floor` rule. `nobody_at_close` is hard when the day's close time is known.
 
 ### `staff_capabilities`
 The Operational Score layer. `(restaurant_id, employee_name, attribute)` unique — `attribute` is things like `overall`, `can_close`, per-role scores. `score` (1–5 scale) or `flag` (boolean), `notes`, `updated_by`. Unrated is absent, never a row with a zero score — a name only appears here once someone has actually rated them.

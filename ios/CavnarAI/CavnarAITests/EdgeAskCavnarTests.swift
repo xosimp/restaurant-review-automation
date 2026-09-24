@@ -75,6 +75,31 @@ final class EdgeAskCavnarTests: XCTestCase {
         XCTAssertEqual(p.id, "p41", "two cards with the same action are two proposals")
     }
 
+    // MARK: NS5 C1 — every field shown, and only those posted
+
+    func testFieldsShownDecodeAndLimitWhatConfirmPosts() throws {
+        let p = try JSONDecoder.cavnar.decode(AskProposal.self, from: Data("""
+        {"action": "set_auto_approve", "summary": "Turn auto-approve of 5-star replies ON",
+         "route": {"mobile": "/mobile/api/account/auto-approve", "method": "POST"},
+         "body": {"enabled": true, "daily_cap": 5, "earned": true},
+         "fields_shown": [{"key": "enabled", "label": "Auto-approve", "value": "On"},
+                          {"key": "daily_cap", "label": "At most a day", "value": "5"}]}
+        """.utf8))
+        XCTAssertEqual(p.fieldsShown?.map(\.label), ["Auto-approve", "At most a day"])
+        XCTAssertEqual(Set(p.postedBody.keys), ["enabled", "daily_cap"],
+                       "a field the card did not show is never posted")
+    }
+
+    func testAnOlderBackendWithoutFieldsShownPostsItsBodyAsBefore() throws {
+        let p = try JSONDecoder.cavnar.decode(AskProposal.self, from: Data("""
+        {"action": "publish_schedule", "summary": "Send the current schedule to staff",
+         "route": {"mobile": "/mobile/api/labor/publish-schedule", "method": "POST"},
+         "body": {"schedule_id": 9}}
+        """.utf8))
+        XCTAssertNil(p.fieldsShown)
+        XCTAssertEqual(Set(p.postedBody.keys), ["schedule_id"])
+    }
+
     func testNotNowSendsTheProposalIdAndTheReason() async throws {
         let bodies = Box<[[String: Any]]>([])
         let client = EdgeHTTP.client { request in

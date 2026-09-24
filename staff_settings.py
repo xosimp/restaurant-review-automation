@@ -62,7 +62,10 @@ def _row(r):
         "min_hours": r["min_hours"],
         "max_hours": r["max_hours"],
         "daypart_availability": {d: v for d, v in avail.items() if d in DAYS and v in DAYPART_CHOICES},
-        "is_minor": bool(r["is_minor"]),
+        "is_minor": bool(r["is_minor"]) or bool(r["minor_age_band"] if "minor_age_band" in keys else None),
+        # Which minor rule table applies (schedule_rules.MINOR_BANDS); None
+        # for an adult, or a minor whose age band was never set.
+        "minor_age_band": (r["minor_age_band"] if "minor_age_band" in keys else None) or None,
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
@@ -143,9 +146,12 @@ def _flag(v) -> bool:
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
-           experienced=None, db_path=DB_PATH) -> dict:
+           experienced=None, minor_age_band=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
-    stored value; the caller passes only what changed."""
+    stored value; the caller passes only what changed.
+
+    `minor_age_band` is "14-15", "16-17" or "" (clear). Setting a band marks
+    the person a minor; switching is_minor off clears the band (NS5 H4)."""
     if employee_name is not None and not isinstance(employee_name, str):
         raise StaffSettingsError("an employee name is required")
     name = (employee_name or "").strip()[:120]
@@ -174,6 +180,15 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             raise StaffSettingsError("every day is off — leave at least one day they can work")
         daypart_availability = cleaned
 
+    if minor_age_band is not None:
+        from schedule_rules import MINOR_BANDS
+        minor_age_band = str(minor_age_band or "").strip().replace("–", "-").replace(" ", "")
+        if minor_age_band and minor_age_band not in MINOR_BANDS:
+            raise StaffSettingsError("age band is 14-15 or 16-17")
+        if minor_age_band and is_minor is None:
+            is_minor = True
+    if is_minor is not None and not _flag(is_minor) and minor_age_band is None:
+        minor_age_band = ""
     if time_windows is not None:
         time_windows = _clean_windows(time_windows)
     if certifications is not None:
@@ -204,7 +219,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
                                          "max_hours": None, "daypart_availability": {}, "is_minor": False,
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
-                                         "desired_hours": None, "experienced": False}
+                                         "desired_hours": None, "experienced": False, "minor_age_band": None}
         new = {
             "active": int(_flag(active)) if active is not None else int(current["active"]),
             "employment_type": (employment_type or None) if employment_type is not None else current["employment_type"],
@@ -217,6 +232,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "preferred_dayparts": preferred_dayparts if preferred_dayparts is not None else current.get("preferred_dayparts") or [],
             "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
             "experienced": int(_flag(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
+            "minor_age_band": (minor_age_band or None) if minor_age_band is not None else current.get("minor_age_band"),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -228,19 +244,19 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "max_hours": max_hours, "daypart_availability": daypart_availability, "is_minor": is_minor,
                  "time_windows": time_windows, "certifications": certifications,
                  "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours,
-                 "experienced": experienced}
+                 "experienced": experienced, "minor_age_band": minor_age_band}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
-                            preferred_dayparts, desired_hours, experienced, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            preferred_dayparts, desired_hours, experienced, minor_age_band, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
                       json.dumps(new["preferred_dayparts"]), new["desired_hours"], new["experienced"],
-                      (updated_by or "").strip()[:120] or None))
+                      new["minor_age_band"], (updated_by or "").strip()[:120] or None))
         conn.commit()
         row = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
                            (restaurant_id, name)).fetchone()

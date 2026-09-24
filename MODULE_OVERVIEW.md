@@ -109,6 +109,8 @@ Weekly ingredient counts → waste cost, price-drift detection (this week's unit
 
 AI-drafted social posts (brand-voice fields on `restaurants`: `voice_notes`, `vibe`, `known_for`, `sign_off_name`, `never_say`), a content calendar, direct publish to connected accounts (Instagram real; Square/Clover honest "contact us" stubs), and the guest text-club feature (`guest_contacts`/`guest_campaigns`, SMS opt-in via `sms_optin_invites`).
 
+**Known limitation (NS5 L16)**: guest texts go out only 8am–9pm in the RESTAURANT's time zone (`guest_marketing.GUEST_SMS_EARLIEST_HOUR`/`LATEST_HOUR`), the closest proxy for the guest's own. A guest whose phone is in another zone, and any state that sets a narrower window for marketing texts, are not modelled — the window is one fixed floor. Widening it per state needs the guest's area code or zone and a checked rule table; nothing here should claim the window satisfies every state's rule.
+
 ---
 
 ## Intel

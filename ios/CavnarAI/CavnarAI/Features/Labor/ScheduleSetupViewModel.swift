@@ -24,9 +24,14 @@ struct RosterSettings: Codable, Equatable {
     // The owner's word that this person knows the job — counted by
     // Experience balance without waiting for twenty shifts on file.
     var experienced: Bool?
+    // Which minor rule table applies: "14-15" (the federal school-day
+    // limits) or "16-17"; nil for an adult or a minor with no band yet
+    // (NS5 H4). Optional so an older backend decodes.
+    var minorAgeBand: String?
 
     enum CodingKeys: String, CodingKey {
         case active, certifications, experienced
+        case minorAgeBand = "minor_age_band"
         case employmentType = "employment_type"
         case minHours = "min_hours"
         case maxHours = "max_hours"
@@ -734,10 +739,13 @@ final class ScheduleSetupViewModel {
         var timeWindows: [String: TimeWindow]? = nil
         var certifications: [String]? = nil
         var experienced: Bool? = nil
+        /// "14-15", "16-17", or "" to clear.
+        var minorAgeBand: String? = nil
 
         enum CodingKeys: String, CodingKey {
             case employeeName = "employee_name"
             case active, certifications, experienced
+            case minorAgeBand = "minor_age_band"
             case employmentType = "employment_type"
             case minHours = "min_hours"
             case maxHours = "max_hours"
@@ -758,6 +766,7 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(timeWindows, forKey: .timeWindows)
             try c.encodeIfPresent(certifications, forKey: .certifications)
             try c.encodeIfPresent(experienced, forKey: .experienced)
+            try c.encodeIfPresent(minorAgeBand, forKey: .minorAgeBand)
         }
     }
 
@@ -785,6 +794,7 @@ final class ScheduleSetupViewModel {
         if let v = patch.timeWindows { settings.timeWindows = v }
         if let v = patch.certifications { settings.certifications = v }
         if let v = patch.experienced { settings.experienced = v }
+        if let v = patch.minorAgeBand { settings.minorAgeBand = v.isEmpty ? nil : v; if !v.isEmpty { settings.isMinor = true } }
         next.settings = settings
         roster[index] = next
         savingFor = patch.employeeName

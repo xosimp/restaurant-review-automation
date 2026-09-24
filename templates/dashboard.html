@@ -9584,6 +9584,26 @@ function _appendAskCavnarProposal(p) {
     pv.textContent = p.preview;
     card.appendChild(pv);
   }
+  /* Every field the confirmed route receives, as the server lists it
+     (fields_shown) - what the owner approves is what runs (NS5 C1). */
+  var shown = p.fields_shown || [];
+  if (shown.length) {
+    var sk = document.createElement('div');
+    sk.className = 'ask-sug-k';
+    sk.textContent = 'Sent with this';
+    card.appendChild(sk);
+    var fl = document.createElement('dl');
+    fl.className = 'dl';
+    for (var f = 0; f < shown.length; f++) {
+      var fdt = document.createElement('dt');
+      fdt.textContent = shown[f].label;
+      var fdd = document.createElement('dd');
+      fdd.textContent = shown[f].value;
+      fl.appendChild(fdt);
+      fl.appendChild(fdd);
+    }
+    card.appendChild(fl);
+  }
   var row = document.createElement('div');
   row.className = 'r';
   var confirm = document.createElement('button');
@@ -9700,6 +9720,19 @@ function _recordAskCavnarAction(p, outcome, reason, reasonCode) {
   }).catch(function(){});
 }
 
+/* The body posted on confirm: only the fields the card showed. A card from
+   an older server (no fields_shown) posts its body as before. */
+function _askShownBody(p) {
+  var body = p.body || {};
+  if (!p.fields_shown) return body;
+  var out = {}, i, k;
+  for (i = 0; i < p.fields_shown.length; i++) {
+    k = p.fields_shown[i].key;
+    if (body.hasOwnProperty(k)) out[k] = body[k];
+  }
+  return out;
+}
+
 function _runAskCavnarProposal(p, card, btn) {
   btn.disabled = true;
   btn.textContent = 'Working…';
@@ -9707,7 +9740,7 @@ function _runAskCavnarProposal(p, card, btn) {
   var method = (p.route && p.route.method) || 'POST';
   if (!route) { card.innerHTML = '<div class="err">No route for that action.</div>'; return; }
   var opts = {method: method, headers: {'Content-Type': 'application/json'}};
-  if (method !== 'GET') opts.body = JSON.stringify(p.body || {});
+  if (method !== 'GET') opts.body = JSON.stringify(_askShownBody(p));
   // The proposal fires the very same authenticated endpoint the button in
   // the UI uses, so it can never reach anything the user couldn't do.
   fetch(route, opts).then(apiJson).then(function(d) {
@@ -14289,6 +14322,9 @@ function rescoreSchedule(btn) {
         if (cs && cs.length) toast('Updated schedule sent to ' + cs.join(', '), 'success');
         else if (cs && !cs.length) toast('Saved; nobody\u2019s shifts changed', 'success');
         else toast('Schedule saved \u2014 this is what your staff will receive', 'success');
+        /* A change inside the notice window: the pay warning replaces the
+           saved toast, since it is the one the owner must read (NS5 H2). */
+        if (d.late_change_warning) toast(d.late_change_warning, 'warning');
         if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
       }
       if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
@@ -21218,7 +21254,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<td><select class="ac-select" data-rst-f="employment_type" aria-label="Employment type"'+(ro?' disabled':'')+'>'+_lbOpts(types,st.employment_type||types[0],_EMP_LABELS)+'</select></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="min_hours" min="0" max="80" step="1" value="'+(st.min_hours==null?'':esc(st.min_hours))+'" placeholder="—" aria-label="Minimum hours"'+(ro?' disabled':'')+'></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
-        +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)+'</td></tr>';
+        +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)
+        /* Which minor rule table applies (NS5 H4): 14-15 carries the federal
+           school-day limits, 16-17 the restaurant's own minor rule. */
+        +(st.is_minor?'<select class="ac-select" data-rst-f="minor_age_band" aria-label="Age band" title="Age band sets which minor limits are checked"'+(ro?' disabled':'')+'>'+_lbOpts(['','14-15','16-17'],st.minor_age_band||'',{'':'Age?','14-15':'14\u201315','16-17':'16\u201317'})+'</select>':'')
+        +'</td></tr>';
       if(open){
         var av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],j;
         h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
@@ -21264,14 +21304,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var f=t.getAttribute('data-rst-f'),day=t.getAttribute('data-rst-day'),patch={};
     if(f==='active'||f==='is_minor'||f==='experienced')patch[f]=!!t.checked;
     else if(f==='min_hours'||f==='max_hours')patch[f]=t.value===''?null:+t.value;
-    else if(f==='employment_type')patch[f]=t.value;
+    else if(f==='employment_type'||f==='minor_age_band')patch[f]=t.value;
     else if(day){
       var sels=tr.querySelectorAll('[data-rst-day]'),map={},i;
       for(i=0;i<sels.length;i++)map[sels[i].getAttribute('data-rst-day')]=sels[i].value;
       patch.daypart_availability=map;
       t.className='ac-select '+t.value;
     } else return;
-    _rstSave(name,patch,f==='active'?renderRoster:null);
+    _rstSave(name,patch,(f==='active'||f==='is_minor')?renderRoster:null);
   });
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.getAttribute)return;
@@ -21321,7 +21361,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
     ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
     ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],['max_consecutive_days','Days in a row, at most','days'],
-    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days']];
+    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days \u2014 a week inside it is held']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
@@ -21396,6 +21436,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     h+='</div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-mod"'+(rules.manager_on_duty?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Manager on duty<small>Every shift needs a manager or keyholder on it; the rules check names the ones without.</small></div></div>';
+    /* On by default (NS5 M8): once anyone is a keyholder or closer, one of
+       them stays until close every open day. */
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Keyholder until close<small>Someone who can close stays until close every open day. Checked once anyone is marked a keyholder or closer.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
     // Closed days: weekdays and dates the restaurant does not trade. The
     // draft writes no shifts on them and the week is not failed for it.
@@ -21496,6 +21539,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
     }
     var mod=document.getElementById('rul-mod');if(mod)rules.manager_on_duty=!!mod.checked;
+    var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
     var body={rules:rules,role_floors:floors};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;

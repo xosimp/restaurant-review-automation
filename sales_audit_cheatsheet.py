@@ -341,7 +341,14 @@ def build(audit, results):
         {"h": "What it does NOT do", "items": [
             "Not a POS, payroll or accounting system — it reads from them.",
             "No bar / pour-cost / variance tracking yet (Bar & Alcohol is upcoming). No waitlist (upcoming).",
-            "Doesn't act on its own: no auto-posted replies, no auto-published schedules, no auto-sent campaigns.",
+            # It denied auto-approved replies and auto-published schedules,
+            # and both exist as opt-ins (NS5 L15) — never tell a
+            # prospect the product cannot do what it does.
+            "Acts on its own only where the owner switches it on, each with a guard: auto-approve of drafted review "
+            "replies (5-star by default, capped per day, held when a reply makes a claim), auto-publish of an "
+            "unedited schedule after three clean weeks with a two-hour undo, orders to a trusted supplier with a "
+            "one-hour undo, and review-request texts to guests who opted in. Everything else is a draft or a "
+            "confirmation card.",
             "Doesn't invent numbers: with no inventory data it says so rather than estimating food cost.",
         ]},
         {"h": "How the AI is used", "items": [

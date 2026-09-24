@@ -148,7 +148,14 @@ def test_the_feed_shows_what_is_queued(db_path):
 
 # ── #3 publish when unedited ──────────────────────────────────────────────────
 
-def _schedule(db_path, rid, week_start, edited=False, shared=True, csv="employee,role\nA,server"):
+def _schedule(db_path, rid, week_start, edited=False, shared=True, csv=None):
+    # A real row on the week's own date: the publish gate re-runs the rule
+    # sweep at send time (NS5 H3), and a row with no date is "outside the
+    # week" — a hard breach, as it should be.
+    if csv is None:
+        day = datetime.strptime(week_start, "%Y-%m-%d").strftime("%A")
+        csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+               f"{week_start},{day},A,Server,4:00pm,10:00pm,6.0,\n")
     conn = get_conn(db_path)
     # A week counts as published when published_at is set — a share row on
     # its own no longer does (a test share on a draft used to count).
@@ -204,7 +211,7 @@ def test_auto_publish_queues_only_with_the_switch_and_the_record(db_path, monkey
     out = scheduler.run_auto_publish_schedules()
     assert out["queued"] == 1 and reached == ["schedule_publish_pending"]
     q = delayed.pending(rid, db_path=db_path)
-    assert q[0]["payload"] == {"schedule_id": draft} and "Publishing the week of 1/4/99" in q[0]["label"]        # M/D/YY for owners
+    assert q[0]["payload"] == {"schedule_id": draft, "automatic": True} and "Publishing the week of 1/4/99" in q[0]["label"]        # M/D/YY for owners
 
 
 def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, monkeypatch):
