@@ -3374,7 +3374,7 @@ svg:hover .hb-xh{opacity:1}
       get('/api/dsr/'+date+'/status').then(function(s){
         if(tk!==st.token)return;
         if(!s||!s.ok){renderProgress(date,null,s);return;}
-        var behind=st.expect&&(!s.exists||(s.version||0)<st.expect);
+        var behind=st.expect&&(!s.exists||((s.version||0)<st.expect&&TERMINAL[s.status]));
         if(behind){st.waits++;if(st.waits>6){st.expect=null;behind=false;}}
         if(s.exists&&TERMINAL[s.status]&&!behind){stopPoll();st.expect=null;loadNight(date,null);return;}
         renderProgress(date,behind?null:s);
@@ -3463,11 +3463,22 @@ svg:hover .hb-xh{opacity:1}
     for(var k=0;k<BLOCKS.length;k++){var n=BLOCKS[k];
       if(B[n])h+=section(n,B[n],p);
       else if(withheld.indexOf(n)<0)h+=section(n,{status:'unavailable',reason:'Not collected for this night'},p);}
+    h+=builtHtml(ck);
     if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
     b.innerHTML=h;
   }
 
+  // How the night was built: the stage and block times kept as provenance,
+  // folded away under the report.
+  function builtHtml(ck){
+    var rows='',sg=ck.stages||[],bl=ck.blocks||[],i;
+    for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic">\u2713</span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
+    for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;var ok=x.status==='ready';
+      rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'\u2713':'!')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
+    if(!rows)return '';
+    return '<details class="dr-sec"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'+rows+'</div></details>';
+  }
   function narrativeHtml(n,ck,p){
     var why=(ck.narrative&&ck.narrative.reason)||null,h='';
     var lead=n&&n.executive_summary&&n.executive_summary.text;
@@ -3685,7 +3696,9 @@ svg:hover .hb-xh{opacity:1}
     post('/api/dsr/close',b).then(function(d){
       if(!d||!d.ok){done();errNear(btn,(d&&d.error)||'Couldn’t start it.');return;}
       if(d.started===false&&d.status==='final'){done();if(typeof toast==='function')toast('That night is already final','success');window.dsrOpen('night',d.business_date);return;}
-      st.expect=rerun?ver+1:(d.version?null:1);st.waits=0;
+      // The run starts on a thread: until its version shows, the last one
+      // (already finished) must not be mistaken for the answer.
+      st.expect=rerun?ver+1:(d.version?d.version+1:1);st.waits=0;
       window.dsrOpen('night',d.business_date,{keepExpect:true});
     }).catch(function(){done();btn.disabled=true;errNear(btn,'The answer didn’t arrive. Open the night again before pressing a second time.');});
   }
