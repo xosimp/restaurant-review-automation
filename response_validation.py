@@ -567,6 +567,23 @@ _EST_HEDGE_RE = re.compile(
 # "not money saved" / "not a saving" names what a figure is NOT; blanked
 # before the realised-money verbs are read.
 _NEGATED_SAVING_RE = re.compile(r"\bnot\s+(?:money\s+|a\s+|any\s+)?(?:saved|savings?|recovered)\b", re.I)
+# A saving word inside a hedge — "could be recovered", "can save", "might
+# save you" — states a possibility, not money saved (never "could have
+# saved", which says it was not). Blanked before the realised verbs are read.
+_HEDGED_SAVE_RE = re.compile(r"\b(?:could|can|might|may|would)\s+(?!have\b)(?:\w+\s+){0,2}?"
+                             r"(?:sav(?:e|ed|ing)|recover(?:ed)?|recoup(?:ed)?)\b(?:\s+you\b)?", re.I)
+# Where one figure's clause ends: a comma or semicolon, a dash, or a joining
+# word — "You saved $1,200, and waste was $84.50" puts "saved" on $1,200 only.
+_CLAUSE_BOUNDARY_RE = re.compile(r"[,;]\s|\s[—–-]\s|\b(?:and|but|while|whereas)\b", re.I)
+
+
+def _clause_span(t, start, end) -> tuple:
+    """(a, b): the clause of `t` the figure at t[start:end] sits in."""
+    a = 0
+    for m in _CLAUSE_BOUNDARY_RE.finditer(t, 0, start):
+        a = m.end()
+    m = _CLAUSE_BOUNDARY_RE.search(t, end)
+    return a, (m.start() if m else len(t))
 _PROJ_WORD_RE = re.compile(r"\b(?:projection|projected|if\s+it\s+holds|at\s+this\s+pace|if\s+nothing\s+changes)\b",
                            re.I)
 _ON_PACE_RE = re.compile(r"\b(?:on\s+pace|on\s+track\s+for|run[- ]rate|annuali[sz]ed|pacing\s+(?:for|toward))\b",
@@ -1556,7 +1573,11 @@ class _Run:
             if c.get("year"):
                 continue
             k = c["kind"]
-            nxt = re.findall(r"[A-Za-z%-]+", t[c["end"]:c["end"] + 30].lower())
+            # The unit is the figure's OWN token: the words right after it,
+            # whitespace only between — never past a comma or another figure
+            # ("labor ran 34.8%, 8.8 points over" is a % and then points).
+            adj = re.match(r"\s*([A-Za-z%★-]+)(?:\s+([A-Za-z%-]+))?", t[c["end"]:c["end"] + 30])
+            nxt = [w.lower() for w in (adj.groups() if adj else ()) if w]
             if k == "star" and "-" in c["raw"]:
                 continue          # "1-star reviews" names a category, not a rating
             if k == "bare" and nxt and nxt[0] in ("stars", "star", "★"):
@@ -1677,10 +1698,16 @@ class _Run:
         if not money or self.legacy:
             return self._realised_without_facts(s)
         t = _NEGATED_SAVING_RE.sub(lambda m: " " * len(m.group(0)), t)
-        realised = _REALISED_RE.search(t)
-        loss = _LOSS_RE.search(t)
-        promise = _PROMISE_RE.search(t)
+        # A saving word inside a hedge ("could be recovered", "can save") is
+        # no claim that money was saved; and a verb speaks for the figure in
+        # its own clause, never for every $ in the sentence ("Waste was
+        # $84.50, and about $640 a month could be recovered").
+        t = _HEDGED_SAVE_RE.sub(lambda m: " " * len(m.group(0)), t)
         for c in money:
+            a, b = _clause_span(t, c["start"], c["end"])
+            realised = _REALISED_RE.search(t, a, b)
+            loss = _LOSS_RE.search(t, a, b)
+            promise = _PROMISE_RE.search(t, a, b)
             facts, how, _tol = self._match(t, "money", c)
             if not facts:
                 continue          # F1 reads it later
@@ -1741,6 +1768,7 @@ class _Run:
             return s
         scan = _blank_own(s)
         t = _NEGATED_SAVING_RE.sub(lambda m: " " * len(m.group(0)), _normalise(scan))
+        t = _HEDGED_SAVE_RE.sub(lambda m: " " * len(m.group(0)), t)
         m = _REALISED_RE.search(t)
         if not m:
             return s
