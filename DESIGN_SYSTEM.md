@@ -371,7 +371,12 @@ now* (ember, breathing), *Recently* (green, timestamped), *Still holding*
 (memory — trackers in flight, follow-ups). Rules: every line is read from a
 row a job wrote; a restaurant with nothing running shows no strip at all;
 lines from a module the viewer may not read are left out. It is not a
-notification surface and never demands attention.
+notification surface and never demands attention. On web its edge carries
+the *orbit*: a single ember light travelling the pill's perimeter (3.6s,
+linear, `aiOrbit` — a conic gradient behind an inset fill, so only a 1.5px ring
+shows). It is the strip's only moving edge, runs only while the strip is shown,
+and stops under `prefers-reduced-motion`. Reuse it for nothing else — one
+"alive" surface per screen.
 
 **The surface hierarchy (brand layer).** Not every panel gets the same
 treatment. Five tiers, shared by web (`dashboard.html` → *Brand layer*) and

@@ -656,6 +656,14 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
    the feed. */
 .cbtn.ai-strip{position:fixed;left:20px;bottom:22px;z-index:997;display:flex;align-items:center;justify-content:flex-start;gap:9px;height:auto;max-width:min(420px,calc(100vw - 120px));padding:9px 14px 9px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--paper3);box-shadow:0 8px 24px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.03);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:transform .18s,box-shadow .18s,opacity .3s;opacity:0}
 .cbtn.ai-strip.on{opacity:1}
+/* The orbit: an ember light travelling the pill's edge while Cavnar AI is
+   working. A conic gradient spun behind an inset fill (:after), so only a
+   1.5px ring of it shows; the pill's own border steps aside for it. */
+.cbtn.ai-strip{overflow:hidden;isolation:isolate}
+.cbtn.ai-strip.on{border-color:transparent}
+.ai-strip:before{content:'';position:absolute;left:50%;top:50%;width:160%;aspect-ratio:1;z-index:-2;background:conic-gradient(from 0deg,var(--paper3) 0 55%,var(--ember) 90%,var(--ember2) 95%,var(--paper3) 100%);transform:translate(-50%,-50%) rotate(0deg);animation:aiOrbit 3.6s linear infinite}
+.ai-strip:after{content:'';position:absolute;inset:1.5px;z-index:-1;border-radius:inherit;background:var(--paper)}
+@keyframes aiOrbit{to{transform:translate(-50%,-50%) rotate(360deg)}}
 .cbtn.ai-strip:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(0,0,0,.18),0 0 0 1px rgba(200,75,47,.12)}
 .ai-strip .dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
 .ai-strip .dot:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:aiBreath 2.4s ease-in-out infinite}
@@ -697,7 +705,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
    watched screen is never perfectly still. */
 .hb-card svg[data-pts] path[stroke]{animation:hbChartBreath 7s ease-in-out infinite}
 @keyframes hbChartBreath{0%,100%{opacity:1}50%{opacity:.78}}
-@media (prefers-reduced-motion:reduce){.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
+@media (prefers-reduced-motion:reduce){.ai-strip:before,.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
 @media(max-width:640px){.ai-strip{left:12px;bottom:14px;max-width:calc(100vw - 110px);font-size:12px}.ai-feed{left:12px;bottom:60px}}
 /* ── Brand layer ─────────────────────────────────────────────────────────
    One surface hierarchy for every module, lit the way Home is lit.
@@ -3499,6 +3507,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-hero{margin-top:30px}
 .lb2-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
 .lb2-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:10px}
+.lb2-hero .hd .big{margin-top:14px}
 .lb2-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3)}
 .lb2-hero .delta{font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
 .lb2-hero .delta.good{color:var(--hb-good)}.lb2-hero .delta.bad{color:var(--hb-bad)}
@@ -3650,7 +3659,9 @@ svg:hover .hb-xh{opacity:1}
    dash bars on these titles: the container and the rows carry the brand. */
 .lb2-sched{position:relative;padding:24px 26px 22px;border-radius:20px;background:linear-gradient(160deg,rgba(200,75,47,.13),rgba(200,75,47,.04) 60%),var(--surface);border:1px solid rgba(200,75,47,.24);box-shadow:var(--elev-card),0 30px 70px -40px rgba(200,75,47,.45)}
 [data-theme="dark"] .lb2-sched{background:linear-gradient(160deg,rgba(224,100,68,.17),rgba(224,100,68,.05) 60%),var(--surface-glass),var(--surface)}
-.lb2-sched>.hb-sh{margin-top:0;padding-top:0;border-top:none}
+/* Only the first header — History is a direct child too, and lost its
+   rule and spacing to this. */
+.lb2-sched>.hb-sh:first-child{margin-top:0;padding-top:0;border-top:none}
 .lb2-srow{position:relative;margin-top:12px;border-radius:14px;border:1px solid rgba(200,75,47,.30);background:linear-gradient(135deg,rgba(200,75,47,.14),rgba(200,75,47,.07));box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 2px rgba(14,12,10,.06),0 14px 28px -18px rgba(200,75,47,.55);overflow:hidden;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
 .lb2-srow.s2{background:linear-gradient(135deg,rgba(200,75,47,.21),rgba(200,75,47,.11))}
 .lb2-srow.s3{background:linear-gradient(135deg,rgba(200,75,47,.29),rgba(200,75,47,.15))}
@@ -3856,7 +3867,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-srow.s8{background:linear-gradient(135deg,rgba(200,75,47,.30),rgba(200,75,47,.16))}
 /* Week picker beside Generate */
 .lb2-weekpick{display:inline-flex;gap:8px;align-items:center}
-.lb2-weekpick .ac-select,.lb2-weekpick .ac-input{width:auto;padding:8px 10px;font-size:14px}
+.lb2-weekpick .ac-select,.lb2-weekpick .ac-input{width:auto;height:36px;box-sizing:border-box;padding:0 12px;font-size:14px;border:1px solid var(--cb-line);border-radius:var(--cb-radius);background-color:var(--cb-surface)}
 /* Redo some days: one checkbox per date under the preview header */
 .sched-redo{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--hb-line2)}
 .sched-redo .sr-k{margin-right:4px}
