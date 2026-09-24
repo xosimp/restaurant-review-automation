@@ -213,9 +213,9 @@ private struct RecTimelineRow: View {
         VStack(alignment: .leading, spacing: 7) {
             HomeMixedText.make(item.title, size: 15, weight: 600, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
-            HomeMixedText.make(metaLine, size: 12.5, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make(item.metaLine(), size: 12.5, weight: 500, color: .cavnarInk3)
             AccountFlowLayout(spacing: 6) {
-                AccountChip(text: answerChip, muted: !item.wasTaken)
+                AccountChip(text: item.answerChip(), muted: !item.wasTaken)
                 if outcome?.validated == true {
                     AccountPill(text: "Validated", on: true)
                 }
@@ -224,8 +224,8 @@ private struct RecTimelineRow: View {
                 HomeMixedText.make("Why: " + why, size: 13, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let made = item.implementedAt, item.answer != "implemented" {
-                HomeMixedText.make("Made the change \(CavnarDate.mdy(made))", size: 13, weight: 500, color: .cavnarInk3)
+            if let made = item.madeTheChangeLine() {
+                HomeMixedText.make(made, size: 13, weight: 500, color: .cavnarInk3)
             }
             if let outcome {
                 outcomeBlock(outcome)
@@ -233,17 +233,6 @@ private struct RecTimelineRow: View {
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var metaLine: String {
-        var bits = [RecSummaryFormat.moduleLabel(item.module ?? "home")]
-        if let shown = item.firstShownAt { bits.append("shown \(CavnarDate.mdy(shown))") }
-        return bits.joined(separator: " \u{00B7} ")
-    }
-
-    private var answerChip: String {
-        guard let at = item.answeredAt, item.answer != "open" else { return item.answerLabel }
-        return "\(item.answerLabel) \u{00B7} \(CavnarDate.mdy(at))"
     }
 
     @ViewBuilder

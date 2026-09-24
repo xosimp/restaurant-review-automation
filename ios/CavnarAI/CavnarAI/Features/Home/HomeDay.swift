@@ -31,6 +31,14 @@ struct HomeDayCard: View {
                                     if let ask = line.ask, !ask.isEmpty {
                                         HomeAskLink(question: ask, label: "Ask")
                                     }
+                                    // A brief line that stands for a
+                                    // recommendation is answered where it
+                                    // is read: Done / Not for us, never
+                                    // Track (the brief names no metric).
+                                    if let key = line.answerKey {
+                                        RecAnswerRow(key: key, surface: "home", module: line.answerModule,
+                                                     answers: [.completed, .notForUs])
+                                    }
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -114,7 +122,51 @@ final class HomeDayViewModel {
         let text: String
         let tone: String?
         let ask: String?
+        /// The recommendation the line stands for, and whether Done / Not
+        /// for us apply to it (false for the money ranking and owed
+        /// replies, which nothing can answer). Both optional: an older
+        /// server sends neither, and the line reads as before.
+        let recKey: String?
+        let answerable: Bool?
         var id: String { (key ?? "") + text }
+
+        enum CodingKeys: String, CodingKey {
+            case key, text, tone, ask, answerable
+            case recKey = "rec_key"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try? c.decodeIfPresent(String.self, forKey: .key)
+            text = try c.decode(String.self, forKey: .text)
+            tone = try? c.decodeIfPresent(String.self, forKey: .tone)
+            ask = try? c.decodeIfPresent(String.self, forKey: .ask)
+            recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+            answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+        }
+
+        /// The key Done / Not for us answer — only on a keyed line the
+        /// server marked answerable.
+        var answerKey: String? {
+            guard answerable == true, let k = recKey?.trimmingCharacters(in: .whitespaces), !k.isEmpty else {
+                return nil
+            }
+            return k
+        }
+
+        /// The module the answer is recorded for, from the line's own key.
+        var answerModule: String { Self.module(forLineKey: key) }
+
+        static func module(forLineKey key: String?) -> String {
+            switch key {
+            case "reviews": return "reviews"
+            case "stock": return "food"
+            case "schedule": return "labor"
+            case "slow_day": return "marketing"
+            case "loss": return "ops"
+            default: return "home"
+            }
+        }
         var toneColor: Color {
             switch tone {
             case "good": return .cavnarGreen

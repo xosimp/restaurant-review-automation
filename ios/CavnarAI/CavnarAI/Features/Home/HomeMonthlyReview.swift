@@ -22,11 +22,28 @@ struct HomeMonthlyReview: Decodable {
         let ask: String?
         var id: String { key }
     }
+    /// One tracker row (outcomes.list_outcomes). `counts` is authoritative
+    /// for its colour (RecOutcome.standing); an older row without it falls
+    /// back to the verdict.
     struct Result: Decodable, Identifiable {
         let id: Int?
         let title: String?
         let summary: String?
         let verdict: String?
+        let counts: Bool?
+
+        enum CodingKeys: String, CodingKey { case id, title, summary, verdict, counts }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try? c.decodeIfPresent(Int.self, forKey: .id)
+            title = try? c.decodeIfPresent(String.self, forKey: .title)
+            summary = try? c.decodeIfPresent(String.self, forKey: .summary)
+            verdict = try? c.decodeIfPresent(String.self, forKey: .verdict)
+            counts = try? c.decodeIfPresent(Bool.self, forKey: .counts)
+        }
+
+        var standing: RecOutcome.Standing { RecOutcome.standing(verdict: verdict, counts: counts) }
     }
     struct Priority: Decodable {
         let label: String
@@ -94,7 +111,7 @@ struct HomeMonthlyReviewCard: View {
                             kicker("What your changes did")
                             ForEach(Array(results.enumerated()), id: \.offset) { _, res in
                                 HStack(alignment: .top, spacing: 10) {
-                                    Circle().fill(Self.tone(res.verdict)).frame(width: 7, height: 7).padding(.top, 6)
+                                    Circle().fill(Self.tone(res.standing)).frame(width: 7, height: 7).padding(.top, 6)
                                     HomeMixedText.make(res.summary ?? res.title ?? "", size: 13.5, weight: 500, color: .cavnarInk2)
                                 }
                             }
@@ -161,6 +178,15 @@ struct HomeMonthlyReviewCard: View {
         case "improved": return .cavnarGreen
         case "worsened": return .cavnarEmber
         default: return .cavnarInk3
+        }
+    }
+
+    /// A result row's colour: only a result that counts is green or ember.
+    static func tone(_ standing: RecOutcome.Standing) -> Color {
+        switch standing {
+        case .good: return .cavnarGreen
+        case .bad: return .cavnarEmber
+        case .neutral: return .cavnarInk3
         }
     }
 

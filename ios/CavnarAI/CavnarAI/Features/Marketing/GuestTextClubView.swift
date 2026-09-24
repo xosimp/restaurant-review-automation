@@ -10,6 +10,8 @@ struct GuestTextClubView: View {
     @State private var copied = false
     @State private var confirmingSend = false
     @State private var confirmingWinback = false
+    /// The win-back's "Not for us" asking why (RecReasonDialog).
+    @State private var askingWinbackReason = false
     /// The guest whose trash button was tapped, awaiting confirmation.
     @State private var contactToDelete: GuestContact?
     @FocusState private var focusedField: CampaignField?
@@ -232,9 +234,12 @@ struct GuestTextClubView: View {
                         Text("Texts go out between \(draft.smsWindow ?? "8:00 AM and 9:00 PM"). A sent text can't be recalled.")
                     }
 
+                    // Not for us asks why first — the same reason picker as
+                    // every other Not for us. A reason sends its code, Skip
+                    // sends none, Cancel sends nothing at all.
                     Button {
                         Haptic.light()
-                        Task { await viewModel.dismissWinback() }
+                        askingWinbackReason = true
                     } label: {
                         Text(RecAnswer.notForUs.label)
                             .font(.cavnarBody(12.5, weight: 600))
@@ -245,6 +250,10 @@ struct GuestTextClubView: View {
                     .buttonStyle(.plain)
                     .disabled(viewModel.isSendingWinback)
                     .accessibilityHint(RecAnswer.notForUs.accessibilityHint)
+                    .recReasonDialog(isPresented: $askingWinbackReason, skipLabel: "Skip",
+                                     onSkip: { Task { await viewModel.dismissWinback() } }) { reason in
+                        Task { await viewModel.dismissWinback(reasonCode: reason.code) }
+                    }
                 }
             }
 

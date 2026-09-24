@@ -12,6 +12,13 @@ struct HomeValueBand: View {
     let history: [ValueSnapshot]
     /// Where the figure came from — only modules with measured dollars.
     var measuredOn: [ValueModulePart] = []
+    /// `HomeSummary.valueHeadline`. When something measured got worse the
+    /// band draws the NET figure, says it is net, and swaps the delta line
+    /// for what the net is made of ("$1,517 improved, less $600 from 1 that
+    /// got worse") — the history behind it is of improvements, so a
+    /// "+$X since the 1st" beside a net figure would compare unlike things.
+    /// Nil (or not net) is the band exactly as before.
+    var headline: HomeValueHeadline? = nil
     /// True once this band has actually been revealed on screen.
     ///
     /// Both animations in here — the count-up and the sparkline's line
@@ -37,6 +44,11 @@ struct HomeValueBand: View {
         return (values.max() ?? 0) != (values.min() ?? 0)
     }
 
+    private var isNet: Bool { headline?.isNet == true }
+    /// The figure drawn: the net when net, else `total` as before.
+    private var figure: Int { isNet ? (headline?.figure ?? total) : total }
+    private var figureTone: Color { figure < 0 ? .cavnarRed : .cavnarGreen }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ValueBandSparkline(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend,
@@ -44,25 +56,25 @@ struct HomeValueBand: View {
                 .opacity(hasRealTrend ? 1 : 0.35)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("MEASURED VALUE \u{00B7} PER MONTH")
+                Text(isNet ? "MEASURED VALUE \u{00B7} NET PER MONTH" : "MEASURED VALUE \u{00B7} PER MONTH")
                     .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.6)
                     .foregroundStyle(Color.cavnarEmber2)
 
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    Text("$")
-                    CavnarAnimatableNumber(value: animatedTotal, format: { Self.digits(Int($0.rounded())) })
+                    Text(figure < 0 ? "\u{2212}$" : "$")
+                    CavnarAnimatableNumber(value: animatedTotal, format: { Self.digits(abs(Int($0.rounded()))) })
                 }
                 .font(.cavnarNumber(46, weight: 600))
-                .foregroundStyle(Color.cavnarGreen)
-                .cavnarNumberGlow(.cavnarGreen)
+                .foregroundStyle(figureTone)
+                .cavnarNumberGlow(figureTone)
                 .cavnarSensitive()
                 .onChange(of: revealed, initial: true) { _, isRevealed in
                     guard isRevealed, !hasCountedUp else { return }
                     hasCountedUp = true
-                    withAnimation(.easeOut(duration: 1.6)) { animatedTotal = Double(total) }
+                    withAnimation(.easeOut(duration: 1.6)) { animatedTotal = Double(figure) }
                 }
-                .onChange(of: total) { _, newValue in
+                .onChange(of: figure) { _, newValue in
                     guard hasCountedUp else { return }
                     animatedTotal = Double(newValue)
                 }
@@ -102,7 +114,9 @@ struct HomeValueBand: View {
     // "tracking starts today" rather than a fabricated gain.
     @ViewBuilder
     private var deltaLine: some View {
-        if let delta = monthDelta {
+        if isNet, let breakdown = headline?.breakdown {
+            HomeMixedText.make(breakdown, size: 13, weight: 600, color: .cavnarInk3, numberWeight: 700)
+        } else if let delta = monthDelta {
             (Text("+$")
                 .font(.cavnarNumber(13, weight: 700))
              + Text(Self.digits(delta))

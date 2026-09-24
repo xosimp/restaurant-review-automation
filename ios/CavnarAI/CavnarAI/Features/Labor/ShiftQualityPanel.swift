@@ -27,7 +27,9 @@ struct ShiftQualityPanel: View {
     /// "dismissed", by text) and where a ✓ or ✕ goes. When no handler is
     /// given the recommendations read as plain warnings, as before.
     var recommendationDecisions: [String: String] = [:]
-    var onRecommendation: ((String, Bool) -> Void)? = nil
+    /// (text, accepted, reason). ✕ asks why first (RecReasonDialog): a
+    /// reason arrives with it, Skip arrives as nil, Cancel never calls.
+    var onRecommendation: ((String, Bool, RecReason?) -> Void)? = nil
     var suppressedKinds: [String] = []
     /// The generation loop's view model, when the panel sits on the live
     /// draft: the score's movement, what Cavnar changed, rating in place
@@ -35,6 +37,10 @@ struct ShiftQualityPanel: View {
     /// alone.
     var viewModel: LaborViewModel? = nil
 
+    /// The recommendation whose ✕ is asking why — held apart from the
+    /// dialog's own flag (DESIGN_SYSTEM → Why not).
+    @State private var reasonFor: String?
+    @State private var askingReason = false
     @State private var expandedShift: String?
     @State private var showingReasoning = false
     @State private var showingChanges = false
@@ -417,9 +423,12 @@ struct ShiftQualityPanel: View {
                     Spacer(minLength: 4)
                     HStack(spacing: 6) {
                         decisionButton("checkmark", on: decision == "accepted", tone: .cavnarGreen,
-                                       label: "Did it") { onRecommendation?(rec, true) }
+                                       label: "Did it") { onRecommendation?(rec, true, nil) }
                         decisionButton("xmark", on: decision == "dismissed", tone: .cavnarInk3,
-                                       label: "Not for us") { onRecommendation?(rec, false) }
+                                       label: "Not for us") {
+                            reasonFor = rec
+                            askingReason = true
+                        }
                     }
                 }
                 // An accepted hours change is measured — say on what, until when.
@@ -435,6 +444,13 @@ struct ShiftQualityPanel: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.cavnarAmber.opacity(0.07))
         )
+        .recReasonDialog(isPresented: $askingReason, skipLabel: "Skip", onSkip: {
+            if let rec = reasonFor { onRecommendation?(rec, false, nil) }
+            reasonFor = nil
+        }) { reason in
+            if let rec = reasonFor { onRecommendation?(rec, false, reason) }
+            reasonFor = nil
+        }
     }
 
     private func decisionButton(_ symbol: String, on: Bool, tone: Color, label: String,

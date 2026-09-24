@@ -10,13 +10,21 @@ final class ModulesGridViewModel {
 
     private let client: APIClient
 
-    // `initialModules`: the same list Home already fetched (both read
-    // /mobile/api/home), so the grid renders on first open and the fetch
-    // below is a silent refresh — never the loading seal for a list the
-    // app already has.
+    // `initialModules`: the same list Home already fetched (Home's payload
+    // carries the modules too), so the grid renders on first open and the
+    // fetch below is a silent refresh — never the loading seal for a list
+    // the app already has.
     init(client: APIClient = .shared, initialModules: [ModuleSummary] = []) {
         self.client = client
         self.modules = initialModules
+    }
+
+    /// GET /mobile/api/home/modules — the grid alone. Asking for the whole
+    /// Home to draw the tiles built Home's brief and recorded its
+    /// recommendations as shown on a screen that never showed them.
+    private struct ModulesResponse: Decodable {
+        let ok: Bool
+        let modules: [ModuleSummary]
     }
 
     func load() async {
@@ -24,14 +32,27 @@ final class ModulesGridViewModel {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let summary: HomeSummary = try await client.send("/mobile/api/home")
-            modules = summary.modules
+            modules = try await fetchModules()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
             // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load your modules."
+        }
+    }
+
+    /// The modules route; only a 404 (an older server without it) falls
+    /// back to the whole Home payload. Any other failure is reported as is.
+    private func fetchModules() async throws -> [ModuleSummary] {
+        do {
+            // No error buzz here: on an older server the 404 is expected
+            // and answered by the fallback, not a failure the owner felt.
+            let r: ModulesResponse = try await client.send("/mobile/api/home/modules", hapticOnError: false)
+            return r.modules
+        } catch let error as APIClient.APIError where error.status == 404 {
+            let summary: HomeSummary = try await client.send("/mobile/api/home")
+            return summary.modules
         }
     }
 }

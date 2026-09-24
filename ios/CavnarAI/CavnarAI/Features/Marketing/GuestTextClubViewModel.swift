@@ -529,15 +529,27 @@ final class GuestTextClubViewModel {
         }
     }
 
-    private struct WinbackDismissBody: Encodable { let kind: String }
+    /// `reason_code` is one of rec_ledger.REASON_CODES (RecReason), omitted
+    /// from the JSON when the owner skipped the why.
+    private struct WinbackDismissBody: Encodable {
+        let kind: String
+        let reasonCode: String?
+        enum CodingKeys: String, CodingKey {
+            case kind
+            case reasonCode = "reason_code"
+        }
+    }
 
-    func dismissWinback() async {
+    /// "Not for us" on the win-back — after the reason picker: a picked
+    /// reason travels as `reason_code`, Skip sends none. (Cancel on the
+    /// picker never calls this.)
+    func dismissWinback(reasonCode: String? = nil) async {
         guard let draft = winback else { return }
         winbackError = nil
         do {
             let r: OKErrorResponse = try await client.send(
                 "/mobile/api/guest-winback/\(draft.id)/dismiss", method: .post,
-                body: WinbackDismissBody(kind: "not_for_us"),
+                body: WinbackDismissBody(kind: "not_for_us", reasonCode: reasonCode),
                 retryTransient: false)
             if r.ok {
                 Haptic.success()

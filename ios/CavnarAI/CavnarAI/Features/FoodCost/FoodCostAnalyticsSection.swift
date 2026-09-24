@@ -130,7 +130,9 @@ struct FoodCostAnalyticsSection: View {
                         target: viewModel.trendTarget,
                         asOf: analytics.lastUpdated
                     )
-                } else if viewModel.isLoading {
+                } else if viewModel.isLoading || !viewModel.hasRequestedFirstLoad {
+                    // The first load starts as the tab appears — the
+                    // skeleton covers the frame before it does.
                     FoodCostAnalyticsSkeleton()
                 } else if let message = viewModel.errorMessage {
                     // A failed load used to render an empty ScrollView: no

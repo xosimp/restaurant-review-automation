@@ -156,6 +156,46 @@ extension DSRBlock {
 
     var topItems: [Item] { items("top_items") }
 
+    // What gross and net mean for this restaurant (`detail.definition`,
+    // restaurants.dsr_gross_basis): "items" = items at the price rung, no
+    // tax; "all" = everything rung, tax and voided lines included. Net is
+    // the same figure either way.
+
+    private var definition: JSONValue? { detail["definition"] }
+
+    /// "items" or "all"; nil from an older report that doesn't say.
+    var grossBasis: String? { definition?["gross_basis"]?.string }
+
+    /// The Tax tile's caption: tax is inside an "all" gross, never in net.
+    var taxCaption: String {
+        grossBasis == "all" ? "in gross, not net" : "not in gross or net"
+    }
+
+    /// "Gross is items at the price rung, … Net is gross less discounts
+    /// and comps." — the server's own definitions. `net_deductions` is
+    /// the fallback only for a report that carries no `net` sentence.
+    var definitionNote: String? {
+        var parts: [String] = []
+        if let gross = definition?["gross"]?.string { parts.append("Gross is \(gross).") }
+        if let net = definition?["net"]?.string {
+            parts.append("Net is \(net).")
+        } else {
+            let takes = (definition?["net_deductions"]?.array ?? []).compactMap(\.string)
+            if !takes.isEmpty { parts.append("Net takes off \(takes.joined(separator: " and ")).") }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// Where the gross figure would be, when an "all" gross could not be
+    /// measured: "Gross not measured — the POS didn't report tax and
+    /// voids". Nil when gross was measured or nothing is named missing.
+    var grossNotMeasured: String? {
+        guard metric("gross") == nil else { return nil }
+        let missing = (definition?["gross_missing"]?.array ?? []).compactMap(\.string)
+        guard !missing.isEmpty else { return nil }
+        return "Gross not measured \u{2014} the POS didn\u{2019}t report \(missing.joined(separator: " and "))"
+    }
+
     private func items(_ key: String) -> [Item] {
         detail[key]?.array.compactMap { i in
             guard let name = i["name"]?.string else { return nil }

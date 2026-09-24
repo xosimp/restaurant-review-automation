@@ -145,6 +145,7 @@ struct HomeView: View {
                                 total: summary.totalValueDelivered,
                                 history: summary.valueHistory,
                                 measuredOn: summary.valueByModule ?? [],
+                                headline: summary.valueHeadline,
                                 // Its count-up and line reveal wait for this
                                 // rather than for onAppear — see the flag's
                                 // own comment in HomeValueBand.
@@ -607,7 +608,8 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 if let summary = viewModel.summary {
-                    ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory)
+                    ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory,
+                                   headline: summary.valueHeadline)
                         .padding(20)
                 }
             }

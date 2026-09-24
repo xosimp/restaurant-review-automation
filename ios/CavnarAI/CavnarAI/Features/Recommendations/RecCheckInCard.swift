@@ -7,12 +7,18 @@ import SwiftUI
 extension APIClient {
     struct RecCheckInBody: Encodable, Equatable {
         let key: String
+        /// The tracker (outcome) the card is about, sent with every
+        /// check-in so the answer lands on THIS result — not on whichever
+        /// episode of the key is newest (a Track re-shown after its silence
+        /// opens a new episode with no tracker behind it).
+        let trackerId: Int
         let didIt: String
         let conditionsChanged: Bool
         let surface: String
 
         enum CodingKeys: String, CodingKey {
             case key, surface
+            case trackerId = "tracker_id"
             case didIt = "did_it"
             case conditionsChanged = "conditions_changed"
         }
@@ -21,35 +27,77 @@ extension APIClient {
     struct RecCheckInResponse: Decodable {
         struct Checkin: Decodable {
             struct Attribution: Decodable {
-                let implemented: Bool?
+                /// "yes" / "partly" / "no" — the answer as the server stored
+                /// it. Declared a Bool, every real reply failed to decode and
+                /// no check-in ever read as saved. A Bool (an older build)
+                /// is still read: true = "yes", false = "no".
+                let implemented: String?
                 let confounded: Bool?
                 let discount: Bool?
+
+                enum CodingKeys: String, CodingKey { case implemented, confounded, discount }
+
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    if let s = try? c.decodeIfPresent(String.self, forKey: .implemented) {
+                        implemented = s
+                    } else if let b = try? c.decodeIfPresent(Bool.self, forKey: .implemented) {
+                        implemented = b ? "yes" : "no"
+                    } else {
+                        implemented = nil
+                    }
+                    confounded = try? c.decodeIfPresent(Bool.self, forKey: .confounded)
+                    discount = try? c.decodeIfPresent(Bool.self, forKey: .discount)
+                }
             }
             let didIt: String?
             let conditionsChanged: Bool?
             let trackerId: Int?
+            let note: String?
             let attribution: Attribution?
             enum CodingKeys: String, CodingKey {
-                case attribution
+                case attribution, note
                 case didIt = "did_it"
                 case conditionsChanged = "conditions_changed"
                 case trackerId = "tracker_id"
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                didIt = try? c.decodeIfPresent(String.self, forKey: .didIt)
+                conditionsChanged = try? c.decodeIfPresent(Bool.self, forKey: .conditionsChanged)
+                trackerId = try? c.decodeIfPresent(Int.self, forKey: .trackerId)
+                note = try? c.decodeIfPresent(String.self, forKey: .note)
+                attribution = try? c.decodeIfPresent(Attribution.self, forKey: .attribution)
             }
         }
         let ok: Bool
         let recorded: Bool?
         let error: String?
+        /// Read leniently: an odd `checkin` block never turns a saved
+        /// answer into "couldn't save that".
         let checkin: Checkin?
+
+        enum CodingKeys: String, CodingKey { case ok, recorded, error, checkin }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            recorded = try? c.decodeIfPresent(Bool.self, forKey: .recorded)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            checkin = try? c.decodeIfPresent(Checkin.self, forKey: .checkin)
+        }
     }
 
     /// POST /recs/checkin — "Did you make this change? Did anything else
     /// change?" The answer changes the result it is about: "no" stops it
-    /// counting, "something else changed" caps its grade.
-    func checkIn(key: String, didIt: String, conditionsChanged: Bool,
+    /// counting, "something else changed" caps its grade. `trackerId` is
+    /// the result the card shows — required, so no caller can leave it out.
+    func checkIn(key: String, trackerId: Int, didIt: String, conditionsChanged: Bool,
                  surface: String) async throws -> RecCheckInResponse {
         try await send("/mobile/api/recs/checkin", method: .post,
-                       body: RecCheckInBody(key: key, didIt: didIt, conditionsChanged: conditionsChanged,
-                                            surface: surface),
+                       body: RecCheckInBody(key: key, trackerId: trackerId, didIt: didIt,
+                                            conditionsChanged: conditionsChanged, surface: surface),
                        retryTransient: false)
     }
 
@@ -179,8 +227,8 @@ struct RecCheckInCard: View {
         errorMessage = nil
         defer { busy = nil }
         do {
-            let r = try await client.checkIn(key: key, didIt: didIt, conditionsChanged: somethingElseChanged,
-                                             surface: surface)
+            let r = try await client.checkIn(key: key, trackerId: outcome.id, didIt: didIt,
+                                             conditionsChanged: somethingElseChanged, surface: surface)
             guard r.ok else {
                 errorMessage = r.error ?? "Couldn\u{2019}t save that."
                 return

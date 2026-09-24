@@ -64,7 +64,15 @@ struct FoodCostQuickEntryView: View {
             if let restaurantId = sessionStore.currentUser?.restaurantId {
                 analyticsViewModel.configureCaching(restaurantId: restaurantId)
             }
-            await analyticsViewModel.load()
+        }
+        // Analytics loads the first time its tab is shown, not on opening
+        // Food Cost: loading it records its recommendations (the read's
+        // lines, the diagnosis, the reprice cards) as shown, and on the
+        // Tracker tab none of them is on screen. An unstructured Task, so
+        // flicking back to Tracker mid-load does not cancel it.
+        .onChange(of: subTab, initial: true) { _, tab in
+            guard tab == .analytics else { return }
+            Task { await analyticsViewModel.loadOnFirstShow() }
         }
     }
 

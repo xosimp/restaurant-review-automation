@@ -1969,6 +1969,12 @@ final class LaborViewModel {
         let kind: String
         let key: String
         let action: String
+        /// A dismissal's why (RecReason) — omitted from the JSON when nil.
+        var reasonCode: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case kind, key, action
+            case reasonCode = "reason_code"
+        }
     }
 
     private struct RecommendationResponse: Decodable {
@@ -1991,8 +1997,10 @@ final class LaborViewModel {
     var recommendationTracking: [String: String] = [:]
 
     /// Record "did it" or "not for us" — the ledger that decides which
-    /// kinds keep being shown.
-    func recordRecommendation(_ text: String, accepted: Bool) async {
+    /// kinds keep being shown. A "not for us" carries the owner's reason
+    /// from the picker (`reason_code`), or none when they skipped it; a
+    /// code handed to "did it" is never sent.
+    func recordRecommendation(_ text: String, accepted: Bool, reasonCode: String? = nil) async {
         let action = accepted ? "accepted" : "dismissed"
         let previous = recommendationDecisions[text]
         recommendationDecisions[text] = action
@@ -2000,7 +2008,8 @@ final class LaborViewModel {
             let r: RecommendationResponse = try await client.send(
                 "/mobile/api/labor/schedule/recommendation", method: .post,
                 body: RecommendationBody(kind: scheduleResult?.quality?.kind(of: text) ?? ScheduleQuality.recommendationKind(text),
-                                         key: String(text.prefix(200)), action: action),
+                                         key: String(text.prefix(200)), action: action,
+                                         reasonCode: accepted ? nil : reasonCode),
                 hapticOnError: false)
             if r.ok {
                 suppressedRecommendationKinds = r.suppressedKinds ?? suppressedRecommendationKinds

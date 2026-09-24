@@ -11,6 +11,14 @@ final class RecOutcomeROITests: XCTestCase {
         try JSONDecoder.cavnar.decode(T.self, from: Data(json.utf8))
     }
 
+    /// Noon UTC on an ISO day — a fixed "today" for date-relative lines.
+    static func noon(_ iso: String) -> Date {
+        let p = iso.split(separator: "-").compactMap { Int($0) }
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        return utc.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 12))!
+    }
+
     // MARK: - Structured reasons (#22)
 
     func testTheSixReasonCodesAreTheServersInOwnerWording() {
@@ -177,7 +185,11 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertNil(o.interim)
         XCTAssertEqual(o.resultLine, "Labor % 31.2% → 29.8%, improved")
         XCTAssertEqual(o.otherChangesLine, "Also changed these weeks: a price change (8/12/26)")
-        XCTAssertEqual(o.recheckLine, "Re-checked on 10/28/26")
+        // recheck_on 2026-10-28, no recheck verdict: still ahead on 9/24/26,
+        // so it is due, not done; from its day on it has happened.
+        let utc = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(o.recheckLine(asOf: Self.noon("2026-09-24"), in: utc), "Re-check on 10/28/26")
+        XCTAssertEqual(o.recheckLine(asOf: Self.noon("2026-10-28"), in: utc), "Re-checked on 10/28/26")
         XCTAssertNil(o.interimLine)
         XCTAssertNil(o.measuringLine)
     }
@@ -303,19 +315,25 @@ final class RecOutcomeROITests: XCTestCase {
         let client = EdgeHTTP.client { request in
             path.value = request.url?.path
             captured.value = EdgeHTTP.bodyJSON(request)
+            // The server's real reply: `implemented` is the answer as a
+            // string ("yes" / "partly" / "no"), never a Bool.
             return EdgeHTTP.reply(request, 200, """
-                {"ok": true, "recorded": true, "checkin": {"did_it": "partly", "conditions_changed": true,
-                 "note": null, "tracker_id": 7, "attribution": {"implemented": true, "confounded": true, "discount": true}}}
+                {"checkin": {"attribution": {"confounded": true, "discount": true, "implemented": "partly"},
+                 "conditions_changed": true, "did_it": "partly", "note": null, "tracker_id": 7},
+                 "ok": true, "recorded": true}
                 """)
         }
-        let r = try await client.checkIn(key: "trim_day:Tuesday", didIt: "partly", conditionsChanged: true,
-                                         surface: "home")
+        let r = try await client.checkIn(key: "trim_day:Tuesday", trackerId: 7, didIt: "partly",
+                                         conditionsChanged: true, surface: "home")
         XCTAssertEqual(path.value, "/mobile/api/recs/checkin")
         XCTAssertEqual(captured.value?["key"] as? String, "trim_day:Tuesday")
+        XCTAssertEqual(captured.value?["tracker_id"] as? Int, 7)
         XCTAssertEqual(captured.value?["did_it"] as? String, "partly")
         XCTAssertEqual(captured.value?["conditions_changed"] as? Bool, true)
         XCTAssertEqual(captured.value?["surface"] as? String, "home")
+        XCTAssertTrue(r.ok)
         XCTAssertEqual(r.checkin?.trackerId, 7)
+        XCTAssertEqual(r.checkin?.attribution?.implemented, "partly")
         XCTAssertEqual(r.checkin?.attribution?.discount, true)
         XCTAssertEqual(RecCheckInCard.thanks(didIt: "no", conditionsChanged: false),
                        "Noted \u{2014} this result no longer counts as one of Cavnar\u{2019}s.")

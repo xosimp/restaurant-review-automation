@@ -255,17 +255,40 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
     }
 
     /// The interim line while measuring: "Partial reading after 9 days:
-    /// labor % 30.1%, −1.1% so far" — labelled partial, never a result. Nil
-    /// when there is no reading yet (first day, or unmeasurable so far).
+    /// labor % 30.1%, −1.1 pts so far" — labelled partial, never a result.
+    /// Nil when there is no reading yet (first day, or unmeasurable so far).
+    ///
+    /// For a metric that is itself a percentage (labor %, food cost %, comp
+    /// or void rate) the move is given in POINTS — `interim.delta`, the
+    /// reading less its baseline, both in % — because `delta_pct` is the
+    /// RELATIVE change (31.2% → 30.1% is −3.5%), and "−3.5%" beside "30.1%"
+    /// reads as three and a half points. Only when the server sends no
+    /// `delta` does a % metric fall back to the relative figure, and then
+    /// it says "relative". Every other unit keeps its relative change.
     var interimLine: String? {
         guard isTracking, let i = interim, let value = Self.reading(i.value, unit: unit) else { return nil }
         let days = i.daysIn.map { " after \($0) day\($0 == 1 ? "" : "s")" } ?? ""
         let label = (metricLabel ?? metric ?? "").lowercased()
         var s = "Partial reading\(days): \(label.isEmpty ? "" : label + " ")\(value)"
-        if let pct = i.deltaPct {
-            s += ", \(pct > 0 ? "+" : pct < 0 ? "\u{2212}" : "\u{00B1}")\(String(format: "%.1f", abs(pct)))% so far"
+        if let move = Self.interimMove(delta: i.delta, deltaPct: i.deltaPct, unit: unit) {
+            s += ", \(move) so far"
         }
         return s
+    }
+
+    /// "−1.1 pts" for a % metric (the difference of the two readings),
+    /// "+4.8%" for any other unit, "−3.5% relative" for a % metric whose
+    /// payload carried only the relative change. Nil when there is neither.
+    static func interimMove(delta: Double?, deltaPct: Double?, unit: String?) -> String? {
+        func signed(_ v: Double) -> String {
+            (v > 0 ? "+" : v < 0 ? "\u{2212}" : "\u{00B1}") + String(format: "%.1f", abs(v))
+        }
+        if unit == "%" {
+            if let delta { return signed(delta) + " pts" }
+            if let deltaPct { return signed(deltaPct) + "% relative" }
+            return nil
+        }
+        return deltaPct.map { signed($0) + "%" }
     }
 
     /// "Measuring labor % until 10/21/26" while it runs.
@@ -276,15 +299,39 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
     }
 
     /// The re-check in plain words: held / faded / reversed, or when it is due.
-    var recheckLine: String? {
+    var recheckLine: String? { recheckLine(asOf: Date()) }
+
+    /// The same, read against `today` on `timeZone`'s calendar. A re-check
+    /// date still ahead is "Re-check on 10/28/26" — it has not happened, and
+    /// "Re-checked on" a future date said it had.
+    func recheckLine(asOf today: Date, in timeZone: TimeZone = .current) -> String? {
         switch recheckVerdict {
         case "held": return "Held at the re-check"
         case "faded": return "Faded at the re-check \u{2014} no longer counted"
         case "reversed": return "Reversed at the re-check \u{2014} no longer counted"
         case "unknown": return "The re-check couldn\u{2019}t be read"
         default:
-            guard isEvaluated, let on = recheckOn else { return nil }
-            return "Re-checked on \(CavnarDate.mdy(on))"
+            guard isEvaluated, let on = recheckOn, !on.isEmpty else { return nil }
+            let upcoming = String(on.prefix(10)) > CavnarDate.isoDay(today, in: timeZone)
+            return (upcoming ? "Re-check on " : "Re-checked on ") + CavnarDate.mdy(on)
+        }
+    }
+
+    /// How a result reads in colour. `counts` is authoritative when the
+    /// server sends it: a result the owner disowned at check-in, one that
+    /// faded at the re-check, or an informational (alert-opened) row does
+    /// not count, and is drawn neutral whatever its verdict. Only an older
+    /// row with no `counts` falls back to the verdict alone.
+    enum Standing: Equatable { case good, bad, neutral }
+
+    var standing: Standing { Self.standing(verdict: verdict, counts: counts) }
+
+    static func standing(verdict: String?, counts: Bool?) -> Standing {
+        if counts == false { return .neutral }
+        switch verdict {
+        case "improved": return .good
+        case "worsened": return .bad
+        default: return .neutral
         }
     }
 
@@ -557,10 +604,12 @@ struct RecTimelineItem: Decodable, Identifiable, Equatable {
         trackerId = try? c.decodeIfPresent(Int.self, forKey: .trackerId)
     }
 
-    /// What the owner did with it, in their words.
+    /// What the owner did with it, in their words. "Tracked" only when a
+    /// tracker actually stands behind it — an accepted recommendation with
+    /// no metric (a schedule move, a refused Track) measured nothing.
     var answerLabel: String {
         switch answer {
-        case "accepted": return "Tracked"
+        case "accepted": return trackerId != nil ? "Tracked" : "Accepted"
         case "completed": return "Done"
         case "implemented": return "Made the change"
         case "dismissed": return "Not for us"
@@ -573,6 +622,29 @@ struct RecTimelineItem: Decodable, Identifiable, Equatable {
 
     /// Taken (accepted, done, made the change) — the answers a result can follow.
     var wasTaken: Bool { ["accepted", "completed", "implemented"].contains(answer) }
+
+    // The timeline's dates. Every stamp here is a UTC `datetime('now')`,
+    // so each is read on the phone's calendar day (`CavnarDate.mdyLocal`):
+    // an answer at 9pm in Chicago is that day, not the next UTC one.
+
+    /// "Labor · shown 8/1/26".
+    func metaLine(in timeZone: TimeZone = .current) -> String {
+        var bits = [RecSummaryFormat.moduleLabel(module ?? "home")]
+        if let shown = firstShownAt, !shown.isEmpty { bits.append("shown \(CavnarDate.mdyLocal(shown, in: timeZone))") }
+        return bits.joined(separator: " \u{00B7} ")
+    }
+
+    /// "Not for us · 8/3/26" — the answer and the day it was given.
+    func answerChip(in timeZone: TimeZone = .current) -> String {
+        guard let at = answeredAt, !at.isEmpty, answer != "open" else { return answerLabel }
+        return "\(answerLabel) \u{00B7} \(CavnarDate.mdyLocal(at, in: timeZone))"
+    }
+
+    /// "Made the change 8/5/26" — when it was made after a different answer.
+    func madeTheChangeLine(in timeZone: TimeZone = .current) -> String? {
+        guard let made = implementedAt, !made.isEmpty, answer != "implemented" else { return nil }
+        return "Made the change \(CavnarDate.mdyLocal(made, in: timeZone))"
+    }
 
     /// "Not for us · too costly — we priced it last spring".
     var reasonLine: String? {
@@ -650,13 +722,76 @@ enum RecValueFormat {
 
     /// "Net of 1 change that got worse: $980/month" — only when something
     /// did get worse; the improvements line above stays the improvements.
+    /// N is the PRICED results that got worse (`worsened.priced_count`):
+    /// the dollars netted cover only those. A worse result with no dollar
+    /// figure nets nothing, so with none priced there is no line (the
+    /// counts line still says "1 got worse"). `count` stands in for an
+    /// older server that sends no `priced_count`.
     static func netLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String? {
         guard let worse = d.worsened, (worse.count ?? 0) > 0 else { return nil }
-        let n = worse.count ?? 0
+        let n = pricedWorse(count: worse.count, pricedCount: worse.pricedCount)
+        guard n > 0 else { return nil }
         let net = d.netMonthly ?? ((d.monthly ?? 0) - (worse.monthly ?? 0))
         var s = "Net of \(n) change\(n == 1 ? "" : "s") that got worse: \(money(net))/month"
         if let wm = worse.monthly, wm > 0 { s += " (\(money(wm))/month worse)" }
         return s + "."
+    }
+
+    /// How many worse results the netted dollars cover: `priced_count` when
+    /// the server sends it, else `count` (an older server priced them all).
+    static func pricedWorse(count: Int?, pricedCount: Int?) -> Int {
+        pricedCount ?? count ?? 0
+    }
+
+    /// "$1,517 improved, less $600 from 1 that got worse" — what a NET
+    /// figure is made of, said beside it wherever it is drawn (Home's value
+    /// band, the value chart). N counts only the priced results, as above;
+    /// with none priced the net is the improvements and the sentence says
+    /// why instead of "less $0 from 0".
+    static func netBreakdown(improved: Double, worseMonthly: Double?, count: Int?, pricedCount: Int?) -> String {
+        let n = pricedWorse(count: count, pricedCount: pricedCount)
+        if n > 0 {
+            return "\(money(improved)) improved, less \(money(worseMonthly ?? 0)) from \(n) that got worse"
+        }
+        let all = count ?? 0
+        return "\(money(improved)) improved \u{2014} the \(all) that got worse "
+            + (all == 1 ? "has" : "have") + " no dollar figure"
+    }
+
+    /// "Reply faster: Average rating 4.2★ → 4.5★, improved — measured, no
+    /// dollar figure." A win measured on a number with no dollar rate (a
+    /// rating) is still a measured win; it is never priced here.
+    static func unpricedWinLine(line: String?, title: String?) -> String? {
+        let l = line?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let t = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body: String
+        switch (t.isEmpty, l.isEmpty) {
+        case (false, false): body = "\(t): \(l)"
+        case (true, false): body = l
+        case (false, true): body = "\(t) \u{2014} improved"
+        default: return nil
+        }
+        return body + " \u{2014} measured, no dollar figure."
+    }
+
+    /// The unpriced wins a card lists, in the server's order.
+    static func unpricedWinLines(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> [String] {
+        (d.unpricedWins ?? []).compactMap { unpricedWinLine(line: $0.line, title: $0.title) }
+    }
+
+    /// The worth card's first line when no priced win exists. "Nothing
+    /// measured yet" only when nothing was: with unpriced wins listed, the
+    /// line is only what is still being measured (or nothing).
+    static func nothingPricedLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered,
+                                  unpricedWins: Int) -> String? {
+        let n = d.inFlight ?? 0
+        if unpricedWins > 0 {
+            return n > 0 ? "\(n) more change\(n == 1 ? "" : "s") being measured now." : nil
+        }
+        if n > 0 {
+            return "Nothing measured yet. \(n) change\(n == 1 ? "" : "s") being measured now."
+        }
+        return "Nothing measured yet. Track a recommendation and its result lands here."
     }
 
     /// The server's own sentence, shown only when the net is below zero.

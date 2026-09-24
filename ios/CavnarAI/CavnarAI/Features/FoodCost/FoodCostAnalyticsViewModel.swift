@@ -64,6 +64,20 @@ final class FoodCostAnalyticsViewModel {
         UserDefaults.standard.set(true, forKey: Self.heroIntroPlayedKey(restaurantId))
     }
 
+    /// Whether the Analytics tab has asked for its first load yet.
+    private(set) var hasRequestedFirstLoad = false
+
+    /// The Analytics tab's first appearance — the only automatic load.
+    /// Opening Food Cost on the Tracker tab fetches nothing here, because
+    /// every analytics read records its recommendations as shown; later
+    /// visits to the tab in the same session keep what is on screen, as
+    /// before (the load used to run once, on opening Food Cost).
+    func loadOnFirstShow() async {
+        guard !hasRequestedFirstLoad else { return }
+        hasRequestedFirstLoad = true
+        await load()
+    }
+
     func load() async {
         isLoading = analytics == nil
         errorMessage = nil

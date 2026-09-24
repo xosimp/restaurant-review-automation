@@ -9,6 +9,15 @@ import SwiftUI
 struct ValueChartCard: View {
     let totalValue: Int
     let history: [ValueSnapshot]
+    /// `HomeSummary.valueHeadline` — when something measured got worse the
+    /// figure is the NET, labelled net, with what it is made of under it.
+    /// The line stays the improvements' own history, and says so. Nil (or
+    /// not net) is the card exactly as before.
+    var headline: HomeValueHeadline? = nil
+
+    private var isNet: Bool { headline?.isNet == true }
+    /// The figure drawn: the net when net, else `totalValue`.
+    private var figure: Int { isNet ? (headline?.figure ?? totalValue) : totalValue }
 
     @State private var selectedRange: ChartRange = .oneMonth
 
@@ -37,7 +46,7 @@ struct ValueChartCard: View {
     }
 
     private var accessibilitySummary: String {
-        let current = Self.currencyText(totalValue)
+        let current = Self.signedCurrencyText(figure) + (isNet ? " net per month" : "")
         guard let first = history.first, history.count > 1 else { return current }
         return "\(current), up from \(Self.currencyText(first.value)) "
             + "across \(history.count) snapshots"
@@ -49,25 +58,27 @@ struct ValueChartCard: View {
             // behind it stopped being labor's gap-to-target plus food
             // cost's recoverable waste — money the restaurant was still
             // LOSING — and became only what outcomes.py measured before and
-            // after. The label has to say which of those it is.
-            Text("MEASURED RESULTS")
+            // after. The label has to say which of those it is — and, when
+            // something got worse, that the figure is net of it.
+            Text(isNet ? "MEASURED RESULTS \u{00B7} NET PER MONTH" : "MEASURED RESULTS")
                 .font(.cavnarBody(14, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
             // A celebratory green count-up to $0 overclaims on an account
             // that has not measured anything yet, which is most of them on
-            // day one. Zero says what it is instead.
-            if totalValue <= 0 {
+            // day one. Zero says what it is instead. A net figure was
+            // measured, whatever its sign, so it is always drawn.
+            if !isNet && totalValue <= 0 {
                 Text("Nothing measured yet")
                     .font(.cavnarNumber(26, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .cavnarSensitive()
             } else {
-            AnimatableNumberText(value: animatedTotal, format: Self.currencyText)
+            AnimatableNumberText(value: animatedTotal, format: Self.signedCurrencyText)
                 .font(.cavnarNumber(38, weight: 600))
-                .foregroundStyle(Color.cavnarGreen)
-                .cavnarNumberGlow(.cavnarGreen)
+                .foregroundStyle(figure < 0 ? Color.cavnarRed : Color.cavnarGreen)
+                .cavnarNumberGlow(figure < 0 ? .cavnarRed : .cavnarGreen)
                 .cavnarSensitive()
                 .onAppear {
                     guard !hasCountedUp else { return }
@@ -76,19 +87,24 @@ struct ValueChartCard: View {
                     // the client actually watches the number climb rather
                     // than just glancing at a static figure.
                     withAnimation(.easeOut(duration: 1.6)) {
-                        animatedTotal = Double(totalValue)
+                        animatedTotal = Double(figure)
                     }
                 }
-                .onChange(of: totalValue) { _, newValue in
+                .onChange(of: figure) { _, newValue in
                     guard hasCountedUp else { return }
                     animatedTotal = Double(newValue)
                 }
             }
 
             Group {
-                if totalValue <= 0 {
+                if !isNet && totalValue <= 0 {
                     Text("Track a recommendation and its result lands here")
                         .foregroundStyle(Color.cavnarInk3)
+                } else if isNet, let breakdown = headline?.breakdown {
+                    // What the net is made of. The history below is of the
+                    // improvements, so no ▲/▼ against it beside a net figure.
+                    HomeMixedText.make(breakdown, size: 14, weight: 600, color: .cavnarInk2, numberWeight: 700)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if let delta = deltaInfo {
                     HStack(spacing: 4) {
                         Text(delta.isPositive ? "▲" : "▼")
@@ -120,6 +136,12 @@ struct ValueChartCard: View {
                 Text("Example — shows the trend a typical restaurant sees over time")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                    .padding(.top, 4)
+            } else if isNet {
+                Text("The line is the improvements measured each day; the figure above is net of what got worse.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
             }
 
@@ -171,6 +193,11 @@ struct ValueChartCard: View {
         formatter.groupingSeparator = ","
         let digits = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
         return "$\(digits)"
+    }
+
+    /// "−$600" for a net below zero — never "$-600".
+    private static func signedCurrencyText(_ value: Int) -> String {
+        value < 0 ? "\u{2212}" + currencyText(abs(value)) : currencyText(value)
     }
 
     private static let snapshotDateFormatter: DateFormatter = {

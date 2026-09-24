@@ -817,8 +817,11 @@ struct LaborView: View {
                                       overrideState: viewModel.overrideState,
                                       savedTick: viewModel.savedTick,
                                       recommendationDecisions: viewModel.recommendationDecisions,
-                                      onRecommendation: { text, accepted in
-                                          Task { await viewModel.recordRecommendation(text, accepted: accepted) }
+                                      onRecommendation: { text, accepted, reason in
+                                          Task {
+                                              await viewModel.recordRecommendation(text, accepted: accepted,
+                                                                                   reasonCode: reason?.code)
+                                          }
                                       },
                                       suppressedKinds: viewModel.suppressedRecommendationKinds.isEmpty
                                           ? (quality.suppressedRecommendationKinds ?? [])

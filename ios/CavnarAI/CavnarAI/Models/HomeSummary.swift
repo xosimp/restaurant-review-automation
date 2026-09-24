@@ -27,6 +27,11 @@ struct HomeSummary: Codable {
     /// largest first. Optional: an older server omits them.
     let valueLabel: String?
     let valueByModule: [ValueModulePart]?
+    /// What got worse beside the improvements, the net, the measured-days
+    /// sum and the unpriced wins (value_delivered.headline). Optional: an
+    /// older server sends none, and the band shows `totalValueDelivered`
+    /// exactly as before. See `valueHeadline`.
+    let value: HomeValueBlock?
     // Computed server-side by the exact same is_in_quiet_hours() check
     // notify.py's own alert dispatch gates on, so the Home badge can never
     // disagree with what's actually being held back right now.
@@ -98,6 +103,7 @@ struct HomeSummary: Codable {
         case totalValueDelivered = "total_value_delivered"
         case valueLabel = "value_label"
         case valueByModule = "value_by_module"
+        case value
         case valueHistory = "value_history"
         case quietHoursActive = "quiet_hours_active"
         case alertQuietEnd = "alert_quiet_end"
@@ -242,6 +248,137 @@ struct ValueModulePart: Codable, Hashable {
     let module: String
     let label: String
     let monthly: Double
+}
+
+/// `value` on GET /mobile/api/home — the headline's other half: what got
+/// worse, the net of it, the measured-days sum, and the wins with no dollar
+/// rate. Every field optional and read leniently (an odd value is nil,
+/// never a Home that fails to decode); a cached summary from before it
+/// shipped simply has none.
+struct HomeValueBlock: Codable, Hashable {
+    struct Worsened: Codable, Hashable {
+        let count: Int?
+        let monthly: Double?
+        /// The worse results carrying dollars — the only ones `monthly` covers.
+        let pricedCount: Int?
+        enum CodingKeys: String, CodingKey {
+            case count, monthly
+            case pricedCount = "priced_count"
+        }
+        init(count: Int?, monthly: Double?, pricedCount: Int?) {
+            self.count = count
+            self.monthly = monthly
+            self.pricedCount = pricedCount
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            count = try? c.decodeIfPresent(Int.self, forKey: .count)
+            monthly = try? c.decodeIfPresent(Double.self, forKey: .monthly)
+            pricedCount = try? c.decodeIfPresent(Int.self, forKey: .pricedCount)
+        }
+    }
+    /// A SUM of measured days (never monthly × months); `total` null is
+    /// "nothing measured", not $0.
+    struct Cumulative: Codable, Hashable {
+        let total: Double?
+        let gained: Double?
+        let lost: Double?
+        let since: String?
+        let until: String?
+        let days: Int?
+        let measuredDays: Int?
+        let basis: String?
+        enum CodingKeys: String, CodingKey {
+            case total, gained, lost, since, until, days, basis
+            case measuredDays = "measured_days"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            total = try? c.decodeIfPresent(Double.self, forKey: .total)
+            gained = try? c.decodeIfPresent(Double.self, forKey: .gained)
+            lost = try? c.decodeIfPresent(Double.self, forKey: .lost)
+            since = try? c.decodeIfPresent(String.self, forKey: .since)
+            until = try? c.decodeIfPresent(String.self, forKey: .until)
+            days = try? c.decodeIfPresent(Int.self, forKey: .days)
+            measuredDays = try? c.decodeIfPresent(Int.self, forKey: .measuredDays)
+            basis = try? c.decodeIfPresent(String.self, forKey: .basis)
+        }
+    }
+    struct UnpricedWin: Codable, Hashable {
+        let line: String?
+        let module: String?
+        let title: String?
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            line = try? c.decodeIfPresent(String.self, forKey: .line)
+            module = try? c.decodeIfPresent(String.self, forKey: .module)
+            title = try? c.decodeIfPresent(String.self, forKey: .title)
+        }
+        enum CodingKeys: String, CodingKey { case line, module, title }
+    }
+
+    /// The improvements alone (the same figure as `total_value_delivered`).
+    let monthly: Double?
+    /// Improvements less the priced results that got worse.
+    let netMonthly: Double?
+    let worsened: Worsened?
+    let cumulative: Cumulative?
+    let unpricedWins: [UnpricedWin]?
+
+    enum CodingKeys: String, CodingKey {
+        case monthly, worsened, cumulative
+        case netMonthly = "net_monthly"
+        case unpricedWins = "unpriced_wins"
+    }
+
+    init(monthly: Double?, netMonthly: Double?, worsened: Worsened?,
+         cumulative: Cumulative? = nil, unpricedWins: [UnpricedWin]? = nil) {
+        self.monthly = monthly
+        self.netMonthly = netMonthly
+        self.worsened = worsened
+        self.cumulative = cumulative
+        self.unpricedWins = unpricedWins
+    }
+
+    init(from decoder: Decoder) throws {
+        // Not even an object: an empty block, never a Home that won't decode.
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        monthly = try? c?.decodeIfPresent(Double.self, forKey: .monthly)
+        netMonthly = try? c?.decodeIfPresent(Double.self, forKey: .netMonthly)
+        worsened = try? c?.decodeIfPresent(Worsened.self, forKey: .worsened)
+        cumulative = try? c?.decodeIfPresent(Cumulative.self, forKey: .cumulative)
+        unpricedWins = try? c?.decodeIfPresent([UnpricedWin].self, forKey: .unpricedWins)
+    }
+}
+
+/// What Home's value band and the value chart draw: the NET figure when
+/// something measured got worse (labelled net, with what it is made of),
+/// otherwise the improvements exactly as before. Pure, so the rule is
+/// pinned by tests rather than by one rendered payload.
+struct HomeValueHeadline: Equatable {
+    /// Dollars per month to draw — may be below zero when net.
+    let figure: Int
+    let isNet: Bool
+    /// "$1,517 improved, less $600 from 1 that got worse" — only when net.
+    let breakdown: String?
+
+    static func make(total: Int, value: HomeValueBlock?) -> HomeValueHeadline {
+        guard let value, let worse = value.worsened, (worse.count ?? 0) > 0 else {
+            return HomeValueHeadline(figure: total, isNet: false, breakdown: nil)
+        }
+        let improved = value.monthly ?? Double(total)
+        guard let net = value.netMonthly ?? worse.monthly.map({ improved - $0 }) else {
+            return HomeValueHeadline(figure: total, isNet: false, breakdown: nil)
+        }
+        return HomeValueHeadline(
+            figure: Int(net.rounded()), isNet: true,
+            breakdown: RecValueFormat.netBreakdown(improved: improved, worseMonthly: worse.monthly,
+                                                   count: worse.count, pricedCount: worse.pricedCount))
+    }
+}
+
+extension HomeSummary {
+    var valueHeadline: HomeValueHeadline { .make(total: totalValueDelivered, value: value) }
 }
 
 /// One entry in the active-modules list. `icon` is a small semantic

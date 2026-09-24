@@ -428,7 +428,9 @@ struct DSRBlockBody: View {
                     .cavnarNumberGlow()
                     .cavnarSensitive()
                 if let line = joined([
-                    m("gross").map { "Gross \(DSRFormat.money($0))" },
+                    // An "all" gross the POS couldn't complete says so
+                    // here, never the items figure passed off as it.
+                    m("gross").map { "Gross \(DSRFormat.money($0))" } ?? block.grossNotMeasured,
                     m("transactions").map { "\(DSRFormat.count($0)) checks" },
                     m("guests").map { "\(DSRFormat.count($0)) guests" },
                     m("avg_ticket").map { "\(DSRFormat.money($0)) avg check" },
@@ -499,10 +501,19 @@ struct DSRBlockBody: View {
 
             // Discounts always; comps, voids and refunds only when this
             // login may see them (the server drops them otherwise).
+            // Tax last, captioned with where it sits for this restaurant's
+            // gross (the web's tile says the same).
             let loss = [("Discounts", "discounts"), ("Comps", "comps"), ("Voids", "voids"), ("Refunds", "refunds")]
                 .filter { block.has($0.1) }
                 .map { DSRStatTile(label: $0.0, value: DSRFormat.money(m($0.1))) }
+                + (m("tax").map { [DSRStatTile(label: "Tax collected", value: DSRFormat.money($0),
+                                               detail: block.taxCaption)] } ?? [])
             if !loss.isEmpty { DSRTileRow(tiles: loss) }
+
+            if let note = block.definitionNote {
+                HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

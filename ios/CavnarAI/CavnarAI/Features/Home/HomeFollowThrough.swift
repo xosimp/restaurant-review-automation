@@ -63,11 +63,14 @@ struct GoalRow: Decodable, Identifiable {
 /// the result line, its attribution sentence and whether the owner has
 /// checked in on it — rather than the old summary-and-verdict pair.
 extension RecOutcome {
+    /// Green / red only for a result that counts (`standing`): one the
+    /// owner disowned at check-in, one that faded at the re-check, or an
+    /// informational row reads neutral whatever its verdict.
     var tone: Color {
-        switch verdict {
-        case "improved": return .cavnarGreen
-        case "worsened": return .cavnarRed
-        default: return .cavnarInk3
+        switch standing {
+        case .good: return .cavnarGreen
+        case .bad: return .cavnarRed
+        case .neutral: return .cavnarInk3
         }
     }
 }
@@ -239,8 +242,40 @@ final class HomeFollowThroughViewModel {
             let validated: Int?
             let faded: Int?
             let cumulative: Cumulative?
+            /// Measured wins on a number with no dollar rate (a rating
+            /// rise): real, counted, never priced. Optional — an older
+            /// server sends none.
+            let unpricedWins: [UnpricedWin]?
             struct Biggest: Decodable { let title: String?; let monthly: Double?; let summary: String? }
-            struct Worsened: Decodable { let count: Int?; let monthly: Double? }
+            /// `count` is every result that got worse; `priced_count` the
+            /// ones carrying dollars — the only ones `monthly` covers.
+            struct Worsened: Decodable {
+                let count: Int?
+                let monthly: Double?
+                let pricedCount: Int?
+                enum CodingKeys: String, CodingKey {
+                    case count, monthly
+                    case pricedCount = "priced_count"
+                }
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    count = try? c.decodeIfPresent(Int.self, forKey: .count)
+                    monthly = try? c.decodeIfPresent(Double.self, forKey: .monthly)
+                    pricedCount = try? c.decodeIfPresent(Int.self, forKey: .pricedCount)
+                }
+            }
+            struct UnpricedWin: Decodable {
+                let line: String?
+                let module: String?
+                let title: String?
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    line = try? c.decodeIfPresent(String.self, forKey: .line)
+                    module = try? c.decodeIfPresent(String.self, forKey: .module)
+                    title = try? c.decodeIfPresent(String.self, forKey: .title)
+                }
+                enum CodingKeys: String, CodingKey { case line, module, title }
+            }
             enum CodingKeys: String, CodingKey {
                 case monthly, annual, wins, evaluated, biggest, caveat
                 case inFlight = "in_flight"
@@ -250,6 +285,7 @@ final class HomeFollowThroughViewModel {
                 case netMonthly = "net_monthly"
                 case netNote = "net_note"
                 case validatedMonthly = "validated_monthly"
+                case unpricedWins = "unpriced_wins"
             }
         }
         /// A SUM of measured days, net of what got worse — never a monthly
@@ -330,6 +366,17 @@ final class HomeFollowThroughViewModel {
         let surfaced: Surfaced?
         let promise: Promise?
         let ledger: Ledger?
+
+        /// Whether Home's worth card has anything to say. An unpriced win
+        /// counts: a restaurant whose only measured win is a rating rise
+        /// has a result, and hid the card entirely when only priced wins did.
+        var showsWorthCard: Bool {
+            guard let d = delivered else { return false }
+            return (d.wins ?? 0) > 0 || !(d.unpricedWins ?? []).isEmpty
+                || (d.inFlight ?? 0) > 0 || (d.worsened?.count ?? 0) > 0
+                || d.cumulative?.total != nil
+                || (avoided?.hours ?? 0) > 0 || (opportunity?.monthly ?? 0) > 0
+        }
     }
 
     /// GET /mobile/api/cross-module — what two modules saw that neither
@@ -1096,19 +1143,22 @@ struct HomeFollowThrough: View {
     /// against target are not addends (see value_delivered.py).
     @ViewBuilder
     private var valueCard: some View {
-        if let v = viewModel.value, let d = v.delivered,
-           (d.wins ?? 0) > 0 || (d.inFlight ?? 0) > 0 || (d.worsened?.count ?? 0) > 0
-            || d.cumulative?.total != nil
-            || (v.avoided?.hours ?? 0) > 0 || (v.opportunity?.monthly ?? 0) > 0 {
+        if let v = viewModel.value, let d = v.delivered, v.showsWorthCard {
             HomeSectionHeader(kicker: "Worth", title: "What Cavnar AI has been worth")
             VStack(alignment: .leading, spacing: 0) {
+                let unpriced = RecValueFormat.unpricedWinLines(d)
                 if (d.wins ?? 0) > 0 {
                     lineRow(Self.deliveredLine(d), tone: .cavnarGreen, showsDivider: true)
                     if let big = d.biggest?.summary {
                         lineRow("Biggest so far: " + big, tone: .cavnarInk3, showsDivider: true)
                     }
-                } else {
-                    lineRow(Self.nothingMeasuredLine(d), tone: .cavnarInk3, showsDivider: true)
+                } else if let lead = RecValueFormat.nothingPricedLine(d, unpricedWins: unpriced.count) {
+                    lineRow(lead, tone: .cavnarInk3, showsDivider: true)
+                }
+                // A win on a number with no dollar rate (a rating rise) is
+                // still a measured win — listed, never priced.
+                ForEach(Array(unpriced.enumerated()), id: \.offset) { _, line in
+                    lineRow(line, tone: .cavnarGreen, showsDivider: true)
                 }
                 // What got worse sits BESIDE the improvements, never folded
                 // into them (rec-ROI #1); the server's own sentence says so
@@ -1226,14 +1276,6 @@ struct HomeFollowThrough: View {
             s += " — about \(money(annual)) a year if it holds"
         }
         return s + "."
-    }
-
-    private static func nothingMeasuredLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String {
-        let n = d.inFlight ?? 0
-        if n > 0 {
-            return "Nothing measured yet. \(n) change\(n == 1 ? "" : "s") being measured now."
-        }
-        return "Nothing measured yet. Track a recommendation and its result lands here."
     }
 
     /// The denominator always travels with the total: "2 results" reads
