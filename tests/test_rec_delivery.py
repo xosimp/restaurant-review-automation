@@ -448,8 +448,9 @@ def test_owed_replies_as_the_one_thing_are_shown_but_not_presented(http, db_path
 
 # ── #32 keyed links and the open they record ────────────────────────────────
 
-def test_the_alert_email_button_and_sms_name_the_recommendation():
+def test_the_alert_email_button_and_sms_name_the_recommendation(monkeypatch):
     import notify
+    monkeypatch.setenv("SMS_TRACKED_LINKS", "1")
     url = notify.alert_url("labor_over", rec="labor_over:2026-09-14", src="alert_email")
     assert "tab=labor" in url and "rec=labor_over%3A2026-09-14&src=alert_email" in url
     html = notify._resolve_cta(f'<a href="{notify.CTA_PLACEHOLDER}">x</a>', "1star", 12, rec="review:12")
@@ -458,12 +459,16 @@ def test_the_alert_email_button_and_sms_name_the_recommendation():
     keyed = notify.keyed_sms_text(sms, "review:12")
     assert keyed.endswith("Respond now · dashboard.cavnar.ai/?rec=review%3A12&src=alert_sms")
     assert notify.keyed_sms_text(sms, None) == sms
+    # Off by default: the keyed address can add a billed segment (Will's call).
+    monkeypatch.delenv("SMS_TRACKED_LINKS")
+    assert notify.keyed_sms_text(sms, "review:12") == sms
     # The push body is built from the plain text, never the keyed link.
     assert "rec=" not in notify.push_body(sms, "1★ review")
 
 
 def test_a_delivered_alert_sends_the_keyed_sms_and_email(db_path, monkeypatch):
     import notify
+    monkeypatch.setenv("SMS_TRACKED_LINKS", "1")
     rid = _rid(db_path)
     c = _conn(db_path)
     c.execute("UPDATE restaurants SET urgent_via_sms=1, urgent_via_email=1 WHERE id=?", (rid,))

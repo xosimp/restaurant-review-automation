@@ -600,7 +600,14 @@ def keyed_sms_text(sms_text: str, rec: str = None) -> str:
     `opened` on that key when the dashboard loads (#32). Only the LAST bare
     address is replaced — a guest's words never carry one (_sms_safe_excerpt
     strips URLs) — and nothing changes without a key. No scheme: the SMS has
-    always shown the bare host, which phones link."""
+    always shown the bare host, which phones link.
+
+    Off unless SMS_TRACKED_LINKS=1: the keyed address adds ~30 characters,
+    which can push a text into a second billed segment and trips some
+    carriers' URL filters — a product call Will has not made yet. Email and
+    push carry their keyed links regardless."""
+    if os.environ.get("SMS_TRACKED_LINKS", "").strip() != "1":
+        return sms_text
     if not rec or not sms_text or SMS_CTA_TOKEN not in sms_text:
         return sms_text
     import rec_delivery
