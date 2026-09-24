@@ -196,7 +196,10 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
             if not passes:
                 continue
             key = f"{c['cohort']}:{h['key']}"
-            label = categories.label(None if c["cohort"] == "platform" else c["cohort"]) if c["cohort"] != "platform" else "restaurants on Cavnar AI"
+            # The cohort actually tested, named as such (NS4 H4): a type's
+            # label, or every restaurant on Cavnar — never "like yours".
+            label = (f"{categories.label(c['cohort']).lower()} on Cavnar" if c["cohort"] != "platform"
+                     else "restaurants on Cavnar (all types)")
             row = {"key": key, "cohort": c["cohort"], "hypothesis": h["key"], "n_with": c["n_with"], "n_without": c["n_without"],
                    "effect": privacy.round_effect(c["effect"], 3), "effect_unit": h["unit"],
                    "cohen_d": privacy.round_effect(c["cohen_d"], 3), "p_value": round(c["p_value"], 4),
@@ -218,10 +221,14 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                  row["cohen_d"], row["p_value"], row["q_value"], row["confidence"], row["sentence"], json.dumps(row["evidence"])))
             active_keys.add(key)
             written += 1
-        # Retire what no longer holds — only among cohorts we could test tonight.
+        # Retire what no longer holds among the cohorts tested tonight — and
+        # every pattern whose cohort has dropped below the floor (NS4 H5): it
+        # was only ever retired "among cohorts we could test", so a cohort
+        # that shrank kept its patterns active, and quoted, indefinitely.
         tested = {c["cohort"] for c in candidates} | {c for c, rows in groups.items() if privacy.cohort_ok(len(rows))}
         for r in conn.execute("SELECT key, cohort FROM intel_patterns WHERE status='active'").fetchall():
-            if r["cohort"] in tested and r["key"] not in active_keys:
+            below_floor = not privacy.cohort_ok(len(groups.get(r["cohort"]) or []))
+            if below_floor or (r["cohort"] in tested and r["key"] not in active_keys):
                 conn.execute("UPDATE intel_patterns SET status='retired', computed_at=datetime('now') WHERE key=?", (r["key"],))
                 retired += 1
         conn.commit()
@@ -231,21 +238,38 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
             "candidates": len(candidates), "active": written, "retired": retired}
 
 
+# An active pattern not re-confirmed within this long is not served: the
+# nightly discovery confirms or retires, so an unconfirmed one means the job
+# stopped, and a stale association is not quoted as current (NS4 H5).
+MAX_PATTERN_AGE_DAYS = 56
+
+
+def _as_of(raw):
+    from time_utils import mdy
+    try:
+        return mdy(str(raw)[:10])
+    except Exception:
+        return None
+
+
 def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20) -> list:
-    """Active patterns for a cohort, with platform-wide ones after them.
-    Rows are anonymous by construction; asserted again on the way out."""
+    """Active patterns for a cohort, with platform-wide ones after them,
+    each re-confirmed within MAX_PATTERN_AGE_DAYS and carrying `as_of`
+    (M/D/YY). Rows are anonymous by construction; asserted again on the
+    way out."""
+    fresh = f"AND last_confirmed >= datetime('now', '-{int(MAX_PATTERN_AGE_DAYS)} days')"
     conn = get_conn(db_path)
     try:
         if cohort and include_platform:
-            rows = conn.execute("SELECT * FROM intel_patterns WHERE status='active' AND cohort IN (?, 'platform') "
+            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} AND cohort IN (?, 'platform') "
                                 "ORDER BY CASE WHEN cohort=? THEN 0 ELSE 1 END, confidence DESC LIMIT ?",
                                 (cohort, cohort, int(limit))).fetchall()
         elif cohort:
-            rows = conn.execute("SELECT * FROM intel_patterns WHERE status='active' AND cohort=? ORDER BY confidence DESC LIMIT ?",
-                                (cohort, int(limit))).fetchall()
+            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} AND cohort=? "
+                                "ORDER BY confidence DESC LIMIT ?", (cohort, int(limit))).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM intel_patterns WHERE status='active' ORDER BY confidence DESC LIMIT ?",
-                                (int(limit),)).fetchall()
+            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} "
+                                "ORDER BY confidence DESC LIMIT ?", (int(limit),)).fetchall()
     finally:
         conn.close()
     out = []
@@ -253,6 +277,7 @@ def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20)
         d = dict(r)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
+        d["as_of"] = _as_of(d.get("last_confirmed"))
         out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 

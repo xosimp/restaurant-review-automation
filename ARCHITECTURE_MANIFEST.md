@@ -73,7 +73,7 @@ Modules sit in one of five layers. **At module scope, a module may import only i
 
 | Layer | What lives there | May import at module scope |
 |---|---|---|
-| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `reply_edits`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories`, `confidence_engine` | stdlib, third-party, L0 |
+| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `benchmark_registry`, `ai_guard`, `competitor_intel_format`, `review_common`, `reply_edits`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories`, `confidence_engine` | stdlib, third-party, L0 |
 | **L1 data** | `models`, `auth`, `ops`, `ai_utils`, `security`, `guest_links` | L0, L1 |
 | **L2 domain** | every module that computes something for one restaurant (the services in §2), the `intelligence/` package, `emails`, `notify`, `push`, `webhooks`, `admin_ops`, `admin_events`, `status_manager`, `sales_audit_engine/cheatsheet/notes_ai`, `sales_audits` | L0, L1, L2 |
 | **L3 HTTP** | `client_api`, `mobile_api`, `strategy_routes`, every `*_routes.py` | L0–L3 |
@@ -112,6 +112,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `audit_app` | 4 | standalone digital-audit scorecard app (port 9000); not part of the web process |
 | `auth` | 1 | users, sessions, decorators, staff portal identity, 2FA |
 | `auth_routes` | 3 | login, reset, 2FA, account-security `/api/*` |
+| `benchmark_registry` | 0 | every outside benchmark the product may state, keyed by metric × restaurant type → {low, high, mid, median, source, short, source_kind (published / rule_of_thumb / vendor), year, data_year, applies_to, note}; seeded from `sales_audit_engine.BENCHMARKS`. No entry for a type → no industry figure on any surface; an all-restaurant ("general") entry only where the source is about every restaurant; `published_only` for dollar comparisons; `ABSENT` names what has no source (the 4–5% waste target, the blended wage); `for_restaurant` carries the type's `inferred` flag (a function-scope import of `intelligence.categories`); `line`/`cite` are the one wording; `facts`/`cohort_facts` are the kind-'benchmark' facts `response_validation` reads |
 | `business_intelligence` | 2 | the cross-module read ("why did profits drop") |
 | `client_api` | 3 | the web dashboard's `/api/*` and page routes; the `_do_*` bodies both surfaces share |
 | `closeout` | 2 | the manager's handoff: four quick lines, plus the six DSR fields (equipment, VIP guests, maintenance, shift notes, general notes, influence) the nightly report reads verbatim |

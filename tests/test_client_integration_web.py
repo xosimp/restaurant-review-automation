@@ -194,7 +194,7 @@ import auth, models
 from models import Restaurant
 rid = models.create_restaurant(Restaurant(name="Full Co", owner_email="full@x.test", module_reviews=1,
                                           module_labor=1, module_inventory=1, module_marketing=1))
-models.update_restaurant(rid, {"google_place_id": "ChIJfull", "gbp_rating": 4.8, "gbp_review_count": 300,
+models.update_restaurant(rid, {"google_place_id": "ChIJfull", "gbp_rating": 4.8, "gbp_review_count": 300, "category": "italian",
     "competitor_intel": json.dumps({"insight": "Hi.", "competitors": [
         {"name": "A", "rating": 4.4, "review_count": 200, "reviews": [], "vicinity": "Main St"}, {"name": "B", "rating": 4.2, "review_count": 100, "reviews": [], "vicinity": "Main St"},
         {"name": "Tiny", "rating": 5.0, "review_count": 3, "rating_is_provisional": True, "reviews": [], "vicinity": "Main St"}]})})

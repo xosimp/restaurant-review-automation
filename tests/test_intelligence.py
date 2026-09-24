@@ -71,7 +71,7 @@ def test_every_cross_restaurant_surface_refuses_below_the_floor(db_path):
     assert patterns.discover(db_path=db_path, cohorts=cohorts)["active"] == 0
     assert benchmarks.compute(db_path=db_path, cohorts=cohorts)["written"] == 0
     b = benchmarks.benchmark(rids[0], "avg_rating_30d", cohort="pizza", db_path=db_path)
-    assert b["available"] is False and "fewer than 5" in b["reason"]
+    assert b["available"] is False and f"at least {benchmarks.MIN_QUARTILE_N}" in b["reason"]
     assert trends.platform_trends(cohorts=cohorts, db_path=db_path) == []
     s = scoring.kind_stats("trim_day", cohort="pizza", db_path=db_path)
     assert s["available"] is False
@@ -270,7 +270,8 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
 
 
 def test_benchmarks_place_a_restaurant_in_its_cohort_and_fall_back_to_platform(db_path):
-    rids = _cohort(db_path, 8, "bar", 2)
+    # Nine bars: the band a member sees leaves its own row out, and needs 8 others (NS4 M6).
+    rids = _cohort(db_path, 9, "bar", 2)
     cohorts = {r: "bar" for r in rids}
     lone = _rid(db_path, "Solo Steak")
     _seed_features(db_path, lone, THIS_WEEK, {"avg_rating_30d": 4.9, "labor_pct_28d": 22.0})
@@ -278,6 +279,7 @@ def test_benchmarks_place_a_restaurant_in_its_cohort_and_fall_back_to_platform(d
     assert out["written"] > 0
     b = benchmarks.benchmark(rids[0], "labor_pct_28d", cohort="bar", db_path=db_path)
     assert b["available"] and b["cohort"] == "bar" and b["n"] == 8 and b["p25"] <= b["p50"] <= b["p75"]
+    assert b["cohort_label"] == "Bars on Cavnar" and b["as_of"]
     assert b["standing"] in ("top quarter", "above the middle", "below the middle", "bottom quarter")
     # a steakhouse alone compares platform-wide, and is told so
     s = benchmarks.benchmark(lone, "avg_rating_30d", cohort="steakhouse", db_path=db_path)
@@ -401,4 +403,7 @@ def test_ask_has_the_two_read_tools_and_a_context_section(db_path):
     plat = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_platform_intelligence")["fn"](rid)
     assert plat["cohort"] == "bar" and all(b["available"] is False for b in plat["benchmarks"]) and plat["patterns"] == []
     privacy.assert_anonymous({"benchmarks": plat["benchmarks"], "patterns": plat["patterns"]})
-    assert ask_cavnar._intelligence_context(rid) == ""                    # nothing to say, nothing said
+    # No cohort section with nothing to say; a bar's labor figure is a rule
+    # of thumb from the registry, and said as one (NS4 H3/M7).
+    ctx = ask_cavnar._intelligence_context(rid)
+    assert "HISTORY AND OTHER RESTAURANTS" not in ctx and "rule of thumb" in ctx

@@ -569,13 +569,17 @@ def index(current_user):
     # One benchmark and one set of guards for web and iOS (thresholds.
     # labor_vs_industry_monthly): the web used 32% with no guards while iOS
     # used 34.5% and refused on estimated hours, missing sales or a sub-week
-    # period, so the same tile showed two dollar figures (CA1 L33).
+    # period, so the same tile showed two dollar figures (CA1 L33). The
+    # figure is by restaurant type (NS4 H3): no published entry for this
+    # type, no industry tile.
     import thresholds as _thr
+    _labor_ind = _thr.labor_industry_benchmark(restaurant)
     _labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
         labor.get("overall_labor_pct"), labor.get("total_sales"), _period_days,
         hours_are_estimated=bool(labor.get("hours_are_estimated")),
         sales_data_missing=bool(labor.get("sales_data_missing")),
-        analysis_failed=bool(labor.get("analysis_failed")))
+        analysis_failed=bool(labor.get("analysis_failed")),
+        industry_pct=(_labor_ind or {}).get("pct"))
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # The "3.1% sales lift from responding to reviews" figure had no source in
@@ -615,8 +619,8 @@ def index(current_user):
         "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
         "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
         "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,
-        "labor_industry_pct":        _thr.LABOR_INDUSTRY_PCT,
-        "labor_industry_basis":      _thr.LABOR_INDUSTRY_BASIS,
+        "labor_industry_pct":        (_labor_ind or {}).get("pct") if _mod_l else None,
+        "labor_industry_basis":      (_labor_ind or {}).get("basis") if _mod_l else None,
         "sales_lift_yr":             _sales_lift_yr,
     }
 

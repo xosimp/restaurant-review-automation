@@ -488,7 +488,7 @@ def test_recoverable_is_labelled_an_opportunity_with_its_basis():
 
 def test_the_benchmark_comment_matches_the_bands_the_code_uses():
     code = inspect.getsource(__import__("inventory").analyse_inventory)
-    comment = code.split("# Industry benchmark:")[1].split("purchases_window comes")[0]
+    comment = code.split("# Waste rate against Cavnar's STARTING target")[1].split("purchases_window comes")[0]
     for band in ("<=4%", "<=6%", "<=10%", "<=15%", ">15%"):
         assert band in comment
     for cut in ("waste_rate_pct <= 4", "waste_rate_pct <= 6", "waste_rate_pct <= 10", "waste_rate_pct <= 15"):
@@ -569,9 +569,12 @@ def test_labor_vs_industry_is_one_constant_with_one_set_of_guards():
         code = _code(path)
         assert "0.345" not in code and "(0.32 -" not in code
         assert "labor_vs_industry_monthly(" in code
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30) == round((34.5 - 30.0) / 100 * 30000)
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, hours_are_estimated=True) == 0
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 5) == 0
+    # The benchmark is by restaurant type now (benchmark_registry, NS4 H3):
+    # the caller passes the type's published figure, and none means no claim.
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=34.2) == round((34.2 - 30.0) / 100 * 30000)
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30) == 0
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, hours_are_estimated=True, industry_pct=34.2) == 0
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 5, industry_pct=34.2) == 0
 
 
 # ══ I11 — the nightly report ═════════════════════════════════════════════

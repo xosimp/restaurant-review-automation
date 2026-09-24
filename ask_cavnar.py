@@ -557,14 +557,38 @@ def _intelligence_context(restaurant_id):
         import intelligence
         lines = intelligence.context_lines(restaurant_id)
     except Exception:
+        lines = []
+    # The published industry figures for THIS restaurant's type, each with
+    # its source and year (benchmark_registry, NS4 H3/M7) — the only
+    # industry numbers Ask may quote as figures.
+    bench_lines = []
+    try:
+        import benchmark_registry as _br
+        from models import get_restaurant as _gr_bench
+        _r = _gr_bench(restaurant_id)
+        for metric, what in (("labor_pct", "Labor %"), ("food_cost_pct", "Food cost %"),
+                             ("prime_cost_pct", "Prime cost %")):
+            e = _br.for_restaurant(metric, _r)
+            if e:
+                bench_lines.append(_br.line(e, what))
+    except Exception:
+        bench_lines = []
+    if not lines and not bench_lines:
         return ""
-    if not lines:
-        return ""
-    return ("WHAT THIS RESTAURANT'S HISTORY AND RESTAURANTS LIKE IT SHOW\n"
-            "- Own-history lines are this restaurant's; cohort lines are aggregates over at least five similar "
-            "restaurants and name none. Use a pattern as support for a recommendation, never as proof about this "
-            "restaurant; say the count when you cite one.\n"
-            + "\n".join(f"- {l}" for l in lines[:10]) + "\n")
+    out = ""
+    if lines:
+        out += ("WHAT THIS RESTAURANT'S HISTORY AND OTHER RESTAURANTS ON CAVNAR SHOW\n"
+                "- Own-history lines are this restaurant's. Cohort lines are aggregates over the cohort each line "
+                "names (never a named restaurant): a type cohort only when it says so, and 'all types' when it is "
+                "every restaurant on Cavnar — call that one 'restaurants on Cavnar', never 'restaurants like yours'. "
+                "Quote a band with its as-of date. Use a pattern as support for a recommendation, never as proof "
+                "about this restaurant; say the count when you cite one.\n"
+                + "\n".join(f"- {l}" for l in lines[:10]) + "\n")
+    if bench_lines:
+        out += ("PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT (quote a figure only with its source "
+                "and year; a rule of thumb is a rule of thumb)\n"
+                + "\n".join(f"- {l}" for l in bench_lines) + "\n")
+    return out
 
 
 def _commitments_context(restaurant_id):
@@ -840,6 +864,8 @@ _SYSTEM_STATIC = """You are Cavnar AI, an AI-powered restaurant intelligence con
 1. QUESTIONS ABOUT THIS RESTAURANT'S OWN NUMBERS (reviews, labor, food cost, marketing, competitors): answer strictly from the DATA SNAPSHOT below. Never invent a figure that isn't there. If what's needed isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing) rather than guessing.
 
 2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
+
+BENCHMARKS AND COMPARISONS. An industry average, what "most restaurants" do, what is "typical", or how this restaurant compares with others is a figure about OTHER businesses. Give one as a number only when the snapshot carries it — a PUBLISHED INDUSTRY BENCHMARKS line (quote its source and year) or a cohort line (quote its cohort, size and as-of date). Anything else from your own knowledge is said as general industry knowledge, not measured here — in those words — and carries no figure. Never say "restaurants like yours" or "similar restaurants" unless a cohort line for this restaurant's type says so.
 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
 

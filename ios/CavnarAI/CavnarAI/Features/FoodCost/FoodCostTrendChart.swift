@@ -129,7 +129,9 @@ struct FoodCostTrendChart: View {
                         Text(String(format: "%.1f%%", wasteRatePct))
                             .font(.cavnarNumber(14, weight: 700))
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
-                        Text("vs. industry")
+                        // Against a target, never "industry": no published
+                        // waste benchmark exists (benchmark_registry.ABSENT).
+                        Text("vs. target")
                             .font(.cavnarBody(13.5))
                             .foregroundStyle(Color.cavnarInk3)
                     }
@@ -216,7 +218,7 @@ struct FoodCostTrendChart: View {
                     HStack(spacing: 5) {
                         Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
                         Text(target?.pct != nil ? "Your target: \(targetPctLabel) of purchases"
-                                                : "Industry target: \(targetPctLabel) of purchases")
+                                                : "Starting target: \(targetPctLabel) of purchases")
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                     }

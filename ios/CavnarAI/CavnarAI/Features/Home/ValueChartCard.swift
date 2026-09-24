@@ -133,7 +133,9 @@ struct ValueChartCard: View {
                 .frame(height: 120)
 
             if !hasRealTrend {
-                Text("Example — shows the trend a typical restaurant sees over time")
+                // An illustration, not data (NS4 L1): nothing measured
+                // what "a typical restaurant" sees, so it never says so.
+                Text("Illustration only — not data. Your own line appears once results are measured.")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .padding(.top, 4)

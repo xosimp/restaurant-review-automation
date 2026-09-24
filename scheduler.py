@@ -806,11 +806,14 @@ def run_weekly_digests():
                 continue
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
-                has_other_modules = (restaurant.module_labor or
-                                     restaurant.module_inventory or
-                                     restaurant.module_marketing)
-                if report.total_reviews == 0 and not has_other_modules:
-                    log.info(f"No reviews this week for {restaurant.name} — skipping digest")
+                # No digest without something measured this week in a
+                # module the restaurant has on (NS4 C2). This skipped only
+                # when there were no reviews AND no other module was switched
+                # on — so a switched-on module with nothing in it got a
+                # generated email of invented comparisons.
+                from reporter import digest_has_data
+                if not digest_has_data(restaurant, report):
+                    log.info(f"Not enough data this week for {restaurant.name} — skipping digest")
                     continue
                 for owner_email in owner_emails:
                     key = (owner_email or "").strip().lower()

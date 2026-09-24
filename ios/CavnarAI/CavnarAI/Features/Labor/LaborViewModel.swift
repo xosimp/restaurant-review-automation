@@ -95,9 +95,11 @@ struct LaborSavingsBreakdown: Codable {
     let laborOvertime: Double
     let laborVsIndustryMonthly: Double
     let laborVsIndustryAnnual: Double
-    /// I10: the benchmark the comparison is against (thresholds.
-    /// LABOR_INDUSTRY_PCT, 34.5) and where it comes from — one figure for
-    /// web and iOS. Absent on an older server, which keeps 34.5.
+    /// I10 / NS4 H3: the benchmark the comparison is against (thresholds.
+    /// labor_industry_benchmark — a published figure for this restaurant's
+    /// type from benchmark_registry) and where it comes from. Null when the
+    /// registry has no entry for the type: then nothing is compared and the
+    /// "vs industry" tiles are hidden.
     var laborIndustryPct: Double? = nil
     var laborIndustryBasis: String? = nil
 
@@ -111,9 +113,9 @@ struct LaborSavingsBreakdown: Codable {
         case laborIndustryBasis = "labor_industry_basis"
     }
 
-    /// "34.5%" — the benchmark as the tiles name it.
-    var industryPctText: String {
-        let p = laborIndustryPct ?? 34.5
+    /// "34.2%" — the benchmark as the tiles name it; nil when there is none.
+    var industryPctText: String? {
+        guard let p = laborIndustryPct else { return nil }
         return (p == p.rounded() ? String(Int(p)) : String(format: "%.1f", p)) + "%"
     }
 }

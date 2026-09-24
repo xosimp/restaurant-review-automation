@@ -150,6 +150,12 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             "Reference the specific data given below naturally, not as a list. "
             + ("Open on the substance — no run-up like 'I wanted to share' or "
                "'Great news'. State what happened, plainly. " if brief else "")
+            # No peer claims (NS4 H1: "running ahead of most restaurants I
+            # bring on" was emailed in Will's first person), and no
+            # celebration where the data shows no activity (NS4 matrix).
+            + "Never compare this restaurant with other restaurants, other clients, 'most' restaurants or an "
+              "industry average — nothing below measures them. If the activity below is zero or missing, say "
+              "plainly what is set up and what comes next; do not celebrate results that are not there. "
             + "Plain text only, no markdown.\n\n" + context
         )
         msg = create_with_retry(
@@ -1775,6 +1781,36 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 
 # ── Onboarding email sequence ─────────────────────────────────────────────────
 
+def benchmark_sentence(metric: str, restaurant_id: int = None, what: str = "") -> str:
+    """The one benchmark sentence an email may carry for `metric`: the band
+    for this restaurant's type from benchmark_registry with its source and
+    year (and "we inferred your type" when Cavnar guessed it), or — with no
+    entry for the type — the owner's own target, never an industry figure
+    (NS4 H3). Plain text; the caller escapes it."""
+    try:
+        import benchmark_registry as _br
+        from models import get_restaurant as _gr_bs
+        r = _gr_bs(restaurant_id) if restaurant_id else None
+        e = _br.for_restaurant(metric, r) if r is not None else None
+    except Exception:
+        e = None
+    if not e:
+        return (f"The dashboard measures your {what} against the target you set in Settings — there's no "
+                "published industry figure for your type of restaurant, so we don't quote one.")
+    if e.get("median") is not None:
+        s = (f"For {e['label']}, the {e.get('median_basis') or 'published median'} is {e['median']:g}% "
+             f"({_br.cite(e)}) — the dashboard measures you against your own target.")
+    elif e.get("source_kind") == "published":
+        s = (f"For {e['label']}, {_br.cite(e)} puts {what} at {_br.band_text(e)} — the dashboard measures you "
+             "against your own target.")
+    else:
+        s = (f"For {e['label']}, an operator rule of thumb (not a published study) puts {what} at "
+             f"{_br.band_text(e)} — the dashboard measures you against your own target.")
+    if e.get("inferred"):
+        s += " (We guessed your type from your restaurant's name; set it in Settings if it's wrong.)"
+    return s
+
+
 def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = None,
                           modules: list = None, restaurant_id: int = None):
     """Day 2 — Getting started: highlight their primary module, not always reviews."""
@@ -1809,7 +1845,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
       <strong>Labor tab</strong> — Upload your shift schedule CSV and the dashboard will calculate your labor cost percentage, flag overstaffed days, and surface overtime risk automatically.
     </p>
     <p style="font-size:13px;color:#7a736a;margin:0">
-      The target is 33-36% labor ratio. The dashboard shows you exactly where you're over and by how much.
+      __LABOR_BENCH__ It shows you exactly where you're over and by how much.
     </p>
   </div>"""
         elif has_inventory:
@@ -1819,7 +1855,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
       <strong>Inventory tab</strong> — Upload your weekly inventory count and the dashboard tracks your food cost percentage, flags waste, and gives AI-powered ordering recommendations.
     </p>
     <p style="font-size:13px;color:#7a736a;margin:0">
-      The target is 28-32% food cost. You'll see exactly where the money is going.
+      __FOOD_BENCH__ You'll see exactly where the money is going.
     </p>
   </div>"""
         elif has_marketing:
@@ -1834,6 +1870,16 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
   </div>"""
         else:
             callout = ""
+        # The benchmark by restaurant type, with its source (NS4 H3): these
+        # stated one full-service labor and food-cost target to every
+        # restaurant — a coffee shop and a steakhouse alike, sourced to nothing.
+        if "__LABOR_BENCH__" in callout or "__FOOD_BENCH__" in callout:
+            import html as _html_bs
+            callout = (callout
+                       .replace("__LABOR_BENCH__", _html_bs.escape(benchmark_sentence("labor_pct", restaurant_id,
+                                                                                    "labor as a share of sales")))
+                       .replace("__FOOD_BENCH__", _html_bs.escape(benchmark_sentence("food_cost_pct", restaurant_id,
+                                                                                   "food cost as a share of sales"))))
 
         # The lead-in only exists if something follows it. It used to be
         # unconditional, so any module list that matched none of the four

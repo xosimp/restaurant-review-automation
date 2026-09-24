@@ -218,7 +218,9 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                 "reason": (f"Fewer than {privacy.MIN_COHORT} similar restaurants ({label.lower()}) have their staffing "
                            f"measured yet, so no starting headcount is borrowed — the first draft works from your "
                            f"floors alone.")}
-    cohort_part = privacy.assert_anonymous({"cohort": cohort, "cohort_label": label,
+    # A type Cavnar inferred from the name travels with the borrowed figure
+    # and is said (NS4 M5).
+    cohort_part = privacy.assert_anonymous({"cohort": cohort, "cohort_label": label, "inferred": src == "inferred",
                                             "n": min(r["n"] for r in ratios), "ratios": ratios})
     sales, basis = _own_sales_by_weekday(restaurant_id, restaurant, db_path)
     if not sales:
@@ -244,8 +246,11 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                 "reason": "Similar restaurants' ratios, scaled to your sales, come to under one person per shift — nothing borrowed."}
     return {"available": True, "borrowed": True, **cohort_part, "headcount": headcount, "by_slot": by_slot,
             "basis": basis,
-            "note": (f"Borrowed: the median of {cohort_part['n']}+ {label.lower()} restaurants' people on the floor per "
-                     f"$1k of sales, scaled to {basis}. A starting point until your own weeks replace it.")}
+            "note": (f"Borrowed: the median of {cohort_part['n']}+ {label.lower()} on Cavnar — people on the floor per "
+                     f"$1k of sales, scaled to {basis}"
+                     + (" (the type was inferred from your restaurant's name — set it under Account)"
+                        if src == "inferred" else "")
+                     + ". A starting point until your own weeks replace it.")}
 
 
 def merge_into_typical(typical: dict, borrowed: dict):

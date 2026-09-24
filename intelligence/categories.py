@@ -67,7 +67,9 @@ def category_for(restaurant):
 
 
 def label(category) -> str:
-    return LABELS.get(category or "", "Restaurants like yours")
+    """A type's label. No type means the comparison is platform-wide, and
+    it is named that way — never "Restaurants like yours" (NS4 H4)."""
+    return LABELS.get(category or "", "All restaurants on Cavnar")
 
 
 def valid(category) -> bool:

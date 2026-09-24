@@ -655,13 +655,22 @@ def client_settings_page(restaurant_id, current_user):
         count_freshness = ordering.count_freshness(restaurant_id)
     except Exception:
         count_freshness = {}
+    # The benchmark hints by this restaurant's type, each with its source
+    # and year, or none (benchmark_registry, NS4 L2): the page said
+    # "Industry average $22–28/hr" and "typically 28–35%" with no source.
+    import benchmark_registry as _br
+    bench_hints = {}
+    for key, metric, what in (("labor", "labor_pct", "Labor %"), ("food", "food_cost_pct", "Food cost %")):
+        e = _br.for_restaurant(metric, restaurant)
+        bench_hints[key] = _br.line(e, what) if e else None
     return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,
         client_data=client_data,
         staff_notes=staff_notes,
         alert_contacts=alert_contacts,
-        count_freshness=count_freshness)
+        count_freshness=count_freshness,
+        bench_hints=bench_hints)
 
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required

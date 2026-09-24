@@ -191,13 +191,17 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         y = (_safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
              if "labor" not in denied else None)
     if y and y.get("available"):
+        # "Typical" rests on this restaurant's own same-weekday median, and
+        # how many nights it is said (NS4 L5: three samples, unshown).
+        _n_typ = int(y.get("samples") or 0)
+        _basis = f"the median of its last {_n_typ} {y['weekday']}s here" if _n_typ else "its own history"
         if y["off"]:
             tone = "good" if y["direction"] == "above" else "bad"
             text = (f"Yesterday: {_money(y['actual'])}, {abs(y['pct']):.0f}% {y['direction']} a typical "
-                    f"{y['weekday']} ({_money(y['typical'])}).")
+                    f"{y['weekday']} ({_money(y['typical'])}, {_basis}).")
         else:
             tone = "neutral"
-            text = f"Yesterday: {_money(y['actual'])}, a normal {y['weekday']}."
+            text = f"Yesterday: {_money(y['actual'])}, a normal {y['weekday']} ({_basis})."
         ask = (f"Why was yesterday's {y['weekday']} {y['direction']} a normal one?" if y["off"]
                else f"How did yesterday compare to a normal {y['weekday']}?")
         lines.append({"key": "yesterday", "text": text, "tone": tone, "ask": ask})

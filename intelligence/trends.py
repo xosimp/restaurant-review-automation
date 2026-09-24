@@ -45,7 +45,7 @@ def platform_trends(weeks: int = 8, cohorts: dict = None, db_path=DB_PATH) -> li
                 continue
             base = ys[0] or None
             out.append(privacy.assert_anonymous({
-                "cohort": cohort, "cohort_label": "All restaurants" if cohort == "platform" else categories.label(cohort),
+                "cohort": cohort, "cohort_label": "All restaurants on Cavnar" if cohort == "platform" else categories.label(cohort),
                 "metric": metric, "weeks": len(pts), "n_latest": pts[-1]["n"], "from": ys[0], "to": ys[-1],
                 "slope_per_week": privacy.round_effect(s, 4),
                 "relative_per_week": privacy.round_effect(s / base, 4) if base else None,

@@ -383,6 +383,10 @@ def test_a_digest_whose_send_failed_is_retried_on_the_next_tick_and_sent_once(db
     rid = _rid(db_path, owner_email="own@x.test", digest_enabled=1, digest_day="monday", module_reviews=1,
                module_labor=1)
     create_user(rid, "own", "own@x.test", "pw-owner-1", db_path=db_path)
+    # A week with something in it: a digest is not sent with no data in any
+    # module (NS4 C2), and this test is about the retry, not the floor.
+    import reporter
+    monkeypatch.setattr(reporter, "digest_has_data", lambda restaurant, report: True)
     monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 21, 9, 30))   # a Monday
     import time_utils
     monkeypatch.setattr(time_utils, "restaurant_now",

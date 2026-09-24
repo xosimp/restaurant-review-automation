@@ -1539,13 +1539,23 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         except Exception:
             answered_block = ""
 
+    # The industry band for THIS restaurant's type, with its source and
+    # year, or none at all (NS4 H3): the full-service 33–36% used to be
+    # quoted to a taco stand. The data window and its age (NS4 M3): June
+    # data read in September came back as "this week labor ran 32.7%".
+    _bench = industry_band_for(restaurant_id)
+    _industry_line = industry_prompt_line(_bench)
+    _window_line, _fresh = labor_window_line(analysis, _local_now)
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
-You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
+You are writing a labor summary of the shifts on file for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}{upload_context}{holiday_context}
+{_window_line}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
-- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: {INDUSTRY_LABOR_RANGE[0]}–{INDUSTRY_LABOR_RANGE[1]}%, National Restaurant Association 2024)
+- This restaurant's labor target: {analysis.get('labor_target', 30)}%
+{_industry_line}
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
@@ -1564,13 +1574,15 @@ Opening: Start with "{greeting}" then ONE sentence with the key number and THE S
 
 Recommendations:
 1. [One concrete, actionable scheduling suggestion. Hard cap: 20 words. Lead with the action, not the reasoning — "Trim Wednesday staffing by 1" beats "Because Wednesday has historically run high on labor percentage, consider trimming..."]
-2. [Second suggestion, same 20-word cap.]
-3. [Third suggestion, same 20-word cap. You may add up to 8 words of warm closing on this line — nothing more.]
+2. [Only if the figures above support a second one — same 20-word cap.]
+3. [Only if the figures above support a third one — same 20-word cap.]
 
 Tone: warm, direct, human — but terse, like a text message from a sharp consultant, not a report. Use the owner name once, not twice. Every number must be real and specific; never pad a sentence just to sound thorough.
 Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400).
 Do NOT use markdown, asterisks, bold, or special characters.
-There must be EXACTLY 3 numbered recommendations and nothing after number 3.
+Write between 0 and 3 numbered recommendations — one per opportunity the figures above actually show, never one to fill a slot. Nothing after the last one.
+If nothing in the figures calls for a change, write the "Recommendations:" line followed by exactly one line: "None — nothing in this period calls for a schedule change."
+Never compare this restaurant with other restaurants, "most restaurants", "similar restaurants" or an industry figure other than the one given above (and only with its source).
 The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}{answered_block}"""
 
     msg = create_with_retry(
@@ -1605,7 +1617,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # names — the prompt is a JSON dump of every day, so presence anywhere
     # in it verified almost anything (H3, the DSR narrative's claim→cite
     # binding ported to prose).
-    entities, globals_ = labor_insight_facts(analysis)
+    entities, globals_ = labor_insight_facts(analysis, industry=_bench)
     misbound = unbound_figures(text, entities, globals_, job="labor_insight", restaurant_id=restaurant_id)
     # A cause is allowed only where it carries the diagnosis's driver (H2);
     # the labor prompt had no cause rule at all.
@@ -1644,6 +1656,10 @@ def schedule_note_problem(bullet, prompt, restaurant_id=None):
     why = injection_residue(bullet)
     if why:
         return why
+    # A missing input the note cannot claim (NS4 M8): "Rain is expected
+    # Friday" passed every check when no forecast was supplied at all.
+    if NO_WEATHER_MARKER in (prompt or "") and _WEATHER_WORDS_RE.search(bullet or ""):
+        return "talks about the weather, and no forecast was supplied"
     figs = unsupported_figures(bullet, prompt, check_counts=True)
     if figs:
         return f"states {', '.join(figs[:3])}, which the schedule's input does not hold"
@@ -1689,15 +1705,86 @@ def _labor_forecast_line(analysis: dict, trend_diff) -> str:
             f"next week near {cur:g}% (a projection, not a measurement).")
 
 
-# The industry full-service labor range the labor prompt quotes (NRA 2024).
-INDUSTRY_LABOR_RANGE = (33, 36)
+# The labor data is "current" for this many days after its last shift: past
+# it the prompt forbids "this week" / "today" wording and says how old the
+# figures are (NS4 M3). Ask's _staleness uses the same week.
+LABOR_FRESH_DAYS = 7
+
+# The schedule prompt states a missing input rather than omitting it (NS4
+# M8), and schedule_note_problem reads the marker: with no forecast, a note
+# bullet about the weather is dropped; with no demand history, one that
+# calls a day busy or slow "for this restaurant" is.
+NO_WEATHER_MARKER = "NO WEATHER FORECAST"
+NO_DEMAND_MARKER = "NO DEMAND HISTORY"
+# Weather words only — not "forecast" (the demand forecast is real input),
+# "hot"/"cold" (the hot line) or "patio" (a section people work).
+_WEATHER_WORDS_RE = re.compile(r"\b(?:weather|rain(?:y|s|ing|ed|fall)?|snow\w*|storm\w*|temperatures?|"
+                               r"heat\s?wave|sunny|drizzle|thunder\w*)\b", re.I)
 
 
-def labor_insight_facts(analysis: dict) -> tuple:
+def industry_band_for(restaurant_id=None, restaurant=None):
+    """The benchmark_registry labor_pct entry for this restaurant's type, or
+    None (no entry, no benchmark — NS4 H3). Never raises."""
+    try:
+        if restaurant is None and restaurant_id:
+            from models import get_restaurant
+            restaurant = get_restaurant(restaurant_id)
+        if restaurant is None:
+            return None
+        import benchmark_registry
+        return benchmark_registry.for_restaurant("labor_pct", restaurant)
+    except Exception:
+        return None
+
+
+def industry_prompt_line(entry) -> str:
+    """The one industry line a labor prompt may carry: the band for this
+    restaurant's type with its source, year and whether the type was
+    inferred — or an instruction that there is none."""
+    import benchmark_registry
+    if not entry:
+        return ("- Industry benchmark: none for this type of restaurant. Do not state or imply an industry "
+                "figure or compare this restaurant with other restaurants.")
+    return ("- Industry benchmark (quote only with its source, never as this restaurant's own figure): "
+            + benchmark_registry.line(entry, "Labor %"))
+
+
+def labor_window_line(analysis: dict, now=None) -> tuple:
+    """(prompt line, fresh) — the dates the labor figures cover and how old
+    the last shift is. Past LABOR_FRESH_DAYS the line forbids present-tense
+    wording ("this week", "today") about the figures (NS4 M3)."""
+    from time_utils import mdy, mdy_range
+    dr = (analysis or {}).get("date_range") or {}
+    start, end = dr.get("start"), dr.get("end")
+    days = int(dr.get("days") or (analysis or {}).get("period_days") or 0)
+    if not end:
+        return ("- Data window: the dates behind these figures are unknown — do not say \"this week\" or "
+                "\"today\" about them.", False)
+    age = None
+    try:
+        today = (now or datetime.now(ZoneInfo('America/Chicago'))).date()
+        age = (today - date.fromisoformat(str(end)[:10])).days
+    except Exception:
+        age = None
+    span = mdy_range(start, end) if start else mdy(end)
+    line = f"- Data window: {span} ({days} day{'' if days == 1 else 's'} with shifts)"
+    if age is None:
+        return line + "; its age is unknown — do not say \"this week\" or \"today\" about it.", False
+    line += f"; the last shift on file is {age} day{'' if age == 1 else 's'} before today."
+    fresh = age <= LABOR_FRESH_DAYS
+    if not fresh:
+        line += (f" These figures are {age} days old: name the period by its dates and never call them "
+                 "\"this week\", \"today\", \"currently\" or \"right now\".")
+    return line, fresh
+
+
+def labor_insight_facts(analysis: dict, industry=None) -> tuple:
     """({entity: [its figures]}, [headline figures]) — what the labor note
     may attach to each weekday, date, role and person it names, for
     ai_guard.unbound_figures. A weekday carries its own day-of-week figure
-    and every dated day that fell on it; a date carries only its own."""
+    and every dated day that fell on it; a date carries only its own.
+    `industry` is the benchmark_registry entry the prompt quoted (or None,
+    and then no industry figure binds at all)."""
     from collections import defaultdict
     a = analysis or {}
     ent = defaultdict(list)
@@ -1730,9 +1817,12 @@ def labor_insight_facts(analysis: dict) -> tuple:
                                "potential_savings", "potential_savings_weekly", "potential_savings_monthly",
                                "period_days")]
     glob += [cov.get("avg_sales_per_cover")]
-    # The industry range the prompt quotes is bound to a sentence that says
+    # The industry band the prompt quotes is bound to a sentence that says
     # "industry" (R13, B5 #14): as a global it let "Wednesday ran 36%" pass.
-    ent["industry"].extend(INDUSTRY_LABOR_RANGE)
+    # Only the registry entry for this restaurant's type — none, nothing.
+    if industry:
+        ent["industry"].extend(v for v in (industry.get("low"), industry.get("high"), industry.get("median"))
+                               if v is not None)
     return dict(ent), [g for g in glob if g is not None]
 
 
@@ -2281,6 +2371,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                           "of it is not a reason to cut further below the historical baseline or the "
                           "minimum staffing floors below — those floors hold regardless of forecast.\n"
                           + "\n".join(_w_lines))
+    else:
+        # Said, not silently omitted (NS4 M8): with no block the note wrote
+        # "Rain is expected Friday…" from nothing. schedule_note_problem
+        # drops a note bullet about weather when this marker is present.
+        _weather_block = ("\n\n" + NO_WEATHER_MARKER + " — no forecast was supplied for next week. Do not "
+                          "mention weather, rain, snow, heat, temperature or patio traffic anywhere, and do not "
+                          "adjust staffing for weather.")
 
     # Which days actually take the money — this restaurant's own median
     # sales per weekday (see build_demand_forecast). Silently omitted when
@@ -2291,6 +2388,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _demand_block = format_demand_block(build_demand_forecast(restaurant_id))
         except Exception:
             _demand_block = ""
+    if not _demand_block:
+        # The missing input is stated (NS4 M8): the note must not claim a
+        # demand pattern nothing measured.
+        _demand_block = ("\n\n" + NO_DEMAND_MARKER + " — there is not enough sales history to say which days "
+                         "take the money. Do not describe any day as busy, slow, peak or typical for this "
+                         "restaurant beyond what the figures above show.")
 
     # The actual previous generation's per-day/per-role staffing (not just
     # historical shift patterns, which TYPICAL HEADCOUNT above already
@@ -2767,10 +2870,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     "column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV "
                     "rows, then \"---SUMMARY---\", then the bullets. Start your response with \"date,day,employee...\" "
                     "immediately and do not deviate from that format at any point.")
+    # The dates the labor figures cover and their age (NS4 M3): the note
+    # may not call month-old figures "this week's".
+    try:
+        _sched_now = datetime.now(ZoneInfo(tz_name or 'America/Chicago'))
+    except Exception:
+        _sched_now = datetime.now(ZoneInfo('America/Chicago'))
+    _sched_window_line = labor_window_line(analysis, _sched_now)[0]
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}
 
 CONTEXT:
-- Current overall labor: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
+{_sched_window_line}
+- Overall labor over that window: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
 - Blended hourly rate: ${hourly_rate}/hr
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
@@ -2806,7 +2917,7 @@ SERVER CLOSING STAGGER RULE (universal — applies to every restaurant, includin
 - When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee costs nothing extra and keeps headcount lean.
 
 NO-SHOW BUFFER:
-- On the highest-volume days of the week (typically Fri/Sat for most restaurants), note in the summary that a standby should be on-call if headcount is already at ceiling.
+- On this restaurant's highest-volume days of the week (from the sales figures above; if there are none, the days TYPICAL HEADCOUNT staffs heaviest), note in the summary that a standby should be on-call if headcount is already at ceiling.
 
 ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - Follow the RESTAURANT HOURS & SHIFT RULES block above exactly. Those are the definitive rules for this restaurant.

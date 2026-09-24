@@ -260,7 +260,7 @@ key, action) keeps one row per answer whichever path reaches it; actions
 include `snoozed`, `accepted`, `implemented` and `ignored`; scoring puts
 each recommendation in ONE bucket, taken > declined > hidden > ignored), `intel_patterns` (discovered
 patterns with n, effect, p, q, confidence, status active|retired),
-`intel_benchmarks` (cohort × metric × week percentiles, n ≥ 5),
+`intel_benchmarks` (cohort × metric × week percentiles, n ≥ 5, plus `vals_json` — the member values, sorted and unlabelled, never selected into a payload, so the band shown to a member leaves its own row out; shown only at ≥ 8 others, coarse-rounded, ≤ 8 weeks old — `intelligence.benchmarks.published`),
 `intel_confidence_log` (weekly acceptance and success by kind). Invariant:
 no row in `intel_patterns`, `intel_benchmarks` or `intel_confidence_log`
 describes fewer than `privacy.MIN_COHORT` restaurants.

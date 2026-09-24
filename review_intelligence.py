@@ -661,6 +661,9 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     return ctx
 
 
+MIN_BENCHMARK_COMPETITORS = 3
+
+
 def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """This restaurant's own rating against the competitors Intel already
     tracks, with the intel's age attached.
@@ -680,8 +683,10 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     except Exception:
         return {"available": False, "reason": "competitor intel is not readable"}
     comps = [c for c in (blob.get("competitors") or []) if c.get("rating")]
-    if len(comps) < 2:
-        return {"available": False, "reason": "fewer than two competitors with a rating"}
+    # A "median" of two ratings is the average of two businesses (NS4 L4).
+    if len(comps) < MIN_BENCHMARK_COMPETITORS:
+        return {"available": False,
+                "reason": f"fewer than {MIN_BENCHMARK_COMPETITORS} competitors with a rating"}
 
     conn = get_conn(db_path)
     row = _one_row(conn, f"""
@@ -819,6 +824,14 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     rests on, and the caller is expected to label it `forecast` via
     ai_guard.CLAIM_KINDS.
     """
+    # The study measured INDEPENDENT restaurants — chains showed no effect —
+    # and the comment above always said so, but nothing checked (NS4 M9).
+    # Gated here, and the study is named to the owner in `assumption`.
+    import benchmark_registry as _br
+    _study = _br.lookup("revenue_per_star_pct", None)
+    indep, indep_why = is_independent(restaurant_id, db_path=db_path)
+    if not indep:
+        return {"available": False, "reason": indep_why}
     # The published 5-9%-per-star range is about the DISPLAYED rating — the
     # all-time average a guest sees on the listing — so the move it is
     # applied to is that one (M-19): the all-time average now against the
@@ -903,10 +916,42 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "scope": "restaurant",
         "elasticity_low_pct": REVENUE_ELASTICITY_LOW * 100,
         "elasticity_high_pct": REVENUE_ELASTICITY_HIGH * 100,
-        "assumption": ("Applies a published 5-9% revenue-per-star range for independent "
-                       "restaurants to this restaurant's own trailing sales. It is an "
-                       "order-of-magnitude range, not a measurement of this business."),
+        # The study, named (NS4 M9): "a published 5-9%" never said whose.
+        "source": (_study or {}).get("short"),
+        "source_year": (_study or {}).get("year"),
+        "assumption": ("Applies the 5–9% revenue-per-star range Luca found for independent restaurants "
+                       "(Harvard Business School, 2016 — Yelp ratings in Seattle; one study, and chains showed "
+                       "no effect) to this restaurant's own trailing sales. It is an order-of-magnitude range, "
+                       "not a measurement of this business."),
     }
+
+
+def is_independent(restaurant_id: int, db_path: str = DB_PATH):
+    """(True, None) for a single-location restaurant; (False, reason) for
+    one of two or more locations under one group and owner. Luca's revenue
+    per star is an INDEPENDENT-restaurant finding — the study classed a
+    name shared across locations as a chain — so a multi-location group gets
+    no estimate from it. An unreadable row is not independent (no estimate
+    beats a borrowed one)."""
+    conn = get_conn(db_path)
+    try:
+        me = conn.execute("SELECT location_group, owner_email FROM restaurants WHERE id=?",
+                          (restaurant_id,)).fetchone()
+        if not me:
+            return False, "restaurant not found"
+        group = (me["location_group"] or "").strip()
+        if not group:
+            return True, None
+        n = conn.execute("SELECT COUNT(*) AS n FROM restaurants WHERE location_group=? AND owner_email=?",
+                         (group, me["owner_email"])).fetchone()
+    except Exception:
+        return False, "could not tell whether this is an independent restaurant"
+    finally:
+        conn.close()
+    if n and int(n["n"] or 0) >= 2:
+        return False, (f"the revenue-per-star study (Luca, 2016) measured independent restaurants; this is one "
+                       f"of {int(n['n'])} locations in a group, so no estimate is made")
+    return True, None
 
 
 # ── The six questions an owner actually opens the tab with ──────────────────

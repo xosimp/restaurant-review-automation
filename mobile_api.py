@@ -2472,11 +2472,10 @@ def _do_mobile_labor(restaurant_id):
     monthly_sales_est = (total_sales / period_days * 30) if period_days >= 7 else 0
     potential_savings = analysis.get("potential_savings", 0)
     labor_monthly = round(analysis.get("potential_savings_monthly", 0) or 0)
-    # 0.345 = midpoint of the 33-36% full-service industry range (NRA 2024
-    # Restaurant Operations Data Abstract) — was 0.32, a leftover from the
-    # stale pre-pandemic 28-32% benchmark already corrected everywhere else
-    # this figure appears (labor.py's AI prompt, the web dashboard, iOS's
-    # own benchmark band).
+    # The industry figure is by restaurant type now (thresholds.
+    # labor_industry_benchmark over benchmark_registry, NS4 H3): a published
+    # entry for this type or none — and with none, `labor_industry_pct` is
+    # null and the app hides the "vs industry" tiles.
     # A benchmark comparison is only honest against a measured actual over a
     # real period. When hours were estimated, the labor percentage was
     # understated, so the gap to the industry midpoint was overstated by
@@ -2487,9 +2486,11 @@ def _do_mobile_labor(restaurant_id):
     # labor_vs_industry_monthly, which the web tile reads too — it used 32%
     # with none of them (CA1 L33).
     import thresholds as _thr
+    _ind = _thr.labor_industry_benchmark(restaurant)
     labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
         overall_pct, total_sales, period_days, hours_are_estimated=hours_are_estimated,
-        sales_data_missing=sales_data_missing, analysis_failed=analysis_failed or period_too_short)
+        sales_data_missing=sales_data_missing, analysis_failed=analysis_failed or period_too_short,
+        industry_pct=(_ind or {}).get("pct"))
 
     savings_breakdown = {
         "labor_monthly": labor_monthly,
@@ -2497,8 +2498,8 @@ def _do_mobile_labor(restaurant_id):
         "labor_overtime": round(ot_premium),
         "labor_vs_industry_monthly": labor_vs_industry_monthly,
         "labor_vs_industry_annual": labor_vs_industry_monthly * 12,
-        "labor_industry_pct": _thr.LABOR_INDUSTRY_PCT,
-        "labor_industry_basis": _thr.LABOR_INDUSTRY_BASIS,
+        "labor_industry_pct": (_ind or {}).get("pct"),
+        "labor_industry_basis": (_ind or {}).get("basis"),
     }
 
     # Upcoming holiday/event scheduling forecast — same 21-day window and

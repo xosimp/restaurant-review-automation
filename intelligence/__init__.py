@@ -27,9 +27,15 @@ def platform_intelligence(db_path=DB_PATH):
 
 
 def industry_intelligence(cohort, db_path=DB_PATH):
+    """A cohort's patterns and its bands as they may be published: current,
+    over MIN_QUARTILE_N, coarse-rounded (benchmarks.published); a withheld
+    band is None."""
+    def _pub(m):
+        p = benchmarks.published(cohort, m, db_path=db_path)
+        return None if (not p or p.get("withheld")) else p
     return {"cohort": cohort, "label": categories.label(cohort),
             "patterns": patterns.active(cohort, db_path=db_path, include_platform=False),
-            "benchmarks": [benchmarks.band(cohort, m, db_path=db_path) for m in features.BENCHMARK_KEYS]}
+            "benchmarks": [_pub(m) for m in features.BENCHMARK_KEYS]}
 
 
 def recommendation_history(restaurant_id, limit=100, db_path=DB_PATH):
@@ -48,12 +54,14 @@ def pattern_discovery(db_path=DB_PATH):
     return patterns.discover(db_path=db_path, cohorts=jobs.cohorts_for(rs))
 
 
-def benchmark(restaurant_id, metric, cohort=None, db_path=DB_PATH):
+def benchmark(restaurant_id, metric, cohort=None, db_path=DB_PATH, cohort_source=None):
+    """benchmarks.benchmark with the restaurant's own type and where it came
+    from ('set' | 'inferred'), so an inferred cohort says so (NS4 M5)."""
     if cohort is None:
         from models import get_restaurant
         r = get_restaurant(restaurant_id, db_path=db_path)
-        cohort = categories.category_for(r)[0] if r else None
-    return benchmarks.benchmark(restaurant_id, metric, cohort=cohort, db_path=db_path)
+        cohort, cohort_source = categories.category_for(r) if r else (None, None)
+    return benchmarks.benchmark(restaurant_id, metric, cohort=cohort, db_path=db_path, cohort_source=cohort_source)
 
 
 def confidence_for(restaurant_id, rec_kind, metric=None, restaurant=None, db_path=DB_PATH):
@@ -72,10 +80,13 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
     cohort, src = categories.category_for(restaurant) if restaurant else (None, None)
-    for b in benchmarks.all_for(restaurant_id, cohort=cohort, db_path=db_path):
-        if b.get("available") and b.get("standing") not in (None, "unmeasured"):
-            lines.append(f"{b['label']}: this restaurant is in the {b['standing']} of {b['n']} {b['cohort_label'].lower()} "
-                         f"(band {b['p25']}–{b['p75']}, middle {b['p50']}).")
+    # Each line names the cohort actually used (a platform band is "other
+    # restaurants on Cavnar — all types"), its size with this restaurant
+    # left out, its as-of date, and an inferred type (NS4 H4/H5/M5).
+    for b in benchmarks.all_for(restaurant_id, cohort=cohort, db_path=db_path, cohort_source=src):
+        line = benchmarks.context_line(b)
+        if line:
+            lines.append(line)
     for p in patterns.active(cohort, db_path=db_path, limit=3):
         # The pattern's MEASURED figures, never a composite percentage (R9,
         # B1: the strength % mixes weights that were never fitted, and a
@@ -89,6 +100,8 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
             bits.append(f"effect size d={float(p['cohen_d']):.2f}")
         if p.get("p_value") is not None:
             bits.append(f"p={float(p['p_value']):.3f}")
+        if p.get("as_of"):
+            bits.append(f"as of {p['as_of']}")
         lines.append(f"Pattern ({', '.join(bits) or 'measured across the cohort'} — an association, not a cause "
                      f"and not a probability): {p['sentence']}")
     return lines

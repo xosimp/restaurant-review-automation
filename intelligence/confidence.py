@@ -135,7 +135,10 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
             "name": "platform_evidence", "value": round(shrink(plat["success_rate"], plat["measured"]), 3),
             "note": (f"{plat['improved']} of {plat['measured']} measured across {plat['measured_restaurants']} "
                      "restaurants improved"),
-            "scope": scope, "measured": plat["measured"], "restaurants": plat["measured_restaurants"]}))
+            "scope": scope, "measured": plat["measured"], "restaurants": plat["measured_restaurants"],
+            # Named from the cohort actually used (NS4 H4), never "like yours".
+            "cohort_label": (f"{categories.label(cohort).lower()} on Cavnar" if scope == "cohort"
+                             else "restaurants on Cavnar (all types)")}))
 
     if cohort:
         conn = get_conn(db_path)
@@ -255,7 +258,8 @@ def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict =
         if (prior is not None and privacy.cohort_ok(prior.get("restaurants"))
                 and int(prior.get("measured") or 0) >= PRIOR_MIN_MEASURED):
             privacy.assert_anonymous(prior)
-            who = "restaurants like yours" if prior.get("scope") == "cohort" else "restaurants on Cavnar"
+            who = prior.get("cohort_label") or ("restaurants on Cavnar (all types)" if prior.get("scope") != "cohort"
+                                                else "restaurants of this type on Cavnar")
             said = f"{who}: {prior['note']}"
             if prior["value"] >= KIND_UP_AT and i < 2:
                 band, adjusted, basis = BANDS[i + 1], "up", prior.get("scope") or "platform"

@@ -829,15 +829,22 @@ def _cohort_block(restaurant_id, restaurant) -> str:
     names, and only when the cohort clears the intelligence layer's floor."""
     try:
         import intelligence
-        cohort = intelligence.cohort_for(restaurant)[0] if restaurant else None
+        cohort, src = intelligence.cohort_for(restaurant) if restaurant else (None, None)
         lines = []
         for metric, label in (("labor_hours_per_1k_28d", "over the whole day"),
                               ("labor_hours_per_1k_day_28d", "at lunch/day"),
                               ("labor_hours_per_1k_night_28d", "at dinner/night")):
-            b = intelligence.benchmark(restaurant_id, metric, cohort=cohort)
+            b = intelligence.benchmark(restaurant_id, metric, cohort=cohort, cohort_source=src)
             if b.get("available") and b.get("value") is not None and b.get("standing") not in (None, "unmeasured"):
+                # The cohort actually used, its size with this restaurant
+                # left out, the band's as-of date and an inferred type
+                # (NS4 H4/H5/M5).
+                who = ("other restaurants on Cavnar (all types)" if b.get("cohort") == "platform"
+                       else f"other {b['cohort_label'].lower()}")
                 lines.append(f"  {label}: this restaurant runs {b['value']:g} labor hours per $1k of sales; "
-                             f"{b['n']} {b['cohort_label'].lower()} run {b['p25']:g}–{b['p75']:g} (middle {b['p50']:g}).")
+                             f"{b['n']} {who} run {b['p25']:g}–{b['p75']:g} (middle {b['p50']:g}; "
+                             f"band as of {b.get('as_of') or 'unknown'})"
+                             + (" — type inferred from the restaurant's name" if b.get("inferred") else "") + ".")
         if not lines:
             return ""
         return ("\n\nHOW THIS RESTAURANT'S LABOR COMPARES (an anonymous cohort ratio — a reason to hold the line on "
@@ -3194,9 +3201,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _start = result.get("starting_headcount") or {}
             if _start.get("available"):
                 result["review"]["lines"].append(
-                    f"Staffing numbers marked borrowed come from {_start.get('n')}+ similar "
-                    f"{(_start.get('cohort_label') or 'restaurants').lower()} restaurants (people on the floor per $1k of "
-                    f"sales, scaled to {_start.get('basis')}) — this restaurant has no schedule history of its own yet.")
+                    f"Staffing numbers marked borrowed come from {_start.get('n')}+ "
+                    f"{(_start.get('cohort_label') or 'restaurants').lower()} on Cavnar (people on the floor per $1k of "
+                    f"sales, scaled to {_start.get('basis')})"
+                    + (" — the type was inferred from the restaurant's name, not set" if _start.get("inferred") else "")
+                    + " — this restaurant has no schedule history of its own yet.")
             _pc = result.get("projected_cost") or {}
             if _pc.get("overtime_hours"):
                 result["review"]["lines"].append(

@@ -405,7 +405,8 @@ def test_a_new_restaurant_borrows_a_starting_headcount_from_its_cohort(db):
     assert out["headcount"][("Saturday", "night")] == {"Server": 4}, "0.5 per $1k × $8,000 of its OWN sales"
     assert out["ratios"] == [{"role_family": "server", "daypart": "night", "people_per_1k": 0.5, "n": 5,
                               "week": features.iso_week(dt.date.today())}]
-    assert "Borrowed" in out["note"] and "5+ pizza restaurants" in out["note"]
+    # The cohort named as the one used, never "similar restaurants" (NS4 H4).
+    assert "Borrowed" in out["note"] and "5+ pizza on Cavnar" in out["note"]
     shaped = staffing.payload(out)
     assert privacy.assert_anonymous(shaped) is shaped
     assert shaped["headcount"]["Saturday|night"] == {"Server": 4}
