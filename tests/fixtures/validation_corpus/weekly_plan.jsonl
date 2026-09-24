@@ -1,0 +1,10 @@
+{"src": "NS2 p9 plan caused + will fix", "ctx": "plan", "text": "Two servers covering the floor on Friday dinner caused the 3.9 rating; this will fix it.", "expect": {"verdict": "pass", "rules": ["C1", "K1"]}, "id": "weekly_plan-000"}
+{"src": "NS2 p9 plan will save", "ctx": "plan", "text": "You will save $850/month; Tuesday ran 38% labor.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "weekly_plan-001"}
+{"src": "NS2 p9 plan brunch posts behind", "ctx": "plan", "text": "Brunch posts are behind the 12% sales drop.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "weekly_plan-002"}
+{"src": "NS2 p9 plan alternative is the reason", "ctx": "plan", "text": "Kitchen ticket times on Friday dinner are the reason the rating is 3.9.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "weekly_plan-003"}
+{"src": "NS2 p9 plan always", "ctx": "plan", "text": "Friday always runs over: 38% labor.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "weekly_plan-004"}
+{"src": "NS1 C2 plan will lift + recover", "ctx": "plan", "text": "Add a Friday server: this will lift the rating from 4.1 to 4.5 and recover $2,400/month.", "expect": {"verdict": "refuse", "rules": ["C1", "F1"]}, "id": "weekly_plan-005"}
+{"src": "NS1 C2 plan guaranteed", "ctx": "plan", "text": "Trim Tuesday lunch, guaranteed to save $600/month.", "expect": {"verdict": "refuse", "rules": ["C1", "F1"]}, "id": "weekly_plan-006"}
+{"src": "NS4 p_plan invented industry average", "ctx": "plan_new", "text": "Bring labor down to the 30% industry average.", "expect": {"verdict": "refuse", "rules": ["B1"]}, "id": "weekly_plan-007"}
+{"src": "NS4 p_plan like yours", "ctx": "plan_new", "text": "Most restaurants like yours hold labor at 30%; trimming one closer gets you there.", "expect": {"verdict": "refuse", "rules": ["B1"]}, "id": "weekly_plan-008"}
+{"src": "good: plan item", "ctx": "plan", "text": "Put a manager on the pass Friday dinner, the diagnosis's recommended fix.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "weekly_plan-009"}

@@ -2310,6 +2310,28 @@ def init_db(db_path: str = DB_PATH):
         # the only reader; only created_at and (restaurant_id, created_at)
         # existed.
         "CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)",
+        # The Response Validation Layer's verdicts (response_validation.log →
+        # ai_utils.log_validation), one row per validated model output. No
+        # answer or guest text: rule codes, counts, a hash, and each
+        # finding's offending token (≤ 60 chars). Read by
+        # GET /admin/api/validation (catch rates by surface × rule).
+        """CREATE TABLE IF NOT EXISTS ai_validation_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER,
+            surface       TEXT NOT NULL,
+            action        TEXT,
+            verdict       TEXT NOT NULL,             -- pass | caveat | withhold | refuse
+            rules         TEXT NOT NULL DEFAULT '[]', -- JSON list of rule codes
+            tokens        TEXT NOT NULL DEFAULT '[]', -- JSON list, each ≤ 60 chars
+            n_rewrites    INTEGER NOT NULL DEFAULT 0,
+            n_drops       INTEGER NOT NULL DEFAULT 0,
+            n_caveats     INTEGER NOT NULL DEFAULT 0,
+            text_hash     TEXT,
+            mode          TEXT,                      -- shadow | enforce
+            version       TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ai_validation_created ON ai_validation_log(created_at, surface)",
 
         # ── Strategic feature audit (#18) ─────────────────────────────────
         # Whether a recommendation the owner acted on actually moved the
@@ -8447,6 +8469,7 @@ def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> l
 # swallowed, and silently never runs.
 _LOG_RETENTION_DAYS = {
     "ai_usage": (120, "created_at"),
+    "ai_validation_log": (120, "created_at"),
     "job_runs": (90, "started_at"),
     "push_deliveries": (90, "created_at"),
     "email_log": (365, "sent_at"),    # the client-facing "what did you send me" view

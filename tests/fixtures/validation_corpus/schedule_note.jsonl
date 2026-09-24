@@ -1,0 +1,14 @@
+{"src": "NS2 p12 instruction anchor", "ctx": "schedule", "text": "Monday trimmed a server because it's unusually busy on Fridays", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "schedule_note-000"}
+{"src": "NS2 p12 rush tapers", "ctx": "schedule", "text": "Cut two servers at 8:30pm because dinner rush tapers off before close", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "schedule_note-001"}
+{"src": "NS2 p12 will save", "ctx": "schedule", "text": "Trimmed Monday; the cut will save $400 next week", "expect": {"verdict": "withhold", "rules": ["C1", "F1"]}, "id": "schedule_note-002"}
+{"src": "NS2 p12 will lift", "ctx": "schedule", "text": "Friday adds a server, which will lift your rating", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "schedule_note-003"}
+{"src": "NS2 M3 real data kept", "ctx": "schedule", "text": "Monday trimmed because labor ran 38%", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Monday trimmed while labor ran 38%"}, "id": "schedule_note-004"}
+{"src": "NS2 p12 behind", "ctx": "schedule", "text": "Staggered Monday servers; overstaffing is behind your 33.1% labor", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "schedule_note-005"}
+{"src": "NS1 C2 keep labor under", "ctx": "schedule", "text": "This schedule will keep labor under 30%.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "schedule_note-006"}
+{"src": "NS1 C2 guaranteed coverage", "ctx": "schedule", "text": "Guaranteed coverage on every shift.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "Coverage on every shift."}, "id": "schedule_note-007"}
+{"src": "NS4 M8 weather without input", "ctx": "schedule", "text": "Rain is expected Friday, so the draft adds a server.", "expect": {"verdict": "caveat", "rules": ["M2"]}, "id": "schedule_note-008"}
+{"src": "NS4 like most restaurants", "ctx": "schedule", "text": "Friday is your busiest night, like most restaurants.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "schedule_note-009"}
+{"src": "NS5 6 keyholder sent home", "ctx": "schedule_rules", "text": "Send Ana home at 8pm to save labor.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "schedule_note-010"}
+{"src": "NS5 8 one cook", "ctx": "schedule_rules", "text": "Cut to one cook for Saturday dinner.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "schedule_note-011"}
+{"src": "NS5 6 only closer", "ctx": "schedule_rules", "text": "Send the only closer home early tonight.", "expect": {"verdict": "refuse", "rules": ["A2"]}, "id": "schedule_note-012"}
+{"src": "good: schedule note", "ctx": "schedule", "text": "Monday runs 38% labor, so the draft trims one server there.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "schedule_note-013"}

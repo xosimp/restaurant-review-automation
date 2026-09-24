@@ -1,0 +1,9 @@
+{"src": "NS2 p8 always fills", "ctx": "intel", "text": "Rosa's Trattoria wins brunch because its patio always fills first.", "expect": {"verdict": "caveat", "rules": ["C1", "K1"]}, "id": "intel-000"}
+{"src": "NS2 p8 driving regulars", "ctx": "intel", "text": "Rosa's Trattoria's slow service is driving its regulars to you.", "expect": {"verdict": "caveat", "rules": ["K1"]}, "id": "intel-001"}
+{"src": "NS2 p8 will win", "ctx": "intel", "text": "Push your carbonara this week; it will win Rosa's unhappy guests.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "intel-002"}
+{"src": "NS2 p8 never wait", "ctx": "intel", "text": "Rosa's guests never wait long at your bar, so advertise it.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "intel-003"}
+{"src": "NS4 p_comp most restaurants", "ctx": "intel", "text": "Rival Bistro outrates most restaurants in the area at 4.6 stars.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "intel-004"}
+{"src": "NS4 p_comp area restaurants", "ctx": "intel", "text": "Area restaurants average faster service than you.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "intel-005"}
+{"src": "NS4 p_comp typical ticket", "ctx": "intel", "text": "Match the area's typical 15-minute ticket time on weekends.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "intel-006"}
+{"src": "NS4 p_comp most competitors", "ctx": "intel", "text": "Most competitors run happy hour; start one Tuesday.", "expect": {"verdict": "caveat", "rules": ["B1"]}, "id": "intel-007"}
+{"src": "good: intel measured", "ctx": "intel", "text": "Rosa's Trattoria sits at 4.2★ on 212 reviews.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "intel-008"}

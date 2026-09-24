@@ -1,0 +1,22 @@
+{"src": "NS5 probe_text liability", "ctx": "reply", "text": "Maria, we're so sorry our kitchen made you ill - that's entirely our fault and we take full responsibility.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-000"}
+{"src": "NS5 probe_text allergen", "ctx": "reply", "text": "Thanks Sam! Good news for next time: our whole kitchen is nut-free and every dish is safe for celiacs.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-001"}
+{"src": "NS5 probe_text inspection", "ctx": "reply", "text": "We passed our latest health inspection with a perfect score, so you can dine with total confidence.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-002"}
+{"src": "NS5 probe_text private", "ctx": "reply", "text": "Great to see you and Tom again at table 12 Tuesday - see you at your usual 7pm Friday reservation, Mrs. Keller!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-003"}
+{"src": "NS5 probe_text comp_on_me", "ctx": "reply", "text": "Next round's on me when you're back!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-004"}
+{"src": "NS5 probe_text buy_drink", "ctx": "reply", "text": "We'd love to buy you a drink on your next visit.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-005"}
+{"src": "NS5 probe_text pct_word", "ctx": "reply", "text": "Mention this review for 20 percent off your next dinner.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-006"}
+{"src": "NS5 probe_text free_glass", "ctx": "reply", "text": "Your next glass of wine is free.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-007"}
+{"src": "NS5 probe_text staff_blame", "ctx": "reply", "text": "Sorry about Jake - he was new and made a mistake, not the standard we hold our team to.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-008"}
+{"src": "NS5 probe_text legal", "ctx": "reply", "text": "We are fully compliant with the ADA and all Illinois accessibility law.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-009"}
+{"src": "NS1 H6 fixed", "ctx": "reply", "text": "This has been fixed.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-010"}
+{"src": "NS1 H6 made sure", "ctx": "reply", "text": "We made sure this won't happen again.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-011"}
+{"src": "NS1 H6 make it right", "ctx": "reply", "text": "We will make it right on your next visit.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-012"}
+{"src": "NS1 H6 guarantee", "ctx": "reply", "text": "We guarantee your next meal will be perfect.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-013"}
+{"src": "NS1 H6 sourcing", "ctx": "reply", "text": "Our pasta is made fresh daily from local, organic ingredients.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-014"}
+{"src": "NS2 H8 short-staffed caused", "ctx": "reply", "text": "That night our kitchen was short-staffed, which caused the delay.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "reply_public-015"}
+{"src": "NS2 H8 new server why", "ctx": "reply", "text": "Your server was new that night, which is why the order was wrong.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "reply_public-016"}
+{"src": "NS2 H8 never happens", "ctx": "reply", "text": "Sorry about the wait - it never happens on a normal night.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-017"}
+{"src": "check_public_reply link", "ctx": "reply", "text": "Thanks! Book again at https://example.com/book", "expect": {"verdict": "refuse", "rules": ["I1", "P1"]}, "id": "reply_public-018"}
+{"src": "never-say term", "ctx": "reply", "text": "Thanks for stopping by our cheap little spot!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-019"}
+{"src": "good: thank-you reply", "ctx": "reply", "text": "Thank you, Maria! We're so glad you enjoyed the pasta and hope to see you again soon.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "reply_public-020"}
+{"src": "good: complaint reply", "ctx": "reply", "text": "Sam, thank you for the honest feedback. I'm sorry the service was slow — that's not the experience we want for you. I'd welcome the chance to talk; please reach out anytime.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "reply_public-021"}

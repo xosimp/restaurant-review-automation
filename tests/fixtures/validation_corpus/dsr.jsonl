@@ -1,0 +1,52 @@
+{"src": "NS3 brief-1 labor savings", "ctx": "dsr", "text": "Labor savings of $1,200 this week.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $1,200 a month is available (an opportunity, not money saved)."}, "id": "dsr-000"}
+{"src": "NS3 brief-2 literal", "ctx": "dsr", "text": "You saved $3,000 on food cost.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "dsr-001"}
+{"src": "NS3 brief-2 traced", "ctx": "dsr", "text": "You saved $1,200 on food cost this month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-002"}
+{"src": "NS3 brief-3 literal", "ctx": "dsr", "text": "On pace for $120,000 this month.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "dsr-003"}
+{"src": "NS3 brief-3 night-as-month", "ctx": "dsr", "text": "Sales are on pace for $19,850 this month.", "expect": {"verdict": "refuse", "rules": ["F3"]}, "id": "dsr-004"}
+{"src": "NS3 brief-4 literal", "ctx": "dsr", "text": "Together these add up to $5,400/month.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "dsr-005"}
+{"src": "NS3 brief-4 sum wording traced", "ctx": "dsr", "text": "Waste and overtime together add up to $1,200/month.", "expect": {"verdict": "refuse", "rules": ["F5"]}, "id": "dsr-006"}
+{"src": "NS3 night x30 as month", "ctx": "dsr", "text": "Waste is costing $84.50 a month.", "expect": {"verdict": "refuse", "rules": ["F3"]}, "id": "dsr-007"}
+{"src": "NS3 night x30 real math", "ctx": "dsr", "text": "Waste is costing $2,535 a month.", "expect": {"verdict": "refuse", "rules": ["F3"]}, "id": "dsr-008"}
+{"src": "NS3 budget as actual", "ctx": "dsr", "text": "Net sales came in at $18,500 tonight.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-009"}
+{"src": "NS3 forecast as actual", "ctx": "dsr", "text": "Net sales hit $18,900 tonight.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-010"}
+{"src": "NS3 labor saved from pts", "ctx": "dsr", "text": "Labor ran 1.8 points under target, saving $1,350.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-011"}
+{"src": "NS3 cavnar credit", "ctx": "dsr", "text": "Cavnar recovered $1,200 in food cost for you.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-012"}
+{"src": "NS3 annualised (no data days)", "ctx": "dsr", "text": "That is $14,400 a year in food cost.", "expect": {"verdict": "refuse", "rules": ["F7"]}, "id": "dsr-013"}
+{"src": "NS3 est quoted as saved", "ctx": "dsr", "text": "Food cost was $5,900, a saving against target.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-014"}
+{"src": "NS3 action why you saved", "ctx": "dsr", "text": "You saved $1,200 this month on food cost.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-015"}
+{"src": "NS3 largest_money_saving budget", "ctx": "dsr_saving", "text": "Trimming Tuesday's close saved $420 this week.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-016"}
+{"src": "NS3 would have saved", "ctx": "dsr_saving", "text": "Labor ran 8.8 points over target, so trimming the close would have saved $420.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-017"}
+{"src": "NS3 food probe3 we saved", "ctx": "dsr_strong", "text": "We saved $640 a month in food cost.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-018"}
+{"src": "NS3 food probe3 measured", "ctx": "dsr_strong", "text": "Food cost drivers are costing $640 a month, measured.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-019"}
+{"src": "NS3 food probe3 largest saving", "ctx": "dsr_strong", "text": "The $640 a month in recoverable food cost is the largest saving.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-020"}
+{"src": "NS2 p2 cause_two_topics", "ctx": "dsr_strong", "text": "Reviews averaged 4.6 because labor stayed at 24.2%.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Reviews averaged 4.6 while labor stayed at 24.2%."}, "id": "dsr-021"}
+{"src": "NS2 p2 labor_caused_reviews", "ctx": "dsr_strong", "text": "Running labor at 24.2% caused the 4.6 rating.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Running labor at 24.2% coincided with the 4.6 rating."}, "id": "dsr-022"}
+{"src": "NS2 p2 weather_drove_sales", "ctx": "dsr_strong", "text": "The 84 degree heat drove $19,850 in net sales.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-023"}
+{"src": "NS2 p2 cubs_game", "ctx": "dsr_strong", "text": "Net sales hit $19,850 thanks to the Cubs home game.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-024"}
+{"src": "NS2 p2 saved_ot", "ctx": "dsr_strong", "text": "You saved $146.25 on overtime tonight.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-025"}
+{"src": "NS2 p2 lost_recov", "ctx": "dsr_strong", "text": "You are losing $640 a month on food cost.", "expect": {"verdict": "pass", "rules": ["F4"], "text_is": "About $640 a month is available (an opportunity, not a measured loss)."}, "id": "dsr-026"}
+{"src": "NS2 p2 will", "ctx": "dsr_strong", "text": "Keeping labor at 24.2% will keep the rating at 4.6.", "expect": {"verdict": "pass", "rules": ["C1"], "text_is": "Keeping labor at 24.2% might keep the rating at 4.6."}, "id": "dsr-027"}
+{"src": "NS2 p2 always", "ctx": "dsr_strong", "text": "Saturdays always beat budget: $21,430 gross against $20,000.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "dsr-028"}
+{"src": "NS2 p2 since", "ctx": "dsr_strong", "text": "Since labor dropped to 24.2%, guests rated you 4.6.", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "dsr-029"}
+{"src": "NS2 p2 resp", "ctx": "dsr_strong", "text": "The friendly staff is responsible for the 4.6 rating.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-030"}
+{"src": "NS2 p2 act_save_640", "ctx": "dsr_strong", "text": "This will save you $640 a month.", "expect": {"verdict": "pass", "rules": ["F4"]}, "id": "dsr-031"}
+{"src": "NS2 p2 act_cause", "ctx": "dsr_strong", "text": "Labor at 24.2% caused a 4.6 rating.", "expect": {"verdict": "pass", "rules": ["K1"]}, "id": "dsr-032"}
+{"src": "NS2 p2 act_guarantee", "ctx": "dsr_strong", "text": "This guarantees you never 86 buns again.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "dsr-033"}
+{"src": "NS2 p2 weak came from", "ctx": "dsr_weak", "text": "The 3.3 rating came from 2 no-shows leaving the floor short.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-034"}
+{"src": "NS2 p2 weak rated because", "ctx": "dsr_weak", "text": "Guests rated the night 3.3 because 2 no-shows left the floor short.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Guests rated the night 3.3 while 2 no-shows left the floor short."}, "id": "dsr-035"}
+{"src": "NS2 C2 reversed causation", "ctx": "dsr_weak", "text": "Net sales of $5,210.60 fell short because labor ran 34.8%.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Net sales of $5,210.60 fell short while labor ran 34.8%."}, "id": "dsr-036"}
+{"src": "NS1 dsr since", "ctx": "dsr_weak", "text": "Labor ran 34.8% against a 26.0% target since the new schedule started.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-037"}
+{"src": "NS1 dsr when rain", "ctx": "dsr_weak", "text": "Sales of $5,210.60 fell short when the rain came in.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-038"}
+{"src": "NS1 dsr following", "ctx": "dsr_weak", "text": "Sales dropped to $5,210.60 following the rain.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-039"}
+{"src": "NS1 dsr is why", "ctx": "dsr_weak", "text": "The rain is why sales came in at $5,210.60.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-040"}
+{"src": "NS1 dsr will keep", "ctx": "dsr_weak", "text": "Labor at 34.8% will keep running over target next week.", "expect": {"verdict": "pass", "rules": ["C1"]}, "id": "dsr-041"}
+{"src": "NS1 dsr will save", "ctx": "dsr_weak", "text": "Cutting one server will save you $202.50 in overtime.", "expect": {"verdict": "refuse", "rules": ["F4"]}, "id": "dsr-042"}
+{"src": "NS1 H2 co-cited cause", "ctx": "dsr_weak", "text": "Rating averaged 3.3 because of the two no-shows.", "expect": {"verdict": "pass", "rules": ["K1"], "text_is": "Rating averaged 3.3 alongside the two no-shows."}, "id": "dsr-043"}
+{"src": "NS1 dsr rain cause", "ctx": "dsr_weak", "text": "Rating averaged 3.3 because of the rain.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "dsr-044"}
+{"src": "X1 sign", "ctx": "dsr_weak", "text": "Sales came in $909.75 ahead of last week.", "expect": {"verdict": "refuse", "rules": ["X1"]}, "id": "dsr-045"}
+{"src": "good: DSR vs budget", "ctx": "dsr", "text": "Net sales came in at $19,850.40, $1,350.40 above budget.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-046"}
+{"src": "good: DSR labor vs target", "ctx": "dsr", "text": "Labor ran 24.2% against a 26.0% target.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-047"}
+{"src": "good: DSR estimate named", "ctx": "dsr", "text": "Food cost is estimated at 29.8% tonight.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-048"}
+{"src": "good: DSR opportunity named", "ctx": "dsr", "text": "About $1,200 a month in food cost is recoverable — an opportunity, not money saved.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-049"}
+{"src": "good: forecast named", "ctx": "dsr", "text": "Sales were forecast at $18,900 tonight.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-050"}
+{"src": "good: DSR weak down", "ctx": "dsr_weak", "text": "Sales came in $909.75 behind last week.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "dsr-051"}

@@ -1,0 +1,5 @@
+{"src": "NS1 H7 voted best + offers", "ctx": "social", "text": "Voted the best pizza in Chicago! 20% off all week. Free dessert for every table tonight. Our chefs trained in Naples.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "social_post-000"}
+{"src": "NS2 L1 rated by guests", "ctx": "social", "text": "Rated 4.9 stars by 2,000 guests!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "social_post-001"}
+{"src": "NS2 L1 voted #1", "ctx": "social", "text": "Voted #1 brunch in the neighborhood.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "social_post-002"}
+{"src": "good: social post", "ctx": "social", "text": "Wood-fired pizza night is back this Friday — come hungry.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "social_post-003"}
+{"src": "good: owner's own history", "ctx": "social", "text": "Family-owned since 1998 and still firing the oven every night.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "social_post-004"}

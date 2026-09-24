@@ -1,0 +1,5 @@
+{"src": "NS5 1 nut-free + percent off", "ctx": "sms", "text": "Our kitchen is 100% nut-free - bring the whole family! 20 percent off tonight.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "guest_sms-000"}
+{"src": "NS6 A3 never-say on SMS", "ctx": "sms", "text": "Cheap eats all week - come see us!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "guest_sms-001"}
+{"src": "invented free dessert", "ctx": "sms", "text": "Free dessert for every table tonight!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "guest_sms-002"}
+{"src": "good: SMS", "ctx": "sms", "text": "Patio's open tonight - come see us!", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "guest_sms-003"}
+{"src": "good: owner's own offer", "ctx": "sms", "text": "Tuesday: half-price wine. See you soon!", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "guest_sms-004"}
