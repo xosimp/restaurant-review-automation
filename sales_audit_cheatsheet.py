@@ -341,8 +341,8 @@ def build(audit, results):
         {"h": "What it does NOT do", "items": [
             "Not a POS, payroll or accounting system — it reads from them.",
             "No bar / pour-cost / variance tracking yet (Bar & Alcohol is upcoming). No waitlist (upcoming).",
-            # It said "no auto-posted replies, no auto-published schedules",
-            # and all of those exist as opt-ins (NS5 L15) — never tell a
+            # It denied auto-approved replies and auto-published schedules,
+            # and both exist as opt-ins (NS5 L15) — never tell a
             # prospect the product cannot do what it does.
             "Acts on its own only where the owner switches it on, each with a guard: auto-approve of drafted review "
             "replies (5-star by default, capped per day, held when a reply makes a claim), auto-publish of an "
