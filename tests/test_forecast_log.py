@@ -99,13 +99,15 @@ def test_legacy_daily_rows_count_once_per_week_in_the_record(db_path):
     the FIRST prediction for that week standing for it."""
     import forecast_log
     rid = _rid(db_path)
-    for i, day in enumerate(("2026-08-04", "2026-08-05", "2026-08-06", "2026-08-12", "2026-08-13")):
+    days = ("2026-08-04", "2026-08-05", "2026-08-06", "2026-08-12", "2026-08-13",
+            "2026-08-19", "2026-08-20", "2026-08-26")
+    for i, day in enumerate(days):
         _sql(db_path, "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, "
                       "signed_error_pct, created_at) VALUES (?,?,?,?,?,?,?,datetime('now', ?))",
              (rid, "waste_week", day, 110, 100, 10.0 + i, 10.0 + i, f"-{30 - i} days"))
     acc = forecast_log.accuracy(rid, "waste_week", db_path=db_path)
-    assert acc["n_weeks"] == 2 and acc["scored"] == 2
-    assert acc["mean_error_pct"] == round((10.0 + 13.0) / 2, 1)
+    assert acc["n_weeks"] == 4 and acc["scored"] == 4
+    assert acc["mean_error_pct"] == round((10.0 + 13.0 + 15.0 + 17.0) / 4, 1)
 
 
 def test_the_record_reads_often_wide_and_withholds_the_next_forecast(db_path):
@@ -174,7 +176,7 @@ def test_labor_and_rating_forecasts_score_against_their_closed_week(db_path, mon
     monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db: (seen.append((key, s, e)) or
                                                                        ({"labor_pct": 25.0}.get(key), "")))
     out = forecast_log.score_due(rid, today=date(2026, 8, 20), db_path=db_path)
-    assert out == {"scored": 1, "unmeasurable": 1}
+    assert out == {"scored": 1, "unmeasurable": 1, "gave_up": 0}
     assert ("labor_pct", "2026-08-03", "2026-08-09") in seen
     row = forecast_log.frozen(rid, "labor_week", date(2026, 8, 5), db_path=db_path)
     assert row["actual"] == 25.0 and row["error_pct"] == 20.0 and row["signed_error_pct"] == 20.0
@@ -210,8 +212,12 @@ def test_the_forecast_range_is_a_percentile_interval_only_on_enough_weeks(db_pat
     vals = [1000, 1100, 1200, 1300, 1400, 1500, 1600, 5000]
     _sales_history(db_path, rid2, "Friday", vals, day)
     full = demand.forecast_day(rid2, day, db_path=db_path)
-    assert full["low"] == round(demand._percentile(vals, 10), 2) and full["high"] == round(demand._percentile(vals, 90), 2)
-    assert full["high"] < 5000 and full["low"] > 1000          # not the extremes
+    # The 80% prediction range for the next night (re-audit B2 #13), not the
+    # two extremes on file and not the 10th-90th percentile of the eight.
+    lo, hi = demand.prediction_range(vals)
+    assert full["low"] == round(lo, 2) and full["high"] == round(hi, 2)
+    assert full["high"] < 5000                                 # not the extreme
+    assert full["range_coverage_pct"] == 80
 
 
 def test_demand_accuracy_reads_the_nightly_forecast_out_of_sample(db_path):
@@ -278,7 +284,7 @@ def test_a_week_missing_a_projected_night_is_not_scored(db_path):
         d = week + timedelta(days=wd_off)
         _sql(db_path, "INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales) VALUES (?,?,?,?)",
              (rid, d.isoformat(), d.strftime("%A"), 1000))
-    assert forecast_log.score_due(rid, today=date(2026, 8, 12), db_path=db_path) == {"scored": 0, "unmeasurable": 1}
+    assert forecast_log.score_due(rid, today=date(2026, 8, 12), db_path=db_path) == {"scored": 0, "unmeasurable": 1, "gave_up": 0}
 
 
 def test_k8_demand_accuracy_rides_on_the_brief_the_labor_payload_and_ask():

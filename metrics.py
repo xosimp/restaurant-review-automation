@@ -570,11 +570,96 @@ BAND_K = 1.645
 BAND_HISTORY_DAYS = 364        # a year of the restaurant's own windows, at most
 MIN_BAND_WINDOWS = 4           # same-length windows before their spread is used
 MIN_BAND_WEEKS = 6             # weekly windows before a scaled weekly spread is used
+# Weekly scaling (the "weekly, scaled" method, day 42 to day 111 of history):
+# weeks are NOT independent — a restaurant's level carries from one week to
+# the next — so scaling a weekly spread by sqrt(7 / L) understated a 28-day
+# window's spread and the band was crossed by 28.7% of do-nothing trackers
+# while stating 10% (re-audit B2 #6, probe p2 S3). The weekly series' lag-1
+# autocorrelation (bias-corrected, held to [AUTOCORR_FLOOR, AUTOCORR_MAX])
+# corrects both the weekly spread (a persistent series' sample variance runs
+# low) and its scaling to L days (the AR(1) variance of a mean).
+# AUTOCORR_FLOOR is the least persistence assumed: a dozen weeks cannot
+# measure a slow level (a level carrying 0.85 week to week under day-to-day
+# noise reads a weekly lag-1 correlation near 0.45, and at 0 the corrected
+# band was still crossed 24% of the time; at 0.5, 12.8% against a stated
+# 10% — tests/test_confidence_round2_q.py replays it).
+AUTOCORR_MAX = 0.95
+AUTOCORR_FLOOR = 0.5
 
 
 def _phi(z):
     import math
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+# ── Student's t, pure Python (no SciPy on the platform) ─────────────────────
+# For a figure estimated from a handful of values — a slope's significance
+# (waste_trend.trend_strength), a prediction range from eight nights
+# (demand.forecast_day) — the normal's quantiles overstate what a few values
+# can show; these read the t distribution at the right degrees of freedom.
+
+def _betacf(a, b, x):
+    """Continued fraction for the regularized incomplete beta (Lentz)."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        de = d * c
+        h *= de
+        if abs(de - 1.0) < 1e-12:
+            break
+    return h
+
+
+def _betainc(a, b, x):
+    """The regularized incomplete beta I_x(a, b). Pure."""
+    import math
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    bt = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def t_cdf(t, df):
+    """P(T <= t) for Student's t with `df` (> 0, may be fractional) degrees
+    of freedom; the normal when df is None. Pure."""
+    if df is None:
+        return _phi(t)
+    df = float(df)
+    t = float(t)
+    tail = 0.5 * _betainc(df / 2.0, 0.5, df / (df + t * t))
+    return 1.0 - tail if t >= 0 else tail
+
+
+def t_ppf(q, df):
+    """The q-quantile of Student's t (bisection on t_cdf); the normal's when
+    df is None. Pure."""
+    lo, hi = -1000.0, 1000.0
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if t_cdf(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
 
 
 def false_alarm_rate(threshold, sigma_diff):
@@ -584,6 +669,38 @@ def false_alarm_rate(threshold, sigma_diff):
     if not sigma_diff or threshold is None:
         return None
     return round(2.0 * (1.0 - _phi(float(threshold) / float(sigma_diff))), 3)
+
+
+def lag1_autocorrelation(vals):
+    """The lag-1 autocorrelation of a series, bias-corrected for its length
+    (Kendall's + (1 + 3r) / n) and held to [0, AUTOCORR_MAX] — 0.0 below 3
+    values. Pure."""
+    n = len(vals)
+    if n < 3:
+        return 0.0
+    m = sum(vals) / n
+    den = sum((v - m) ** 2 for v in vals)
+    if not den:
+        return 0.0
+    r = sum((vals[i] - m) * (vals[i - 1] - m) for i in range(1, n)) / den
+    r = r + (1.0 + 3.0 * r) / n
+    return max(0.0, min(AUTOCORR_MAX, r))
+
+
+def ar1_mean_variance_factor(rho, m):
+    """Var(mean of m consecutive values) / (Var(one value) / m) for an AR(1)
+    series with lag-1 correlation rho: 1 + 2 Σ_{k<m} (1 − k/m) ρ^k. Pure."""
+    m = max(1, int(m))
+    return 1.0 + 2.0 * sum((1.0 - k / m) * rho ** k for k in range(1, m))
+
+
+def ar1_sample_variance_bias(rho, n):
+    """E[s²] / σ² for n values of an AR(1) series: a persistent series'
+    sample variance understates its spread. Pure."""
+    n = int(n)
+    if n < 2:
+        return 1.0
+    return 1.0 - (2.0 / (n * (n - 1))) * sum((n - k) * rho ** k for k in range(1, n))
 
 
 def _sd(vals):
@@ -596,14 +713,23 @@ def _sd(vals):
 
 def window_spread(restaurant_id, key, window_days, end, db_path=DB_PATH, history_days=BAND_HISTORY_DAYS):
     """(sigma of the metric over one window of `window_days`, method, n) from
-    this restaurant's own non-overlapping windows ending on or before `end`
-    — or (None, "stated", 0) when there is too little history.
+    this restaurant's own history ending on or before `end` — or (None,
+    "stated", n) when there is too little (window_spread_detail)."""
+    d = window_spread_detail(restaurant_id, key, window_days, end, db_path=db_path, history_days=history_days)
+    return d["sigma"], d["method"], d["n"]
 
-    method "own windows": the spread of MIN_BAND_WINDOWS or more windows of
-    the same length. method "weekly, scaled": for a per-day metric with too
-    few whole windows, the spread of MIN_BAND_WEEKS or more whole weeks
-    scaled by sqrt(7 / window) — weeks read as independent, so it can
-    understate a slow drift; the stated band still floors it."""
+
+def window_spread_detail(restaurant_id, key, window_days, end, db_path=DB_PATH, history_days=BAND_HISTORY_DAYS):
+    """{sigma, method, n, rho}: the spread of the metric over one window
+    of `window_days`, from this restaurant's own history ending on `end`.
+
+    method "own windows": the spread of MIN_BAND_WINDOWS or more
+    non-overlapping windows of the same length. method "weekly, scaled": for
+    a per-day metric with too few whole windows, MIN_BAND_WEEKS or more whole
+    weeks corrected for their persistence ρ (see the note at AUTOCORR_MAX):
+    sigma_L = s_7 / sqrt(E[s²]/σ²) × sqrt(VIF(ρ, L/7) / (L/7)). method
+    "stated": too little history (sigma None). The stated band floors every
+    estimate."""
     e = date.fromisoformat(_d(end))
     L = max(1, int(window_days))
 
@@ -623,14 +749,21 @@ def window_spread(restaurant_id, key, window_days, end, db_path=DB_PATH, history
         return out
     vals = _windows(L)
     if len(vals) >= MIN_BAND_WINDOWS:
-        return _sd(vals), "own windows", len(vals)
+        return {"sigma": _sd(vals), "method": "own windows", "n": len(vals), "rho": None}
     base, _ = parse(key)
     if base in PER_DAY_METRICS and L > 7:
-        weeks = _windows(7)
+        weeks = list(reversed(_windows(7)))          # oldest first
         if len(weeks) >= MIN_BAND_WEEKS:
             sd7 = _sd(weeks)
-            return (sd7 * (7.0 / L) ** 0.5 if sd7 is not None else None), "weekly, scaled", len(weeks)
-    return None, "stated", len(vals)
+            if sd7 is None:
+                return {"sigma": None, "method": "weekly, scaled", "n": len(weeks), "rho": None}
+            n = len(weeks)
+            rho = max(AUTOCORR_FLOOR, lag1_autocorrelation(weeks))
+            m = L / 7.0
+            bias = max(0.2, ar1_sample_variance_bias(rho, n))
+            sigma = (sd7 / bias ** 0.5) * (ar1_mean_variance_factor(rho, int(round(m))) / m) ** 0.5
+            return {"sigma": sigma, "method": "weekly, scaled", "n": n, "rho": round(rho, 3)}
+    return {"sigma": None, "method": "stated", "n": len(vals), "rho": None}
 
 
 def band_from_sigma(sigma, window_days, baseline_days=None):
@@ -664,11 +797,12 @@ def noise_band(restaurant_id, key, window_days=None, end=None, baseline_days=Non
            "method": "stated", "n_windows": 0, "window_days": L, "baseline_days": B,
            "stated": round(fixed_band(key, before), 4) if before is not None else None}
     try:
-        sigma, method, n = window_spread(restaurant_id, key, L, e.isoformat(), db_path=db_path)
+        sp = window_spread_detail(restaurant_id, key, L, e.isoformat(), db_path=db_path)
     except Exception as ex:
         print(f"[metrics] noise band unavailable for {restaurant_id} {key}: {ex}")
-        sigma, method, n = None, "stated", 0
-    out["method"], out["n_windows"] = method, n
+        sp = {"sigma": None, "method": "stated", "n": 0, "rho": None}
+    sigma, method, n = sp["sigma"], sp["method"], sp["n"]
+    out["method"], out["n_windows"], out["rho"] = method, n, sp.get("rho")
     if sigma is None:
         out["basis"] = (f"the stated band for {info['label'].lower()} — too little history here "
                         f"({n} windows of {L} days) to measure this restaurant's own")

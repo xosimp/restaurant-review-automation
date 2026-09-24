@@ -56,14 +56,22 @@ def _weekday_history(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS, db_pa
     return [float(r["sales"]) for r in rows]
 
 
-# The stated range around a forecast is the empirical 10th-90th percentile of
-# the same weekday's own history — an interval a night lands inside about
-# 8 times in 10 — and only once there are RANGE_MIN_SAMPLES of them. It used
-# to be the min and max of as few as three nights: not an interval, just the
-# two most extreme nights on file (CA2 #6). Below the floor the range is
+# The stated range around a forecast is an 80% PREDICTION range for the next
+# night from the same weekday's own history, and only once there are
+# RANGE_MIN_SAMPLES of them. It used to be the min and max of as few as three
+# nights (CA2 #6), then the 10th-90th percentile of the eight on file — which
+# describes those eight nights, not the next one: it covered 61-64% of next
+# nights, not 80% (confidence re-audit B2 #13, probe p7). Now: on the log
+# scale (sales are multiplicative), mean ± t(RANGE_COVERAGE, n − 1) × sd ×
+# sqrt(1 + 1/n) — the textbook prediction interval, whose t quantile and
+# sqrt(1 + 1/n) pay for estimating the spread from eight nights. Replayed:
+# 80% on steady nights, 79% with a drifting weekly level, 76% with 1.5%/week
+# growth (tests/test_confidence_round2_q.py). demand_accuracy measures the
+# coverage it actually gets (inside_range_pct). Below the floor the range is
 # withheld and says why.
-RANGE_LOW_PCTL = 10
+RANGE_LOW_PCTL = 10            # the stated coverage's two tails (80% between them)
 RANGE_HIGH_PCTL = 90
+RANGE_COVERAGE = (RANGE_HIGH_PCTL - RANGE_LOW_PCTL) / 100.0
 RANGE_MIN_SAMPLES = 8
 
 
@@ -78,11 +86,29 @@ def _percentile(vals, q):
     return s[lo] + (s[hi] - s[lo]) * (pos - lo)
 
 
+def prediction_range(hist):
+    """(low, high): the RANGE_COVERAGE prediction range for the next value
+    of a positive series from its own history (see the note at
+    RANGE_MIN_SAMPLES), or None below RANGE_MIN_SAMPLES values. Pure."""
+    import math
+    import metrics
+    vals = [float(v) for v in hist or [] if v is not None and float(v) > 0]
+    n = len(vals)
+    if n < RANGE_MIN_SAMPLES:
+        return None
+    logs = [math.log(v) for v in vals]
+    m = sum(logs) / n
+    sd = (sum((x - m) ** 2 for x in logs) / (n - 1)) ** 0.5
+    half = metrics.t_ppf(1.0 - (1.0 - RANGE_COVERAGE) / 2.0, n - 1) * sd * (1.0 + 1.0 / n) ** 0.5
+    return math.exp(m - half), math.exp(m + half)
+
+
 def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
     """Typical sales for `day` (default today), from its own weekday history.
 
-    `low`/`high` are the 10th-90th percentile of those nights once there are
-    RANGE_MIN_SAMPLES of them; None before that, with `range_note` saying so."""
+    `low`/`high` are the 80% prediction range for the night (prediction_range)
+    once there are RANGE_MIN_SAMPLES past nights; None before that, with
+    `range_note` saying so."""
     day = day or date.today()
     weekday = day.strftime("%A")
     hist = _weekday_history(restaurant_id, weekday, day, db_path=db_path)
@@ -92,10 +118,12 @@ def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
     out = {"available": True, "day": day.isoformat(), "weekday": weekday,
            "typical_sales": round(_median(hist), 2), "samples": len(hist),
            "claim_kind": "forecast", "low": None, "high": None, "range_note": None}
-    if len(hist) >= RANGE_MIN_SAMPLES:
-        out.update({"low": round(_percentile(hist, RANGE_LOW_PCTL), 2),
-                    "high": round(_percentile(hist, RANGE_HIGH_PCTL), 2),
-                    "range_basis": (f"10th-90th percentile of the last {len(hist)} {weekday}s")})
+    rng = prediction_range(hist) if len(hist) >= RANGE_MIN_SAMPLES else None
+    if rng is not None:
+        out.update({"low": round(rng[0], 2), "high": round(rng[1], 2),
+                    "range_coverage_pct": int(round(RANGE_COVERAGE * 100)),
+                    "range_basis": (f"where 8 in 10 nights should land, from the spread of the last "
+                                    f"{len(hist)} {weekday}s")})
     else:
         out["range_note"] = (f"range not yet measurable — {len(hist)} past {weekday}s, "
                              f"needs {RANGE_MIN_SAMPLES}")
@@ -121,20 +149,32 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
 
     {"available", "n_nights", "mean_error_pct" (mean |actual vs forecast|),
      "bias_pct" (mean signed: + means nights ran ABOVE the forecast),
-     "inside_range_pct" (share of nights inside the stated 10th-90th
-     range, over the nights that had one), "n_ranged", "window_days",
-     "reason"}. Nothing below ACCURACY_MIN_NIGHTS scored nights."""
+     "inside_range_pct" (share of nights inside the stated 80% range, over
+     the nights that had one), "n_ranged", "window_days", "reason",
+     "skill_vs_last_pct", "skill_vs_mean_pct", "skill_pct", "n_skill"}.
+     Nothing below ACCURACY_MIN_NIGHTS scored nights.
+
+    The skill figures (confidence re-audit B2 #11) compare the forecast's
+    mean absolute error with two naive forecasts for the same nights — the
+    same weekday a week before, and the mean of the NAIVE_WEEKS same
+    weekdays before it (labor_daily_history) — as 1 − MAE(forecast) /
+    MAE(naive), whole percent, over the nights that have each; `skill_pct`
+    is the lower (the forecast must beat both), None below
+    ACCURACY_MIN_NIGHTS such nights. The evidence input for a
+    recommendation built on the demand forecast."""
     today = today or date.today()
     start = (today - timedelta(days=days)).isoformat()
     end = (today - timedelta(days=1)).isoformat()
     base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None,
-            "inside_range_pct": None, "n_ranged": 0, "window_days": days, "claim_kind": "measured"}
+            "inside_range_pct": None, "n_ranged": 0, "window_days": days, "claim_kind": "measured",
+            "skill_vs_last_pct": None, "skill_vs_mean_pct": None, "skill_pct": None, "n_skill": 0}
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
             "AND business_date BETWEEN ? AND ? AND metric IN "
-            "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high') "
+            "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high',"
+            "'sales.forecast_net') "
             "AND value IS NOT NULL", (restaurant_id, start, end)).fetchall()
     except Exception:
         rows = []
@@ -160,7 +200,61 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
         "inside_range_pct": round(len(inside) / len(ranged) * 100) if ranged else None,
         "basis": (f"{len(pcts)} nights in the last {days} days, each forecast from the nights before it"),
     })
+    try:
+        base.update(_forecast_skill(restaurant_id, nights, db_path=db_path))
+    except Exception as e:
+        print(f"[demand] forecast skill unavailable for {restaurant_id}: {e}")
     return base
+
+
+NAIVE_WEEKS = 8
+
+
+def _forecast_skill(restaurant_id, nights, db_path=DB_PATH) -> dict:
+    """The skill figures of demand_accuracy (see its docstring) over
+    {business_date: {metric: value}}."""
+    dated = []
+    for d, n in nights.items():
+        a = n.get("sales.net")
+        f = n.get("sales.forecast_net")
+        if f is None and a is not None and n.get("sales.vs_forecast_pct") is not None:
+            f = a / (1.0 + n["sales.vs_forecast_pct"] / 100.0) if n["sales.vs_forecast_pct"] > -100 else None
+        if a and a > 0 and f is not None:
+            try:
+                dated.append((date.fromisoformat(str(d)[:10]), float(a), float(f)))
+            except ValueError:
+                continue
+    out = {"skill_vs_last_pct": None, "skill_vs_mean_pct": None, "skill_pct": None, "n_skill": 0}
+    if not dated:
+        return out
+    first = min(x[0] for x in dated) - timedelta(weeks=NAIVE_WEEKS)
+    last = max(x[0] for x in dated)
+    conn = get_conn(db_path)
+    try:
+        hist = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
+            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<? "
+            "AND sales IS NOT NULL AND sales > 0", (restaurant_id, first.isoformat(), last.isoformat())).fetchall()}
+    finally:
+        conn.close()
+    pairs_last, pairs_mean = [], []
+    for d, a, f in dated:
+        prev = [hist.get((d - timedelta(weeks=k)).isoformat()) for k in range(1, NAIVE_WEEKS + 1)]
+        if prev[0] is not None:
+            pairs_last.append((abs(f - a) / a, abs(prev[0] - a) / a))
+        got = [v for v in prev if v is not None]
+        if len(got) >= 3:
+            pairs_mean.append((abs(f - a) / a, abs(sum(got) / len(got) - a) / a))
+    for key, pairs in (("skill_vs_last_pct", pairs_last), ("skill_vs_mean_pct", pairs_mean)):
+        out["n_skill"] = max(out["n_skill"], len(pairs))
+        if len(pairs) < ACCURACY_MIN_NIGHTS:
+            continue
+        mae_f = sum(p[0] for p in pairs) / len(pairs)
+        mae_n = sum(p[1] for p in pairs) / len(pairs)
+        if mae_n > 0:
+            out[key] = int(round(100.0 * (1.0 - mae_f / mae_n)))
+    got = [v for v in (out["skill_vs_last_pct"], out["skill_vs_mean_pct"]) if v is not None]
+    out["skill_pct"] = min(got) if got else None
+    return out
 
 
 def week_projection(restaurant_id, week_dates, db_path=DB_PATH) -> dict:

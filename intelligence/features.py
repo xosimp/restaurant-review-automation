@@ -51,6 +51,19 @@ UNITS = {
     "labor_hours_per_1k_28d": "h/$1k", "labor_hours_per_1k_day_28d": "h/$1k", "labor_hours_per_1k_night_28d": "h/$1k",
 }
 
+# Measured floors for every ratio feature (confidence re-audit B3 #11): one
+# costed day at 61% labor published labor_pct_28d = 61.0, a benchmark key,
+# at completeness 0.045. A ratio over a 28-day window needs MIN_MEASURED_DAYS
+# days that carry its data (half the window); a daypart ratio as many
+# schedule-outcome days; a review ratio MIN_REVIEWS_FOR_RATIO reviews (and
+# timed replies); a campaign rate MIN_SENT_FOR_RATE messages sent; a post
+# rate MIN_POSTS_FOR_RATE posts. Below a floor the feature is None — not
+# measured — and neither enters benchmarks nor counts in completeness.
+MIN_MEASURED_DAYS = 14
+MIN_REVIEWS_FOR_RATIO = 5
+MIN_SENT_FOR_RATE = 20
+MIN_POSTS_FOR_RATE = 3
+
 # Features benchmarks are published for (cohort p25/p50/p75). Ratios only.
 BENCHMARK_KEYS = ("avg_rating_30d", "response_24h_rate_30d", "reply_rate_30d", "labor_pct_28d",
                   "labor_pct_sd_28d", "labor_hours_per_1k_28d", "labor_hours_per_1k_day_28d",
@@ -89,7 +102,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                            (restaurant_id,)).fetchone()
         has_source = bool(src and (src["gmb_refresh_token"] or (src["reviews_live"] and src["google_place_id"])))
         f["reviews_30d"] = len(last30) if (rows or has_source) else None
-        if last30:
+        if len(last30) >= MIN_REVIEWS_FOR_RATIO:
             f["avg_rating_30d"] = round(sum(r["rating"] for r in last30) / len(last30), 2)
             replied = [r for r in last30 if r["response_status"] in ("approved", "posted")]
             f["reply_rate_30d"] = round(len(replied) / len(last30), 3)
@@ -107,8 +120,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                 timed += 1
                 if (at - rd).total_seconds() <= 24 * 3600:
                     within += 1
-            f["response_24h_rate_30d"] = round(within / timed, 3) if timed else None
-        if prior:
+            f["response_24h_rate_30d"] = round(within / timed, 3) if timed >= MIN_REVIEWS_FOR_RATIO else None
+        if len(prior) >= MIN_REVIEWS_FOR_RATIO:
             f["avg_rating_prior_60d"] = round(sum(r["rating"] for r in prior) / len(prior), 2)
         if f["avg_rating_30d"] is not None and f["avg_rating_prior_60d"] is not None:
             f["avg_rating_delta"] = round(f["avg_rating_30d"] - f["avg_rating_prior_60d"], 2)
@@ -124,15 +137,16 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         # slow Monday at 60% as heavily as a $9,000 Saturday (CA3 F12).
         costed = [r for r in lab if r["labor_pct"] is not None and r["sales"] and float(r["sales"]) > 0]
         pcts = [float(r["labor_pct"]) for r in costed]
-        if pcts:
+        # MIN_MEASURED_DAYS costed days of the 28 (re-audit B3 #11).
+        if len({_d(r["date"]) for r in costed}) >= MIN_MEASURED_DAYS:
             tot_sales = sum(float(r["sales"]) for r in costed)
             f["labor_pct_28d"] = round(sum(float(r["labor_pct"]) * float(r["sales"]) for r in costed)
                                        / tot_sales, 2)
-            if len(pcts) >= 5:
-                m = sum(pcts) / len(pcts)
-                f["labor_pct_sd_28d"] = round((sum((p - m) ** 2 for p in pcts) / (len(pcts) - 1)) ** 0.5, 2)
+            m = sum(pcts) / len(pcts)
+            f["labor_pct_sd_28d"] = round((sum((p - m) ** 2 for p in pcts) / (len(pcts) - 1)) ** 0.5, 2)
         sales_days = [(r["date"], float(r["sales"])) for r in lab if r["sales"]]
-        if len(sales_days) >= 7:
+        n_sales_days = len({_d(dt) for dt, _s in sales_days})
+        if n_sales_days >= MIN_MEASURED_DAYS:
             total = sum(s for _, s in sales_days)
             wknd = sum(s for dt, s in sales_days if date.fromisoformat(_d(dt)).weekday() >= 4)
             f["weekend_sales_share_28d"] = round(wknd / total, 3) if total else None
@@ -141,16 +155,16 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         # from the schedule's own outcome record when it exists.
         try:
             hrs_rows = [r for r in lab if r["sales"] and r["total_hours"]]
-            if len(hrs_rows) >= 7:
+            if len({_d(r["date"]) for r in hrs_rows}) >= MIN_MEASURED_DAYS:
                 tot_s = sum(float(r["sales"]) for r in hrs_rows)
                 tot_h = sum(float(r["total_hours"]) for r in hrs_rows)
                 f["labor_hours_per_1k_28d"] = round(tot_h / tot_s * 1000, 2) if tot_s else None
             if _has_col(conn, "schedule_outcomes", "daypart"):
                 for part, key in (("morning", "labor_hours_per_1k_day_28d"), ("night", "labor_hours_per_1k_night_28d")):
-                    o = conn.execute("SELECT SUM(hours) AS h, SUM(sales) AS s, COUNT(*) AS n FROM schedule_outcomes "
-                                     "WHERE restaurant_id=? AND daypart=? AND date >= ? AND sales IS NOT NULL",
-                                     (restaurant_id, part, d28.isoformat())).fetchone()
-                    if o and (o["n"] or 0) >= 5 and o["s"]:
+                    o = conn.execute("SELECT SUM(hours) AS h, SUM(sales) AS s, COUNT(DISTINCT date) AS n "
+                                     "FROM schedule_outcomes WHERE restaurant_id=? AND daypart=? AND date >= ? "
+                                     "AND sales IS NOT NULL", (restaurant_id, part, d28.isoformat())).fetchone()
+                    if o and (o["n"] or 0) >= MIN_MEASURED_DAYS and o["s"]:
                         f[key] = round(float(o["h"]) / float(o["s"]) * 1000, 2)
         except Exception:
             pass
@@ -165,11 +179,13 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         # ── food cost ──────────────────────────────────────────────────────
         try:
             import metrics
+            # Both are shares of sales: the same MIN_MEASURED_DAYS sales days.
+            enough_sales = n_sales_days >= MIN_MEASURED_DAYS
             fc, _ = metrics.measure(restaurant_id, "food_cost_pct", d28.isoformat(), today.isoformat(), db_path)
-            f["food_cost_pct_28d"] = round(float(fc), 2) if fc is not None else None
+            f["food_cost_pct_28d"] = round(float(fc), 2) if (fc is not None and enough_sales) else None
             waste, _ = metrics.measure(restaurant_id, "weekly_waste", d28.isoformat(), today.isoformat(), db_path)
             sales, _ = metrics.measure(restaurant_id, "sales", d28.isoformat(), today.isoformat(), db_path)
-            if waste is not None and sales:
+            if waste is not None and sales and enough_sales:
                 # weekly waste against weekly sales: sales is per day
                 f["waste_sales_pct_28d"] = round(float(waste) / (float(sales) * 7) * 100, 2)
         except Exception:
@@ -184,7 +200,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             camps = []
         f["campaigns_28d"] = len(camps)
         sent = sum(int(c["sent_count"] or 0) for c in camps)
-        if sent:
+        if sent >= MIN_SENT_FOR_RATE:
             taps = 0
             for c in camps:
                 if c["link_token"]:
@@ -192,7 +208,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                     taps += int((row["clicks"] if row else 0) or 0)
             f["campaign_tap_rate_28d"] = round(taps / sent, 3)
             measured = [c for c in camps if c["visits_matched"] is not None]
-            if measured:
+            if sum(int(c["sent_count"] or 0) for c in measured) >= MIN_SENT_FOR_RATE:
                 f["campaign_return_rate_28d"] = round(sum(int(c["visits_matched"]) for c in measured)
                                                       / max(1, sum(int(c["sent_count"] or 0) for c in measured)), 3)
         # Published posts only (post_id set), with what each was about
@@ -216,7 +232,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             f["offer_posts_28d"] = sum(1 for p in posts if p["post_kind"] == "offer")
             f["occasion_posts_28d"] = sum(1 for p in posts if p["occasion"] in ("game_day", "holiday", "event"))
             seen = [p for p in posts if p["seen"]]
-            if seen:
+            if len(seen) >= MIN_POSTS_FOR_RATE:
                 f["post_engagement_rate_28d"] = round(sum(p["engaged"] for p in seen) / sum(p["seen"] for p in seen), 4)
             try:
                 ids = [p["id"] for p in posts]
@@ -226,9 +242,9 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                 from .stats import percentile as _pct
                 lifts = [float(a["lift_pct"]) for a in att if a["lift_pct"] is not None]
                 ilifts = [float(a["item_lift_pct"]) for a in att if a["item_lift_pct"] is not None]
-                if lifts:
+                if len(lifts) >= MIN_POSTS_FOR_RATE:
                     f["post_lift_median_28d"] = round(_pct(lifts, 50), 1)
-                if ilifts:
+                if len(ilifts) >= MIN_POSTS_FOR_RATE:
                     f["item_lift_median_28d"] = round(_pct(ilifts, 50), 1)
             except Exception:
                 pass

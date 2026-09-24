@@ -498,7 +498,9 @@ def _w(eps):
 def test_f6_probe_e_three_results_no_longer_rank_like_thirty_and_acceptance_alone_lifts_nothing():
     three = _w([_ep(i, "trim_day", "accepted", "improved") for i in range(3)])
     thirty = _w([_ep(i, "trim_day", "accepted", "improved") for i in range(30)])
-    assert three < 1.05 < thirty <= rec_learning.MAX_WEIGHT
+    # Against the do-nothing base rate (re-audit B2 #7), not even odds: three
+    # of three is real evidence, and thirty of thirty still ranks clearly above.
+    assert 1.0 < three < thirty - 0.05 and thirty <= rec_learning.MAX_WEIGHT
     assert _w([_ep(i, "trim_day", "accepted") for i in range(10)]) <= 1.0       # liked, never measured
     assert 0.9 < _w([_ep(i, "trim_day", "dismissed") for i in range(10)]) < 1.0
     assert rec_learning.W_ACCEPT <= 0.2

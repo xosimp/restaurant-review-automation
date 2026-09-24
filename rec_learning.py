@@ -89,6 +89,29 @@ WORSE_KIND_STEP, WORSE_KIND_CAP = 0.08, 0.20   # per worse result on its kind
 WORSE_HALF_LIFE_DAYS = 60
 MIN_CALIBRATION_PAIRS = 3      # predicted-vs-measured pairs before dollars adjust
 CALIBRATION_BOUNDS = (0.8, 1.2)
+# Once this many pairs exist the lower bound is lifted (re-audit B2 #8): 2
+# of 10 results realised $1,000 and 8 realised $0 on $1,000 estimates, and
+# the 0.8 floor showed $800 against a measured mean of $200. With enough
+# pairs the measured median stands, shrunk toward 1 as before; the realised
+# mean is shown beside it either way (adjusted_dollars `realised_mean`).
+CALIBRATION_WIDE_PAIRS = 8
+CALIBRATION_WIDE_BOUNDS = (0.0, 1.2)
+
+# The success rate expected from doing nothing (re-audit B2 #2, #7): a
+# result reads "improved" by chance when a move of nothing crosses the noise
+# band on the improving side — half the band's two-sided false-alarm rate,
+# which is stated at 10% (metrics.BAND_K), so 5%. Measured do-nothing rates
+# ran 3-6% (probe B2 p2 S1/S2). Every success rate here is shrunk toward
+# THIS, not toward even: shrinking toward 0.5 inflated a short record (0 of
+# 5 read 28%) and ranked never-measured kinds above measured ones.
+BASE_RATE_STATED = 0.05
+BASE_RATE_BOUNDS = (0.02, 0.5)
+
+# Historical Accuracy's recency-weighted companion (re-audit B2 #15): each
+# measured result weighs 0.5 ** (age / RECENT_HALF_LIFE_DAYS), age from its
+# evaluation, so a year-old result counts a sixteenth of this month's. An
+# ADDITIONAL figure (kind_record `rate_recent`); `rate` is unchanged.
+RECENT_HALF_LIFE_DAYS = 90
 
 
 def _stamp(d):
@@ -200,8 +223,10 @@ def viewer_sees(viewer, row) -> bool:
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
 # outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
-# against its own trigger window is never a win.
-_TRACKER_CALIBRATION_COLS = ", baseline_overlaps_trigger, attribution"
+# against its own trigger window is never a win; and the other changes found
+# in its window (`concurrent`, re-audit B2 #5): a confounded result is never
+# counted either way.
+_TRACKER_CALIBRATION_COLS = ", baseline_overlaps_trigger, attribution, concurrent"
 
 
 def _tracker_rows(conn, rid, tids):
@@ -320,6 +345,23 @@ def _state(r, now):
     return "open"
 
 
+def _confounded(tr) -> bool:
+    """outcomes.confounded on a tracker row (a test holds the two in step):
+    its stored `concurrent` list names at least one other change, trend or
+    level shift. NULL (never checked) is not confounded."""
+    raw = (tr or {}).get("concurrent")
+    if raw in (None, ""):
+        return False
+    if isinstance(raw, list):
+        conc = raw
+    else:
+        try:
+            conc = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+    return bool(isinstance(conc, list) and any(isinstance(c, dict) for c in conc))
+
+
 def learned_verdict(verdict, tracker=None, checkin=None):
     """What a measured result says about the recommendation it measured —
     the ONE mapping rec_learning and the engine's feedback.sync both read
@@ -335,6 +377,11 @@ def learned_verdict(verdict, tracker=None, checkin=None):
         triggered the recommendation (outcomes baseline_overlaps_trigger,
         CA2 #1) → `unknown`: a number coming back from a bad stretch on its
         own is not the recommendation working;
+      * a result read alongside another change on the same number, a trend
+        already under way or a level shift at the trigger (outcomes.
+        confounded — the tracker's stored `concurrent` list; re-audit B2
+        #5, #10) → `unknown`, whichever way it read: it can't be separated
+        from what else moved the number;
       * a move that faded or reversed at its re-check → `no_clear_change`:
         not a win (and not a loss — the number went back);
       * anything that is not a clear verdict → `unknown`.
@@ -363,6 +410,8 @@ def learned_verdict(verdict, tracker=None, checkin=None):
     except (TypeError, ValueError):
         overlaps = bool(tr.get("baseline_overlaps_trigger"))
     if overlaps:
+        return "unknown"
+    if _confounded(tr):
         return "unknown"
     if verdict in ("improved", "worsened") and tr.get("recheck_verdict") in ("faded", "reversed"):
         return "no_clear_change"
@@ -484,7 +533,7 @@ def _one_per_window(eps) -> list:
             kept.append(e)
     for items in by_metric.values():
         last_end = ""
-        for (start, end), e in sorted(items, key=lambda x: (x[0][0], x[1]["rec_id"])):
+        for (start, end), e in sorted(items, key=lambda x: (x[0][0], x[1].get("rec_id") or 0)):
             if last_end and start <= last_end:
                 continue
             kept.append(e)
@@ -643,19 +692,23 @@ class Effectiveness:
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
     reasons when nothing has been learned."""
 
-    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None):
+    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None):
         self.rid = restaurant_id
         self.cohort = cohort
         self.db_path = db_path
         self.now = now or datetime.utcnow()
         self._priors = {}
+        self._base_rates = base_rates
         self.kinds, self.tags = {}, {}
         self.worse_keys, self.worse_kinds = {}, {}
         self.calibration = {}
+        self.calibration_realised = {}
+        clear_eps = {}
         for e in episodes:
             if not e["shown"] or e["state"] in ("superseded", "open", "snoozed"):
                 continue
-            for bucket, name in ((self.kinds, e["kind"] or rec_ledger.kind_of(e["key"])),
+            kind = e["kind"] or rec_ledger.kind_of(e["key"])
+            for bucket, name in ((self.kinds, kind),
                                  *((self.tags, t) for t in e["tag_list"] if t.startswith(
                                      ("topic:", "focus:", "category:", "dish:", "item:", "daypart:")))):
                 s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0})
@@ -663,18 +716,28 @@ class Effectiveness:
                 if _taken(e):
                     s["taken"] += 1
                     if e["verdict"] in CLEAR_VERDICTS:
-                        s["measured"] += 1
-                        s["improved"] += 1 if e["verdict"] == "improved" else 0
-            if _taken(e) and e["verdict"] == "worsened":
-                age = self._age_days(e["verdict_at"])
-                self.worse_keys.setdefault(e["key"], []).append(age)
-                self.worse_kinds.setdefault(e["kind"] or rec_ledger.kind_of(e["key"]), []).append(age)
-            tr = e.get("tracker") or {}
-            if _taken(e) and e.get("dollar_value") and e["verdict"] in CLEAR_VERDICTS:
-                realised = float(tr.get("dollars_monthly") or 0.0) if e["verdict"] != "no_clear_change" else 0.0
-                if tr.get("dollars_monthly") is not None or e["verdict"] == "no_clear_change":
-                    self.calibration.setdefault(e["kind"] or rec_ledger.kind_of(e["key"]), []).append(
-                        realised / float(e["dollar_value"]))
+                        clear_eps.setdefault((id(bucket), name), (s, []))[1].append(e)
+        # One result per change (re-audit B2 #7): the measured results of a
+        # kind or tag are counted exactly as kind_record counts them — one
+        # per tracker, one per overlapping after-window on a number — and the
+        # worse-result penalties and dollar pairs come from the same set.
+        for (bid, name), (s, eps) in clear_eps.items():
+            kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
+            s["measured"] = len(kept)
+            s["improved"] = sum(1 for e in kept if e["verdict"] == "improved")
+            if bid != id(self.kinds):
+                continue
+            for e in kept:
+                if e["verdict"] == "worsened":
+                    age = self._age_days(e["verdict_at"])
+                    self.worse_keys.setdefault(e["key"], []).append(age)
+                    self.worse_kinds.setdefault(name, []).append(age)
+                tr = e.get("tracker") or {}
+                if e.get("dollar_value"):
+                    realised = float(tr.get("dollars_monthly") or 0.0) if e["verdict"] != "no_clear_change" else 0.0
+                    if tr.get("dollars_monthly") is not None or e["verdict"] == "no_clear_change":
+                        self.calibration.setdefault(name, []).append(realised / float(e["dollar_value"]))
+                        self.calibration_realised.setdefault(name, []).append(realised)
 
     def _age_days(self, at):
         t = rec_ledger._stamp(at)
@@ -682,13 +745,29 @@ class Effectiveness:
             return 0.0
         return max(0.0, (self.now - datetime.strptime(t, "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0)
 
+    def base_rate(self, kind):
+        """The success rate doing nothing gives for this kind here
+        (rec_learning.base_rate), read once per model."""
+        if self._base_rates is None:
+            try:
+                self._base_rates = _base_rate_inputs(self.rid, self.db_path)
+            except Exception as e:
+                print(f"[rec_learning] base rates unavailable for {self.rid}: {e}")
+                self._base_rates = {}
+        return base_rate_from(self._base_rates, kind)["rate"]
+
     def prior(self, kind):
-        """(acceptance prior, success prior) for a kind: the cohort's shrunk
-        rates when the cohort clears MIN_COHORT (asserted anonymous), else
-        even."""
+        """(acceptance prior, success prior) for a kind: the cohort's rates
+        when the cohort clears MIN_COHORT (asserted anonymous) — its success
+        rate over the capped counts (no one restaurant above scoring.
+        MAX_RESTAURANT_SHARE of it) shrunk toward this kind's base rate —
+        else even acceptance and the BASE RATE for success (re-audit B2 #7:
+        a success prior of 0.5 ranked a never-measured kind above one that
+        measurably worked)."""
         if kind in self._priors:
             return self._priors[kind]
-        acc = suc = 0.5
+        acc = 0.5
+        suc = self.base_rate(kind)
         if self.cohort:
             try:
                 import intelligence
@@ -704,7 +783,9 @@ class Effectiveness:
                 if s.get("answered") and privacy.cohort_ok(s.get("answered_restaurants")):
                     acc = float(s.get("acceptance_rate_shrunk") or 0.5)
                 if s.get("measured") and privacy.cohort_ok(s.get("measured_restaurants")):
-                    suc = float(s.get("success_rate_shrunk") or 0.5)
+                    pm = float(s.get("measured_capped", s.get("measured")) or 0.0)
+                    pi = float(s.get("improved_capped", s.get("improved")) or 0.0)
+                    suc = _shrink(pi / pm if pm else None, pm, suc)
             except Exception as e:
                 print(f"[rec_learning] cohort prior unavailable for {kind}: {e}")
         self._priors[kind] = (acc, suc)
@@ -766,13 +847,28 @@ class Effectiveness:
         """(ratio, n): measured dollars over the dollars the recommendation
         was shown with, the median of this restaurant's pairs for the kind,
         shrunk toward 1 by 3 pseudo-pairs and bounded to CALIBRATION_BOUNDS
-        — or (None, n) below MIN_CALIBRATION_PAIRS."""
+        — below CALIBRATION_WIDE_PAIRS; from there to CALIBRATION_WIDE_BOUNDS
+        (no floor: the measured shortfall stands) — or (None, n) below
+        MIN_CALIBRATION_PAIRS."""
         cal = self.calibration.get(kind) or []
         if len(cal) < MIN_CALIBRATION_PAIRS:
             return None, len(cal)
         ratio = sorted(cal)[len(cal) // 2]
         ratio = (ratio * len(cal) + 1.0 * 3) / (len(cal) + 3)      # shrunk toward 1
-        return round(min(CALIBRATION_BOUNDS[1], max(CALIBRATION_BOUNDS[0], ratio)), 3), len(cal)
+        lo, hi = CALIBRATION_WIDE_BOUNDS if len(cal) >= CALIBRATION_WIDE_PAIRS else CALIBRATION_BOUNDS
+        return round(min(hi, max(lo, ratio)), 3), len(cal)
+
+    def realised(self, kind) -> dict:
+        """{realised_mean, realised_ratio_mean, n}: what this restaurant's
+        measured results of the kind actually came to — the mean realised
+        monthly dollars (no clear change = $0) and the mean of realised ÷
+        estimate — or Nones below MIN_CALIBRATION_PAIRS."""
+        cal = self.calibration.get(kind) or []
+        dollars = self.calibration_realised.get(kind) or []
+        if len(cal) < MIN_CALIBRATION_PAIRS or not dollars:
+            return {"realised_mean": None, "realised_ratio_mean": None, "n": len(cal)}
+        return {"realised_mean": round(sum(dollars) / len(dollars), 2),
+                "realised_ratio_mean": round(sum(cal) / len(cal), 3), "n": len(cal)}
 
     def adjusted_dollars(self, key, dollars, kind=None) -> dict:
         """The dollars a recommendation is SHOWN with, corrected by what this
@@ -784,8 +880,10 @@ class Effectiveness:
         the ratio, and `note` reads "adjusted from N measured results"."""
         kind = kind or rec_ledger.kind_of(str(key or ""))
         ratio, n = self.calibration_ratio(kind)
+        real = self.realised(kind)
         out = {"dollars": dollars, "dollars_adjusted": None, "calibration_n": n, "calibration_ratio": ratio,
-               "note": None}
+               "note": None, "realised_mean": real["realised_mean"],
+               "realised_ratio_mean": real["realised_ratio_mean"]}
         try:
             d = float(dollars)
         except (TypeError, ValueError):
@@ -810,6 +908,10 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
                          (the client then shows `dollars_field` as it is)
       calibration_n      measured predicted-vs-realised pairs behind it
       calibration_note   "adjusted from N measured results", or None
+      realised_mean      the mean monthly dollars those measured results of
+                         the kind actually realised (no clear change = $0),
+                         shown beside the estimate — None below
+                         MIN_CALIBRATION_PAIRS (re-audit B2 #8)
 
     `dollars_field` (dollars_monthly) is left as the raw estimate on
     purpose: it is what the ledger snapshots as `dollar_value`, and the
@@ -818,6 +920,7 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
     item["dollars_adjusted"] = None
     item["calibration_n"] = 0
     item["calibration_note"] = None
+    item["realised_mean"] = None
     if learned is None or item.get(dollars_field) in (None, 0, 0.0):
         return item
     try:
@@ -826,6 +929,7 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
         print(f"[rec_learning] dollar calibration failed for {key or item.get('key')}: {e}")
         return item
     item["calibration_n"] = int(adj.get("calibration_n") or 0)
+    item["realised_mean"] = adj.get("realised_mean")
     if adj.get("dollars_adjusted") is not None:
         item["dollars_adjusted"] = adj["dollars_adjusted"]
         item["calibration_note"] = adj.get("note")
@@ -867,17 +971,31 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     informational, faded or reversed result is never a win), one result per
     overlapping after-window. Returns
       {kind, measured, improved, rate, low, high, source, prior_measured,
-       prior_improved, prior_restaurants}
+       prior_improved, prior_restaurants, rate_recent, rate_recent_n_eff,
+       recent_half_life_days, base_rate, base_rate_source, base_rate_n,
+       base_rate_basis, untaken}
     where `rate` is the own improved share only at MIN_MEASURED_FOR_RATE
     measured; below that `source` is "cohort" when the anonymous cohort
     (this restaurant excluded) clears privacy.cohort_ok and has at least
-    PRIOR_MIN_MEASURED measured results, else "none" and rate None.
+    PRIOR_MIN_MEASURED measured results after no one restaurant is allowed
+    more than scoring.MAX_RESTAURANT_SHARE of them (the capped counts —
+    re-audit B2 #3; `prior_measured_raw` / `prior_improved_raw` are the
+    uncapped counts), else "none" and rate None.
+
+    `rate_recent` (re-audit B2 #15) is the own improved share with each
+    result weighted 0.5 ** (age / RECENT_HALF_LIFE_DAYS), beside `rate`, at
+    the same floor; `rate_recent_n_eff` is the summed weight. `base_rate` is
+    what doing nothing gives for this kind here (base_rate) — the value a
+    success rate should be shrunk toward, never 0.5.
     Never raises. `episodes` lets a caller that already loaded the ledger
     (Home) pass it in."""
     kind = str(kind or "")
     now = now or datetime.utcnow()
     out = {"kind": kind, "measured": 0, "improved": 0, "rate": None, "low": None, "high": None,
-           "source": "none", "prior_measured": 0, "prior_improved": 0, "prior_restaurants": 0}
+           "source": "none", "prior_measured": 0, "prior_improved": 0, "prior_restaurants": 0,
+           "rate_recent": None, "rate_recent_n_eff": None, "recent_half_life_days": RECENT_HALF_LIFE_DAYS,
+           "base_rate": BASE_RATE_STATED, "base_rate_source": "stated", "base_rate_n": 0,
+           "base_rate_basis": None}
     try:
         if episodes is None:
             conn = get_conn(db_path)
@@ -897,10 +1015,17 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
         return out
     out["untaken"] = untaken_comparison(restaurant_id, kind, taken_measured=out["measured"],
                                         taken_improved=out["improved"], db_path=db_path)
+    try:
+        br = base_rate(restaurant_id, kind, db_path=db_path)
+        out.update(base_rate=br["rate"], base_rate_source=br["source"], base_rate_n=br["n"],
+                   base_rate_basis=br["basis"])
+    except Exception as e:
+        print(f"[rec_learning] base rate unavailable for {restaurant_id}/{kind}: {e}")
     if out["measured"] >= MIN_MEASURED_FOR_RATE:
         out["rate"] = out["improved"] / out["measured"]
         out["low"], out["high"] = wilson(out["improved"], out["measured"])
         out["source"] = "own"
+        out["rate_recent"], out["rate_recent_n_eff"] = recency_weighted_rate(measured, now=now)
         return out
     try:
         import intelligence
@@ -912,16 +1037,155 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
             s = intelligence.recommendation_success(kind, cohort=cohort, db_path=db_path,
                                                     exclude_restaurant_id=restaurant_id)
             privacy.assert_anonymous(s)
-            pm = int(s.get("measured") or 0)
+            # The capped counts (scoring.MAX_RESTAURANT_SHARE): one peer's
+            # eight results among twelve no longer stand as the cohort.
+            pm = float(s.get("measured_capped", s.get("measured")) or 0)
+            pi = float(s.get("improved_capped", s.get("improved")) or 0)
             if pm >= PRIOR_MIN_MEASURED and privacy.cohort_ok(s.get("measured_restaurants")):
-                pi = int(s.get("improved") or 0)
-                out.update(prior_measured=pm, prior_improved=pi,
+                out.update(prior_measured=int(round(pm)), prior_improved=int(round(pi)),
+                           prior_measured_raw=int(s.get("measured") or 0),
+                           prior_improved_raw=int(s.get("improved") or 0),
                            prior_restaurants=int(s.get("measured_restaurants") or 0),
                            rate=pi / pm, source="cohort")
                 out["low"], out["high"] = wilson(pi, pm)
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
     return out
+
+
+def recency_weighted_rate(measured, now=None, half_life_days=RECENT_HALF_LIFE_DAYS):
+    """(rate, n_eff) over measured episodes, each weighted 0.5 ** (age /
+    half_life_days) with age from its verdict — or (None, 0.0) with no
+    weight. Pure."""
+    now = now or datetime.utcnow()
+    num = den = 0.0
+    for e in measured or []:
+        t = rec_ledger._stamp(e.get("verdict_at"))
+        try:
+            age = max(0.0, (now - datetime.strptime(t, "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0) if t else 0.0
+        except (TypeError, ValueError):
+            age = 0.0
+        w = 0.5 ** (age / float(half_life_days))
+        den += w
+        num += w if e.get("verdict") == "improved" else 0.0
+    if den <= 0:
+        return None, 0.0
+    return round(num / den, 3), round(den, 2)
+
+
+def _base_rate_inputs(restaurant_id, db_path=DB_PATH) -> dict:
+    """{kind: {"far": [stated false-alarm rates of its trackers], "untaken":
+    [(verdict, metric, after_start, after_end)]}, "*": {"far": [...]}} — the
+    raw material of base_rate, read in two queries. Taken trackers give the
+    false-alarm rate their band was read at; untaken trackers
+    (outcomes.observe_untaken) what the number did when the advice was not
+    taken."""
+    out = {"*": {"far": [], "untaken": []}}
+    conn = get_conn(db_path)
+    try:
+        try:
+            for r in conn.execute(
+                    "SELECT i.kind, i.key, o.false_alarm_rate FROM rec_instances i JOIN recommendation_outcomes o "
+                    "ON o.id = i.tracker_id AND o.restaurant_id = i.restaurant_id WHERE i.restaurant_id=? "
+                    "AND o.false_alarm_rate IS NOT NULL", (restaurant_id,)).fetchall():
+                k = r["kind"] or rec_ledger.kind_of(r["key"])
+                out.setdefault(k, {"far": [], "untaken": []})["far"].append(float(r["false_alarm_rate"]))
+                out["*"]["far"].append(float(r["false_alarm_rate"]))
+        except Exception as e:
+            print(f"[rec_learning] tracker false-alarm rates unreadable for {restaurant_id}: {e}")
+        for k, row in _untaken_rows(conn, restaurant_id):
+            out.setdefault(k, {"far": [], "untaken": []})["untaken"].append(row)
+    finally:
+        conn.close()
+    return out
+
+
+def base_rate_from(inputs, kind) -> dict:
+    """base_rate over _base_rate_inputs (see base_rate). Pure."""
+    ki = (inputs or {}).get(kind) or {}
+    far = ki.get("far") or ((inputs or {}).get("*") or {}).get("far") or []
+    if far:
+        chance = sum(far) / len(far) / 2.0
+        src, basis = "false_alarm", (f"half the {sum(far) / len(far):.0%} false-alarm rate of this restaurant's "
+                                     f"{len(far)} measured noise band{'s' if len(far) != 1 else ''}")
+    else:
+        chance = BASE_RATE_STATED
+        src, basis = "stated", "half the stated 10% false-alarm rate of the noise band"
+    chance = min(BASE_RATE_BOUNDS[1], max(BASE_RATE_BOUNDS[0], chance))
+    kept = _one_untaken_per_window(ki.get("untaken") or [])
+    n = len(kept)
+    if n >= MIN_MEASURED_FOR_RATE:
+        k = sum(1 for v in kept if v[0] == "improved")
+        rate = _shrink(k / n, n, chance)
+        return {"rate": round(min(BASE_RATE_BOUNDS[1], max(BASE_RATE_BOUNDS[0], rate)), 3), "source": "untaken",
+                "n": n, "basis": (f"{k} of {n} improved when this advice was not taken here, shrunk toward "
+                                  f"{basis}")}
+    return {"rate": round(chance, 3), "source": src, "n": len(far), "basis": basis}
+
+
+def base_rate(restaurant_id, kind, db_path=DB_PATH) -> dict:
+    """The success rate DOING NOTHING gives for this kind at this restaurant
+    — the value every success rate here is shrunk toward (re-audit B2 #2,
+    #7), and the base rate the confidence engine's Historical Accuracy
+    shrinks toward (kind_record `base_rate`):
+      {rate, source, n, basis}
+    source "untaken": at least MIN_MEASURED_FOR_RATE clear results of the
+    kind measured when the advice was NOT taken (outcomes.observe_untaken,
+    one per window, same trigger-mirror baseline), shrunk by SHRINK_K toward
+    the chance rate; else "false_alarm": half the mean false-alarm rate the
+    restaurant's own noise bands were read at (the kind's, else any); else
+    "stated": BASE_RATE_STATED. Held to BASE_RATE_BOUNDS. Never raises."""
+    try:
+        return base_rate_from(_base_rate_inputs(restaurant_id, db_path), kind)
+    except Exception as e:
+        print(f"[rec_learning] base rate unavailable for {restaurant_id}/{kind}: {e}")
+        return {"rate": BASE_RATE_STATED, "source": "stated", "n": 0,
+                "basis": "half the stated 10% false-alarm rate of the noise band"}
+
+
+def _untaken_rows(conn, restaurant_id):
+    """[(kind, (verdict, metric, after_start, after_end))] for this
+    restaurant's evaluated untaken trackers that count (clear verdict, not
+    measured against the trigger window, not confounded)."""
+    rows = None
+    for extra in (", o.baseline_overlaps_trigger, o.concurrent", ", o.baseline_overlaps_trigger", ""):
+        try:
+            rows = conn.execute(
+                "SELECT o.verdict, o.after_start, o.after_end, o.metric, i.kind, i.key" + extra +
+                " FROM recommendation_outcomes o "
+                "JOIN rec_instances i ON i.rec_id = substr(o.source_key, ?) AND i.restaurant_id = o.restaurant_id "
+                "WHERE o.restaurant_id=? AND o.status='evaluated' AND o.source_key LIKE ?",
+                (len("observed:untaken:") + 1, restaurant_id, "observed:untaken:%")).fetchall()
+            break
+        except Exception as e:
+            if not extra:
+                print(f"[rec_learning] untaken trackers unreadable for {restaurant_id}: {e}")
+                return []
+    out = []
+    for r in rows or []:
+        d = dict(r)
+        try:
+            overl = bool(int(d.get("baseline_overlaps_trigger") or 0))
+        except (TypeError, ValueError):
+            overl = False
+        if d["verdict"] not in CLEAR_VERDICTS or overl or _confounded(d):
+            continue
+        out.append((d["kind"] or rec_ledger.kind_of(d["key"]),
+                    (d["verdict"], d["metric"], str(d["after_start"] or ""), str(d["after_end"] or ""))))
+    return out
+
+
+def _one_untaken_per_window(rows):
+    """One result per window on a number, earliest first — the rule both
+    sides of untaken_comparison count by."""
+    kept, last = [], {}
+    for v in sorted(rows, key=lambda x: (x[2], x[3])):
+        m = v[1]
+        if m in last and v[2] <= last[m]:
+            continue
+        kept.append(v)
+        last[m] = v[3]
+    return kept
 
 
 def untaken_comparison(restaurant_id, kind, taken_measured=0, taken_improved=0, db_path=DB_PATH) -> dict:
@@ -935,52 +1199,24 @@ def untaken_comparison(restaurant_id, kind, taken_measured=0, taken_improved=0, 
     a cause: the owner chose which ones to take. Never raises."""
     out = {"measured": 0, "improved": 0, "rate": None, "taken_measured": int(taken_measured or 0),
            "taken_improved": int(taken_improved or 0), "taken_rate": None, "enough": False, "label": None}
+    # The taken side reads through learned_verdict, which never counts a
+    # result read against a baseline overlapping its trigger window (CA2 #1)
+    # or a confounded one (re-audit B2 #5); the untaken side follows the same
+    # rules (_untaken_rows), or the comparison would set clean results
+    # against regressions to the mean — and one result per window on a
+    # number, as the taken side is counted.
     try:
         conn = get_conn(db_path)
         try:
-            rows = None
-            # The taken side reads through learned_verdict, which never counts
-            # a result read against a baseline overlapping its trigger window
-            # (CA2 #1); the untaken side follows the same rule, or the
-            # comparison would set clean results against regressions to the
-            # mean. The narrower SELECT is for a database from before the
-            # column (outcomes._ADDED_COLUMNS adds it at boot).
-            for extra in (", o.baseline_overlaps_trigger", ""):
-                try:
-                    rows = conn.execute(
-                        "SELECT o.verdict, o.after_start, o.after_end, o.metric, i.kind, i.key" + extra +
-                        " FROM recommendation_outcomes o "
-                        "JOIN rec_instances i ON i.rec_id = substr(o.source_key, ?) AND i.restaurant_id = o.restaurant_id "
-                        "WHERE o.restaurant_id=? AND o.status='evaluated' AND o.source_key LIKE ?",
-                        (len("observed:untaken:") + 1, restaurant_id, "observed:untaken:%")).fetchall()
-                    break
-                except Exception as e:
-                    if not extra:
-                        raise
-                    print(f"[rec_learning] untaken trigger column missing ({e}); reading without it")
+            rows = _untaken_rows(conn, restaurant_id)
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] untaken comparison unavailable for {restaurant_id}/{kind}: {e}")
         return out
-
-    def _overlaps(r):
-        try:
-            return bool(int(r["baseline_overlaps_trigger"] or 0))
-        except (IndexError, KeyError, TypeError, ValueError):
-            return False
-    mine = [r for r in rows if (r["kind"] or rec_ledger.kind_of(r["key"])) == kind
-            and r["verdict"] in CLEAR_VERDICTS and not _overlaps(r)]
-    # One result per window on a number, as the taken side is counted.
-    kept, last = [], {}
-    for r in sorted(mine, key=lambda x: (str(x["after_start"] or ""), str(x["after_end"] or ""))):
-        m = r["metric"]
-        if m in last and str(r["after_start"] or "") <= last[m]:
-            continue
-        kept.append(r)
-        last[m] = str(r["after_end"] or "")
+    kept = _one_untaken_per_window([v for k, v in rows if k == kind])
     out["measured"] = len(kept)
-    out["improved"] = sum(1 for r in kept if r["verdict"] == "improved")
+    out["improved"] = sum(1 for v in kept if v[0] == "improved")
     if out["measured"]:
         out["rate"] = round(out["improved"] / out["measured"], 3)
     if out["taken_measured"]:

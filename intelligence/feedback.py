@@ -93,6 +93,66 @@ ASK_CURSOR = "intelligence_feedback_ask"
 AUTO_CURSOR = "intelligence_feedback_auto"
 LEGACY_ROWS_PER_PASS = 20000
 REPAIR_MARK = "intelligence_feedback_repair:v2"
+# Measured results are filed one per EPISODE (re-audit B2 #3, probe p10):
+# the unique (restaurant, key, action) row used to hold the latest of every
+# tracker a key ever had, overwritten in place — improved, then worsened,
+# then improved again read as one result flipping. Each tracker's result is
+# now its own row, keyed "<source_key>#o<tracker id>", and the rows written
+# the old way are removed once (EPISODE_REPAIR_MARK); the next pass derives
+# them again from recommendation_outcomes, which it reads whole.
+MEASURED_KEY_SEP = "#o"
+EPISODE_REPAIR_MARK = "intelligence_feedback_repair:episodes_v1"
+
+
+def measured_key(source_key, tracker_id) -> str:
+    """The intel_rec_events key of one tracker's measured result."""
+    return f"{str(source_key or '')[:180]}{MEASURED_KEY_SEP}{int(tracker_id)}"
+
+
+def _repair_episode_keys(conn):
+    """Once (EPISODE_REPAIR_MARK): drop the measured rows written under the
+    bare recommendation key — derived rows, re-derived per episode by the
+    same pass. Returns True when it ran."""
+    try:
+        if conn.execute("SELECT 1 FROM job_cursors WHERE key=?", (EPISODE_REPAIR_MARK,)).fetchone():
+            return False
+    except Exception:
+        return False
+    conn.execute("DELETE FROM intel_rec_events WHERE action='measured' "
+                 "AND COALESCE(synced_from, 'recommendation_outcomes')='recommendation_outcomes' "
+                 "AND instr(source_key, ?) = 0", (MEASURED_KEY_SEP,))
+    _cursor_set(conn, 1, key=EPISODE_REPAIR_MARK)
+    return True
+
+
+def _counted_tracker_ids(rows) -> set:
+    """The evaluated trackers whose result counts in the cohort record — the
+    own record's rule (rec_learning._one_per_window): one result per
+    tracker, and on one number (restaurant, metric) one per non-overlapping
+    after-window, the earliest kept. Only a clear learned verdict holds a
+    window (an unknown result is no change to count once); a row without its
+    window is kept."""
+    kept, by = set(), {}
+    for r in rows:
+        if r.get("status") != "evaluated" or r.get("id") is None:
+            continue
+        if _outcome_of(r) not in ("improved", "worsened", "no_clear_change"):
+            kept.add(r["id"])            # filed as its own (unknown) verdict
+            continue
+        start = str(r.get("after_start") or r.get("started_on") or "")[:10]
+        end = str(r.get("after_end") or r.get("evaluate_on") or start)[:10]
+        if not r.get("metric") or not start:
+            kept.add(r["id"])
+            continue
+        by.setdefault((r["restaurant_id"], r["metric"]), []).append((start, end, r["id"]))
+    for items in by.values():
+        last_end = ""
+        for start, end, tid in sorted(items):
+            if last_end and start <= last_end:
+                continue
+            kept.add(tid)
+            last_end = max(last_end, end)
+    return kept
 # rec_ledger keys that are bookkeeping, not advice (rec_ledger.BOOKKEEPING_PREFIXES).
 _BOOKKEEPING = ("restore_kind:", "calibration:", "standby:")
 _AUTO_DONE = ("done", "executed")
@@ -235,6 +295,7 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
     conn = get_conn(db_path)
     try:
         _repair_once(conn)
+        _repair_episode_keys(conn)
 
         def put(rid, kind, key, action, **kw):
             return _record_on(conn, rid, kind, key, action, cohort=cohorts.get(rid), **kw)
@@ -251,12 +312,21 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
 
         try:
             # baseline_overlaps_trigger: learned_verdict never reads a result
-            # measured against its own trigger window as a win (CA2 #1).
-            outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
-                                "created_at, recheck_verdict, owner_checkin, baseline_overlaps_trigger "
-                                "FROM recommendation_outcomes").fetchall()
+            # measured against its own trigger window as a win (CA2 #1);
+            # concurrent: nor one confounded by another change (B2 #5); id,
+            # metric and the after-window: one result per episode and window.
+            outs = conn.execute("SELECT id, restaurant_id, source, source_key, status, verdict, started_on, "
+                                "evaluate_on, created_at, recheck_verdict, owner_checkin, baseline_overlaps_trigger, "
+                                "concurrent, metric, after_start, after_end FROM recommendation_outcomes").fetchall()
         except Exception:
             outs = None
+        if outs is None:
+            try:
+                outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, "
+                                    "evaluate_on, created_at, recheck_verdict, owner_checkin, "
+                                    "baseline_overlaps_trigger FROM recommendation_outcomes").fetchall()
+            except Exception:
+                outs = None
         if outs is None:
             try:
                 outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, "
@@ -267,6 +337,9 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
         if outs is None:                 # a database from before the re-check / check-in columns
             outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
                                 "created_at FROM recommendation_outcomes").fetchall()
+        outs = [dict(r) for r in outs]
+        counted = _counted_tracker_ids([r for r in outs if not str(r.get("source_key") or "")
+                                        .startswith("observed:untaken:")])
         for r in outs:
             # The kind comes from the key, not the tracker's source: Home's
             # "Done" starts an `observed` tracker under the recommendation's
@@ -285,7 +358,15 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
                             - date.fromisoformat(str(r["started_on"])[:10])).days
                 except (TypeError, ValueError):
                     pass
-                written += put(r["restaurant_id"], kind, r["source_key"], "measured", outcome=_outcome_of(r),
+                # One row per episode; a result whose after-window overlaps
+                # an earlier one on the same number is filed `unknown` —
+                # never a second result for one change.
+                if r.get("id") is None:          # a database from before the id was read
+                    mkey, outcome = r["source_key"], _outcome_of(r)
+                else:
+                    mkey = measured_key(r["source_key"], r["id"])
+                    outcome = _outcome_of(r) if r["id"] in counted else "unknown"
+                written += put(r["restaurant_id"], kind, mkey, "measured", outcome=outcome,
                                days_to_effect=days, event_at=r["evaluate_on"], synced_from="recommendation_outcomes")
 
         a0 = _cursor_get(conn, ASK_CURSOR)

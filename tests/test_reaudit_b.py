@@ -530,20 +530,22 @@ def test_b8_an_expired_card_answered_later_is_the_answer_not_also_an_ignore(db):
 def test_b9_reversed_and_disowned_results_are_not_wins_in_either_reader(db):
     rid = _rid(db)
     tids = {}
-    for key, cols in (("trim_day:Monday", {"recheck_verdict": "reversed"}),
-                      ("trim_day:Tuesday", {"owner_checkin": json.dumps({"did_it": "no"})}),
-                      ("trim_day:Thursday", {"owner_checkin": json.dumps({"did_it": "yes",
-                                                                           "conditions_changed": True})}),
-                      ("trim_day:Wednesday", {})):
+    # Windows 40 days apart: one result per change on a number (re-audit B2 #3).
+    for i, (key, cols) in enumerate((("trim_day:Monday", {"recheck_verdict": "reversed"}),
+                                     ("trim_day:Tuesday", {"owner_checkin": json.dumps({"did_it": "no"})}),
+                                     ("trim_day:Thursday", {"owner_checkin": json.dumps({"did_it": "yes",
+                                                                                          "conditions_changed": True})}),
+                                     ("trim_day:Wednesday", {}))):
         rl.present(rid, key, "labor", "home", db_path=db)
-        tids[key] = _tracker(db, rid, key, "improved", **cols)
+        tids[key] = _tracker(db, rid, key, "improved", days_ago=40 + 40 * i, **cols)
         rl.record(rid, key, "accepted", surface="home", meta={"tracker_id": tids[key]}, db_path=db)
     verdicts = {e["key"]: e["verdict"] for e in rec_learning._load(models.get_conn(db), rid)}
     assert verdicts == {"trim_day:Monday": "no_clear_change", "trim_day:Tuesday": "unknown",
                         "trim_day:Thursday": "unknown", "trim_day:Wednesday": "improved"}
     feedback.sync(db_path=db)
-    engine = {r["source_key"]: r["outcome"] for r in _q(db, "SELECT source_key, outcome FROM intel_rec_events "
-                                                            "WHERE action='measured'")}
+    # One measured row per episode, keyed "<key>#o<tracker id>" (re-audit B2 #3).
+    engine = {r["source_key"].split(feedback.MEASURED_KEY_SEP)[0]: r["outcome"]
+              for r in _q(db, "SELECT source_key, outcome FROM intel_rec_events WHERE action='measured'")}
     assert engine == verdicts
     s = scoring.kind_stats("trim_day", restaurant_id=rid, db_path=db)
     assert (s["improved"], s["measured"]) == (1, 2)
@@ -553,8 +555,8 @@ def test_b9_reversed_and_disowned_results_are_not_wins_in_either_reader(db):
     _x(db, "UPDATE recommendation_outcomes SET owner_checkin=? WHERE id=?",
        (json.dumps({"did_it": "no"}), tids["trim_day:Wednesday"]))
     feedback.sync(db_path=db)
-    assert _q(db, "SELECT outcome FROM intel_rec_events WHERE action='measured' AND source_key='trim_day:Wednesday'"
-              )[0]["outcome"] == "unknown"
+    assert _q(db, "SELECT outcome FROM intel_rec_events WHERE action='measured' AND source_key=?",
+              (feedback.measured_key("trim_day:Wednesday", tids["trim_day:Wednesday"]),))[0]["outcome"] == "unknown"
 
 
 # ══ B10 · the snooze repair never erases a real hide ══════════════════════════

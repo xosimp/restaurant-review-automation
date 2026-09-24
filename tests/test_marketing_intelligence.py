@@ -212,7 +212,8 @@ def test_engine_features_read_post_kinds_lift_and_engagement(db_path):
     conn.commit(); conn.close()
     f = features.compute(rid, today=today, db_path=db_path)
     assert f["posts_28d"] == 3 and f["dish_posts_28d"] == 2 and f["offer_posts_28d"] == 1 and f["occasion_posts_28d"] == 1
-    assert f["post_lift_median_28d"] == 4.0 and f["item_lift_median_28d"] == 17.5
+    # Two item lifts are under MIN_POSTS_FOR_RATE (re-audit B3 #11): not a median yet.
+    assert f["post_lift_median_28d"] == 4.0 and f["item_lift_median_28d"] is None
     assert f["post_engagement_rate_28d"] == round(78 / 2300, 4)
     assert "specials_28d" not in f
     from intelligence import patterns

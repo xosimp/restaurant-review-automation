@@ -65,6 +65,38 @@ BUCKETS = ("taken", "declined", "hidden", "ignored")
 # 4). The raw and shrunk rates are still computed for the engine's own
 # weighting.
 MIN_MEASURED_FOR_RATE = 5
+# No one restaurant may carry more than this share of a CROSS-restaurant
+# success figure (re-audit B2 #3): one peer's 8 results among a cohort's 12
+# stood as "10 of 12 improved at restaurants like yours". Each restaurant's
+# clear results are scaled down to at most this share of the capped total
+# (capped_counts); `measured_capped` / `improved_capped` are the figure a
+# prior may use, the raw counts stay beside them.
+MAX_RESTAURANT_SHARE = 1.0 / 3.0
+
+
+def capped_counts(per_restaurant, max_share=MAX_RESTAURANT_SHARE):
+    """(measured, improved) summed over {restaurant: (measured, improved)}
+    after each restaurant's weight is cut so its measured count is at most
+    `max_share` of the capped total: the cap c is the fixed point of
+    c = max_share × Σ min(n_r, c), and a restaurant over it counts c of its
+    n_r results at its own improved share. Pure."""
+    ns = [n for n, _k in per_restaurant.values() if n > 0]
+    if not ns:
+        return 0.0, 0.0
+    c = float(max(ns))
+    for _ in range(200):
+        nxt = max_share * sum(min(n, c) for n in ns)
+        if nxt >= c - 1e-9:
+            break
+        c = nxt
+    measured = improved = 0.0
+    for n, k in per_restaurant.values():
+        if n <= 0:
+            continue
+        w = min(1.0, c / n)
+        measured += n * w
+        improved += k * w
+    return round(measured, 3), round(improved, 3)
 
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
@@ -155,6 +187,14 @@ def _summarise(rows, cross=True) -> dict:
     out["success_rate_shrunk"] = shrink(out["success_rate"], len(clear))
     out["acceptance_rate_shrunk"] = shrink(out["acceptance_rate"], denominator)
     if cross:
+        per = {}
+        for r in clear:
+            n, k = per.get(r["restaurant_id"], (0, 0))
+            per[r["restaurant_id"]] = (n + 1, k + (1 if r["outcome"] == "improved" else 0))
+        mc, ic = capped_counts(per)
+        out["measured_capped"], out["improved_capped"] = mc, ic
+        out["success_rate_capped"] = round(ic / mc, 3) if mc else None
+        out["max_restaurant_share"] = round(MAX_RESTAURANT_SHARE, 3)
         # Below the floor the rates are still computed for the engine's own
         # weighting, but nothing here may be shown as a cohort fact — and
         # each figure has its own population.
@@ -176,12 +216,15 @@ def public(s) -> dict:
     out = dict(s)
     if not s.get("success_available"):
         for k in ("measured", "improved", "worsened", "no_clear_change", "unknown", "success_rate",
-                  "success_rate_shrunk", "median_days_to_improvement"):
+                  "success_rate_shrunk", "median_days_to_improvement", "measured_capped", "improved_capped",
+                  "success_rate_capped"):
             out[k] = None
     elif not s.get("success_enough", True):
         # The counts stay; a rate over fewer than MIN_MEASURED_FOR_RATE clear
         # results is not shown as one (CA2 finding 4).
         out["success_rate"] = None
+        if "success_rate_capped" in out:
+            out["success_rate_capped"] = None
     if not s.get("acceptance_available"):
         for k in ("answered", "accepted", "declined", "hidden", "ignored", "snoozed", "auto", "acceptance_rate",
                   "acceptance_rate_shrunk"):
