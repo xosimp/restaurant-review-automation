@@ -82,10 +82,32 @@ def test_k1_object_reads_its_percentage_and_tone():
 
 @pytest.mark.parametrize("pct,tone,band", [(75, "good", "high"), (74, "mid", "medium"), (50, "mid", "medium"),
                                            (49, "warn", "low"), (0, "warn", "low"), (100, "good", "high")])
-def test_tone_boundaries_are_75_and_50(pct, tone, band):
-    c = dict(K1, pct=pct)
-    n = _eval("C.norm(c)", c=c)
+def test_tone_boundaries_are_the_engines(pct, tone, band):
+    """The payload's band is the tone; with none, the client's thresholds,
+    which are held to confidence_engine.HIGH_AT / MEDIUM_AT (B6 low: the
+    tests pinned the literals)."""
+    import confidence_engine as ce
+    assert ce.band(pct) == band
+    n = _eval("C.norm(c)", c=dict(K1, pct=pct, band=ce.band(pct)))
     assert (n["tone"], n["band"]) == (tone, band)
+    n = _eval("C.norm(c)", c={k: v for k, v in dict(K1, pct=pct).items() if k != "band"})
+    assert (n["tone"], n["band"]) == (tone, band)
+
+
+def test_client_thresholds_are_the_engines():
+    import confidence_engine as ce
+    assert _eval("C.AT") == {"high": ce.HIGH_AT, "medium": ce.MEDIUM_AT}
+
+
+def test_the_server_band_decides_the_tone():
+    """If the engine moves its cut-offs, the payload's band moves the tone
+    without a client release; a dimension row reads the payload's
+    thresholds when sent."""
+    c = dict(K1, pct=72, band="high", thresholds={"high": 70, "medium": 40})
+    n = _eval("C.norm(c)", c=c)
+    assert n["tone"] == "good" and n["band"] == "high"
+    rows = _eval("C.rows(C.norm(c))", c=c)
+    assert rows[0]["tone"] == "good"                 # evidence 80 >= 70
 
 
 def test_overall_null_is_not_yet_measurable_never_a_number():
@@ -205,15 +227,19 @@ def test_every_j1_surface_draws_the_shared_component():
     assert "cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home'" in src
     assert "cavConfLine(fconf,{key:fkey,surface:'home'" in src and "fconf=ff.confidence_detail||ff.confidence" in src
     # Diagnosis blocks: reviews, food, labor + marketing (renderDiagnosis).
-    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'reviews'" in src
-    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:'food'" in src
-    assert "cavConfLine(dg.confidence_detail||dg.confidence||'low',{key:dg.rec_key,surface:dsurf" in src
+    # Only a measured object draws: never a literal 'low' or the model's
+    # own band as a fallback (B1 L1).
+    assert "cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'reviews'" in src
+    assert "cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'food'" in src
+    assert "cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:dsurf" in src
+    assert "confidence||'low'" not in src
     # Food drivers, Ask, the daily report's actions.
-    assert "cavConfLine(x.confidence_detail||x.confidence,{key:x.rec_key||x.key,surface:'food'" in src
-    assert "cavConfLine(d.confidence_detail || d.confidence, {surface: 'ask'" in src
-    assert "cavConfLine(x.confidence_detail||x.confidence,{key:rk,surface:'dsr'" in src
-    # Schedule recommendations (an object with its confidence, on the dark panel).
-    assert "cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule'" in src
+    assert "cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:x.rec_key||x.key,surface:'food'" in src
+    assert "cavConfLine(askConf, {surface: 'ask'" in src
+    assert "cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:rk,surface:'dsr'" in src
+    # Schedule recommendations (an object with its confidence, on the dark
+    # panel), logged on the surface the server presents them on (B4 L6).
+    assert "cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review'" in src
 
 
 def test_the_old_per_module_pills_and_the_strength_pill_are_gone():
@@ -334,7 +360,33 @@ def test_dsr_footer_counts_estimates_apart():
 def test_shift_quality_confidence_uses_tokens_and_amber_for_low():
     fn = _fn_src(_src(), "renderQualityConfidence")
     assert "#eb5757" not in fn and "#f2994a" not in fn and "#6fcf97" not in fn
-    assert "var(--amber)" in fn and "'moderate' ? 'medium'" in fn
+    assert "var(--amber)" in fn and "confidence.level === 'moderate'" in fn
+
+
+def _sq_panel(conf, detail):
+    fn = _fn_src(_src(), "renderQualityConfidence")
+    js = ("var els={'sq-confidence':{innerHTML:''},'sq-prov':{innerHTML:''}};"
+          "var document={getElementById:function(i){return els[i]||null;}};"
+          "function _escAttr(v){return String(v==null?'':v);}function num(v){return String(v==null?'':v);}"
+          "var cavConf=window.cavConf,cavConfLine=window.cavConfLine;\n" + fn
+          + f"\nrenderQualityConfidence({json.dumps(conf)},{json.dumps(detail)});"
+          "console.log(JSON.stringify([els['sq-confidence'].innerHTML,els['sq-prov'].innerHTML]));")
+    return _run(js)
+
+
+def test_shift_quality_pill_is_a_percentage_never_a_band_word():
+    """B4 L2 / H3: the pill was "Low confidence · provisional" beside items
+    reading 67%. It is the read's measured completeness as its %, named for
+    what it measures; with the panel's own K1 object it is that line."""
+    conf = {"score": 45, "level": "low", "reasons": ["5 of 9 scheduled staff have no Operational Score."],
+            "summary": "s"}
+    html, prov = _sq_panel(conf, None)
+    text = re.sub(r"<[^>]+>", "", html)
+    assert "Read completeness 45%" in text and "provisional" in prov
+    assert not re.search(r"(High|Medium|Low|Moderate) confidence", text)
+    html, prov = _sq_panel(conf, dict(K1, pct=46, band="low"))
+    assert 'data-conf-pct="46"' in html and "46% confidence" in html and "provisional" in prov
+    assert "Read completeness" not in html
 
 
 # ── admin: the calibration view (K7) ───────────────────────────────────────
@@ -342,28 +394,57 @@ def test_shift_quality_confidence_uses_tokens_and_amber_for_low():
 ADMIN = os.path.join(ROOT, "templates", "admin.html")
 
 
-def test_admin_calibration_view_renders_k7():
+def _k7_payload():
+    """Built by the server's own functions, so the fixture is the shape the
+    server sends (B6#7: a hand-written fixture with 0-1 shares and a list per
+    dimension passed while the real view never drew a dimension table)."""
+    import confidence_engine as ce
+    # 70-79: 42 shown at 74, 29 improved -> 69%, its 90% range brackets 74.
+    # 40-49: 6 rows, under the floor. 90-100: 30 shown at 95, 3 improved ->
+    # 10%, far outside - the warn tick.
+    overall = ([(74, 1)] * 29 + [(74, 0)] * 13 + [(45, 1)] * 3 + [(45, 0)] * 3
+               + [(95, 1)] * 3 + [(95, 0)] * 27)
+    ev = [(84, 1)] * 21 + [(84, 0)] * 9
+    return {"ok": True, "floor_n": 20, "bands": ce.reliability(overall, 20), "brier": ce.brier(overall, 20),
+            "by_kind": [{"kind": "trim_day", "n": 25, "predicted_mean": 71.0, "observed_rate": 40.0, "enough": True}],
+            "by_dimension": {"evidence": {"bands": ce.reliability(ev, 20), "brier": ce.brier(ev, 20), "n": len(ev)},
+                             "accuracy": {"bands": [], "brier": None, "n": 0},
+                             "freshness": {"bands": [], "brier": None, "n": 0}}}
+
+
+def _admin_cal_js(payloads):
     a = open(ADMIN, encoding="utf-8").read()
     fns = "".join(_fn_src(a, n) for n in ("_calPct", "_calBar", "_calTable", "confidenceCalibration"))
-    k7 = {"bands": [{"range": "70-79", "n": 42, "predicted_mean": 0.74, "observed_rate": 0.69, "low": 0.57, "high": 0.79},
-                    {"range": "40-49", "n": 6, "predicted_mean": 0.45, "observed_rate": 0.5, "low": 0.2, "high": 0.8}],
-          "brier": 0.214,
-          "by_kind": [{"kind": "trim_day", "n": 25, "predicted_mean": 71, "observed_rate": 40, "low": 25, "high": 57}],
-          "by_dimension": {"evidence": [{"range": "80-89", "n": 30, "predicted_mean": 0.84, "observed_rate": 0.7}],
-                           "accuracy": [], "freshness": []},
-          "floor_n": 20}
-    js = ("function esc(v){return String(v==null?'':v);}function fmtN(n){return String(n);}"
-          "function kpi(v,l){return '<kpi>'+v+'|'+l+'</kpi>';}"
-          "function table(cols,rows){return '<table>'+rows.map(function(r){return '<tr>'+cols.map(function(c)"
-          "{return '<td>'+(c.cell?c.cell(r):r[c.key])+'</td>';}).join('')+'</tr>';}).join('')+'</table>';}"
-          + fns + f"\nconsole.log(JSON.stringify([confidenceCalibration({json.dumps(k7)}), confidenceCalibration(null)]));")
-    html, empty = _node(js)
-    assert "Confidence calibration" in html and "0.214|Brier score" in html
-    assert "calbar ok" in html                        # shown 74 sits inside 57-79
-    assert "calbar warn" in html                      # trim_day: 71 outside 25-57
+    return ("function esc(v){return String(v==null?'':v);}function fmtN(n){return String(n);}"
+            "function kpi(v,l){return '<kpi>'+v+'|'+l+'</kpi>';}"
+            "function table(cols,rows,o){return '<table id=\"'+((o&&o.id)||'')+'\">'+rows.map(function(r){return '<tr>'+cols.map(function(c)"
+            "{return '<td>'+(c.cell?c.cell(r):r[c.key])+'</td>';}).join('')+'</tr>';}).join('')+'</table>';}"
+            + fns + "\nconsole.log(JSON.stringify(" + payloads + ".map(function(k){return confidenceCalibration(k);})));")
+
+
+def test_admin_calibration_view_renders_k7():
+    k7 = _k7_payload()
+    html, empty = _node(_admin_cal_js(json.dumps([k7, None])))
+    assert "Confidence calibration" in html and "|Brier score" in html
+    assert "calbar ok" in html                        # shown 74 sits inside its range
+    assert "calbar warn" in html                      # shown 95, 10% improved
     assert "n&lt;20" in html and "calbar off" in html  # the 6-row band is below the floor
-    assert "By kind" in html and "Evidence strength" in html
+    assert "By kind" in html
+    # The per-dimension table renders from {bands, brier, n} (B6#7).
+    assert "Evidence strength" in html and 'id="cal-dim-evidence"' in html and "84%" in html
     assert "No calibration yet" in empty
+
+
+def test_admin_calibration_reads_every_figure_as_0_to_100():
+    """A value under 1 is under 1%, never a share times 100 (B6#7)."""
+    k7 = {"ok": True, "floor_n": 1, "brier": None, "by_kind": [], "by_dimension": {},
+          "bands": [{"range": "0-9", "n": 30, "predicted_mean": 0.9, "observed_rate": 0.5, "low": 0.0,
+                     "high": 0.8, "enough": True}]}
+    html = _node(_admin_cal_js(json.dumps([k7])))[0]
+    html = html[html.index("<table"):]                # the table, not the "90% range" legend
+    assert "Predicted 90%" not in html and "50%" not in html and "80%" not in html
+    assert "Predicted 1%" in html
+    assert "1%" in html
 
 
 def test_admin_says_setup_completeness():

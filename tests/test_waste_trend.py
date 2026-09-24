@@ -480,7 +480,11 @@ def test_observations_split_into_labeled_good_and_fixable_columns():
     assert m, "wtDrawObs not found"
     m2 = re.search(r"function wtObBullet\(ob\)\{.*?\}", html)
     assert m2, "wtObBullet not found"
-    js = "function wtEsc(x){return String(x==null?'':x);}\n" + m2.group(0) + "\n" + m.group(0) + """
+    # wtObBullet's footnote comes from wtObNote (trend strength as a %).
+    m3 = re.search(r"function wtObNote\(ob\)\{.*?\n\}", html, re.S)
+    assert m3, "wtObNote not found"
+    js = ("function wtEsc(x){return String(x==null?'':x);}\nvar _wtStrength=null;\n" + m3.group(0) + "\n"
+          + m2.group(0) + "\n" + m.group(0) + """
 var seen = null;
 var document = {getElementById:function(){return {};}};
 function wtShow(id, on){ seen = on; }
@@ -491,7 +495,7 @@ wtDrawObs({
     {tone:'warn', text:'w'}, {tone:'neutral', text:'n'}, {tone:'good', text:'g2'}
   ]
 });
-"""
+""")
     # wtDrawObs writes into box.innerHTML — capture it via a stub element.
     js = js.replace(
         "var document = {getElementById:function(){return {};}};",
@@ -521,12 +525,16 @@ def test_observations_hide_empty_column_header():
     html = _dashboard_html()
     m = re.search(r"function wtDrawObs\(d\)\{.*?\n\}", html, re.S)
     m2 = re.search(r"function wtObBullet\(ob\)\{.*?\}", html)
-    js = "function wtEsc(x){return String(x==null?'':x);}\n" + m2.group(0) + "\n" + m.group(0) + """
+    # wtObBullet's footnote comes from wtObNote (trend strength as a %).
+    m3 = re.search(r"function wtObNote\(ob\)\{.*?\n\}", html, re.S)
+    assert m3, "wtObNote not found"
+    js = ("function wtEsc(x){return String(x==null?'':x);}\nvar _wtStrength=null;\n" + m3.group(0) + "\n"
+          + m2.group(0) + "\n" + m.group(0) + """
 var box={innerHTML:''}; var document = {getElementById:function(){return box;}};
 function wtShow(id, on){}
 wtDrawObs({weeks:[1,2], observations:[{tone:'good', text:'all good'}]});
 console.log(JSON.stringify(box.innerHTML));
-"""
+""")
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     import json

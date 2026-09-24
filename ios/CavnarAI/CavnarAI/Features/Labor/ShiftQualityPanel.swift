@@ -142,7 +142,10 @@ struct ShiftQualityPanel: View {
                         ScoreDeltaChip(delta: delta)
                     }
                 }
-                if let confidence = quality.confidence {
+                if let detail = quality.confidenceDetail, ConfidenceDisplay(detail).isRenderable {
+                    // One engine for the panel and its items (B4 H3).
+                    ConfidenceLine(confidence: detail, surface: "schedule_review", module: "schedule")
+                } else if let confidence = quality.confidence {
                     confidencePill(confidence)
                     // Low confidence says why first — the top reason.
                     if quality.isProvisional, let top = confidence.reasons.first {
@@ -160,10 +163,10 @@ struct ShiftQualityPanel: View {
             Circle()
                 .fill(confidenceTone(confidence.level))
                 .frame(width: 6, height: 6)
-            Text("\(confidence.label) confidence")
-                .font(.cavnarBody(14, weight: 600))
-                .foregroundStyle(Color.cavnarInk2)
+            HomeMixedText.make(confidence.completenessLabel, size: 14, weight: 600, color: .cavnarInk2)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Read completeness \(max(0, min(100, confidence.score))) percent")
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color.cavnarPaper3.opacity(0.7)))
@@ -430,6 +433,13 @@ struct ShiftQualityPanel: View {
                             askingReason = true
                         }
                     }
+                }
+                // Each served item's K1 confidence, as on the web (B4 H4);
+                // Why? is logged on the surface the server presented it on.
+                if decision == nil, let item = quality.item(for: rec), let conf = item.confidence {
+                    ConfidenceLine(confidence: conf, recKey: item.ledgerKey, surface: "schedule_review",
+                                   module: "schedule")
+                        .padding(.leading, 13)
                 }
                 // An accepted hours change is measured — say on what, until when.
                 if decision == "accepted", let tracking = viewModel?.recommendationTracking[rec] {

@@ -112,9 +112,9 @@ final class ConfidenceIntegrationTests: XCTestCase {
         XCTAssertEqual(e.label, "Last year 18% above a typical Saturday here — 3 Saturdays")
         XCTAssertEqual(e.claimKind, "measured")
         XCTAssertEqual(e.planningLine, "Check this week's schedule against it.")
-        XCTAssertEqual(s.demandAccuracy?.sentence, "Demand forecasts here: within range 64% of 21 nights · 12% mean error")
+        XCTAssertEqual(s.demandAccuracy?.sentence, "Demand forecasts here: inside the range on 64% of the 14 nights that had one · 21 nights measured · 12% mean error · nights came in 3% below the forecast on average")
         XCTAssertEqual(LaborView.forecastRecordLines(s), [
-            "Demand forecasts here: within range 64% of 21 nights · 12% mean error",
+            "Demand forecasts here: inside the range on 64% of the 14 nights that had one · 21 nights measured · 12% mean error · nights came in 3% below the forecast on average",
             "Past weekly sales projections here have been close (8% mean error over 5 weeks); they have run 6% high on average",
         ])
         XCTAssertEqual(LaborAnalyticsSection.industryLine(diff: -3.3, industryText: "34.5%"),
@@ -274,7 +274,7 @@ final class ConfidenceIntegrationTests: XCTestCase {
         let v = try decode(DSRVerification.self, #"{"checked": 8, "kept": 7, "dropped": [{}], "estimated": 2, "measured": 5}"#)
         XCTAssertEqual(v.measured, 5)
         XCTAssertEqual(v.footer,
-                       "Every figure above traced to a fact it cites · 7 of 8 lines kept · 5 measured, 2 estimated (labelled as such) · 1 dropped because a figure didn’t trace")
+                       "Every figure above traced to a fact it cites · 7 of 8 lines kept · 5 measured, 2 estimated (labelled as such) · 1 dropped because it didn’t pass the check against the night’s facts")
         // No estimates: the measured wording stands.
         let clean = try decode(DSRVerification.self, #"{"checked": 4, "kept": 4, "estimated": 0, "measured": 4}"#)
         XCTAssertEqual(clean.footer, "Every figure above traced to a measured fact · 4 of 4 lines kept")

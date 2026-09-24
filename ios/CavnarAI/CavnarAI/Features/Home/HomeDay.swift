@@ -188,7 +188,9 @@ final class HomeDayViewModel {
             switch tone {
             case "good": return .cavnarGreen
             case "bad", "critical": return .cavnarRed
-            case "action", "important": return .cavnarEmber2
+            // A line that needs doing is a warning tone; ember is not a
+            // status (B4 L7).
+            case "action", "important": return .cavnarAmber
             case "warn", "watch": return .cavnarAmber
             default: return .cavnarInk3
             }

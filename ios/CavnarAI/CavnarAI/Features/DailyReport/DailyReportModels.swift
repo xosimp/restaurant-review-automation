@@ -446,6 +446,11 @@ struct DSRVerification: Decodable, Hashable {
     let checked: Int?
     let kept: Int?
     let dropped: Int?
+    /// Of `dropped`, the lines left out because the owner already answered
+    /// them, said not for us, or they repeated a line above — not failed
+    /// checks (dsr/narrative.settle_actions). The footer says each as what
+    /// it is.
+    var droppedAnswered: Int = 0
     let estimated: Int?
     /// H13 (dsr/narrative.py): the kept lines resting on measured facts
     /// only — kept minus estimated, as the server counts it.
@@ -463,8 +468,42 @@ struct DSRVerification: Decodable, Hashable {
         checked = try? c.decodeIfPresent(Int.self, forKey: .checked)
         kept = try? c.decodeIfPresent(Int.self, forKey: .kept)
         dropped = Self.count(c, .dropped)
+        if let list = (try? c.decodeIfPresent([DroppedLine].self, forKey: .dropped)) ?? nil {
+            droppedAnswered = list.filter { $0.isAnswered }.count
+        }
         estimated = Self.count(c, .estimated) ?? Self.count(c, .estimates)
         measured = try? c.decodeIfPresent(Int.self, forKey: .measured)
+    }
+
+    private struct DroppedLine: Decodable {
+        let why: String?
+        init(from decoder: Decoder) throws {
+            let c = try? decoder.container(keyedBy: K.self)
+            why = (try? c?.decodeIfPresent(String.self, forKey: .why)) ?? nil
+        }
+        enum K: String, CodingKey { case why }
+        var isAnswered: Bool {
+            guard let why else { return false }
+            return why.range(of: "owner|already answered|same action|not for us",
+                             options: [.regularExpression, .caseInsensitive]) != nil
+        }
+    }
+
+    /// " · 1 dropped because it didn't pass the check against the night's
+    /// facts · 1 left out because you already answered it or it repeated a
+    /// line above".
+    private var droppedText: String {
+        let total = dropped ?? 0
+        let answered = min(droppedAnswered, total)
+        let failed = total - answered
+        var s = ""
+        if failed > 0 {
+            s += " \u{00B7} \(failed) dropped because \(failed == 1 ? "it" : "they") didn\u{2019}t pass the check against the night\u{2019}s facts"
+        }
+        if answered > 0 {
+            s += " \u{00B7} \(answered) left out because you already answered \(answered == 1 ? "it" : "them") or \(answered == 1 ? "it repeated" : "they repeated") a line above"
+        }
+        return s
     }
 
     /// A count sent as a number or as the list it counts.
@@ -484,11 +523,11 @@ struct DSRVerification: Decodable, Hashable {
         if let m = measured, let e = estimated, e > 0 {
             var s = "Every figure above traced to a fact it cites \u{00B7} \(kept) of \(checked) lines kept \u{00B7} "
                 + "\(m) measured, \(e) estimated (labelled as such)"
-            if let d = dropped, d > 0 { s += " \u{00B7} \(d) dropped because a figure didn\u{2019}t trace" }
+            s += droppedText
             return s
         }
         var s = "Every figure above traced to a measured fact \u{00B7} \(kept) of \(checked) lines kept"
-        if let d = dropped, d > 0 { s += " \u{00B7} \(d) dropped because a figure didn\u{2019}t trace" }
+        s += droppedText
         if let e = estimated, e > 0 { s += " \u{00B7} \(e) estimate\(e == 1 ? "" : "s"), labelled as such" }
         return s
     }

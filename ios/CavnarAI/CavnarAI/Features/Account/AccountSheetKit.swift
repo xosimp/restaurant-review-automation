@@ -39,17 +39,25 @@ struct AccountHero<Badge: View, Subtitle: View>: View {
 struct AccountChip: View {
     let text: String
     var muted: Bool = false
+    /// A status colour for a chip that states a status (an urgency): green,
+    /// amber or red, never the ember — ember is emphasis, not a verdict
+    /// (DESIGN_SYSTEM §9). Nil keeps the ember/muted look.
+    var tint: Color? = nil
+
+    private var fg: Color { tint ?? (muted ? Color.cavnarInk2 : Color.cavnarEmber2) }
+    private var bg: Color { tint.map { $0.opacity(0.12) } ?? (muted ? Color.white.opacity(0.04) : Color.cavnarEmber.opacity(0.12)) }
+    private var edge: Color { tint.map { $0.opacity(0.3) } ?? (muted ? Color.white.opacity(0.08) : Color.cavnarEmber.opacity(0.3)) }
 
     var body: some View {
         Text(text)
             .font(.cavnarBody(13.5, weight: 700))
-            .foregroundStyle(muted ? Color.cavnarInk2 : Color.cavnarEmber2)
+            .foregroundStyle(fg)
             .multilineTextAlignment(.leading)
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
-            .background(muted ? Color.white.opacity(0.04) : Color.cavnarEmber.opacity(0.12))
+            .background(bg)
             .overlay(
-                Capsule().strokeBorder(muted ? Color.white.opacity(0.08) : Color.cavnarEmber.opacity(0.3), lineWidth: 1)
+                Capsule().strokeBorder(edge, lineWidth: 1)
             )
             .clipShape(Capsule())
         // Deliberately no .lineLimit(1) — a chip built from a full

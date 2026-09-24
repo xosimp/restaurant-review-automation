@@ -69,6 +69,11 @@ struct MarketingAnalyticsSection: View {
                     CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
                         .padding(.bottom, 10)
                 }
+                // A cached read served because a new one failed (B6 sub-audit).
+                if let note = insight.olderReadNote {
+                    CavnarCaveat.olderRead(note)
+                        .padding(.bottom, 10)
+                }
                 Text(insight.intro)
                     .font(.cavnarHeadline(18))
                     .foregroundStyle(Color.cavnarInk)

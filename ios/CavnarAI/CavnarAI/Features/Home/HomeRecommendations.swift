@@ -137,6 +137,8 @@ struct HomeRecommendations: View {
         if let d = rec.statedDollars {
             out.append("$\(d.commaFormatted)/mo at stake" + (rec.dollarsNote.map { " (\($0))" } ?? ""))
         }
+        // What that figure covers (B4 H7).
+        if rec.statedDollars != nil, let b = rec.dollarsBasis { out.append(b) }
         if let t = rec.timeframe { out.append(t) }
         if let i = rec.impact { out.append(i) }
         return out

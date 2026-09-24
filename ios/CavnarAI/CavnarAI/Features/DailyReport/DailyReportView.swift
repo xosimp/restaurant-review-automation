@@ -14,6 +14,15 @@ import SwiftUI
 /// Renders only what the payload has: a block the login may not read isn't
 /// in it, an owner-only line isn't either, and a null figure is a dash.
 struct DailyReportView: View {
+    /// The urgency chip's status colour: amber when it is for today, none
+    /// (ink) otherwise. Never the ember (B4 L7).
+    static func urgencyTint(_ urgency: String?) -> Color? {
+        switch urgency?.lowercased() {
+        case "before_service", "today": return .cavnarAmber
+        default: return nil
+        }
+    }
+
     @State private var viewModel: DailyReportViewModel
     @State private var expanded: Set<String> = ["sales"]
     @State private var confirmingRerun = false
@@ -312,7 +321,11 @@ struct DailyReportView: View {
                                 if !chips.isEmpty {
                                     AccountFlowLayout(spacing: 6) {
                                         ForEach(Array(chips.enumerated()), id: \.offset) { j, chip in
-                                            AccountChip(text: chip, muted: j > 0)
+                                            // The urgency is a status: amber for today, ink
+                                            // otherwise — never the ember (B4 L7).
+                                            AccountChip(text: chip, muted: true,
+                                                        tint: (j == 0 && action.urgencyLabel != nil)
+                                                            ? DailyReportView.urgencyTint(action.urgency) : nil)
                                         }
                                     }
                                 }

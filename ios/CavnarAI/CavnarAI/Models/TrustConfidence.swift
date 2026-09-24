@@ -36,19 +36,23 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         var asOf: String?
         var asOfISO: String?
         var stalest: String?
+        /// Evidence only: how many observations make a full sample, when the
+        /// server sends it (confidence_engine.N_FULL).
+        var nFull: Int?
 
         enum CodingKeys: String, CodingKey {
             case pct, basis, n, improved, source, low, high, stalest
             case asOf = "as_of"
             case asOfISO = "as_of_iso"
+            case nFull = "n_full"
         }
 
         init(pct: Int? = nil, basis: String? = nil, n: Int? = nil, improved: Int? = nil,
              source: String? = nil, low: Int? = nil, high: Int? = nil,
-             asOf: String? = nil, asOfISO: String? = nil, stalest: String? = nil) {
+             asOf: String? = nil, asOfISO: String? = nil, stalest: String? = nil, nFull: Int? = nil) {
             self.pct = pct; self.basis = basis; self.n = n; self.improved = improved
             self.source = source; self.low = low; self.high = high
-            self.asOf = asOf; self.asOfISO = asOfISO; self.stalest = stalest
+            self.asOf = asOf; self.asOfISO = asOfISO; self.stalest = stalest; self.nFull = nFull
         }
 
         init(from decoder: Decoder) throws {
@@ -63,6 +67,7 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             asOf = TrustConfidence.text(c, .asOf)
             asOfISO = TrustConfidence.text(c, .asOfISO)
             stalest = TrustConfidence.text(c, .stalest)
+            nFull = TrustConfidence.integer(c, .nFull)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -77,6 +82,35 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             try c.encodeIfPresent(asOf, forKey: .asOf)
             try c.encodeIfPresent(asOfISO, forKey: .asOfISO)
             try c.encodeIfPresent(stalest, forKey: .stalest)
+            try c.encodeIfPresent(nFull, forKey: .nFull)
+        }
+
+        /// Sample or demo data: evidence scored 0 with nothing counted
+        /// (confidence_engine.evidence(sample=True)).
+        var isSample: Bool {
+            pct == 0 && (n ?? 0) == 0
+                && (basis?.range(of: "sample|demo", options: [.regularExpression, .caseInsensitive]) != nil)
+        }
+    }
+
+    /// Where the bands start, when the server sends them; else the engine's
+    /// (confidence_engine.HIGH_AT / MEDIUM_AT, held in step by a test).
+    struct Thresholds: Codable, Hashable, Sendable {
+        var high: Int
+        var medium: Int
+        static let engine = Thresholds(high: 75, medium: 50)
+    }
+
+    /// The ceilings confidence_engine.overall applies, when the server sends
+    /// them; else the engine's.
+    struct Caps: Codable, Hashable, Sendable {
+        var noTrackRecord: Int?
+        var stale: Int?
+        var staleBelow: Int?
+        enum CodingKeys: String, CodingKey {
+            case stale
+            case noTrackRecord = "no_track_record"
+            case staleBelow = "stale_below"
         }
     }
 
@@ -108,17 +142,21 @@ struct TrustConfidence: Codable, Hashable, Sendable {
     var caution: String?
     var dimensions: Dimensions?
     var version: Int?
+    var thresholds: Thresholds?
+    var caps: Caps?
 
     enum CodingKeys: String, CodingKey {
-        case pct, band, label, reason, score, caution, dimensions, version
+        case pct, band, label, reason, score, caution, dimensions, version, thresholds, caps
     }
 
     init(pct: Int? = nil, band: String? = nil, label: String? = nil, reason: String? = nil,
-         score: Double? = nil, caution: String? = nil, dimensions: Dimensions? = nil, version: Int? = nil) {
+         score: Double? = nil, caution: String? = nil, dimensions: Dimensions? = nil, version: Int? = nil,
+         thresholds: Thresholds? = nil, caps: Caps? = nil) {
         self.pct = pct.map { max(0, min(100, $0)) }
         self.band = TrustConfidence.normalisedBand(band)
         self.label = label; self.reason = reason; self.score = score
         self.caution = caution; self.dimensions = dimensions; self.version = version
+        self.thresholds = thresholds; self.caps = caps
     }
 
     /// A bare legacy band ("high", "moderate", …).
@@ -146,7 +184,9 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             score: Self.number(c, .score),
             caution: Self.text(c, .caution),
             dimensions: try? c.decodeIfPresent(Dimensions.self, forKey: .dimensions),
-            version: Self.integer(c, .version)
+            version: Self.integer(c, .version),
+            thresholds: (try? c.decodeIfPresent(Thresholds.self, forKey: .thresholds)) ?? nil,
+            caps: (try? c.decodeIfPresent(Caps.self, forKey: .caps)) ?? nil
         )
     }
 
@@ -160,6 +200,18 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         try c.encodeIfPresent(caution, forKey: .caution)
         try c.encodeIfPresent(dimensions, forKey: .dimensions)
         try c.encodeIfPresent(version, forKey: .version)
+        try c.encodeIfPresent(thresholds, forKey: .thresholds)
+        try c.encodeIfPresent(caps, forKey: .caps)
+    }
+
+    /// The object a view draws: `detail` (confidence_detail), else a
+    /// `legacy` value that is itself K1. A bare band or the model's own word
+    /// is not a measurement and draws nothing (B1 L1: "Low confidence" from
+    /// the model's band).
+    static func measured(_ detail: TrustConfidence?, _ legacy: TrustConfidence?) -> TrustConfidence? {
+        if let detail, detail.isMeasuredShape { return detail }
+        if let legacy, legacy.isMeasuredShape { return legacy }
+        return nil
     }
 
     /// The K1 object (anything from the confidence engine), as against a
@@ -172,7 +224,8 @@ struct TrustConfidence: Codable, Hashable, Sendable {
     var effectiveBand: String {
         if let band { return band }
         guard let pct else { return "low" }
-        return pct >= 75 ? "high" : (pct >= 50 ? "medium" : "low")
+        let at = thresholds ?? .engine
+        return pct >= at.high ? "high" : (pct >= at.medium ? "medium" : "low")
     }
 
     // MARK: - Lenient readers
@@ -236,6 +289,8 @@ struct ConfidenceDisplay: Equatable {
         let basis: String
         let detail: String?
         let meterFraction: Double?
+        /// A plain-words note under the detail (the pull toward 50%).
+        var note: String? = nil
     }
 
     let pct: Int?
@@ -253,10 +308,10 @@ struct ConfidenceDisplay: Equatable {
     static let footerBase = "The overall figure combines all three \u{2014} the weakest pulls it down most."
     static let footerNoTrackRecord = " Without a track record here it stays at 70% or below."
 
-    static func tone(pct: Int?) -> Tone {
+    static func tone(pct: Int?, at: TrustConfidence.Thresholds = .engine) -> Tone {
         guard let pct else { return .warn }
-        if pct >= 75 { return .good }
-        if pct >= 50 { return .neutral }
+        if pct >= at.high { return .good }
+        if pct >= at.medium { return .neutral }
         return .warn
     }
 
@@ -293,20 +348,29 @@ struct ConfidenceDisplay: Equatable {
     }
 
     init(_ c: TrustConfidence) {
-        pct = c.pct
         let measured = c.isMeasuredShape
-        if c.pct != nil {
-            tone = Self.tone(pct: c.pct)
+        let at = c.thresholds ?? .engine
+        // Sample or demo data scores evidence 0 and so the whole figure 0;
+        // that is not a measurement — "not yet measurable" (B4 L1).
+        let sample = c.dimensions?.evidence?.isSample ?? false
+        let shownPct = sample ? nil : c.pct
+        pct = shownPct
+        if shownPct != nil {
+            // The server's band is the tone, so an engine that moves its
+            // cut-offs moves the colour without an app release.
+            tone = Self.tone(band: c.band ?? c.effectiveBand)
         } else if measured {
             tone = .warn
         } else {
             tone = Self.tone(band: c.band)
         }
 
-        if let pct = c.pct {
+        if let pct = shownPct {
             lineLabel = "\(pct)% confidence"
+        } else if sample {
+            lineLabel = "Confidence not yet measurable"
         } else if measured {
-            lineLabel = c.label ?? "Confidence not yet measurable"
+            lineLabel = c.label.flatMap { $0.contains("%") ? nil : $0 } ?? "Confidence not yet measurable"
         } else if let label = c.label {
             lineLabel = label
         } else if let band = c.band {
@@ -315,9 +379,10 @@ struct ConfidenceDisplay: Equatable {
             lineLabel = "Confidence not yet measurable"
         }
         isRenderable = measured || c.band != nil || c.label != nil
-        reason = c.reason
+        reason = sample ? (c.reason.flatMap { $0.range(of: "sample", options: .caseInsensitive) != nil ? $0 : nil }
+                           ?? "Sample data \u{2014} not measurable until your own data is in") : c.reason
         caution = c.caution
-        meterFraction = Self.fraction(c.pct)
+        meterFraction = Self.fraction(shownPct)
 
         guard let dims = c.dimensions else {
             showsWhy = false
@@ -326,23 +391,48 @@ struct ConfidenceDisplay: Equatable {
             return
         }
         showsWhy = true
-        rows = [Self.evidenceRow(dims.evidence), Self.accuracyRow(dims.accuracy), Self.freshnessRow(dims.freshness)]
-        footer = Self.footerBase + (dims.accuracy?.pct == nil ? Self.footerNoTrackRecord : "")
+        rows = [Self.evidenceRow(dims.evidence, at: at, sample: sample), Self.accuracyRow(dims.accuracy, at: at),
+                Self.freshnessRow(dims.freshness, at: at)]
+        footer = Self.footer(dims: dims, caps: c.caps)
+    }
+
+    /// What holds the overall figure down, in plain words (B4 M7): the two
+    /// ceilings confidence_engine.overall applies, from the payload's caps
+    /// when sent, else the engine's.
+    static func footer(dims: TrustConfidence.Dimensions, caps: TrustConfidence.Caps?) -> String {
+        let ntr = caps?.noTrackRecord ?? 70
+        let staleCap = caps?.stale ?? 49
+        let staleBelow = caps?.staleBelow ?? 50
+        var s = footerBase
+        if dims.accuracy?.pct == nil { s += " Without a track record here it stays at \(ntr)% or below." }
+        if let f = dims.freshness?.pct, f < staleBelow {
+            s += " Data under \(staleBelow)% fresh holds it at \(staleCap)% or below."
+        }
+        return s
     }
 
     private static func notMeasured(_ title: String) -> Row {
         Row(title: title, value: "\u{2014}", tone: .warn, basis: "Not measured", detail: nil, meterFraction: nil)
     }
 
-    static func evidenceRow(_ d: TrustConfidence.Dimension?) -> Row {
-        let title = "Evidence strength"
-        guard let d else { return notMeasured(title) }
-        return Row(title: title, value: percentText(d.pct), tone: tone(pct: d.pct),
-                   basis: d.basis ?? (d.pct == nil ? "Not measured" : ""),
-                   detail: nil, meterFraction: fraction(d.pct))
+    /// "Sample: 12" (of n_full when sent) — the evidence count on its own
+    /// line, since several bases carry no count (B4 M7).
+    static func sampleText(_ d: TrustConfidence.Dimension) -> String? {
+        guard let n = d.n else { return nil }
+        return "Sample: \(n)" + (d.nFull.map { " of the \($0) a full read needs" } ?? "")
     }
 
-    static func accuracyRow(_ d: TrustConfidence.Dimension?) -> Row {
+    static func evidenceRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine,
+                            sample: Bool = false) -> Row {
+        let title = "Evidence strength"
+        guard let d else { return notMeasured(title) }
+        let p = sample ? nil : d.pct
+        return Row(title: title, value: percentText(p), tone: tone(pct: p, at: at),
+                   basis: d.basis ?? (p == nil ? "Not measured" : ""),
+                   detail: sample ? nil : sampleText(d), meterFraction: fraction(p))
+    }
+
+    static func accuracyRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine) -> Row {
         let title = "Historical accuracy"
         guard let d else { return notMeasured(title) }
         guard let pct = d.pct else {
@@ -357,14 +447,23 @@ struct ConfidenceDisplay: Equatable {
         if d.source == "cohort" {
             detail = "At restaurants like yours" + (detail.map { " \u{00B7} " + $0 } ?? "")
         }
-        return Row(title: title, value: percentText(pct), tone: tone(pct: pct),
-                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct))
+        // The pull toward even, in words: 5 of 5 reads 75%, not 100%
+        // (confidence_engine.shrink; B4 M7).
+        var note: String? = nil
+        if let improved = d.improved, let n = d.n, n > 0 {
+            let raw = Int((100.0 * Double(improved) / Double(n)).rounded())
+            if abs(raw - pct) >= 1 {
+                note = "Reads \(pct)%, not \(raw)%: a short record is pulled toward 50% until more results are in"
+            }
+        }
+        return Row(title: title, value: percentText(pct), tone: tone(pct: pct, at: at),
+                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct), note: note)
     }
 
-    static func freshnessRow(_ d: TrustConfidence.Dimension?) -> Row {
+    static func freshnessRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine) -> Row {
         let title = "Data freshness"
         guard let d else { return notMeasured(title) }
-        return Row(title: title, value: percentText(d.pct), tone: tone(pct: d.pct),
+        return Row(title: title, value: percentText(d.pct), tone: tone(pct: d.pct, at: at),
                    basis: d.basis ?? (d.pct == nil ? "Not measured" : ""),
                    detail: mdyDate(asOf: d.asOf, asOfISO: d.asOfISO).map { "as of " + $0 },
                    meterFraction: fraction(d.pct))
@@ -423,24 +522,36 @@ struct LenientText: Codable, Hashable, Sendable {
 }
 
 /// How demand forecasts have held up here (K8 `demand_accuracy`):
-/// `{mean_error_pct, bias_pct, inside_range_pct, n_nights}`. Every field
-/// lenient; decoding never fails the schedule payload it rides on.
+/// `{mean_error_pct, bias_pct | actual_vs_forecast_pct, inside_range_pct,
+/// n_nights, n_ranged}`. Every field lenient; decoding never fails the
+/// schedule payload it rides on.
+///
+/// `inside_range_pct` is a share of `n_ranged` — the nights that had a
+/// range — not of `n_nights` (B6#10, B1 H7: "100% of 10 nights" was 1 of 1).
+/// The signed figure is actual over forecast (positive: nights came in
+/// above the forecast); `bias_pct` is its older name.
 struct DemandAccuracy: Codable, Equatable, Sendable {
     var meanErrorPct: Double?
     var biasPct: Double?
     var insideRangePct: Double?
     var nNights: Int?
+    var nRanged: Int?
+    var actualVsForecastPct: Double?
 
     enum CodingKeys: String, CodingKey {
         case meanErrorPct = "mean_error_pct"
         case biasPct = "bias_pct"
         case insideRangePct = "inside_range_pct"
         case nNights = "n_nights"
+        case nRanged = "n_ranged"
+        case actualVsForecastPct = "actual_vs_forecast_pct"
     }
 
-    init(meanErrorPct: Double? = nil, biasPct: Double? = nil, insideRangePct: Double? = nil, nNights: Int? = nil) {
+    init(meanErrorPct: Double? = nil, biasPct: Double? = nil, insideRangePct: Double? = nil, nNights: Int? = nil,
+         nRanged: Int? = nil, actualVsForecastPct: Double? = nil) {
         self.meanErrorPct = meanErrorPct; self.biasPct = biasPct
         self.insideRangePct = insideRangePct; self.nNights = nNights
+        self.nRanged = nRanged; self.actualVsForecastPct = actualVsForecastPct
     }
 
     init(from decoder: Decoder) throws {
@@ -449,19 +560,27 @@ struct DemandAccuracy: Codable, Equatable, Sendable {
         biasPct = try? c.decodeIfPresent(Double.self, forKey: .biasPct)
         insideRangePct = try? c.decodeIfPresent(Double.self, forKey: .insideRangePct)
         nNights = try? c.decodeIfPresent(Int.self, forKey: .nNights)
+        nRanged = try? c.decodeIfPresent(Int.self, forKey: .nRanged)
+        actualVsForecastPct = try? c.decodeIfPresent(Double.self, forKey: .actualVsForecastPct)
     }
 
-    /// "Demand forecasts here: within range 64% of 21 nights · 12% mean
-    /// error" — nil when there is nothing measured to say.
+    private static func nights(_ n: Int) -> String { "\(n) night\(n == 1 ? "" : "s")" }
+
+    /// "Demand forecasts here: inside the range on 64% of the 14 nights that
+    /// had one · 21 nights measured · 12% mean error · nights came in 6%
+    /// above the forecast on average" — nil when there is nothing measured.
     var sentence: String? {
         var parts: [String] = []
-        if let inside = insideRangePct {
-            parts.append("within range \(Int(inside.rounded()))%" + (nNights.map { " of \($0) night\($0 == 1 ? "" : "s")" } ?? ""))
+        if let inside = insideRangePct, let nr = nRanged, nr > 0 {
+            parts.append("inside the range on \(Int(inside.rounded()))% of the \(Self.nights(nr)) that had one")
         }
-        if let e = meanErrorPct {
-            parts.append("\(Int(e.rounded()))% mean error" + (insideRangePct == nil ? (nNights.map { " over \($0) night\($0 == 1 ? "" : "s")" } ?? "") : ""))
+        if let n = nNights, n > 0 { parts.append(Self.nights(n) + " measured") }
+        if let e = meanErrorPct { parts.append("\(Int(e.rounded()))% mean error") }
+        if let v = actualVsForecastPct ?? biasPct, v.isFinite, abs(v) >= 1 {
+            parts.append("nights came in \(Int(abs(v).rounded()))% \(v > 0 ? "above" : "below") the forecast on average")
         }
-        guard !parts.isEmpty else { return nil }
+        // A count of nights alone measures nothing.
+        guard meanErrorPct != nil || (insideRangePct != nil && (nRanged ?? 0) > 0) else { return nil }
         return "Demand forecasts here: " + parts.joined(separator: " \u{00B7} ")
     }
 }

@@ -145,21 +145,27 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
     }
 
     let module: String?
+    /// The data_freshness source KEY ("pos", "shifts", "reviews") — an id,
+    /// never printed: the strip prints `label` (B6#9).
     let source: String?
+    /// The owner's name for the row ("Labor", "Food cost"), as the server
+    /// wrote it.
+    let label: String?
     let state: State
     let pct: Int?
     let asOf: String?
     let basis: String?
 
-    var id: String { (module ?? "") + "|" + (source ?? "") }
+    var id: String { (module ?? "") + "|" + (source ?? label ?? "") }
 
     enum CodingKeys: String, CodingKey {
         case module, source, state, pct, basis, key, label, at, note
         case asOf = "as_of"
     }
 
-    init(module: String?, source: String?, state: State, pct: Int? = nil, asOf: String? = nil, basis: String? = nil) {
-        self.module = module; self.source = source; self.state = state
+    init(module: String?, source: String?, label: String? = nil, state: State, pct: Int? = nil,
+         asOf: String? = nil, basis: String? = nil) {
+        self.module = module; self.source = source; self.label = label; self.state = state
         self.pct = pct; self.asOf = asOf; self.basis = basis
     }
 
@@ -171,7 +177,8 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
             return t.isEmpty ? nil : t
         }
         module = text(.module) ?? text(.key)
-        source = text(.source) ?? text(.label)
+        source = text(.source)
+        label = text(.label)
         basis = text(.basis) ?? text(.note)
         let rawAsOf = text(.asOf) ?? text(.at)
         asOf = rawAsOf.flatMap { ConfidenceDisplay.mdyDate(asOf: $0, asOfISO: nil) }
@@ -189,6 +196,7 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(module, forKey: .module)
         try c.encodeIfPresent(source, forKey: .source)
+        try c.encodeIfPresent(label, forKey: .label)
         try c.encode(Self.wire(state), forKey: .state)
         try c.encodeIfPresent(pct, forKey: .pct)
         try c.encodeIfPresent(asOf, forKey: .asOf)
@@ -220,9 +228,11 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
         }
     }
 
-    /// The source's name as the strip prints it.
+    /// The row's name as the strip prints it: the server's label, else the
+    /// module's own name. Never the source key — "pos" and "shifts" are ids
+    /// (B6#9: the chips read "pos", "labor").
     var name: String {
-        if let source { return source }
+        if let label { return label }
         guard let module else { return "Data" }
         return module == "inventory" ? "Food cost" : module.prefix(1).uppercased() + module.dropFirst()
     }
@@ -362,11 +372,16 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     var dollarsAdjusted: Double? = nil
     var calibrationN: Int? = nil
     var calibrationNote: String? = nil
+    /// What the dollar figure covers ("one Tuesday's overstaffing, per
+    /// month"): one Home can carry three labor figures of different scope
+    /// (B4 H7). Absent on an older server.
+    var dollarsBasis: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
         case key, title, why, evidence, module, metric, confidence, timeframe, impact, strength, alternative, action
         case dollarsMonthly = "dollars_monthly"
+        case dollarsBasis = "dollars_basis"
         case ifIgnored = "if_ignored"
         case timesHidden = "times_hidden"
         case modelWritten = "model_written"
@@ -407,6 +422,7 @@ extension HomeRecommendation {
         dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
         calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
         calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)
+        dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
     }
 }
 
@@ -417,6 +433,14 @@ extension HomeRecommendation {
 /// `calibration_n` how many results, `calibration_note` the server's words.
 /// Pure, so the rule is pinned by tests.
 enum RecDollarCalibration {
+    /// "covers the whole schedule's gap to your target, per month" — what a
+    /// dollar figure covers, as the server wrote it (dollars_basis), or nil.
+    static func basis(_ raw: String?) -> String? {
+        guard var b = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !b.isEmpty else { return nil }
+        if b.hasSuffix(".") { b.removeLast() }
+        return b.lowercased().hasPrefix("covers") ? b : "covers " + b
+    }
+
     /// The figure to show: the adjusted one when the server calibrated it,
     /// else the raw one; nil when neither is above zero.
     static func figure(raw: Double?, adjusted: Double?) -> Double? {
@@ -720,14 +744,28 @@ struct NeedsAttentionItem: Codable, Identifiable {
     let evidence: String?
     /// K1 — how sure Cavnar is, with "Why?". Absent on an older server.
     let confidence: TrustConfidence?
+    /// What the item's dollar figure covers (dollars_basis, B4 H7), when the
+    /// server sends it.
+    var dollarsBasis: String? = nil
 
     var id: String { type }
+
+    /// The evidence line with the dollar scope after it.
+    var evidenceLine: String? {
+        switch (evidence, dollarsBasis) {
+        case let (e?, b?): return e + " \u{00B7} " + b
+        case let (e?, nil): return e
+        case let (nil, b?): return b.prefix(1).uppercased() + b.dropFirst()
+        default: return nil
+        }
+    }
     var isPublishAction: Bool { action == "publish_replies" }
 
     enum CodingKeys: String, CodingKey {
         case type, module, title, detail, cta, secondary, action, dismissable, count, evidence, confidence
         case recKey = "rec_key"
         case timesHidden = "times_hidden"
+        case dollarsBasis = "dollars_basis"
     }
 }
 
@@ -751,5 +789,6 @@ extension NeedsAttentionItem {
         let ev = (try? c.decodeIfPresent(String.self, forKey: .evidence)) ?? nil
         evidence = (ev?.isEmpty ?? true) ? nil : ev
         confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
+        dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
     }
 }

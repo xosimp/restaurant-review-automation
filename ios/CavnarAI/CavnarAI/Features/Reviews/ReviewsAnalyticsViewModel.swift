@@ -209,7 +209,7 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     /// The K1 object when `confidence` stays the band word for older builds
     /// (confidence audit, group E). Views read `trust`.
     var confidenceDetail: TrustConfidence? = nil
-    var trust: TrustConfidence? { confidenceDetail ?? confidence }
+    var trust: TrustConfidence? { TrustConfidence.measured(confidenceDetail, confidence) }
     let ageHours: Double?
     let stale: Bool?
     /// The recommended action's rec_ledger key — present only when there is
@@ -263,15 +263,22 @@ struct ReviewRatingTrend: Decodable, Sendable, Equatable {
     let change: Double?
     let weeksAboveFloor: Int?
     let reason: String?
+    /// How steady the trend is, as a measured percentage (trend_strength_pct:
+    /// the share of weekly moves agreeing with the slope × sample adequacy).
+    /// Shown instead of a band word (B4 L2). Absent on an older server.
+    var trendStrengthPct: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case direction, change, reason
         case weeksAboveFloor = "weeks_above_floor"
+        case trendStrengthPct = "trend_strength_pct"
     }
 
-    init(direction: String? = nil, change: Double? = nil, weeksAboveFloor: Int? = nil, reason: String? = nil) {
+    init(direction: String? = nil, change: Double? = nil, weeksAboveFloor: Int? = nil, reason: String? = nil,
+         trendStrengthPct: Int? = nil) {
         self.direction = direction; self.change = change
         self.weeksAboveFloor = weeksAboveFloor; self.reason = reason
+        self.trendStrengthPct = trendStrengthPct.map { max(0, min(100, $0)) }
     }
 
     /// Never throws — a trend that is not an object must not take the whole
@@ -281,10 +288,13 @@ struct ReviewRatingTrend: Decodable, Sendable, Equatable {
             self.init()
             return
         }
+        let strength = ((try? c.decodeIfPresent(Double.self, forKey: .trendStrengthPct)) ?? nil)
+            .flatMap { $0.isFinite ? Int($0.rounded()) : nil }
         self.init(direction: try? c.decodeIfPresent(String.self, forKey: .direction),
                   change: try? c.decodeIfPresent(Double.self, forKey: .change),
                   weeksAboveFloor: try? c.decodeIfPresent(Int.self, forKey: .weeksAboveFloor),
-                  reason: try? c.decodeIfPresent(String.self, forKey: .reason))
+                  reason: try? c.decodeIfPresent(String.self, forKey: .reason),
+                  trendStrengthPct: strength)
     }
 
     /// "Rating improving (+0.2★ over 9 weeks)" — nil without a direction.

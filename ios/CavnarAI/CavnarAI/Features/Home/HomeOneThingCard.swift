@@ -84,6 +84,11 @@ struct HomeOneThingCard: View {
                                     HomeMixedText.make(note, size: 12, weight: 500, color: .cavnarInk3)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
+                                // What the figure covers (B4 H7).
+                                if let basis = ff.dollarsBasis {
+                                    HomeMixedText.make(basis, size: 12, weight: 500, color: .cavnarInk3)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
                         Spacer(minLength: 0)

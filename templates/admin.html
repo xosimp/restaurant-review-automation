@@ -278,6 +278,21 @@ function orDefault(v, d){ return v == null ? d : v; }
 // Setup completeness (G14): what is connected and configured - renamed from
 // "data completeness", which collided with the intelligence layer's feature
 // completeness. Either key, so this reads an older payload too.
+// The fleet table's Data cell. A connected POS is judged by the server's own
+// state (pos_health.pos_sync_state - the rule the POS column, the status page
+// and the owner's freshness strip share), not a table-local "older than 3
+// days" rule that disagreed with them (B6 sub-audit). Only a restaurant with
+// no POS falls back to its review fetch's age.
+const FLEET_STATE_CHIP = {current:'ok', aging:'', stale:'warn', error:'bad', unknown:'warn'};
+function _fleetDataCell(r){
+  const f = r.freshness || {}, ps = f.pos_state || null;
+  if(ps && ps.state && ps.state !== 'not_connected'){
+    const t = ps.last_synced || f.pos;
+    return `<span class="chip ${FLEET_STATE_CHIP[ps.state]==null?'warn':FLEET_STATE_CHIP[ps.state]}" title="POS ${esc(ps.state)}">${t?ago(t):'never'}</span>`;
+  }
+  const t = f.reviews, a = parseTs(t), stale = !a || (Date.now()-a) > 3*864e5;
+  return `<span class="${stale?'chip warn':'chip ok'}" title="reviews fetched">${a?ago(t):'never'}</span>`;
+}
 // The POS column from freshness.pos_state (pos_health.pos_sync_state, G3):
 // the provider, when it last synced, and a chip when the sync is stale or
 // failing — a sync that stopped without writing an error is not "fine".
@@ -458,7 +473,7 @@ async function clientsView(){
       {h:'Churn risk', key:'churn', val:r=>({high:3,medium:2,low:1}[(r.churn_risk||{}).level]||0), cell:r=>{const c=r.churn_risk||{}; return c.level==='n/a'||!c.level?'<span class="dim">—</span>':`<span class="chip ${c.level==='high'?'warn':c.level==='medium'?'':'ok'}" title="${esc((c.reasons||[]).join(' · '))}">${esc(c.level)}</span>`;}},
       {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
       {h:'Modules', cell:r=>r.modules.filter(m=>m.enabled).map(modchip).join('')||'<span class="dim">none</span>'},
-      {h:'Data', key:'fresh', val:r=>tsMs(r.freshness.reviews||r.freshness.pos), cell:r=>{const t=r.freshness.reviews||r.freshness.pos; const a=parseTs(t); const stale=!a||(Date.now()-a)>3*864e5; return `<span class="${stale?'chip warn':'chip ok'}">${a?ago(t):'never'}</span>`;}},
+      {h:'Data', key:'fresh', val:r=>tsMs(r.freshness.reviews||r.freshness.pos), cell:r=>_fleetDataCell(r)},
       {h:'AI 30d', key:'aicost', r:true, val:r=>r.ai.cost_30d, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span> <span class="dim num">${fmtUSD(r.ai.cost_30d,2)}</span>`},
       {h:'Email', key:'em', val:r=>r.email.failed_7d, cell:r=>r.email.failed_7d?`<span class="b bad nodot">${r.email.failed_7d} failed</span>`:`<span class="dim num">${r.email.sent_7d} sent</span>`},
       {h:'Push', key:'pu', val:r=>r.push.failed_7d+r.push.disabled, cell:r=>(r.push.failed_7d||r.push.disabled)?`<span class="b bad nodot">${r.push.failed_7d} failed${r.push.disabled?' · '+r.push.disabled+' dead':''}</span>`:`<span class="dim num">${r.push.devices} device${r.push.devices===1?'':'s'}</span>`},
@@ -674,7 +689,10 @@ async function recommendations(arg){
 // recomputed one) and sets the share that improved (learned_verdict,
 // improved ÷ measured) beside it, with its 90% range. A row under floor_n
 // is shown dimmed, not read. The same by kind and per dimension.
-function _calPct(v){ if(v==null || !isFinite(+v)) return null; v = +v; return v <= 1 ? v*100 : v; }
+// Every calibration figure the server sends is already 0-100
+// (confidence_engine.reliability rounds pct and 100 x rate): no 0-1 guess,
+// which read a 0.9% lower bound as 90%.
+function _calPct(v){ if(v==null || v==='' || !isFinite(+v)) return null; return Math.max(0, Math.min(100, +v)); }
 function _calBar(r, floor){
   const p = _calPct(r.predicted_mean), o = _calPct(r.observed_rate), lo = _calPct(r.low), hi = _calPct(r.high);
   if(p==null && o==null) return '<span class="dim">—</span>';
@@ -707,7 +725,11 @@ function confidenceCalibration(k){
   if(!k || k.ok === false || !Array.isArray(k.bands)) return `<div class="card"><div class="ch"><h2>Confidence calibration</h2></div><div class="cb"><div class="empty">No calibration yet — it needs recommendations shown with a confidence percentage and measured since.</div></div></div>`;
   const floor = k.floor_n || 20, dims = k.by_dimension || {};
   const brier = (k.brier==null || !isFinite(+k.brier)) ? '—' : (+k.brier).toFixed(3);
-  const dimBlock = (key, label) => (dims[key] && dims[key].length) ? `<div class="k" style="margin:12px 0 6px">${esc(label)}</div>${_calTable(dims[key], floor, 'cal-dim-'+key)}` : '';
+  // by_dimension[key] is {bands, brier, n} (admin_ops.confidence_calibration);
+  // a bare list is read too, for an older server.
+  const dimRows = key => { const d = dims[key]; return Array.isArray(d) ? d : ((d && Array.isArray(d.bands)) ? d.bands : []); };
+  const dimBrier = key => { const d = dims[key]; return (d && !Array.isArray(d) && d.brier!=null && isFinite(+d.brier)) ? ` <span class="dim">Brier ${(+d.brier).toFixed(3)}</span>` : ''; };
+  const dimBlock = (key, label) => dimRows(key).length ? `<div class="k" style="margin:12px 0 6px">${esc(label)}${dimBrier(key)}</div>${_calTable(dimRows(key), floor, 'cal-dim-'+key)}` : '';
   return `<div class="card"><div class="ch"><h2>Confidence calibration</h2><span class="sub">Shown confidence against the share that improved, measured. The tick is what was shown, the dot what happened, the band its 90% range — green when the tick sits inside it. Rows under ${floor} are dimmed.</span></div><div class="cb">
     <div class="grid g3" style="margin-bottom:12px">${kpi(brier,'Brier score', '', 'lower is better · 0.25 is a coin flip')}${kpi(fmtN((k.bands||[]).reduce((a,b)=>a+(b.n||0),0)),'Measured')}${kpi(fmtN(floor),'Floor per row')}</div>
     ${_calTable(k.bands, floor, 'cal-bands')}
