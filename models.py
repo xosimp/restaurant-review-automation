@@ -2320,6 +2320,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE recommendation_outcomes ADD COLUMN recheck_verdict TEXT",   # held | faded | reversed | unknown
         "ALTER TABLE recommendation_outcomes ADD COLUMN rechecked_at TEXT",
         "ALTER TABLE recommendation_outcomes ADD COLUMN accrued_through TEXT",   # last day outcome_value_days has read
+        "ALTER TABLE recommendation_outcomes ADD COLUMN owner_checkin TEXT",     # JSON {did_it, conditions_changed, at, attribution_before}: the owner's check-in (rec-ROI #21)
         "CREATE INDEX IF NOT EXISTS idx_outcomes_recheck ON recommendation_outcomes(status, recheck_on)",
         # Measured dollars, one row per tracker per measured day (#14): the
         # cumulative figure is a SUM of these, never monthly x months. Signed

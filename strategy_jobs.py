@@ -157,6 +157,8 @@ def _tell_owners_what_worked(results, db_path):
     for row in results:
         if not isinstance(row, dict) or row.get("verdict") != "improved":
             continue
+        if row.get("counts") is False:
+            continue          # disowned at check-in, or no longer holding
         dollars = row.get("dollars_monthly")
         if not dollars or abs(float(dollars)) < OUTCOME_WORTH_TELLING:
             continue
@@ -170,9 +172,13 @@ def _tell_owners_what_worked(results, db_path):
         try:
             import outcomes as _outcomes
             dollars = abs(float(row["dollars_monthly"]))
-            body = _outcomes.win_message(row)
+            # The title says what moved, never that the change caused it; the
+            # body is the result's own graded sentence (rec-ROI #23), which
+            # names any other change in the same weeks.
+            label = row.get("metric_label") or "Your number"
+            body = row.get("attribution_label") or _outcomes.win_message(row)
             if _reach(rid, "outcome_achieved",
-                      f"That one worked — about ${dollars:,.0f}/month", body,
+                      f"{label} improved after your change — about ${dollars:,.0f}/month", body,
                       {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
                       db_path, subject="A change you made paid off",
                       # A food-cost win is for people who can open Food

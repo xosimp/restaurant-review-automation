@@ -629,8 +629,8 @@ def _follow_through_sections(restaurant_id, owner_view=False):
         # Only the ones worth a conversation: a dollar a month of lost margin
         # is not a weekly-review item.
         worth = [x for x in sg if (x.get("monthly_margin_lost") or 0) >= 25
-                 and f"reprice:{x.get('dish')}" not in silenced][:3]
-        shown += [{"key": f"reprice:{x['dish']}", "module": "food", "title": f"Reprice {x['dish']}",
+                 and menu_intelligence.reprice_key(x.get('dish')) not in silenced][:3]
+        shown += [{"key": menu_intelligence.reprice_key(x['dish']), "module": "food", "title": f"Reprice {x['dish']}",
                    "dollar_value": x.get("monthly_margin_lost")} for x in worth if x.get("suggested_price")]
         if worth:
             out.append(report_eyebrow("Prices to revisit") + report_paragraph(_list(

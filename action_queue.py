@@ -233,7 +233,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                                   "mobile": "/mobile/api/food-cost/reprice/apply"},
                         "body": {"dish": x["dish"], "price": x["suggested_price"]}}
                        if x.get("suggested_price") else {"label": "Open Food Cost", "module": "inventory"})
-                add(f"reprice:{x['dish']}", "reprice",
+                add(menu_intelligence.reprice_key(x['dish']), "reprice",
                     f"Reprice {x['dish']} — it is priced below its new cost",
                     "watch", act,
                     detail=f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",

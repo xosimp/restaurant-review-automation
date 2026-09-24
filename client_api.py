@@ -2143,6 +2143,13 @@ def _do_record_ask_action(restaurant_id, user_id, data):
         if not prop or prop["action"] != action:
             return {"ok": False, "error": "That proposal wasn't found."}, 404
     reason = (str(data.get("reason") or "").strip()[:300] or None) if outcome == "dismissed" else None
+    # The structured why, same codes as every other "Not for us" (rec_ledger
+    # REASON_CODES, rec-ROI #22); an unknown code is refused, not guessed.
+    import rec_ledger as _rl_ask
+    reason_code = data.get("reason_code") if outcome == "dismissed" else None
+    if reason_code not in (None, "") and reason_code not in _rl_ask.REASON_CODES:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl_ask.REASON_CODES)}, 400
+    reason_code = reason_code or None
     log_ask_action(restaurant_id, action, summary=data.get("summary"),
                    body=data.get("body"), outcome=outcome, user_id=user_id,
                    proposal_id=proposal_id, reason=reason)
@@ -2151,8 +2158,9 @@ def _do_record_ask_action(restaurant_id, user_id, data):
             import rec_ledger, ask_cavnar as _ac_rec
             rec_ledger.record(restaurant_id, _ac_rec.proposal_key(proposal_id),
                               "accepted" if outcome == "confirmed" else "dismissed", surface="ask",
-                              user_id=user_id, meta={"reason": reason, "action": action} if reason
-                              else {"action": action},
+                              user_id=user_id,
+                              meta=dict({"action": action}, **({"reason": reason} if reason else {}),
+                                        **({"reason_code": reason_code} if reason_code else {})),
                               source_ref=f"ask:{proposal_id}:{outcome}")
         except Exception as e:
             print(f"[ask] rec_ledger record failed rid={restaurant_id}: {e}")

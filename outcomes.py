@@ -42,7 +42,7 @@ FAMILY is being measured, and related metrics measured over the same weeks
 count as one result.
 """
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import metrics
 import models as _models_mod
@@ -172,6 +172,7 @@ def _row(r):
             d["attribution"] = grade(d.get("verdict"), None, conc, checked=conc is not None)
     else:
         d["attribution"] = None
+    d["owner_checkin"] = _checkin_of(d)
     d["attribution_label"] = attribution_label(d)
     d["validated"] = is_validated(d)
     d["counts"] = counts_in_delivered(d)
@@ -646,6 +647,14 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
                            (cur.lastrowid,)).fetchone()
     finally:
         conn.close()
+    # The recommendation and the tracker measuring it, linked for good at the
+    # moment it starts, whichever door it came through (rec-ROI #36). A
+    # source_key that is not a recommendation's key links nothing.
+    try:
+        import rec_ledger
+        rec_ledger.link_tracker(restaurant_id, source_key, row["id"], db_path=db_path)
+    except Exception as e:
+        print(f"[outcomes] tracker {row['id']} not linked to its recommendation: {e}")
     return _row(row)
 
 
@@ -837,6 +846,10 @@ def attribution_label(r) -> str:
     if v == "no_clear_change":
         return "No clear change: within this number's normal week-to-week movement."
     moved = "Improved" if v == "improved" else "Got worse"
+    ck = _checkin_of(r) or {}
+    if ck.get("did_it") == "no":
+        return (f"{moved} over these weeks, but you said this change wasn't made, so the result isn't "
+                f"credited to it.")
     a = r.get("attribution")
     conc = [c for c in (r.get("concurrent") or []) if isinstance(c, dict)]
     rechecked = mdy(r.get("rechecked_at") or r.get("recheck_on")) if r.get("recheck_verdict") else None
@@ -846,6 +859,9 @@ def attribution_label(r) -> str:
     elif a == "consistent":
         s = (f"{moved} clearly: more than twice this number's normal variation, with no other change "
              f"on it in the same weeks. Measured, not proven cause.")
+    elif ck.get("conditions_changed"):
+        s = (f"{moved} alongside the change, but you said something else changed in the same weeks, so it "
+             f"can't be separated from that. {CAUSATION_CAVEAT}")
     elif conc:
         names = ", ".join(c.get("label") or c.get("kind") for c in conc[:2])
         more = f" and {len(conc) - 2} more" if len(conc) > 2 else ""
@@ -873,9 +889,30 @@ def is_validated(r) -> bool:
 
 def counts_in_delivered(r) -> bool:
     """An evaluated move that still counts: a change the owner made (not an
-    alert read) that has not faded or reversed at its re-check (#33)."""
+    alert read) that has not faded or reversed at its re-check (#33), and
+    that the owner has not said they never made (#21)."""
     return (r.get("status") == "evaluated" and r.get("verdict") in _MOVED
-            and not is_informational(r) and r.get("recheck_verdict") not in _FAILED_RECHECK)
+            and not is_informational(r) and r.get("recheck_verdict") not in _FAILED_RECHECK
+            and not disowned(r))
+
+
+def _checkin_of(r):
+    raw = r.get("owner_checkin")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        v = json.loads(raw) if raw else None
+        return v if isinstance(v, dict) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def disowned(r) -> bool:
+    """The owner answered the check-in "No, I didn't make this change": the
+    number may have moved, but not because of this recommendation, so it is
+    neither a win nor a loss of Cavnar's."""
+    c = _checkin_of(r)
+    return bool(c and c.get("did_it") == "no")
 
 
 # ── evaluating ──────────────────────────────────────────────────────────────
@@ -1061,7 +1098,8 @@ def _unit_amount(r, monthly):
 
 def _accrues(r) -> bool:
     return (r.get("status") == "evaluated" and r.get("verdict") in _MOVED
-            and r.get("dollars_monthly") not in (None, 0) and not is_informational(r))
+            and r.get("dollars_monthly") not in (None, 0) and not is_informational(r)
+            and not disowned(r))
 
 
 def _put_day(conn, r, day, amount, held, basis):
@@ -1237,6 +1275,69 @@ def cumulative(restaurant_id, db_path=DB_PATH, denied_modules=None) -> dict:
                   f"worse; related numbers over the same days count once; each change for up to "
                   f"{ACCRUAL_HORIZON_DAYS} days from when it started"),
     }
+
+
+def apply_checkin(restaurant_id, tracker_id, did_it, conditions_changed, db_path=DB_PATH, at=None):
+    """The owner's check-in on a tracked change (rec-ROI #21), applied to its
+    result. The latest answer wins and can be changed back.
+
+    - "no" (the change was not made): the result is neither a win nor a loss
+      of this recommendation's — it stops counting in Delivered and its
+      measured days are released, so another change on the same family that
+      day is counted instead (the one-per-family rule, #4).
+    - conditions_changed: the grade is capped at "associated", like any other
+      change in the same weeks (#31).
+    - "yes"/"partly" after a "no": the days are re-accrued by the next pass
+      and the grade before the check-in is restored (still capped when
+      conditions changed).
+    Returns the updated row, or None when the tracker is not this
+    restaurant's."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=? AND restaurant_id=?",
+                           (tracker_id, restaurant_id)).fetchone()
+        if not row:
+            return None
+        r = dict(row)
+        before = _checkin_of(r) or {}
+        was_disowned = before.get("did_it") == "no"
+        base_grade = before.get("attribution_before", r.get("attribution"))
+        ck = {"did_it": did_it, "conditions_changed": bool(conditions_changed),
+              "at": at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "attribution_before": base_grade}
+        grade_now = r.get("attribution")
+        if r.get("status") == "evaluated" and r.get("verdict") in _MOVED:
+            grade_now = "associated" if (conditions_changed and base_grade in ("consistent", "held")) else base_grade
+        conn.execute("UPDATE recommendation_outcomes SET owner_checkin=?, attribution=? WHERE id=?",
+                     (json.dumps(ck), grade_now, r["id"]))
+        if did_it == "no" and not was_disowned:
+            _release_days(conn, r)
+        elif did_it != "no" and was_disowned:
+            # Re-accrued from the start by the next accrual pass.
+            conn.execute("DELETE FROM outcome_value_days WHERE outcome_id=?", (r["id"],))
+            conn.execute("UPDATE recommendation_outcomes SET accrued_through=NULL WHERE id=?", (r["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+    return get_outcome(tracker_id, db_path=db_path)
+
+
+def _release_days(conn, r):
+    """Stop counting a disowned change's measured days, and on each day it was
+    the counted row of its family and direction, count the next-largest
+    held reading instead."""
+    days = conn.execute("SELECT day, family, sign FROM outcome_value_days WHERE outcome_id=? AND counted=1",
+                        (r["id"],)).fetchall()
+    conn.execute("UPDATE outcome_value_days SET counted=0 WHERE outcome_id=?", (r["id"],))
+    for d in days:
+        nxt = conn.execute(
+            "SELECT outcome_id FROM outcome_value_days v JOIN recommendation_outcomes o ON o.id=v.outcome_id "
+            "WHERE v.restaurant_id=? AND v.family=? AND v.sign=? AND v.day=? AND v.held=1 AND v.outcome_id<>? "
+            "AND (o.owner_checkin IS NULL OR o.owner_checkin NOT LIKE '%\"did_it\": \"no\"%') "
+            "ORDER BY ABS(v.dollars) DESC LIMIT 1",
+            (r["restaurant_id"], d["family"], d["sign"], d["day"], r["id"])).fetchone()
+        if nxt:
+            conn.execute("UPDATE outcome_value_days SET counted=1 WHERE outcome_id=? AND day=?",
+                         (nxt["outcome_id"], d["day"]))
 
 
 # ── reading ─────────────────────────────────────────────────────────────────

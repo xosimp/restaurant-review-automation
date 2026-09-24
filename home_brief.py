@@ -1289,7 +1289,7 @@ def _build(current_user):
                 if str(x.get("dish") or "").lower() == _named:
                     continue
                 _ing = ((x.get("drivers") or [{}])[0] or {}).get("ingredient") or "An ingredient"
-                add_rec(f"reprice:{x['dish']}", f"Reprice {x['dish']} to ${x['suggested_price']:.2f}",
+                add_rec(_mi_hb.reprice_key(x['dish']), f"Reprice {x['dish']} to ${x['suggested_price']:.2f}",
                         f"{_ing} rose — {x['dish']} now runs at {x.get('food_cost_pct_now')}% food cost, "
                         f"up from {x.get('food_cost_pct_before')}%.",
                         f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",

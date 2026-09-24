@@ -1656,6 +1656,15 @@ def _do_recs_checkin(u):
                       role=u.get("role"), surface=surface)
     if out is None:
         return {"ok": False, "error": "No such recommendation."}, 404
+    if out.get("tracker_id"):
+        # The answer changes the result it is about: "no" stops it counting,
+        # "conditions changed" caps its grade (outcomes.apply_checkin).
+        try:
+            import outcomes
+            outcomes.apply_checkin(_rid(u), out["tracker_id"], did_it, changed)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="outcome_checkin", context=f"restaurant_id={_rid(u)}")
     try:
         import home_brief as _hb
         _hb.invalidate(_rid(u))
