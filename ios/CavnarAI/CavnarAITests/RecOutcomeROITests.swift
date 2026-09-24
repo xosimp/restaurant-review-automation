@@ -249,6 +249,54 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertEqual(RecCheckIn.answers.map(\.code), ["yes", "partly", "no"])
     }
 
+    func testTheServerNamesTheCheckInKeyWhenItSendsOne() throws {
+        func row(_ extra: String) throws -> RecOutcome {
+            var base = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(Self.evaluatedRow.utf8)) as? [String: Any])
+            let change = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data("{\(extra)}".utf8)) as? [String: Any])
+            base.merge(change) { _, new in new }
+            return try JSONDecoder.cavnar.decode(RecOutcome.self, from: JSONSerialization.data(withJSONObject: base))
+        }
+        // The server's key wins over the source key.
+        XCTAssertEqual(RecCheckIn.key(for: try row(#""checkin_key": "home:trim tuesday""#)), "home:trim tuesday")
+        // Null from the server: no recommendation stands behind it — no check-in,
+        // even when the source key looks like one (a monthly reprice figure).
+        let none = try row(#""checkin_key": null, "source_key": "reprice:2026-09""#)
+        XCTAssertNil(RecCheckIn.key(for: none))
+        XCTAssertFalse(RecCheckIn.isDue(none))
+        // An older server sends no field: the source-key fallback still applies.
+        XCTAssertEqual(RecCheckIn.key(for: try row(#""source_key": "trim_day:Tuesday""#)), "trim_day:Tuesday")
+    }
+
+    @MainActor
+    func testAnOlderLinkedResultIsFetchedById() async throws {
+        let requests = Box<[String]>([])
+        let client = EdgeHTTP.client { request in
+            let path = request.url?.path ?? ""
+            let query = request.url?.query ?? ""
+            requests.value.append(path + (query.isEmpty ? "" : "?" + query))
+            switch path {
+            case "/mobile/api/outcomes" where query.contains("ids="):
+                return EdgeHTTP.reply(request, 200, #"{"ok": true, "outcomes": [\#(RecOutcomeROITests.evaluatedRow)]}"#)
+            case "/mobile/api/outcomes":
+                return EdgeHTTP.reply(request, 200, #"{"ok": true, "outcomes": []}"#)
+            case "/mobile/api/recs/timeline":
+                return EdgeHTTP.reply(request, 200, """
+                    {"ok": true, "next_before": null, "items": [
+                      {"key": "trim_day:Tuesday", "title": "Trim Tuesday lunch", "module": "labor", "answer": "accepted",
+                       "first_shown_at": "2025-08-01 12:00:00", "tracker_id": 7}]}
+                    """)
+            case "/mobile/api/recs/summary":
+                return EdgeHTTP.reply(request, 200, RecOutcomeROITests.summaryJSON)
+            default:
+                return EdgeHTTP.reply(request, 404, #"{"ok": false}"#)
+            }
+        }
+        let vm = RecommendationHistoryViewModel(client: client)
+        await vm.load()
+        XCTAssertTrue(requests.value.contains("/mobile/api/outcomes?ids=7"))
+        XCTAssertNotNil(vm.outcome(for: vm.items[0]))
+    }
+
     func testTheCheckInPostsTheKeyTheAnswerAndWhetherAnythingElseChanged() async throws {
         let captured = Box<[String: Any]?>(nil)
         let path = Box<String?>(nil)

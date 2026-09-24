@@ -169,3 +169,32 @@ def test_the_win_push_names_what_moved_never_a_cause(db_path, monkeypatch):
     outcomes.apply_checkin(rid, oid, "no", False, db_path=db_path)
     sent.clear()
     assert strategy_jobs._tell_owners_what_worked([outcomes.get_outcome(oid, db_path=db_path)], db_path) == 0
+
+
+def test_outcomes_can_be_asked_for_by_id_and_name_their_checkin_key(db_path, monkeypatch):
+    import auth
+    from flask import Flask
+    from strategy_routes import strategy_bp
+    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    rid = _rid(db_path)
+    old = _insert(db_path, rid, "Old trim", "labor_pct", 100.0, "2025-06-01", source="home")
+    for i in range(60):                                   # push the old one past the newest 50
+        _insert(db_path, rid, f"Other {i}", "labor_pct", 10.0, "2026-06-01", source=f"manual{i}")
+    rec_ledger.present(rid, "home:old trim", "labor", "home", title="Old trim", db_path=db_path)
+    rec_ledger.link_tracker(rid, "home:old trim", old, db_path=db_path)
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": rid, "role": "client",
+                                                           "is_admin": 0, "username": "o", "email": "o@x"})
+    app = Flask(__name__)
+    app.register_blueprint(strategy_bp)
+    c = app.test_client()
+    newest = c.get("/api/outcomes").get_json()["outcomes"]
+    assert old not in [r["id"] for r in newest]
+    asked = c.get(f"/api/outcomes?ids={old}").get_json()["outcomes"]
+    assert [r["id"] for r in asked] == [old] and asked[0]["checkin_key"] == "home:old trim"
+    # A tracker with no recommendation behind it offers no check-in.
+    assert all(r["checkin_key"] is None for r in newest)
+    assert c.get("/api/outcomes?ids=1,x").status_code == 400
+    # Another restaurant's id is simply not returned.
+    other = _rid(db_path, name="Other Co")
+    theirs = _insert(db_path, other, "Theirs", "labor_pct", 10.0, "2026-06-01")
+    assert c.get(f"/api/outcomes?ids={theirs}").get_json()["outcomes"] == []

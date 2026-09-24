@@ -212,15 +212,27 @@ def _do_goal_end(u, goal_id):
 
 def _do_outcomes_list(u):
     import outcomes
-    rows = outcomes.list_outcomes(_rid(u), status=request.args.get("status") or None)
+    ids = None
+    raw_ids = request.args.get("ids")
+    if raw_ids:
+        try:
+            ids = [int(x) for x in raw_ids.split(",") if x.strip()][:200]
+        except ValueError:
+            return {"ok": False, "error": "ids must be comma-separated numbers"}, 400
+    rows = outcomes.list_outcomes(_rid(u), status=request.args.get("status") or None,
+                                  limit=200 if ids else 50, ids=ids)
     live = {p["id"]: p for p in outcomes.progress(_rid(u))}
+    # The recommendation each result measures, so a check-in is only offered
+    # where the server has one to attach it to (rec-ROI #21).
+    keys = outcomes.checkin_keys(_rid(u), [r["id"] for r in rows])
     out = []
     for r in rows:
         if not _metric_visible(u, r.get("metric")):
             continue
         if r["id"] in live:
             r = {**r, **{k: v for k, v in live[r["id"]].items() if k.startswith("interim")}}
-        out.append({**r, "summary": outcomes.summarise(r) if r.get("status") != "tracking" else None})
+        out.append({**r, "summary": outcomes.summarise(r) if r.get("status") != "tracking" else None,
+                    "checkin_key": keys.get(r["id"])})
     return {"ok": True, "outcomes": out, "caveat": outcomes.CAUSATION_CAVEAT}, 200
 
 

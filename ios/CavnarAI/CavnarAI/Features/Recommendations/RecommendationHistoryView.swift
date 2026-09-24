@@ -353,6 +353,7 @@ final class RecommendationHistoryViewModel {
         if let page = await t, page.ok {
             items = page.items
             nextBefore = page.nextBefore
+            await loadLinkedOutcomes()
         } else if items.isEmpty {
             errorMessage = "The timeline didn\u{2019}t load \u{2014} close this and open it again to retry."
         }
@@ -379,6 +380,20 @@ final class RecommendationHistoryViewModel {
         let seen = Set(items.map(\.id))
         items += page.items.filter { !seen.contains($0.id) }
         nextBefore = page.nextBefore
+        await loadLinkedOutcomes()
+    }
+
+    /// The results the timeline's items link to that the newest-first list
+    /// did not carry (an older recommendation's tracker): asked for by id.
+    func loadLinkedOutcomes() async {
+        let missing = Array(Set(items.compactMap(\.trackerId)).subtracting(outcomesById.keys)).sorted()
+        guard !missing.isEmpty else { return }
+        for chunk in stride(from: 0, to: missing.count, by: 100).map({ Array(missing[$0..<min($0 + 100, missing.count)]) }) {
+            guard let r: RecOutcomesResponse = try? await client.send(
+                "/mobile/api/outcomes", query: ["ids": chunk.map(String.init).joined(separator: ",")],
+                hapticOnError: false), r.ok else { continue }
+            for o in r.outcomes { outcomesById[o.id] = o }
+        }
     }
 
     func reloadOutcomes() async {
@@ -386,6 +401,7 @@ final class RecommendationHistoryViewModel {
               r.ok else { return }
         outcomesById = Dictionary(r.outcomes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         caveat = r.caveat
+        await loadLinkedOutcomes()
     }
 
     @discardableResult

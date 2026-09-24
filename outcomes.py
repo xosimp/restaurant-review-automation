@@ -1374,7 +1374,10 @@ def get_outcome(outcome_id, db_path=DB_PATH):
     return _row(row) if row else None
 
 
-def list_outcomes(restaurant_id, status=None, limit=50, db_path=DB_PATH):
+def list_outcomes(restaurant_id, status=None, limit=50, db_path=DB_PATH, ids=None):
+    """Newest first. `ids` narrows to those trackers (the timeline asks for
+    the ones its page links to, however old — the newest 50 alone left an
+    older result unshown)."""
     conn = get_conn(db_path)
     try:
         sql = "SELECT * FROM recommendation_outcomes WHERE restaurant_id=?"
@@ -1382,11 +1385,39 @@ def list_outcomes(restaurant_id, status=None, limit=50, db_path=DB_PATH):
         if status:
             sql += " AND status=?"
             args.append(status)
+        if ids:
+            ids = [int(i) for i in ids][:200]
+            sql += f" AND id IN ({','.join('?' for _ in ids)})"
+            args.extend(ids)
         sql += " ORDER BY id DESC LIMIT ?"
         args.append(int(limit))
         return [_row(r) for r in conn.execute(sql, args).fetchall()]
     finally:
         conn.close()
+
+
+def checkin_keys(restaurant_id, tracker_ids, db_path=DB_PATH) -> dict:
+    """{tracker id: the recommendation key it measures} — what a check-in
+    for that result is sent against. A tracker with no recommendation behind
+    it (a manual tracker, a monthly reprice figure) has no entry, so the
+    surfaces never offer a check-in the server would refuse."""
+    ids = [int(i) for i in (tracker_ids or []) if i is not None]
+    if not ids:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT tracker_id, key FROM rec_instances WHERE restaurant_id=? AND tracker_id IN "
+            f"({','.join('?' for _ in ids)}) ORDER BY rec_id DESC", (restaurant_id, *ids)).fetchall()
+    except Exception as e:
+        print(f"[outcomes] checkin keys unavailable: {e}")
+        return {}
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["tracker_id"], r["key"])
+    return out
 
 
 def abandon(restaurant_id, outcome_id, db_path=DB_PATH):

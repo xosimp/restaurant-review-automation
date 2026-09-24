@@ -149,6 +149,11 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
     let title: String?
     let source: String?
     let sourceKey: String?
+    /// The recommendation this result measures (GET /outcomes `checkin_key`);
+    /// nil when none stands behind it. `hasCheckinKeyField` is false only
+    /// for an older server that never sends the field.
+    let checkinKey: String?
+    let hasCheckinKeyField: Bool
     let metric: String?
     let metricLabel: String?
     let unit: String?
@@ -180,6 +185,7 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
         case id, title, source, metric, unit, status, verdict, module, delta, attribution
         case concurrent, validated, counts, summary, informational, interim
         case sourceKey = "source_key"
+        case checkinKey = "checkin_key"
         case metricLabel = "metric_label"
         case startedOn = "started_on"
         case evaluateOn = "evaluate_on"
@@ -201,6 +207,8 @@ struct RecOutcome: Decodable, Identifiable, Equatable, Sendable {
         title = try? c.decodeIfPresent(String.self, forKey: .title)
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         sourceKey = try? c.decodeIfPresent(String.self, forKey: .sourceKey)
+        hasCheckinKeyField = c.contains(.checkinKey)
+        checkinKey = try? c.decodeIfPresent(String.self, forKey: .checkinKey)
         metric = try? c.decodeIfPresent(String.self, forKey: .metric)
         metricLabel = try? c.decodeIfPresent(String.self, forKey: .metricLabel)
         unit = try? c.decodeIfPresent(String.self, forKey: .unit)
@@ -316,9 +324,15 @@ enum RecCheckIn {
     /// send — which /recs/checkin would answer with a 404.
     static let episodeLessPrefixes = ["manual:", "ask:", "campaign:"]
 
-    /// The ledger key a check-in answers — the tracker's source key, when it
-    /// is a recommendation's.
+    /// The ledger key a check-in answers. The server names it
+    /// (`checkin_key`, nil when no recommendation stands behind the tracker);
+    /// only an older server that sends no such field falls back to the
+    /// tracker's source key, minus the prefixes known to have no episode.
     static func key(for o: RecOutcome) -> String? {
+        if o.hasCheckinKeyField {
+            guard let key = o.checkinKey?.trimmingCharacters(in: .whitespaces), !key.isEmpty else { return nil }
+            return key
+        }
         guard let key = o.sourceKey?.trimmingCharacters(in: .whitespaces), !key.isEmpty,
               !episodeLessPrefixes.contains(where: { key.hasPrefix($0) }) else { return nil }
         return key
