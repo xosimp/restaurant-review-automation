@@ -1407,6 +1407,14 @@ class _Run:
                 if phrase.lower() not in src:
                     self.emit("P1", "refuse", span=phrase, detail="a commitment nobody told Cavnar was true")
                     break
+            # The public-reply claims auto-approve and bulk approve already
+            # hold (NS5 H5, ai_guard.public_reply_claims): an explanation
+            # nobody gave, a sourcing claim, a guest's private details. What
+            # the owner or the guest said themselves is theirs to repeat.
+            for claim in _g.public_reply_claims(body, " ".join([ctx.offer_source] + ctx.untrusted)):
+                span = claim.split("(", 1)[-1].strip(" )'\"") if "(" in claim else claim
+                self.emit("P1", "refuse", span=span, detail=claim)
+                break
             # A staff member named in public (a guest's name is allowed).
             names = [n for n in _g.unsupported_names(body, " ".join(list(ctx.names_allowed) + ctx.untrusted))
                      if _norm_name(n) not in {_norm_name(a) for a in ctx.names_allowed}]

@@ -115,6 +115,16 @@ def test_anchor_helper():
     assert rv.anchor(None) == []
 
 
+def test_a_public_reply_runs_the_reply_claims_auto_approve_holds():
+    # NS5 H5's list (ai_guard.public_reply_claims), reused by the engine: an
+    # explanation nobody gave is held, one the guest gave is theirs.
+    ctx = Ctx(surface="reply_public", untrusted=["Service was slow tonight."])
+    v = rv.validate("Thanks for coming in. We were short-staffed that night.", ctx)
+    assert v.verdict == "refuse" and "P1" in v.codes
+    said = Ctx(surface="reply_public", untrusted=["You were clearly short-staffed that night, service was slow."])
+    assert rv.validate("Thanks for coming in. We were short-staffed that night.", said).verdict == "pass"
+
+
 # ── other_tenant_names ──────────────────────────────────────────────────────
 
 def test_other_tenant_names_excludes_itself_and_its_own_group(tmp_path, monkeypatch):
