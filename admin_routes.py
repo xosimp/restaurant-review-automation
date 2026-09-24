@@ -1415,8 +1415,9 @@ def stop_viewing():
     """Return to admin — delete current session and redirect to admin login."""
     token = request.cookies.get("session_token")
     if token:
-        # Only delete session if it actually exists (prevents session fixation)
-        from models import get_session_user
+        # Only delete session if it actually exists (prevents session fixation).
+        # auth.get_session_user, imported at the top — models has none, and the
+        # local `from models import` made this route a 500.
         if get_session_user(token):
             delete_session(token)
     resp = make_response(redirect("/login?next=/admin"))
