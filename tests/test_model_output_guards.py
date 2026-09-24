@@ -95,8 +95,10 @@ def test_h1_review_diagnosis_keeps_only_operational_evidence_its_module_line_hol
         {"module": "marketing", "metric": "reach", "value": "31.4%"},       # labor's figure, wrong module
     ])
     out = ri._validate_diagnosis(raw, {1, 2}, "prompt 31.4%", 1, op_lines={"labor": LABOR_LINE})
+    # R1: a plain-string line (no named fields) keeps the model's words but
+    # carries the figures it matched; one entry per module.
     assert out["operational_evidence"] == [{"module": "labor", "metric": "labor %", "value": "31.4%",
-                                            "verified": True}]
+                                            "verified": True, "fields": ["pct:31.4"]}]
     assert out["confidence"] == "high" and out["model_confidence"] == "high"
 
 

@@ -789,20 +789,90 @@ def cap_band(model_band, *, verified_evidence: int, unverified_figures=()) -> st
     return band if BANDS.index(band) <= BANDS.index(ceiling) else ceiling
 
 
+class OperationalLine(str):
+    """One module's line in a diagnosis prompt's "what the other modules
+    recorded" block, carrying the NAMED figures it states (R1).
+
+    It is a str, so the block still joins it as prose; `fields` is
+    {name: {"label", "value", "kind", "evidence", "display"}} — kind is
+    pct / money / count / context, and `evidence` is False for a figure that
+    is context, not a measurement (the owner's target, the window's length).
+    verify_operational_evidence matches a value's figures to these fields,
+    never to "any word in the line": the line template always says
+    "understaffed", "target" and "sales", so a word match let three template
+    words read as three cross-checks (B5 #1)."""
+    fields = None
+
+    def __new__(cls, text, fields=None):
+        obj = super().__new__(cls, text)
+        obj.fields = dict(fields or {})
+        return obj
+
+
+def op_field(label, value, kind, evidence=True, display=None) -> dict:
+    """One named figure of an OperationalLine."""
+    return {"label": label, "value": value, "kind": kind, "evidence": evidence,
+            "display": display if display is not None else str(value)}
+
+
+def _claim_tol(c) -> float:
+    return (0.051 if c["kind"] == "star" else
+            0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0) + 1e-9)
+
+
+def _field_matches(c, f) -> bool:
+    """Whether figure claim `c` states named field `f`, to the claim's own
+    written precision and never across kinds (a "$28" is not the 28% target)."""
+    try:
+        v = float(f.get("value"))
+    except (TypeError, ValueError):
+        return False
+    fk = f.get("kind")
+    if c["kind"] == "money" and fk != "money":
+        return False
+    if c["kind"] == "pct" and fk != "pct":
+        return False
+    return abs(abs(c["value"]) - abs(v)) <= _claim_tol(c)
+
+
+def _is_measured_field(f) -> bool:
+    """A field that can stand as evidence: a measurement, and not a zero
+    count — "0 understaffed days" says nothing happened, so it is no
+    cross-check for a cause that needs something to have happened."""
+    if not f.get("evidence"):
+        return False
+    try:
+        return not (f.get("kind") == "count" and float(f.get("value") or 0) == 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def verify_operational_evidence(entries, module_lines: dict, allowed_modules=()) -> tuple:
     """(kept, dropped) for a diagnosis's operational_evidence.
 
     The model writes {module, metric, value} and the screen shows it under
-    "Cross-checked against". It used to be copied through with only the
-    module name whitelisted. An entry is kept only when its module had a line
-    in the block the model was handed and its value is that line's: every
-    figure in the value appears in THAT module's line (to its written
-    precision), or — for a value with no figure (an item's name) — the value
-    appears in the line verbatim. Each kept entry carries verified: True;
-    the dropped ones are returned so the caller can report them (K6)."""
-    kept, dropped = [], []
-    lines = {k: str(v or "") for k, v in (module_lines or {}).items() if v}
-    for e in (entries or [])[:4]:
+    "Cross-checked against"; the number of kept entries is Evidence Strength
+    for the food diagnosis and lifts the review diagnosis's band. So the
+    model must not be able to raise it by writing more (R1, B5 #1):
+
+    * every value must carry a figure — a word ("understaffed", "target",
+      "sales") is never evidence, whatever the line says;
+    * with an OperationalLine, every figure must be one of that module's
+      NAMED fields, at least one of them a measured, non-zero one (the
+      target and the window length are context); the kept entry's metric and
+      value are the fields' own labels and figures, written by code, so a
+      mislabelled metric ("overtime cost rose: 28%") never reaches a screen;
+      a plain-string line (older callers) falls back to "every figure is in
+      the line";
+    * entries are merged by module: one kept entry per module, however many
+      times — or under however many metric names — the model lists it, so
+      len(kept) is the number of distinct modules that corroborate.
+
+    Each kept entry carries verified: True and `fields`; each dropped entry
+    carries why, so the caller can report it (K6)."""
+    by_module, order, dropped = {}, [], []
+    lines = {k: v for k, v in (module_lines or {}).items() if v}
+    for e in (entries or [])[:8]:
         if not isinstance(e, dict):
             continue
         module = e.get("module")
@@ -811,23 +881,84 @@ def verify_operational_evidence(entries, module_lines: dict, allowed_modules=())
         entry = {"module": module, "metric": str(e.get("metric") or "")[:80],
                  "value": str(e.get("value") or "")[:80]}
         line = lines.get(module)
-        ok = False
-        if line and entry["value"].strip():
-            claims = [c for c in figure_claims(entry["value"]) if not c["year"]]
-            if claims:
-                known = _figures(line)
-                pool = known["money"] | known["pct"] | known["bare"]
-                ok = all(any(abs(abs(c["value"]) - abs(k)) <=
-                             (0.051 if c["kind"] == "star" else
-                              0.5 * 10 ** -c["decimals"] * (c.get("mult") or 1.0) + 1e-9)
-                             for k in pool) for c in claims)
-            else:
-                ok = entry["value"].strip().lower() in line.lower()
-        if ok:
-            kept.append(dict(entry, verified=True))
+        if not line:
+            dropped.append(dict(entry, reason="no line for that module"))
+            continue
+        claims = [c for c in figure_claims(entry["value"]) if not c["year"]]
+        if not claims:
+            dropped.append(dict(entry, reason="no figure"))
+            continue
+        fields = getattr(line, "fields", None)
+        if fields:
+            matched, ok = [], True
+            for c in claims:
+                hit = [n for n, f in fields.items() if _field_matches(c, f)]
+                if not hit:
+                    ok = False
+                    break
+                # a figure two fields share counts for the measured one
+                meas = [n for n in hit if _is_measured_field(fields[n])]
+                matched.append(meas[0] if meas else hit[0])
+            measured = [n for n in matched if _is_measured_field(fields[n])]
+            if not ok:
+                dropped.append(dict(entry, reason="a figure not in that module's line"))
+                continue
+            if not measured:
+                dropped.append(dict(entry, reason="no measured figure (context or a zero count)"))
+                continue
+            keys = list(dict.fromkeys(measured))
         else:
-            dropped.append(entry)
+            known = _figures(str(line))
+            pool = known["money"] | known["pct"] | known["bare"]
+            if not all(any(abs(abs(c["value"]) - abs(k)) <= _claim_tol(c) for k in pool) for c in claims):
+                dropped.append(dict(entry, reason="a figure not in that module's line"))
+                continue
+            keys = [f"{c['kind']}:{round(abs(c['value']), 2)}" for c in claims]
+        cur = by_module.get(module)
+        if cur is None:
+            by_module[module] = cur = {"module": module, "keys": [], "metric": [], "value": []}
+            order.append(module)
+        new = [k for k in keys if k not in cur["keys"]]
+        if not new:
+            dropped.append(dict(entry, reason="duplicate"))
+            continue
+        cur["keys"].extend(new)
+        if fields:
+            for k in new:
+                cur["metric"].append(fields[k]["label"])
+                cur["value"].append(fields[k]["display"])
+        else:
+            cur["metric"].append(entry["metric"])
+            cur["value"].append(entry["value"])
+    kept = [{"module": m, "metric": "; ".join(by_module[m]["metric"])[:160],
+             "value": "; ".join(by_module[m]["value"])[:160], "verified": True,
+             "fields": by_module[m]["keys"]} for m in order]
     return kept, dropped
+
+
+def served_operational_evidence(entries) -> list:
+    """The operational evidence a stored diagnosis may serve (R1): only
+    entries the validator marked verified, only those whose value carries a
+    figure (a row written before R1 may hold a template word marked
+    verified), merged to one entry per module — so every reader that counts
+    the list (the food diagnosis's Evidence Strength, the band cap, Home's
+    evidence inputs) counts distinct corroborating modules, never padding."""
+    out, seen = [], {}
+    for e in entries or []:
+        if not (isinstance(e, dict) and e.get("verified") is True):
+            continue
+        if not [c for c in figure_claims(str(e.get("value") or "")) if not c["year"]]:
+            continue
+        m = e.get("module")
+        if m in seen:
+            prev = out[seen[m]]
+            if str(e.get("value")) not in str(prev.get("value")):
+                prev["value"] = (str(prev.get("value")) + "; " + str(e.get("value")))[:160]
+                prev["metric"] = (str(prev.get("metric")) + "; " + str(e.get("metric") or ""))[:160]
+            continue
+        seen[m] = len(out)
+        out.append(dict(e))
+    return out
 
 
 # ── how old is this, and does the reader need telling ──────────────────────

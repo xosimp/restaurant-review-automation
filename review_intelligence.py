@@ -1052,27 +1052,55 @@ def _diagnosis_inputs(restaurant_id, cluster, db_path):
 def _operational_lines(ctx) -> dict:
     """{module: its line} for the modules that reported — the lines
     _operational_block joins, kept apart so a diagnosis's operational
-    evidence is checked against the ONE module line it names (H1, K6)."""
+    evidence is checked against the ONE module line it names (H1, K6).
+    Each line is an ai_guard.OperationalLine carrying its named figures, so
+    evidence is matched to a field, never to a word in the line (R1)."""
+    from ai_guard import OperationalLine, op_field
     lines = {}
     lab = ctx.get("labor")
     if lab:
         age = f", data through {lab['covers_to']}" + (f" ({lab['age_days']} days ago)" if lab.get("age_days") else "") if lab.get("covers_to") else ""
-        lines["labor"] = (f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% target, "
-                          f"{lab['understaffed_days']} understaffed and {lab['overstaffed_days']} overstaffed days "
-                          f"over {lab['period_days']} days{age}")
+        lines["labor"] = OperationalLine(
+            f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% target, "
+            f"{lab['understaffed_days']} understaffed and {lab['overstaffed_days']} overstaffed days "
+            f"over {lab['period_days']} days{age}",
+            {"labor_pct": op_field("labor % of sales", lab["labor_pct"], "pct", display=f"{lab['labor_pct']}%"),
+             "target_pct": op_field("labor target", lab["target_pct"], "pct", evidence=False,
+                                    display=f"{lab['target_pct']}%"),
+             "understaffed_days": op_field("understaffed days", lab["understaffed_days"], "count",
+                                           display=f"{lab['understaffed_days']} understaffed days"),
+             "overstaffed_days": op_field("overstaffed days", lab["overstaffed_days"], "count",
+                                          display=f"{lab['overstaffed_days']} overstaffed days"),
+             "period_days": op_field("days in the period", lab["period_days"], "count", evidence=False),
+             "age_days": op_field("days since the data", lab.get("age_days"), "count", evidence=False)})
     fc = ctx.get("food_cost")
     if fc:
         top = f", top waste item {fc['top_waste_item']}" if fc.get("top_waste_item") else ""
-        lines["food_cost"] = (f"- Food cost: ${fc['waste_cost_week']} of waste this week{top}, "
-                              f"{fc['critical_low']} items critically low")
+        lines["food_cost"] = OperationalLine(
+            f"- Food cost: ${fc['waste_cost_week']} of waste this week{top}, "
+            f"{fc['critical_low']} items critically low",
+            {"waste_cost_week": op_field("waste this week", fc["waste_cost_week"], "money",
+                                         display=f"${fc['waste_cost_week']}"),
+             "critical_low": op_field("items critically low", fc["critical_low"], "count",
+                                      display=f"{fc['critical_low']} items critically low")})
     wt = ctx.get("waste")
     if wt:
-        lines["waste"] = (f"- Waste trend: {wt['direction']} over {wt['weeks']} weeks "
-                          f"({wt['change_pct']}% change, {wt['confidence']} confidence)")
+        lines["waste"] = OperationalLine(
+            f"- Waste trend: {wt['direction']} over {wt['weeks']} weeks "
+            f"({wt['change_pct']}% change, {wt['confidence']} confidence)",
+            {"change_pct": op_field(f"waste trend ({wt['direction']})", wt["change_pct"], "pct",
+                                    display=f"{wt['change_pct']}%"),
+             "weeks": op_field("weeks in the trend", wt["weeks"], "count", evidence=False)})
     mk = ctx.get("marketing")
     if mk:
-        lines["marketing"] = (f"- Marketing: {mk['posts_30d']} measured posts in 30 days, "
-                              f"best was '{mk['best_topic']}' at {mk['best_reach']} reach+impressions")
+        lines["marketing"] = OperationalLine(
+            f"- Marketing: {mk['posts_30d']} measured posts in 30 days, "
+            f"best was '{mk['best_topic']}' at {mk['best_reach']} reach+impressions",
+            {"posts_30d": op_field("measured posts in 30 days", mk["posts_30d"], "count",
+                                   display=f"{mk['posts_30d']} posts"),
+             "best_reach": op_field("best post's reach+impressions", mk["best_reach"], "count",
+                                    display=f"{mk['best_reach']}"),
+             "window": op_field("days in the window", 30, "count", evidence=False)})
     return lines
 
 
@@ -1364,8 +1392,8 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
         # Only verified cross-checks are ever served (K6): a row written
         # before the check existed carries the model's unchecked entries, and
         # its band is capped the way a new one would be.
-        from ai_guard import cap_band
-        _op = [e for e in _j(r["operational_evidence"], []) if isinstance(e, dict) and e.get("verified") is True]
+        from ai_guard import cap_band, served_operational_evidence
+        _op = served_operational_evidence(_j(r["operational_evidence"], []))
         _unsup = _j(r["unsupported_figures"] if "unsupported_figures" in r.keys() else None, [])
         _model_conf = (r["model_confidence"] if "model_confidence" in r.keys() else None) or r["confidence"]
         out.append({
@@ -1399,8 +1427,11 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
         _ctx = rec_trust.Context(restaurant_id, db_path=db_path)
         for d in out:
             n_rv = int(d.get("mention_count") or 0)
+            # The band the evidence reads is the CAPPED one (R9, B5 #9): the
+            # raw model band let a diagnosis with no cross-check read "high".
             d["confidence_detail"] = rec_trust.diagnosis_confidence(
-                restaurant_id, f"diag_review:{d.get('category')}", d, n_rv, "reviews",
+                restaurant_id, f"diag_review:{d.get('category')}", dict(d, model_confidence=d["confidence"]),
+                n_rv, "reviews",
                 f"{n_rv} reviews on this theme over {d.get('window_days') or 90} days",
                 sources=("reviews",), ctx=_ctx)
     except Exception as e:

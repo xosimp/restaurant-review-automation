@@ -991,24 +991,45 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 def _operational_lines(ctx) -> dict:
     """{module: its line} for the modules that reported — the lines
     _operational_block joins, kept apart so the diagnosis's operational
-    evidence is checked against the ONE module line it names (H1, K6)."""
+    evidence is checked against the ONE module line it names (H1, K6).
+    Each line is an ai_guard.OperationalLine carrying its named figures, so
+    evidence is matched to a field, never to a word in the line (R1)."""
+    from ai_guard import OperationalLine, op_field
     lines = {}
     lab = ctx.get("labor")
     if lab:
-        lines["labor"] = (f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% "
-                          f"target, {lab['understaffed_days']} understaffed and "
-                          f"{lab['overstaffed_days']} overstaffed days over {lab['period_days']} days"
-                          + (f", data through {lab['covers_to']}" if lab.get("covers_to") else ""))
+        lines["labor"] = OperationalLine(
+            f"- Labor: {lab['labor_pct']}% of sales against a {lab['target_pct']}% "
+            f"target, {lab['understaffed_days']} understaffed and "
+            f"{lab['overstaffed_days']} overstaffed days over {lab['period_days']} days"
+            + (f", data through {lab['covers_to']}" if lab.get("covers_to") else ""),
+            {"labor_pct": op_field("labor % of sales", lab["labor_pct"], "pct", display=f"{lab['labor_pct']}%"),
+             "target_pct": op_field("labor target", lab["target_pct"], "pct", evidence=False,
+                                    display=f"{lab['target_pct']}%"),
+             "understaffed_days": op_field("understaffed days", lab["understaffed_days"], "count",
+                                           display=f"{lab['understaffed_days']} understaffed days"),
+             "overstaffed_days": op_field("overstaffed days", lab["overstaffed_days"], "count",
+                                          display=f"{lab['overstaffed_days']} overstaffed days"),
+             "period_days": op_field("days in the period", lab["period_days"], "count", evidence=False)})
     rev = ctx.get("reviews")
     if rev:
-        lines["reviews"] = (f"- Reviews: {rev['mentions']} negative reviews mention "
-                            f"{rev['category'].replace('_',' ')} in the last {rev['window_days']} days"
-                            + (f", concentrated on {rev['dish']}" if rev.get("dish") else "")
-                            + " — relevant because it bounds how far portions can be cut")
+        lines["reviews"] = OperationalLine(
+            f"- Reviews: {rev['mentions']} negative reviews mention "
+            f"{rev['category'].replace('_',' ')} in the last {rev['window_days']} days"
+            + (f", concentrated on {rev['dish']}" if rev.get("dish") else "")
+            + " — relevant because it bounds how far portions can be cut",
+            {"mentions": op_field(f"negative reviews on {rev['category'].replace('_', ' ')}", rev["mentions"],
+                                  "count", display=f"{rev['mentions']} reviews"),
+             "window_days": op_field("days in the window", rev["window_days"], "count", evidence=False)})
     mk = ctx.get("marketing")
     if mk:
-        lines["marketing"] = (f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
-                              f"{mk['reach_30d']:,} — a demand change would show up in usage")
+        lines["marketing"] = OperationalLine(
+            f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
+            f"{mk['reach_30d']:,} — a demand change would show up in usage",
+            {"posts_30d": op_field("published posts in 30 days", mk["posts_30d"], "count",
+                                   display=f"{mk['posts_30d']} posts"),
+             "reach_30d": op_field("reach in 30 days", mk["reach_30d"], "count", display=f"{mk['reach_30d']:,}"),
+             "window": op_field("days in the window", 30, "count", evidence=False)})
     return lines
 
 
@@ -1551,8 +1572,8 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         except Exception:
             return fallback
 
-    from ai_guard import cap_band as _cap_band
-    _op = [e for e in _j(row["operational_evidence"], []) if isinstance(e, dict) and e.get("verified") is True]
+    from ai_guard import cap_band as _cap_band, served_operational_evidence
+    _op = served_operational_evidence(_j(row["operational_evidence"], []))
     out = {
         "ok": True, "headline": row["headline"], "cause": row["cause"],
         "alternative_cause": row["alternative_cause"],
@@ -1586,10 +1607,12 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
     try:
         import rec_trust
         import data_freshness
+        # One served entry per corroborating module (R1), and the band the
+        # evidence reads is the CAPPED one (R9).
         n_ev = rec_trust.verified_evidence_count(out)
         out["confidence_detail"] = rec_trust.diagnosis_confidence(
-            restaurant_id, "diag_food", out, n_ev, "evidence_items",
-            f"{n_ev} verified figure{'s' if n_ev != 1 else ''} from the ledger behind it",
+            restaurant_id, "diag_food", dict(out, model_confidence=out["confidence"]), n_ev, "evidence_items",
+            f"{n_ev} other module{'s' if n_ev != 1 else ''} cross-checked against the ledger",
             sources=data_freshness.sources_for(["inventory"]), db_path=db_path)
     except Exception as e:
         print(f"[food_cost_intelligence] diagnosis confidence unavailable: {e}")
