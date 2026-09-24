@@ -123,23 +123,21 @@ def _as_date(v):
 
 # ── adapters onto the data-quality group's helpers ─────────────────────────
 #
-# Group G (confidence audit, data quality at the source) adds
-# time_utils.parse_stamp, fetcher.places_coverage and admin_ops.review_source.
-# Each is read through one adapter here, with a fallback for a tree that does
-# not have it yet, so wiring them is a change to these bodies only.
+# Group G (confidence audit, data quality at the source) added
+# time_utils.parse_stamp, fetcher.places_coverage, admin_ops.review_source,
+# weather.cache_age and scheduler.metrics_sync_state; each is read through one
+# adapter here. The "not merged yet" hasattr fallbacks were removed at the
+# integration pass (trace: every helper is defined unconditionally —
+# time_utils.py parse_stamp, fetcher.py places_coverage, admin_ops.py
+# review_source; no test deletes or patches them away; no dynamic lookup
+# reaches the guards; pos_health.parse_stamp, the old fallback, is itself a
+# wrapper over time_utils.parse_stamp). The exception fallbacks stay.
 
 def _stamp(v, naive_tz="UTC"):
-    """A stored timestamp as an aware UTC datetime, or None.
-    time_utils.parse_stamp when present (one parser for every stamp style,
-    CA3 F15); else pos_health's, which reads a naive stamp as UTC."""
-    try:
-        import time_utils
-        if hasattr(time_utils, "parse_stamp"):
-            return time_utils.parse_stamp(v, naive_tz=naive_tz)
-    except Exception:
-        pass
-    import pos_health
-    return pos_health.parse_stamp(v)
+    """A stored timestamp as an aware UTC datetime, or None — the one
+    parser for every stamp style (time_utils.parse_stamp, CA3 F15)."""
+    from time_utils import parse_stamp
+    return parse_stamp(v, naive_tz=naive_tz)
 
 
 def _review_fetched_at(raw):
@@ -158,19 +156,17 @@ def _review_sampling(r):
     label = "Google reviews (sampled — Places returns 5 at a time)" if sampled else "Google Business Profile"
     try:
         import admin_ops
-        if hasattr(admin_ops, "review_source"):
-            kind, label = admin_ops.review_source(r)
-            sampled = kind == "places_sampled"
+        kind, label = admin_ops.review_source(r)
+        sampled = kind == "places_sampled"
     except Exception:
-        pass
+        pass            # the row-derived reading above stands
     share = None
     if sampled:
         try:
             import fetcher
-            if hasattr(fetcher, "places_coverage"):
-                cov = fetcher.places_coverage(_rid(r)) or {}
-                if cov.get("share") is not None:
-                    share = max(0.0, min(1.0, float(cov["share"])))
+            cov = fetcher.places_coverage(_rid(r)) or {}
+            if cov.get("share") is not None:
+                share = max(0.0, min(1.0, float(cov["share"])))
         except Exception:
             share = None
     return sampled, share, label
@@ -350,7 +346,49 @@ def _marketing(r, conn, today, now, ctx):
     if d is None:
         return _result("marketing", 0 if err else None, None, err or "Nothing posted yet",
                        state="stale" if err else "not_connected", error=err)
-    return _data_date_state("marketing", d, today, "Last post", 1.0, err or "", error=err)
+    # The post figures (reach, engagement) are only as current as the
+    # nightly metrics sync that refreshes them (CA3 F15, G11): a sync that
+    # is failing, has never succeeded, or last succeeded more than
+    # METRICS_SYNC_STALE_DAYS ago is an error on this source, whatever the
+    # token says.
+    sync = _metrics_sync(r, conn, ctx)
+    note = ""
+    if sync:
+        ok = _stamp(sync.get("last_ok_at"))
+        if sync.get("error"):
+            err = err or f"Post metrics sync failing ({str(sync['error'])[:80]})"
+        elif ok is None:
+            err = err or "Post metrics have never synced"
+        elif (now - ok).total_seconds() / 86400.0 > METRICS_SYNC_STALE_DAYS:
+            err = err or f"Post metrics last synced {ce._mdy(ok.date().isoformat())}"
+        if ok is not None:
+            note = f"metrics synced {ce._mdy(ok.date().isoformat())}"
+    extra = " · ".join(x for x in (err, note) if x)
+    out = _data_date_state("marketing", d, today, "Last post", 1.0, extra, error=err)
+    out["metrics_synced_at"] = sync.get("last_ok_at") if sync else None
+    return out
+
+
+# The Meta metrics sync is nightly (scheduler.run_marketing_metrics_sync); a
+# success older than this has missed a night.
+METRICS_SYNC_STALE_DAYS = 2
+
+
+def _metrics_sync(r, conn, ctx):
+    """scheduler.metrics_sync_state for this restaurant, read through this
+    reading's own connection — {} when it never ran. A deliberate
+    function-scope upward import (L2 → L4, ARCHITECTURE_MANIFEST §3; pos.py
+    does the same): the scheduler owns the job_cursors key it writes, so it
+    owns the reader too. `ctx["metrics_sync"]` overrides (a caller that
+    already read it). Never raises."""
+    if isinstance(ctx, dict) and "metrics_sync" in ctx:
+        return ctx.get("metrics_sync") or {}
+    try:
+        import scheduler
+        return scheduler.metrics_sync_state(_rid(r), conn=conn) or {}
+    except Exception as e:
+        print(f"[data_freshness] metrics sync state unreadable for {_rid(r)}: {e}")
+        return {}
 
 
 def _visibility(r, conn, today, now, ctx):
@@ -373,10 +411,28 @@ def _competitor(r, conn, today, now, ctx):
 
 
 def _weather(r, conn, today, now, ctx):
-    d = _as_date(_get(r, "weather_cached_at"))
-    if d is None:
+    """The cached forecast's age in hours, read by weather.py's own rule
+    (G11: weather_cached_at is UTC with an offset now, server-local naive
+    on older rows) and its own line — `stale` past
+    weather.FORECAST_STALE_HOURS, or when the age is unknown. A stale copy
+    is an error on this source (at most half fresh), so Home never calls a
+    72-hour-old fallback forecast current."""
+    raw = _get(r, "weather_cached_at")
+    if not raw:
         return _result("weather", None, None, "No forecast cached", state="not_connected")
-    return _data_date_state("weather", d, today, "Forecast cached")
+    import weather
+    at = _stamp(raw, naive_tz="local")
+    age_h = max(0.0, (now - at).total_seconds() / 3600.0) if at is not None else None
+    stale = age_h is None or age_h > weather.FORECAST_STALE_HOURS
+    if at is None:
+        return _result("weather", 0, None, "Weather: forecast age unknown", state="unknown",
+                       error="forecast age unknown", age_hours=None, stale=True)
+    err = f"Forecast is {int(age_h)} hours old" if stale else None
+    iso = at.date().isoformat()
+    pct = _score("weather", age_h / 24.0, 1.0, bool(err))
+    basis = f"Forecast cached {ce._mdy(iso)}" + (f" · {err}" if err else "")
+    return _result("weather", pct, iso, basis, error=err, age_hours=round(age_h, 1), stale=stale,
+                   lag_days=round(age_h / 24.0, 2))
 
 
 def _dsr(r, conn, today, now, ctx):

@@ -1058,9 +1058,28 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
             run.append(c)
         flush()
         candidates = ordered
+    # "Not for us" to the same advice on any surface (H16) — the nightly
+    # report's Tuesday cut declined is this hero's Tuesday cut declined.
+    # Read once, only if something non-critical could lead.
+    declined_sigs = None
     for c in candidates:
         if c["key"] in silenced:
             continue
+        try:
+            import insight_store
+            sig = insight_store.advice_signature(c["key"], c.get("what"))
+        except Exception:
+            sig = None
+        if sig and c.get("urgency") != "critical":
+            if declined_sigs is None:
+                try:
+                    import insight_store
+                    declined_sigs = insight_store.declined_signatures(restaurant_id, db_path=db_path)
+                except Exception as e:
+                    log.warning("one thing: declined signatures unavailable: %s", e)
+                    declined_sigs = set()
+            if sig in declined_sigs:
+                continue
         # A quiet kind never leads — unless the candidate is critical: the
         # owner going quiet on a kind is not an answer to an emergency, and
         # "reply to the 1-star reviews" skipped for "post this week" was
@@ -1074,6 +1093,14 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
         # the model wrote it.
         out["confidence"] = one_thing_confidence(restaurant_id, out, db_path=db_path)
         out["model_written"] = bool(out.get("model_written"))
+        out["advice_signature"] = sig
+        # Its dollars beside the calibrated figure, the rule Home cards
+        # follow (rec_learning.attach_dollar_calibration, F6).
+        try:
+            import rec_learning
+            rec_learning.attach_dollar_calibration(out, learned)
+        except Exception as e:
+            log.warning("one thing: dollar calibration unavailable: %s", e)
         return out
     return None
 

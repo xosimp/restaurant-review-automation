@@ -592,8 +592,15 @@ def test_a_week_is_judged_against_a_band_scaled_for_seven_days():
     scale = weekly_review.band_scale("labor_pct")
     assert scale == 2.0
     assert metrics.compare("labor_pct", 30.0, 30.8, band_scale=scale)["verdict"] == "no_clear_change"
-    assert "band_scale=band_scale(key)" in inspect.getsource(weekly_review.build)
-    assert "band_scale=_wr_lr.band_scale(\"labor_pct\")" in _src("reporter.py")
+    # One rule since the integration pass (weekly_review.week_band): the
+    # scaled stated band is the floor, this restaurant's own 7-day band
+    # (metrics.noise_band, F2) replaces it only when wider — both the weekly
+    # review and the digest's "trending" line read it.
+    band = weekly_review.week_band(None, "labor_pct", 30.0)["band"]
+    assert band == 1.0
+    assert metrics.compare("labor_pct", 30.0, 30.8, band=band)["verdict"] == "no_clear_change"
+    assert "week_band(restaurant_id, key" in inspect.getsource(weekly_review.build)
+    assert "_wr_lr.week_band(" in _src("reporter.py")
 
 
 def test_one_ranking_floor_for_the_groups_strongest_and_weakest():

@@ -125,7 +125,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `credentials` | 0 | Fernet at rest for POS/OAuth columns |
 | `csrf` | 0 | CSRF cookie and check |
 | `dashboard` | 4 | pre-hosted standalone demo app (port 8080); 0 importers; candidate for `docs/history` |
-| `data_freshness` | 2 | how current and complete each data source is (contract K2): one `SOURCES` threshold table and `source_state(restaurant, key)` → `{pct, as_of, as_of_iso, basis, state, error}` for POS (every provider through `pos_health`), shifts and sales (dated by the last day the data covers), reviews (`fetched_at_ct`, missed fetch slots, Places sampled), counts (the oldest `last_recount_at`), deliveries, marketing (token expiry), AI visibility, competitors, weather, the DSR; an unknown age is never current |
+| `data_freshness` | 2 | how current and complete each data source is (contract K2): one `SOURCES` threshold table and `source_state(restaurant, key)` → `{pct, as_of, as_of_iso, basis, state, error}` for POS (every provider through `pos_health`), shifts and sales (dated by the last day the data covers), reviews (`fetched_at_ct`, missed fetch slots, Places sampled), counts (the oldest `last_recount_at`), deliveries, marketing (token expiry and `scheduler.metrics_sync_state` — a failing or missed nightly metrics sync is an error on the source; a deliberate function-scope L2→L4 import), AI visibility, competitors, weather (`age_hours` and `stale` past `weather.FORECAST_STALE_HOURS`), the DSR; an unknown age is never current |
 | `decisions` | 2 | the owner's decision record |
 | `delayed` | 2 | actions with an undo window |
 | `demand` | 2 | demand forecast from same-weekday medians |

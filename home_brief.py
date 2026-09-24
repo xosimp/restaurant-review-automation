@@ -255,26 +255,20 @@ def undismiss(rid, key, _card=True):
 # ── small helpers ────────────────────────────────────────────────────────────
 
 def _ts(v):
-    """Parse the two timestamp styles the DB holds — sqlite datetime('now')
-    (UTC, space) and Python isoformat (local or tz-aware, 'T') — into an
-    aware UTC datetime. None when unparseable."""
+    """Parse the timestamp styles the DB holds into an aware UTC datetime,
+    through the one parser (time_utils.parse_stamp, CA3 F15): sqlite
+    datetime('now') (space) is UTC, an offset or Z is that instant, a naive
+    'T' stamp (Python isoformat from this server) is server-local, and a
+    bare date is UTC midnight. A string that does not parse whole falls back
+    to its leading date. None when unparseable."""
     if not v:
         return None
+    from time_utils import parse_stamp
     s = str(v).strip()
-    try:
-        if "T" in s:
-            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
-            if d.tzinfo is None:
-                d = d.replace(tzinfo=datetime.now().astimezone().tzinfo)
-            return d.astimezone(timezone.utc)
-        d = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
-        return d.replace(tzinfo=timezone.utc)
-    except Exception:
-        try:
-            d = datetime.strptime(s[:10], "%Y-%m-%d")
-            return d.replace(tzinfo=timezone.utc)
-        except Exception:
-            return None
+    d = parse_stamp(s, naive_tz="UTC" if len(s) <= 10 else "local")
+    if d is None and len(s) > 10:
+        d = parse_stamp(s[:10], naive_tz="UTC")
+    return d
 
 
 def _iso_z(d):
@@ -643,6 +637,28 @@ HOME_RECS_SHOWN = 3
 
 def ledger_key(key):
     return LEDGER_KEY.get(key, key)
+
+
+def signature_of(key, title):
+    """What a Home item is about (insight_store.advice_signature), or None.
+    Never raises: an unreadable item is simply not matched across surfaces."""
+    try:
+        import insight_store
+        return insight_store.advice_signature(key, title)
+    except Exception:
+        return None
+
+
+def home_declined_signatures(rid) -> set:
+    """Every advice signature this restaurant said "not for us" to on any
+    surface (insight_store.declined_signatures). Empty on failure: a read
+    that fails shows the item rather than hiding advice nobody declined."""
+    try:
+        import insight_store
+        return insight_store.declined_signatures(rid)
+    except Exception as e:
+        print(f"[home] declined signatures unavailable for {rid}: {e}")
+        return set()
 
 
 def other_days_mean(dow, day) -> float:
@@ -1813,6 +1829,13 @@ def _build(current_user, present=True):
     except Exception:
         silenced = set()
     answered = set(dismissed) | silenced
+    # ...and a "not for us" to the same ADVICE on any surface (H16): the
+    # nightly report's "cut Tuesday's hours" or the Reviews "Do today" line
+    # declined is Home's trim_day:Tuesday declined, whatever each key is.
+    # insight_store.advice_signature is the one reading of what an item is
+    # about; the DSR (dsr/narrative.settle_actions) and Reviews
+    # (client_api._review_insight_recs) sides use the same two calls.
+    declined_sigs = home_declined_signatures(rid)
     for a in attention:
         a["rec_key"] = a.get("rec_key") or ledger_key(a["key"])
         a["dismissable"] = a["severity"] != "critical"
@@ -1820,7 +1843,9 @@ def _build(current_user, present=True):
         # The contract every payload carrying a recommendation keeps
         # (rec_delivery.answerable): only an answerable item is presented.
         a["answerable"] = attention_answerable(a)
-    attention = [a for a in attention if not (a["dismissable"] and (a["rec_key"] in answered))]
+        a["advice_signature"] = signature_of(a["rec_key"], a["title"])
+    attention = [a for a in attention if not (a["dismissable"] and (
+        a["rec_key"] in answered or (a["advice_signature"] and a["advice_signature"] in declined_sigs)))]
 
     # ── order, brief headline, empty states ────────────────────────────────
     sev_rank = {"critical": 0, "important": 1, "watch": 2}
@@ -1901,8 +1926,11 @@ def _build(current_user, present=True):
     for _r in recs:
         _r["times_hidden"] = hidden_counts.get(_r["key"], 0)
 
+    for _r in recs:
+        _r["advice_signature"] = signature_of(_r["key"], _r["title"])
     dismissed_recs = [r for r in recs if r["key"] in answered]
-    recs = [r for r in recs if r["key"] not in answered]
+    recs = [r for r in recs if r["key"] not in answered
+            and not (r["advice_signature"] and r["advice_signature"] in declined_sigs)]
     # One piece of news in one place: a card that says what an attention
     # item already says ("Publish the 5 drafted replies" beside "5 replies
     # drafted, waiting for you") is left out while that item is on the page,
@@ -1925,6 +1953,16 @@ def _build(current_user, present=True):
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
     recs = order_recommendations(recs, quiet, learned=learned)
+    # The dollars a card is shown with, corrected by this restaurant's own
+    # measured results of the kind once there are enough of them (F6):
+    # `dollars_adjusted` / `calibration_n` / `calibration_note` beside the
+    # raw `dollars_monthly`, which stays what the ledger snapshots.
+    for _r in recs:
+        try:
+            import rec_learning as _rl_cal
+            _rl_cal.attach_dollar_calibration(_r, learned)
+        except Exception as e:
+            print(f"[home] dollar calibration unavailable for {_r.get('key')}: {e}")
     quieter = []
     for _r in recs:
         _k = _r["key"].split(":", 1)[0]

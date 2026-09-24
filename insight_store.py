@@ -439,25 +439,21 @@ def next_week_end(today=None):
 
 
 def record_weekly_forecast(restaurant_id, kind, predicted, basis=None, today=None, db_path=DB_PATH) -> dict:
-    """Freeze one forecast for next week, once. Returns {"recorded": bool,
+    """Freeze one forecast for next week, once, through forecast_log.record —
+    the one writer every forecast kind goes through, so its insert-once and
+    period-key rules apply unchanged and scheduler.run_forecast_scoring
+    scores the row once its week closes. Returns {"recorded": bool,
     "horizon_end", "reason"?}. Never raises: a forecast that could not be
     logged is still shown and says nothing it would not otherwise."""
     if kind not in WEEKLY_FORECAST_KINDS or predicted is None or not restaurant_id:
         return {"recorded": False, "reason": "nothing to record"}
-    horizon = next_week_end(today).isoformat()
     try:
-        conn = get_conn(db_path)
-        try:
-            cur = conn.execute(
-                "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, basis) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(restaurant_id, kind, horizon_end) DO NOTHING",
-                (restaurant_id, kind, horizon, round(float(predicted), 2), (basis or "")[:300] or None))
-            conn.commit()
-            done = cur.rowcount == 1
-            return {"recorded": done, "horizon_end": horizon,
-                    **({} if done else {"reason": "already frozen this week"})}
-        finally:
-            conn.close()
+        import forecast_log
+        out = forecast_log.record(restaurant_id, kind, predicted, period_of=next_week_end(today),
+                                  basis=(basis or "")[:300] or None, db_path=db_path)
+        if not out.get("recorded") and out.get("horizon_end"):
+            return {"recorded": False, "horizon_end": out["horizon_end"], "reason": "already frozen this week"}
+        return out
     except Exception as e:
         print(f"[insight_store] forecast not recorded rid={restaurant_id} {kind}: {e}")
         return {"recorded": False, "reason": "could not be stored"}

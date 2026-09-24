@@ -189,14 +189,15 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     if len(_lh) >= 2:
                         _vals = [r["labor_pct"] for r in reversed(_lh)]
                         _facts["labor"].update({"from_pct": float(_vals[0]), "weeks": len(_vals)})
-                        # "Trending" only past the labor % noise band scaled
-                        # for weekly periods (weekly_review.band_scale, fix
-                        # I12): a flat 1.5 points over 2-3 periods called
-                        # ordinary week-to-week wobble a trend.
+                        # "Trending" only past the week's one noise band
+                        # (weekly_review.week_band, fixes I12 + F2): a flat
+                        # 1.5 points over 2-3 periods called ordinary
+                        # week-to-week wobble a trend.
                         import metrics as _metrics_lr
                         import weekly_review as _wr_lr
+                        _wb_lr = _wr_lr.week_band(report.restaurant_id, "labor_pct", float(_vals[0]))
                         _cmp = _metrics_lr.compare("labor_pct", float(_vals[0]), float(_vals[-1]),
-                                                   band_scale=_wr_lr.band_scale("labor_pct"))
+                                                   band=_wb_lr["band"])
                         if _cmp["verdict"] == "worsened":
                             _facts["labor"]["direction"] = "up"
                             labor_context += f" — trending UP from {_vals[0]:.1f}% ({len(_vals)} weeks)"

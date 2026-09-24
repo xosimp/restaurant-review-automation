@@ -800,6 +800,38 @@ class Effectiveness:
         return self.weight(key, kind=kind, tags=tags)
 
 
+def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_monthly") -> dict:
+    """Put the calibrated dollars beside a shown recommendation's own figure
+    (CA2 #8, F6) — the one place Home cards, the one-thing hero and the DSR
+    actions get them from:
+
+      dollars_adjusted   the figure times this restaurant's measured ratio
+                         for the kind, or None below MIN_CALIBRATION_PAIRS
+                         (the client then shows `dollars_field` as it is)
+      calibration_n      measured predicted-vs-realised pairs behind it
+      calibration_note   "adjusted from N measured results", or None
+
+    `dollars_field` (dollars_monthly) is left as the raw estimate on
+    purpose: it is what the ledger snapshots as `dollar_value`, and the
+    ratio is realised ÷ dollar_value. Snapshotting the adjusted figure
+    would feed each correction back into the next ratio. Never raises."""
+    item["dollars_adjusted"] = None
+    item["calibration_n"] = 0
+    item["calibration_note"] = None
+    if learned is None or item.get(dollars_field) in (None, 0, 0.0):
+        return item
+    try:
+        adj = learned.adjusted_dollars(key or item.get("key"), item.get(dollars_field))
+    except Exception as e:
+        print(f"[rec_learning] dollar calibration failed for {key or item.get('key')}: {e}")
+        return item
+    item["calibration_n"] = int(adj.get("calibration_n") or 0)
+    if adj.get("dollars_adjusted") is not None:
+        item["dollars_adjusted"] = adj["dollars_adjusted"]
+        item["calibration_note"] = adj.get("note")
+    return item
+
+
 def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> Effectiveness:
     """The model for one restaurant from its last EFFECT_WINDOW_DAYS of
     episodes. Never raises: with the ledger unreadable it is the neutral
@@ -906,18 +938,39 @@ def untaken_comparison(restaurant_id, kind, taken_measured=0, taken_improved=0, 
     try:
         conn = get_conn(db_path)
         try:
-            rows = conn.execute(
-                "SELECT o.verdict, o.after_start, o.after_end, o.metric, i.kind, i.key FROM recommendation_outcomes o "
-                "JOIN rec_instances i ON i.rec_id = substr(o.source_key, ?) AND i.restaurant_id = o.restaurant_id "
-                "WHERE o.restaurant_id=? AND o.status='evaluated' AND o.source_key LIKE ?",
-                (len("observed:untaken:") + 1, restaurant_id, "observed:untaken:%")).fetchall()
+            rows = None
+            # The taken side reads through learned_verdict, which never counts
+            # a result read against a baseline overlapping its trigger window
+            # (CA2 #1); the untaken side follows the same rule, or the
+            # comparison would set clean results against regressions to the
+            # mean. The narrower SELECT is for a database from before the
+            # column (outcomes._ADDED_COLUMNS adds it at boot).
+            for extra in (", o.baseline_overlaps_trigger", ""):
+                try:
+                    rows = conn.execute(
+                        "SELECT o.verdict, o.after_start, o.after_end, o.metric, i.kind, i.key" + extra +
+                        " FROM recommendation_outcomes o "
+                        "JOIN rec_instances i ON i.rec_id = substr(o.source_key, ?) AND i.restaurant_id = o.restaurant_id "
+                        "WHERE o.restaurant_id=? AND o.status='evaluated' AND o.source_key LIKE ?",
+                        (len("observed:untaken:") + 1, restaurant_id, "observed:untaken:%")).fetchall()
+                    break
+                except Exception as e:
+                    if not extra:
+                        raise
+                    print(f"[rec_learning] untaken trigger column missing ({e}); reading without it")
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] untaken comparison unavailable for {restaurant_id}/{kind}: {e}")
         return out
+
+    def _overlaps(r):
+        try:
+            return bool(int(r["baseline_overlaps_trigger"] or 0))
+        except (IndexError, KeyError, TypeError, ValueError):
+            return False
     mine = [r for r in rows if (r["kind"] or rec_ledger.kind_of(r["key"])) == kind
-            and r["verdict"] in CLEAR_VERDICTS]
+            and r["verdict"] in CLEAR_VERDICTS and not _overlaps(r)]
     # One result per window on a number, as the taken side is counted.
     kept, last = [], {}
     for r in sorted(mine, key=lambda x: (str(x["after_start"] or ""), str(x["after_end"] or ""))):

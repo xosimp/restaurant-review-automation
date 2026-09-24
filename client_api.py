@@ -1104,6 +1104,30 @@ def _do_today_confidence(rid, payload):
         return confidence_engine.unknown()
 
 
+def _trend_confidence_both_places(payload):
+    """The rating trend's confidence (the slope scorer's band) lives at
+    `trend.confidence` — where the web reads it — and stays at the top-level
+    `confidence` for shipped iOS builds that read it there. A read stored
+    before `trend` existed, or a cached one missing either, gets the other
+    filled from the one it has, so every path (fresh, stored, stale) carries
+    both. The "Do today" line's own K1 is `recs[].confidence_detail`, never
+    this. Only fills what is missing; an error payload is left alone."""
+    if not isinstance(payload, dict) or payload.get("error"):
+        return payload
+    top = payload.get("confidence")
+    trend = payload.get("trend")
+    if not isinstance(trend, dict):
+        if top is None:
+            return payload
+        trend = {"confidence": top}
+        payload["trend"] = trend
+    elif trend.get("confidence") is None and top is not None:
+        trend["confidence"] = top
+    if top is None and trend.get("confidence") is not None:
+        payload["confidence"] = trend["confidence"]
+    return payload
+
+
 def _review_insight_recs(rid, payload):
     """The recommendations in a Reviews read, keyed and logged (audit #21):
     the "Do today" line ("insight_review:<hash>") and each diagnosis's
@@ -1113,6 +1137,7 @@ def _review_insight_recs(rid, payload):
     the answers change even when the read does not."""
     import re as _re_dt
     import insight_store
+    _trend_confidence_both_places(payload)
     text = payload.get("insight") or ""
     payload["recs"] = []
     m = _re_dt.search(r"(?m)^.*Do today:\s*(.+)$", text)

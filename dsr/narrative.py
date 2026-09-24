@@ -1024,6 +1024,13 @@ def settle_actions(actions, F, ctx, declined, dropped):
         a = dict(s["_a"], rank_score=s["rank_score"])
         if s.get("quiet"):
             a["quiet"] = True
+        # The calibrated dollars beside the model's own figure (F6), the
+        # rule Home cards and the one-thing hero follow.
+        try:
+            import rec_learning
+            rec_learning.attach_dollar_calibration(a, learned)
+        except Exception as e:
+            _capture(e, ctx.restaurant_id, "dollar calibration")
         ranked.append(a)
     # Not presented here. Writing the narrative is not showing it: the
     # report is read later (the DSR view) or mailed (dsr.deliver), and each

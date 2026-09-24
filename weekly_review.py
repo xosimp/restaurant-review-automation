@@ -63,6 +63,60 @@ def band_scale(key, window_days=WINDOW_DAYS) -> float:
     return round(max(1.0, (default / float(window_days)) ** 0.5), 3)
 
 
+def week_band(restaurant_id, key, before, end=None, window_days=WINDOW_DAYS, db_path=None) -> dict:
+    """THE noise band a week-on-week move is read against — one rule for the
+    weekly review and the digest's "trending" line (I12 and F2 reconciled):
+
+        band = max(stated band × band_scale(key),
+                   this restaurant's own band for a 7-day window)
+
+    Two estimates existed: I's `band_scale` (the stated 28-day band widened
+    by sqrt(28/7), the same for every restaurant) and F's
+    `metrics.noise_band(window_days=7)` (1.645 × this restaurant's own
+    spread of 7-day windows — two-sided 10% false alarm — floored at the
+    UNSCALED stated band). Passing both to compare() would multiply the
+    own band, already measured at seven days, by the scale a second time;
+    passing only the own band would let a steady restaurant's week be
+    judged against the 28-day floor, the bug I12 fixed. So the scaled
+    stated band is the floor (all a restaurant with thin history gets) and
+    the own band replaces it only when this restaurant's weeks swing wider.
+    The stricter of two principled bands, never a product of them.
+
+    Returns {band (metric units, or None when `before` is None), own,
+    scaled_stated, false_alarm_rate, method, basis}. `band` goes to
+    metrics.compare(key, before, after, band=...) with band_scale left at 1.
+    Never raises."""
+    out = {"band": None, "own": None, "scaled_stated": None, "false_alarm_rate": None,
+           "method": "stated", "basis": None}
+    if before is None:
+        return out
+    try:
+        scaled = metrics.fixed_band(key, before) * band_scale(key, window_days)
+    except Exception as e:
+        log.warning("weekly_review: stated band unavailable for %s: %s", key, e)
+        return out
+    out["scaled_stated"] = round(scaled, 4)
+    nb = {}
+    if restaurant_id:
+        try:
+            kw = {"db_path": db_path} if db_path else {}
+            nb = metrics.noise_band(restaurant_id, key, window_days=window_days, end=end, before=before, **kw) or {}
+        except Exception as e:
+            log.warning("weekly_review: own band unavailable for %s/%s: %s", restaurant_id, key, e)
+            nb = {}
+    own = nb.get("band")
+    out["own"] = own
+    if own is not None and own > scaled:
+        out.update(band=round(own, 4), method=nb.get("method") or "own windows",
+                   false_alarm_rate=nb.get("false_alarm_rate"), basis=nb.get("basis"))
+    else:
+        out.update(band=round(scaled, 4), method="stated, scaled for a week",
+                   basis=(f"the stated band widened ×{band_scale(key, window_days)} for a "
+                          f"{window_days}-day window"
+                          + ("" if own is None else " — wider than this restaurant's own weekly spread")))
+    return out
+
+
 def week_bounds(day):
     """(monday, sunday) of the ISO week `day` falls in."""
     monday = day - timedelta(days=day.weekday())
@@ -101,10 +155,14 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
         was_v, _ = metrics.measure(restaurant_id, key, prev_start.isoformat(),
                                    prev_end.isoformat(), db_path)
         info = metrics.describe(key)
+        # The week's one band (week_band): this restaurant's own 7-day
+        # spread from the history before the week being judged, never
+        # narrower than the stated band scaled for seven days.
+        wb = week_band(restaurant_id, key, was_v, end=prev_end.isoformat(), db_path=db_path)
         row = {"key": key, "label": info["label"], "unit": info["unit"],
                "value": now_v, "previous": was_v, "why": now_why,
-               # The band scaled for a 7-day window (band_scale).
-               **metrics.compare(key, was_v, now_v, band_scale=band_scale(key))}
+               **metrics.compare(key, was_v, now_v, band=wb["band"]),
+               "band_basis": wb["basis"], "false_alarm_rate": wb["false_alarm_rate"]}
         row["monthly_dollars"] = (metrics.monthly_dollars(restaurant_id, key, row["delta"], db_path)
                                   if row["verdict"] in ("improved", "worsened") else None)
         rows.append(row)

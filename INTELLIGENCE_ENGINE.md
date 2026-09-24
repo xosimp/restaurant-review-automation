@@ -325,8 +325,14 @@ the last 365 days of episodes.
   `Effectiveness.adjusted_dollars(key, dollars)` → `{dollars,
   dollars_adjusted, calibration_n, calibration_ratio, note}` —
   `dollars_adjusted` is None below 3 measured pairs, otherwise the figure ×
-  the ratio with the note "adjusted from N measured results" (the surfaces
-  carry it on the rec; Group E/J render it).
+  the ratio with the note "adjusted from N measured results".
+  `rec_learning.attach_dollar_calibration` puts `dollars_adjusted`,
+  `calibration_n` and `calibration_note` on every Home card, the one-thing
+  hero and every DSR action; clients show the adjusted figure when it is
+  non-null. The raw `dollars_monthly` stays on the item and is what the
+  ledger snapshots as `dollar_value` — the ratio is realised ÷ dollar_value,
+  so snapshotting the adjusted figure would feed each correction into the
+  next ratio.
 - A worse result downweights that key (0.20 each, capped 0.30) and its kind
   (0.08 each, capped 0.20), halving every 60 days; with the penalty the
   weight never goes below 0.6.
@@ -373,6 +379,11 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
   `noise_band`, `noise_sigma`, `false_alarm_rate` and `band_basis` at its
   start and every read of it (evaluation, re-check, accrual, the grade, the
   interim reading) uses it. A 7-day caller passes `window_days=7`.
+  The weekly review and the digest's "trending" line read one band,
+  `weekly_review.week_band`: max(stated band × √(28/7) — `band_scale`, the
+  floor a restaurant with thin history gets — , this restaurant's own
+  7-day band). The own band is already measured at seven days, so it is
+  never multiplied by the scale again; the stricter of the two stands.
 - **One success definition (CA2 #4).** `rec_learning.learned_verdict` is
   the only mapping; `outcomes.result_counts` is its value twin (not an alert
   read, a routine supplier order or advice not taken; not disowned; no

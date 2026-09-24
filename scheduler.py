@@ -1245,18 +1245,22 @@ def record_metrics_sync(restaurant_id, ok, error=None):
         log.warning(f"metrics sync stamp for {restaurant_id}: {e}")
 
 
-def metrics_sync_state(restaurant_id, db_path=None) -> dict:
+def metrics_sync_state(restaurant_id, db_path=None, conn=None) -> dict:
     """{last_attempt_at, last_ok_at, error} — UTC "YYYY-MM-DD HH:MM:SS"
-    stamps (time_utils.parse_stamp reads them) — or {} when never synced."""
+    stamps (time_utils.parse_stamp reads them) — or {} when never synced.
+    `conn` reads through a caller's open connection (data_freshness, which
+    already holds one for the database it was asked about)."""
     import json as _json
     from models import get_conn
     try:
-        conn = get_conn(db_path) if db_path else get_conn()
+        own = conn is None
+        c = (get_conn(db_path) if db_path else get_conn()) if own else conn
         try:
-            row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
-                               (f"metrics_sync:{int(restaurant_id)}",)).fetchone()
+            row = c.execute("SELECT value FROM job_cursors WHERE key=?",
+                            (f"metrics_sync:{int(restaurant_id)}",)).fetchone()
         finally:
-            conn.close()
+            if own:
+                c.close()
         return _json.loads(row["value"]) if row and row["value"] else {}
     except Exception:
         return {}
