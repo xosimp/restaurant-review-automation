@@ -8,6 +8,7 @@ Nothing here runs in the request path. Who runs each one:
 | `check_silent_handlers.py` | CI, `tests/test_silent_handler_lint.py` | fails a bare `except:` or a swallowed database write |
 | `check_timeouts.py` | `tests/test_resiliency.py` | fails an outbound HTTP call with no `timeout=` |
 | `check_email_tokens.py` | `tests/test_email_audit_fixes.py` | ratchet on literal colours in email HTML (`emails.BRAND` is the source) |
+| `check_owner_copy.py` | `tests/test_owner_copy_lint.py` | ratchet on the banned owner-copy labels (NS1 V7 / NS3 R9: "value delivered", "optimized", "Monthly savings" over a gap, band words as confidence …) in templates, `public/`, Swift and the email/notify modules |
 | `check_pin_pepper.py` | by hand — `docs/ops/PIN_PEPPER_RUNBOOK.md` | reports whether `CAVNAR_PIN_PEPPER` is set and which version PINs carry |
 | `inventory.py` | by hand, when a doc needs a number | tables, routes by blueprint, job claim keys, model call sites, test count — from the code |
 | `build_contract_pdf.py` | by hand — `pricing.py` docstring | renders `docs/contracts/Cavnar-AI-Service-Agreement.pdf` from `pricing.TIERS` |

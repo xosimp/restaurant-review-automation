@@ -73,7 +73,7 @@ Modules sit in one of five layers. **At module scope, a module may import only i
 
 | Layer | What lives there | May import at module scope |
 |---|---|---|
-| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `reply_edits`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories`, `confidence_engine` | stdlib, third-party, L0 |
+| **L0 foundation** | pure helpers and constants with no data access: `config`, `time_utils`, `pricing`, `permissions`, `csrf`, `security_headers`, `http_layer`, `shift_quality`, `schedule_requirements`, `staffing_curve`, `thresholds`, `ai_guard`, `competitor_intel_format`, `review_common`, `reply_edits`, `pos`, `credentials`, `sales_audit_schema`, `intelligence.stats`, `intelligence.privacy`, `intelligence.categories`, `confidence_engine`, `response_validation` | stdlib, third-party, L0 |
 | **L1 data** | `models`, `auth`, `ops`, `ai_utils`, `security`, `guest_links` | L0, L1 |
 | **L2 domain** | every module that computes something for one restaurant (the services in §2), the `intelligence/` package, `emails`, `notify`, `push`, `webhooks`, `admin_ops`, `admin_events`, `status_manager`, `sales_audit_engine/cheatsheet/notes_ai`, `sales_audits` | L0, L1, L2 |
 | **L3 HTTP** | `client_api`, `mobile_api`, `strategy_routes`, every `*_routes.py` | L0–L3 |
@@ -226,6 +226,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `reporter` | 2 | the weekly digest |
 | `review_common` | 0 | sentences the weekly and monthly reviews share, and `impressions()` — the ledger items for what a periodic email rendered (the email stages them; nothing here writes) |
 | `reply_edits` | 0 | what the owner changes in a drafted reply, measured: `compare(original, final)` (word edit distance, category, closed-vocabulary signals) and `style_note()` — the drafter's OWNER'S EDITS block; pure |
+| `response_validation` | 0 | the Response Validation Layer, pure (no database, clock, model or network; imports only `ai_guard` and `confidence_engine`'s thresholds): `validate(text, ValidationContext) → Verdict` (pass / caveat / withhold / refuse, findings, rewrites, caveats, controls) over typed `Fact`s — the rule codes F1–F8, C1–C2, K1, X1, M1–M2, B1, N1, T1, A1–A2, P1, I1 (PROMPT_LIBRARY.md → Response Validation); `validate_lines` for the digest, DSR and weekly plan; `kind_of_key`, `facts_from_dict`; `mode_for` / `apply` (RESPONSE_VALIDATION_MODE shadow|enforce per surface); `log()` reaches `ai_utils.log_validation` lazily (the one upward call) into `ai_validation_log`. Built, not yet called by any model call site (adoption is workstream A) |
 | `review_intelligence` | 2 | the reviews consultant layer and diagnosis |
 | `rpower` / `rpower_routes` | 2 / 3 | RPOWER provider / bootstrap and status routes |
 | `sales_audit_cheatsheet` | 2 | the in-person pitch cheat-sheet (deterministic) |
@@ -274,7 +275,9 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | a table | `models.init_db` (or an `init_*` it calls) | `CREATE TABLE` on a request or job path — only `ops.py`'s lease tables, `ai_utils._ensure_usage_schema` and `waste_trend`'s once-per-process `_SCHEMA_ENSURED` guard are allowed to |
 | a swallowed error | `ops.capture(e, job=, context=)` | `except Exception: pass` around a write (lint fails) |
 | an email | `emails.send_*` / `emails.deliver`, colours from `emails.BRAND` | inline HTML with literal colours (ratchet lint) |
-| a figure a model may quote | `ai_guard.verify_figures` and the claim kinds | prose the client cannot trace |
+| a figure a model may quote | `ai_guard.verify_figures` and the claim kinds; for a whole output, `response_validation.validate` with typed facts | prose the client cannot trace |
+| a claim a model makes about money, cause, certainty or benchmarks | `response_validation.validate` (one context, one verdict) | a per-module guard sequence or a prompt-only rule |
+| owner-facing label copy | the banned-label ratchet `scripts/check_owner_copy.py` | "savings", "value delivered", "optimized" over a gap or an estimate |
 | a route both surfaces need | a `strategy_routes._ROUTES` entry, else a `_do_*` body, else `_m()` | a second copy of the body |
 | review-period sentences | `review_common` | copies in the weekly and monthly modules |
 | a colour, font, spacing, component | `DESIGN_SYSTEM.md` tokens and components; iOS `DesignSystem/` | a literal or a feature-local kit |

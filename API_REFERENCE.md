@@ -188,6 +188,16 @@ grep -n '"/labor/' strategy_routes.py            # the _ROUTES table (registered
 python3 scripts/repo_inventory.py                     # every rule, by blueprint, from the live url_map
 ```
 
+## Response validation (admin only)
+
+- `GET /admin/api/validation?days=1|7|30|90` (default 30; `admin_ops.validation_rates`) —
+  the Response Validation Layer's catch rates from `ai_validation_log`:
+  `{ok, days, total, version, surfaces: [{surface, n, verdicts: {pass, caveat,
+  withhold, refuse}, caught_pct, modes: {shadow|enforce: n}, mode_now,
+  rules: [{rule, label, n, pct}]}]}` — `pct` is the share of that surface's
+  validated outputs the rule fired on. No answer or guest text is stored, so
+  none is served. Server only; no web or iOS twin.
+
 ## Schedule experiments (admin only)
 
 - `GET /admin/api/schedule-experiments` — per experiment and arm: weeks, draft
