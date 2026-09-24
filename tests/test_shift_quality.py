@@ -1112,7 +1112,9 @@ def test_ios_decodes_and_renders_shift_quality():
 
 def test_ios_shows_what_the_generator_is_doing_rather_than_a_spinner():
     view = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborView.swift"))
-    assert "ScheduleProgressSteps()" in view
+    # The first step names last year's same days only when that input
+    # exists (never-say C, NS1 #21), so the view passes the payload's flag.
+    assert "ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true)" in view
     steps = _source("ios/CavnarAI/CavnarAI/Features/Labor/ScheduleProgressSteps.swift")
     for stage in ("available", "labor target", "operational scores",
                   "leadership", "strongest team", "quality"):
