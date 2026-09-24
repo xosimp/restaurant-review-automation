@@ -251,8 +251,10 @@ def test_r3_p18_model_stated_confidence_is_rewritten_to_the_computed_one(db_path
         pct = meta["confidence_detail"]["pct"]
         assert "85%" not in answer and "High confidence" not in answer
         assert meta.get("confidence_rewritten") == 1
-        if "High" in said:
-            assert f"{pct}% confidence" in answer
+        # The computed % rides in meta beside the answer; it is no longer
+        # stamped onto one sentence of it (the Response Validation Layer's
+        # C2 — one answer's overall % on a single claim was NS1 M5).
+        assert f"{pct}% confidence" not in answer and meta["validation"]["codes"][:1] == ["C2"]
         assert answer.startswith("Trim the Tuesday bar shift.")
 
 

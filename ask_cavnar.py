@@ -1114,20 +1114,143 @@ def _recorded(answer, meta, restaurant_id):
     return meta
 
 
-def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id):
-    """(answer, meta) as the owner receives them: the meta computed, any
-    confidence the MODEL stated rewritten to the computed figure or taken
-    out (R3, B5 #3/p18 — "I'm about 85% sure" sat beside a 33% chip). The
-    meta is measured on the answer WITHOUT the model's confidence (its "85%"
-    is no claim about the restaurant, and the computed figure written back
-    in is ours), and the figure check is recorded under the text shown (H4)."""
-    from ai_guard import rewrite_confidence_claims
-    bare, n = rewrite_confidence_claims(answer, None)
-    meta = _meta(bare, corpus, tools_used, consulted, depth, restaurant_id)
+# Shown when the Response Validation Layer leaves nothing of an answer (every
+# sentence named another restaurant, or an unsafe action): no figure, no claim.
+ASK_REFUSED_ANSWER = ("I couldn't write an answer to that I could check against your data. "
+                      "Try asking about one part of the business at a time.")
+
+# What each direct action Ask can run actually does, in the verbs the
+# engine's A1 rule reads ("I've sent / posted / ordered …"). None of today's
+# direct actions sends, posts, orders or publishes anything — a draft edited
+# is not a reply posted — so a claim of those stays "queued for your OK".
+_ACTION_VERBS = {"remember": (), "forget": (), "set_staff_contact": (), "generate_marketing_content": (),
+                 "edit_review_reply": (), "skip_review": (), "change_setting": (), "set_goal": ()}
+
+_ASSOCIATION_ANCHOR_RE = re.compile(r"\b(?:moved\s+together|coincid\w+|alongside|in\s+the\s+same\s+(?:period|week)|"
+                                    r"correlat\w+|associated\s+with|co-?moved?)\b", re.I)
+_UNTRUSTED_BLOCK_RE = None
+
+
+def _untrusted_blocks(corpus) -> list:
+    """The guest / owner words fenced in what the model read — never a
+    source, only what an echo or a public claim is read against."""
+    global _UNTRUSTED_BLOCK_RE
+    from ai_guard import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+    if _UNTRUSTED_BLOCK_RE is None:
+        _UNTRUSTED_BLOCK_RE = re.compile(re.escape(UNTRUSTED_OPEN) + r"(.*?)" + re.escape(UNTRUSTED_CLOSE), re.S)
+    out = []
+    for c in corpus or []:
+        out += [m.group(1).strip()[:2000] for m in _UNTRUSTED_BLOCK_RE.finditer(str(c or ""))]
+    return [u for u in out if u][:40]
+
+
+def _cause_anchors(corpus) -> list:
+    """The causes the data states, each with how strongly: a stored
+    diagnosis or ranked driver ("likely"), a co-movement line
+    ("association"). Guest and owner text is fenced and never an anchor."""
+    from ai_guard import CAUSAL_RE, _strip_untrusted, causal_clauses, sentences as _sentences
+    out = []
+    for c in corpus or []:
+        for s in _sentences(_strip_untrusted(str(c or ""))):
+            if CAUSAL_RE.search(s) or causal_clauses(s):
+                out.append({"text": s[:300],
+                            "strength": "association" if _ASSOCIATION_ANCHOR_RE.search(s) else "likely"})
+    return out[:120]
+
+
+def _typed_facts(corpus) -> list:
+    """Typed facts from the JSON tool payloads the model read (kinds from
+    their keys: recoverable / gap / potential → opportunity, budget /
+    target → plan, forecast → projection …). Sample payloads type nothing;
+    the snapshot text and everything else back figures as measured through
+    context_text (the engine's hybrid mode)."""
+    import response_validation as rv
+    facts = []
+    for c in (corpus or [])[1:]:
+        try:
+            p = json.loads(c) if isinstance(c, str) else None
+        except (TypeError, ValueError):
+            p = None
+        if isinstance(p, dict) and not _is_sample(p) and not p.get("error"):
+            facts += rv.facts_from_dict(p)
+    return facts[:600]
+
+
+def _validation_context(corpus, restaurant_id, confidence=None, actions_done=()):
+    """The Response Validation Layer's context for one Ask answer."""
+    import response_validation as rv
+    text = "\n".join(str(c) for c in corpus or [])
+    denied = set()
+    if restaurant_id:
+        try:
+            import models as _m
+            denied = _m.other_tenant_names(restaurant_id)
+        except Exception:
+            denied = set()
+    low = text.lower()
+    # A tenant's name the restaurant's own data holds (its competitor list,
+    # a review that mentions them) is the restaurant's to talk about; one
+    # the model brought from anywhere else is another tenant's (T1).
+    allowed = {n for n in denied if n.lower() in low}
+    done = []
+    for name in actions_done or ():
+        done.append(name)
+        done += list(_ACTION_VERBS.get(name, ()))
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="ask", facts=_typed_facts(corpus), context_text=text,
+        untrusted=_untrusted_blocks(corpus), cause_anchors=_cause_anchors(corpus),
+        names_allowed=allowed, tenant_names_denied=denied, confidence=confidence,
+        policy={"action": "ask_cavnar", "check_counts": True, "actions_done": done})
+
+
+_FIGURE_RULES = ("F1", "F2", "F3", "F5", "F7", "F8", "X1")
+
+
+def _engine_flags(verdict) -> tuple:
+    """(unverified figures, unsupported cause sentences, unsupported names)
+    from a verdict's findings — the engine is the one check (workstream A);
+    a finding that was only a rewrite is not a flag."""
+    unverified, causes, names = [], [], []
+    for f in verdict.findings:
+        if f["severity"] in ("rewrite", "info"):
+            continue
+        if f["rule"] in _FIGURE_RULES and f.get("span"):
+            unverified.append(f["span"])
+        elif f["rule"] == "K1":
+            causes.append(f.get("sentence") or f.get("span"))
+        elif f["rule"] == "N1" and f.get("span"):
+            names.append(f["span"])
+    return (list(dict.fromkeys(unverified)), list(dict.fromkeys(c for c in causes if c)),
+            list(dict.fromkeys(names)))
+
+
+def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions_done=()):
+    """(answer, meta) as the owner receives them, through the Response
+    Validation Layer (workstream A). Two passes over one context: the first
+    finds what does not check out (figures, causes, names — the flags the
+    K1 confidence is measured from); the second, with that confidence,
+    applies the rewrites (certainty to the computed %, a model's own
+    confidence removed, "saved" on an opportunity, a cause stronger than its
+    anchor, "I've sent…" → queued for your OK) and drops what may not stand
+    (another tenant's name, an unsafe action). The text carries the
+    rewrites; meta carries the findings and the structured `validation`
+    object. The figure check is recorded under the text shown (H4)."""
+    import dataclasses
+    import response_validation as rv
+    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done)
+    first = rv.validate(answer, ctx)
+    meta = _meta(answer, corpus, tools_used, consulted, depth, restaurant_id, verdict=first)
+    ctx = dataclasses.replace(ctx, confidence=meta.get("confidence_detail"))
+    shown, verdict = rv.apply(answer, ctx)
+    if not str(shown or "").strip():
+        shown = ASK_REFUSED_ANSWER
+    n = sum(1 for f in verdict.findings if f["rule"] == "C2")
     if n:
-        answer, _ = rewrite_confidence_claims(answer, (meta.get("confidence_detail") or {}).get("pct"))
         meta["confidence_rewritten"] = n
-    return answer, _recorded(answer, meta, restaurant_id)
+    meta["validation"] = rv.payload(verdict)
+    meta["validation_findings"] = [{k: f.get(k) for k in ("rule", "severity", "span", "detail", "action", "sentence")
+                                    if f.get(k) is not None} for f in verdict.findings][:40]
+    return shown, _recorded(shown, meta, restaurant_id)
 
 
 def _verified_history(restaurant_id, messages, db_path=None) -> list:
@@ -1512,6 +1635,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     tools_used = []
     # Modules a tool reported reading that its own name does not reveal.
     consulted = []
+    # Direct actions this turn executed (not proposals awaiting a confirm).
+    actions_done = []
 
     # One tool list for the whole turn. Every call after a tool round carries
     # it too, even the ones that must not use a tool: history holding
@@ -1551,7 +1676,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
         if getattr(message, "stop_reason", None) != "tool_use":
-            answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id)
+            answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id,
+                                   actions_done=actions_done)
             return (answer, truncated, proposals, meta)
 
         # Echo the assistant turn back verbatim — the API requires the
@@ -1631,6 +1757,10 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                         block.name, "Making that change" if is_action else "Looking that up"),
                         "working" if is_action else "searching")
                 payload = tools.run_read_tool(block.name, restaurant.id, block.input, restaurant=restaurant)
+                if is_action and '"error"' not in str(payload or "")[:400]:
+                    # What this turn really did (the engine's A1 rule: a
+                    # claim of anything else is "queued for your OK").
+                    actions_done.append(block.name)
                 if tools.reads_public_text(block.name):
                     read_public_text = True
                 # Every figure the model is handed becomes fair game for it to
@@ -1666,7 +1796,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action="ask_cavnar",
             )
-            answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id)
+            answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
+                                   actions_done=actions_done)
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
     # Ran out of rounds (or of time) — answer with what it has rather than
@@ -1677,7 +1808,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action="ask_cavnar",
     )
-    answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id)
+    answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
+                           actions_done=actions_done)
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
 
@@ -1727,7 +1859,7 @@ def _strip_leaked_markers(text):
     return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 
 
-def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
+def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id, verdict=None):
     """What the answer rests on, and whether its figures check out.
 
     The figure check is the important half. Every prompt in this product
@@ -1737,33 +1869,26 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     the registry and can do arithmetic across them. Audit #14 caught exactly
     this failure in a far simpler prompt.
 
-    Interactive text keeps its content and carries a flag rather than being
-    silently rewritten — see ai_guard.verify_figures on why unattended email
-    is treated differently. The flag is what lets the UI caveat the numbers.
+    The check is the Response Validation Layer (workstream A): `verdict` is
+    its first pass over the answer (run here when not given), and its
+    findings are the flags — figures (F1–F8, X1; counts too, R3: "47 open
+    complaints" was never read), causes (K1, R5: a causal sentence must
+    carry a cause the data it read states — a stored diagnosis, labor's lead
+    driver, a cross-module link; guest and owner text never counts) and names
+    (N1, R11). Interactive text keeps its content and carries the flags; the
+    UI caveats the numbers and marks the sentences.
     """
-    from ai_guard import verify_figures
-    try:
-        # Counts are checked too (R3, B5 #3): "47 open complaints" was never
-        # read, yet the basis line called it checked.
-        unverified = verify_figures(answer, "\n".join(str(c) for c in corpus),
-                                    job="ask_cavnar", restaurant_id=restaurant_id, check_counts=True)
-    except Exception:
-        unverified = []
-    # A cause is checked too (R5, B5 #5): Ask had no cause check at all. A
-    # causal sentence must carry, in the clause its cause sits in, a cause
-    # the data it read states — a sentence of the snapshot or a tool result
-    # that itself names a cause (a stored diagnosis, labor's lead driver, a
-    # cross-module link). Guest and owner text is fenced and never counts.
-    try:
-        causes = unsupported_causes_in(answer, corpus)
-    except Exception:
-        causes = []
-    # And a name nothing it read holds (R11, B5 #11).
-    try:
-        from ai_guard import unsupported_names
-        names = unsupported_names(answer, "\n".join(str(c) for c in corpus))
-    except Exception:
-        names = []
+    if verdict is None:
+        try:
+            import response_validation as rv
+            verdict = rv.validate(answer, _validation_context(corpus, restaurant_id))
+        except Exception as e:
+            print(f"[ask_cavnar] validation unavailable: {e}")
+            verdict = None
+    if verdict is not None:
+        unverified, causes, names = _engine_flags(verdict)
+    else:
+        unverified, causes, names = [], [], []
     # What the answer rests on: the modules the tool names imply, plus the
     # ones a tool reported reading on its own (read_business_snapshot reads
     # every module in one call, and its name says none of them).
@@ -1783,7 +1908,11 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # that did not check out caps it low. Freshness: the sources of the
     # modules read. `confidence` stays the band string both shipped clients
     # decode; the K1 object rides in `confidence_detail`.
-    detail = _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id,
+    # Measured on the answer WITHOUT the model's own confidence: its "85%"
+    # is no claim about the restaurant (R3, p18).
+    from ai_guard import rewrite_confidence_claims
+    bare, _n = rewrite_confidence_claims(answer or "", None)
+    detail = _answer_confidence(bare, corpus, tools_used, modules, unverified, restaurant_id,
                                 causes=causes, names=names)
     return {
         "modules_consulted": modules,

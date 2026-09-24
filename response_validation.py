@@ -97,6 +97,7 @@ figure, never raises confidence (it only ever lowers a modal, a band or a
 causal level), and is idempotent (a second pass makes no new rewrites).
 """
 import bisect
+import functools
 import hashlib
 import json
 import os
@@ -877,7 +878,7 @@ _ACTION_CLAIM_RE = re.compile(
     r"(?P<verb>sent|posted|ordered|texted|published|emailed|messaged|submitted|placed|booked|called|paid|"
     r"replied|scheduled\s+the\s+(?:post|text|email)|approved)\b", re.I)
 _DISCIPLINE_RE = re.compile(
-    r"\b(?:fire|terminate|discipline|suspend|reprimand|demote|write\s+up|dock)\s+(?:the\s+|your\s+|our\s+)?"
+    r"\b(?i:fire|terminate|discipline|suspend|reprimand|demote|write\s+up|dock)\s+(?i:the\s+|your\s+|our\s+)?"
     r"(?:[\w'’]+\s+){0,2}?(?:[A-Z][a-z]{2,}\b|closers?|openers?|servers?|cooks?|bartenders?|hosts?|managers?|staff|"
     r"employees?|bussers?|dishwashers?|chefs?|waiters?|waitress(?:es)?|runners?)\b"
     r"|\blet\s+(?:[A-Z][a-z]{2,}|the\s+\w+|your\s+\w+)\s+go\b", re.UNICODE)
@@ -1062,6 +1063,27 @@ def _root(w):
             return w[:-len(suf)]
     return w
 
+@functools.lru_cache(maxsize=8)
+def _context_pool_for(txt: str) -> dict:
+    """The prompt text's figures, by unit, for the hybrid fallback — pure in
+    the text and cached for the last few (Ask validates one corpus twice).
+    The "memo" dict caches lookups, which are pure in (text, query) too."""
+    known = _g._figures(txt)
+    # A bare numeral that counts days, reviews or shifts ("30 days", "212
+    # reviews") never backs a % (F8); any other bare numeral — a JSON dump's
+    # "labor_pct": 38.2 — does, as it always did.
+    counted = set()
+    for m in _COUNTED_BARE_RE.finditer(_g._prepared(txt)):
+        try:
+            counted.add(round(float(m.group(1).replace(",", "")), 2))
+        except ValueError:
+            continue
+    pct_pool = sorted(set(known["pct"]) | (set(known["bare"]) - counted))[:4000]
+    money = _g._money_periods(txt)
+    return {"money": money, "money_keys": sorted(money), "bare": sorted(known["bare"]),
+            "pct_pool": pct_pool, "dirs": _g._directions(txt), "memo": {}}
+
+
 class _Facts:
     def __init__(self, facts):
         self.all = [f for f in facts if f.value is not None]
@@ -1186,6 +1208,7 @@ class _Run:
         self._legacy_known = None
         self._body = ""
         self._claims_memo = {}
+        self._cur_sentence = None
         self._name_known = None
         self.has_delivered = any(is_delivered(f) for f in ctx.facts)
         ents = sorted(self.facts.entities, key=len, reverse=True)
@@ -1203,8 +1226,14 @@ class _Run:
         sev = (sev_u or sev_i) if self.unattended else sev_i
         if self.public and _SEV_RANK[sev] >= _SEV_RANK["caveat"]:
             sev = "refuse"
-        self.findings.append({"rule": rule, "severity": sev, "span": str(span or "")[:60],
-                              "detail": str(detail or "")[:200], "action": _ACTION_OF[sev]})
+        finding = {"rule": rule, "severity": sev, "span": str(span or "")[:60],
+                   "detail": str(detail or "")[:200], "action": _ACTION_OF[sev]}
+        if self._cur_sentence:
+            # The sentence the finding is about, for a client that flags it
+            # in place (Ask's unsupported causes). Never logged (log() keeps
+            # the span only).
+            finding["sentence"] = self._cur_sentence.strip()[:300]
+        self.findings.append(finding)
         if sev in ("caveat", "withhold") and caveat and caveat not in self.caveats:
             self.caveats.append(caveat)
         if sev == "withhold":
@@ -1276,11 +1305,13 @@ class _Run:
             new = self.line(line)
             if new is not None:
                 lines_out.append(new)
+        self._cur_sentence = None
         result = "\n".join(lines_out).strip("\n")
         self.disclosures(result)
         return result
 
     def line(self, line):
+        self._cur_sentence = line
         if re.search(r"\bUNVERIFIED\s*:", line):
             # Our own marker, written by the model: it would be read as ours.
             self.emit("I1", "drop", "drop", "UNVERIFIED:", "the model wrote the verification marker itself")
@@ -1305,6 +1336,7 @@ class _Run:
     # ── one sentence ──
     def sentence(self, s):
         """The sentence after rewrites, or None when it is dropped."""
+        self._cur_sentence = s
         before = len(self.findings)
 
         def dropped():
@@ -1515,21 +1547,7 @@ class _Run:
         blanked): money {value: {period}}, pct, bare, % differences, and
         the directions the prompt states."""
         if self._ctx_pool is None:
-            txt = self.ctx.context_text
-            known = _g._figures(txt)
-            # A bare numeral that counts days, reviews or shifts ("30 days",
-            # "212 reviews") never backs a % (F8); any other bare numeral —
-            # a JSON dump's "labor_pct": 38.2 — does, as it always did.
-            counted = set()
-            for m in _COUNTED_BARE_RE.finditer(_g._prepared(txt)):
-                try:
-                    counted.add(round(float(m.group(1).replace(",", "")), 2))
-                except ValueError:
-                    continue
-            pct_pool = sorted(set(known["pct"]) | (set(known["bare"]) - counted))[:4000]
-            self._ctx_pool = {
-                "money": _g._money_periods(txt), "pct": known["pct"], "bare": known["bare"],
-                "pct_pool": pct_pool, "dirs": _g._directions(txt)}
+            self._ctx_pool = _context_pool_for(self.ctx.context_text)
         return self._ctx_pool
 
     @staticmethod
@@ -1551,13 +1569,15 @@ class _Run:
         F3 then leaves alone, as the old check did)."""
         pool = self._context_pool()
         v = abs(value)
+        memo_key = (ctype, v, tol)
+        if memo_key in pool["memo"]:
+            return pool["memo"][memo_key]
         hits = []
         if ctype == "money":
-            for k, periods in pool["money"].items():
-                if abs(v - abs(k)) <= tol:
-                    hits += [(k, "$", p) for p in (periods or {None})]
+            for k in self._near(pool["money_keys"], v, tol):
+                hits += [(k, "$", p) for p in (pool["money"][k] or {None})]
             if not hits:
-                hits = [(k, "", None) for k in pool["bare"] if abs(v - abs(k)) <= tol]
+                hits = [(k, "", None) for k in self._near(pool["bare"], v, tol)]
         elif ctype == "pct":
             hits = [(k, "%", None) for k in self._near(pool["pct_pool"], v, tol)]
         elif ctype == "pts":
@@ -1571,12 +1591,13 @@ class _Run:
                         break
         else:
             unit = {"star": "★", "count": "count", "h": "h", "x": "x"}.get(ctype, "")
-            hits = [(k, unit, None) for k in pool["bare"] if abs(v - abs(k)) <= tol]
+            hits = [(k, unit, None) for k in self._near(pool["bare"], v, tol)]
         out = []
         for k, unit, period in hits[:4]:
             dirs = pool["dirs"].get(("money" if ctype == "money" else "pct", k)) or set()
             out.append(Fact(key="context", value=k, unit=unit, kind="measured", period=period,
                             direction=next(iter(dirs)) if len(dirs) == 1 else None, source="context"))
+        pool["memo"][memo_key] = out
         return out
 
     def money_claims(self, s):
@@ -1815,7 +1836,9 @@ class _Run:
             self.emit("K1", "caveat", "drop", matched,
                       "a cause nothing stored supports" if not strength else "a cause stated more strongly than its anchor",
                       "Unsupported cause: nothing measured here shows this caused it.")
-        return _tidy(s) if s[:1].islower() else s
+        # Only a sentence this rule rewrote is tidied: a quoted guest line
+        # that starts lower-case is not the engine's to recapitalise.
+        return _tidy(s) if (rewrites and s[:1].islower()) else s
 
     # ── F1 / F2 / F3 / F5 / F6 / F7 / F8 ──
     def figures(self, s):
