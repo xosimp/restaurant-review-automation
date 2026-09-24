@@ -136,6 +136,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `fetcher` | 2 | review pull (Google Places / CSV) |
 | `first_look` | 2 | the first-week read |
 | `food_cost_intelligence` | 2 | the CFO layer: drivers, diagnosis, projection |
+| `forecast_log` | 2 | every stated forecast frozen once per period, scored only after the period closes, and its accuracy by kind (waste, prime cost, weekly revenue, labor, marketing reach, review rating) |
 | `gmb` | 2 | Google Business Profile OAuth and posting |
 | `goals` | 2 | one active target per metric |
 | `good_news` | 2 | wins the brief and emails draw on |

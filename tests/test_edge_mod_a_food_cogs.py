@@ -344,7 +344,8 @@ def test_reprice_monthly_margin_matches_its_stated_basis(db_path, monkeypatch):
 
 def test_a_forecast_of_zero_against_an_actual_of_zero_is_scored_without_dividing(db_path):
     rid = _rid(db_path)
-    horizon = date.today() - timedelta(days=3)
+    # A closed week (last week): only a closed period is scored.
+    horizon = date.today() - timedelta(days=7)
     _snapshot(db_path, rid, horizon, waste=0.0)
     c = get_conn(db_path)
     c.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted) VALUES (?,?,?,0)",

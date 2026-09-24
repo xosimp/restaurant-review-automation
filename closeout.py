@@ -126,8 +126,14 @@ def _act_on(restaurant_id, day, values, restaurant, db_path=DB_PATH):
         for phrase in _phrases(eighty):
             hit = _match_ingredient(phrase, ings)
             if hit:
+                # It ran out in service: the gap between what the ledger
+                # expected and zero is usage the recipes missed, not waste.
+                # Recorded as waste it inflated inferred waste on every 86
+                # (verified 9/24/26 — record_recount wrote the full gap as
+                # an 'inferred' waste event; CA1 F20, fix I8).
                 inventory_ledger.record_recount(restaurant_id, hit["id"], 0.0, event_date=day,
-                                                source="closeout", note=f"86'd at close: {phrase}")
+                                                source="closeout", note=f"86'd at close: {phrase}",
+                                                infer_waste=False)
                 # Ran out in service: was it ever flagged as running low
                 # first? If not, a missed detection (ROI #44).
                 try:

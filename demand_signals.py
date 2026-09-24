@@ -18,6 +18,11 @@ from models import get_conn, DB_PATH
 
 KINDS = ("event", "reservations")
 MAX_ROWS = 200
+# What an event with no covers and no lift is ASSUMED to add. Carried as
+# `assumed_lift_pct` beside `assumed: True` for the prompt and the clients
+# to say as an assumption; never written into lift_pct, so it never raises
+# a demand level without a figure behind it.
+ASSUMED_EVENT_LIFT_PCT = 25
 
 
 def _d(s):
@@ -67,8 +72,11 @@ def save(restaurant_id, rows, source="manual", created_by=None, db_path=DB_PATH)
                     errors.append(f"{day}: lift is not a number")
                     continue
                 lift = max(-80, min(300, lift))
-            if kind == "event" and covers is None and lift is None:
-                lift = 25   # an event with no figure attached is a busy night
+            # An event with no figure attached used to be stored as a 25% lift,
+            # which then raised the day's demand level and headcount exactly
+            # like a figure the owner had given. It is stored with no lift
+            # now; by_date marks it `assumed` (ASSUMED_EVENT_LIFT_PCT, said as
+            # an assumption) and it never moves a demand level (CA1 L29).
             conn.execute(
                 "INSERT INTO demand_signals (restaurant_id, date, kind, label, covers, lift_pct, source, created_by) "
                 "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date, kind, label) DO UPDATE SET "
@@ -158,6 +166,9 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
         entry = out.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
         entry["labels"].append(s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else ""))
         lift = s.get("lift_pct")
+        if s.get("kind") == "event" and lift is None and not s.get("covers"):
+            entry["assumed"] = True
+            entry["assumed_lift_pct"] = ASSUMED_EVENT_LIFT_PCT
         if lift is None and s.get("covers"):
             try:
                 day = date.fromisoformat(d).strftime("%A")
@@ -193,6 +204,9 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
                     else " — about a typical day")
         elif e.get("covers"):
             tail = f" — {e['covers']} covers booked"
+        elif e.get("assumed"):
+            tail = (f" — no covers or lift given; ASSUMED busier (about {e.get('assumed_lift_pct')}% is an "
+                    f"assumption, not a figure) — staff it as a normal busy {day}, not above it")
         lines.append(f"  {day} {d}: {what}{tail}")
     if not lines:
         return ""

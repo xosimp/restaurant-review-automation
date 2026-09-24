@@ -244,8 +244,16 @@ def week_rows(grid, restaurant_name):
     width = len(header)
     rows = [[(title(grid, restaurant_name), "title")] + [None] * (width - 1),
             [(h, "header") for h in header]]
+    provisional = 0
     for d in grid.get("days") or []:
-        row = [f"{d.get('weekday') or ''} {mdy(d.get('date'))}".strip()]
+        # A provisional night (the report finished with data still syncing)
+        # is marked in the workbook as it is on screen — the weekly .xlsx
+        # carried no marker, so a provisional night read as final (CA1 D1).
+        label = f"{d.get('weekday') or ''} {mdy(d.get('date'))}".strip()
+        if d.get("provisional"):
+            label += " (provisional)"
+            provisional += 1
+        row = [label]
         row += [_cell(_value(d, k), t) for _h, k, t in cols]
         row += [_cell(d.get(k), "text") for _h, k in _NOTE_COLS]
         rows.append(row)
@@ -269,6 +277,9 @@ def week_rows(grid, restaurant_name):
     rows.append([])
     rows.append([(f"Totals sum only the days that were measured ({measured or 0} of "
                   f"{len(grid.get('days') or [])}). An empty cell was not measured — it is not $0.", "muted")])
+    if provisional:
+        rows.append([(f"{provisional} night{'' if provisional == 1 else 's'} marked provisional: the report "
+                      f"finished while some data was still syncing, and the figures may still change.", "muted")])
     # The gross column can cover fewer nights than net, and can mix the two
     # definitions of gross when the owner switched bases inside the range.
     t = grid.get("totals") or {}

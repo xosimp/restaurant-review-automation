@@ -172,16 +172,32 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
 
         # ── food cost ────────────────────────────────────────────────────
         if getattr(r, "module_inventory", 0) and "inventory" not in denied:
+            # Food Cost's own two kinds: forecast_log now also holds the
+            # week's sales projection and the labor/marketing/review lines.
             fc = _row(conn, "SELECT kind, predicted, created_at FROM forecast_log WHERE restaurant_id=? "
+                            "AND kind IN ('waste_week','profitability_month') "
                             "ORDER BY created_at DESC LIMIT 1", (restaurant_id,))
             if fc and fc["created_at"] and fc["created_at"] >= week:
-                what = "this week's waste" if fc["kind"] == "waste_week" else "this month's profitability"
+                # A waste_week row predicts NEXT week (it is frozen the week
+                # before); it read "this week's waste".
+                what = "next week's waste" if fc["kind"] == "waste_week" else "this month's profitability"
                 corr = ""
                 try:
-                    import food_cost_intelligence as _fci
-                    cal = _fci.forecast_calibration(restaurant_id, fc["kind"], db_path=db_path)
-                    if cal.get("available") and cal.get("factor", 1.0) != 1.0:
-                        corr = f" Earlier projections {cal['reading']}; this one is corrected for it."
+                    import forecast_log as _flog
+                    cal = _flog.calibration(restaurant_id, fc["kind"], db_path=db_path)
+                    acc = _flog.accuracy(restaurant_id, fc["kind"], db_path=db_path)
+                    if acc.get("withheld") and fc["kind"] == "waste_week":
+                        corr = (f" It was not shown: past forecasts here missed by {acc['mean_error_pct']:.0f}% "
+                                f"on average, so it is only being scored until the record improves.")
+                    elif cal.get("available") and cal.get("factor", 1.0) != 1.0:
+                        # "Corrected" only where the corrected figure is the
+                        # one shown — the waste forecast (inventory's FORECAST
+                        # line). The prime-cost projection is shown raw, and
+                        # saying it was corrected was the false claim the
+                        # confidence audit found (CA1 red flag 2).
+                        corr = (f" Earlier projections {cal['reading']}; the figure shown is corrected for it."
+                                if fc["kind"] == "waste_week" else
+                                f" Earlier projections {cal['reading']}.")
                 except Exception:
                     pass
                 entries.append({"at": _iso_z(fc["created_at"]), "module": "inventory", "kind": "projected",

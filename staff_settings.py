@@ -456,7 +456,52 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
             t["no_show"] += 1
         elif sched - actual >= 1.5:
             t["short"] += 1
+    # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
+    # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
+    # misses in six shifts read as a flat 33%, and the engine then treated
+    # that person as unreliable on the strength of two nights. The raw count
+    # travels beside it. `no_show_threshold` is the engine's own line
+    # (shift_quality.UNRELIABLE_RATE), so a client colours a row red exactly
+    # when the scheduler treats that person as unreliable — the web used 10%
+    # against the engine's 20%.
+    from shift_quality import UNRELIABLE_RATE
+    base = no_show_base_rate(tally)
     return {n: {"shifts": t["shifts"],
-                "no_show_rate": round(t["no_show"] / t["shifts"], 2),
+                "no_shows": t["no_show"],
+                "no_show_rate": smoothed_rate(t["no_show"], t["shifts"], base),
+                "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
+                "base_rate": round(base, 3),
+                "no_show_threshold": UNRELIABLE_RATE,
+                "unreliable": smoothed_rate(t["no_show"], t["shifts"], base) >= UNRELIABLE_RATE,
                 "short_rate": round(t["short"] / t["shifts"], 2)}
             for n, t in tally.items() if t["shifts"] >= min_shifts}
+
+
+# Pseudo-shifts of the restaurant's own base rate every person's no-show
+# rate starts from. Six is the reliability floor (min_shifts): at the floor a
+# person's own record and the base rate carry equal weight.
+NO_SHOW_PRIOR_SHIFTS = 6
+
+
+def no_show_base_rate(tally) -> float:
+    """The restaurant's own no-show rate across every clocked shift in
+    `tally` ({name: {"shifts", "no_show", ...}} or {name: {"all": [n, k]}})."""
+    shifts = misses = 0
+    for t in (tally or {}).values():
+        if "all" in t:
+            n, k = t["all"][0], t["all"][1]
+        else:
+            n, k = t.get("shifts", 0), t.get("no_show", 0)
+        shifts += n
+        misses += k
+    return (misses / shifts) if shifts else 0.0
+
+
+def smoothed_rate(misses, shifts, base, prior=NO_SHOW_PRIOR_SHIFTS) -> float:
+    """(misses + prior·base) / (shifts + prior), rounded to 2 — a person's
+    rate shrunk toward the restaurant's base rate in proportion to how
+    little of their own record there is."""
+    try:
+        return round((float(misses) + prior * float(base)) / (float(shifts) + prior), 2)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0

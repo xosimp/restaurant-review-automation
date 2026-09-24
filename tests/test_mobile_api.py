@@ -2865,10 +2865,13 @@ def test_ai_visibility_drop_alert(client, db_path, monkeypatch):
     # answered by a non-deterministic model, so the alert compares
     # appearance counts rather than percentage points — see
     # notify._ai_visibility_drop.
+    record_ai_visibility_run(rid, 100, answered=6, appeared=6, db_path=db_path)
     record_ai_visibility_run(rid, 83, answered=6, appeared=5, db_path=db_path)
-    record_ai_visibility_run(rid, 67, answered=6, appeared=4, db_path=db_path)
     notify.check_extra_daily_alerts(db_path=db_path)
     assert emails_sent == []                       # one question flipping isn't a drop
+    # 6 of 6 → 1 of 6: the two runs' 90% ranges (69-100%, 4-50%) do not
+    # overlap, which is the bar now (fix I4) — 5 of 6 → 1 of 6 still touches.
+    record_ai_visibility_run(rid, 100, answered=6, appeared=6, db_path=db_path)
     record_ai_visibility_run(rid, 17, answered=6, appeared=1, db_path=db_path)
     notify.check_extra_daily_alerts(db_path=db_path)
     assert emails_sent == ["AI visibility dropped — Mobile Test Co"]

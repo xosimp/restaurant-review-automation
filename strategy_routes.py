@@ -442,6 +442,9 @@ def _do_value(u):
     # same object delivered.rates carries, so a surface prices a reply from
     # the server's REPLY_RATE, not its own copy (rec-ROI #12).
     out["rates"] = value_delivered.rates()
+    # The two headings the four figures sit under — "What was measured" over
+    # `delivered` only (fix I7).
+    out["sections"] = [dict(s) for s in value_delivered.VALUE_SECTIONS]
     # Distinct work since sign-up. Needs no button and carries no dollars,
     # so it is not filtered by module permission — a manager may know the
     # product drafted 200 replies.

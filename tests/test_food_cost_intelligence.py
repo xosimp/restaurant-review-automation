@@ -155,14 +155,18 @@ def test_the_insight_takes_week_over_week_from_the_iso_week_series():
     assert "week_end < date('now','-1 day')" not in code
 
 
-def test_a_forecast_is_withheld_when_the_latest_week_is_an_outlier():
-    """A single anomalous week extrapolated is not a forecast. waste_trend
-    already computes both a confidence and an anomaly flag; neither was
-    consulted before projecting."""
+def test_an_outlier_week_is_never_projected_from():
+    """A single anomalous week extrapolated is not a forecast. The forecast
+    is the four-week mean now (the momentum projection this test used to
+    gate lost to "same as last week" — CA2 probe W), and an outlier week is
+    left out of that mean rather than becoming the level."""
+    import forecast_log
     src = inspect.getsource(inventory.get_claude_insights)
-    assert '_conf in ("high", "medium")' in src
-    assert "_latest_is_anomaly" in src
-    assert "Do not project from it." in src
+    assert "_latest_is_anomaly" in src and "Do not project from it." in src
+    assert "waste_next_week(" in src and "_anoms" in src
+    # the flagged week does not move the forecast
+    assert forecast_log.waste_next_week([400, 410, 390, 1400], anomalies={3}) == 400.0
+    assert forecast_log.waste_next_week([400, 410, 390, 1400]) == 650.0
 
 
 def test_a_page_render_never_moves_the_inventory_value_cogs_brackets_on(db_path, monkeypatch):
@@ -627,16 +631,26 @@ def test_a_forecast_is_stored_and_later_scored(db_path):
     """A forecast nobody checks costs nothing to get wrong, which is the
     opposite of what a projection is for."""
     rid = _restaurant(db_path)
-    horizon = date.today().isoformat()
-    fci.record_forecast(rid, "waste_week", horizon, 400.0, basis="test", db_path=db_path)
-    _snapshot(db_path, rid, days_ago=0, waste=500.0)
+    # Last week: closed, so scorable. (This used today's date, and the old
+    # scorer scored a week still in progress against its partial figure.)
+    last_week = date.today() - timedelta(days=7)
+    fci.record_forecast(rid, "waste_week", last_week.isoformat(), 400.0, basis="test", db_path=db_path)
+    _snapshot(db_path, rid, days_ago=7, waste=500.0)
     out = fci.score_forecasts(rid, db_path=db_path)
     assert out["scored"] == 1
     conn = models.get_conn(db_path)
-    row = conn.execute("SELECT predicted, actual, error_pct FROM forecast_log").fetchone()
+    row = conn.execute("SELECT predicted, actual, error_pct, signed_error_pct FROM forecast_log").fetchone()
     conn.close()
     assert row["predicted"] == 400.0 and row["actual"] == 500.0
-    assert row["error_pct"] == 25.0
+    # One denominator — the actual — for both error figures (CA2 #5).
+    assert row["error_pct"] == 20.0 and row["signed_error_pct"] == -20.0
+
+
+def test_a_week_still_in_progress_is_never_scored(db_path):
+    rid = _restaurant(db_path)
+    fci.record_forecast(rid, "waste_week", date.today().isoformat(), 400.0, basis="test", db_path=db_path)
+    _snapshot(db_path, rid, days_ago=0, waste=500.0)
+    assert fci.score_forecasts(rid, db_path=db_path)["scored"] == 0
 
 
 def test_forecast_accuracy_says_nothing_until_it_has_scored_enough(db_path):

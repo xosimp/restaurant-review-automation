@@ -32,6 +32,11 @@ log = logging.getLogger(__name__)
 
 # Same-weekday, same-hour readings needed before a comparison is offered.
 MIN_PROFILE_SAMPLES = 3
+# ...and before the pulse goes further than the comparison and suggests
+# sending somebody home (strategy_jobs.staffing_move). A median of three
+# past Fridays is enough to say "you're running behind"; it is not enough
+# to cut a shift on (CA1 L28, fix I13).
+MIN_SAMPLES_FOR_CUT = 6
 # How far off a typical day has to be before it is worth interrupting for.
 PULSE_BEHIND_PCT = 15
 PULSE_AHEAD_PCT = 20
@@ -123,6 +128,7 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
     return {"available": True, "weekday": weekday, "hour": today_row["captured_hour"],
             "net_sales": round(today_row["net_sales"], 2), "typical": round(typical, 2),
             "samples": len(history), "pct": pct,
+            "enough_to_cut": len(history) >= MIN_SAMPLES_FOR_CUT,
             "off": pct is not None and (pct <= -PULSE_BEHIND_PCT or pct >= PULSE_AHEAD_PCT),
             "direction": "behind" if (pct or 0) < 0 else "ahead"}
 

@@ -151,6 +151,22 @@ def test_food_is_ready_with_the_nights_estimate_waste_stock_and_variance(db):
     assert b["detail"]["variance"]["items"][0]["dish"] == "Burger"
 
 
+def test_the_estimated_food_cost_pct_needs_most_units_costed_and_speaks_in_units(db):
+    """CA1 D5 (fix I11): no coverage floor, and "dishes" where the figure is
+    counted in units. 10 burgers against 25 uncosted fries is 29% covered —
+    the costed dollars stay, the percentage is withheld and says why."""
+    rid = _rid(db)
+    k = _kitchen(db, rid)
+    _sql(db, "UPDATE menu_item_sales SET qty_sold=25 WHERE restaurant_id=? AND menu_item_id=?", (rid, k["fries"]))
+    b = block_food.collect(_ctx(db, rid))
+    m, est = b["metrics"], b["detail"]["estimate"]
+    assert m["recipe_coverage_pct"] == 28.6 and m["est_food_cost"] == 55.0
+    assert m["est_food_cost_pct"] is None
+    assert est["coverage_floor_pct"] == block_food.ESTIMATE_MIN_COVERAGE_PCT
+    assert "withheld until it reaches" in est["coverage_note"]
+    assert "units sold" in est["label"] and "dishes should have cost" not in est["label"]
+
+
 def test_food_recoverable_is_the_deduplicated_total_not_the_plain_sum(db, monkeypatch):
     rid = _rid(db)
     _kitchen(db, rid)
@@ -271,7 +287,11 @@ def test_reviews_ready_with_the_nights_reviews_themes_urgent_drafts_and_replies(
     m = b["metrics"]
     assert b["status"] == dsr.READY and b["detail"]["sync"]["state"] == "complete"
     assert (m["received"], m["positive"], m["negative"], m["not_analysed"], m["urgent"]) == (3, 1, 1, 1, 1)
-    assert m["avg_rating"] == round((5 + 2 + 4) / 3, 2)
+    # Three reviews are not a night's rating: the floor metrics applies
+    # everywhere (thresholds.RATING_MIN_REVIEWS = 5; CA1 D6, fix I11). The
+    # count is stated and the rating is not.
+    assert m["avg_rating"] is None
+    assert b["detail"]["rating_note"] == "3 reviews — not rated (a rating needs 5)"
     assert (m["drafts_awaiting"], m["replies_posted"]) == (1, 1)
     themes = b["detail"]["themes"]
     assert [t["theme"] for t in themes["negative"]] == ["food", "wait time"]
@@ -321,7 +341,8 @@ def test_reviews_never_counts_another_restaurants_reviews(db):
     _review(db, mine, "2026-09-22T13:00:00", 5, ext="same-id")
     b = block_reviews.collect(_ctx(db, mine))
     assert (b["metrics"]["received"], b["metrics"]["urgent"], b["metrics"]["replies_posted"]) == (1, 0, 0)
-    assert b["metrics"]["avg_rating"] == 5.0
+    assert b["metrics"]["avg_rating"] is None                   # one review: counted, not rated
+    assert b["detail"]["rating_note"].startswith("1 review — not rated")
 
 
 # ── Marketing ───────────────────────────────────────────────────────────────

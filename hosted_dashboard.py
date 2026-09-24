@@ -479,6 +479,23 @@ def index(current_user):
             competitor_data = _json.loads(restaurant.competitor_intel)
         except Exception:
             competitor_data = None
+    # The Intel header's market average and standing, from the one definition
+    # the phone and the welcome email use (competitor_intel_format; fix I10):
+    # the template took a flat mean against the imported-review average.
+    intel_market = None
+    if competitor_data:
+        try:
+            import competitor_intel_format as _cif
+            from models import get_review_stats as _grs_m
+            _sample_m = {} if getattr(restaurant, "gbp_rating", None) else (_grs_m(rid) or {})
+            _own_m = _cif.own_rating(getattr(restaurant, "gbp_rating", None),
+                                     getattr(restaurant, "gbp_review_count", None),
+                                     _sample_m.get("avg_rating"), _sample_m.get("total"))
+            _mk_m = _cif.market_rating(competitor_data.get("competitors") or [])
+            intel_market = {**_own_m, **_mk_m, **_cif.market_standing(_own_m, _mk_m)}
+        except Exception as _mx:
+            print(f"[intel market] {_mx}")
+            intel_market = None
 
     # Labor overtime premium cost (0.5× blended rate on hours over 40/week)
     _hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
@@ -549,11 +566,24 @@ def index(current_user):
     _labor_monthly = int(round(labor.get("potential_savings_monthly", 0) or 0))
     _period_days = labor.get("period_days") or labor.get("date_range", {}).get("days") or 0
     _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
-    _labor_vs_industry_monthly = max(0, int((0.32 - labor.get("overall_labor_pct", 32) / 100) * _monthly_sales_est))
+    # One benchmark and one set of guards for web and iOS (thresholds.
+    # labor_vs_industry_monthly): the web used 32% with no guards while iOS
+    # used 34.5% and refused on estimated hours, missing sales or a sub-week
+    # period, so the same tile showed two dollar figures (CA1 L33).
+    import thresholds as _thr
+    _labor_vs_industry_monthly = _thr.labor_vs_industry_monthly(
+        labor.get("overall_labor_pct"), labor.get("total_sales"), _period_days,
+        hours_are_estimated=bool(labor.get("hours_are_estimated")),
+        sales_data_missing=bool(labor.get("sales_data_missing")),
+        analysis_failed=bool(labor.get("analysis_failed")))
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
-    # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
-    _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
+    # The "3.1% sales lift from responding to reviews" figure had no source in
+    # the product and was worded as the owner's own number (CA4 F5, CA1 R16):
+    # retired. The key stays at 0 because dashboard.html still reads it
+    # (gSalesLiftYr); that reader and the unreachable .review-rate-count line
+    # are a candidate for future cleanup after additional verification.
+    _sales_lift_yr = 0
     import value_delivered as _vd_rates
     savings_breakdown = {
         # The banner: measured monthly dollars only.
@@ -585,37 +615,25 @@ def index(current_user):
         "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
         "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
         "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,
+        "labor_industry_pct":        _thr.LABOR_INDUSTRY_PCT,
+        "labor_industry_basis":      _thr.LABOR_INDUSTRY_BASIS,
         "sales_lift_yr":             _sales_lift_yr,
     }
 
     import secrets as _sec
     csrf_token = request.cookies.get('csrf_token') or _sec.token_hex(16)
-    # Labor: upcoming events within 21 days for scheduling forecast banner
+    # Labor: upcoming holidays within 21 days for the banner — one list for
+    # web and iOS (demand.upcoming_holidays): the date M/D/YY, and a label
+    # that states only what THIS restaurant's own sales showed on that
+    # holiday last year, else the generic "Holiday — check your own history"
+    # (CA1 L30: the banner claimed "your busiest Sundays follow this
+    # pattern" for every restaurant).
     _labor_upcoming = []
     try:
-        from marketing import get_upcoming_holidays as _guh_labor
-        _now_labor = datetime.now()
-        _hol_str = _guh_labor(_now_labor)
-        if _hol_str:
-            import re as _re_labor
-            for _chunk in _hol_str.split(", "):
-                _m = _re_labor.search(r'\((\w+ \d+)\)$', _chunk)
-                if _m:
-                    try:
-                        _hdate = datetime.strptime(_m.group(1) + " " + str(_now_labor.year), "%b %d %Y")
-                        if _hdate < _now_labor:
-                            _hdate = _hdate.replace(year=_now_labor.year + 1)
-                        _days = (_hdate - _now_labor).days
-                        if 0 <= _days <= 21:
-                            _name = _chunk[:_chunk.rfind("(")].strip()
-                            _d = _hdate.day
-                            _suf = "th" if 11 <= _d <= 13 else {1:"st",2:"nd",3:"rd"}.get(_d % 10, "th")
-                            _date_str = _hdate.strftime("%B %-d") + _suf
-                            _labor_upcoming.append({"name": _name, "days_away": _days, "date_str": _date_str})
-                    except Exception:
-                        pass
+        import demand as _demand_hol
+        _labor_upcoming = _demand_hol.upcoming_holidays(rid)
     except Exception:
-        pass
+        _labor_upcoming = []
 
     # Food cost: load saved quick-count data for price drift display
     _food_cost_data = None
@@ -699,6 +717,7 @@ def index(current_user):
         mkt_stats=mkt_stats,
         savings_breakdown=savings_breakdown,
         competitor_data=competitor_data,
+        intel_market=intel_market,
         competitor_updated_at=restaurant.competitor_updated_at if restaurant else None,
         labor_upcoming=_labor_upcoming,
         food_cost_data=_food_cost_data)

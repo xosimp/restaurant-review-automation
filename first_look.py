@@ -127,11 +127,18 @@ def build(google_place_id, restaurant_id=None, deep=False):
             from competitor import get_nearby_competitors
             rivals = [c for c in (get_nearby_competitors(google_place_id, max_results=5) or [])
                       if c.get("rating")]
-            if len(rivals) >= MIN_COMPETITORS:
-                avg = sum(float(c["rating"]) for c in rivals) / len(rivals)
+            # The market average every surface uses (competitor_intel_format.
+            # market_rating: review-weighted, provisional ratings left out) —
+            # this took a flat mean, so the welcome email could put an owner
+            # "ahead of your own neighbourhood" that the Intel tab put behind.
+            from competitor_intel_format import market_rating
+            mk = market_rating(rivals)
+            if mk["market_rating_n"] >= MIN_COMPETITORS:
                 out["neighbourhood"] = {
-                    "count": len(rivals),
-                    "avg_rating": round(avg, 1),
+                    "count": mk["market_rating_n"],
+                    "avg_rating": mk["market_rating"],
+                    "reviews": mk["market_rating_reviews"],
+                    "basis": "weighted by each restaurant's review count",
                     "best": max(rivals, key=lambda c: float(c["rating"]))["name"],
                 }
         except Exception as e:
@@ -161,12 +168,18 @@ def lines(look):
     if rating and hood.get("avg_rating") and hood.get("count"):
         avg = hood["avg_rating"]
         n = hood["count"]
-        if rating > avg:
+        # The same standing rule as the Intel tab (competitor_intel_format.
+        # market_standing): "ahead" needs a real lead, not 0.1 of a star.
+        from competitor_intel_format import market_standing
+        st = market_standing({"own_rating": rating, "own_rating_basis": "google_all_time"},
+                             {"market_rating": avg})["standing"]
+        if st == "ahead":
             out.append(f"The {n} comparable restaurants nearest you average {avg} — "
                        f"you are ahead of your own neighbourhood.")
-        elif rating < avg:
+        elif st == "behind":
             out.append(f"The {n} comparable restaurants nearest you average {avg}. "
                        f"That gap is the first thing I will go after.")
         else:
-            out.append(f"The {n} comparable restaurants nearest you average the same {avg}.")
+            out.append(f"The {n} comparable restaurants nearest you average {avg} — "
+                       f"you are level with them.")
     return out

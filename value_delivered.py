@@ -378,12 +378,31 @@ def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None, s
     """
     if scope is not None:
         denied_modules = set(scope.get("denied_modules") or ())
+    d = delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules, scope=scope)
+    # Which "measured" figure this is (fix I7, CA4 F16): Home's is a MONTHLY
+    # RATE; the owner report's is a sum over its window; a milestone's is an
+    # all-time sum. Each carries its scope so no surface prints one under
+    # another's words.
+    if isinstance(d, dict):
+        d = dict(d, scope="monthly_rate")
     return {
-        "delivered": delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules, scope=scope),
+        "delivered": d,
         "avoided": avoided(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "opportunity": opportunity(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "surfaced": surfaced(restaurant_id, db_path=db_path, denied_modules=denied_modules),
     }
+
+
+# The value section's two headings (fix I7, CA4 F6), served beside the four
+# figures by /api/value as `sections`: the web put "Measured — What Cavnar AI
+# has been worth" over all four tiles, two of which grow as the restaurant
+# does worse. Only `delivered` is measured; the rest are what Cavnar surfaced
+# or what is still available. Clients head each group with its own words.
+VALUE_SECTIONS = (
+    {"key": "measured", "heading": "What was measured", "figures": ["delivered"]},
+    {"key": "surfaced", "heading": "What Cavnar surfaced / still available",
+     "figures": ["avoided", "surfaced", "opportunity"]},
+)
 
 
 # What each module's measured dollars are called on the Home headline. Built
@@ -452,6 +471,9 @@ def headline(restaurant_id: int, user=None, db_path: str = DB_PATH) -> dict:
         "sales_lift": {"monthly": lift.get("monthly", 0.0), "net_monthly": lift.get("net_monthly", 0.0),
                        "wins": lift.get("wins", 0), "basis": lift.get("basis")},
         "label": "measured, per month",
+        # `monthly` is a monthly RATE; `cumulative` an all-time sum over
+        # measured days (fix I7).
+        "scope": "monthly_rate",
         "caveat": v.get("caveat"),
         "restaurant_wide": _restaurant_wide(scope),
     }
@@ -473,6 +495,7 @@ def home_block(vh, history=None) -> dict:
             "worsened": vh.get("worsened") or {"count": 0, "monthly": 0.0, "priced_count": 0},
             "cumulative": vh.get("cumulative"), "unpriced_wins": vh.get("unpriced_wins") or [],
             "sales_lift": vh.get("sales_lift"), "history": history or [], "per": "month",
+            "scope": "monthly_rate", "cumulative_scope": "measured_days_sum",
             "label": vh.get("label"), "by_module": vh.get("by_module") or [], "caveat": vh.get("caveat")}
 
 

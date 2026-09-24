@@ -48,11 +48,19 @@ def build(restaurant_id, day=None, db_path=DB_PATH):
     import labor
     fc = _safe(labor.build_demand_forecast, restaurant_id) or {}
     today = next((d for d in fc.get("days", []) if d["day"] == weekday), None)
-    if today and today.get("samples", 0) >= 3:
+    # The same demand levels the Shift Quality scorer staffs the day by
+    # (thresholds.demand_level: +25 peak / +8 high / -15 low) on the same
+    # reading floor — this line used its own ±15%, so a day the schedule
+    # was built as "high" was "a typical Friday" at lineup.
+    import thresholds
+    if today and today.get("samples", 0) >= thresholds.DEMAND_LEVEL_MIN_READINGS:
         pct = today["vs_average_pct"]
-        if pct >= 15:
+        level = thresholds.demand_level(pct)
+        if level == "peak":
             text = f"Expect a busy {weekday} — typically about {pct}% busier than an average day."
-        elif pct <= -15:
+        elif level == "high":
+            text = f"Expect a busier-than-average {weekday} — typically about {pct}% above an average day."
+        elif level == "low":
             text = f"Expect a quieter {weekday} — typically about {abs(pct)}% under an average day."
         else:
             text = f"A typical {weekday} in volume."

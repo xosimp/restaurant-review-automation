@@ -822,6 +822,24 @@ ALERT_HARD_CEILING_PER_DAY = 50
 MIN_TREND_REVIEWS_PER_WEEK = 3
 
 
+def _negative_trend(restaurant_id: int, db_path: str = DB_PATH):
+    """{"weeks", "reviews", "first", "latest", "confidence"} when the one
+    rating-trend rule (review_intelligence.rating_trend) reads a decline of
+    medium or high confidence over the last 8 weeks, else None."""
+    try:
+        import review_intelligence as _ri
+        t = _ri.rating_trend(restaurant_id, weeks=8, db_path=db_path) or {}
+    except Exception:
+        return None
+    if t.get("direction") != "declining" or t.get("confidence") not in ("medium", "high"):
+        return None
+    if t.get("first") is None or t.get("latest") is None:
+        return None
+    solid = [w for w in (t.get("series") or []) if (w.get("count") or 0) >= MIN_TREND_REVIEWS_PER_WEEK]
+    return {"weeks": len(solid), "reviews": sum(int(w.get("count") or 0) for w in solid),
+            "first": float(t["first"]), "latest": float(t["latest"]), "confidence": t["confidence"]}
+
+
 def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     try:
         from models import count_alerts_today
@@ -2547,42 +2565,28 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
 
         # ── Negative trend ────────────────────────────────────
         if r["alert_negative_trend"] and not _already_alerted("negative_trend"):
-            c2 = models.get_conn(db_path)
-            # COALESCE(NULLIF(review_date,''), fetched_at), not review_date
-            # alone: a CSV/manual import with no date was excluded from its
-            # own restaurant's trend entirely. Soft-deleted rows excluded.
-            # `n` comes back so a "week" of one review cannot be a trend.
-            weeks = c2.execute("""
-                SELECT strftime('%Y-%W', COALESCE(NULLIF(review_date,''), fetched_at)) as week,
-                       AVG(rating) as avg_rating,
-                       COUNT(*)    as n
-                FROM reviews
-                WHERE restaurant_id=?
-                  AND deleted_at IS NULL
-                  AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', '-28 days')
-                  AND rating IS NOT NULL
-                GROUP BY week
-                ORDER BY week ASC
-            """, (rid,)).fetchall()
-            c2.close()
-            # Three consecutive weekly averages, each over at least
-            # MIN_TREND_REVIEWS_PER_WEEK reviews. Without the volume gate a
-            # single 5-star week followed by a single 3-star week read as a
-            # "rating declining 3 weeks in a row" SMS.
-            recent = weeks[-3:]
-            if len(recent) >= 3 and all((w["n"] or 0) >= MIN_TREND_REVIEWS_PER_WEEK for w in recent):
-                avgs = [w["avg_rating"] for w in recent]
-                if avgs[0] > avgs[1] > avgs[2]:
-                    sms  = (
-                        f"📉 {name}: Average rating has declined 3 weeks in a row "
-                        f"({avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★).\n"
-                        f"dashboard.cavnar.ai"
-                    )
-                    _fire(sms, f"Rating declining — {name}", [
-                        f"Weekly average ratings have dropped 3 weeks in a row: "
-                        f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
-                        "This trend warrants a closer look at what guests are saying.",
-                    ], "negative_trend")
+            # One rating-trend rule for every owner-facing surface (fix I14,
+            # CA1 R19): review_intelligence.rating_trend — a least-squares
+            # slope over the weeks with MIN_TREND_REVIEWS_PER_WEEK+ reviews,
+            # needing 4 such weeks, a direction the first-to-last change
+            # agrees with, and a confidence scored on how consistently the
+            # weeks move. This alert ran its own "3 strictly falling weekly
+            # averages" check, which the Reviews page's scorer could call flat
+            # on the same data. It fires on a declining read of medium or high
+            # confidence, and says how many weeks and reviews it rests on.
+            neg = _negative_trend(rid, db_path)
+            if neg:
+                sms = (
+                    f"📉 {name}: Weekly rating has been declining over {neg['weeks']} weeks "
+                    f"({neg['first']:.1f} → {neg['latest']:.1f}★, {neg['reviews']} reviews).\n"
+                    f"dashboard.cavnar.ai"
+                )
+                _fire(sms, f"Rating declining — {name}", [
+                    f"Weekly average ratings have been declining over {neg['weeks']} weeks: "
+                    f"<strong>{neg['first']:.1f} → {neg['latest']:.1f}★</strong>, across "
+                    f"{neg['reviews']} reviews ({neg['confidence']} confidence).",
+                    "This trend warrants a closer look at what guests are saying.",
+                ], "negative_trend")
 
         # ── Rating drops below threshold ───────────────────────
         if r["alert_rating_threshold"] and not _already_alerted("rating_threshold"):
@@ -2697,11 +2701,37 @@ def _lost_query_lines(restaurant_id: int, db_path: str = DB_PATH) -> list:
 # the move has to be more than one question changing its mind.
 AI_VISIBILITY_MIN_SAMPLE = 5
 AI_VISIBILITY_MIN_QUERIES_MOVED = 2
+AI_VISIBILITY_Z = 1.645     # 90%, the interval the Intel page draws
+
+
+def visibility_range(appeared, answered):
+    """(low, high) whole-percent 90% Wilson interval for `appeared` of
+    `answered` questions — the same interval client_api draws on the Intel
+    page — or (None, None) without a sample."""
+    try:
+        k, n = int(appeared), int(answered)
+    except (TypeError, ValueError):
+        return None, None
+    if n <= 0 or k < 0 or k > n:
+        return None, None
+    import math
+    z = AI_VISIBILITY_Z
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    m = (z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d
+    return max(0, round((c - m) * 100)), min(100, round((c + m) * 100))
 
 
 def _ai_visibility_drop(runs: list):
     """(current, previous, questions_moved) when a drop is worth telling
-    the owner about, else None."""
+    the owner about, else None.
+
+    Three bars: both runs big enough to say anything, at least
+    AI_VISIBILITY_MIN_QUERIES_MOVED questions changed, and — the one that
+    matters (fix I4, CA1 I4) — the two runs' 90% ranges do not overlap.
+    Two of seven questions moving sits inside both runs' ranges; an alert on
+    it told the owner about a decline their own Intel page drew as noise."""
     if len(runs) != 2:
         return None
     now, prev = runs[0], runs[1]
@@ -2721,6 +2751,10 @@ def _ai_visibility_drop(runs: list):
         return None
     s_now, s_prev = now.get("ai_score"), prev.get("ai_score")
     if s_now is None or s_prev is None or s_now >= s_prev:
+        return None
+    _lo_prev, _hi_prev = visibility_range(a_prev, n_prev)
+    _lo_now, hi_now = visibility_range(a_now, n_now)
+    if _lo_prev is None or hi_now is None or hi_now >= _lo_prev:
         return None
     return s_now, s_prev, int(round(moved))
 
@@ -2919,16 +2953,21 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 drop = _ai_visibility_drop(runs)
                 if drop:
                     now_s, prev_s, moved = drop
+                    # The ranges, not just the points: the alert fires only
+                    # when they do not overlap, and says so.
+                    p_lo, p_hi = visibility_range(runs[1].get("appeared"), runs[1].get("answered"))
+                    n_lo, n_hi = visibility_range(runs[0].get("appeared"), runs[0].get("answered"))
                     _fire("ai_visibility_drop",
-                          f"Cavnar AI: {name}'s AI visibility fell from {prev_s}% to {now_s}% "
-                          f"({moved} fewer of the questions we ask mentioned you).",
+                          f"Cavnar AI: {name}'s AI visibility fell from about {p_lo}-{p_hi}% to about "
+                          f"{n_lo}-{n_hi}% ({moved} fewer of the questions we ask mentioned you).",
                           f"AI visibility dropped — {name}",
-                          [f"Your visibility in Perplexity went from <strong>{prev_s}%</strong> to "
-                           f"<strong>{now_s}%</strong> since the last check.",
+                          [f"Your visibility in Perplexity went from <strong>{prev_s}%</strong> "
+                           f"(likely {p_lo}-{p_hi}%) to <strong>{now_s}%</strong> (likely {n_lo}-{n_hi}%) "
+                           f"since the last check.",
                            f"That is {moved} fewer of the questions we ask that mentioned you.",
                            *_lost_query_lines(rid, db_path),
-                           "Perplexity varies run to run, so a small move is normal. This one was "
-                           "large enough to be worth a look.",
+                           "Perplexity varies run to run, so a small move is normal. These two checks' "
+                           "likely ranges do not overlap, so this is more than that variation.",
                            "Open Intel → AI Visibility for the full picture."])
             except Exception as e:
                 print(f"[notify] ai visibility check error rid={rid}: {e}")

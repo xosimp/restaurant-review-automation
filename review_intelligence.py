@@ -139,6 +139,11 @@ def _age_days(stamp):
 
 # ── Rating trend, with a confidence that means something ────────────────────
 
+# rating_trend's `direction` values — the contract every consumer compares
+# against (morning_brief, business_intelligence, notify's negative-trend
+# alert). tests/test_forecast_log.py pins it against the real function.
+TREND_DIRECTIONS = ("improving", "declining", "flat")
+
 def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> dict:
     """The weekly rating series with a direction, a confidence and anomalies.
 
@@ -204,7 +209,16 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
     change = values[-1] - values[0]
     # A tenth of a star across the whole window is not a movement an owner
     # should be told about; it is rounding on a handful of reviews.
-    if abs(change) < 0.15:
+    #
+    # The direction comes from the slope and the size from first-vs-last, so
+    # the two must agree before either is said: a rising fitted line whose
+    # last week sits below its first read "improving" beside a negative
+    # change (CA1 R1). Mixed evidence is "flat".
+    #
+    # The values are exactly DIRECTIONS — "improving" | "declining" | "flat"
+    # (None below the floor). Consumers compare against these; two of them
+    # checked "up"/"down" and never fired (CA1 red flag 3).
+    if abs(change) < 0.15 or (slope > 0) != (change > 0):
         direction = "flat"
     else:
         direction = "improving" if slope > 0 else "declining"
@@ -896,8 +910,16 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "worsened": worsened,
         "discuss_tomorrow": [p["category"] for p in problems[:2]] or None,
         "severity": sev,
+        # The one rating-trend rule, whole (fix I14): the web Reviews header
+        # ran its own ±0.05★ first-vs-last-week rule with no review counts;
+        # it renders this — direction, confidence, the move and what it rests
+        # on — instead.
         "trend": {"direction": trend["direction"], "confidence": trend["confidence"],
-                  "reason": trend["reason"]},
+                  "reason": trend["reason"], "first": trend.get("first"), "latest": trend.get("latest"),
+                  "change": trend.get("change"), "weeks": trend.get("weeks_above_floor"),
+                  "reviews": sum(int(w.get("count") or 0) for w in (trend.get("series") or [])
+                                 if (w.get("count") or 0) >= (trend.get("min_reviews_per_week") or 0)),
+                  "min_reviews_per_week": trend.get("min_reviews_per_week")},
         "coverage": {"total": stats.get("total", 0),
                      "unanalysed": stats.get("unanalysed", 0),
                      "classified": stats.get("classified", 0)},

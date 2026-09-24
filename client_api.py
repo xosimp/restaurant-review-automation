@@ -2672,7 +2672,9 @@ def ai_visibility_roadmap(d) -> list:
          "action": "Send a review request", "module": "reviews", "done": reviews_done,
          "why": (f"You have {total} review{'' if total == 1 else 's'} right now. Review count and recency are the "
                  "most visible public signal about your restaurant, and the one you can move fastest."),
-         "detail": (f"{total} reviews — past the 50-review AI threshold" if reviews_done
+         # "past the 50-review AI threshold" stated an unsourced cut-off as
+         # fact (CA4 F5): 50 is this checklist's own target, and says so.
+         "detail": (f"{total} reviews — past this checklist's 50-review target" if reviews_done
                     else f"{total} of 50 reviews — {max(50 - total, 0)} more to go")},
         {"key": "aiv_roadmap:responses", "title": "Respond to every review", "impact": "High impact",
          "action": "Go to review queue", "module": "reviews", "done": response_done,
@@ -4644,9 +4646,67 @@ def ai_visibility(current_user):
 def _do_ai_visibility(rid):
     """Shared by the web route above and mobile_api.py's own ai-visibility."""
     try:
-        return _do_ai_visibility_inner(rid)
+        payload, status = _do_ai_visibility_inner(rid)
     except Exception as e:
         return {"ok": False, "error": _safe_err(e)}, 200
+    # Applied on the way out as well as at build time, so a payload served
+    # from the six-hour cache written before these fields existed carries
+    # them too.
+    if isinstance(payload, dict) and payload.get("ok", True) and "ai_score_band" not in payload:
+        payload = dict(payload, **ai_visibility_band(payload.get("ai_score_low"), payload.get("ai_score_high")),
+                       **presence_band(payload.get("presence_score")))
+    return payload, status
+
+
+# ── One server-side reading for the AI-visibility chip and listing strength ──
+#
+# The clients each carried their own cut-offs: the web labelled the POINT
+# ai_score at 67/34 ("comes up often / sometimes") while showing a Wilson
+# range beside it that routinely spanned 30 to 90, and the listing score's
+# label (80/60/40) and colour (70/40) disagreed between 70 and 80 (CA1 I1/I7,
+# CA4 F4; fixes I4/I10). These are the one table; clients render `*_label`
+# and `*_tone` as sent.
+AIVIS_OFTEN_PCT = 67        # the whole range at or above: comes up often
+AIVIS_RARELY_PCT = 33       # the whole range at or below: rarely comes up
+
+
+def ai_visibility_band(low, high) -> dict:
+    """{"ai_score_band", "ai_score_label", "ai_score_tone"} from the 90%
+    range, never the point. A range that crosses a band edge is said as a
+    range ("somewhere between 30% and 90%…"), because that is what the
+    sample can support."""
+    if low is None or high is None:
+        return {"ai_score_band": None, "ai_score_label": "not measured", "ai_score_tone": "neutral"}
+    lo, hi = int(low), int(high)
+    if lo >= AIVIS_OFTEN_PCT:
+        return {"ai_score_band": "often", "ai_score_label": "comes up often", "ai_score_tone": "good"}
+    if hi <= AIVIS_RARELY_PCT:
+        return {"ai_score_band": "rarely", "ai_score_label": "rarely comes up", "ai_score_tone": "bad"}
+    if lo > AIVIS_RARELY_PCT and hi < AIVIS_OFTEN_PCT:
+        return {"ai_score_band": "sometimes", "ai_score_label": "comes up sometimes", "ai_score_tone": "warn"}
+    return {"ai_score_band": "uncertain",
+            "ai_score_label": f"somewhere between {lo}% and {hi}% — too few questions to say more",
+            "ai_score_tone": "neutral"}
+
+
+# (floor, words, tone), highest first — listing strength's one table.
+PRESENCE_BANDS = ((80, "strong", "good"), (60, "a few gaps", "warn"), (40, "needs work", "warn"),
+                  (0, "critical gaps", "bad"))
+PRESENCE_LABEL = "Listing strength"
+
+
+def presence_band(score) -> dict:
+    """{"presence_label", "presence_band_label", "presence_tone"} for the
+    listing-strength score; the name is "Listing strength" — it counts what
+    is true of the public listing and review record, not Google Business
+    Profile completeness."""
+    if score is None:
+        return {"presence_label": PRESENCE_LABEL, "presence_band_label": "not measured", "presence_tone": "neutral"}
+    s = float(score)
+    for floor, words, tone in PRESENCE_BANDS:
+        if s >= floor:
+            return {"presence_label": PRESENCE_LABEL, "presence_band_label": words, "presence_tone": tone}
+    return {"presence_label": PRESENCE_LABEL, "presence_band_label": "critical gaps", "presence_tone": "bad"}
 
 
 # A visibility check asks the same three questions about the same restaurant
@@ -5206,7 +5266,8 @@ def _do_ai_visibility_inner(rid, force=False):
                           "action": "Go to Account → fill in neighborhood, vibe, and what you're known for",
                           "needs_gmb": False})
 
-    # 5. Review volume — AI systems rank by review count; 50+ is the threshold for appearing
+    # 5. Review volume. 50 is this checklist's own target — no published
+    # source puts an AI-search "threshold" there, and no string says one does.
     rstats = get_review_stats(rid)
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
     # Google's own count of the listing's reviews when Cavnar has it, not the
@@ -5496,11 +5557,19 @@ def _do_ai_visibility_inner(rid, force=False):
         # range, not the point.
         "ai_score_low": ai_score_low,
         "ai_score_high": ai_score_high,
+        # The chip's words and tone come from the RANGE (fix I4): the web
+        # labelled the point ("comes up often" at 67) while the range beside
+        # it ran from 30 to 90.
+        **ai_visibility_band(ai_score_low, ai_score_high),
         "gbp_score": gbp_score,
         # gbp_score's two halves, split apart — see the comment at their
         # computation. presence_score is the only one that describes the
         # restaurant rather than this product's own configuration.
         "presence_score": presence_score,
+        # Its name and its words/tone from one server-side table (fix I10):
+        # it is not Google Business Profile completeness, and the web label
+        # (80/60/40) and colour (70/40) disagreed between 70 and 80.
+        **presence_band(presence_score),
         # How many presence items the score is out of, and how many could
         # not be read (they are left out of it, not counted as 0).
         "presence_measured": len(_presence_measured),
@@ -7294,6 +7363,14 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # The week's sales projection the schedule was built against, frozen
+    # now so it can be scored when the week closes (forecast_log kind
+    # revenue_week, insert-once; CA2 #6). Never blocks the publish.
+    try:
+        import demand as _demand
+        _demand.freeze_week_projection(rid, row["week_start"])
+    except Exception as _fx:
+        print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
     note = None
     if not sent:
         note = ("Published to the staff portal. Nobody has an email address on file, so no emails went out."

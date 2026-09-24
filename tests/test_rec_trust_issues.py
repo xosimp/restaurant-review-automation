@@ -371,13 +371,19 @@ def test_a_slow_night_with_spare_servers_names_the_latest_starter_and_the_saving
                               ("Cy", "Server", "11:00am", "5:00pm"), ("Di", "Cook", "4:00pm", "11:00pm")])
     r = models.get_restaurant(rid, db_path)
     local = datetime(2026, 9, 21, 16, 30)
-    move = strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -22.0}, db_path=db_path)
+    move = strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -22.0, "samples": 6}, db_path=db_path)
     assert move["employee"] == "Bo" and move["hours"] == 3.0 and move["dollars"] == 45
     assert "go at 8pm" in move["text"] and "2 servers on" in move["text"]
-    assert strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -10.0}, db_path=db_path) is None
+    assert strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -10.0, "samples": 6},
+                                       db_path=db_path) is None
+    # Three past readings are enough to say the night is behind, not to cut a
+    # shift on (intraday.MIN_SAMPLES_FOR_CUT; CA1 L28, fix I13).
+    assert strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -22.0, "samples": 3},
+                                       db_path=db_path) is None
     update_restaurant(rid, {"role_floors_json": json.dumps({"Server": {"night": 2}})}, db_path=db_path)
     r = models.get_restaurant(rid, db_path)
-    assert strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -22.0}, db_path=db_path) is None, \
+    assert strategy_jobs.staffing_move(r, local, {"direction": "behind", "pct": -22.0, "samples": 6},
+                                       db_path=db_path) is None, \
         "at the floor there is nobody to spare"
 
 

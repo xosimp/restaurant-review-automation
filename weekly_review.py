@@ -40,6 +40,28 @@ HEADLINE_METRICS = ("sales", "labor_pct", "food_cost_pct", "avg_rating")
 WINDOW_CAVEAT = ("A week is a short window — one closed day or one large party "
                  "moves it in a way it cannot move a month.")
 
+WINDOW_DAYS = 7
+
+
+def band_scale(key, window_days=WINDOW_DAYS) -> float:
+    """How much wider a metric's noise band is over `window_days` than over
+    the window it was set for (metrics' default_window_days, 28-30 days for
+    the headline four).
+
+    metrics.compare's bands are the smallest move that counts over the
+    metric's own default window, and they were applied unscaled to 7-day
+    windows (CA1 H12/red flag 21): a week's mean wobbles about twice as much
+    as a four-week one, so a week-on-week "better than" cleared a band set
+    for a month. The spread of a mean scales with 1/sqrt(days), so the band
+    widens by sqrt(default / window). Never narrower than the metric's own
+    band. When per-restaurant bands land (metrics, group F) they pass
+    through the same `band_scale` argument."""
+    try:
+        default = float(metrics.describe(key).get("default_window_days") or window_days)
+    except Exception:
+        return 1.0
+    return round(max(1.0, (default / float(window_days)) ** 0.5), 3)
+
 
 def week_bounds(day):
     """(monday, sunday) of the ISO week `day` falls in."""
@@ -81,7 +103,8 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
         info = metrics.describe(key)
         row = {"key": key, "label": info["label"], "unit": info["unit"],
                "value": now_v, "previous": was_v, "why": now_why,
-               **metrics.compare(key, was_v, now_v)}
+               # The band scaled for a 7-day window (band_scale).
+               **metrics.compare(key, was_v, now_v, band_scale=band_scale(key))}
         row["monthly_dollars"] = (metrics.monthly_dollars(restaurant_id, key, row["delta"], db_path)
                                   if row["verdict"] in ("improved", "worsened") else None)
         rows.append(row)

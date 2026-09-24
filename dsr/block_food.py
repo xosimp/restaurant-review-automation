@@ -40,6 +40,11 @@ import dsr
 from dsr import common
 
 VARIANCE_WINDOW_DAYS = 7
+# The estimated food cost % is stated only when at least this share of the
+# units sold that night had a fully costed recipe — most of what was sold.
+# Below it the percentage describes a minority of the night and is withheld
+# with the coverage stated (CA1 D5). The dollars of what was costed stay.
+ESTIMATE_MIN_COVERAGE_PCT = 50
 # scheduler.run_daily_depletion_sync re-reads business dates from two days
 # back: a night younger than that may still get its item sales.
 ITEM_SYNC_DAYS = 2
@@ -111,18 +116,30 @@ def _estimate(ctx):
     revenue = sum(float(s["qty"]) * price[s["id"]] for s in priced)
     priced_cost = sum(float(s["qty"]) * plate[s["id"]] for s in priced)
     missing = sorted((s for s in sold if s["id"] not in plate), key=lambda s: -float(s["qty"]))
+    coverage = round(units_costed / units * 100, 1) if units else 0.0
+    # The estimate is a percentage of the night only when enough of what was
+    # sold is costed: a percentage built on 30% of the units sold says
+    # nothing about the night (CA1 D5). Under the floor the dollars of what
+    # WAS costed stay, the percentage is withheld and says why.
+    covered = coverage >= ESTIMATE_MIN_COVERAGE_PCT
     metrics = {
         "est_food_cost": round(cost, 2) if costed else None,
-        "est_food_cost_pct": round(priced_cost / revenue * 100, 1) if revenue > 0 else None,
-        "recipe_coverage_pct": round(units_costed / units * 100, 1),
+        "est_food_cost_pct": round(priced_cost / revenue * 100, 1) if (revenue > 0 and covered) else None,
+        "recipe_coverage_pct": coverage,
     }
     detail = {"estimate": {
         "estimated": True,
-        "label": (f"Estimated — what {mdy(ctx.business_date)}'s dishes should have cost by their recipes, "
-                  "at current ingredient prices. Not a count of what was actually used."),
+        # "units", not "dishes": the coverage and the estimate are counted in
+        # units sold, and a dish sold twenty times is twenty of them.
+        "label": (f"Estimated — what the units sold on {mdy(ctx.business_date)} should have cost by their "
+                  "recipes, at current ingredient prices. Not a count of what was actually used."),
         "units_sold": round(units, 2),
         "units_with_recipe": round(units_costed, 2),
-        "coverage_basis": "share of units sold (by dish) that had a fully costed recipe",
+        "coverage_basis": "share of units sold that had a fully costed recipe",
+        "coverage_floor_pct": ESTIMATE_MIN_COVERAGE_PCT,
+        "coverage_note": (None if covered else
+                          f"Only {coverage:g}% of units sold have a costed recipe — the food cost % is "
+                          f"withheld until it reaches {ESTIMATE_MIN_COVERAGE_PCT}%."),
         "pct_basis": ("theoretical cost over menu price, on the dishes sold that have both a recipe and a price"
                       if revenue > 0 else None),
         "without_recipe": [{"dish": s["name"], "units": round(float(s["qty"]), 2),

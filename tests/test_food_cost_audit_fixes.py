@@ -422,18 +422,23 @@ def test_recipe_coverage_reports_the_share_of_sales_a_recipe_accounts_for(db_pat
 
 # ── Benchmark honesty ───────────────────────────────────────────────────────
 
-def test_a_week_with_no_waste_is_excellent_not_missing_data():
-    """_has_benchmark also required total_waste_cost > 0, so the best possible
-    week — real purchases, nothing wasted — rendered as "—" with "Upload
-    inventory data to see benchmark", identical to having no data at all."""
+def test_a_week_with_no_waste_recorded_is_neither_missing_data_nor_excellent():
+    """_has_benchmark also required total_waste_cost > 0, so a week with real
+    purchases and nothing logged rendered as "—" with "Upload inventory data
+    to see benchmark", identical to having no data at all. It then became
+    "Excellent" — but nothing logged is not the same as nothing wasted, so it
+    is its own state now: not measured, neutral, never the best result
+    (confidence audit CA4 F11, fix I8)."""
     items = [{"item": "Romaine", "category": "Produce", "par_level": 10, "current_stock": 8,
               "unit_cost": 2.0, "avg_daily_usage": 1.0, "last_order_qty": 20, "waste_last_week": 0.0,
               "unit": "lb", "case_size": 1}]
     out = inventory.analyse_inventory(items)
     assert out["waste_rate_pct"] == 0
-    assert out["benchmark_label"] == "Excellent"
-    assert out["benchmark_tone"] == "good"
-    assert "No waste recorded" in out["benchmark_detail"]
+    assert out["benchmark_label"] == "No waste recorded" and out["benchmark_label"] != "—"
+    assert out["benchmark_tone"] == "neutral"
+    assert out["benchmark_state"] == "not_measured"
+    assert "No waste recorded this week" in out["benchmark_detail"]
+    assert "Excellent" not in out["benchmark_detail"]
 
 
 def test_the_benchmark_tone_is_a_semantic_name_not_a_hex():

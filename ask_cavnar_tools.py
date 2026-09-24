@@ -171,6 +171,16 @@ def _read_schedule(restaurant_id):
         "employees": employees_in_schedule(row["schedule_csv"] or ""),
         "share_status": get_schedule_share_status(restaurant_id, row["id"]),
     }
+    # Contract K8: how far the demand forecast this schedule was staffed
+    # against has been off (nightly, out of sample) and how the frozen weekly
+    # projections have scored, so "how sure are you about next week" has a
+    # measured answer rather than none.
+    try:
+        import demand as _demand
+        out["demand_accuracy"] = _demand.demand_accuracy(restaurant_id)
+        out["week_projection_accuracy"] = _demand.week_projection_accuracy(restaurant_id)
+    except Exception:
+        pass
     # The Shift Quality evaluation, which the owner can already read on the
     # Labor tab. Without it an owner who saw "Saturday scored 44" and asked
     # why got a worse answer here than the panel had already given them.
@@ -865,6 +875,15 @@ def _read_ai_visibility(restaurant_id):
     return {
         "has_data": True,
         "ai_score": payload.get("ai_score"),
+        # The range is the measurement; the point alone is false precision
+        # from a handful of non-deterministic questions (CA1 I1/I2, fix I4).
+        "ai_score_low": payload.get("ai_score_low"),
+        "ai_score_high": payload.get("ai_score_high"),
+        "ai_score_label": payload.get("ai_score_label"),
+        "answered_queries": payload.get("answered_queries"),
+        "note": ("ai_score is a point estimate from answered_queries questions; quote the range "
+                 "ai_score_low-ai_score_high, never the point alone, and never call a move inside "
+                 "that range a change."),
         "gbp_score": payload.get("gbp_score"),
         "gbp_connected": payload.get("gbp_connected"),
         "appeared_in": payload.get("appeared_count"),

@@ -551,9 +551,11 @@ def test_forecast_calibration_needs_a_record_and_a_real_lean(db_path):
     import food_cost_intelligence as fci
     rid = _rid(db_path, module_inventory=1)
     conn = get_conn(db_path)
+    # One row per ISO week: three rows inside one week are ONE scored week
+    # now (forecast_log reads one prediction per period — CA2 probe F).
     for i, se in enumerate((18.0, 22.0, 20.0)):
         conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, signed_error_pct) "
-                     "VALUES (?,?,?,?,?,?,?)", (rid, "waste_week", f"2026-08-{10 + i:02d}", 120, 100, abs(se), se))
+                     "VALUES (?,?,?,?,?,?,?)", (rid, "waste_week", f"2026-08-{2 + 7 * i:02d}", 120, 100, abs(se), se))
     conn.commit(); conn.close()
     cal = fci.forecast_calibration(rid, "waste_week", db_path=db_path)
     assert cal["available"] and cal["bias_pct"] == 20.0 and cal["factor"] == 0.8333 and "high" in cal["reading"]
@@ -564,7 +566,7 @@ def test_forecast_calibration_needs_a_record_and_a_real_lean(db_path):
     conn = get_conn(db_path)
     for i, se in enumerate((4.0, -3.0, 5.0)):
         conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, signed_error_pct) "
-                     "VALUES (?,?,?,?,?,?,?)", (rid2, "waste_week", f"2026-08-{10 + i:02d}", 100, 98, abs(se), se))
+                     "VALUES (?,?,?,?,?,?,?)", (rid2, "waste_week", f"2026-08-{2 + 7 * i:02d}", 100, 98, abs(se), se))
     conn.commit(); conn.close()
     assert fci.calibrated(rid2, "waste_week", 100, db_path=db_path)[0] == 100     # no consistent lean → untouched
 

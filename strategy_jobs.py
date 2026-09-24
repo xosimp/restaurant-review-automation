@@ -970,6 +970,11 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     if pulse.get("direction") != "behind" or abs(pct) < PULSE_MOVE_MIN_BEHIND_PCT:
         return None
     import intraday
+    # A cut rests on the hour's own history: under MIN_SAMPLES_FOR_CUT past
+    # same-weekday readings the pulse says how the night is running and
+    # stops there (CA1 L28).
+    if int(pulse.get("samples") or 0) < intraday.MIN_SAMPLES_FOR_CUT:
+        return None
     import schedule_rules as _sr
     from models import get_role_rates
     rows = intraday.published_rows(restaurant.id, local.date(), db_path=db_path)

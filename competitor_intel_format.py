@@ -248,3 +248,75 @@ def extract_recs(text):
     if not text:
         return []
     return parse_competitor_intel(text)["recommendations"][:3]
+
+
+# ── The market average: one definition (CA1 I11, fix I10) ─────────────────
+#
+# There were three: the web Intel header took a flat mean of competitor
+# ratings and compared it with the average of the reviews Cavnar imported;
+# the phone took a review-weighted mean against Google's all-time rating;
+# the welcome email (first_look) took a flat mean of whatever Places
+# returned. The same restaurant could lead its block on one surface and
+# trail it on another. This is the phone's definition, for every surface.
+
+# A lead needs a real gap; "neck and neck" covers the band either side.
+# Stars, against the review-weighted market average.
+MARKET_LEAD_STARS = 0.3
+MARKET_LEVEL_STARS = -0.1
+
+
+def market_rating(competitors) -> dict:
+    """The competitor set's rating, weighted by review volume, leaving out
+    provisional ratings (a four-review venue at 5.0 would otherwise pull the
+    market the owner is measured against). Unrated places are absent, never
+    a zero. {"market_rating", "market_rating_reviews", "market_rating_n"}."""
+    rated = []
+    for c in competitors or []:
+        try:
+            r = float(c.get("rating") or 0)
+            n = int(c.get("review_count") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if r and not c.get("rating_is_provisional"):
+            rated.append((r, n))
+    if not rated:
+        return {"market_rating": None, "market_rating_reviews": 0, "market_rating_n": 0}
+    total_reviews = sum(n for _r, n in rated)
+    weighted = (sum(r * n for r, n in rated) / total_reviews) if total_reviews > 0 else \
+        sum(r for r, _n in rated) / len(rated)
+    return {"market_rating": round(weighted, 1), "market_rating_reviews": total_reviews,
+            "market_rating_n": len(rated)}
+
+
+def own_rating(gbp_rating=None, gbp_review_count=None, sample_rating=None, sample_count=None) -> dict:
+    """The owner's rating, from one source: Google's all-time rating when
+    Cavnar has it (the only figure comparable to competitors' all-time
+    ratings), else the imported sample, labelled as such.
+    {"own_rating", "own_rating_basis", "own_rating_count"}."""
+    if gbp_rating:
+        return {"own_rating": round(float(gbp_rating), 1), "own_rating_basis": "google_all_time",
+                "own_rating_count": gbp_review_count}
+    if sample_rating:
+        return {"own_rating": round(float(sample_rating), 2), "own_rating_basis": "imported_sample",
+                "own_rating_count": sample_count}
+    return {"own_rating": None, "own_rating_basis": None, "own_rating_count": None}
+
+
+def market_standing(own: dict, market: dict) -> dict:
+    """Where the owner stands against the market, from market_rating() and
+    own_rating(). Compared only when the own rating is Google's all-time
+    one — an imported sample is not the same kind of number as the
+    competitors' ratings, and a rough month in the sample read as losing to
+    the market. {"own_vs_market", "standing": "ahead" | "level" | "behind" |
+    None, "standing_label", "standing_tone"}."""
+    o, m = (own or {}).get("own_rating"), (market or {}).get("market_rating")
+    if o is None or m is None or (own or {}).get("own_rating_basis") != "google_all_time":
+        return {"own_vs_market": None, "standing": None, "standing_label": None, "standing_tone": "neutral"}
+    gap = round(float(o) - float(m), 1)
+    if gap >= MARKET_LEAD_STARS:
+        standing, label, tone = "ahead", "You lead the block", "good"
+    elif gap >= MARKET_LEVEL_STARS:
+        standing, label, tone = "level", "Neck and neck", "warn"
+    else:
+        standing, label, tone = "behind", "Behind the block", "bad"
+    return {"own_vs_market": gap, "standing": standing, "standing_label": label, "standing_tone": tone}
