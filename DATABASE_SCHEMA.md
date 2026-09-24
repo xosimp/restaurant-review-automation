@@ -199,6 +199,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 - `dsr_metrics` — PK (restaurant_id, business_date, metric); `metric` is `<block>.<key>`; only measured values are stored (NULL = not measured, never 0). The searchable history.
 - `dsr_budgets` — PK (restaurant_id, business_date); gross / net budget per night.
 - `dsr_category_map` — PK (restaurant_id, pos_name) → category; an unmapped POS department is shown as Unmapped, never guessed.
+- `dsr_history_import` — PK (restaurant_id, business_date): gross, net, categories_json, source_file — last year from the owner's old DSR workbooks; an empty cell is skipped, never stored as $0.
 - `restaurants`: `fiscal_week_start_dow`, `fiscal_year_start`, `fiscal_period_scheme` (4x13 | 445), `dsr_enabled`, `dsr_deadline_hour`.
 
 ## Conventions that apply across this schema

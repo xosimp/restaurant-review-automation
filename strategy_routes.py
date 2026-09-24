@@ -2471,6 +2471,47 @@ def _do_dsr_close(u):
     return {"ok": True, "business_date": d.isoformat(), "label": mdy(d), **out}, (202 if out.get("started") else 200)
 
 
+def _do_dsr_week(u):
+    """Erik's weekly grid: the restaurant's week holding ?date= (default:
+    the latest report's night, else today), with period to date."""
+    from dsr import access, rollup
+    from models import get_restaurant
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    d = _dsr_grid_day(u)
+    if d is None:
+        return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+    r = get_restaurant(_rid(u))
+    return {"ok": True, "view": _dsr_view(u), "week": access.redact_grid(rollup.week(r, d), u)}, 200
+
+
+def _do_dsr_period(u):
+    from dsr import access, rollup
+    from models import get_restaurant
+    if _dsr_view(u) is None:
+        return _NO_DSR
+    d = _dsr_grid_day(u)
+    if d is None:
+        return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
+    grid = rollup.period(get_restaurant(_rid(u)), d)
+    if grid is None:
+        return {"ok": False, "error": "Set your fiscal calendar to see periods."}, 409
+    return {"ok": True, "view": _dsr_view(u), "period": access.redact_grid(grid, u)}, 200
+
+
+def _dsr_grid_day(u):
+    from dsr import store
+    raw = request.args.get("date")
+    if raw:
+        return _dsr_day(raw)
+    latest = store.list_reports(_rid(u), limit=1)
+    if latest:
+        return _dsr_day(latest[0]["business_date"])
+    import closeout
+    from models import get_restaurant
+    return closeout.business_date_for(get_restaurant(_rid(u)))
+
+
 def _forget(rid, route, key):
     from models import get_conn
     conn = get_conn()
@@ -2581,6 +2622,8 @@ _ROUTES = [
     ("/morning-brief/settings", ["POST"], _do_morning_brief_settings, "morning_brief_settings"),
     ("/dsr", ["GET"], _do_dsr_list, "dsr_list"),
     ("/dsr/close", ["POST"], _do_dsr_close, "dsr_close"),
+    ("/dsr/week", ["GET"], _do_dsr_week, "dsr_week"),
+    ("/dsr/period", ["GET"], _do_dsr_period, "dsr_period"),
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
 ]

@@ -84,6 +84,20 @@ def init_dsr(db_path=DB_PATH):
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, pos_name)
         )""")
+        # Last year from the owner's old DSR workbooks — RPower keeps only a
+        # month of history for some stores, so Last Year would otherwise stay
+        # empty for a year. One row per business date; a re-import replaces.
+        conn.execute("""CREATE TABLE IF NOT EXISTS dsr_history_import (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT    NOT NULL,
+            gross           REAL,
+            net             REAL,
+            categories_json TEXT,
+            source_file     TEXT,
+            imported_by     INTEGER,
+            imported_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, business_date)
+        )""")
         conn.commit()
     finally:
         conn.close()
@@ -408,3 +422,47 @@ def category_for(pos_name, mapping):
     """The DSR category a POS department/category name maps to — only what
     the owner mapped; anything else is UNMAPPED, never guessed."""
     return (mapping or {}).get(str(pos_name or "").strip().lower(), _dsr.UNMAPPED)
+
+
+# ── last year, imported ────────────────────────────────────────────────────
+
+def import_history(restaurant_id, rows, source_file=None, imported_by=None, db_path=DB_PATH):
+    """Upsert [{"date", "gross", "net", "categories": {cat: value}}]; returns
+    how many rows were written. A row with neither gross nor net is skipped —
+    an empty cell in a workbook is not a $0 night."""
+    n = 0
+    conn = get_conn(db_path)
+    try:
+        for r in rows or []:
+            day = str(r.get("date") or "")[:10]
+            gross, net = r.get("gross"), r.get("net")
+            if len(day) != 10 or (gross is None and net is None):
+                continue
+            cats = {str(k): float(v) for k, v in (r.get("categories") or {}).items() if v is not None}
+            conn.execute("INSERT INTO dsr_history_import (restaurant_id, business_date, gross, net, categories_json, "
+                         "source_file, imported_by, imported_at) VALUES (?,?,?,?,?,?,?,datetime('now')) "
+                         "ON CONFLICT(restaurant_id, business_date) DO UPDATE SET gross=excluded.gross, net=excluded.net, "
+                         "categories_json=excluded.categories_json, source_file=excluded.source_file, "
+                         "imported_by=excluded.imported_by, imported_at=excluded.imported_at",
+                         (restaurant_id, day, float(gross) if gross is not None else None,
+                          float(net) if net is not None else None, json.dumps(cats) if cats else None,
+                          (source_file or "")[:200] or None, imported_by))
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def history_for(restaurant_id, start, end, db_path=DB_PATH):
+    """{date: {"gross", "net", "categories"}} imported for the range."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT business_date, gross, net, categories_json FROM dsr_history_import "
+                            "WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
+                            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
+    finally:
+        conn.close()
+    return {r["business_date"]: {"gross": r["gross"], "net": r["net"],
+                                 "categories": json.loads(r["categories_json"]) if r["categories_json"] else {}}
+            for r in rows}

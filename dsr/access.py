@@ -243,3 +243,28 @@ def summary(report, user):
             "version": report.get("version"), "status": report.get("status"),
             "provisional": bool(report.get("provisional")), "missing": facts.get("missing") or [],
             "finalized_at": report.get("finalized_at")}
+
+
+def redact_grid(grid, user):
+    """A week or period from dsr.rollup, as this login may read it: the
+    budget columns (and their comparisons) are the owner's, as on the
+    nightly report. Returns a copy; None passes through."""
+    if grid is None:
+        return None
+    if view_for(user) == OWNER:
+        return grid
+    import copy
+
+    def strip(d):
+        return {k: v for k, v in d.items() if not str(k).startswith(OWNER_ONLY_PREFIXES)}
+
+    g = copy.deepcopy(grid)
+    for key in ("days",):
+        g[key] = [strip(r) for r in g.get(key) or []]
+    for w in g.get("weeks") or []:
+        w["totals"] = strip(w.get("totals") or {})
+    for key in ("totals", "period_to_date"):
+        if g.get(key):
+            g[key] = strip(g[key])
+    g["withheld"] = ["budget"]
+    return g
