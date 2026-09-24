@@ -48,7 +48,13 @@ final class DailyReportDecodingTests: XCTestCase {
         XCTAssertEqual(n.actionsTomorrow.first?.urgencyLabel, "This week")
         XCTAssertEqual(n.actionsTomorrow.first?.effortLabel, "low effort")
         XCTAssertEqual(n.callouts.map(\.label),
-                       ["Highest priority", "Biggest risk", "Biggest win", "Staffing", "Money on the table", "Guest experience"])
+                       ["Highest priority", "Biggest risk", "Biggest win", "Staffing",
+                        "Biggest opportunity \u{00B7} not captured",
+                        "Largest dollar gap \u{00B7} an opportunity, not savings", "Guest experience"])
+        // The old largest_money_saving slot is read as an opportunity (NS3 R13)
+        // and no call-out label claims money was saved (NS1 #17).
+        XCTAssertFalse(n.callouts.contains { $0.label.lowercased().contains("saving") && !$0.label.contains("not savings") })
+        XCTAssertFalse(n.callouts.contains { $0.label == "Money on the table" })
         XCTAssertEqual(n.verification?.kept, 20)
 
         XCTAssertEqual(r.versions.map(\.version), [1, 2])

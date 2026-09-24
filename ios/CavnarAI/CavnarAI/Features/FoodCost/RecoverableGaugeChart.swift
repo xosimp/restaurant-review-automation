@@ -1,24 +1,33 @@
 import SwiftUI
 
-/// Recoverable Gauge — the money on the table this month as a half-arc,
-/// projected to the year beneath once the arc lands. The arc fills with an
-/// ember gradient and a hot tip.
+/// Recoverable Gauge — the waste above tolerance, projected to a month from
+/// one week's count, as a half-arc; the year beneath once the arc lands. An
+/// OPPORTUNITY, labelled one: projected, with its basis, never "this month"
+/// as if measured, never "claw back" (a certainty), never "overstock"
+/// (which is not in the figure) — NS1 #6.
 struct RecoverableGaugeChart: View {
     let monthly: Double
     let annual: Double
-    /// What "full" means — the month's total waste + overstock exposure, so
-    /// the arc reads as "this much of what's leaking is recoverable".
+    /// What "full" means — the month's projected waste, so the arc reads
+    /// as "this much of what's being wasted is above the normal trim".
     let ceiling: Double
+    /// The server's basis for the figure (`annual_recoverable_basis`),
+    /// shown under the gauge; the model's default when absent.
+    var basis: String = "Projected from one week\u{2019}s count \u{2014} what is still being lost, not money saved"
+    /// `recoverable_kind` — "opportunity" on today's server.
+    var kind: String? = nil
 
     private var fraction: Double { ceiling > 0 ? min(1, monthly / ceiling) : 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CavnarChartHeader(kicker: "Recoverable", title: "Recoverable Gauge",
-                              detail: "Waste and overstock you can claw back with better ordering — the one number to remember.")
+            CavnarChartHeader(kicker: "Recoverable \u{00B7} \(kind ?? "opportunity")", title: "Recoverable Gauge",
+                              detail: "Waste above the normal trim for each category, projected to a month \u{2014} available with better ordering, not captured yet.")
             CavnarAnimatedCanvas(duration: 2.8, height: 230, replayKey: "\(Int(monthly))-\(Int(ceiling))") { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
+            HomeMixedText.make(basis, size: 12.5, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -46,7 +55,7 @@ struct RecoverableGaugeChart: View {
         // The readout sits in the middle of the bowl (the open area between
         // the top of the arc and its diameter), not crowded down by the
         // baseline: at `center.y - 16` the big number was practically
-        // resting on the "Recoverable this month" line under it while the
+        // resting on the caption line under it while the
         // whole upper half of the gauge sat empty. Anchoring off R keeps it
         // centered at any canvas width, since R is what actually sets how
         // tall the open area is.
@@ -61,11 +70,11 @@ struct RecoverableGaugeChart: View {
         // caption drops away from it. At 28pt below a 34pt number the two
         // were nearly touching — the number's own descenders ran into the
         // caption's cap height — and the gauge has plenty of room here.
-        CavnarChart.text(&ctx, CavnarChart.kicker("Recoverable this month"), at: CGPoint(x: center.x, y: bowlMid + 40))
+        CavnarChart.text(&ctx, CavnarChart.kicker("Projected / mo \u{00B7} opportunity"), at: CGPoint(x: center.x, y: bowlMid + 40))
         let at = CavnarChart.window(t, from: 0.85, length: 0.15)
         ctx.drawLayer { layer in
             layer.opacity = at
-            CavnarChart.text(&layer, CavnarChart.number("$\(Int(annual.rounded()).formatted()) / year at this pace", size: 13),
+            CavnarChart.text(&layer, CavnarChart.number("$\(Int(annual.rounded()).formatted()) / year projected", size: 13),
                              at: CGPoint(x: center.x, y: bowlMid + 64))
         }
         CavnarChart.text(&ctx, CavnarChart.label("$0", size: 10), at: CGPoint(x: center.x - R - 6, y: center.y + 22), anchor: .leading)

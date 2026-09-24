@@ -254,16 +254,18 @@ struct RecCheckInCard: View {
     }
 }
 
-/// "What worked for you" — the server's sentences about this restaurant's
-/// own measured record, rendered exactly as given (numbers in the number
-/// face). The card does not exist until the server says there is enough.
+/// "Measured alongside your changes" — the server's sentences about this
+/// restaurant's own measured record, rendered exactly as given (numbers in
+/// the number face). The card does not exist until the server says there is
+/// enough. It was titled "What worked for you", which asserts causation over
+/// before-and-after data; the caveat under it is now always drawn (NS1 #18).
 struct WhatWorkedCard: View {
     let whatWorked: WhatWorked
 
     var body: some View {
         if whatWorked.isShown {
             VStack(alignment: .leading, spacing: 14) {
-                HomeSectionHeader(kicker: "Your record", title: "What worked for you",
+                HomeSectionHeader(kicker: "Your record", title: "Measured alongside your changes",
                                   trailing: whatWorked.days.map { "\($0) days" })
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(whatWorked.sentences.enumerated()), id: \.offset) { _, sentence in
@@ -274,10 +276,10 @@ struct WhatWorkedCard: View {
                             Spacer(minLength: 0)
                         }
                     }
-                    if let caveat = whatWorked.caveat, !caveat.isEmpty {
-                        CavnarCaveat(title: "Before and after, not proof", detail: caveat)
-                            .padding(.top, 4)
-                    }
+                    CavnarCaveat(title: "Before and after, not proof",
+                                 detail: (whatWorked.caveat?.isEmpty == false ? whatWorked.caveat : nil)
+                                    ?? "Measured before and after, not proven cause.")
+                        .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()

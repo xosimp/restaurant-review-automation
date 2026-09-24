@@ -595,6 +595,16 @@ struct DSRBlockBody: View {
         }
     }
 
+    /// The food block's drivers total, under its new name or its old one,
+    /// with its detail's basis and completeness.
+    private var atStakeLine: String? {
+        let keys = ["drivers_at_stake_monthly", "at_stake_monthly", "recoverable_monthly"]
+        guard let key = keys.first(where: { m($0) != nil }), let amount = m(key) else { return nil }
+        let detail = block.detail["drivers_at_stake"] ?? block.detail["at_stake"] ?? block.detail["recoverable"]
+        return OwnerCopy.dsrAtStakeLine(amount: DSRFormat.money(amount), basis: detail?["basis"]?.string,
+                                        complete: detail?["complete"]?.bool)
+    }
+
     /// Red over target, green under it, plain ink when there's no target.
     private var laborTone: Color {
         guard m("pct") != nil else { return .cavnarInk3 }
@@ -620,8 +630,12 @@ struct DSRBlockBody: View {
                 HomeMixedText.make(note, size: 13, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let recoverable = m("recoverable_monthly") {
-                HomeMixedText.make("Recoverable each month: \(DSRFormat.money(recoverable))", size: 14, color: .cavnarInk2)
+            // The cost drivers' monthly total is an opportunity, never money
+            // recovered: it carries its basis, and "partial" when a source
+            // was missing (NS1 #7). The renamed key is read first.
+            if let line = atStakeLine {
+                HomeMixedText.make(line, size: 14, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             let stock = block.criticalStock
             if !stock.isEmpty {

@@ -38,7 +38,7 @@ struct HomePulseStrip: View {
                                     PulseChip(pulse: pulse, paused: paused)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("\(module.label): \(pulse.value) \(pulse.label)")
+                                .accessibilityLabel("\(module.label): \(pulse.value) \(OwnerCopy.displayLabel(pulse.label))")
                             }
                         }
                     }
@@ -99,7 +99,7 @@ private struct PulseChip: View {
                 .font(.cavnarNumber(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarSensitive()
-            HomeMixedText.make(pulse.label, size: 12, weight: 700, color: .cavnarInk2)
+            HomeMixedText.make(OwnerCopy.displayLabel(pulse.label), size: 12, weight: 700, color: .cavnarInk2)
                 .lineLimit(1)
         }
         .padding(.horizontal, 12)

@@ -39,7 +39,10 @@ struct AccountReferralView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             AccountKicker(text: "Who should we introduce?")
                             VStack(alignment: .leading, spacing: 12) {
-                                Text("Will sends them a short, personal intro from you — no pressure, no spam. If they become a client, your next month is on us.")
+                                // No promise that has no billing behind it,
+                                // and the intro is a template email sent right
+                                // away, so it isn't called personal (NS1 #19).
+                                Text("We email them a short intro that says it came from you \u{2014} no pressure, no spam.")
                                     .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                                 TextField("Restaurant or owner name", text: $name)

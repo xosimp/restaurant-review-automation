@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Labor Analytics tab — savings breakdown, industry benchmark, and a real
+/// Labor Analytics tab — the gap to target, industry benchmark, and a real
 /// performance chart (trend/by-day toggle), matching the web dashboard's
 /// Labor "Analytics" sub-tab. Takes the same `LaborStats` the Overview tab
 /// already fetched (LaborViewModel) rather than re-fetching — the AI
@@ -13,12 +13,13 @@ struct LaborAnalyticsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let stats = laborStats {
-                savingsTiles(stats)
+                moneyTiles(stats)
                 benchmarkBar(stats)
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
                 WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
-                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "))
+                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
+                               positiveAllowed: Self.positiveAllowed(stats))
             } else if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 20)
             }
@@ -45,7 +46,7 @@ struct LaborAnalyticsSection: View {
     }
 
     @ViewBuilder
-    private func savingsTiles(_ stats: LaborStats) -> some View {
+    private func moneyTiles(_ stats: LaborStats) -> some View {
         let b = stats.savingsBreakdown
         // Captured once per render, before the .onAppear below flips the
         // flag — every tile in this pass sees the same snapshot, so all
@@ -54,23 +55,26 @@ struct LaborAnalyticsSection: View {
         let startFromZero = !viewModel.hasPlayedTilesIntro
         // LazyVGrid doesn't equalise heights across a row, so a tile whose
         // label wraps sat taller than its neighbour. Each tile now fills
-        // its cell (see SavingsTile's maxHeight) inside a grid whose rows
+        // its cell (see LaborStatTile's maxHeight) inside a grid whose rows
         // are sized by the taller tile.
+        // The gap above target is an opportunity, not savings: its label,
+        // its period, the warn tone, and no dollars at all on sample data
+        // (OwnerCopy.laborMoneyTiles; never-say C, NS1 #2, #15, NS3 C3).
+        let money = OwnerCopy.laborMoneyTiles(isLive: stats.isLive, monthly: b.laborMonthly, annual: b.laborAnnual,
+                                              vsIndustryMonthly: b.laborVsIndustryMonthly,
+                                              vsIndustryAnnual: b.laborVsIndustryAnnual,
+                                              industryText: b.industryPctText, periodDays: stats.periodDays)
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-            if b.laborMonthly > 0 {
-                SavingsTile(numericValue: b.laborMonthly, format: formattedDollarsK, label: "Monthly savings", sublabel: "if schedule optimized", startFromZero: startFromZero)
-            } else {
-                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs \(b.industryPctText) avg", startFromZero: startFromZero)
+            ForEach(Array(money.enumerated()), id: \.offset) { _, tile in
+                LaborStatTile(numericValue: tile.value, format: formattedDollarsK, label: tile.label, sublabel: tile.sublabel,
+                            tone: Self.color(tile.tone), startFromZero: startFromZero)
             }
-            if b.laborAnnual > 0 {
-                SavingsTile(numericValue: b.laborAnnual, format: formattedDollarsK, label: "Annual savings", sublabel: "extrapolated yearly", startFromZero: startFromZero)
-            } else {
-                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. \(b.industryPctText) industry avg/yr", startFromZero: startFromZero)
+            if stats.isLive && b.laborOvertime > 0 {
+                LaborStatTile(numericValue: b.laborOvertime, format: formattedDollarsK, label: "Overtime premium",
+                            sublabel: "0.5× rate on hours over 40" + (stats.periodDays.map { " \u{00B7} \($0) days" } ?? ""),
+                            tone: Color.cavnarRed, startFromZero: startFromZero)
             }
-            if b.laborOvertime > 0 {
-                SavingsTile(numericValue: b.laborOvertime, format: formattedDollarsK, label: "Overtime premium", sublabel: "0.5× rate on hours over 40", tone: Color.cavnarRed, startFromZero: startFromZero)
-            }
-            SavingsTile(
+            LaborStatTile(
                 numericValue: Double(stats.overstaffedDays.count),
                 format: { "\(Int($0.rounded()))" },
                 label: "Overstaffed days",
@@ -80,6 +84,17 @@ struct LaborAnalyticsSection: View {
             )
         }
         .onAppear { viewModel.markTilesIntroPlayed() }
+    }
+
+    /// Semantic tone → colour. Neutral is ink, never green: a gap or a
+    /// benchmark difference is not a win.
+    static func color(_ tone: OwnerCopy.Tone) -> Color {
+        switch tone {
+        case .good: return .cavnarGreen
+        case .warn: return .cavnarAmber
+        case .bad: return .cavnarRed
+        case .neutral: return .cavnarInk
+        }
     }
 
     private func formattedDollarsK(_ value: Double) -> String {
@@ -100,7 +115,7 @@ struct LaborAnalyticsSection: View {
     private func benchmarkBar(_ stats: LaborStats) -> some View {
         let pct = stats.overallLaborPct
         let target = max(stats.target, 1)
-        let bucket = benchmarkBucket(pct: pct, target: target)
+        let bucket = benchmarkBucket(stats, pct: pct, target: target)
         let barFill = min(pct / 50 * 100, 100)
         let targetPos = min(target / 50 * 100, 97)
         let industryStart = min(Self.industryLow / 50 * 100, 100)
@@ -164,8 +179,10 @@ struct LaborAnalyticsSection: View {
             let industryMid = stats.savingsBreakdown.laborIndustryPct ?? (Self.industryLow + Self.industryHigh) / 2
             let diff = pct - industryMid
             let isBelow = diff <= 0
+            // Green only when the read may carry a positive word at all.
+            let positive = Self.positiveAllowed(stats)
             HomeMixedText.make(Self.industryLine(diff: diff, industryText: stats.savingsBreakdown.industryPctText),
-                               size: 14, color: isBelow ? .cavnarGreen : .cavnarRed, numberWeight: 700)
+                               size: 14, color: isBelow ? (positive ? .cavnarGreen : .cavnarInk2) : .cavnarRed, numberWeight: 700)
                 .fixedSize(horizontal: false, vertical: true)
             if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
                 HomeMixedText.make("Benchmark: \(basis).", size: 12.5, color: .cavnarInk3)
@@ -183,21 +200,30 @@ struct LaborAnalyticsSection: View {
         return "Your labor is \(pts) point\(pts == "1.0" ? "" : "s") \(diff <= 0 ? "below" : "above") the \(industryText) industry benchmark"
     }
 
-    private func benchmarkBucket(pct: Double, target: Double) -> (label: String, color: Color) {
-        if pct <= target - 3 { return ("Excellent", Color.cavnarGreen) }
-        if pct <= target { return ("On Target", Color.cavnarGreen) }
-        if pct <= target + 3 { return ("Slightly Over", Color.cavnarAmber) }
-        if pct <= target + 8 { return ("Above Target", Color.cavnarAmber) }
-        return ("Needs Attention", Color.cavnarRed)
+    /// The positive-status contract for labor (OwnerCopy): live, complete,
+    /// clocked hours, a full week, and sales under it.
+    static func positiveAllowed(_ stats: LaborStats) -> Bool {
+        OwnerCopy.laborPositiveAllowed(isLive: stats.isLive, dataComplete: stats.dataComplete,
+                                       salesDataMissing: stats.salesDataMissing,
+                                       hoursAreEstimated: stats.hoursAreEstimated,
+                                       periodTooShort: stats.periodTooShortToProject, pct: stats.overallLaborPct)
+    }
+
+    /// "On Target" / "Well Under Target" only under the contract — labor at
+    /// 0% with no sales read "Excellent" (NS1 #4, H13). Neutral is ink3.
+    private func benchmarkBucket(_ stats: LaborStats, pct: Double, target: Double) -> (label: String, color: Color) {
+        let s = OwnerCopy.laborBucket(pct: pct, target: target, isLive: stats.isLive,
+                                      positiveAllowed: Self.positiveAllowed(stats))
+        return (s.label, s.tone == .neutral ? Color.cavnarInk3 : Self.color(s.tone))
     }
 }
 
-private struct SavingsTile: View {
+private struct LaborStatTile: View {
     let numericValue: Double
     let format: (Double) -> String
     let label: String
     let sublabel: String
-    var tone: Color = Color.cavnarGreen
+    var tone: Color = Color.cavnarInk
     let startFromZero: Bool
 
     // Same count-up-once treatment as Home's ValueChartCard hero number —

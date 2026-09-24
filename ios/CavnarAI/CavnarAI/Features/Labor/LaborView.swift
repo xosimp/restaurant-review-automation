@@ -338,10 +338,15 @@ struct LaborView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if stats.potentialSavings > 0 && stats.figuresAreTrustworthy {
-                (Text("Est. ") + Text("$\(Int(stats.potentialSavings))").font(.cavnarNumber(14, weight: 600)) + Text(" in optimized-scheduling savings available"))
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarAmber)
+            // The whole window's gap above target, said as what it is — an
+            // opportunity over a named number of days, never "savings"
+            // (NS3 labor #11) — and never on sample data.
+            if stats.isLive && stats.potentialSavings > 0 && stats.figuresAreTrustworthy {
+                HomeMixedText.make("About $\(Int(stats.potentialSavings)) above your target"
+                                   + (stats.periodDays.map { " over these \($0) days" } ?? " over this window")
+                                   + " \u{2014} a gap to close, not money saved.",
+                                   size: 14, weight: 600, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if stats.isLive {
@@ -374,7 +379,7 @@ struct LaborView: View {
                     }
                     // What it is actually doing, rather than sixty seconds
                     // of a spinner. Every line is a real stage of the run.
-                    ScheduleProgressSteps()
+                    ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true)
                 }
                 .padding(.top, 10)
                 .transition(.opacity)
@@ -1417,7 +1422,7 @@ private struct ScheduleGenerateButton: View {
                         Text("Generate next week's schedule")
                             .font(.cavnarBody(15, weight: 700))
                             .foregroundStyle(tone.foreground)
-                        Text("AI-optimized from your sales & shift history")
+                        Text("A draft from your sales & shift history")
                             .font(.cavnarBody(14, weight: 500))
                             .foregroundStyle(Color.cavnarInk3)
                     }

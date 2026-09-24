@@ -290,9 +290,9 @@ def test_vs_industry_is_toned_by_whether_its_actually_good():
     (never-say C, NS1 #4, NS4 L7)."""
     panel = _labor_panel()
     m = re.search(
-        r"<i class=\"\{% if _lp > _lt \+ 3 %\}bad\{% elif _lp > _lt %\}warn\{% elif _status_ok %\}good\{% endif %\}\">"
-        r"\{% if _lp > _lt \+ 8 %\}needs attention\{% elif _lp > _lt \+ 3 %\}above target\{% elif _lp > _lt %\}slightly over"
-        r"\{% elif not labor.is_live %\}sample\{% elif not _status_ok %\}— partial data"
+        r"<i class=\"\{% if not labor.is_live %\}\{% elif _lp > _lt \+ 3 %\}bad\{% elif _lp > _lt %\}warn\{% elif _status_ok %\}good\{% endif %\}\">"
+        r"\{% if not labor.is_live %\}sample\{% elif _lp > _lt \+ 8 %\}needs attention\{% elif _lp > _lt \+ 3 %\}above target"
+        r"\{% elif _lp > _lt %\}slightly over\{% elif not _status_ok %\}— partial data"
         r"\{% elif _lp <= _lt - 3 %\}well under target\{% else %\}on target\{% endif %\}</i>",
         panel,
     )

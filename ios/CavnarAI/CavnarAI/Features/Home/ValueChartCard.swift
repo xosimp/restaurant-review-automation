@@ -60,7 +60,8 @@ struct ValueChartCard: View {
             // LOSING — and became only what outcomes.py measured before and
             // after. The label has to say which of those it is — and, when
             // something got worse, that the figure is net of it.
-            Text(isNet ? "MEASURED RESULTS \u{00B7} NET PER MONTH" : "MEASURED RESULTS")
+            // The figure is a monthly rate, so the label says so (NS3 M2).
+            Text(isNet ? "MEASURED RESULTS \u{00B7} NET PER MONTH" : "MEASURED RESULTS \u{00B7} PER MONTH")
                 .font(.cavnarBody(14, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
@@ -133,7 +134,9 @@ struct ValueChartCard: View {
                 .frame(height: 120)
 
             if !hasRealTrend {
-                Text("Example — shows the trend a typical restaurant sees over time")
+                // The curve is a hard-coded shape, not any restaurant's
+                // data — it says exactly that (NS1 #13, NS4 L1).
+                Text("Illustration only \u{2014} not your data or any restaurant\u{2019}s")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .padding(.top, 4)
@@ -149,7 +152,7 @@ struct ValueChartCard: View {
         }
         // audit 7.4 — the headline number the whole Home screen is built around
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Total value delivered")
+        .accessibilityLabel("Measured results")
         .accessibilityValue(accessibilitySummary)
     }
 
@@ -221,7 +224,7 @@ struct ValueChartCard: View {
     // tends to produce — normalized 0-1 so SparklineCanvas can plot it the
     // same way it plots real dollar history. Purely illustrative: never
     // shown next to a real dollar figure implying it IS this restaurant's
-    // data (see the "Example" caption above).
+    // data (see the "Illustration only" caption above).
     private static let sampleTrend: [Double] = [
         0.12, 0.20, 0.17, 0.26, 0.31, 0.27, 0.35, 0.44, 0.39, 0.47,
         0.43, 0.53, 0.61, 0.56, 0.65, 0.60, 0.70, 0.78, 0.73, 0.85, 1.0,

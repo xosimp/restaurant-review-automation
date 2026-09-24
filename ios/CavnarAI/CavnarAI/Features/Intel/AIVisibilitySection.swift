@@ -143,7 +143,11 @@ struct AIVisibilitySection: View {
                 // that all three are queried. Only Perplexity is (see
                 // client_api's ai-visibility check), so the copy now says
                 // so and explains why that stands in for the rest.
-                Text("More guests are asking AI where to eat before they ever open Maps. This runs real queries through Perplexity's live web search — the same public web, reviews and Google Business Profile data ChatGPT and Google AI read — and shows whether you came up.")
+                // No claim about what ChatGPT or Google AI read, or about how
+                // guests search: neither is sourced, and the page's own
+                // footer says what an assistant answers from is not
+                // something we can see (NS1 #9).
+                Text("This runs real guest-style queries through one AI search system \u{2014} Perplexity's live web search \u{2014} and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.")
                     .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineSpacing(4)
@@ -281,7 +285,7 @@ struct AIVisibilitySection: View {
             // nobody can act on.
             if let b = result.brandedScore, (result.brandedQueries ?? 0) > 0 {
                 Text(b >= 50
-                     ? "Asked about you by name, \(result.platform ?? "it") knows who you are."
+                     ? "Asked about you by name, \(result.platform ?? "it") recognised you."
                      : "Asked about you by name, \(result.platform ?? "it") didn't recognise you. That's separate from whether you come up in an open search.")
                     .font(.cavnarBody(13))
                     .foregroundStyle(Color.cavnarInk3)
@@ -625,7 +629,9 @@ struct AIVisibilitySection: View {
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 Spacer()
-                Text(pointsLeft > 0 ? "\(pointsLeft) action\(pointsLeft == 1 ? "" : "s") to grow your score" : "All steps complete")
+                // A count of gaps, not a promise about the score: nothing
+                // measures what closing one does to it (NS1 #10).
+                Text(pointsLeft > 0 ? "\(pointsLeft) gap\(pointsLeft == 1 ? "" : "s") still open" : "No open gaps")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
             }
@@ -758,7 +764,10 @@ struct AIVisibilitySection: View {
                     if card.done {
                         Label("Done", systemImage: "checkmark").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarGreen)
                     } else {
-                        Text(card.impact.uppercased()).font(.cavnarBody(14, weight: 600)).tracking(0.4).foregroundStyle(card.color)
+                        // The impact tiers are fixed labels with no
+                        // measurement behind them, so the row says only
+                        // that the gap is open; the tier still orders it.
+                        Text("OPEN").font(.cavnarBody(14, weight: 600)).tracking(0.4).foregroundStyle(card.color)
                     }
                 }
                 Text(card.detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)

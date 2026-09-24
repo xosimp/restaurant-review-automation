@@ -542,12 +542,19 @@ struct DSRNarrative: Decodable {
     let biggestWin: DSRLine?
     let biggestStaffingConcern: DSRLine?
     let biggestFinancialOpportunity: DSRLine?
+    /// The old `largest_money_saving` slot, an opportunity slot (NS3 R13):
+    /// read under its new name first and its old one after, and labelled
+    /// as an opportunity whichever it came from.
+    var largestMoneyOpportunity: DSRLine? = nil
     let largestGuestExperience: DSRLine?
     let actionsTomorrow: [DSRAction]
     let verification: DSRVerification?
     let model: String?
 
     enum CodingKeys: String, CodingKey {
+        case largestMoneyOpportunity = "largest_money_opportunity"
+        case largestDollarGap = "largest_dollar_gap"
+        case largestMoneySaving = "largest_money_saving"
         case model, verification
         case executiveSummary = "executive_summary"
         case wentWell = "went_well"
@@ -573,6 +580,9 @@ struct DSRNarrative: Decodable {
         biggestWin = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestWin)
         biggestStaffingConcern = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestStaffingConcern)
         biggestFinancialOpportunity = try? c.decodeIfPresent(DSRLine.self, forKey: .biggestFinancialOpportunity)
+        largestMoneyOpportunity = ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestMoneyOpportunity)) ?? nil)
+            ?? ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestDollarGap)) ?? nil)
+            ?? ((try? c.decodeIfPresent(DSRLine.self, forKey: .largestMoneySaving)) ?? nil)
         largestGuestExperience = try? c.decodeIfPresent(DSRLine.self, forKey: .largestGuestExperience)
         actionsTomorrow = (try? c.decodeIfPresent([DSRAction].self, forKey: .actionsTomorrow)) ?? []
         verification = try? c.decodeIfPresent(DSRVerification.self, forKey: .verification)
@@ -580,14 +590,23 @@ struct DSRNarrative: Decodable {
     }
 
     /// The "biggest" call-outs, labelled as the report labels them, in the
-    /// order they are read; only the ones the payload has.
+    /// order they are read; only the ones the payload has. A label over a
+    /// model-written dollar sentence names the kind of figure and never
+    /// claims money was saved (NS1 #17). The same sentence twice is shown
+    /// once, as on the web.
     var callouts: [(label: String, line: DSRLine)] {
         let all: [(String, DSRLine?)] = [
             ("Highest priority", highestPriorityIssue), ("Biggest risk", biggestRisk),
             ("Biggest win", biggestWin), ("Staffing", biggestStaffingConcern),
-            ("Money on the table", biggestFinancialOpportunity), ("Guest experience", largestGuestExperience),
+            ("Biggest opportunity \u{00B7} not captured", biggestFinancialOpportunity),
+            ("Largest dollar gap \u{00B7} an opportunity, not savings", largestMoneyOpportunity),
+            ("Guest experience", largestGuestExperience),
         ]
-        return all.compactMap { label, line in line.map { (label, $0) } }
+        var seen = Set<String>()
+        return all.compactMap { label, line in
+            guard let line, seen.insert(line.text).inserted else { return nil }
+            return (label, line)
+        }
     }
 
     var isEmpty: Bool {

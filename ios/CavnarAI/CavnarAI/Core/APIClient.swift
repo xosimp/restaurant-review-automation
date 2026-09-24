@@ -415,6 +415,10 @@ actor APIClient {
         /// K5's `meta` block, when the server nests it.
         let meta: AskMeta?
         let unverifiedFigures: [String]?
+        /// Causes and names the answer states that nothing it read supports
+        /// (NS1 H1). Absent from a server that does not send them.
+        var unsupportedCauses: [String]? = nil
+        var unsupportedNames: [String]? = nil
         /// The answer's id — what "Was this useful?" rates.
         let messageId: Int?
         /// The answer's own concrete suggestions, keyed (`ask_tip:<hash>`).
@@ -426,13 +430,17 @@ actor APIClient {
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
+            case unsupportedCauses = "unsupported_causes"
+            case unsupportedNames = "unsupported_names"
             case messageId = "message_id"
         }
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
                         confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
-                        unverifiedFigures: unverifiedFigures ?? [])
+                        unverifiedFigures: unverifiedFigures ?? [],
+                        unsupportedCauses: unsupportedCauses ?? [],
+                        unsupportedNames: unsupportedNames ?? [])
         }
     }
 

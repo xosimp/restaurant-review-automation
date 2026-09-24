@@ -648,7 +648,9 @@ private struct EvidenceStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if let warning = evidence.warning {
+            // Untraced figures, then unsupported causes and names — each
+            // inline, the answer kept (NS1 H1).
+            ForEach(evidence.warnings, id: \.self) { warning in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11, weight: .bold))
@@ -805,7 +807,7 @@ private struct AskFeedbackRow: View {
         HStack(spacing: 8) {
             if let rating = message.rating {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} Cavnar AI will do better")
+                Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
                     .font(.cavnarBody(12.5, weight: 500))
             } else {
                 Text("Was this useful?")

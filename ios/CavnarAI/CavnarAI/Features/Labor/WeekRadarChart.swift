@@ -7,6 +7,9 @@ struct WeekRadarChart: View {
     let dowSummary: [String: Double]
     let target: Double
     var subtitle: String
+    /// The positive-status contract (OwnerCopy.laborPositiveAllowed): "Every
+    /// day on target" in green only over live, complete data.
+    var positiveAllowed: Bool = true
 
     private static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     private static let short = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -68,8 +71,10 @@ struct WeekRadarChart: View {
             CavnarChart.text(&ctx, CavnarChart.number("\(Self.short[worst.index]) \(Int(worst.pct.rounded()))%", size: 13, weight: 700),
                              at: CGPoint(x: 14, y: 20), anchor: .leading)
             let delta = worst.pct - target
-            let line = delta > 0 ? String(format: "%.0f pts over target", delta) : "Every day on target"
-            CavnarChart.text(&ctx, CavnarChart.label(line, size: 10, weight: 700, color: delta > 0 ? .cavnarRed : .cavnarGreen),
+            let line = delta > 0 ? String(format: "%.0f pts over target", delta)
+                : (positiveAllowed ? "Every day on target" : "No day over target \u{00B7} data incomplete")
+            CavnarChart.text(&ctx, CavnarChart.label(line, size: 10, weight: 700,
+                                                     color: delta > 0 ? .cavnarRed : (positiveAllowed ? .cavnarGreen : .cavnarInk3)),
                              at: CGPoint(x: 14, y: 38), anchor: .leading)
         }
     }
