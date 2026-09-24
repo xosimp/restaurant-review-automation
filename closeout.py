@@ -128,6 +128,15 @@ def _act_on(restaurant_id, day, values, restaurant, db_path=DB_PATH):
             if hit:
                 inventory_ledger.record_recount(restaurant_id, hit["id"], 0.0, event_date=day,
                                                 source="closeout", note=f"86'd at close: {phrase}")
+                # Ran out in service: was it ever flagged as running low
+                # first? If not, a missed detection (ROI #44).
+                try:
+                    import rec_ledger
+                    rec_ledger.note_problem(restaurant_id, "closeout",
+                                            rec_ledger.rec_key("stock_low", hit["name"]), module="food",
+                                            detail=f"86'd at close: {phrase}", db_path=db_path)
+                except Exception as e:
+                    print(f"[closeout] missed-detection note failed for {restaurant_id}: {e}")
     callouts = (values.get("callouts") or "").strip()
     if callouts and getattr(restaurant, "module_labor", 0):
         import issues, labor_replacements

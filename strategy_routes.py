@@ -1503,24 +1503,38 @@ def _do_rec_event(u):
                    told not to suggest the same thing in other words;
       accepted   — "Track": a real outcomes tracker on the module's metric
                    when one can be measured, quiet for its window; otherwise
-                   no tracker, and the message says it is only hidden."""
+                   no tracker, and the message says it is only hidden.
+
+    `reason_code` (rec_ledger.REASON_CODES: already_doing, doesnt_fit,
+    too_costly, bad_timing, dont_trust_data, other) and an optional free
+    `reason` ride on the answer's meta; an unknown code is a 400. Events
+    the server writes where they happen (implemented, superseded, checkin,
+    abandoned, outcome, expired, shown) are refused."""
     import rec_ledger as _rl
     from datetime import datetime as _dt, timedelta as _td
     b = _body()
     key = b.get("key")
     event = b.get("event")
-    if not isinstance(key, str) or not key.strip() or event not in _rl.EVENTS or event in ("shown", "expired", "outcome"):
+    # implemented / superseded / checkin / abandoned / outcome / expired /
+    # shown are written where they happen, never posted by a client.
+    if not isinstance(key, str) or not key.strip() or event not in _rl.EVENTS or event in _rl.SERVER_ONLY_EVENTS:
         return {"ok": False, "error": "key and a response are required"}, 400
+    code = b.get("reason_code")
+    if code not in (None, "") and code not in _rl.REASON_CODES:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl.REASON_CODES)}, 400
     surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
     meta = {}
     silence = None
     until = None
-    if event == "dismissed":
-        kind = b.get("kind") if b.get("kind") in _rl.SILENCE_DAYS else "hide"
-        meta["kind"] = kind
+    if code:
+        meta["reason_code"] = code
+    if event in ("dismissed", "snoozed"):
         reason = b.get("reason")
         if isinstance(reason, str) and reason.strip():
             meta["reason"] = reason.strip()[:200]
+    if event == "dismissed":
+        kind = b.get("kind") if b.get("kind") in _rl.SILENCE_DAYS else "hide"
+        meta["kind"] = kind
     if event == "snoozed":
         try:
             days = max(1, min(30, int(b.get("days") or 1)))
@@ -1578,6 +1592,77 @@ def _do_rec_event(u):
     elif refused:
         out["tracker_refused"] = refused
     return out, 200
+
+
+# ── the owner's own recommendation record (rec_learning) ────────────────────
+#
+# What they followed, what it did, and the timeline — restaurant-scoped and
+# redacted per viewer (a manager never sees a loss, a food-cost or an
+# owner-only recommendation: rec_learning.viewer_sees). Contracts in
+# API_REFERENCE.md → "Recommendation record".
+
+def _do_recs_summary(u):
+    import rec_learning
+    raw = request.args.get("days") or "30"
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        days = None
+    if days not in rec_learning.SUMMARY_WINDOWS:
+        return {"ok": False, "error": "days must be 30, 90 or 180"}, 400
+    return rec_learning.summary(_rid(u), days=days, viewer=u), 200
+
+
+def _do_recs_timeline(u):
+    import rec_learning
+    raw = request.args.get("limit")
+    try:
+        limit = int(raw) if raw not in (None, "") else 30
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "limit must be a number"}, 400
+    before = request.args.get("before") or None
+    if before and rec_learning._cursor(before) is None:
+        return {"ok": False, "error": "before must be a timestamp or a next_before cursor"}, 400
+    return rec_learning.timeline(_rid(u), limit=limit, before=before, viewer=u), 200
+
+
+def _do_recs_checkin(u):
+    """"Did you make this change? Did anything else change?" — one answer
+    per tap, recorded as a `checkin` on the recommendation's latest episode
+    (rec_ledger.checkin documents the meta the outcome evaluation reads).
+    {key, did_it: yes|no|partly, conditions_changed: bool, note?}"""
+    import rec_ledger as _rl
+    import rec_learning
+    b = _body()
+    key = b.get("key")
+    did_it = b.get("did_it")
+    changed = b.get("conditions_changed", False)
+    note = b.get("note")
+    if not isinstance(key, str) or not key.strip():
+        return {"ok": False, "error": "key is required"}, 400
+    if did_it not in _rl.CHECKIN_ANSWERS:
+        return {"ok": False, "error": "did_it must be yes, no or partly"}, 400
+    if not isinstance(changed, bool):
+        return {"ok": False, "error": "conditions_changed must be true or false"}, 400
+    if note is not None and not isinstance(note, str):
+        return {"ok": False, "error": "note must be text"}, 400
+    ep = rec_learning.episode_for(_rid(u), key.strip())
+    # Another restaurant's key, or one this login may not see, is simply not
+    # found — its existence is not confirmed either way.
+    if ep is None or not rec_learning.viewer_sees(u, ep):
+        return {"ok": False, "error": "No such recommendation."}, 404
+    surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
+    out = _rl.checkin(_rid(u), key.strip(), did_it, conditions_changed=changed, note=note, user_id=u.get("id"),
+                      role=u.get("role"), surface=surface)
+    if out is None:
+        return {"ok": False, "error": "No such recommendation."}, 404
+    try:
+        import home_brief as _hb
+        _hb.invalidate(_rid(u))
+    except Exception as e:
+        print(f"[recs] home cache not cleared after check-in: {e}")
+    return {"ok": True, "recorded": out["recorded"],
+            "checkin": {k: out[k] for k in ("did_it", "conditions_changed", "note", "tracker_id", "attribution")}}, 200
 
 
 def _do_standby_ask(u):
@@ -3100,6 +3185,9 @@ _ROUTES = [
     ("/labor/ratings/unmatched", ["GET"], _do_ratings_unmatched, "ratings_unmatched"),
     ("/labor/ratings/match", ["POST"], _do_ratings_match, "ratings_match"),
     ("/recs/event", ["POST"], _do_rec_event, "rec_event"),
+    ("/recs/summary", ["GET"], _do_recs_summary, "recs_summary"),
+    ("/recs/timeline", ["GET"], _do_recs_timeline, "recs_timeline"),
+    ("/recs/checkin", ["POST"], _do_recs_checkin, "recs_checkin"),
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),

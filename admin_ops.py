@@ -1282,19 +1282,20 @@ def _ras_block(eps):
     n = len(eps)
     if not n:
         return {"n": 0, "ras": None}
-    k = {x: sum(1 for e in eps if e[x]) for x in ("opened", "evidence", "accepted", "completed", "dismissed",
-                                                   "snoozed", "ignored", "outcome")}
-    took = sum(1 for e in eps if e["accepted"] or e["completed"])
+    k = {x: sum(1 for e in eps if e.get(x)) for x in ("opened", "evidence", "accepted", "completed", "implemented",
+                                                       "dismissed", "snoozed", "ignored", "outcome")}
+    took = sum(1 for e in eps if e["accepted"] or e["completed"] or e.get("implemented"))
     # "Improved" only among what was taken: a verdict on an episode nobody
     # took is not the recommendation working, and counting it let the
     # outcome rate pass 100%.
-    k["improved"] = sum(1 for e in eps if e["improved"] and (e["accepted"] or e["completed"]))
+    k["improved"] = sum(1 for e in eps if e["improved"] and (e["accepted"] or e["completed"] or e.get("implemented")))
     rates = {"opened": k["opened"] / n, "accepted": took / n, "completed": k["completed"] / n,
              # Of what was taken, how much a measured outcome later confirmed.
              "outcome": (k["improved"] / took) if took else 0.0}
     acts = sorted(e["hours_to_act"] for e in eps if e["hours_to_act"] is not None)
     out = {"n": n, "shown": sum(1 for e in eps if e["shown"]), "opened": k["opened"], "evidence": k["evidence"],
-           "accepted": took, "completed": k["completed"], "dismissed": k["dismissed"], "snoozed": k["snoozed"],
+           "accepted": took, "completed": k["completed"], "implemented": k["implemented"],
+           "dismissed": k["dismissed"], "snoozed": k["snoozed"],
            "ignored": k["ignored"], "outcomes": k["outcome"], "improved": k["improved"],
            "open_rate": round(rates["opened"], 3), "accept_rate": round(rates["accepted"], 3),
            "complete_rate": round(rates["completed"], 3), "outcome_rate": round(rates["outcome"], 3),
@@ -1332,15 +1333,24 @@ def _episodes(conn, since, restaurant_id=None):
         # rate.
         if "shown" not in names or not rec_ledger.counts_in_acceptance(i["key"]):
             continue
+        # A superseded episode is the same recommendation carried on under
+        # new content by a newer one: counting both would count one
+        # recommendation twice, and neither was answered nor ignored.
+        if i["status"] == "superseded":
+            continue
         verdicts = []
         for e in es:
             if e["event"] == "outcome":
                 try:
-                    verdicts.append((json.loads(e["meta"] or "{}") or {}).get("verdict"))
+                    v = (json.loads(e["meta"] or "{}") or {}).get("verdict")
                 except (TypeError, ValueError):
-                    pass
-        answered = names & {"accepted", "completed", "dismissed"}
-        first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed")), None)
+                    v = None
+                # "Could not be measured" is not an outcome (ROI #2).
+                if v in ("improved", "worsened", "no_clear_change"):
+                    verdicts.append(v)
+        answered = names & {"accepted", "completed", "dismissed", "implemented"}
+        first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed",
+                                                                 "implemented")), None)
         hours = None
         if first_act:
             a, c = _parse(first_act), _parse(i["created_at"])
@@ -1364,7 +1374,8 @@ def _episodes(conn, since, restaurant_id=None):
                     "sources": sources, "position": i["first_position"],
                     "shown": "shown" in names, "opened": bool(names & {"opened", "evidence_viewed"}) or bool(answered),
                     "evidence": "evidence_viewed" in names, "accepted": "accepted" in names,
-                    "completed": "completed" in names, "dismissed": "dismissed" in names, "snoozed": "snoozed" in names,
+                    "completed": "completed" in names, "implemented": "implemented" in names,
+                    "dismissed": "dismissed" in names, "snoozed": "snoozed" in names,
                     "ignored": ignored, "outcome": bool(verdicts), "improved": "improved" in verdicts,
                     "hours_to_act": hours, "responder_role": next((e["role"] for e in es if e["event"] in (
                         "accepted", "completed", "dismissed") and e["role"]), None)})
@@ -1411,7 +1422,8 @@ def recommendation_acceptance(days=30, restaurant_id=None):
     total = _ras_block(eps)
     funnel = [{"step": s, "n": total.get(k) or 0} for s, k in (
         ("Shown", "shown"), ("Opened", "opened"), ("Evidence viewed", "evidence"), ("Accepted", "accepted"),
-        ("Completed", "completed"), ("Outcome measured", "outcomes"), ("Improved", "improved"))]
+        ("Completed", "completed"), ("Implemented", "implemented"), ("Outcome measured", "outcomes"),
+        ("Improved", "improved"))]
     by_kind = _group(eps, lambda e: e["kind"] or "unknown")
     most_ignored = sorted((r for r in by_kind if r["n"] >= 5), key=lambda r: (-r["ignore_rate"], -r["n"]))[:10]
     by_rest = _group(eps, lambda e: (e["restaurant_id"], e["restaurant"] or f"#{e['restaurant_id']}"))
@@ -1465,3 +1477,120 @@ def set_schedule_experiment_pin(restaurant_id, experiment, arm, by="admin"):
     if not models.get_restaurant(int(restaurant_id)):
         return {"ok": False, "error": "No such restaurant."}
     return sx.set_pin(int(restaurant_id), experiment, arm, pinned_by=by)
+
+
+def promote_schedule_experiment(experiment, arm, by="admin", note=None):
+    """The reviewed step that makes an experiment's winning arm the default
+    (ROI #46): only the arm the readout's verdict calls, recorded with who
+    promoted it; every restaurant then gets that arm from a stored setting —
+    no code edit. Undone by revert_schedule_experiment."""
+    import schedule_experiments as sx
+    return sx.promote(experiment, arm, promoted_by=by, note=note)
+
+
+def revert_schedule_experiment(experiment, by="admin"):
+    import schedule_experiments as sx
+    return sx.revert(experiment, reverted_by=by)
+
+
+# ── recommendation calibration and missed detections (internal only) ────────
+#
+# ROI audit #43 and #44. Admin-only until the figures have enough behind
+# them to be shown to an owner.
+
+CALIBRATION_MIN_N = 5      # pairs per kind before a ratio is called
+
+
+def recommendation_calibration(days=365, restaurant_id=None):
+    """Each recommendation's predicted dollars (what it was shown with,
+    rec_instances.dollar_value) against what its tracker measured
+    (recommendation_outcomes.dollars_monthly; a no-clear-change result is $0
+    realised), by kind. Only episodes taken and measured with a clear
+    verdict; a result on a metric with no dollar reading is counted as
+    `unpriced` and left out of the ratio. ratio = realised ÷ predicted over
+    the kind; within_half = share of pairs whose realised figure landed
+    within ±50% of the prediction."""
+    import models
+    days = max(1, min(int(days or 365), 730))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    where, args = "i.created_at >= ? AND i.dollar_value IS NOT NULL AND i.dollar_value > 0", [since]
+    if restaurant_id:
+        where += " AND i.restaurant_id=?"
+        args.append(int(restaurant_id))
+    conn = models.get_conn()
+    try:
+        try:
+            rows = _rows_dict(conn, "SELECT i.kind, i.key, i.status, i.dollar_value, o.verdict, o.dollars_monthly "
+                                    "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
+                                    f"WHERE {where} AND o.status='evaluated'", tuple(args))
+        except Exception as e:           # the columns predate this database
+            log.warning("recommendation_calibration unavailable: %s", e)
+            rows = []
+    finally:
+        conn.close()
+    by = {}
+    for r in rows:
+        if r["status"] not in ("accepted", "completed", "implemented"):
+            continue
+        k = by.setdefault(r["kind"] or (r["key"] or "").split(":", 1)[0], {"pairs": [], "unpriced": 0})
+        if r["verdict"] == "no_clear_change":
+            k["pairs"].append((float(r["dollar_value"]), 0.0))
+        elif r["verdict"] in ("improved", "worsened") and r["dollars_monthly"] is not None:
+            k["pairs"].append((float(r["dollar_value"]), float(r["dollars_monthly"])))
+        elif r["verdict"] in ("improved", "worsened"):
+            k["unpriced"] += 1
+    out = []
+    for kind, v in by.items():
+        pairs = v["pairs"]
+        pred = sum(p for p, _ in pairs)
+        real = sum(a for _, a in pairs)
+        ratios = sorted(a / p for p, a in pairs if p)
+        out.append({"kind": kind, "n": len(pairs), "unpriced": v["unpriced"], "predicted": round(pred, 2),
+                    "realised": round(real, 2), "ratio": round(real / pred, 3) if pred else None,
+                    "median_ratio": round(ratios[len(ratios) // 2], 3) if ratios else None,
+                    "within_half": (round(sum(1 for x in ratios if 0.5 <= x <= 1.5) / len(ratios), 3)
+                                    if ratios else None),
+                    "enough": len(pairs) >= CALIBRATION_MIN_N})
+    out.sort(key=lambda r: (-r["n"], r["kind"]))
+    pred = sum(r["predicted"] for r in out)
+    real = sum(r["realised"] for r in out)
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": CALIBRATION_MIN_N, "by_kind": out,
+            "total": {"n": sum(r["n"] for r in out), "predicted": round(pred, 2), "realised": round(real, 2),
+                      "ratio": round(real / pred, 3) if pred else None}}
+
+
+def missed_detections(days=30, restaurant_id=None, limit=200):
+    """Problems that surfaced — an alert, an issue, a close-out 86 — with no
+    recommendation covering their subject shown in the days before
+    (rec_ledger.note_problem): by source, by subject kind, and the latest
+    rows."""
+    import models
+    import rec_ledger
+    days = max(1, min(int(days or 30), 365))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    where, args = "m.detected_at >= ?", [since]
+    if restaurant_id:
+        where += " AND m.restaurant_id=?"
+        args.append(int(restaurant_id))
+    conn = models.get_conn()
+    try:
+        try:
+            rows = _rows_dict(conn, "SELECT m.*, r.name AS restaurant FROM rec_missed_detections m "
+                                    "LEFT JOIN restaurants r ON r.id=m.restaurant_id "
+                                    f"WHERE {where} ORDER BY m.detected_at DESC, m.id DESC", tuple(args))
+        except Exception as e:           # the table predates this database
+            log.warning("missed_detections unavailable: %s", e)
+            rows = []
+    finally:
+        conn.close()
+    by_source, by_kind = {}, {}
+    for r in rows:
+        by_source[r["source"]] = by_source.get(r["source"], 0) + 1
+        k = rec_ledger.kind_of(r["subject_key"])
+        by_kind[k] = by_kind.get(k, 0) + 1
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "total": len(rows),
+            "lookback_days": rec_ledger.MISSED_LOOKBACK_DAYS,
+            "by_source": sorted(({"source": s, "n": n} for s, n in by_source.items()), key=lambda x: -x["n"]),
+            "by_kind": sorted(({"kind": s, "n": n, "mapped": s in rec_ledger.PROBLEM_COVERAGE}
+                               for s, n in by_kind.items()), key=lambda x: -x["n"]),
+            "rows": rows[:int(limit)]}

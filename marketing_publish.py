@@ -185,6 +185,8 @@ def _log_published(restaurant_id, content_type, topic, post_id, platform,
         outcomes.observe(restaurant_id, "post_published", detail=(topic or "")[:60], db_path=db_path)
     except Exception:
         pass
+    import marketing as _mkt
+    _mkt.post_went_live(restaurant_id, post_id or f"log:{row_id}", db_path=db_path)
 
 
 # ── Preview ────────────────────────────────────────────────────────────────

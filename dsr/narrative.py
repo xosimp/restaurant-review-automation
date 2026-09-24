@@ -883,10 +883,18 @@ def settle_actions(actions, F, ctx, declined, dropped):
         quiet = decisions.quiet_kinds(ctx.restaurant_id, db_path=ctx.db_path)
     except Exception as e:
         _capture(e, ctx.restaurant_id, "quiet_kinds")
+    # What this restaurant's own answers and measured results taught the
+    # ledger, as a bounded weight on each action's rank (ROI #24/#47).
+    learned = None
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(ctx.restaurant_id, db_path=ctx.db_path)
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "effectiveness")
     shadow = [{"key": a["key"], "timeframe": URGENCIES[a["urgency"]], "dollars_monthly": a["dollars_monthly"],
                "effort": a["effort"], "_a": a} for a in keyed]
     ranked = []
-    for s in order_recommendations(shadow, quiet_kinds=quiet):
+    for s in order_recommendations(shadow, quiet_kinds=quiet, learned=learned):
         a = dict(s["_a"], rank_score=s["rank_score"])
         if s.get("quiet"):
             a["quiet"] = True
@@ -915,7 +923,11 @@ def ledger_items(actions) -> list:
         out.append({"key": a["key"], "module": module, "kind": "dsr_action", "title": str(a.get("text") or "")[:200],
                     "position": i, "dollar_value": a.get("dollars_monthly"),
                     "evidence_sources": sorted({_MODULE.get(c.split(".", 1)[0], "ops") for c in cites}) or None,
-                    "model_written": True})
+                    "model_written": True,
+                    # An action resting on a figure the Manager DSR never shows
+                    # (budget, prime cost, loss lines, the Food block) is never
+                    # listed to a manager in the recommendation record either.
+                    "owner_only": any(owner_only_cite(c) for c in cites)})
     return out
 
 

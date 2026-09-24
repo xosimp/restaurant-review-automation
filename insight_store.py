@@ -155,6 +155,9 @@ def _normalise(text: str) -> str:
     return re.sub(r"[^\w$%.\s-]", "", t)
 
 
+_LINE_KEY_RE = re.compile(r"^[a-z_]+:[0-9a-f]{10}$")
+
+
 def line_key(prefix: str, text: str) -> str:
     """A stable key for one model-written line: the same words (ignoring
     case, spacing and punctuation) are the same recommendation, so an answer
@@ -192,7 +195,16 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
                   "model_written": it.get("model_written", True),
                   "cavnar_completes": it.get("cavnar_completes", False),
                   "expected_metric": it.get("expected_metric")} for it in items]
-        ids = rec_ledger.present_many(restaurant_id, batch, surface, user_id=user_id, db_path=db_path)
+        # A read's numbered lines are keyed by a hash of their words
+        # (line_key), so a regenerated read is a NEW set of keys: the old
+        # read's unanswered lines were replaced, not ignored, and close as
+        # superseded (rec_ledger, ROI #37). Only a read's own lines
+        # (insight_<module>): a key that names a subject (reprice:<dish>, a
+        # diagnosis) is not a read's line and replaces nothing.
+        replaces = sorted({rec_ledger.kind_of(it["key"]) for it in items
+                           if _LINE_KEY_RE.match(str(it["key"])) and str(it["key"]).startswith("insight_")})
+        ids = rec_ledger.present_many(restaurant_id, batch, surface, user_id=user_id, db_path=db_path,
+                                      replaces=replaces)
     except Exception as e:
         print(f"[insight_store] present failed: {e}")
         ids = {}

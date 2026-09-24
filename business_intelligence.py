@@ -898,10 +898,19 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
     return out
 
 
-def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH):
+def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
     """The top candidate the owner has not already answered, and whose kind
     they have not stopped answering (decisions.quiet_kinds) — a "no" on Home
-    is a no here too, and a kind ignored four times running never leads."""
+    is a no here too, and a kind ignored four times running never leads.
+
+    Candidates are weighed by what this restaurant's own answers and
+    measured results taught the ledger (rec_learning.effectiveness, a
+    bounded 0.6–1.25× on the score; ROI #24, #29, #47) and re-sorted —
+    except that a critical candidate keeps exactly its place: the weights
+    reorder only the non-critical candidates between critical ones, so
+    nothing learned can put anything ahead of a critical item or move one
+    down. `learned` may be passed in (tests, a caller that already built
+    it)."""
     if not candidates:
         return None
     try:
@@ -912,6 +921,35 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH):
     except Exception as e:
         log.warning("one thing: ledger unavailable: %s", e)
         silenced, quiet = set(), set()
+    if learned is None:
+        try:
+            import rec_learning
+            learned = rec_learning.effectiveness(restaurant_id, db_path=db_path)
+        except Exception as e:
+            log.warning("one thing: effectiveness unavailable: %s", e)
+    if learned is not None:
+        ordered, run = [], []
+
+        def flush():
+            ordered.extend(sorted(run, key=lambda x: -(x.get("score") or 0)))
+            run.clear()
+        for c in candidates:
+            c = dict(c)
+            if c.get("urgency") == "critical":
+                flush()
+                ordered.append(c)
+                continue
+            try:
+                w, why = learned(c["key"])
+            except Exception as e:
+                log.warning("one thing: weight failed for %s: %s", c.get("key"), e)
+                w, why = 1.0, []
+            if w != 1.0:
+                c["score"] = round(float(c.get("score") or 0) * w, 2)
+                c["learned"] = {"weight": w, "why": why[:3]}
+            run.append(c)
+        flush()
+        candidates = ordered
     for c in candidates:
         if c["key"] in silenced or c["key"].split(":", 1)[0] in quiet:
             continue

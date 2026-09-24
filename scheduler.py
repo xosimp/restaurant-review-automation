@@ -2858,12 +2858,14 @@ def scheduler_loop():
             # repair_sync_replays first: it undoes what the replaying sync
             # wrote before it attached answers by time (a no-op after that),
             # and the sync then re-carries those answers where they belong.
+            # backfill_tags tags episodes from before tags were stored (ROI
+            # #17), bounded; it finishes the tail on later nights.
             if _due(now, 8) and _ops.claim_period("rec_ledger", str(today)):
                 import rec_ledger as _rl
 
                 def _rec_ledger_pass():
                     return {"repaired": _rl.repair_sync_replays(), "synced": _rl.sync_existing(),
-                            "expired": _rl.expire_stale()}
+                            "expired": _rl.expire_stale(), "tagged": _rl.backfill_tags()}
                 _ops.run_job("rec_ledger", _rec_ledger_pass)
 
             # 9am local, per restaurant — what is waiting on each manager

@@ -1264,7 +1264,20 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB
     refusal = check_public_reply(text)
     if refusal:
         return {"ok": False, "error": f"Not sent: {refusal}."}
-    result = start_campaign(restaurant_id, text, segment=row["segment"], db_path=db_path)
+    rec_key = row["rec_key"]
+
+    def _sent(res):
+        # The texts went out: the win-back was implemented, not only
+        # accepted (ROI #27). Runs on the send thread once it finishes.
+        if (res or {}).get("sent"):
+            try:
+                import rec_ledger
+                rec_ledger.implemented(restaurant_id, rec_key, "marketing", user_id=user_id,
+                                       source_ref=f"winback:{draft_id}",
+                                       meta={"module": "marketing", "sent": res.get("sent")}, db_path=db_path)
+            except Exception as e:
+                print(f"[winback] implementation not recorded for {restaurant_id}: {e}")
+    result = start_campaign(restaurant_id, text, segment=row["segment"], on_done=_sent, db_path=db_path)
     if not result.get("ok"):
         return result
     _answer_winback(restaurant_id, draft_id, "sent", user_id, sent_message=text, total=result.get("total"),

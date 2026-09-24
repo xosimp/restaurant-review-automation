@@ -33,8 +33,18 @@ Kill switches: the env var SCHEDULE_EXPERIMENT_PIN ("off", an arm key, or
 "experiment:arm") pins every restaurant; a row in schedule_experiment_pins
 pins one. A pinned week records the arm it was pinned to and is left out of
 the comparison, since it was not randomised. "off" is the control arm.
+
+Promotion (ROI audit #46): once the readout calls a winner, an admin
+promotes it — a reviewed step, recorded in schedule_experiment_promotions
+with who promoted it, when, the verdict it rested on and a note. From then
+every restaurant gets the promoted arm's flags from that stored row (no
+code edit), as a pin with pin_source "promoted" (so those weeks stay out of
+the comparison), and it holds even after the experiment is retired in code.
+revert() ends it and the experiment randomises again. Precedence: the env
+kill switch, then a restaurant's own pin, then a promotion, then the hash.
 """
 import hashlib
+import json
 import math
 import os
 
@@ -122,13 +132,20 @@ def _restaurant_pins(restaurant_id, db_path):
 
 def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
     """[{experiment, arm, pinned, pin_source, flags}] for every active
-    experiment, for this restaurant's week."""
+    experiment, for this restaurant's week — and, for an experiment retired
+    in code whose winner was promoted, the promoted arm, so its flags keep
+    holding."""
     out = []
     try:
         pins = _restaurant_pins(restaurant_id, db_path)
     except Exception as e:           # a pin that cannot be read never breaks generation
         print(f"[experiments] pins unavailable for restaurant {restaurant_id}: {e}")
         pins = {}
+    try:
+        promoted = active_promotions(db_path)
+    except Exception as e:           # nor does a promotion that cannot be read
+        print(f"[experiments] promotions unavailable: {e}")
+        promoted = {}
     for exp in EXPERIMENTS:
         if not exp.get("active"):
             continue
@@ -137,10 +154,17 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
             raw = pins[exp["key"]]
             arm = exp["control"] if raw == OFF else (raw if _arm_def(exp, raw) else None)
             source = "restaurant"
+        if arm is None and exp["key"] in promoted and _arm_def(exp, promoted[exp["key"]]["arm"]):
+            arm, source = promoted[exp["key"]]["arm"], "promoted"
         if arm is None:
             arm, source = hashed_arm(exp, restaurant_id, week_start), None
         out.append({"experiment": exp["key"], "arm": arm, "pinned": source is not None, "pin_source": source,
                     "flags": dict(_arm_def(exp, arm).get("flags") or {})})
+    live = {e["key"] for e in EXPERIMENTS if e.get("active")}
+    for key, p in promoted.items():
+        if key not in live:
+            out.append({"experiment": key, "arm": p["arm"], "pinned": True, "pin_source": "promoted",
+                        "flags": dict(p.get("flags") or {})})
     return out
 
 
@@ -197,6 +221,88 @@ def set_pin(restaurant_id, experiment_key, arm, pinned_by=None, db_path=DB_PATH)
     finally:
         conn.close()
     return {"ok": True, "restaurant_id": int(restaurant_id), "experiment": exp["key"], "arm": arm}
+
+
+# ── promotion: the reviewed step from a winner to the default (ROI #46) ─────
+
+def active_promotions(db_path=DB_PATH) -> dict:
+    """{experiment: {id, arm, flags, promoted_by, promoted_at, verdict, note}}
+    for every promotion in force (not reverted)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM schedule_experiment_promotions WHERE reverted_at IS NULL "
+                            "ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        try:
+            flags = json.loads(r["flags_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            flags = {}
+        out[r["experiment"]] = {"id": r["id"], "arm": r["arm"], "flags": flags, "promoted_by": r["promoted_by"],
+                                "promoted_at": r["promoted_at"], "verdict": r["verdict_text"], "note": r["note"]}
+    return out
+
+
+def promotions(experiment_key=None, db_path=DB_PATH) -> list:
+    """Every promotion, in force or reverted, newest first — the audit trail."""
+    conn = get_conn(db_path)
+    try:
+        sql, args = "SELECT * FROM schedule_experiment_promotions", ()
+        if experiment_key:
+            sql, args = sql + " WHERE experiment=?", (experiment_key,)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT 100", args).fetchall()]
+    finally:
+        conn.close()
+
+
+def promote(experiment_key, arm, promoted_by=None, note=None, db_path=DB_PATH, _readout=None) -> dict:
+    """Make `arm` every restaurant's arm for this experiment. Refused unless
+    the readout's verdict right now calls exactly this arm (state "winner")
+    and nothing is already promoted — the review is reading that verdict;
+    this records who acted on it and when, with the verdict's words."""
+    exp = experiment(experiment_key)
+    if exp is None:
+        return {"ok": False, "error": "No such experiment."}
+    arm_def = _arm_def(exp, arm)
+    if arm_def is None:
+        return {"ok": False, "error": "No such arm."}
+    if experiment_key in active_promotions(db_path):
+        return {"ok": False, "error": "An arm is already promoted for this experiment — revert it first."}
+    data = _readout or readout(db_path=db_path)
+    row = next((e for e in data.get("experiments") or [] if e["key"] == experiment_key), None)
+    verdict = (row or {}).get("verdict") or {}
+    if verdict.get("state") != "winner" or verdict.get("call") != arm:
+        return {"ok": False, "error": "Only the arm the readout calls the winner can be promoted "
+                                      f"(now: {verdict.get('text') or 'no verdict'})."}
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO schedule_experiment_promotions (experiment, arm, flags_json, verdict_text, promoted_by, note) "
+            "VALUES (?,?,?,?,?,?)",
+            (exp["key"], arm, json.dumps(dict(arm_def.get("flags") or {})), (verdict.get("text") or "")[:400],
+             (promoted_by or "")[:80] or None, (str(note or "")[:300] or None)))
+        conn.commit()
+        pid = cur.lastrowid
+    finally:
+        conn.close()
+    return {"ok": True, "experiment": exp["key"], "arm": arm, "promotion_id": pid}
+
+
+def revert(experiment_key, reverted_by=None, db_path=DB_PATH) -> dict:
+    """End the promotion in force: the experiment randomises again."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE schedule_experiment_promotions SET reverted_at=datetime('now'), reverted_by=? "
+                         "WHERE experiment=? AND reverted_at IS NULL",
+                         ((reverted_by or "")[:80] or None, experiment_key)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not n:
+        return {"ok": False, "error": "Nothing is promoted for this experiment."}
+    return {"ok": True, "experiment": experiment_key, "reverted": n}
 
 
 # ── the readout (internal only) ────────────────────────────────────────────
@@ -350,6 +456,15 @@ def readout(db_path=DB_PATH) -> dict:
                      "verdict": verdict(exp, arms) if exp.get("control") else
                      {"call": None, "state": "retired", "text": "Retired experiment."}})
     env = (os.environ.get(PIN_ENV) or "").strip() or None
+    try:
+        promoted = active_promotions(db_path)
+        history = promotions(db_path=db_path)
+    except Exception as e:           # the promotions table predates this database
+        print(f"[experiments] promotions unavailable: {e}")
+        promoted, history = {}, []
+    for e in exps:
+        e["promotion"] = promoted.get(e["key"])
+        e["promotions"] = [h for h in history if h["experiment"] == e["key"]][:10]
     return {"ok": True, "experiments": exps, "pins": pins, "env_pin": env, "rule": RULE,
             "min_weeks": MIN_WEEKS_PER_ARM, "min_restaurants": MIN_RESTAURANTS_PER_ARM}
 
@@ -380,5 +495,21 @@ def init_schedule_experiments(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, experiment)
     )""")
+    # A winning arm made the default by a reviewed admin step (ROI #46):
+    # one row per promotion, kept after a revert as the audit trail.
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_experiment_promotions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        experiment     TEXT    NOT NULL,
+        arm            TEXT    NOT NULL,
+        flags_json     TEXT    NOT NULL,
+        verdict_text   TEXT,
+        note           TEXT,
+        promoted_by    TEXT,
+        promoted_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        reverted_by    TEXT,
+        reverted_at    TEXT
+    )""")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_exp_promotion_live ON "
+                 "schedule_experiment_promotions(experiment) WHERE reverted_at IS NULL")
     conn.commit()
     conn.close()
