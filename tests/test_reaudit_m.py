@@ -468,6 +468,7 @@ def _rec_event(rid, body, monkeypatch):
 def test_m8_done_silences_for_good_not_fourteen_days(db_path, monkeypatch):
     import rec_ledger
     rid = _rid(db_path)
+    rec_ledger.present(rid, "insight_food:abc", "food", "food")          # what the owner was shown (K2)
     out, st = _rec_event(rid, {"key": "insight_food:abc", "event": "completed", "surface": "food",
                                "module": "food"}, monkeypatch)
     assert st == 200 and "won’t suggest it again" in out["message"]
@@ -500,6 +501,8 @@ def test_m8_track_starts_a_real_tracker_on_the_modules_metric(db_path, monkeypat
 def test_m8_track_with_nothing_to_measure_says_it_is_only_hidden(db_path, monkeypatch):
     import metrics
     rid = _rid(db_path)
+    import rec_ledger
+    rec_ledger.present(rid, "insight_marketing:q", "marketing", "marketing")   # what the owner was shown (K2)
     monkeypatch.setattr(metrics, "measure", lambda *a, **k: (None, "no data"))
     out, st = _rec_event(rid, {"key": "insight_marketing:q", "event": "accepted", "surface": "marketing",
                                "module": "marketing"}, monkeypatch)

@@ -36,8 +36,11 @@ def recommendation_history(restaurant_id, limit=100, db_path=DB_PATH):
     return feedback.history(restaurant_id, limit=limit, db_path=db_path)
 
 
-def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH):
-    return scoring.kind_stats(rec_kind, cohort=cohort, restaurant_id=restaurant_id, db_path=db_path)
+def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None):
+    """scoring.kind_stats. A cohort figure used as one restaurant's prior
+    passes exclude_restaurant_id so its own rows are not in it."""
+    return scoring.kind_stats(rec_kind, cohort=cohort, restaurant_id=restaurant_id, db_path=db_path,
+                              exclude_restaurant_id=exclude_restaurant_id)
 
 
 def pattern_discovery(db_path=DB_PATH):

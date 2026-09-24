@@ -9,7 +9,8 @@ see why in `factors`.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
 from . import privacy, categories, scoring, patterns
 from . import features as _features
 from .stats import shrink
@@ -24,6 +25,14 @@ WEIGHTS = {
     "recent_changes": 0.10,     # applied as a penalty (1 - change score)
 }
 HIGH, MEDIUM = 0.70, 0.45
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports —
+    re-audit B23)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 
 def _recent_changes(restaurant_id, days=14, db_path=DB_PATH) -> tuple[float, str]:
@@ -89,18 +98,25 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
             note = f"this restaurant: {own['accepted']} of {own['answered']} accepted, none measured yet"
         factors.append({"name": "restaurant_history", "value": round(v, 3), "note": note})
 
-    plat = scoring.kind_stats(rec_kind, cohort=cohort, db_path=db_path) if cohort else None
+    # The cohort (else the platform) WITHOUT this restaurant — its own
+    # record is the restaurant_history factor above — and a success figure
+    # only over MIN_COHORT restaurants that measured one: restaurants that
+    # merely let a card expire are no floor for what one other restaurant
+    # measured (re-audit B3).
+    plat = (scoring.kind_stats(rec_kind, cohort=cohort, db_path=db_path, exclude_restaurant_id=restaurant_id)
+            if cohort else None)
     scope = "cohort"
-    if not plat or not plat["available"]:
-        plat = scoring.kind_stats(rec_kind, db_path=db_path)
+    if not plat or not plat.get("success_available"):
+        plat = scoring.kind_stats(rec_kind, db_path=db_path, exclude_restaurant_id=restaurant_id)
         scope = "platform"
-    if plat["available"] and plat["measured"] and privacy.cohort_ok(plat["restaurants"]):
-        # A cross-restaurant figure: over MIN_COHORT restaurants (available),
+    if plat.get("success_available") and plat["measured"] and privacy.cohort_ok(plat.get("measured_restaurants")):
+        # A cross-restaurant figure: over MIN_COHORT measuring restaurants,
         # counts only, and asserted anonymous before a card may carry it.
         factors.append(privacy.assert_anonymous({
             "name": "platform_evidence", "value": round(shrink(plat["success_rate"], plat["measured"]), 3),
-            "note": f"{plat['improved']} of {plat['measured']} measured across {plat['restaurants']} restaurants improved",
-            "scope": scope, "measured": plat["measured"], "restaurants": plat["restaurants"]}))
+            "note": (f"{plat['improved']} of {plat['measured']} measured across {plat['measured_restaurants']} "
+                     "restaurants improved"),
+            "scope": scope, "measured": plat["measured"], "restaurants": plat["measured_restaurants"]}))
 
     if cohort:
         conn = get_conn(db_path)

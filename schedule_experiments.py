@@ -162,10 +162,44 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
                     "flags": dict(_arm_def(exp, arm).get("flags") or {})})
     live = {e["key"] for e in EXPERIMENTS if e.get("active")}
     for key, p in promoted.items():
-        if key not in live:
-            out.append({"experiment": key, "arm": p["arm"], "pinned": True, "pin_source": "promoted",
-                        "flags": dict(p.get("flags") or {})})
+        if key in live:
+            continue
+        # A promotion outlives the experiment's code — and so do the kill
+        # switches: the env pin, then this restaurant's own pin, still come
+        # before it (the precedence above). A retired experiment's promoted
+        # arm used to be applied over both (re-audit B19).
+        exp = experiment(key)
+
+        def usable(c):
+            return c is not None and (c == OFF or c == p["arm"] or bool(exp and _arm_def(exp, c)))
+        choice, source = _env_choice(key), "env"
+        if not usable(choice):
+            choice, source = pins.get(key), "restaurant"
+        if not usable(choice) or choice == p["arm"]:
+            out.append({"experiment": key, "arm": p["arm"], "pinned": True,
+                        "pin_source": source if usable(choice) else "promoted", "flags": dict(p.get("flags") or {})})
+            continue
+        arm = (exp["control"] if exp else OFF) if choice == OFF else choice
+        adef = _arm_def(exp, arm) if exp else None
+        # An arm the code no longer defines (the control of an experiment
+        # deleted from EXPERIMENTS) has no flags to give: the week takes the
+        # defaults (DEFAULT_FLAGS) — never the promoted arm's.
+        out.append({"experiment": key, "arm": arm, "pinned": True, "pin_source": source,
+                    "flags": dict((adef or {}).get("flags") or {})})
     return out
+
+
+def _env_choice(key):
+    """The env kill switch's choice for experiment `key` ("off", an arm key)
+    — for an experiment retired in code, where _env_pin (which validates
+    against the live definition) cannot be used — or None."""
+    raw = (os.environ.get(PIN_ENV) or "").strip()
+    if not raw:
+        return None
+    if ":" in raw:
+        k, arm = raw.split(":", 1)
+        return (arm.strip() or None) if k.strip() == key else None
+    return raw
 
 
 def flag(arms, name, default=None) -> bool:

@@ -173,14 +173,42 @@ restaurant and key — never per event row):
   clear-verdict count.
 - `acceptance_rate` = taken ÷ (taken + declined + hidden + ignored). An
   ignored recommendation — shown, never answered, expired — stays in the
-  denominator; a snooze is neither.
+  denominator; a snooze is neither. Each recommendation is in **one**
+  bucket, the strongest thing that happened to it: taken > declined >
+  hidden > ignored (a snooze only when nothing else did) — a card that
+  expired and was answered later is the answer, not an answer and an ignore
+  (re-audit B8).
+- Only answers to a recommendation some surface **showed** are learned: a
+  ledger answer on an episode nobody was shown (one an answer opened) is
+  skipped by `feedback.sync` (B20). A measured verdict is read through
+  `rec_learning.learned_verdict` — the one mapping the engine and the
+  owner's record share: the owner saying they did not make the change, or
+  that something else changed, is `unknown`; a move that faded or reversed
+  at its re-check is `no_clear_change`, never a win (B9).
+
+**The floor, per figure (re-audit B3).** A cross-restaurant rate is a fact
+only over `MIN_COHORT` restaurants that contributed **to that rate**:
+`answered_restaurants` (restaurants with a settled recommendation of the
+kind — taken, declined, hidden or ignored) gate the acceptance rate
+(`acceptance_available`), `measured_restaurants` (restaurants with a clear
+measured result) gate the success rate (`success_available`); `available`
+is either, and `scoring.public()` withholds a rate — and its counts — whose
+own population is below the floor. Counting every restaurant with any row
+let five restaurants that merely let one card expire stand as the floor for
+a 10-of-10 success rate that ONE restaurant measured, and a card then said
+"restaurants like yours: 10 of 10 improved". A figure used as one
+restaurant's prior (`confidence.score`'s `platform_evidence`,
+`rec_learning`'s cohort prior) also leaves that restaurant out
+(`exclude_restaurant_id`): its own record is weighed against the prior,
+never counted inside it.
 
 **One confidence per card** (`card_confidence`): the card's own evidence
 sets its band; the kind's record may move it one step. This restaurant's
 own measured record of the kind comes first. Where it has none, the
 cross-restaurant figure (`platform_evidence` — the cohort's, else the
-platform's) may move it, only when it stands on at least `MIN_COHORT`
-restaurants and `PRIOR_MIN_MEASURED` (10) measured results; the factor is
+platform's, without this restaurant) may move it, only when it stands on
+at least `MIN_COHORT` restaurants that MEASURED the kind and
+`PRIOR_MIN_MEASURED` (10) measured results; the factor is
 asserted anonymous where `score()` builds it and again before a card uses
 it, and the card says "restaurants like yours: X of Y measured … improved"
 — counts only (`basis`: own | cohort | platform). It used to be computed
@@ -198,9 +226,13 @@ the last 365 days of episodes.
   review category, dish, item, daypart): acceptance (taken ÷ settled, the
   ignored included) and success (improved ÷ clear verdicts), each shrunk
   toward its prior by 5 pseudo-observations. The prior is the cohort's own
-  shrunk rate for the kind **only when the cohort clears `MIN_COHORT`**
-  (through `intelligence.recommendation_success`, asserted anonymous),
-  otherwise even (0.5). With nothing learned the weight is exactly 1.0.
+  shrunk rate for the kind, the cohort **without this restaurant**, each
+  rate **only when its own population clears `MIN_COHORT`** (answering
+  restaurants for acceptance, measuring restaurants for success — through
+  `intelligence.recommendation_success`, asserted anonymous), otherwise
+  even (0.5). With nothing learned the weight is exactly 1.0. The model
+  reads a year of episodes without their `shown` rows (only whether each
+  has one — B18).
 - weight = 1 + mean over the kind and its tags of
   0.5 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
   dollar calibration (median measured ÷ predicted, ≥ 3 pairs, shrunk toward

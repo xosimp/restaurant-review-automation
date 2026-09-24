@@ -1106,6 +1106,10 @@ def _do_mobile_home(current_user):
                 # How many a publish tap sends — the number on the label.
                 "count": (a.get("action") or {}).get("count"),
                 "dismissable": bool(a.get("dismissable")),
+                # Whether it is a recommendation the owner can answer (and
+                # Home presented) — false for a setup/health nudge and a
+                # critical item (home_brief.attention_answerable).
+                "answerable": bool(a.get("answerable")),
                 "times_hidden": int(a.get("times_hidden") or 0),
             } for a in _attn]
             # home_brief's payload key is "recommendations". This read
@@ -1643,7 +1647,7 @@ def mobile_ask_cavnar_history(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_clear_history(current_user):
     from models import clear_ask_history
-    clear_ask_history(current_user["restaurant_id"])
+    clear_ask_history(current_user["restaurant_id"], viewer_id=current_user.get("id"))
     return jsonify(ok=True)
 
 
@@ -1688,7 +1692,7 @@ def mobile_ask_cavnar_record_action(current_user):
     the same route its own button uses. See client_api's shared body."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_record_ask_action(
-        current_user["restaurant_id"], current_user.get("id"), data)
+        current_user["restaurant_id"], current_user.get("id"), data, user=current_user)
     return jsonify(**payload), status
 
 
@@ -3122,10 +3126,20 @@ def mobile_guest_winback_send(current_user, draft_id):
 @mobile_bp.route("/guest-winback/<int:draft_id>/dismiss", methods=["POST"])
 @mobile_login_required
 def mobile_guest_winback_dismiss(current_user, draft_id):
+    """"Not for us" on a win-back draft — the one body both twins call. K2:
+    only a login shown the draft's recommendation and allowed to see it
+    (else 404, as for a draft that is gone); K3: `reason_code` (+ `reason`)
+    like POST /recs/event, an unknown code a 400."""
     rid = current_user["restaurant_id"]
     import guest_marketing as _gm
+    import rec_ledger as _rl
     data = request.get_json(silent=True) or {}
-    out = _gm.dismiss_winback(rid, draft_id, user_id=current_user.get("id"), kind=data.get("kind") or "not_for_us")
+    code = data.get("reason_code")
+    if code not in (None, "") and code not in _rl.REASON_CODES:
+        return jsonify(ok=False, error="reason_code must be one of " + ", ".join(_rl.REASON_CODES)), 400
+    out = _gm.dismiss_winback(rid, draft_id, user_id=current_user.get("id"), kind=data.get("kind") or "not_for_us",
+                              viewer=current_user, reason_code=code or None,
+                              reason=data.get("reason") if isinstance(data.get("reason"), str) else None)
     return jsonify(**out), (200 if out.get("ok") else 404)
 
 

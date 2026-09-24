@@ -2048,7 +2048,7 @@ def ask_cavnar_history(current_user):
 @login_required
 def ask_cavnar_clear_history(current_user):
     from models import clear_ask_history
-    clear_ask_history(current_user["restaurant_id"])
+    clear_ask_history(current_user["restaurant_id"], viewer_id=current_user.get("id"))
     return jsonify(ok=True)
 
 
@@ -2118,16 +2118,30 @@ def ask_cavnar_delete_conversation(current_user, conversation_id):
     return jsonify(**payload), status
 
 
-def _do_record_ask_action(restaurant_id, user_id, data):
+# The longest summary an answer's audit line keeps. A proposal's own summary
+# is one short sentence; a client-sent one (an older client with no
+# proposal_id) is cut here — a 20,000-character "summary" was written into
+# the transcript the model re-reads (re-audit B6).
+ASK_ACTION_SUMMARY_MAX = 200
+ASK_ACTION_BODY_MAX = 4000
+
+
+def _do_record_ask_action(restaurant_id, user_id, data, user=None):
     """Record what the owner did with a proposal.
 
     The confirmed action itself is executed by the client calling the same
     route its button already uses — this only writes the audit line, so
     there is still exactly one code path that can send a supplier order.
+
+    Scoped to the login it was proposed to (re-audit B6): a teammate's
+    answer to the owner's proposal silenced it for the owner and wrote into
+    the owner's chat. A proposal made to another login is not found unless
+    the caller is an account principal (`user`); the audit line quotes the
+    proposal's OWN summary, and a client-sent summary is capped.
     """
     from models import log_ask_action, save_ask_message, get_ask_proposal
-    action = (data.get("action") or "").strip()
-    outcome = (data.get("outcome") or "").strip()
+    action = str(data.get("action") or "").strip()[:60]
+    outcome = str(data.get("outcome") or "").strip()
     if not action or outcome not in ("confirmed", "dismissed"):
         return {"ok": False, "error": "action and outcome (confirmed|dismissed) are required"}, 400
     # The ONE proposal this answers (#23). Checked against this restaurant —
@@ -2138,10 +2152,24 @@ def _do_record_ask_action(restaurant_id, user_id, data):
         proposal_id = int(proposal_id) if proposal_id not in (None, "") else None
     except (TypeError, ValueError):
         proposal_id = None
+    prop = None
     if proposal_id is not None:
         prop = get_ask_proposal(restaurant_id, proposal_id)
         if not prop or prop["action"] != action:
             return {"ok": False, "error": "That proposal wasn't found."}, 404
+        owner_of = prop.get("user_id")
+        if owner_of is not None and user_id is not None and owner_of != user_id:
+            from permissions import is_principal
+            if not is_principal(user):
+                return {"ok": False, "error": "That proposal wasn't found."}, 404
+    summary = (prop or {}).get("summary") or str(data.get("summary") or "").strip()[:ASK_ACTION_SUMMARY_MAX] or None
+    body = data.get("body")
+    try:
+        import json as _json_b
+        if body is not None and len(_json_b.dumps(body, default=str)) > ASK_ACTION_BODY_MAX:
+            body = None
+    except (TypeError, ValueError):
+        body = None
     reason = (str(data.get("reason") or "").strip()[:300] or None) if outcome == "dismissed" else None
     # The structured why, same codes as every other "Not for us" (rec_ledger
     # REASON_CODES, rec-ROI #22); an unknown code is refused, not guessed.
@@ -2150,8 +2178,8 @@ def _do_record_ask_action(restaurant_id, user_id, data):
     if reason_code not in (None, "") and reason_code not in _rl_ask.REASON_CODES:
         return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl_ask.REASON_CODES)}, 400
     reason_code = reason_code or None
-    log_ask_action(restaurant_id, action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=user_id,
+    log_ask_action(restaurant_id, action, summary=summary,
+                   body=body, outcome=outcome, user_id=user_id,
                    proposal_id=proposal_id, reason=reason)
     if proposal_id is not None:
         try:
@@ -2182,7 +2210,7 @@ def _do_record_ask_action(restaurant_id, user_id, data):
     # keeps the user/assistant alternation the Messages API expects. Lands in
     # the chat the proposal came from when the client says which.
     try:
-        label = data.get("summary") or action.replace("_", " ")
+        label = summary or action.replace("_", " ")
         verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
         why = f" — {reason}" if reason else ""
         save_ask_message(restaurant_id, "user", f"[{verb}: {label}{why}]", user_id=user_id,
@@ -2196,7 +2224,8 @@ def _do_record_ask_action(restaurant_id, user_id, data):
 @login_required
 def ask_cavnar_record_action(current_user):
     data = request.get_json(silent=True) or {}
-    payload, status = _do_record_ask_action(current_user["restaurant_id"], current_user.get("id"), data)
+    payload, status = _do_record_ask_action(current_user["restaurant_id"], current_user.get("id"), data,
+                                            user=current_user)
     return jsonify(**payload), status
 
 @client_bp.route("/api/mkt-insight")
@@ -7256,10 +7285,18 @@ def home_dismiss_api(current_user):
         ok = decisions.restore_kind(rid, str(data["restore_kind"])[:60], user_id=current_user.get("id"))
         home_brief.invalidate(rid)
         return jsonify(ok=True, restored=bool(ok))
-    key = (data.get("key") or "").strip()
+    key = data.get("key").strip() if isinstance(data.get("key"), str) else ""
     if not key:
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
+        # Taking an answer back is still a write on the recommendation: not
+        # one this login may not see (a manager lifting the owner's "not for
+        # us" on a loss flag). A key with no episode (an answer from before
+        # the ledger, a setup nudge) is Home's own row.
+        import rec_learning as _rl_undo
+        _ep = _rl_undo.episode_for(rid, key[:160])
+        if _ep is not None and not _rl_undo.viewer_sees(current_user, _ep):
+            return jsonify(ok=False, error="No such recommendation."), 404
         return jsonify(**home_brief.undismiss(rid, key))
     # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
     # refused, never stored as if it were one of the six.
@@ -7267,10 +7304,23 @@ def home_dismiss_api(current_user):
     reason_code = data.get("reason_code")
     if reason_code not in (None, "") and reason_code not in _rl_codes.REASON_CODES:
         return jsonify(ok=False, error="reason_code must be one of " + ", ".join(_rl_codes.REASON_CODES)), 400
+    # K2: an answer names something this login was shown and may see. A
+    # recommendation must have a shown episode here that viewer_sees allows
+    # (a manager hiding the owner's loss flag silenced it for the owner); a
+    # Home setup/health nudge is not a recommendation and is checked
+    # against its module's permission. Anything else is not found.
+    import rec_learning as _rlearn
+    key = key[:160]
+    if key in home_brief.HOME_SETUP_KEYS:
+        if not _rlearn.viewer_sees(current_user, {"key": key, "module": home_brief.HOME_SETUP_KEYS[key]}):
+            return jsonify(ok=False, error="No such recommendation."), 404
+    elif _rlearn.answerable_episode(current_user, rid, key) is None:
+        return jsonify(ok=False, error="No such recommendation."), 404
     kind = (data.get("kind") or "recommendation")[:40]
     out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
                              days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
-                             surface="home", role=current_user.get("role"), reason_code=reason_code or None)
+                             surface="home", role=current_user.get("role"), reason_code=reason_code or None,
+                             require_existing=True)
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.

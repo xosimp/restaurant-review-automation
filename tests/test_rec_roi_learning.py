@@ -150,8 +150,10 @@ def test_answers_from_every_surface_reach_the_engine_once(db):
 def test_a_snooze_is_learned_as_a_snooze_and_an_old_hidden_one_is_repaired(db):
     rid = _rid(db)
     home_brief.dismiss(rid, "labor_over:2026-09-01", kind="snooze", days=1)
-    # what the old sync wrote for it
-    feedback.record(rid, "labor_over", "labor_over:2026-09-01", "hidden", synced_from="home_dismissals", db_path=db)
+    # what the old sync wrote for it — stamped with the snooze row's own time
+    at = _q(db, "SELECT dismissed_at FROM home_dismissals WHERE key='labor_over:2026-09-01'")[0]["dismissed_at"]
+    feedback.record(rid, "labor_over", "labor_over:2026-09-01", "hidden", synced_from="home_dismissals",
+                    event_at=at, db_path=db)
     feedback.sync(db_path=db)
     acts = {r["action"] for r in _q(db, "SELECT action FROM intel_rec_events WHERE source_key='labor_over:2026-09-01'")}
     assert acts == {"snoozed"}
@@ -242,20 +244,30 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     models.update_restaurant(rid, {"category": "pizza"})
     calls = []
 
-    def fake(kind, cohort=None, restaurant_id=None, db_path=None):
-        calls.append(cohort)
-        return {"restaurants": 7, "available": True, "answered": 40, "measured": 20,
-                "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
+    def fake(kind, cohort=None, restaurant_id=None, db_path=None, exclude_restaurant_id=None):
+        calls.append((cohort, exclude_restaurant_id))
+        return {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 6, "available": True,
+                "answered": 40, "measured": 20, "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
     monkeypatch.setattr(intelligence, "recommendation_success", fake)
     m = rec_learning.effectiveness(rid, db_path=db)
-    assert m.prior("trim_day") == (0.8, 0.7) and calls == ["pizza"]
+    # The cohort without this restaurant: its own record is never inside its own prior (re-audit B3).
+    assert m.prior("trim_day") == (0.8, 0.7) and calls == [("pizza", rid)]
     # below the floor, or carrying an identity, the prior is even
     monkeypatch.setattr(intelligence, "recommendation_success",
-                        lambda *a, **k: {"restaurants": 4, "available": False, "answered": 9, "measured": 9})
+                        lambda *a, **k: {"restaurants": 4, "answered_restaurants": 4, "measured_restaurants": 4,
+                                         "available": False, "answered": 9, "measured": 9})
     assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, 0.5)
     monkeypatch.setattr(intelligence, "recommendation_success",
-                        lambda *a, **k: {"restaurants": 9, "available": True, "restaurant_id": 3, "answered": 9})
+                        lambda *a, **k: {"restaurants": 9, "answered_restaurants": 9, "available": True,
+                                         "restaurant_id": 3, "answered": 9})
     assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.5, 0.5)
+    # Each rate over its OWN population: seven restaurants answered, one measured —
+    # the acceptance prior is the cohort's, the success prior stays even.
+    monkeypatch.setattr(intelligence, "recommendation_success",
+                        lambda *a, **k: {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 1,
+                                         "available": True, "answered": 30, "measured": 10,
+                                         "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.95})
+    assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.8, 0.5)
 
 
 def test_home_orders_by_the_learned_weight_and_says_why():
@@ -358,7 +370,8 @@ def test_score_builds_the_prior_only_over_the_floor_and_anonymous(db):
     c = confidence.score(rids[0], "trim_day", cohort="pizza", restaurant=models.get_restaurant(rids[0]), db_path=db)
     f = next(x for x in c["factors"] if x["name"] == "platform_evidence")
     privacy.assert_anonymous(f)
-    assert f["scope"] == "cohort" and f["restaurants"] == 6 and f["measured"] == 18
+    # The cohort WITHOUT the restaurant asking (re-audit B3): five others, fifteen results.
+    assert f["scope"] == "cohort" and f["restaurants"] == 5 and f["measured"] == 15
 
 
 # ── #46 the reviewed promotion ──────────────────────────────────────────────

@@ -42,27 +42,40 @@ def kind_of(source_key: str) -> str:
     return key.split(":", 1)[0] or "unknown"
 
 
-def record(restaurant_id, rec_kind, source_key, action, outcome=None, days_to_effect=None,
-           confidence_at=None, event_at=None, cohort=None, synced_from=None, db_path=DB_PATH) -> bool:
+def _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=None, days_to_effect=None,
+               confidence_at=None, event_at=None, cohort=None, synced_from=None) -> bool:
+    """record() on the caller's connection, uncommitted — sync() writes a
+    whole pass on one connection (re-audit B22)."""
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action}")
     if outcome is not None and outcome not in OUTCOMES:
         raise ValueError(f"unknown outcome {outcome}")
     key = str(source_key)[:200]
+    cur = conn.execute(
+        "INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, cohort, action, outcome, days_to_effect, "
+        "confidence_at, event_at, synced_from) VALUES (?,?,?,?,?,?,?,?,COALESCE(?, datetime('now')),?) "
+        "ON CONFLICT(restaurant_id, source_key, action) DO NOTHING",
+        (restaurant_id, rec_kind, key, cohort, action, outcome, days_to_effect, confidence_at, event_at, synced_from))
+    inserted = cur.rowcount > 0
+    if not inserted and (outcome is not None or days_to_effect is not None or cohort is not None):
+        # An existing event takes what it lacked (a cohort resolved later)
+        # and a verdict that changed since (a re-check, the owner's
+        # check-in). Never counted as new.
+        conn.execute("UPDATE intel_rec_events SET outcome=COALESCE(?, outcome), days_to_effect=COALESCE(?, days_to_effect), "
+                     "cohort=COALESCE(?, cohort) WHERE restaurant_id=? AND source_key=? AND action=? "
+                     "AND (outcome IS NOT COALESCE(?, outcome) OR days_to_effect IS NOT COALESCE(?, days_to_effect) "
+                     "     OR cohort IS NOT COALESCE(?, cohort))",
+                     (outcome, days_to_effect, cohort, restaurant_id, key, action, outcome, days_to_effect, cohort))
+    return inserted
+
+
+def record(restaurant_id, rec_kind, source_key, action, outcome=None, days_to_effect=None,
+           confidence_at=None, event_at=None, cohort=None, synced_from=None, db_path=DB_PATH) -> bool:
     conn = get_conn(db_path)
     try:
-        cur = conn.execute(
-            "INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, cohort, action, outcome, days_to_effect, "
-            "confidence_at, event_at, synced_from) VALUES (?,?,?,?,?,?,?,?,COALESCE(?, datetime('now')),?) "
-            "ON CONFLICT(restaurant_id, source_key, action) DO NOTHING",
-            (restaurant_id, rec_kind, key, cohort, action, outcome, days_to_effect, confidence_at, event_at, synced_from))
-        inserted = cur.rowcount > 0
-        if not inserted and (outcome is not None or days_to_effect is not None or cohort is not None):
-            # An existing event only ever gains what it lacked — a verdict that
-            # arrived later, a cohort resolved later. Never counted as new.
-            conn.execute("UPDATE intel_rec_events SET outcome=COALESCE(?, outcome), days_to_effect=COALESCE(?, days_to_effect), "
-                         "cohort=COALESCE(?, cohort) WHERE restaurant_id=? AND source_key=? AND action=?",
-                         (outcome, days_to_effect, cohort, restaurant_id, key, action))
+        inserted = _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=outcome,
+                              days_to_effect=days_to_effect, confidence_at=confidence_at, event_at=event_at,
+                              cohort=cohort, synced_from=synced_from)
         conn.commit()
         return inserted
     finally:
@@ -71,8 +84,19 @@ def record(restaurant_id, rec_kind, source_key, action, outcome=None, days_to_ef
 
 LEDGER_CURSOR = "intelligence_feedback_ledger"
 LEDGER_EVENTS_PER_PASS = 20000
+# The append-only older tables are read forward from their own cursors too
+# (re-audit B22): home_dismissals (a new answer replaces its row, so it
+# takes a new id), ask_cavnar_actions (append-only) and delayed_actions (a
+# low-water mark: the cursor never passes a row still pending).
+HOME_CURSOR = "intelligence_feedback_home"
+ASK_CURSOR = "intelligence_feedback_ask"
+AUTO_CURSOR = "intelligence_feedback_auto"
+LEGACY_ROWS_PER_PASS = 20000
+REPAIR_MARK = "intelligence_feedback_repair:v2"
 # rec_ledger keys that are bookkeeping, not advice (rec_ledger.BOOKKEEPING_PREFIXES).
 _BOOKKEEPING = ("restore_kind:", "calibration:", "standby:")
+_AUTO_DONE = ("done", "executed")
+_AUTO_OFF = ("cancelled", "canceled")
 
 
 def _ask_key(proposal_id, action, summary) -> str:
@@ -103,36 +127,41 @@ def _ledger_action(key, event, meta):
     return None
 
 
-def _cursor_get(conn):
+def _cursor_get(conn, key=LEDGER_CURSOR):
     try:
-        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (LEDGER_CURSOR,)).fetchone()
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
         return int(row["value"]) if row and row["value"] else 0
     except Exception:
         return 0
 
 
-def _cursor_set(conn, value):
+def _cursor_set(conn, value, key=LEDGER_CURSOR):
     conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
-                 (LEDGER_CURSOR, str(int(value))))
+                 (key, str(int(value))))
 
 
 def _repair(conn, dis, asks):
-    """Two derived-row corrections, idempotent, run before each sync:
+    """Two derived-row corrections, run ONCE (REPAIR_MARK; re-audit B22):
 
     * a Home "Not today" (home_dismissals kind 'snooze') was learned as
-      `hidden` — a deliberate no. Where the key has no real hide, that row
-      becomes `snoozed` (a duplicate `snoozed` from the ledger wins).
+      `hidden` — a deliberate no — by the old sync, which wrote it with the
+      snooze row's own dismissed_at. Only a `hidden` row carrying THAT time
+      becomes `snoozed` (a duplicate `snoozed` wins): a real, earlier hide
+      of the same key — whose row a later "Not today" replaced — is an
+      answer and stays one (re-audit B10: it used to be erased).
     * an Ask answer was keyed "ask:<action>:<summary>" while every other
       reader keys it "ask:<proposal id>". Rows whose answer names its
       proposal move to the proposal's key, so the ledger's copy of the
       same answer cannot count it twice."""
-    hides = {(r["restaurant_id"], r["key"]) for r in dis if r["kind"] not in ("snooze", "done", "not_for_us")}
-    for rid, key in {(r["restaurant_id"], r["key"]) for r in dis if r["kind"] == "snooze"} - hides:
+    for r in dis:
+        if r["kind"] != "snooze":
+            continue
+        rid, key, at = r["restaurant_id"], str(r["key"])[:200], r["dismissed_at"]
         conn.execute("UPDATE OR IGNORE intel_rec_events SET action='snoozed' WHERE restaurant_id=? AND source_key=? "
-                     "AND action='hidden' AND synced_from='home_dismissals'", (rid, str(key)[:200]))
+                     "AND action='hidden' AND synced_from='home_dismissals' AND event_at=?", (rid, key, at))
         conn.execute("DELETE FROM intel_rec_events WHERE restaurant_id=? AND source_key=? AND action='hidden' "
-                     "AND synced_from='home_dismissals'", (rid, str(key)[:200]))
+                     "AND synced_from='home_dismissals' AND event_at=?", (rid, key, at))
     for r in asks:
         if not r["proposal_id"]:
             continue
@@ -141,7 +170,29 @@ def _repair(conn, dis, asks):
                      "AND synced_from='ask_cavnar_actions'", (new, r["restaurant_id"], legacy))
         conn.execute("DELETE FROM intel_rec_events WHERE restaurant_id=? AND source_key=? "
                      "AND synced_from='ask_cavnar_actions'", (r["restaurant_id"], legacy))
-    conn.commit()
+
+
+def _repair_once(conn):
+    try:
+        if conn.execute("SELECT 1 FROM job_cursors WHERE key=?", (REPAIR_MARK,)).fetchone():
+            return False
+    except Exception:
+        return False                      # no job_cursors: nothing to mark, nothing repaired
+    dis = conn.execute("SELECT restaurant_id, key, kind, dismissed_at FROM home_dismissals WHERE kind='snooze'").fetchall()
+    asks = conn.execute("SELECT restaurant_id, action, summary, proposal_id FROM ask_cavnar_actions "
+                        "WHERE outcome IN ('confirmed','dismissed') AND proposal_id IS NOT NULL").fetchall()
+    _repair(conn, dis, asks)
+    _cursor_set(conn, 1, key=REPAIR_MARK)
+    return True
+
+
+def _outcome_of(r):
+    """The engine's verdict for one tracker row — rec_learning.learned_verdict,
+    the one mapping both readers share (re-audit B9): the owner saying they
+    did not make the change, or that something else changed, is `unknown`;
+    a move that faded or reversed at its re-check is not a win."""
+    import rec_learning
+    return rec_learning.learned_verdict(r["verdict"], dict(r))
 
 
 def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
@@ -150,11 +201,18 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
     rec_ledger (rec_events) is the input for every surface — Home, the
     brief, Reviews, Food, Marketing, Intel, the DSR, the schedule, the
     queue, alerts and issues — read forward from a cursor in job_cursors,
-    bounded per pass. The four older tables are still read for what
-    predates the ledger: home_dismissals, recommendation_outcomes (the
-    source of every measured verdict and its days to effect),
-    ask_cavnar_actions (every Ask answer, under the ledger's own
-    "ask:<proposal id>") and delayed_actions.
+    bounded per pass. Only an answer to an episode some surface SHOWED is
+    counted (re-audit B20): an episode an answer opened, with nothing shown
+    behind it, is not a recommendation the owner took or declined.
+
+    The four older tables are still read for what predates the ledger:
+    home_dismissals, ask_cavnar_actions and delayed_actions forward from
+    their own cursors; recommendation_outcomes (the source of every
+    measured verdict and its days to effect) whole, because its rows change
+    after they are written — a tracker is evaluated, re-checked, checked in
+    on — and each verdict is read through rec_learning.learned_verdict
+    (re-audit B9). Ask answers are filed under the ledger's own
+    "ask:<proposal id>".
 
     Never counted twice: an answer reaches the same (restaurant, key,
     action) row from both paths — a Home "not for us" is `not_for_us` from
@@ -168,91 +226,119 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
     accepted → tracking (a tracker named) | accepted; implemented →
     implemented; snoozed → snoozed (a "Not today" is not a no); expired →
     ignored. `cohorts` is {restaurant_id: cohort} so events carry their
-    cohort. Idempotent."""
+    cohort. The whole pass is written on one connection and committed once
+    (re-audit B22). Idempotent."""
     import json as _json
     cohorts = cohorts or {}
     written = 0
+    from_ledger = 0
     conn = get_conn(db_path)
     try:
-        dis = conn.execute("SELECT restaurant_id, key, kind, dismissed_at FROM home_dismissals").fetchall()
-        outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, created_at "
-                            "FROM recommendation_outcomes").fetchall()
-        asks = conn.execute("SELECT restaurant_id, action, summary, outcome, created_at, proposal_id FROM ask_cavnar_actions "
-                            "WHERE outcome IN ('confirmed','dismissed')").fetchall()
-        auto = conn.execute("SELECT restaurant_id, kind, id, status, executed_at, created_at FROM delayed_actions "
-                            "WHERE status IN ('done','executed','cancelled','canceled')").fetchall()
-        _repair(conn, dis, asks)
+        _repair_once(conn)
+
+        def put(rid, kind, key, action, **kw):
+            return _record_on(conn, rid, kind, key, action, cohort=cohorts.get(rid), **kw)
+
+        h0 = _cursor_get(conn, HOME_CURSOR)
+        dis = conn.execute("SELECT id, restaurant_id, key, kind, dismissed_at FROM home_dismissals WHERE id > ? "
+                           "ORDER BY id LIMIT ?", (h0, LEGACY_ROWS_PER_PASS)).fetchall()
+        for r in dis:
+            action = {"done": "done", "not_for_us": "not_for_us", "snooze": "snoozed"}.get(r["kind"], "hidden")
+            written += put(r["restaurant_id"], kind_of(r["key"]), r["key"], action, event_at=r["dismissed_at"],
+                           synced_from="home_dismissals")
+        if dis:
+            _cursor_set(conn, max(int(r["id"]) for r in dis), key=HOME_CURSOR)
+
+        try:
+            outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
+                                "created_at, recheck_verdict, owner_checkin FROM recommendation_outcomes").fetchall()
+        except Exception:                # a database from before the re-check / check-in columns
+            outs = conn.execute("SELECT restaurant_id, source, source_key, status, verdict, started_on, evaluate_on, "
+                                "created_at FROM recommendation_outcomes").fetchall()
+        for r in outs:
+            # The kind comes from the key, not the tracker's source: Home's
+            # "Done" starts an `observed` tracker under the recommendation's
+            # own key ("trim_day:Monday"), whose result belongs to trim_day —
+            # not to a meaningless "observed:Monday". kind_of already gives a
+            # genuine observed:<action>:<month> key its observed: kind.
+            kind = kind_of(r["source_key"])
+            written += put(r["restaurant_id"], kind, r["source_key"], "tracking", event_at=r["created_at"],
+                           synced_from="recommendation_outcomes")
+            if r["status"] == "evaluated":
+                days = None
+                try:
+                    days = (date.fromisoformat(str(r["evaluate_on"])[:10])
+                            - date.fromisoformat(str(r["started_on"])[:10])).days
+                except (TypeError, ValueError):
+                    pass
+                written += put(r["restaurant_id"], kind, r["source_key"], "measured", outcome=_outcome_of(r),
+                               days_to_effect=days, event_at=r["evaluate_on"], synced_from="recommendation_outcomes")
+
+        a0 = _cursor_get(conn, ASK_CURSOR)
+        asks = conn.execute("SELECT id, restaurant_id, action, summary, outcome, created_at, proposal_id "
+                            "FROM ask_cavnar_actions WHERE id > ? ORDER BY id LIMIT ?",
+                            (a0, LEGACY_ROWS_PER_PASS)).fetchall()
+        for r in asks:
+            if r["outcome"] not in ("confirmed", "dismissed"):
+                continue
+            key = _ask_key(r["proposal_id"], r["action"], r["summary"])
+            written += put(r["restaurant_id"], f"ask:{r['action']}", key, r["outcome"], event_at=r["created_at"],
+                           synced_from="ask_cavnar_actions")
+        if asks:
+            _cursor_set(conn, max(int(r["id"]) for r in asks), key=ASK_CURSOR)
+
+        d0 = _cursor_get(conn, AUTO_CURSOR)
+        auto = conn.execute("SELECT id, restaurant_id, kind, status, executed_at, created_at FROM delayed_actions "
+                            "WHERE id > ? ORDER BY id LIMIT ?", (d0, LEGACY_ROWS_PER_PASS)).fetchall()
+        low = None                       # the first row still pending: the cursor stops before it
+        for r in auto:
+            if r["status"] in _AUTO_DONE or r["status"] in _AUTO_OFF:
+                written += put(r["restaurant_id"], f"auto:{r['kind']}", f"auto:{r['kind']}:{r['id']}",
+                               "auto" if r["status"] in _AUTO_DONE else "dismissed",
+                               event_at=r["executed_at"] or r["created_at"], synced_from="delayed_actions")
+            elif r["status"] == "pending" and low is None:
+                low = int(r["id"])
+        if auto:
+            _cursor_set(conn, (low - 1) if low is not None else max(int(r["id"]) for r in auto), key=AUTO_CURSOR)
+
         start = _cursor_get(conn)
         try:
             ledger = conn.execute(
-                "SELECT id, restaurant_id, key, event, meta, at FROM rec_events WHERE id > ? AND event IN "
-                "('accepted','completed','dismissed','snoozed','implemented','expired') ORDER BY id LIMIT ?",
+                "SELECT e.id, e.restaurant_id, e.key, e.event, e.meta, e.at, "
+                "EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=e.rec_id AND s.event='shown') AS shown "
+                "FROM rec_events e WHERE e.id > ? AND e.event IN "
+                "('accepted','completed','dismissed','snoozed','implemented','expired') ORDER BY e.id LIMIT ?",
                 (start, LEDGER_EVENTS_PER_PASS)).fetchall()
         except Exception:            # a database from before the ledger
             ledger = []
+        last = start
+        for r in ledger:
+            last = max(last, int(r["id"]))
+            key = str(r["key"] or "")
+            if not key or key.startswith(_BOOKKEEPING) or key.startswith("ask:") or not r["shown"]:
+                continue
+            try:
+                meta = _json.loads(r["meta"] or "{}") or {}
+            except (TypeError, ValueError):
+                meta = {}
+            action = _ledger_action(key, r["event"], meta)
+            if not action:
+                continue
+            n = put(r["restaurant_id"], kind_of(key), key, action, event_at=r["at"], synced_from="rec_ledger")
+            written += n
+            from_ledger += n
+        if ledger:
+            _cursor_set(conn, last)
+        # Rows read on an earlier pass are not read again, but the cohort
+        # they belong to is today's (a category set or changed since) — one
+        # statement per restaurant, touching only rows that differ.
+        for rid, cohort in cohorts.items():
+            if cohort:
+                conn.execute("UPDATE intel_rec_events SET cohort=? WHERE restaurant_id=? AND cohort IS NOT ?",
+                             (cohort, rid, cohort))
+        conn.commit()
     finally:
         conn.close()
-    for r in dis:
-        action = {"done": "done", "not_for_us": "not_for_us", "snooze": "snoozed"}.get(r["kind"], "hidden")
-        written += record(r["restaurant_id"], kind_of(r["key"]), r["key"], action, event_at=r["dismissed_at"],
-                          cohort=cohorts.get(r["restaurant_id"]), synced_from="home_dismissals", db_path=db_path)
-    for r in outs:
-        # The kind comes from the key, not the tracker's source: Home's
-        # "Done" starts an `observed` tracker under the recommendation's own
-        # key ("trim_day:Monday"), whose result belongs to trim_day — not to
-        # a meaningless "observed:Monday". kind_of already gives a genuine
-        # observed:<action>:<month> key its observed: kind.
-        kind = kind_of(r["source_key"])
-        written += record(r["restaurant_id"], kind, r["source_key"], "tracking", event_at=r["created_at"],
-                          cohort=cohorts.get(r["restaurant_id"]), synced_from="recommendation_outcomes", db_path=db_path)
-        if r["status"] == "evaluated":
-            days = None
-            try:
-                days = (date.fromisoformat(str(r["evaluate_on"])[:10]) - date.fromisoformat(str(r["started_on"])[:10])).days
-            except (TypeError, ValueError):
-                pass
-            outcome = r["verdict"] if r["verdict"] in OUTCOMES else "unknown"
-            written += record(r["restaurant_id"], kind, r["source_key"], "measured", outcome=outcome, days_to_effect=days,
-                              event_at=r["evaluate_on"], cohort=cohorts.get(r["restaurant_id"]),
-                              synced_from="recommendation_outcomes", db_path=db_path)
-    for r in asks:
-        key = _ask_key(r["proposal_id"], r["action"], r["summary"])
-        written += record(r["restaurant_id"], f"ask:{r['action']}", key, r["outcome"], event_at=r["created_at"],
-                          cohort=cohorts.get(r["restaurant_id"]), synced_from="ask_cavnar_actions", db_path=db_path)
-    for r in auto:
-        if r["status"] in ("done", "executed"):
-            written += record(r["restaurant_id"], f"auto:{r['kind']}", f"auto:{r['kind']}:{r['id']}", "auto",
-                              event_at=r["executed_at"] or r["created_at"], cohort=cohorts.get(r["restaurant_id"]),
-                              synced_from="delayed_actions", db_path=db_path)
-        else:
-            written += record(r["restaurant_id"], f"auto:{r['kind']}", f"auto:{r['kind']}:{r['id']}", "dismissed",
-                              event_at=r["executed_at"] or r["created_at"], cohort=cohorts.get(r["restaurant_id"]),
-                              synced_from="delayed_actions", db_path=db_path)
-    from_ledger = 0
-    last = start
-    for r in ledger:
-        last = max(last, int(r["id"]))
-        key = str(r["key"] or "")
-        if not key or key.startswith(_BOOKKEEPING) or key.startswith("ask:"):
-            continue
-        try:
-            meta = _json.loads(r["meta"] or "{}") or {}
-        except (TypeError, ValueError):
-            meta = {}
-        action = _ledger_action(key, r["event"], meta)
-        if not action:
-            continue
-        n = record(r["restaurant_id"], kind_of(key), key, action, event_at=r["at"],
-                   cohort=cohorts.get(r["restaurant_id"]), synced_from="rec_ledger", db_path=db_path)
-        written += n
-        from_ledger += n
-    if ledger:
-        conn = get_conn(db_path)
-        try:
-            _cursor_set(conn, last)
-            conn.commit()
-        finally:
-            conn.close()
     return {"events": written, "from_ledger": from_ledger, "ledger_cursor": last}
 
 

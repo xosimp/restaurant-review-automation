@@ -1059,7 +1059,9 @@ def _read_decisions(restaurant_id, limit=20, _viewer=None):
     import decisions
     # Loss issues name the approving manager: only for a LOSS_VIEW login.
     loss = getattr(_viewer, "_ask_sees_loss", False) if _viewer is not None else False
-    rows = decisions.history(restaurant_id, limit=int(limit or 20), sees_loss=loss)
+    # ...and only what this login may see (re-audit B4).
+    who = getattr(_viewer, "_ask_dsr_user", None) if _viewer is not None else None
+    rows = decisions.history(restaurant_id, limit=int(limit or 20), sees_loss=loss, viewer=who)
     return {"decisions": rows, "count": len(rows),
             "note": "Each row is what the owner did and what was measured — never a guess."}
 

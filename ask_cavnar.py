@@ -518,7 +518,11 @@ def _decisions_context(restaurant_id, viewer=None):
     try:
         import decisions
         loss = getattr(viewer, "_ask_sees_loss", False) if viewer is not None else False
-        return decisions.context(restaurant_id, sees_loss=loss)
+        # The login itself (viewer_restaurant carries it): the history is
+        # redacted to what that login may see — food cost, owner-only,
+        # others' Ask proposals (re-audit B4). None is the owner's own view.
+        who = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+        return decisions.context(restaurant_id, sees_loss=loss, viewer=who)
     except Exception:
         return ""
 
@@ -734,8 +738,16 @@ def build_context(restaurant):
     # The DSR view (owner / manager) is part of it too: last night's report
     # below is redacted per view, and an owner's copy carries the budget.
     import ask_cavnar_tools as _tools
+    # A login that is not a principal reads only its own Ask proposals in
+    # the decisions section (decisions._redact), so its snapshot is its own.
+    _who = getattr(restaurant, "_ask_dsr_user", None)
+    try:
+        from permissions import is_principal as _is_principal
+        _own = None if (_who is None or _is_principal(_who)) else _who.get("id")
+    except Exception:
+        _own = (_who or {}).get("id")
     key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))),
-           bool(getattr(restaurant, "_ask_sees_loss", False)), _tools.dsr_view_key(restaurant))
+           bool(getattr(restaurant, "_ask_sees_loss", False)), _tools.dsr_view_key(restaurant), _own)
     cached = _CONTEXT_CACHE.get(key)
     if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
         return cached[1]

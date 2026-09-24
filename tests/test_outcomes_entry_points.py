@@ -70,6 +70,13 @@ def _route(fn, rid, body=None, args=(), query=None):
     return out
 
 
+def _shown(rid, *keys, module="labor", surface="home"):
+    """What a surface showed this owner — an answer names a recommendation
+    it was shown (K2), so every door is walked from a shown card."""
+    for k in keys:
+        rec_ledger.present(rid, k, module, surface)
+
+
 def _rec_event(rid, body):
     out, status = _route(strategy_routes._do_rec_event, rid, body)
     assert status == 200
@@ -88,6 +95,7 @@ def _tracking(db_path, rid):
 
 def test_3_a_second_track_on_the_same_metric_is_answered_not_started(db_path):
     rid = _rid(db_path)
+    _shown(rid, "trim_day:Monday", "trim_day:Tuesday")
     first, st = _route(strategy_routes._do_outcome_record, rid,
                        {"source": "recommendation", "source_key": "trim_day:Monday", "title": "Trim Monday",
                         "metric": "labor_pct"})
@@ -109,6 +117,7 @@ def test_3_a_second_track_on_the_same_metric_is_answered_not_started(db_path):
 
 def test_3_tracking_the_same_recommendation_twice_returns_the_same_tracker(db_path):
     rid = _rid(db_path)
+    _shown(rid, "trim_day:Monday")
     body = {"source": "recommendation", "source_key": "trim_day:Monday", "title": "Trim Monday",
             "metric": "labor_pct"}
     a, _ = _route(strategy_routes._do_outcome_record, rid, body)
@@ -120,6 +129,7 @@ def test_3_tracking_the_same_recommendation_twice_returns_the_same_tracker(db_pa
 
 def test_3_module_track_twice_on_labor_is_refused(db_path):
     rid = _rid(db_path)
+    _shown(rid, "insight_labor:a", "insight_labor:b", surface="labor")
     a = _rec_event(rid, {"key": "insight_labor:a", "event": "accepted", "surface": "labor", "module": "labor"})
     assert a["tracker"]["metric"] == "labor_pct" and a["tracking"]["metric"] == "labor_pct"
     b = _rec_event(rid, {"key": "insight_labor:b", "event": "accepted", "surface": "labor", "module": "labor"})
@@ -170,6 +180,7 @@ def test_18_an_automatic_start_is_refused_while_its_family_is_measured(db_path):
 
 def test_18_the_home_done_button_starts_and_refuses_the_same_way(db_path):
     rid = _rid(db_path)
+    _shown(rid, "trim_day:Monday", "trim_day:Friday")
 
     def done(key, title, metric):
         app = Flask(__name__)
@@ -188,6 +199,7 @@ def test_18_the_home_done_button_starts_and_refuses_the_same_way(db_path):
 
 def test_11_marketing_track_starts_no_sales_tracker(db_path):
     rid = _rid(db_path)
+    _shown(rid, "insight_marketing:q", module="marketing", surface="marketing")
     out = _rec_event(rid, {"key": "insight_marketing:q", "event": "accepted", "surface": "marketing",
                            "module": "marketing"})
     assert "tracker" not in out and out["tracker_refused"]["code"] == "no_metric"
@@ -248,6 +260,9 @@ def test_39_reduce_waste_is_measured_on_waste_and_credited_to_food_cost(db_path,
 
 def test_3_schedule_accept_is_refused_while_labor_is_measured(db_path):
     rid = _rid(db_path)
+    from schedule_intel import schedule_rec_key
+    _shown(rid, schedule_rec_key("hours", "Trim about 6h on Monday"), schedule_rec_key("hours", "Trim about 4h on Friday"),
+           module="schedule", surface="schedule_review")
     a, st = _route(strategy_routes._do_recommendation_event, rid,
                    {"action": "accepted", "kind": "hours", "key": "Trim about 6h on Monday"})
     assert st == 200 and a["tracker"]["metric"] == "labor_pct" and a["tracker"]["module"] == "labor"

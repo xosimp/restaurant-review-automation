@@ -254,6 +254,13 @@ def _do_outcome_record(u):
             return {"ok": False, "error": "Track for between 7 and 180 days."}, 400
     else:
         wd = None
+    if b.get("source_key") not in (None, ""):
+        # K2: a tracker keyed to a recommendation measures THAT
+        # recommendation (rec_ledger links it to the episode), so the key must
+        # be one this login was shown and may see — before anything starts.
+        import rec_learning as _rlearn
+        if not isinstance(b["source_key"], str) or _rlearn.answerable_episode(u, _rid(u), b["source_key"]) is None:
+            return {"ok": False, "error": "No such recommendation."}, 404
     source_key = b.get("source_key") or f"manual:{title.lower()[:80]}"
     try:
         # One tracker per metric (rec-ROI #3): a second Track on a number
@@ -274,9 +281,14 @@ def _do_outcome_record(u):
             surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "home"
             meta = ({"tracking": o.get("id"), "metric": o.get("metric")} if o else
                     {"metric": b["metric"], "tracker_refused": (res["tracker_refused"].get("in_flight") or {}).get("id")})
+            # Quiet for the tracker's whole window (re-audit B1): at the
+            # 14-day default a 28-day tracker's card came back mid-window as a
+            # new episode, and the check-in then answered that one.
+            window = int(o.get("window_days") or 0) if o else 0
             _rl.record(_rid(u), str(b["source_key"]), "accepted", surface=surface, user_id=u.get("id"),
                        role=u.get("role"), meta=meta,
-                       source_ref=f"track:{o.get('id')}" if o else f"track-refused:{source_key}")
+                       source_ref=f"track:{o.get('id')}" if o else f"track-refused:{source_key}",
+                       silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window), require_existing=True)
             import home_brief as _hb
             _hb.invalidate(_rid(u))
         except Exception as _tx:
@@ -439,12 +451,68 @@ def _do_actions(u):
     return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u))}, 200
 
 
+def _queue_issue_visible(u, key) -> bool:
+    """An issue row in the queue ("issue:<id>") — not a recommendation, and
+    never presented to the ledger (issues are finished at source) — may be
+    put back tomorrow by a login that can see it: this restaurant's issue,
+    and a loss issue only with LOSS_VIEW (the queue's own filter)."""
+    import issues
+    try:
+        issue_id = int(key.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return False
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT kind FROM ops_issues WHERE id=? AND restaurant_id=?",
+                               (issue_id, _rid(u))).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[queue] issue lookup failed closed: {e}")
+        return False
+    return bool(row) and (row["kind"] != "loss" or issues.viewer_sees_loss(u))
+
+
+# The queue's task kinds (action_queue.TASK_KEY_PREFIXES where it defines
+# them) and the module whose view permission each needs.
+_QUEUE_TASK_MODULE = {"shift_request": "labor", "time_off": "labor", "invoice": "food"}
+
+
+def _queue_task(key) -> bool:
+    """Whether a queue key is a task, not a recommendation —
+    action_queue.is_task when the queue defines it, else its known prefixes."""
+    import action_queue
+    fn = getattr(action_queue, "is_task", None)
+    if fn is not None:
+        return bool(fn(key)) and not str(key).startswith("issue:")
+    return str(key or "").startswith(tuple(f"{p}:" for p in _QUEUE_TASK_MODULE))
+
+
 def _do_action_snooze(u):
     import action_queue
     b = _body()
-    key = (b.get("key") or "").strip()
-    if not key:
+    key = b.get("key")
+    if not isinstance(key, str) or not key.strip():
         return {"ok": False, "error": "Which item?"}, 400
+    key = key.strip()
+    # K2: a queue item is snoozed restaurant-wide, so the login must be one
+    # that was shown it and may see it — a recommendation's episode
+    # (answerable_episode), or an issue row it may read. Not found
+    # confirms nothing.
+    import rec_learning as _rlearn
+    if key.startswith("issue:"):
+        if not _queue_issue_visible(u, key):
+            return {"ok": False, "error": "No such item."}, 404
+    elif _queue_task(key):
+        # A task (a shift request, time off, an invoice to apply) is not a
+        # recommendation and has no episode: its module's permission is the
+        # gate, as it is for the queue listing it.
+        if not _rlearn.viewer_sees(u, {"key": key, "module": _QUEUE_TASK_MODULE.get(key.split(":", 1)[0], "home")}):
+            return {"ok": False, "error": "No such item."}, 404
+    elif _rlearn.answerable_episode(u, _rid(u), key) is None:
+        return {"ok": False, "error": "No such item."}, 404
     out = action_queue.snooze(_rid(u), key, days=b.get("days") or action_queue.SNOOZE_DAYS,
                               user_id=u.get("id"), today=_local_today(u))
     return {"ok": True, **out}, 200
@@ -856,7 +924,9 @@ def _do_decisions(u):
     import decisions
     import issues
     # Loss issues name the manager who approved the comps (re-audit A-8).
-    rows = decisions.history(_rid(u), limit=40, sees_loss=issues.viewer_sees_loss(u))
+    # ...and a manager never reads the owner's food-cost, owner-only or
+    # loss decisions (re-audit B4: decisions.history redacts per viewer).
+    rows = decisions.history(_rid(u), limit=40, sees_loss=issues.viewer_sees_loss(u), viewer=u)
     if not _sees_food(u):
         rows = [r for r in rows if not ((r.get("outcome") or {}).get("metric") or "").startswith(("food_cost", "weekly_waste"))]
     return {"ok": True, "decisions": rows}, 200
@@ -1555,6 +1625,14 @@ def _do_rec_event(u):
         until = (_dt.utcnow() + _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(b.get("module"), str):
         meta["module"] = b["module"][:20]
+    # K2: the answer names a recommendation this login was shown and may
+    # see — before anything is started or silenced. A manager's "Not for
+    # us" on the owner's loss flag silenced it for the owner; a Track on a
+    # key nobody was shown started a food-cost tracker from a login that
+    # cannot see food cost. Not found confirms nothing.
+    import rec_learning as _rlearn
+    if _rlearn.answerable_episode(u, _rid(u), key.strip()) is None:
+        return {"ok": False, "error": "No such recommendation."}, 404
     module = meta.get("module") or (surface if surface in REC_TRACK_METRICS else None)
     message = None
     tracking = None
@@ -1593,7 +1671,7 @@ def _do_rec_event(u):
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
                        "here Cavnar can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
-                    meta=meta or None, silence_days=silence, snooze_until=until)
+                    meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True)
     out = {"ok": True, "recorded": ok}
     if message:
         out["message"] = message
@@ -1657,32 +1735,44 @@ def _do_recs_what_worked(u):
 
 def _do_recs_checkin(u):
     """"Did you make this change? Did anything else change?" — one answer
-    per tap, recorded as a `checkin` on the recommendation's latest episode
+    per tap, recorded as a `checkin` on the episode the result measured
     (rec_ledger.checkin documents the meta the outcome evaluation reads).
-    {key, did_it: yes|no|partly, conditions_changed: bool, note?}"""
+    {tracker_id?, key?, did_it: yes|no|partly, conditions_changed: bool,
+    note?} — K1: with `tracker_id` the episode is the one that tracker
+    measures (rec_instances.tracker_id, this restaurant; 404 when there is
+    none or this login may not see it) and the answer, any `implemented`
+    and outcomes.apply_checkin all land on THAT result; `key` alone is the
+    key's latest episode that has a tracker, else its latest. A key sent
+    beside a tracker_id must be that episode's."""
     import rec_ledger as _rl
     import rec_learning
     b = _body()
     key = b.get("key")
+    tid = b.get("tracker_id")
     did_it = b.get("did_it")
     changed = b.get("conditions_changed", False)
     note = b.get("note")
-    if not isinstance(key, str) or not key.strip():
-        return {"ok": False, "error": "key is required"}, 400
+    if tid is not None and (isinstance(tid, bool) or not isinstance(tid, int) or tid <= 0):
+        return {"ok": False, "error": "tracker_id must be a number"}, 400
+    if key is not None and not isinstance(key, str):
+        return {"ok": False, "error": "key must be text"}, 400
+    key = (key or "").strip()
+    if tid is None and not key:
+        return {"ok": False, "error": "key or tracker_id is required"}, 400
     if did_it not in _rl.CHECKIN_ANSWERS:
         return {"ok": False, "error": "did_it must be yes, no or partly"}, 400
     if not isinstance(changed, bool):
         return {"ok": False, "error": "conditions_changed must be true or false"}, 400
     if note is not None and not isinstance(note, str):
         return {"ok": False, "error": "note must be text"}, 400
-    ep = rec_learning.episode_for(_rid(u), key.strip())
-    # Another restaurant's key, or one this login may not see, is simply not
-    # found — its existence is not confirmed either way.
+    ep = _rl.checkin_episode(_rid(u), key=key or None, tracker_id=tid)
+    # Another restaurant's key or tracker, or one this login may not see, is
+    # simply not found — its existence is not confirmed either way.
     if ep is None or not rec_learning.viewer_sees(u, ep):
         return {"ok": False, "error": "No such recommendation."}, 404
     surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "unknown"
-    out = _rl.checkin(_rid(u), key.strip(), did_it, conditions_changed=changed, note=note, user_id=u.get("id"),
-                      role=u.get("role"), surface=surface)
+    out = _rl.checkin(_rid(u), ep["key"], did_it, conditions_changed=changed, note=note, user_id=u.get("id"),
+                      role=u.get("role"), surface=surface, rec_id=ep["rec_id"])
     if out is None:
         return {"ok": False, "error": "No such recommendation."}, 404
     if out.get("tracker_id"):
@@ -1700,7 +1790,8 @@ def _do_recs_checkin(u):
     except Exception as e:
         print(f"[recs] home cache not cleared after check-in: {e}")
     return {"ok": True, "recorded": out["recorded"],
-            "checkin": {k: out[k] for k in ("did_it", "conditions_changed", "note", "tracker_id", "attribution")}}, 200
+            "checkin": {k: out[k] for k in ("did_it", "conditions_changed", "note", "tracker_id", "attribution",
+                                            "key")}}, 200
 
 
 def _do_standby_ask(u):
@@ -1831,13 +1922,27 @@ def _do_recommendation_event(u):
         return {"ok": False, "error": "action is accepted, dismissed or restored"}, 400
     kind = (b.get("kind") or "other")[:60] if isinstance(b.get("kind"), str) else "other"
     text = b.get("key") if isinstance(b.get("key"), str) else ""
+    # K3: the ✕ carries the owner's one-tap why like every other "Not for
+    # us" (rec_ledger.REASON_CODES, + an optional free `reason`); an unknown
+    # code is refused, never stored.
+    code = b.get("reason_code") if action == "dismissed" else None
+    if code not in (None, "") and code not in _rl.REASON_CODES:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl.REASON_CODES)}, 400
+    reason = b.get("reason") if action == "dismissed" and isinstance(b.get("reason"), str) else None
+    reason = (reason or "").strip()[:200] or None
+    rkey = _si.schedule_rec_key(kind, text)
+    # K2: accepting or declining names a recommendation this login was
+    # shown on the draft review. "restored" brings a KIND back (no key) and
+    # is not an answer.
+    if action != "restored":
+        import rec_learning as _rlearn
+        if _rlearn.answerable_episode(u, _rid(u), rkey) is None:
+            return {"ok": False, "error": "No such recommendation."}, 404
     _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u))
     # The same answer in the one trail every surface reads: "Not for us"
     # keeps this recommendation off the draft from now on, on any device.
-    rkey = _si.schedule_rec_key(kind, text)
     started = None
     if action == "accepted":
-        _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"))
         # An accepted "Trim about Nh…" is measured like Home's trim_day: the
         # labor % after against before (outcomes). The other kinds are read
         # against what the night itself recorded (schedule_intel.
@@ -1850,9 +1955,21 @@ def _do_recommendation_event(u):
                                     user_id=u.get("id"), module="labor", gate="metric")
             except Exception as _ox:
                 print(f"[schedule] could not start the outcome tracker: {_ox}")
+        # Quiet while it is measured (re-audit B1): the tracker's whole
+        # window, not the 14-day default, and the tracker linked for good.
+        o = (started or {}).get("outcome") or {}
+        window = int(o.get("window_days") or 0) or None
+        _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
+                   meta=({"tracker_id": o["id"]} if o.get("id") else None),
+                   silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window or 0), require_existing=True)
     elif action == "dismissed":
+        meta = {"kind": "not_for_us"}
+        if code:
+            meta["reason_code"] = code
+        if reason:
+            meta["reason"] = reason
         _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
-                   meta={"kind": "not_for_us"})
+                   meta=meta, require_existing=True)
     out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}
     if started:
         out.update({k: started[k] for k in ("tracker", "tracker_refused") if k in started})
@@ -2776,6 +2893,7 @@ def _dsr_present_view(u, day, payload):
         if not recent:
             import rec_ledger
             silenced = rec_ledger.silenced_keys(_rid(u))
+        import rec_learning
         for a in acts:
             if not isinstance(a, dict) or not a.get("key"):
                 continue
@@ -2783,6 +2901,11 @@ def _dsr_present_view(u, day, payload):
             a["rec_key"] = a["key"]
             a["answered"] = bool(answered)
             a["answerable"] = rec_delivery.answerable(a["key"]) and not answered
+            if a["answerable"] and not recent:
+                # An old night presents nothing, so an action is answerable
+                # only when some surface did show it to this login (K2): Done
+                # on a line nobody was shown would be refused.
+                a["answerable"] = rec_learning.answerable_episode(u, _rid(u), a["key"]) is not None
     except Exception as e:
         print(f"[dsr] view presentation failed rid={_rid(u)}: {e}")
 

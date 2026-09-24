@@ -72,7 +72,7 @@ Drafts (create/edit/list), media upload, scheduling, attribution per post, the t
 Competitor snapshots, AI-visibility run trigger + results.
 
 ### Ask Cavnar (`/mobile/api/ask-cavnar/*`, `/api/ask-cavnar*`)
-`opening` (deterministic briefing, no model call), `conversations` (list/create), `history` (a conversation's messages), the streaming chat endpoint itself (SSE), and the tool-confirmation route a `write`-kind tool's proposal card posts to. Each proposal in an answer carries `proposal_id`, `details` (`[{label, value}]`), `preview` (the words that would go out) and `at_stake` (dollars, or null); `POST ask-cavnar/action` takes `{action, outcome, proposal_id?, reason?, summary, conversation_id}` — a `proposal_id` not this restaurant's (or naming another action) is a 404.
+`opening` (deterministic briefing, no model call), `conversations` (list/create), `history` (a conversation's messages), the streaming chat endpoint itself (SSE), and the tool-confirmation route a `write`-kind tool's proposal card posts to. Each proposal in an answer carries `proposal_id`, `details` (`[{label, value}]`), `preview` (the words that would go out) and `at_stake` (dollars, or null); `POST ask-cavnar/action` takes `{action, outcome, proposal_id?, reason?, summary, conversation_id}` — a `proposal_id` not this restaurant's (or naming another action), or proposed to another login when the caller is not an account principal, is a 404 (re-audit B6); the audit line quotes the proposal's own summary (a client summary is capped at 200 characters, a `body` over 4,000 is dropped) and lands in `conversation_id` only when that chat is the caller's own. A turn saved without a conversation lands in the CALLER's current chat, never another login's (B5); `conversations` previews and counts only the turns the caller may read, and `DELETE ask-cavnar/history` clears only the caller's chats.
 
 ### Connections (`/mobile/api/connections/*`)
 Per-integration connect/disconnect/status: Google Business, Instagram, Toast, Square, Clover.
@@ -194,9 +194,10 @@ rates and pages are computed after redaction.
 - `GET recs/summary?days=30|90|180` → `{ok, days, since (YYYY-MM-DD, UTC),
   by_module: {<module>: {shown, answered, accepted, completed, implemented,
   dismissed, ignored, n, accept_rate, accept_rate_low, accept_rate_high,
-  enough}}, by_tag: [{tag, label, module, measured, improved, worsened,
-  no_clear_change, unknown, success_rate, enough}], most_effective: {tag,
-  label, module, success_rate, measured} | null, min_settled, min_measured}`.
+  enough}}, by_tag: [{tag, label, module, modules, measured, improved,
+  worsened, no_clear_change, unknown, success_rate, enough}], most_effective:
+  {tag, label, module, modules, success_rate, measured, improved} | null,
+  min_settled, min_measured}`.
   Episodes first shown in the window; superseded ones are not counted.
   `answered` = accepted + completed + implemented + dismissed (a taken
   episode whose change was made counts as implemented); `n` = answered +
@@ -206,8 +207,16 @@ rates and pages are computed after redaction.
   `measured` = improved + worsened + no_clear_change; `unknown` (not
   measurable, or discounted by the owner's check-in) is never in the
   denominator; `success_rate` = improved ÷ measured; `enough` = measured ≥
-  5. `most_effective` is the tag with `enough`, success ≥ 0.5 and the best
-  lower 90% bound. Any other `days` is a 400.
+  5. One `by_tag` row per tag across every module it was recommended under
+  (`module` = where most of its results came from; `modules` lists them),
+  counting one result per change (one per tracker; on one metric, one per
+  non-overlapping after-window); a result that faded or reversed at its
+  re-check is `no_clear_change`, one the owner disowned or said conditions
+  changed is `unknown` (`rec_learning.learned_verdict`, re-audit B9/B13).
+  `most_effective` is the tag with `enough`, success ≥ 0.5 and the best
+  lower 90% bound, carrying its own `improved` of `measured` — "most often
+  followed by an improvement", not the cause of one. Any other `days` is a
+  400.
 - `GET recs/timeline?limit=30&before=<next_before>` → `{ok, items: [{key,
   title, module, tags, first_shown_at, surfaces, answer, answered_at,
   reason_code, reason, implemented_at, tracker_id}], next_before}` — newest
@@ -236,22 +245,66 @@ rates and pages are computed after redaction.
   are "associated with" / "measured", never causal. Redacted exactly like
   `recs/summary` (module permissions, loss without LOSS_VIEW, owner-only);
   the owner's monthly email carries the same sentences (viewer none).
-- `POST recs/checkin` `{key, did_it: "yes"|"no"|"partly",
+- `POST recs/checkin` **(K1)** `{tracker_id?, key?, did_it: "yes"|"no"|"partly",
   conditions_changed: bool, note?}` → `{ok, recorded, checkin: {did_it,
   conditions_changed, note, tracker_id, attribution: {implemented,
-  confounded, discount}}}`. Recorded as a `checkin` event on the key's
-  latest episode (`rec_ledger.checkin` documents the meta; an outcome
-  evaluation reads it through `rec_ledger.latest_checkin(rid, tracker_id)`):
-  `discount` is true for "no" or conditions_changed. "yes" also records the
-  episode implemented. 404 for a key this restaurant has no episode of, or
-  this login may not see; 400 for a malformed body.
+  confounded, discount}, key}}`. With `tracker_id` (an int — clients send
+  the result's own id) the episode is the one that tracker measures
+  (`rec_instances.tracker_id`) at this restaurant: the `checkin` event, any
+  `implemented` ("yes") and `outcomes.apply_checkin` all land on THAT result,
+  however many times the key was shown since; a `key` sent beside it must be
+  that episode's. Without `tracker_id`: the key's latest episode that has a
+  tracker, else its latest. `rec_ledger.checkin_episode` documents the
+  resolution and `rec_ledger.checkin` the meta (an outcome evaluation reads
+  it through `rec_ledger.latest_checkin(rid, tracker_id)`); `discount` is
+  true for "no" or conditions_changed. 404 when there is no such episode or
+  this login may not see it (another restaurant's tracker, a food-cost
+  result for a manager); 400 for a malformed body (a non-integer
+  `tracker_id`, neither key nor tracker_id). No `shown` is required: the
+  tracker is what the owner is asked about.
+- **Who may answer (K2).** Every answer route answers only a recommendation
+  this login was SHOWN and may SEE (`rec_learning.answerable_episode`: the
+  key's latest episode exists at this restaurant, has a `shown` event, and
+  `viewer_sees` allows it) — else 404 `No such recommendation.` (nothing is
+  confirmed either way, and nothing is written: an answer never opens an
+  episode — `rec_ledger.record(require_existing=True)`). The routes:
+  `POST recs/event` (before any tracker starts), `POST /api/home/dismiss` +
+  `/mobile/api/home/dismiss` (Home's setup/health nudges —
+  `home_brief.HOME_SETUP_KEYS`: google_not_connected, reviews_stale,
+  toast_sync, inventory_stale, post_failed, social_not_connected — are
+  Home's own hides, gated by their module's permission and never written to
+  the ledger; `undo` and `restore_kind` are not answers), `POST
+  actions/snooze` (an `issue:<id>` row is not a recommendation: allowed when
+  it is this restaurant's issue and, for a loss issue, the login has
+  LOSS_VIEW), `POST outcomes` with any `source_key`, `POST
+  guest-winback/<id>/dismiss` (404 as for a draft that is gone) and `POST
+  labor/schedule/recommendation` for `accepted`/`dismissed` (the key is
+  `schedule_intel.schedule_rec_key(kind, key)`; `restored` brings a kind
+  back and is not checked). `POST outcomes/<id>/abandon` is gated by the
+  outcome group (A28). An employee login never reaches these (403). Track
+  (`POST outcomes`, and a schedule accept that starts a tracker) holds the
+  key quiet for the tracker's whole window, `max(14, window_days)` (B1).
 - **Structured reasons.** `POST recs/event` and `POST /api/home/dismiss`
   (and `/mobile/api/home/dismiss`) take `reason_code` ∈ already_doing |
   doesnt_fit | too_costly | bad_timing | dont_trust_data | other (plus the
   free `reason`); stored on the answer's meta; any other code is a 400.
+  **K3:** so do `POST guest-winback/<id>/dismiss` `{kind?, reason_code?,
+  reason?}` and the schedule ✕, `POST labor/schedule/recommendation`
+  `{action: "dismissed", kind, key, reason_code?, reason?}` (web and mobile
+  twins; the reason is ≤200 characters).
   `recs/event` refuses the events the server writes itself (implemented,
   superseded, checkin, abandoned, outcome, expired, shown). `GET decisions`
-  rows carry `reason_code`, and `answer` may be `implemented`.
+  rows carry `reason_code`, and `answer` may be `implemented`; they are
+  redacted for the login exactly as the record is (`decisions.history(viewer=)`:
+  no food-cost, owner-only or loss decision for a manager, no food-cost or
+  comp/void outcome without the permission, and a teammate reads only the Ask
+  proposals it answered) — and so are Ask's decisions context and its
+  `read_decisions` tool (re-audit B4).
+- **Home's `answerable`.** Every Home attention item (web `/api/home/brief`,
+  mobile `/mobile/api/home` `needs_attention`) and card carries `answerable`:
+  true only when it is dismissable, not a setup/health nudge and a key the
+  ledger presents (`home_brief.attention_answerable`, `rec_delivery.answerable`).
+  Home records as shown exactly the answerable items it renders (re-audit B7).
 
 Admin only (internal): `GET /admin/api/recommendations/calibration?days=365`
 (predicted vs measured $ by kind, ROI #43) and `GET
