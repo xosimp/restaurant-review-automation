@@ -64,6 +64,11 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
         where.append("cohort=?"); args.append(cohort)
     if restaurant_id is None and exclude_restaurant_id is not None:
         where.append("restaurant_id != ?"); args.append(exclude_restaurant_id)
+    if restaurant_id is None:
+        # A cohort or platform rate never counts a demo account's seeded
+        # answers (CA3 F7; the rule lives in jobs.real_restaurant_ids).
+        from .jobs import SEEDED_RESTAURANT_SQL, SEEDED_HISTORY_DAYS
+        where.append(f"restaurant_id NOT IN ({SEEDED_RESTAURANT_SQL})"); args.append(f"-{SEEDED_HISTORY_DAYS} days")
     conn = get_conn(db_path)
     try:
         rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect FROM intel_rec_events "

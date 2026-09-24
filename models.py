@@ -427,6 +427,7 @@ class Restaurant:
     reviews_live: int               = 0
     billing_status: str             = "trial"
     is_demo: int                    = 0
+    demo_cleared_at: Optional[str]  = None
     two_fa_enabled: int             = 0
     two_fa_code: str                = None
     two_fa_expires: str             = None
@@ -836,6 +837,16 @@ def ensure_columns(db_path: str = DB_PATH):
         ("menu_items", "sell_price", "REAL"),
         ("ingredients", "supplier_name", "TEXT"),
         ("ingredients", "supplier_email", "TEXT"),
+        # The ledger's own sum when it went below zero (NULL otherwise).
+        # current_stock is clamped to 0 for orders and valuation (MOD-FC-12);
+        # this keeps the discrepancy visible so the item is flagged for a
+        # count instead of reading "critically low" (CA3 F14).
+        ("ingredients", "count_discrepancy_qty", "REAL"),
+        # When is_demo was turned off (admin). The seeded history stays in
+        # place — never hard-deleted — and the restaurant is kept out of
+        # cross-restaurant learning until every feature window has rolled
+        # past it (intelligence.jobs.real_restaurant_ids, CA3 F7).
+        ("restaurants", "demo_cleared_at", "TEXT"),
         # The supplier group's draft hash a PO was sent for — the durable
         # "this exact order already went" claim (record_purchase_order).
         ("purchase_orders", "draft_hash", "TEXT"),
@@ -2714,6 +2725,8 @@ def init_db(db_path: str = DB_PATH):
     _ops.init_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
+    # After init_dsr: its POS evidence is one of the tables it reads.
+    backfill_missing_sales_null(db_path=db_path)
     print(f"Database initialised at {db_path}")
 
 
@@ -2899,7 +2912,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -3228,6 +3241,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
         is_demo=row["is_demo"] if "is_demo" in row.keys() and row["is_demo"] is not None else 0,
+        demo_cleared_at=row["demo_cleared_at"] if "demo_cleared_at" in row.keys() else None,
         internal_notes=row["internal_notes"] if "internal_notes" in row.keys() else None,
         service_tier=row["service_tier"] if "service_tier" in row.keys() else "trial",
         module_reviews=row["module_reviews"] if "module_reviews" in row.keys() else 1,
@@ -5872,7 +5886,16 @@ def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
     """Save a labor analysis snapshot for trend tracking — once per period.
     It was written on every insight view, so the second view found "the
     previous upload" to be the same period and compared it with itself: the
-    trend and forecast lines vanished."""
+    trend and forecast lines vanished.
+
+    Never for a period with no sales: its labor % is a stand-in 0, and a
+    (0.0%, $0) row was later handed to the labor note as a "previous upload"
+    at 0.0% labor and to the labor alert as the latest period (CA3 F3)."""
+    try:
+        if total_sales is None or float(total_sales) <= 0:
+            return
+    except (TypeError, ValueError):
+        return
     conn = get_conn(db_path)
     try:
         same = conn.execute("SELECT 1 FROM labor_history WHERE restaurant_id=? AND period_start IS ? AND period_end IS ? "
@@ -5909,7 +5932,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
         JOIN (
             SELECT period_start, MAX(id) AS max_id
             FROM labor_history
-            WHERE restaurant_id=?
+            WHERE restaurant_id=? AND total_sales > 0
             GROUP BY period_start
         ) latest ON h.id = latest.max_id
         ORDER BY h.period_start DESC LIMIT ?
@@ -6270,17 +6293,33 @@ def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0)
 
 def save_labor_daily_history(restaurant_id: int, by_day: dict,
                               db_path: str = DB_PATH):
-    """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload."""
+    """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload.
+
+    A day with no sales figure is written sales=NULL, labor_pct=NULL — never
+    $0 and 0.0% (CA3 F3). Missing-as-zero dragged the cohort labor average
+    to a third of the truth, plotted 0% days on the iOS chart, and let a
+    sales feed that had stopped read as current to the demand forecast. And
+    a NULL never overwrites a figure already on file for that date: a later
+    sync whose sales call failed keeps the day's known sales, re-costed
+    against the new labor (DATABASE_SCHEMA.md → labor_daily_history)."""
     from datetime import datetime as _dt
     conn = get_conn(db_path)
     for date_str, day_data in by_day.items():
-        sales = day_data.get("sales", 0)
+        try:
+            sales = float(day_data.get("sales")) if day_data.get("sales") is not None else None
+        except (TypeError, ValueError):
+            sales = None
+        if sales is not None and sales <= 0:
+            sales = None
         actual_hours = day_data.get("actual", 0)
         # Use pre-computed per-role labor cost/pct from analyse_shifts (already correct)
         labor_cost = day_data.get("labor_cost", 0)
-        labor_pct = day_data.get("labor_pct") if day_data.get("labor_pct") is not None else (
-            round(labor_cost / sales * 100, 1) if sales else None
-        )
+        if sales is None:
+            labor_pct = None
+        else:
+            labor_pct = day_data.get("labor_pct") if day_data.get("labor_pct") is not None else (
+                round(float(labor_cost or 0) / sales * 100, 1)
+            )
         try:
             dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except Exception:
@@ -6291,9 +6330,16 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(restaurant_id, date) DO UPDATE SET
                 day_of_week=excluded.day_of_week,
-                labor_pct=excluded.labor_pct,
+                labor_pct=CASE
+                    WHEN excluded.sales IS NOT NULL THEN excluded.labor_pct
+                    WHEN labor_daily_history.sales > 0 THEN
+                        ROUND(COALESCE(excluded.labor_cost, 0) * 100.0 / labor_daily_history.sales, 1)
+                    ELSE NULL END,
                 labor_cost=excluded.labor_cost,
-                sales=excluded.sales,
+                sales=CASE
+                    WHEN excluded.sales IS NOT NULL THEN excluded.sales
+                    WHEN labor_daily_history.sales > 0 THEN labor_daily_history.sales
+                    ELSE NULL END,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
         """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours))
@@ -6673,6 +6719,53 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
         # Same stance as auth.backfill_memberships: a backfill failure must
         # not stop the app booting, and every read still falls back to the
         # (group_name, owner_email) string match it has always used.
+        return 0
+
+
+def backfill_missing_sales_null(db_path: str = DB_PATH) -> int:
+    """Rewrite the $0 "missing sales" rows the old per-day archive wrote as
+    what they were: unknown (CA3 F3).
+
+    A labor_daily_history row with sales=0, labor on the books, and no POS
+    evidence of a sale that date (dsr_metrics sales.net, pos_intraday,
+    menu_item_sales) was a day whose sales figure never arrived — the
+    analysis only ever counts a positive figure as sales. It becomes
+    sales=NULL, labor_pct=NULL. A $0 row WITH POS evidence is left for a
+    person to look at rather than guessed at.
+
+    Data only, no DDL; idempotent (a second run matches nothing); runs at
+    boot after every table it reads exists, and a failure never stops the
+    app booting. Returns the rows rewritten."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            def _has(table):
+                return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                                    (table,)).fetchone() is not None
+            evidence = []
+            if _has("dsr_metrics"):
+                evidence.append("EXISTS (SELECT 1 FROM dsr_metrics m WHERE m.restaurant_id=l.restaurant_id "
+                                "AND m.business_date=l.date AND m.metric='sales.net' AND m.value > 0)")
+            if _has("pos_intraday"):
+                evidence.append("EXISTS (SELECT 1 FROM pos_intraday p WHERE p.restaurant_id=l.restaurant_id "
+                                "AND p.business_date=l.date AND p.net_sales > 0)")
+            if _has("menu_item_sales"):
+                evidence.append("EXISTS (SELECT 1 FROM menu_item_sales s WHERE s.restaurant_id=l.restaurant_id "
+                                "AND s.business_date=l.date AND s.qty_sold > 0)")
+            no_pos = (" AND NOT (" + " OR ".join(evidence) + ")") if evidence else ""
+            cur = conn.execute(
+                "UPDATE labor_daily_history SET sales=NULL, labor_pct=NULL WHERE rowid IN ("
+                "SELECT l.rowid FROM labor_daily_history l WHERE l.sales = 0 "
+                "AND COALESCE(l.labor_cost, 0) > 0" + no_pos + ")")
+            n = cur.rowcount or 0
+            conn.commit()
+            if n:
+                print(f"[backfill] labor_daily_history: {n} missing-sales day(s) rewritten from $0 to NULL")
+            return n
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[backfill] missing-sales rewrite skipped: {e}")
         return 0
 
 
@@ -7820,6 +7913,10 @@ ACCOUNT_EVENT_TYPES = (
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
     "pos_connected", "pos_disconnected", "supplier_order_sent", "schedule_published",
+    # Data the owner's figures rest on stopped arriving (CA3 F6, F13): the
+    # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
+    # counted that a Places fetch never returned (scheduler._record_places_gap).
+    "pos_sync_failing", "review_fetch_gap",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -7859,6 +7956,8 @@ ACCOUNT_EVENT_LABELS = {
     "auto_order_changed": "Trusted supplier orders changed",
     "weekly_plan_changed": "Monday plan changed",
     "send_delay_changed": "Send delay changed",
+    "pos_sync_failing": "POS sync failing",
+    "review_fetch_gap": "Google reviews missed by the sampled fetch",
 }
 
 

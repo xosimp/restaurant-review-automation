@@ -133,9 +133,9 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 |---|---|---|
 | `backup_db` | 2am | `backup_db` — a consistent, **unredacted** snapshot on the volume (only the emailed copy is redacted), then `prune_ledgers` |
 | `restore_drill` | 2nd of Jan/Apr/Jul/Oct | `run_restore_drill` |
-| `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`), `run_loss_sync` |
-| `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`), `run_learning` |
-| `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` |
+| `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`; after each restaurant `pos.note_sync_failure` writes one account-visible `pos_sync_failing` activity event per failure run once a provider has failed `SYNC_FAILURE_NOTICE_DAYS` (2) with no success — never an SMS or push), `run_loss_sync` |
+| `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`; demo accounts get their own row), `run_learning` (cross-restaurant: `active_restaurants()` and every cohort reader leave out `jobs.seeded_restaurant_ids()` — `is_demo` accounts and ones de-flagged under 90 days ago) |
+| `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` (each restaurant's result stamped in `job_cursors metrics_sync:<rid>`, failures captured — `scheduler.metrics_sync_state`) |
 | `inventory_depletion`, `food_cost_snapshots` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots` |
 | `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations`, `outcome_rechecks` | 6am | the two root-cause passes, then `run_outcome_evaluations`, then `run_outcome_rechecks` |
 | `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |

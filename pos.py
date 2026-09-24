@@ -33,6 +33,29 @@ DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
             "fetch_sales_today", "fetch_clock_ins_today", "fetch_order_customers",
             "fetch_day_sales", "fetch_day_closed")
 
+# ── The sales contract every provider's synced CSV keeps (CA3 F11) ─────────
+#
+# build_shifts_csv's `sales` column — what labor_daily_history, labor %,
+# cogs' archive, demand and every cohort benchmark read — is, for EVERY
+# provider:
+#
+#   * NET sales: items at the price rung, less discounts and comps
+#     (NET_DEDUCTIONS). Never tax, tips, gratuities or service charges.
+#       toast   — businessDays' net (toast.py fetch_business_days)
+#       rpower  — the sales-type rules in rpower.fetch_business_days
+#       square  — order total_money less total_tax_money, total_tip_money
+#                 and total_service_charge_money (square._order_net_cents)
+#       clover  — order total less the tax on its payments
+#                 (clover._order_net_cents); verify on the first live
+#                 Clover restaurant, there is none today
+#   * by BUSINESS DATE in the restaurant's timezone: an order or a shift
+#     is filed under the service it belongs to (time_utils.business_date —
+#     before BUSINESS_DAY_START_HOUR it is still last night), never the UTC
+#     calendar date. Shift start/end times are local.
+#   * dollars to the cent, and blank — never 0 — for a day with no figure.
+#   * a page that fails mid-range fails the sync (nothing is saved), so a
+#     partial day is never stored as a whole one (Square MOD-LAB-7, Clover).
+
 
 def _load_providers():
     import toast, square, clover, rpower
@@ -107,8 +130,62 @@ def sync_all():
             log.warning(f"POS sync failed [{name}] {r.name}: {result.get('error')}")
             ops.capture(Exception(result.get("error", "unknown")),
                         job="pos_sync", context=f"{name} {r.name}")
+        try:
+            note_sync_failure(rid)
+        except Exception as e:
+            log.warning(f"POS sync-failure note skipped for {rid}: {e}")
     scheduler.resumable_sweep("pos_sync", list(live), _one, max_seconds=POS_SYNC_MAX_SECONDS, job="pos_sync")
     return results
+
+
+# A sync failing this long, with no success in between, is the owner's to
+# know about — not only the operator's failure digest.
+SYNC_FAILURE_NOTICE_DAYS = 2
+
+
+def note_sync_failure(restaurant_id, now=None):
+    """Record an account-visible activity event ("pos_sync_failing") when the
+    restaurant's POS — any provider, RPOWER included — has been failing for
+    SYNC_FAILURE_NOTICE_DAYS or more with no successful sync in between.
+    Once per failure run: nothing is written again until a sync succeeds.
+    An activity event on the account, deliberately not an SMS or a push
+    (CA3 F6). Returns True when it wrote one."""
+    from datetime import datetime, timezone, timedelta
+    import models
+    import pos_health
+    r = models.get_restaurant(restaurant_id)
+    if r is None:
+        return False
+    st = pos_health.pos_sync_state(r, now=now)
+    if st["state"] != "error":
+        return False
+    now = now or datetime.now(timezone.utc)
+    last_ok = pos_health.parse_stamp(st.get("last_synced"))
+    if last_ok is not None and (now - last_ok) < timedelta(days=SYNC_FAILURE_NOTICE_DAYS):
+        return False
+    conn = models.get_conn()
+    try:
+        rows = conn.execute("SELECT created_at FROM activity_log WHERE restaurant_id=? "
+                            "AND event_type='pos_sync_failing' ORDER BY id DESC LIMIT 1",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    if rows:
+        from time_utils import parse_stamp
+        prev = parse_stamp(rows[0]["created_at"], naive_tz="America/Chicago")
+        if last_ok is None or (prev is not None and prev >= last_ok):
+            return False            # already told about this run of failures
+    name = {"rpower": "RPOWER"}.get(st["provider"], (st["provider"] or "POS").title())
+    from time_utils import mdy
+    since = f" since {mdy(last_ok.date())}" if last_ok else ""
+    models.log_event(restaurant_id, "pos_sync_failing", {
+        "provider": st["provider"],
+        "detail": (f"{name} hasn't synced{since} — {str(st.get('error') or '')[:160]}. "
+                   "Labor and sales figures stop at the last good sync until it reconnects."),
+        "error": str(st.get("error") or "")[:300],
+        "last_synced": st.get("last_synced"),
+    })
+    return True
 
 
 def save_synced_shifts(restaurant_id, csv_str, source):

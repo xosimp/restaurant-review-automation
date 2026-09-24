@@ -81,6 +81,79 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
     return out
 
 
+# ── Places coverage (CA3 F13) ────────────────────────────────────────────────
+#
+# A Places-only restaurant's reviews are a SAMPLE: five a fetch, newest
+# first. Coverage is the share of the reviews Google counted onto the listing
+# since we started watching that a fetch actually returned — kept as running
+# totals in job_cursors (`places_coverage:<rid>`, JSON) by
+# scheduler._record_places_gap, and read by the freshness registry.
+
+def _coverage_key(restaurant_id):
+    return f"places_coverage:{int(restaurant_id)}"
+
+
+def record_places_coverage(restaurant_id, google_growth, stored_new, db_path=None):
+    """Add one fetch's figures: how much Google's user_ratings_total grew
+    since the previous fetch, and how many new reviews this fetch stored.
+    A shrinking total (Google removed reviews) adds no growth. Never raises."""
+    import json as _json
+    import models
+    growth = max(0, int(google_growth or 0))
+    stored = max(0, int(stored_new or 0))
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            key = _coverage_key(restaurant_id)
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+            try:
+                st = _json.loads(row["value"]) if row and row["value"] else {}
+            except ValueError:
+                st = {}
+            if not st.get("since"):
+                st["since"] = datetime.now(timezone.utc).date().isoformat()
+            st["google_growth"] = int(st.get("google_growth") or 0) + growth
+            # Stored can exceed growth on a single fetch (a backlog the
+            # first fetches caught up on); counted up to the growth only,
+            # so coverage never reads above 100%.
+            st["stored"] = int(st.get("stored") or 0) + min(stored, growth)
+            st["fetches"] = int(st.get("fetches") or 0) + 1
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (key, _json.dumps(st)))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[places] coverage not recorded for {restaurant_id}: {e}")
+
+
+def places_coverage(restaurant_id, db_path=None) -> dict:
+    """{"share": 0-1 | None, "stored", "google_growth", "missed", "since"
+    (ISO date), "fetches", "sampled": True}. share is None — unknown, never
+    1.0 — until Google's count has grown at least once while watched."""
+    import json as _json
+    import models
+    out = {"share": None, "stored": 0, "google_growth": 0, "missed": 0, "since": None,
+           "fetches": 0, "sampled": True}
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
+                               (_coverage_key(restaurant_id),)).fetchone()
+        finally:
+            conn.close()
+        st = _json.loads(row["value"]) if row and row["value"] else {}
+    except Exception:
+        return out
+    growth, stored = int(st.get("google_growth") or 0), int(st.get("stored") or 0)
+    out.update(stored=stored, google_growth=growth, missed=max(0, growth - stored),
+               since=st.get("since"), fetches=int(st.get("fetches") or 0))
+    if growth > 0:
+        out["share"] = round(min(1.0, stored / growth), 3)
+    return out
+
+
 def _places_external_id(r: dict) -> str:
     """Stable identity for a Places review."""
     author_url = (r.get("author_url") or "").strip()

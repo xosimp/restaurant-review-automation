@@ -29,19 +29,10 @@ def _get(r, name):
 
 def parse_stamp(value):
     """A sync stamp as an aware UTC datetime, or None. Provider stamps are
-    ISO with an offset (toast/square/clover) or naive UTC (rpower)."""
-    if not value:
-        return None
-    s = str(value).strip().replace(" ", "T", 1)
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    ISO with an offset (toast/square/clover) or naive UTC (rpower). The one
+    parser is time_utils.parse_stamp; naive means UTC for every sync stamp."""
+    from time_utils import parse_stamp as _parse_stamp
+    return _parse_stamp(value, naive_tz="UTC")
 
 
 def _connected(r, name):
@@ -50,6 +41,35 @@ def _connected(r, name):
     cols = {"toast": ("toast_restaurant_guid",), "square": ("square_access_token",),
             "clover": ("clover_api_token",), "rpower": ("rpower_token", "rpower_store_mid")}
     return any(_get(r, c) for c in cols.get(name, ())) or bool(_get(r, f"{name}_last_synced"))
+
+
+def provider_state(r, name, now=None) -> dict:
+    """The same reading as pos_sync_state for ONE named provider, whether or
+    not it is the one pos_sync_state would choose — for surfaces that list
+    every provider (admin integrations). Never raises."""
+    now = now or datetime.now(timezone.utc)
+    out = {"provider": name, "connected": False, "last_synced": None, "last_synced_iso": None,
+           "age_days": None, "error": None, "state": "not_connected"}
+    try:
+        if not _connected(r, name):
+            return out
+        stamp = parse_stamp(_get(r, f"{name}_last_synced"))
+        err = _get(r, f"{name}_sync_error") or None
+        out.update(connected=True, error=err)
+        if stamp is not None:
+            age = max(0.0, (now - stamp).total_seconds() / 86400.0)
+            out.update(last_synced=stamp.isoformat(), last_synced_iso=stamp.date().isoformat(),
+                       age_days=round(age, 2))
+        if err:
+            out["state"] = "error"
+        elif stamp is None:
+            out["state"] = "unknown"
+        else:
+            out["state"] = "current" if age <= 1.5 else ("aging" if age <= 3 else "stale")
+    except Exception as e:
+        print(f"[pos_health] unreadable: {e}")
+        out["state"] = "unknown"
+    return out
 
 
 def pos_sync_state(r, now=None) -> dict:
@@ -68,19 +88,7 @@ def pos_sync_state(r, now=None) -> dict:
                     chosen = name
         if chosen is None:
             return out
-        stamp = parse_stamp(_get(r, f"{chosen}_last_synced"))
-        err = _get(r, f"{chosen}_sync_error") or None
-        out.update(provider=chosen, connected=True, error=err)
-        if stamp is not None:
-            age = max(0.0, (now - stamp).total_seconds() / 86400.0)
-            out.update(last_synced=stamp.isoformat(), last_synced_iso=stamp.date().isoformat(),
-                       age_days=round(age, 2))
-        if err:
-            out["state"] = "error"
-        elif stamp is None:
-            out["state"] = "unknown"
-        else:
-            out["state"] = "current" if age <= 1.5 else ("aging" if age <= 3 else "stale")
+        return provider_state(r, chosen, now=now)
     except Exception as e:
         print(f"[pos_health] unreadable: {e}")
         out["state"] = "unknown"

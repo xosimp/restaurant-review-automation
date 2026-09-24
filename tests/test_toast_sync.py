@@ -19,7 +19,7 @@ def _demo_restaurant(db_path):
     # toast_client_id/secret/restaurant_guid aren't part of create_restaurant()'s
     # INSERT (only set via the separate "save Toast credentials" flow) — set
     # them with update_restaurant() after creation, same as that real flow.
-    rid = create_restaurant(Restaurant(name="Demo Sync Co", owner_email="demo@x.com"), db_path=db_path)
+    rid = create_restaurant(Restaurant(name="Demo Sync Co", owner_email="demo@x.com", is_demo=1), db_path=db_path)
     update_restaurant(rid, {"toast_client_id": "demo", "toast_client_secret": "demo",
                             "toast_restaurant_guid": "demo"}, db_path=db_path)
     return rid

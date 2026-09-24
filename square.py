@@ -119,18 +119,40 @@ def _tz_for(restaurant_id):
         return restaurant_tz(None)
 
 
-def _local_date(stamp, tz):
-    """The restaurant's business date for a Square UTC timestamp."""
+def _local_date(stamp, tz, restaurant=None):
+    """The restaurant's BUSINESS date for a Square UTC timestamp: its local
+    time, filed under the service it belongs to (time_utils.business_date —
+    a 12:30am check is still last night's). pos.py's sales contract."""
+    from time_utils import business_date
     try:
-        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(tz).date().isoformat()
+        local = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(tz)
     except Exception:
         return None
+    return business_date(restaurant, local.replace(tzinfo=None)).isoformat()
+
+
+def _money_cents(order, field):
+    try:
+        return int((order.get(field) or {}).get("amount") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def _order_net_cents(order) -> int:
+    """NET sales for one Square order, in cents: total_money less tax, tips
+    and service charges (pos.py's sales contract, CA3 F11). total_money is
+    what the guest paid — tax and tip included — so labor % against it read
+    low and was not comparable with Toast or RPOWER. Discounts are already
+    out of total_money."""
+    return (_money_cents(order, "total_money") - _money_cents(order, "total_tax_money")
+            - _money_cents(order, "total_tip_money") - _money_cents(order, "total_service_charge_money"))
 
 
 def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> dict:
-    """Return {business_date: total_sales_dollars} from Square Orders, each
-    order dated in the restaurant's own timezone (Square's created_at is UTC,
-    so an 8pm order used to land on tomorrow's sales)."""
+    """Return {business_date: net_sales_dollars} from Square Orders, each
+    order dated by the restaurant's own business date (Square's created_at
+    is UTC, so an 8pm order used to land on tomorrow's sales), net of tax,
+    tips and service charges, to the cent."""
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     tz = _tz_for(restaurant_id)
@@ -165,16 +187,15 @@ def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> 
             raise RuntimeError(f"Square orders search returned {resp.status_code} partway through; nothing was saved")
         data = resp.json()
         for order in data.get("orders", []):
-            created = _local_date(order.get("created_at", ""), tz)
+            created = _local_date(order.get("created_at", ""), tz, r)
             if not created:
                 continue
-            total = (order.get("total_money") or {}).get("amount", 0)
-            sales[created] = sales.get(created, 0) + total
+            sales[created] = sales.get(created, 0) + _order_net_cents(order)
         cursor = data.get("cursor")
         if not cursor:
             break
-    # Convert cents to dollars
-    return {k: round(v / 100) for k, v in sales.items()}
+    # Cents to dollars, to the cent (it was rounded to whole dollars).
+    return {k: round(v / 100, 2) for k, v in sales.items()}
 
 
 # ── CSV builder ────────────────────────────────────────────────────────────────
@@ -186,6 +207,9 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     end_d    = end_dt.date()
 
     tz      = _tz_for(restaurant_id)
+    from models import get_restaurant as _gr
+    from time_utils import business_date
+    restaurant = _gr(restaurant_id)
     team    = _fetch_team_members(restaurant_id)
     shifts  = _fetch_shifts(restaurant_id, start_dt, end_dt)
     sales   = _fetch_daily_sales(restaurant_id, start_d, end_d)
@@ -207,14 +231,17 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
         except Exception:
             continue
 
-        # Square's times are UTC; the business day is the restaurant's.
+        # Square's times are UTC; the business day is the restaurant's —
+        # the service the shift starts in (time_utils.business_date).
         start_p, end_p = start_p.astimezone(tz), end_p.astimezone(tz)
-        date_str   = start_p.date().isoformat()
-        day_name   = DAY_NAMES[start_p.weekday()]
+        bdate      = business_date(restaurant, start_p.replace(tzinfo=None))
+        date_str   = bdate.isoformat()
+        day_name   = DAY_NAMES[bdate.weekday()]
         hours      = round((end_p - start_p).total_seconds() / 3600, 2)
         tid        = s.get("team_member_id", "")
         member     = team.get(tid, {"name": "Unknown", "job_title": "Staff"})
-        daily_sale = sales.get(date_str, 0)
+        # Blank, never 0, for a day with no sales figure (pos.py's contract).
+        daily_sale = sales.get(date_str, "")
 
         rows.append({
             "date":             date_str,

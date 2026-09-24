@@ -77,6 +77,12 @@ Competitor snapshots, AI-visibility run trigger + results.
 ### Connections (`/mobile/api/connections/*`)
 Per-integration connect/disconnect/status: Google Business, Instagram, Toast, Square, Clover.
 
+`GET /mobile/api/account` → `connections` (CA3 F6/F13): `toast`, `square`, `clover` and now `rpower` each `{connected, last_synced, error, sync_state, age_days}` — `sync_state` from `pos_health.provider_state` (current | aging | stale | error | unknown | not_connected); `pos` is `pos_health.pos_sync_state` for the provider in use; `google_business` adds `source` (gbp | places_sampled | none) and `label` ("Google reviews (sampled — Places returns 5 at a time)" for Places-only). All new keys are additive; clients decode them optional.
+
+`POST /mobile/api/connections/toast` and the web twins (`/api/toast/save`, `/admin/toast/save/<id>`) refuse the literal "demo" credentials unless the restaurant is flagged `is_demo` (CA3 F8).
+
+Admin: `/admin/api/client/<id>` → `client.integrations[]` lists `rpower` beside toast/square/clover, each POS row with `sync_state`/`age_days` and an `error` when a sync simply stopped (stale, no error written); `client.freshness.pos_state` is `pos_health.pos_sync_state`; `client.freshness.inventory` is the newest `ingredients.last_recount_at`; `client.setup_completeness` `{score, checks, label: "Setup completeness"}` — `data_completeness` is the same object, kept as an alias until admin.html reads the new key.
+
 ### Home (`/api/home/brief`, `/api/home/brief/group`, `/mobile/api/home`, `/mobile/api/home/modules`)
 The deterministic Home-tab payload — see `home_brief.py`. `?fresh=1` forces recompute past the 60s per-restaurant cache. `/group` returns every location in an owner's `location_group` side by side.
 

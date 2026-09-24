@@ -2459,6 +2459,9 @@ def _no_response_is_news(restaurant_id, n, db_path: str = DB_PATH) -> bool:
 # A labor snapshot older than this is history, not news. The alert used to
 # take the most recently SAVED row with no bound on the period it covered.
 LABOR_ALERT_MAX_PERIOD_AGE_DAYS = 21
+# ...and at least this long: labor.MIN_DAYS_TO_EXTRAPOLATE, the floor under
+# which a period is reported as-is and never projected (CA3 F5).
+LABOR_ALERT_MIN_PERIOD_DAYS = 7
 
 
 def _short_period(start, end) -> str:
@@ -2613,13 +2616,19 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # "labor over target" text every seven days, forever, quoting
             # June. An alert about a period nobody is working any more is
             # not an alert, it is noise the owner learns to ignore.
+            # Bounded on the LENGTH of the period too, and on it having
+            # sales. One day of shifts used to text "Labor at 48% — 23 pts
+            # over target" (CA3 F5): the same floor under which labor.py
+            # refuses to project a period forward (MIN_DAYS_TO_EXTRAPOLATE).
             recent = c2.execute("""
                 SELECT labor_pct, period_start, period_end
                 FROM labor_history
                 WHERE restaurant_id=?
                   AND period_end >= date('now', ?)
+                  AND total_sales > 0
+                  AND julianday(period_end) - julianday(period_start) + 1 >= ?
                 ORDER BY period_end DESC, saved_at DESC LIMIT 1
-            """, (rid, f"-{LABOR_ALERT_MAX_PERIOD_AGE_DAYS} days")).fetchone()
+            """, (rid, f"-{LABOR_ALERT_MAX_PERIOD_AGE_DAYS} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
             c2.close()
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]
@@ -2840,6 +2849,13 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 from inventory import analysis_for
                 items, is_live, analysis = analysis_for(rid)
                 crit = (analysis or {}).get("critical_low") or [] if (items and is_live) else []
+                # Only items whose stock rests on a current count. With no
+                # count in the last ordering.COUNT_FRESH_DAYS the "on hand"
+                # is a projection, and an item "running out" may simply be
+                # one nobody counted (inventory.analysis_for marks it
+                # count_stale) — that is a reason to count, not a push
+                # (CA1 N4/F21, CA3 F14).
+                crit = [x for x in crit if not x.get("count_stale") and not x.get("count_discrepancy")]
                 # One recommendation per item ("stock_low:Salmon"): an item
                 # the owner already answered is left out, the rest still go.
                 quiet = silenced_keys(rid, db_path)

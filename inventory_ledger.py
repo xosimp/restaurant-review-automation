@@ -137,12 +137,22 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
         # the wrong unit or a delivery nobody logged, and read as-is it grew
         # the suggested order and turned the stock value negative (MOD-FC-12).
         # The ledger keeps the true sum; the warning names the ingredient.
+        #
+        # Clamped, but not silently (CA3 F14): the ledger's own negative sum
+        # is kept in count_discrepancy_qty, so the item is flagged as a count
+        # discrepancy — "count this" — and left out of "critically low"
+        # (inventory.analysis_for), where a 0 it never really had would
+        # otherwise read as running out. Cleared (NULL) once the ledger is
+        # back at or above zero, which a recount does.
+        discrepancy = None
         if (current_stock or 0) < 0:
             log.warning(f"[inventory_ledger] restaurant {restaurant_id} ingredient {ingredient_id}: "
                         f"ledger reads {current_stock} — a recipe unit or a missing delivery; "
-                        f"clamped to 0 until the next count")
+                        f"clamped to 0 and flagged as a count discrepancy until the next count")
+            discrepancy = round(float(current_stock), 3)
             current_stock = 0.0
-        sets, params = ["current_stock=?", "updated_at=datetime('now')"], [current_stock]
+        sets, params = (["current_stock=?", "updated_at=datetime('now')", "count_discrepancy_qty=?"],
+                        [current_stock, discrepancy])
         if recount_date:
             sets.append("last_recount_at=?")
             params.append(recount_date)

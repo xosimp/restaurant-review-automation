@@ -57,9 +57,68 @@ def _cursor_set(db_path, value):
         conn.close()
 
 
-def active_restaurants(db_path=DB_PATH) -> list:
-    return [r for r in get_all_restaurants(db_path)
+# After is_demo is turned off, the seeded history is still in the tables
+# (never hard-deleted). The longest window a feature reads is 90 days
+# (features.compute), so the restaurant stays out of cross-restaurant
+# learning until that window holds none of it.
+SEEDED_HISTORY_DAYS = 90
+
+# The one predicate (one parameter: f"-{SEEDED_HISTORY_DAYS} days"), so SQL
+# readers such as scoring.kind_stats filter exactly as real_restaurant_ids.
+REAL_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0 AND "
+                       "(demo_cleared_at IS NULL OR demo_cleared_at < datetime('now', ?))")
+# Its complement over the restaurants table — what readers of other tables
+# exclude (a row whose restaurant is not in the table is left alone).
+SEEDED_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1 OR "
+                         "(demo_cleared_at IS NOT NULL AND demo_cleared_at >= datetime('now', ?))")
+
+
+def seeded_restaurant_ids(db_path=DB_PATH) -> set:
+    """The complement of real_restaurant_ids within the restaurants table:
+    demo accounts and recently de-flagged ones. Readers of the feature and
+    event tables drop these ids."""
+    conn = get_conn(db_path)
+    try:
+        try:
+            rows = conn.execute(SEEDED_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
+        except Exception:
+            rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1").fetchall()
+    finally:
+        conn.close()
+    return {int(r["id"]) for r in rows}
+
+
+def real_restaurant_ids(db_path=DB_PATH) -> set:
+    """Ids of restaurants whose data may feed CROSS-restaurant learning —
+    benchmarks, patterns, trends, cohort and platform rates, the privacy
+    floor's count (CA3 F7). Excluded: is_demo=1 accounts (seeded, synthetic),
+    and a restaurant whose is_demo flag was turned off less than
+    SEEDED_HISTORY_DAYS ago (restaurants.demo_cleared_at), because its
+    windows still hold the seeded rows. A restaurant's OWN screens are not
+    filtered by this — only what it contributes to everyone else's."""
+    conn = get_conn(db_path)
+    try:
+        try:
+            rows = conn.execute(REAL_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
+        except Exception:
+            rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0").fetchall()
+    finally:
+        conn.close()
+    return {int(r["id"]) for r in rows}
+
+
+def active_restaurants(db_path=DB_PATH, include_demo=False) -> list:
+    """Restaurants in service, for the nightly passes. Cross-restaurant
+    learning (cohorts, patterns, benchmarks, the confidence log) takes the
+    default — real restaurants only (real_restaurant_ids). run_features
+    passes include_demo=True: a demo account's OWN feature row still backs
+    its own screens; the cross-restaurant readers leave it out."""
+    live = [r for r in get_all_restaurants(db_path)
             if (getattr(r, "billing_status", None) or "trial").lower() in _LIVE]
+    if include_demo:
+        return live
+    seeded = seeded_restaurant_ids(db_path)
+    return [r for r in live if r.id not in seeded]
 
 
 def cohorts_for(restaurants) -> dict:
@@ -70,7 +129,7 @@ def cohorts_for(restaurants) -> dict:
 
 def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_SECONDS, workers=FEATURE_WORKERS) -> dict:
     today = today or date.today()
-    rs = sorted(active_restaurants(db_path), key=lambda r: r.id)
+    rs = sorted(active_restaurants(db_path, include_demo=True), key=lambda r: r.id)
     if not rs:
         return {"computed": 0, "skipped": 0, "resumed_at": 0, "complete": True}
     start_after = _cursor_get(db_path)
@@ -137,7 +196,10 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     finally:
         conn.close()
     groups = {}
+    seeded = seeded_restaurant_ids(db_path)      # demo accounts never in a platform rate (CA3 F7)
     for r in rows:
+        if r["restaurant_id"] in seeded:
+            continue
         groups.setdefault(("platform", r["rec_kind"]), []).append(r)
         c = cohorts.get(r["restaurant_id"])
         if c:

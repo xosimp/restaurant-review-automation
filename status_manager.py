@@ -436,6 +436,11 @@ def _check_ai_drafting():
     update_service_status("ai_drafting", "operational", None)
 
 
+# Scheduled review fetches (admin_ops.REVIEW_FETCH_SLOTS) a location may miss
+# before the status page calls it stale.
+REVIEW_SLOTS_MISSED_STALE = 2
+
+
 def _check_review_sync():
     conn = _conn()
     # EXACTLY the predicate scheduler.run_daily_fetch selects on. Nothing else
@@ -459,20 +464,31 @@ def _check_review_sync():
         update_service_status("review_sync", "operational", None)
         return
 
-    cutoff = (datetime.utcnow() - timedelta(hours=25)).strftime("%Y-%m-%d %H:%M:%S")
-    stale = conn.execute(
-        "SELECT COUNT(*) as cnt FROM restaurants r "
+    # Staleness on the fetch schedule's own clock, through
+    # admin_ops.fetch_slots_missed. This compared last_fetched_at — Chicago
+    # local with a 'T' — as a STRING against a UTC cutoff with a space, and
+    # 'T' sorts after ' ', so any fetch on the cutoff's date never counted as
+    # stale: a check meant to fire at 25 hours took up to ~47 (CA3 F10). Two
+    # missed slots is the same rule the admin console uses; one can be the
+    # bounded pass's tail.
+    rows = conn.execute(
+        "SELECT DISTINCT r.id, r.last_fetched_at FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        f"WHERE u.is_active=1 AND {_FETCH_POPULATION} "
-        "AND (r.last_fetched_at IS NULL OR r.last_fetched_at < ?)",
-        (cutoff,)
-    ).fetchone()["cnt"]
+        f"WHERE u.is_active=1 AND {_FETCH_POPULATION}"
+    ).fetchall()
     conn.close()
+    from admin_ops import fetch_slots_missed
+    stale = 0
+    for row in rows:
+        missed = fetch_slots_missed(row["last_fetched_at"])
+        if missed is None or missed >= REVIEW_SLOTS_MISSED_STALE:
+            stale += 1
 
     if stale == 0:
         update_service_status("review_sync", "operational", None)
     elif stale < active_with_gmb:
-        update_service_status("review_sync", "degraded", f"{stale} of {active_with_gmb} location(s) not synced in 25h")
+        update_service_status("review_sync", "degraded",
+                              f"{stale} of {active_with_gmb} location(s) missed 2+ scheduled review fetches")
     else:
         update_service_status("review_sync", "outage", f"Review sync stale on all {stale} location(s)")
 
@@ -505,18 +521,31 @@ def _check_email():
 
 
 def _check_labor_analytics():
+    """Every POS provider, RPOWER included, through the one provider-agnostic
+    reading (pos_health.pos_sync_state). It checked Toast only, so a Square,
+    Clover or RPOWER sync failing for days read operational (CA3 F6)."""
+    import pos_health
     conn = _conn()
     rows = conn.execute(
-        "SELECT r.name, r.toast_sync_error FROM restaurants r "
+        "SELECT DISTINCT r.* FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1 AND r.toast_restaurant_guid IS NOT NULL"
+        "WHERE u.is_active=1"
     ).fetchall()
     conn.close()
 
-    errored = [r for r in rows if r["toast_sync_error"]]
+    errored, stale = [], []
+    for r in rows:
+        st = pos_health.pos_sync_state(dict(r))
+        if st["state"] == "error":
+            errored.append(r["name"])
+        elif st["state"] == "stale":
+            stale.append(r["name"])
     if errored:
-        names = ", ".join(r["name"] for r in errored[:2])
+        names = ", ".join(errored[:2])
         update_service_status("labor_analytics", "degraded", f"POS sync error: {names}")
+    elif stale:
+        names = ", ".join(stale[:2])
+        update_service_status("labor_analytics", "degraded", f"POS not synced in 3+ days: {names}")
     else:
         update_service_status("labor_analytics", "operational", None)
 

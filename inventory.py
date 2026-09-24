@@ -1371,6 +1371,10 @@ def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
             # into the "unassigned" group.
             "supplier_name":   (r["supplier_name"] if "supplier_name" in r.keys() else None) or "",
             "supplier_email":  (r["supplier_email"] if "supplier_email" in r.keys() else None) or "",
+            # The ledger went below zero and was clamped (inventory_ledger,
+            # CA3 F14): the stock figure is a discrepancy to count, not a
+            # reading. None when the ledger is sound.
+            "count_discrepancy": (r["count_discrepancy_qty"] if "count_discrepancy_qty" in r.keys() else None),
         } for r in rows]
         return items, True
     # A caller that already holds the client_data row passes it (Home reads
@@ -1458,6 +1462,21 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         if analysis["count_freshness"]["stale"]:
             for x in analysis.get("critical_low") or []:
                 x["count_stale"] = True
+    except Exception:
+        pass
+    # An item whose ledger went negative reads 0 on hand only because it was
+    # clamped. It is a count discrepancy — named so someone counts it — and
+    # never "critically low" (CA3 F14).
+    try:
+        flagged = {it.get("ingredient_id") for it in (items or [])
+                   if it.get("count_discrepancy") is not None and it.get("ingredient_id")}
+        if flagged:
+            analysis["critical_low"] = [x for x in analysis.get("critical_low") or []
+                                        if x.get("ingredient_id") not in flagged]
+            analysis["count_discrepancies"] = [
+                {"item": it.get("item"), "ingredient_id": it.get("ingredient_id"),
+                 "ledger_qty": it.get("count_discrepancy"), "unit": it.get("unit") or ""}
+                for it in items if it.get("ingredient_id") in flagged]
     except Exception:
         pass
     return items, bool(is_live), analysis

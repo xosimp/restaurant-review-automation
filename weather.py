@@ -187,12 +187,32 @@ def _fetch_periods(lat, lon):
     return _fetch_periods_ex(lat, lon)[0]
 
 
+# A forecast row older than this carries stale=True (CA3 F15): the 72-hour
+# fallback below used to hand a three-day-old forecast out as if current.
+FORECAST_STALE_HOURS = 24
+
+
+def _cached_at(restaurant):
+    """weather_cached_at as an aware UTC datetime, or None. Written UTC with
+    an offset now; older rows are server-local naive (time_utils.parse_stamp,
+    naive_tz="local")."""
+    from time_utils import parse_stamp
+    return parse_stamp(getattr(restaurant, "weather_cached_at", None), naive_tz="local")
+
+
+def _age_hours(cached_at):
+    from datetime import timezone as _tz
+    if cached_at is None:
+        return None
+    return max(0.0, (datetime.now(_tz.utc) - cached_at).total_seconds() / 3600.0)
+
+
 def _stale_periods(restaurant):
     """The cached periods even past _CACHE_HOURS (up to _STALE_OK_HOURS), for
     when a refresh has failed. None when there is nothing usable."""
     try:
-        cached_at = datetime.fromisoformat(restaurant.weather_cached_at)
-        if datetime.now() - cached_at > timedelta(hours=_STALE_OK_HOURS):
+        age = _age_hours(_cached_at(restaurant))
+        if age is None or age > _STALE_OK_HOURS:
             return None
         periods = json.loads(restaurant.weather_cache_json or "[]")
     except Exception:
@@ -204,11 +224,8 @@ def _cached_periods(restaurant):
     """Returns the cached periods list if fresh, None if missing/stale/bad."""
     if not restaurant.weather_cached_at:
         return None
-    try:
-        cached_at = datetime.fromisoformat(restaurant.weather_cached_at)
-    except Exception:
-        return None
-    if datetime.now() - cached_at > timedelta(hours=_CACHE_HOURS):
+    age = _age_hours(_cached_at(restaurant))
+    if age is None or age > _CACHE_HOURS:
         return None
     try:
         periods = json.loads(restaurant.weather_cache_json or "[]")
@@ -232,6 +249,11 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
     takes the newer one."""
     periods = _cached_periods(restaurant)
     previous = None
+    # Every period is tagged with when ITS copy of the forecast was fetched
+    # (`_as_of`, UTC ISO), so each row can say how old it is (CA3 F15).
+    old_stamp = _cached_at(restaurant)
+    old_iso = old_stamp.isoformat() if old_stamp else None
+    periods_as_of = old_iso
     if periods is None:
         previous = _stale_periods(restaurant)
         lat, lon = _geocode(restaurant, db_path=db_path)
@@ -242,10 +264,15 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
         if failure is None:
             periods, failure = _fetch_periods_ex(lat, lon)
         if failure is None:
+            from datetime import timezone as _tz
+            fetched = datetime.now(_tz.utc).isoformat()
             update_restaurant(restaurant.id, {
                 "weather_cache_json": json.dumps(periods),
-                "weather_cached_at": datetime.now().isoformat(),
+                # UTC with an offset: it was server-local naive, one of the
+                # five stamp formats time_utils.parse_stamp now reconciles.
+                "weather_cached_at": fetched,
             }, db_path=db_path)
+            periods_as_of = fetched
         else:
             if failure != "backing_off":
                 _back_off(key, _NOT_COVERED_BACKOFF_SECS if failure == "not_covered"
@@ -253,21 +280,34 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
             periods = _stale_periods(restaurant) or []
 
     by_day, by_night = {}, {}
-    for p in list(previous or []) + list(periods or []):
-        pdate = (p.get("startTime") or "")[:10]
-        if pdate:
-            (by_day if p.get("isDaytime") else by_night)[pdate] = p
+    for src, as_of in ((previous or [], old_iso), (periods or [], periods_as_of)):
+        for p in src:
+            pdate = (p.get("startTime") or "")[:10]
+            if pdate:
+                p = dict(p)
+                p["_as_of"] = as_of
+                (by_day if p.get("isDaytime") else by_night)[pdate] = p
     return by_day, by_night
 
 
 def _row(d, p):
+    """One forecast row. `as_of` (UTC ISO) is when this copy of the forecast
+    was fetched, `age_hours` how old it is now — None when unknown, never 0
+    — and `stale` is True past FORECAST_STALE_HOURS or when the age is
+    unknown: a 72-hour-old fallback must not read as today's forecast."""
+    from time_utils import parse_stamp
     precip = (p.get("probabilityOfPrecipitation") or {}).get("value")
+    as_of = p.get("_as_of")
+    age = _age_hours(parse_stamp(as_of)) if as_of else None
     return {
         "date": d,
         "day_name": p.get("name", ""),
         "high_f": p.get("temperature"),
         "short_forecast": p.get("shortForecast", ""),
         "precip_pct": precip,
+        "as_of": as_of,
+        "age_hours": round(age, 1) if age is not None else None,
+        "stale": age is None or age > FORECAST_STALE_HOURS,
     }
 
 

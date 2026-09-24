@@ -492,9 +492,9 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Target waste as % of purchases, used by the Food Cost waste-trend chart. Leave blank for the 4.5% industry default.</div>
         </div>
         <div class="form-group">
-          <label>Last inventory update</label>
-          <input type="text" value="{{ restaurant.inventory_updated_at[:10] if restaurant.inventory_updated_at else 'Never' }}" disabled style="background:var(--paper2);color:var(--ink3)">
-          <div class="hint">Updated automatically when you upload new data</div>
+          <label>Last inventory count</label>
+          <input type="text" value="{{ (count_freshness.last_count_at|format_date) if count_freshness and count_freshness.last_count_at else 'Never' }}" disabled style="background:var(--paper2);color:var(--ink3)">
+          <div class="hint">The newest physical count on file{% if count_freshness and count_freshness.stale and count_freshness.last_count_at %} — older than a week, so stock is a projection{% endif %}</div>
         </div>
       </div>
 

@@ -118,6 +118,78 @@ def parse_stored_dt(value, tz=OPERATOR_TZ):
     return dt
 
 
+def parse_stamp(value, naive_tz="UTC"):
+    """Any timestamp this codebase stores, as an AWARE UTC datetime, or None.
+
+    The one parser every freshness reading goes through (confidence audit
+    CA3 F15). Five formats are in the tables, and which zone an offset-less
+    stamp means depends on who wrote it, so the rule is explicit:
+
+      * an offset or a trailing Z ("…+00:00", "…Z")   → that instant;
+      * SQLite's space form ("2026-09-24 13:05:00")   → UTC, always — it is
+        what datetime('now') and time_utils.utc_stamp write;
+      * a naive 'T' form ("2026-09-24T08:05:00") or a bare date → `naive_tz`,
+        which the CALLER names because the column decides it: Chicago for
+        restaurants.last_fetched_at (models.update_last_fetched), UTC for
+        rpower_last_synced, "local" for the server-local stamps weather.py
+        wrote before it stamped UTC.
+
+    `naive_tz` is an IANA name, a tzinfo, or "local". A datetime passes
+    through (naive → naive_tz); a date is its midnight in naive_tz.
+    Unparseable → None, never an exception: a freshness reading that
+    cannot parse its stamp is "unknown", not "fresh"."""
+    from datetime import date as _date, timezone as _tz
+    if value is None or value == "":
+        return None
+
+    def _zone():
+        if naive_tz in (None, "local"):
+            return None
+        if isinstance(naive_tz, str):
+            try:
+                return ZoneInfo(naive_tz)
+            except Exception:
+                return _tz.utc
+        return naive_tz
+
+    def _localise(dt):
+        z = _zone()
+        return dt.astimezone() if z is None else dt.replace(tzinfo=z)
+
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else _localise(value)
+        return dt.astimezone(_tz.utc)
+    if isinstance(value, _date):
+        return _localise(datetime(value.year, value.month, value.day)).astimezone(_tz.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    sqlite_space = len(text) > 10 and text[10] == " "
+    iso = text.replace(" ", "T", 1) if sqlite_space else text
+    if iso.endswith("Z"):
+        iso = iso[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc) if sqlite_space else _localise(dt)
+    return dt.astimezone(_tz.utc)
+
+
+def age_days(value, naive_tz="UTC", now=None):
+    """Days since `value` (parse_stamp rules), never negative; None when the
+    stamp is missing or unreadable."""
+    from datetime import timezone as _tz
+    dt = parse_stamp(value, naive_tz=naive_tz)
+    if dt is None:
+        return None
+    now = now or datetime.now(_tz.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_tz.utc)
+    return max(0.0, (now - dt).total_seconds() / 86400.0)
+
+
 def utc_stamp(dt=None) -> str:
     """`dt` (or now) as the UTC "YYYY-MM-DD HH:MM:SS" the ledgers store.
     Was defined identically in security, activity and delayed."""

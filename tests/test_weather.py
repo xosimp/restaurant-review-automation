@@ -165,8 +165,11 @@ def test_forecast_fetches_and_matches_week_dates(db_path, monkeypatch):
     rows = weather.get_forecast_for_week(r, week_dates, db_path=db_path)
 
     assert len(rows) == 2  # 2026-07-15 has no matching period -> omitted, not guessed
-    assert rows[0] == {"date": "2026-07-13", "day_name": "Monday", "high_f": 89,
-                        "short_forecast": "Sunny", "precip_pct": 5}
+    # Every row carries its age (CA3 F15): as_of, age_hours, stale.
+    assert {k: v for k, v in rows[0].items() if k not in ("as_of", "age_hours", "stale")} == {
+        "date": "2026-07-13", "day_name": "Monday", "high_f": 89,
+        "short_forecast": "Sunny", "precip_pct": 5}
+    assert rows[0]["as_of"] and rows[0]["stale"] is False and rows[0]["age_hours"] < 1
     assert rows[1]["short_forecast"] == "Rain Showers"
     assert rows[1]["precip_pct"] == 80
 

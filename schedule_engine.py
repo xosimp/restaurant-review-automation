@@ -858,7 +858,12 @@ def _demand_data_through(restaurant_id) -> dict:
     from models import get_conn as _gc
     conn = _gc()
     try:
-        row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL",
+        # A day with a real sales figure: NULL is a missing figure, and rows
+        # written before that rule carry 0 for one. `sales IS NOT NULL`
+        # alone let a feed that kept landing shifts with no sales read as
+        # current — the forecast called itself fresh on 20 days of $0 (CA3 F3).
+        row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
+                           "AND sales IS NOT NULL AND sales > 0",
                            (restaurant_id,)).fetchone()
     finally:
         conn.close()

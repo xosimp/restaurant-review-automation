@@ -608,7 +608,7 @@ def analyse_shifts(shifts: list[dict],
     # uses (thresholds.LABOR_OVER_TARGET_PTS). With no margin, 30.1% against
     # a 30% target was "where the money is going".
     OVERSTAFF_THRESHOLD = labor_target + LABOR_OVER_TARGET_PTS
-    by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": [], "labor_cost": 0})
+    by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": None, "shifts": [], "labor_cost": 0})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     overtime_flags = []
 
@@ -688,7 +688,11 @@ def analyse_shifts(shifts: list[dict],
 
         by_day[day]["scheduled"] += sched
         by_day[day]["actual"]    += actual
-        by_day[day]["sales"]     = day_sales.get(day, 0.0)
+        # None, never 0.0, for a day with no sales figure: the per-day
+        # archive (labor_daily_history) is written from this, and a missing
+        # figure saved as $0 sales and 0.0% labor dragged every average that
+        # read it and made a stopped sales feed look current (CA3 F3).
+        by_day[day]["sales"]     = day_sales.get(day)
         by_day[day]["shifts"].append(s)
         by_day[day]["labor_cost"] += actual * rate
 
@@ -747,8 +751,13 @@ def analyse_shifts(shifts: list[dict],
     understaffed = []
     for date, d in by_day.items():
         labor_cost = d["labor_cost"]  # already summed with per-role rates
-        labor_pct  = (labor_cost / d["sales"] * 100) if d["sales"] else 0
         d["labor_cost"] = round(labor_cost, 2)
+        if not d["sales"]:
+            # No sales figure: no labor percentage for this day (None), and
+            # it can be neither over- nor understaffed.
+            d["labor_pct"] = None
+            continue
+        labor_pct  = labor_cost / d["sales"] * 100
         d["labor_pct"]  = round(labor_pct, 1)
         if labor_pct >= OVERSTAFF_THRESHOLD:        # one comparison with the alert (A-29)
             # Format date as M/D/YY

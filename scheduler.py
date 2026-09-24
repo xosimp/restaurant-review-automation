@@ -335,8 +335,10 @@ def _record_places_gap(rid, name, total, stored_new):
     """Places returns at most five reviews a fetch. When Google's own count
     of the listing grew by more than this fetch stored, the difference was
     never returned and is lost unless recorded (MOD-REV-11): an activity-log
-    entry the account can show, and a failure-digest line for the operator.
-    The last total seen lives in job_cursors."""
+    entry the account shows (review_fetch_gap is an ACCOUNT_EVENT_TYPE), and
+    a failure-digest line for the operator. The last total seen lives in
+    job_cursors; the running coverage — reviews stored ÷ Google's growth —
+    in `places_coverage:<rid>` (fetcher.places_coverage reads it, CA3 F13)."""
     from models import get_conn
     key = f"places_total:{rid}"
     prev = None
@@ -356,6 +358,11 @@ def _record_places_gap(rid, name, total, stored_new):
         return
     if prev is None:
         return
+    try:
+        import fetcher
+        fetcher.record_places_coverage(rid, int(total) - prev, int(stored_new or 0))
+    except Exception as e:
+        log.warning(f"places coverage for {rid}: {e}")
     missed = (int(total) - prev) - int(stored_new or 0)
     if missed <= 0:
         return
@@ -1205,6 +1212,56 @@ def refresh_expiring_tokens():
 METRICS_SYNC_SECONDS = int(os.getenv("METRICS_SYNC_SECONDS", "1800"))
 
 
+def record_metrics_sync(restaurant_id, ok, error=None):
+    """Stamp one restaurant's Meta metrics sync in job_cursors
+    (`metrics_sync:<rid>` → JSON {last_attempt_at, last_ok_at, error}), so a
+    freshness reading can say how old the marketing figures are instead of
+    calling them fresh whenever a token exists. Never raises."""
+    import json as _json
+    from models import get_conn
+    from time_utils import utc_stamp
+    key = f"metrics_sync:{int(restaurant_id)}"
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+            try:
+                state = _json.loads(row["value"]) if row and row["value"] else {}
+            except ValueError:
+                state = {}
+            now = utc_stamp()
+            state["last_attempt_at"] = now
+            if ok:
+                state["last_ok_at"], state["error"] = now, None
+            else:
+                state["error"] = str(error or "unknown")[:300]
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (key, _json.dumps(state)))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"metrics sync stamp for {restaurant_id}: {e}")
+
+
+def metrics_sync_state(restaurant_id, db_path=None) -> dict:
+    """{last_attempt_at, last_ok_at, error} — UTC "YYYY-MM-DD HH:MM:SS"
+    stamps (time_utils.parse_stamp reads them) — or {} when never synced."""
+    import json as _json
+    from models import get_conn
+    try:
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
+                               (f"metrics_sync:{int(restaurant_id)}",)).fetchone()
+        finally:
+            conn.close()
+        return _json.loads(row["value"]) if row and row["value"] else {}
+    except Exception:
+        return {}
+
+
 def run_marketing_metrics_sync():
     """Nightly: refresh Meta post-performance metrics for every restaurant
     with marketing on and a connected account. Previously this only ever ran
@@ -1227,11 +1284,22 @@ def run_marketing_metrics_sync():
 
         def _one(rid):
             r = candidates[rid]
-            result = social_routes.refresh_post_metrics(rid) or {}
+            try:
+                result = social_routes.refresh_post_metrics(rid) or {}
+            except Exception as e:
+                record_metrics_sync(rid, False, str(e))
+                raise
             if result.get("ok"):
                 log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
+                record_metrics_sync(rid, True)
             else:
+                # Was only logged, so marketing figures read current after
+                # the Meta token died (CA3 F15). Captured for the operator and
+                # stamped per restaurant for the freshness registry.
                 log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
+                record_metrics_sync(rid, False, result.get("error"))
+                _ops.capture(RuntimeError(f"metrics sync failed: {result.get('error')}"),
+                             job="marketing_metrics_sync", context=f"restaurant_id={rid}")
 
         done, hit_bound = resumable_sweep("marketing_metrics_sync", list(candidates), _one,
                                           METRICS_SYNC_SECONDS, workers=1, job="marketing_metrics_sync")

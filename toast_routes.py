@@ -39,10 +39,13 @@ def save_toast_credentials(restaurant_id, current_user):
 
     # Optionally validate credentials against the Toast API before saving
     if run_test:
-        from toast import test_credentials
+        from toast import test_credentials, demo_allowed
         result = test_credentials(client_id, client_secret, guid)
         if not result["ok"]:
             return jsonify(ok=False, error=result["error"])
+        # Synthetic "demo" data only on a restaurant flagged is_demo (CA3 F8).
+        if result.get("demo") and not demo_allowed(restaurant_id):
+            return jsonify(ok=False, error="Demo credentials are only accepted on a restaurant flagged as a demo")
 
     update_restaurant(restaurant_id, {
         "toast_client_id":       client_id,
@@ -128,10 +131,14 @@ def client_save_toast(current_user):
     if not client_id or not client_secret or not guid:
         return jsonify(ok=False, error="All three fields are required.")
 
-    from toast import test_credentials
+    from toast import test_credentials, demo_allowed
     result = test_credentials(client_id, client_secret, guid)
     if not result["ok"]:
         return jsonify(ok=False, error=result["error"])
+    # "demo" loads synthetic shifts and sales — never into a real restaurant
+    # (CA3 F8).
+    if result.get("demo") and not demo_allowed(current_user["restaurant_id"]):
+        return jsonify(ok=False, error="Those are not Toast credentials.")
 
     update_restaurant(current_user["restaurant_id"], {
         "toast_client_id":       client_id,
