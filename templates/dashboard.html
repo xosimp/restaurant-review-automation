@@ -832,6 +832,8 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-badge{width:64px;height:64px;border-radius:19px;background:linear-gradient(180deg,#2c2c2e,#161618);border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;color:#e8956a;box-shadow:0 10px 30px rgba(200,75,47,.28);flex-shrink:0}
 .ask-badge.s{width:28px;height:28px;border-radius:9px;box-shadow:0 4px 14px rgba(200,75,47,.25);margin-top:2px}
 .ask-badge.s svg{width:15px;height:15px}
+.ask-av{display:block;width:28px;height:28px;flex-shrink:0;margin-top:2px}
+.ask-av-lg{display:block;width:64px;height:64px}
 .ask-empty h3{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin:16px 0 6px}
 .ask-empty p{font-size:13.5px;line-height:1.55;color:var(--ink3);margin:0 12px 14px;max-width:36ch}
 .ask-brief{width:100%;text-align:left;margin:0 0 16px}
@@ -846,7 +848,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-b.user{align-self:flex-end;justify-content:flex-end}
 .ask-b .bb{padding:10px 14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;border-radius:18px 18px 18px 4px;background:var(--paper2);color:var(--ink);border:1px solid rgba(14,12,10,.06);min-width:0}
 [data-theme="dark"] .ask-b .bb{border-color:rgba(255,255,255,.05)}
-.ask-b.user .bb{border-radius:18px 18px 4px 18px;background:linear-gradient(180deg,#d95b3d,#c84b2f);color:#fff;border-color:transparent;box-shadow:0 6px 18px rgba(200,75,47,.3)}
+.ask-b.user .bb{border-radius:18px 18px 4px 18px;background:linear-gradient(180deg,#d95b3d,#c84b2f);color:#fff;border-color:transparent;box-shadow:none}
 .ask-b .bb b{font-weight:700}
 .ask-b.loading .bb{display:flex;align-items:center;gap:10px;min-width:170px}
 .ask-b.loading .bb canvas{display:block;flex-shrink:0}
@@ -1630,7 +1632,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* a link between two modules — the "across your restaurant" mark */
 .hb-join{display:flex;align-items:center;margin:6px 0 16px;flex-wrap:wrap;row-gap:8px}
 .hb-join .mod{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:7px 13px;white-space:nowrap}
-.hb-join .ln{flex:0 0 64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2));position:relative;border-radius:2px}
+.hb-join .ln{flex:0 0 64px;height:2px;margin:0 2px;background:var(--ember);position:relative;border-radius:2px}
 .hb-join .ln:before,.hb-join .ln:after{content:'';position:absolute;left:50%;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:var(--ember)}
 .hb-join .ln:before{box-shadow:0 0 14px 4px var(--ember);animation:hbGlow 2s ease-in-out infinite}
 .hb-join .ln:after{opacity:.55;animation:hbHalo 2s ease-out infinite}
@@ -1791,9 +1793,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-live i{position:relative;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
 .hb-live i:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.4;animation:hbBreath 2.2s ease-in-out infinite}
 .hb-live .hb-num{color:var(--ink2)}
-.hb-join .ln:before{left:0;margin-left:-5.5px;animation:hbTravel 2.6s cubic-bezier(.45,0,.2,1) infinite,hbGlow 2s ease-in-out infinite}
-.hb-join .ln:after{left:100%}
-@keyframes hbTravel{0%{left:0;opacity:0}14%{opacity:1}86%{opacity:1}100%{left:100%;opacity:0}}
+.hb-join .ln:before{left:6px;margin-left:-5.5px;animation:hbTravel 2.6s cubic-bezier(.45,0,.2,1) infinite,hbGlow 2s ease-in-out infinite}
+/* The sphere runs the line at full strength and stops where the pulse sits:
+   both centred 6px inside the end, on the line, clear of the pill's edge. */
+.hb-join .ln:after{left:calc(100% - 6px)}
+@keyframes hbTravel{0%{left:6px}100%{left:calc(100% - 6px)}}
 .hb-rec.new{animation:hbNewRing 1.7s ease-out 3}
 @keyframes hbNewRing{0%{outline:2px solid var(--ember);outline-offset:0}100%{outline:2px solid transparent;outline-offset:14px}}
 /* the brief's dots land one after another */
@@ -1976,8 +1980,11 @@ svg:hover .hb-xh{opacity:1}
   // Stacked positive / negative bars per week.
   function stacked(weeks,w,h){
     if(!weeks||!weeks.length)return '';
-    var n=weeks.length,gap=6,bw=(w-gap*(n+1))/n,max=Math.max.apply(null,weeks.map(function(x){return x.total||0;}))||1,base=h-16;
-    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">';
+    // The bars stretch to the column (preserveAspectRatio none); their
+    // labels are HTML under them, placed by percentage. As SVG text they
+    // stretched with the bars and read as narrow, squeezed digits.
+    var n=weeks.length,gap=6,bw=(w-gap*(n+1))/n,max=Math.max.apply(null,weeks.map(function(x){return x.total||0;}))||1,base=h;
+    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">',ax='<div class="hb-stk-ax hb-num" aria-hidden="true">';
     for(var i=0;i<n;i++){var wk=weeks[i],x=gap+i*(bw+gap),ph=((wk.pos||0)/max)*(base-4),nh=((wk.neg||0)/max)*(base-4),oh=(((wk.total||0)-(wk.pos||0)-(wk.neg||0))/max)*(base-4);
       var delay=reduced()?'':' style="animation-delay:'+(i*100)+'ms"';var y=base;
       if(nh>0){y-=nh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+nh.toFixed(1)+'" rx="2" fill="var(--red)"/>';}
@@ -1987,8 +1994,8 @@ svg:hover .hb-xh{opacity:1}
       // else, solid, matching the pos/neg bars' own solid fills.
       if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="var(--ink3)"/>';}
       if(ph>0){y-=ph;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+ph.toFixed(1)+'" rx="2" fill="var(--green)"/>';}
-      s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".7">'+esc(wk.label||'')+'</text>';}
-    return s+'</svg>';
+      ax+='<span style="left:'+((x+bw/2)/w*100).toFixed(2)+'%">'+esc(wk.label||'')+'</span>';}
+    return '<div class="hb-stk">'+s+'</svg>'+ax+'</div></div>';
   }
   function countUp(el,target,prefix){
     if(!el)return;
@@ -2228,6 +2235,12 @@ svg:hover .hb-xh{opacity:1}
   // from the first payload and is upgraded in place once the follow-through
   // reads land, so it is never a skeleton and never empty.
   function focusUsed(d){var att=d.attention||[],recs=d.recommendations||[];return att.length?{att:1}:(recs.length?{rec:1}:{});}
+  function hbNorm(t){return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/^\s+|\s+$/g,'');}
+  function hbFreshEvidence(ev,said){
+    said=String(said||'');
+    return (ev||[]).filter(function(x){var ns=String(x).match(/\d[\d,]*(?:\.\d+)?/g)||[];if(!ns.length)return true;
+      for(var q=0;q<ns.length;q++)if(said.indexOf(ns[q])<0)return true;return false;});
+  }
   function renderFocus(d,g){
     var att=d.attention||[],recs=d.recommendations||[];
     var lines=(g&&g.brief&&g.brief.brief&&g.brief.brief.lines)||[];
@@ -2259,6 +2272,12 @@ svg:hover .hb-xh{opacity:1}
     // The biggest dollar opportunity rides along as the figure, unless the
     // lead already carries its own.
     if(!money&&byKey.money){var mm=/\$[\d,]+(?:\.\d+)?/.exec(byKey.money.text||'');var lab=/opportunity: (.+?), \$/.exec(byKey.money.text||'');if(mm)money=mm[0]+'<small>/month'+(lab?' · '+esc(lab[1].toLowerCase()):'')+'</small>';}
+    // Say each thing once: a confirm step that IS the lead (a link's
+    // fix_first leads with its confirm_by) is not repeated under it, and an
+    // evidence chip whose every figure is already in the lead or the why
+    // only restates it.
+    if(confirm&&hbNorm(confirm)===hbNorm(lead))confirm='';
+    ev=hbFreshEvidence(ev,lead+' '+why);
     var h='<section class="hb-card hero hb-focus'+(clear?' clear':'')+' hb-rise" id="hb-focus" aria-label="Today">';
     // The date already sits in the hero's kicker; this corner is where the
     // product says it is awake — how many live signals it is reading, and
@@ -2287,7 +2306,7 @@ svg:hover .hb-xh{opacity:1}
   // page twice.
   function renderRecs(d,skip){
     var recs=(d.recommendations||[]).slice(skip||0),hid=d.dismissed||[];
-    var h='<div id="hb-recs"><div class="hb-sh"><div><div class="k">Worth your time</div><h2>Cavnar AI recommends <small>'+hbLive(d,'ranked across')+'</small></h2></div>'+(hid.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(hid[0].key)+'" data-undo="1">restore hidden</button>':'')+'</div>';
+    var h='<div id="hb-recs"><div class="hb-sh"><div><div class="k">Worth your time</div><h2>Cavnar AI recommends <small>'+hbLive(d,'ranked across')+'</small></h2></div>'+(hid.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(hid[0].key)+'" data-undo="1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>Restore hidden</button>':'')+'</div>';
     if(!recs.length)return h+'<div class="hb-empty">Nothing to recommend yet — that changes as your data grows.</div></div>';
     // A recommendation this browser has not shown before gets a short ring
     // pulse - new evidence arrived. Per-viewer convenience only, so it lives
@@ -2446,7 +2465,10 @@ svg:hover .hb-xh{opacity:1}
   function renderReadiness(d){
     var r=d.readiness;if(!r||!r.modules||!r.modules.length||r.complete)return '';
     var h='<div class="hb-ready">';
-    for(var i=0;i<r.modules.length;i++){var m=r.modules[i];
+    // What is flowing first, then what needs a step.
+    var mods=[],k;for(k=0;k<r.modules.length;k++)if(r.modules[k].connected)mods.push(r.modules[k]);
+    for(k=0;k<r.modules.length;k++)if(!r.modules[k].connected)mods.push(r.modules[k]);
+    for(var i=0;i<mods.length;i++){var m=mods[i];
       h+='<span class="it '+(m.connected?'on':'off')+'"><i></i><b>'+esc(m.label)+'</b>'+(m.connected?(m.measurable.length?' · reading '+esc(m.measurable.join(', ').toLowerCase()):' · connected'):'')+(m.next?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(m.module)+'">'+esc(m.next)+' →</button>':'')+'</span>';}
     return h+'</div>';
   }
@@ -2576,7 +2598,9 @@ svg:hover .hb-xh{opacity:1}
     // The focus card already leads with fix_first, which IS links[0] when
     // there is a link. Rendering it here too put the same finding on the
     // page twice, a screen apart. This section shows the rest.
-    var lead=(c.fix_first&&c.fix_first.what)||'';
+    // fix_first.what is the link's confirm step now; its headline is
+    // link_headline. Matching on what showed the hero's finding twice.
+    var lead=(c.fix_first&&(c.fix_first.link_headline||c.fix_first.what))||'';
     var ls=(c.links||[]).filter(function(l){return l.headline!==lead;});
     if(!ls.length)return '';
     // The second hero moment on the page: the module pills joined by a lit
@@ -2593,7 +2617,7 @@ svg:hover .hb-xh{opacity:1}
     if(mods.length){h+='<div class="hb-join">';for(var m=0;m<mods.length;m++){if(m)h+='<span class="ln"></span>';h+='<span class="mod">'+esc(MODLABEL[mods[m]]||mods[m])+'</span>';}h+='</div>';}
     h+='<div class="lead">'+num(l.headline)+'</div>';
     if(l.confirm_by)h+='<div class="why"><strong>To confirm:</strong> '+num(l.confirm_by)+'</div>';
-    var ev=l.evidence||[];
+    var ev=hbFreshEvidence(l.evidence,l.headline);
     if(ev.length){h+='<div class="ev">';for(var e=0;e<ev.length;e++)h+='<span>'+num(ev[e])+'</span>';h+='</div>';}
     h+='<div class="ft"><span class="sp"></span>'+(alt?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding">Could also be…</button>':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc('Tell me more about this: '+l.headline)+'">Ask about this →</button></div>';
     if(ls.length>1){
@@ -3124,6 +3148,9 @@ svg:hover .hb-xh{opacity:1}
    the other two columns' own content (#perf-body, #heatmap-grid) are
    untouched. */
 #sentiment-trend-bars{margin-top:22px}
+.rv2-sg .hb-stk svg{height:90px}
+.hb-stk-ax{position:relative;height:16px;margin-top:5px}
+.hb-stk-ax span{position:absolute;top:0;transform:translateX(-50%);font-size:11.5px;color:var(--ink3);white-space:nowrap}
 .rv2-sg svg{display:block;width:100%;height:108px;margin-top:10px;overflow:visible}
 .rv2-sg .cap{font-size:13px;color:var(--ink3);margin-top:auto;padding-top:8px;display:flex;justify-content:space-between;gap:10px}
 .rv2-days{display:flex;gap:2px}
@@ -7176,6 +7203,10 @@ var _askCavnarHeaderOrb = null;
 var _askCavnarLoadingOrb = null;
 
 var _askFabOrb = null;
+// The panel's mark is the FAB's own animated orb (mounted by
+// cavnarMountOrbs when it enters the DOM), not the obsidian spark tile.
+var ASK_ORB_SM = '<canvas class="hb-orb ask-av" data-orb-state="working" width="28" height="28" aria-hidden="true"></canvas>';
+var ASK_ORB_LG = '<canvas class="hb-orb ask-av-lg" data-orb-state="searching" width="64" height="64" aria-hidden="true"></canvas>';
 var ASK_SPARK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14zM5 15l.7 2 2 .7-2 .7L5 20.4l-.7-2-2-.7 2-.7L5 15z"/></svg>';
 function _askEsc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // Bold and bullets only — the same light markdown pass the Home inline ask uses.
@@ -7205,7 +7236,7 @@ window._askEmptyHtml = function() {
     // panel is for asking. The questions below come from the same signals.
     html += '</div>';
   } else {
-    html += '<div class="ask-badge">' + ASK_SPARK + '</div><h3>Ask me anything</h3>'
+    html += ASK_ORB_LG + '<h3>Ask me anything</h3>'
          + '<p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p>';
   }
   html += '<div class="lbl" style="width:100%;text-align:left">Start here</div><div class="ask-sugg">'
@@ -7250,7 +7281,7 @@ window.toggleAskCavnar = function() {
   if (!isOpen) {
     // Idle orb in the header — a slow breathing ring while nothing is in flight.
     if (!_askCavnarHeaderOrb && window.CavnarOrb) {
-      _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'breathing', {size: 40, dark: _askIsDark()});
+      _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'searching', {size: 40, dark: _askIsDark()});
     }
     var box = document.getElementById('ask-cavnar-messages');
     if (box && !box.children.length) {
@@ -7285,7 +7316,7 @@ function _appendAskCavnarMessage(text, isUser) {
   _askClearEmpty();
   var wrap = document.createElement('div');
   wrap.className = 'ask-b ' + (isUser ? 'user' : 'ai');
-  if (!isUser) wrap.innerHTML = '<div class="ask-badge s">' + ASK_SPARK + '</div>';
+  if (!isUser) wrap.innerHTML = ASK_ORB_SM;
   var bubble = document.createElement('div');
   bubble.className = 'bb';
   if (isUser) bubble.textContent = text; else { bubble.innerHTML = _askMd(text); _askStagger(bubble); }
@@ -8395,17 +8426,22 @@ function loadSentimentTrend(){
   });
 }
 function processInsightHtml(html){
+  // One line-icon family, one colour — the same stroke icons the rest of
+  // the app draws (24-unit, 2px, round caps). Each mark still names its
+  // KIND of line: measured, why, watch, do, urgent, idea.
+  function _ic(d){return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;margin-top:3px;color:var(--ember)">'+d+'</svg>';}
+  var _warn = _ic('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>');
   var _svgs = {
-    '📊': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><rect x="1" y="9" width="3" height="6" rx="1" fill="#6aabff"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#6aabff"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#6aabff"/></svg>',
-    '⚠️': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><path d="M8 2L14 13H2L8 2Z" stroke="#e8a825" stroke-width="1.5" stroke-linejoin="round"/><rect x="7.3" y="6.5" width="1.4" height="3.5" rx=".7" fill="#e8a825"/><circle cx="8" cy="11.5" r=".8" fill="#e8a825"/></svg>',
-    '⚠': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><path d="M8 2L14 13H2L8 2Z" stroke="#e8a825" stroke-width="1.5" stroke-linejoin="round"/><rect x="7.3" y="6.5" width="1.4" height="3.5" rx=".7" fill="#e8a825"/><circle cx="8" cy="11.5" r=".8" fill="#e8a825"/></svg>',
-    '✅': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#3ecf6e" stroke-width="1.5"/><path d="M5.5 8.5l2 2 3.5-3.5" stroke="#3ecf6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    '🚨': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#f05555" stroke-width="1.5"/><rect x="7.3" y="4.5" width="1.4" height="4.5" rx=".7" fill="#f05555"/><circle cx="8" cy="11" r=".8" fill="#f05555"/></svg>',
-    '💡': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="7" r="4.5" stroke="#e8a825" stroke-width="1.5"/><path d="M6 11.5h4M6.5 13h3" stroke="#e8a825" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    '📊': _ic('<path d="M6 20v-6M12 20V10M18 20V4"/>'),
+    '⚠️': _warn,
+    '⚠': _warn,
+    '✅': _ic('<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/>'),
+    '🚨': _ic('<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>'),
+    '💡': _ic('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>'),
     /* The "Why" line — the read's own root-cause sentence, drawn from the
        stored diagnosis. Its own mark because it is a different KIND of claim
        from the measured line above it. */
-    '🔍': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="7" cy="7" r="4.5" stroke="#e06444" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="#e06444" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    '🔍': _ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>')
   };
   var _emojiRe = /^([\uD83C-􏰀-\uDFFF]{1,2}[️]?|[☀-➿][️]?)\s*/;
   var lines = html.replace(/<br\s*\/?>/gi,'\n').split('\n');
@@ -17717,7 +17753,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // ── Ask Cavnar history ──
   window._askConversationId=window._askConversationId||null;
-  function askMsgHtml(m){var me=m.role==='user';return '<div class="ask-b '+(me?'user':'ai')+'">'+(me?'':'<div class="ask-badge s">'+ASK_SPARK+'</div>')+'<div class="bb">'+(me?_askEsc(m.content):_askMd(m.content))+'</div></div>';}
+  function askMsgHtml(m){var me=m.role==='user';return '<div class="ask-b '+(me?'user':'ai')+'">'+(me?'':ASK_ORB_SM)+'<div class="bb">'+(me?_askEsc(m.content):_askMd(m.content))+'</div></div>';}
   window.askRefreshConversations=function(quiet){
     var box=document.getElementById('ask-cavnar-history');if(!box)return;
     if(!quiet&&box.style.display==='none')return;
