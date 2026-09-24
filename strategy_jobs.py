@@ -62,6 +62,27 @@ def run_outcome_evaluations(db_path=DB_PATH):
     return {"outcomes_closed": closed, "goals_achieved": achieved}
 
 
+def run_outcome_rechecks(db_path=DB_PATH):
+    """6am operator time, after run_outcome_evaluations: re-check each
+    measured move at outcomes.RECHECK_DAYS (a win that no longer holds stops
+    counting and stops accruing), then accrue measured dollars day by day
+    into outcome_value_days — only days actually measured, only while each
+    move holds (rec-ROI #14, #33). Bounded and resumable (_bounded_each);
+    safe to run twice: a re-check is written once, and each tracker's
+    accrued_through is a cursor no day is read past twice. Sends nothing."""
+    import outcomes
+    from datetime import date as _date
+    counts = {"rechecked": 0, "days_accrued": 0}
+    today = _date.today()
+
+    def _one(r):
+        counts["rechecked"] += len(outcomes.recheck_due(r.id, db_path=db_path, today=today) or [])
+        counts["days_accrued"] += outcomes.accrue_due(r.id, db_path=db_path, today=today)
+
+    _bounded_each("outcome_rechecks", _one, db_path)
+    return counts
+
+
 # Owner-facing results and milestones go out at this hour in the
 # restaurant's own timezone, with the catch-up window closing at
 # RESULTS_UNTIL_HOUR so an outage never delivers one late at night.
@@ -998,8 +1019,9 @@ def _metric_permissions(metric):
     means nothing beyond the brief audience itself (sales)."""
     import permissions as _p
     base = str(metric or "").split(":", 1)[0]
-    need = {"labor_pct": _p.LABOR_VIEW, "food_cost_pct": _p.FOOD_COST_VIEW, "weekly_waste": _p.FOOD_COST_VIEW,
-            "avg_rating": _p.REVIEWS_VIEW, "complaints": _p.REVIEWS_VIEW,
+    need = {"labor_pct": _p.LABOR_VIEW, "overtime_hours": _p.LABOR_VIEW,
+            "food_cost_pct": _p.FOOD_COST_VIEW, "weekly_waste": _p.FOOD_COST_VIEW,
+            "avg_rating": _p.REVIEWS_VIEW, "complaints": _p.REVIEWS_VIEW, "response_hours": _p.REVIEWS_VIEW,
             "comp_rate": _p.LOSS_VIEW, "void_rate": _p.LOSS_VIEW}.get(base)
     return {need} if need else None
 

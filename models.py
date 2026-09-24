@@ -2305,6 +2305,43 @@ def init_db(db_path: str = DB_PATH):
         # twice must not double-count it.
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_outcomes_tracking ON recommendation_outcomes"
         "(restaurant_id, source_key) WHERE status='tracking'",
+        # Rec-ROI audit (#5, #14, #16, #23, #30, #31, #33). After the CREATE,
+        # so a fresh database gets them too; outcomes.init_outcomes fills
+        # what can be recomputed on older rows at boot.
+        "ALTER TABLE recommendation_outcomes ADD COLUMN module TEXT",            # credited module (value vocabulary)
+        "ALTER TABLE recommendation_outcomes ADD COLUMN baseline_kind TEXT",     # prior window | matched weekdays | same weeks last year
+        "ALTER TABLE recommendation_outcomes ADD COLUMN baseline_raw REAL",      # the before-window reading, before any seasonal adjustment
+        "ALTER TABLE recommendation_outcomes ADD COLUMN after_detail TEXT",
+        "ALTER TABLE recommendation_outcomes ADD COLUMN delta_pct REAL",
+        "ALTER TABLE recommendation_outcomes ADD COLUMN attribution TEXT",       # none | associated | consistent | held
+        "ALTER TABLE recommendation_outcomes ADD COLUMN concurrent TEXT",        # JSON [{kind, label, date}]; NULL = never checked
+        "ALTER TABLE recommendation_outcomes ADD COLUMN recheck_on TEXT",
+        "ALTER TABLE recommendation_outcomes ADD COLUMN recheck_value REAL",
+        "ALTER TABLE recommendation_outcomes ADD COLUMN recheck_verdict TEXT",   # held | faded | reversed | unknown
+        "ALTER TABLE recommendation_outcomes ADD COLUMN rechecked_at TEXT",
+        "ALTER TABLE recommendation_outcomes ADD COLUMN accrued_through TEXT",   # last day outcome_value_days has read
+        "CREATE INDEX IF NOT EXISTS idx_outcomes_recheck ON recommendation_outcomes(status, recheck_on)",
+        # Measured dollars, one row per tracker per measured day (#14): the
+        # cumulative figure is a SUM of these, never monthly x months. Signed
+        # (a worsened change's days are negative); `counted` marks the one
+        # row per restaurant, family, direction and day that is summed, so
+        # waste and food cost over the same days are one saving (#4).
+        """CREATE TABLE IF NOT EXISTS outcome_value_days (
+            outcome_id     INTEGER NOT NULL REFERENCES recommendation_outcomes(id),
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            day            TEXT    NOT NULL,
+            module         TEXT,
+            metric         TEXT    NOT NULL,
+            family         TEXT    NOT NULL,
+            sign           INTEGER NOT NULL,              -- +1 a win, -1 a change that got worse
+            dollars        REAL    NOT NULL,              -- signed; 0 on a measured day it did not hold
+            held           INTEGER NOT NULL DEFAULT 0,
+            counted        INTEGER NOT NULL DEFAULT 0,
+            basis          TEXT    NOT NULL,              -- 'window' | 'daily'
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (outcome_id, day)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_outcome_value_days ON outcome_value_days(restaurant_id, day)",
 
         # Structured goals. They used to exist only as free text in
         # ask_memory ("wants labor under 26%"), which the assistant could
@@ -2649,6 +2686,10 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The rec-ROI columns on trackers written before them (module from the
+    # recommendation's own rec_instances row, so after the ledger exists).
+    from outcomes import init_outcomes
+    init_outcomes(db_path)
     # The nightly Daily Sales Report: reports, searchable metrics, budgets,
     # the POS-department → DSR-category map (dsr/).
     from dsr import init_dsr

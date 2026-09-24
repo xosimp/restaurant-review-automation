@@ -1997,10 +1997,11 @@ def mobile_set_menu_item_price(current_user):
     # suggestion (a rise on a dish that had one). It started on ANY price set
     # — a dish's first price, a clear to nothing — and measured food cost
     # "after a reprice" that never happened.
+    extra = {}
     if _mi.record_price_change(rid, item_id, _old, data.get("sell_price"), user_id=current_user.get("id"),
                                source="manual", suggestion=_sug):
-        _capi.track_reprice(rid, current_user.get("id"))
-    return jsonify(ok=True)
+        extra = _capi.tracker_fields(_capi.track_reprice(rid, current_user.get("id")))
+    return jsonify(ok=True, **extra)
 
 
 @mobile_bp.route("/food-cost/reprice/apply", methods=["POST"])
@@ -2021,7 +2022,8 @@ def mobile_reprice_apply(current_user):
                                         price=data.get("price"), menu_item_id=mid,
                                         user_id=current_user.get("id"))
     if status == 200:
-        _capi.track_reprice(current_user["restaurant_id"], current_user.get("id"))
+        payload = dict(payload, **_capi.tracker_fields(
+            _capi.track_reprice(current_user["restaurant_id"], current_user.get("id"))))
     return jsonify(**payload), status
 
 

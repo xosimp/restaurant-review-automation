@@ -77,6 +77,31 @@ SCHEDULE_MINUTES = 90    # to build a week's schedule by hand
 INVOICE_MINUTES = 12     # to key one supplier invoice in by hand
 
 
+def rates() -> dict:
+    """Every stated rate behind every value figure, in one place, so a
+    surface shows the server's number instead of keeping its own copy (the
+    web's review-savings bar multiplied replies by a hard-coded 5 — rec-ROI
+    audit #12). Assumptions (the avoided figure's rates) and conversions
+    (the calendar, the overtime premium, the re-check rules the delivered
+    figure is read under) are both here; nothing in it is a measurement."""
+    import labor
+    import metrics
+    import outcomes
+    return {
+        "reply_rate": REPLY_RATE, "reply_rate_basis": REPLY_RATE_BASIS, "reply_minutes": REPLY_MINUTES,
+        "agency_monthly": AGENCY_MONTHLY, "agency_basis": AGENCY_BASIS,
+        "schedule_minutes": SCHEDULE_MINUTES, "invoice_minutes": INVOICE_MINUTES,
+        "overtime_multiplier": labor.OVERTIME_MULTIPLIER,
+        "overtime_threshold_hours": labor.OVERTIME_THRESHOLD_HOURS,
+        "overtime_basis": metrics.OVERTIME_BASIS,
+        "days_per_month": round(metrics.DAYS_PER_MONTH, 4),
+        "weeks_per_month": round(metrics.WEEKS_PER_MONTH, 4),
+        "recheck_days": outcomes.RECHECK_DAYS,
+        "accrual_horizon_days": outcomes.ACCRUAL_HORIZON_DAYS,
+        "consistent_multiple": outcomes.CONSISTENT_MULTIPLE,
+    }
+
+
 def _scalar(conn, sql, args):
     row = conn.execute(sql, args).fetchone()
     return (row[0] if row else 0) or 0
@@ -100,17 +125,35 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -
     v = outcomes.total_value(restaurant_id, db_path=db_path, denied_modules=denied_modules)
     best = outcomes.best_ever(restaurant_id, db_path=db_path, denied_modules=denied_modules)
     return {
+        # `monthly` stays the improvements alone (what every surface already
+        # renders); the changes that got worse sit BESIDE it and `net_monthly`
+        # is the one less the other (rec-ROI #1). Never summed into avoided,
+        # surfaced or opportunity.
         "monthly": v["monthly"],
         "annual": v["annual"],
         "wins": v["wins"],
+        "wins_measured": v.get("wins_measured", v["wins"]),
+        "wins_by_module": v.get("wins_by_module", {}),
+        "unpriced_wins": v.get("unpriced_wins", []),
+        "worsened": v.get("worsened", {"count": 0, "monthly": 0.0}),
+        "net_monthly": v.get("net_monthly", v["monthly"]),
+        "net_note": v.get("net_note"),
+        "net_by_module": v.get("net_by_module", v["by_module"]),
+        "validated_monthly": v.get("validated_monthly", 0.0),
+        "validated": v.get("validated", 0),
+        "faded": v.get("faded", 0),
         "evaluated": v["evaluated"],
         "in_flight": v["in_flight"],
         "unmeasurable": v["unmeasurable"],
         "no_clear_change": v["no_clear_change"],
         "by_module": v["by_module"],
+        "cumulative": outcomes.cumulative(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+        "rates": rates(),
         "biggest": ({"title": best["title"],
                      "monthly": round(abs(float(best["dollars_monthly"])), 2),
                      "metric": best.get("metric_label") or best["metric"],
+                     "module": best.get("module"),
+                     "attribution": best.get("attribution"),
                      "summary": outcomes.summarise(best)} if best else None),
         "caveat": v["caveat"],
         "basis": "measured before and after each change, over the metric's own window",
@@ -337,6 +380,10 @@ def headline(restaurant_id: int, user=None, db_path: str = DB_PATH) -> dict:
                    key=lambda x: -x[1])
     return {
         "monthly": int(round(d["monthly"] or 0)),
+        # Beside the improvements, never folded into them (rec-ROI #1): what
+        # got worse and the net, so a surface can show both.
+        "net_monthly": int(round(d.get("net_monthly", d["monthly"]) or 0)),
+        "worsened": d.get("worsened") or {"count": 0, "monthly": 0.0},
         "by_module": [{"module": m, "label": MODULE_VALUE_LABELS.get(m, m), "monthly": round(v, 2)}
                       for m, v in parts],
         "wins": d.get("wins"),
@@ -446,6 +493,9 @@ def ledger(restaurant_id, db_path=None):
                                    restaurant_id),
             "outcomes_measured": one("SELECT COUNT(*) FROM recommendation_outcomes WHERE restaurant_id=? "
                                      "AND status='evaluated'", restaurant_id),
+            # Distinct measured improvements, priced or not: a rating that
+            # rose is a win even though nothing here can price it (#49).
+            "outcomes_improved": _improved_count(restaurant_id, db_path),
             "milestones": one("SELECT COUNT(*) FROM milestones WHERE restaurant_id=?", restaurant_id),
             "months_active": one("SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log "
                                  "WHERE restaurant_id=?", restaurant_id),
@@ -453,6 +503,16 @@ def ledger(restaurant_id, db_path=None):
     finally:
         conn.close()
     return out
+
+
+def _improved_count(restaurant_id, db_path):
+    """Distinct measured improvements that still count, priced or not."""
+    try:
+        import outcomes
+        return int(outcomes.total_value(restaurant_id, db_path=db_path).get("wins_measured") or 0)
+    except Exception as e:
+        print(f"[value] improvements count unreadable for {restaurant_id}: {e}")
+        return 0
 
 
 def ledger_lines(led):
@@ -464,6 +524,7 @@ def ledger_lines(led):
         (led.get("alerts_sent", 0), "alert sent before it became a problem", "alerts sent before they became problems"),
         (led.get("issues_resolved", 0), "issue resolved with a name on it", "issues resolved with a name on them"),
         (led.get("outcomes_measured", 0), "change measured before and after", "changes measured before and after"),
+        (led.get("outcomes_improved", 0), "change measured as an improvement", "changes measured as improvements"),
     ]
     out = []
     for n, one_form, many_form in sorted(items, key=lambda x: -x[0]):

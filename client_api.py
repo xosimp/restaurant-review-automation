@@ -5538,15 +5538,21 @@ def _track_campaign_outcome(rid, data, result, user_id):
     segment then refused. Best-effort: tracking never fails the send."""
     day = (data.get("target_day") or "").strip().capitalize()
     if day not in _WEEKDAYS or not (result or {}).get("ok"):
-        return
+        return None
     try:
         import outcomes
         from datetime import date as _d
-        outcomes.record(rid, "slow_day_campaign", f"campaign:{day}:{_d.today().isoformat()}",
-                        f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id)
+        # Credited to Marketing (the campaign is marketing's recommendation,
+        # rec-ROI #5), and refused while that weekday is already measured
+        # (#3) — a second campaign on the same Tuesdays would read the same
+        # lift twice. A refusal is an answer, not a failure.
+        return outcomes.start(rid, "slow_day_campaign", f"campaign:{day}:{_d.today().isoformat()}",
+                              f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
+                              module="marketing", gate="metric")
     except Exception as e:
         import ops
         ops.capture(e, job="campaign_outcome", context=f"restaurant_id={rid}")
+        return None
 
 
 @client_bp.route("/api/guest-winback")
@@ -6815,19 +6821,29 @@ def track_reprice(rid, user_id=None):
 
     Keyed on the MONTH, so changing six prices in a week is one tracker
     ("the prices you changed in September") rather than six. Six trackers on
-    one metric would all read the same movement and report it six times.
-    Best-effort: measurement never fails a price change.
+    one metric would all read the same movement and report it six times —
+    and for the same reason nothing starts while another tracker already
+    measures food cost % (rec-ROI #3). Best-effort: measurement never fails
+    a price change. Returns outcomes.start's result (tracker or
+    tracker_refused) for the reply, or None on a failure.
     """
     try:
         import outcomes
         from datetime import date as _d
         month = _d.today().strftime("%Y-%m")
-        outcomes.record(rid, "reprice", f"reprice:{month}",
-                        f"Menu prices changed in {_d.today().strftime('%B')}",
-                        "food_cost_pct", user_id=user_id)
+        return outcomes.start(rid, "reprice", f"reprice:{month}",
+                              f"Menu prices changed in {_d.today().strftime('%B')}",
+                              "food_cost_pct", user_id=user_id, module="inventory", gate="metric")
     except Exception as e:
         import ops
         ops.capture(e, job="reprice_outcome", context=f"restaurant_id={rid}")
+        return None
+
+
+def tracker_fields(started) -> dict:
+    """The `tracker` / `tracker_refused` pair a reply carries from an
+    outcomes.start result (API_REFERENCE.md, "Tracker-start replies")."""
+    return {k: started[k] for k in ("tracker", "tracker_refused") if k in (started or {})}
 
 
 @client_bp.route("/api/food-cost/menu-item-price", methods=["POST"])
@@ -7205,15 +7221,24 @@ def home_dismiss_api(current_user):
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
     # Nothing is invented — a recommendation with no honest metric records
-    # nothing, the same rule the Track button follows.
-    if out.get("ok") and kind == "done" and data.get("metric") and data.get("title"):
+    # nothing, the same rule the Track button follows. The metric is the
+    # card's own (sent by the client, else the one it was presented with),
+    # and the start is automatic, so the family gate applies (rec-ROI #18):
+    # while anything in its family is measured the reply says so instead.
+    if out.get("ok") and kind == "done":
         try:
             import outcomes
-            if outcomes.known_metric(data["metric"]):
-                o = outcomes.record(current_user["restaurant_id"], "observed", key,
-                                    str(data["title"])[:200], data["metric"],
-                                    user_id=current_user.get("id"))
-                out["outcome"] = {"id": o.get("id"), "evaluate_on": o.get("evaluate_on")}
+            metric, _auth = outcomes.metric_for_rec(rid, key, body_metric=data.get("metric"))
+            title = str(data.get("title") or "")[:200]
+            if not title:
+                title = (outcomes.presented_title(rid, key) or "")[:200]
+            if metric and title:
+                started = outcomes.start(rid, "observed", key, title, metric,
+                                         user_id=current_user.get("id"), gate="family")
+                out.update(tracker_fields(started))
+                o = started.get("outcome")
+                if o:
+                    out["outcome"] = {"id": o.get("id"), "evaluate_on": o.get("evaluate_on")}
         except Exception as e:
             import ops
             ops.capture(e, job="home_dismiss_done", context=f"key={key}")
