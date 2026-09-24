@@ -537,7 +537,11 @@ _AFTER_POS = {"above", "over", "higher", "more", "ahead", "increase", "gain", "j
 
 
 def _normalise(text):
+    from ai_guard import normalise_numbers
     t = " ".join(str(text or "").split())
+    # Figures written in words are figures (R7): "about three thousand
+    # dollars" walked past every check as prose.
+    t = normalise_numbers(t)
     t = re.sub(r"\bpercentage points?\b", "points", t, flags=re.I)
     t = re.sub(r"(\d)\s*(?:percent|per cent)\b", r"\1%", t, flags=re.I)
     t = re.sub(r"\b86(?:['’]?d|['’-]?ed)\b", "eighty-sixed", t, flags=re.I)   # "86'd" is a verb, not a figure

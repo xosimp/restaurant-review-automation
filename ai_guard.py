@@ -282,9 +282,161 @@ _BARE_RE = re.compile(r"(?<![\w.:/])(\d[\d,]*(?:\.\d+)?)(?![\w:/])")
 # held to an exact-match rule instead: a rating is quoted to one decimal from
 # a specific query, so 4.2 and 4.3 are different claims, not rounding.
 _STAR_RE = re.compile(
-    r"(?:(\d(?:\.\d)?)\s?(?:★|☆|-?\s?stars?\b)"
+    r"(?:(\d(?:\.\d)?)\s?(?:★|☆|-?\s?stars?\b|\s+out\s+of\s+(?:5|five)\b)"
     r"|\brating(?:\s+\w+){0,2}\s+(?:of|to|at|was|is)\s+(\d(?:\.\d)?))",
     re.I)
+
+
+# ── figures written in words (R7, B5 #7) ───────────────────────────────────
+#
+# "45 percent", "three thousand dollars", "up 7 points" and "a dozen guests"
+# were never checked: the figure regexes read digits and "%" only.
+_NUM_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+_NUM_TENS = {w: 10 * (i + 2) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
+_NUM_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000}
+_NUM_WORD = r"(?:" + "|".join(sorted(list(_NUM_UNITS) + list(_NUM_TENS) + list(_NUM_SCALES) + ["dozen"],
+                                     key=len, reverse=True)) + r")"
+_SPELLED_RE = re.compile(
+    r"\b(?:(?:half\s+a|a|an)\s+(?=(?:hundred|thousand|million|dozen)\b))?" + _NUM_WORD
+    + r"(?:(?:\s+and\s+|\s+|-)" + _NUM_WORD + r")*\b", re.I)
+_UNIT_AFTER_RE = re.compile(r"\s*(?:%|percent\b|per\s+cent\b|dollars?\b|bucks\b|points?\b|pts?\b|stars?\b|★)",
+                            re.I)
+
+
+def _spelled_value(phrase: str):
+    words = re.findall(r"[a-z]+", phrase.lower())
+    total, current, half = 0, 0, False
+    for i, w in enumerate(words):
+        if w == "half":
+            half = True
+        elif w in ("a", "an", "and"):
+            continue
+        elif w in _NUM_UNITS:
+            current += _NUM_UNITS[w]
+        elif w in _NUM_TENS:
+            current += _NUM_TENS[w]
+        elif w == "dozen":
+            current = (current or 1) * 12
+        elif w == "hundred":
+            current = (current or 1) * 100
+        elif w in ("thousand", "million"):
+            total += (current or 1) * _NUM_SCALES[w]
+            current = 0
+    value = total + current
+    return value / 2 if half else value
+
+
+def normalise_numbers(text: str) -> str:
+    """`text` with figures written in words turned into the digits the
+    figure checks read: "45 percent" → "45%", "three thousand dollars" →
+    "3000 dollars", "a dozen guests" → "12 guests", "twenty-five percent" →
+    "25%". A small number word on its own ("one server", "two no-shows")
+    is ordinary prose and is left alone; it is converted only at 11 or more,
+    with a scale word (hundred, thousand, dozen), or right before a unit
+    (percent, dollars, points, stars)."""
+    body = str(text or "")
+
+    def _sub(m):
+        phrase = m.group(0)
+        words = re.findall(r"[a-z]+", phrase.lower())
+        value = _spelled_value(phrase)
+        scaled = any(w in ("hundred", "thousand", "million", "dozen") for w in words)
+        unit = bool(_UNIT_AFTER_RE.match(body[m.end():m.end() + 12]))
+        if not (value >= 11 or scaled or unit) or (value == 0 and not unit):
+            return phrase
+        return str(int(value)) if float(value).is_integer() else str(value)
+    body = _SPELLED_RE.sub(_sub, body)
+    body = re.sub(r"(\d)\s*(?:percent|per\s+cent)\b", r"\1%", body, flags=re.I)
+    return body
+
+
+# Percentage points: a move between two percentages ("up 7 points").
+_POINTS_RE = re.compile(r"(?<![\w.$])(\d+(?:\.\d+)?)\s*(?:percentage\s+)?(?:points?|pts?|pp)\b", re.I)
+
+# Parts of a prompt that are not figures (R7): a review id before its star
+# rating ("4521 (2★)", "#4521 (2★)"), ISO dates and month-name dates. A
+# "$4,500" passed on review id 4521 and "21%" on the 21 of "2026-09-21".
+_NOT_FIGURES_RE = re.compile(
+    r"#?\b\d+(?=\s*\(\s*\d(?:\.\d)?\s*★\))"
+    r"|\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b"
+    r"|\b(?:review[_ ]?id|id)\s*[:=#]\s*\d+", re.I)
+
+
+def _blank_non_figures(text: str) -> str:
+    return _NOT_FIGURES_RE.sub(lambda m: " " * len(m.group(0)), text or "")
+
+
+# The period a money figure is stated for (R7): "$2,400 a week" is not the
+# "$2,400 this month" it was checked against.
+_PERIOD_RE = re.compile(
+    r"^\s*(?:(?:a|an|per|each|every|this|last|that|the|/)\s*)?(?:(?:past|prior|previous|whole)\s+)?"
+    r"(week|wk|month|mo|year|yr|day|night|shift|weekly|monthly|yearly|annually|annual|daily|nightly)\b", re.I)
+_PERIOD_NORM = {"wk": "week", "weekly": "week", "mo": "month", "monthly": "month", "yr": "year",
+                "yearly": "year", "annually": "year", "annual": "year", "daily": "day", "nightly": "night"}
+
+
+def _period_after(text: str, end: int):
+    m = _PERIOD_RE.match(text[end:end + 30])
+    if not m:
+        return None
+    p = m.group(1).lower()
+    return _PERIOD_NORM.get(p, p)
+
+
+def _money_periods(text: str) -> dict:
+    """{value: {period or None}} for each money figure the context states."""
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    out = {}
+    for pat in (_MONEY_RE, _DOLLARS_RE):
+        for m in pat.finditer(text):
+            try:
+                v = _value(m)
+            except ValueError:
+                continue
+            out.setdefault(v, set()).add(_period_after(text, m.end()))
+    return out
+
+
+# Which way a figure moved, where the words say so (R7): "fell to 31.4%" is
+# a different claim from the "31.4% (up from 29.0%)" in the data.
+_DIR_DOWN = {"fell", "dropped", "declined", "slipped", "decreased", "dipped", "sank", "eased", "down", "lower",
+             "shrank", "plunged", "tumbled", "improved_down"}
+_DIR_UP = {"rose", "climbed", "increased", "grew", "jumped", "spiked", "up", "higher", "surged", "soared"}
+
+
+def _direction_near(text: str, start: int, end: int):
+    """+1 / -1 when the words right around a figure say which way it moved
+    ("fell to 31.4%", "31.4% (up from 29%)", "up to $2,400"), else None."""
+    before = re.findall(r"[a-z]+", text[max(0, start - 30):start].lower())[-3:]
+    after = re.findall(r"[a-z]+", text[end:end + 16].lower())[:2]
+    for w in reversed(before):
+        if w in _DIR_DOWN:
+            return -1
+        if w in _DIR_UP:
+            return 1
+    if after and after[0] in ("down", "up") and (len(after) < 2 or after[1] in ("from", "on", "vs", "versus")):
+        return -1 if after[0] == "down" else 1
+    return None
+
+
+def _directions(text: str) -> dict:
+    """{(kind, value): {+1/-1}} for the figures a context states with a
+    direction."""
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
+    out = {}
+    for kind, pat in (("money", _MONEY_RE), ("pct", _PCT_RE)):
+        for m in pat.finditer(text):
+            d = _direction_near(text, *m.span())
+            if d is None:
+                continue
+            try:
+                out.setdefault((kind, _value(m)), set()).add(d)
+            except ValueError:
+                continue
+    return out
 
 
 def _value(m) -> float:
@@ -314,7 +466,7 @@ def _figures(text: str) -> dict:
     can back either. Calendar years and the parts of dates and times are not
     figures: "2026" in "Today's date" verified any invented $1,990-$2,066.
     """
-    text = _strip_untrusted(text)
+    text = _blank_non_figures(normalise_numbers(_strip_untrusted(text)))
     out = {"money": set(), "pct": set(), "bare": set()}
     spans = []
     for kind, pats in (("money", (_MONEY_RE, _DOLLARS_RE)), ("pct", (_PCT_RE,))):
@@ -459,12 +611,15 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
     it must appear in the context exactly (H3). Callers whose prompt forbids
     an invented count turn it on.
     """
+    generated = normalise_numbers(generated)
     known = _figures(context)
     missing = []
     claims = ([(m, "money") for m in _MONEY_RE.finditer(generated or "")]
               + [(m, "money") for m in _DOLLARS_RE.finditer(generated or "")]
               + [(m, "pct") for m in _PCT_RE.finditer(generated or "")])
     taken = []
+    periods_known = _money_periods(context) if any(k == "money" for _m, k in claims) else None
+    dirs_known = None
     for m, kind in claims:
         taken.append(m.span())
         try:
@@ -478,6 +633,47 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02,
         else:
             tol = max(tolerance * max(abs(value), 1), 0.5)
         if any(abs(value - k) <= tol for k in pool):
+            # The sign, where the data states one for this figure (R7):
+            # "fell to 31.4%" against "31.4% (up from 29%)".
+            said_dir = _direction_near(generated, *m.span())
+            if said_dir is not None:
+                if dirs_known is None:
+                    dirs_known = _directions(context)
+                ds = set()
+                for (k_kind, k), dd in dirs_known.items():
+                    if k_kind == kind and abs(value - k) <= tol:
+                        ds |= dd
+                if ds and said_dir not in ds:
+                    missing.append(m.group(0).strip() + (" (it went up)" if 1 in ds else " (it went down)"))
+                    continue
+            # The period is part of a money figure (R7): "$2,400 a week" is
+            # not the "$2,400 this month" in the data.
+            if kind == "money":
+                said = _period_after(generated, m.end())
+                if said:
+                    periods = set()
+                    for k, ps in (periods_known if periods_known is not None else {}).items():
+                        if abs(value - k) <= tol:
+                            periods |= ps
+                    if periods and None not in periods and said not in periods:
+                        missing.append(m.group(0).strip() + f" a {said}")
+            continue
+        missing.append(m.group(0).strip())
+
+    # Percentage points (R7): "up 7 points" is a move between two
+    # percentages, so it must be a percentage or a difference of two.
+    pcts = sorted(known["pct"] | known["bare"])
+    for m in _POINTS_RE.finditer(generated or ""):
+        if any(a <= m.start(1) < b for a, b in taken):
+            continue
+        taken.append(m.span())
+        try:
+            value = float(m.group(1))
+        except ValueError:
+            continue
+        tol = _small_tolerance(m.group(1)) if value <= 10 else max(tolerance * value, 0.5)
+        diffs = {abs(x - y) for i, x in enumerate(sorted(known["pct"])) for y in sorted(known["pct"])[i + 1:]}
+        if any(abs(value - k) <= tol for k in set(pcts) | diffs):
             continue
         missing.append(m.group(0).strip())
 
@@ -730,7 +926,7 @@ def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: st
         pool = set(glob)
         for n in about:
             pool |= names[n]
-        for c in figure_claims(s):
+        for c in figure_claims(normalise_numbers(s)):
             if c["kind"] not in ("money", "pct", "star") or c["year"]:
                 continue
             v = abs(c["value"])
