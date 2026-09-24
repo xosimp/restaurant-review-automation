@@ -230,6 +230,14 @@ def _changes(rows):
         n = len(kept)
         deltas = [float(r["delta"]) if r.get("delta") is not None
                   else float(r["after_value"]) - float(r["baseline_value"]) for r in kept]
+        mean_delta = sum(deltas) / n
+        mean_base = sum(float(r["baseline_value"]) for r in kept) / n
+        # A direction is said only when the results agree on it AND the
+        # average move is past the metric's own noise band (re-audit A32):
+        # one result up and one down averaged to "an average reduction".
+        mixed = any(d > 0 for d in deltas) and any(d < 0 for d in deltas)
+        within = metrics.compare(metric, mean_base, mean_base + mean_delta)["verdict"] not in ("improved",
+                                                                                               "worsened")
         out.append({
             "metric": metric, "label": info["label"], "unit": info["unit"],
             "lower_is_better": info["lower_is_better"], "family": info["family"],
@@ -237,8 +245,9 @@ def _changes(rows):
             "improved": sum(1 for r in kept if r.get("verdict") == "improved"),
             "worsened": sum(1 for r in kept if r.get("verdict") == "worsened"),
             "no_clear_change": sum(1 for r in kept if r.get("verdict") == "no_clear_change"),
-            "mean_delta": round(sum(deltas) / n, 2),
+            "mean_delta": round(mean_delta, 2),
             "mean_delta_pct": round(sum(float(r["delta_pct"]) for r in kept) / n, 1),
+            "consistent_direction": not (mixed or within),
             "outcome_ids": [r["id"] for r in kept],
         })
     out.sort(key=lambda c: (-c["results"], -abs(c["mean_delta_pct"]), c["metric"]))
@@ -246,17 +255,6 @@ def _changes(rows):
 
 
 def _change_sentence(c):
-    if c["unit"] == "%":
-        size = abs(c["mean_delta"])
-        if round(size, 1) == 0:
-            return None
-        mag = f"{size:.1f}-point"
-    else:
-        size = abs(c["mean_delta_pct"])
-        if round(size, 1) == 0:
-            return None
-        mag = f"{size:.1f}%"
-    down = (c["mean_delta"] if c["unit"] == "%" else c["mean_delta_pct"]) < 0
     bits = []
     if c["improved"]:
         bits.append(f"{c['improved']} improved")
@@ -264,18 +262,47 @@ def _change_sentence(c):
         bits.append(f"{c['worsened']} got worse")
     if c["no_clear_change"]:
         bits.append(f"{c['no_clear_change']} no clear change")
-    return (f"Across {c['results']} measured results that didn't overlap ({', '.join(bits)}), the "
-            f"recommendations you took were associated with an average {mag} "
-            f"{'reduction' if down else 'increase'} in {_lower_first(c['label'])}. {CAVEAT}")
+    lead = f"Across {c['results']} measured results that didn't overlap ({', '.join(bits)}), "
+    if not c.get("consistent_direction", True):
+        # Results that disagree, or an average inside the noise band, have
+        # no direction to quote (re-audit A32).
+        return (lead + f"the recommendations you took showed no consistent direction in "
+                f"{_lower_first(c['label'])}. {CAVEAT}")
+    # The size and the direction come from ONE statistic: points for a
+    # percentage, the average % change otherwise.
+    stat = c["mean_delta"] if c["unit"] == "%" else c["mean_delta_pct"]
+    if round(abs(stat), 1) == 0:
+        return None
+    mag = f"{abs(stat):.1f}-point" if c["unit"] == "%" else f"{abs(stat):.1f}%"
+    return (lead + f"the recommendations you took were associated with an average {mag} "
+            f"{'reduction' if stat < 0 else 'increase'} in {_lower_first(c['label'])}. {CAVEAT}")
 
 
 # ── measured dollars over the window ────────────────────────────────────────
 
-def _measured(rid, since, db_path, denied, sees_loss):
+def _measured(rid, since, db_path, denied, sees_loss, viewer=None):
     import outcomes
+    # The results whose recommendation this login may not see are dropped
+    # before the sum too, as the change sentences drop them (re-audit A26).
     cum = outcomes.cumulative(rid, db_path=db_path, denied_modules=denied, since=since,
-                              exclude_metrics=() if sees_loss else LOSS_METRICS)
+                              exclude_metrics=() if sees_loss else LOSS_METRICS,
+                              exclude_ids=outcomes.hidden_tracker_ids(rid, viewer, db_path=db_path))
     return cum
+
+
+def _sales_lift_sentence(cum):
+    """A sales lift measured over the window, apart from the savings — it is
+    gross revenue, not profit (re-audit A6)."""
+    lift = (cum or {}).get("sales_lift") or {}
+    if lift.get("total") is None or (lift.get("measured_days") or 0) < MIN_MEASURED_DAYS:
+        return None
+    total = float(lift["total"])
+    if round(total) == 0:
+        return None
+    word = "more" if total > 0 else "less"
+    return (f"Sales on the days measured came to about {_money(total)} {word} than before the changes over "
+            f"{int(lift['measured_days'])} measured days — gross revenue, not profit, so it is kept apart from "
+            f"the savings.")
 
 
 def _measured_sentence(cum):
@@ -288,7 +315,9 @@ def _measured_sentence(cum):
         return None
     days = int(cum["measured_days"])
     if total < 0:
-        return (f"Measured before and after, more got worse than improved: your changes came to "
+        # It is the DOLLARS that went the wrong way — not a count of changes
+        # (re-audit A33).
+        return (f"Measured before and after, more dollars were lost than gained: your changes came to "
                 f"{_money(total)} less over {days} measured days, net.")
     s = (f"Measured before and after, your changes came to about {_money(total)} over {days} measured days, "
          f"net of any that got worse")
@@ -310,8 +339,12 @@ def _most_effective_sentence(best, by_tag):
     if not row:
         return None
     label = best["label"] if str(best["tag"]).startswith("day:") else _lower_first(best["label"])
-    return (f"Of what Cavnar has measured, recommendations about {label} have been the most consistently "
-            f"effective for your restaurant: {row['improved']} of {row['measured']} measured results improved.")
+    # "Most often followed by an improvement" — what the count says. "Most
+    # consistently effective" claimed an effect a before-and-after cannot
+    # show (re-audit B13; the ranking itself is rec_learning's).
+    return (f"Of what Cavnar has measured, recommendations about {label} have most often been followed by an "
+            f"improvement at your restaurant: {row['improved']} of {row['measured']} measured results improved. "
+            f"{CAVEAT}")
 
 
 # ── the report ─────────────────────────────────────────────────────────────
@@ -340,7 +373,7 @@ def what_worked(restaurant_id, days=DEFAULT_DAYS, viewer=None, db_path=DB_PATH, 
         print(f"[owner_report] changes unreadable rid={restaurant_id}: {e}")
         changes = []
     try:
-        measured = _measured(restaurant_id, since, db_path, denied, sees_loss)
+        measured = _measured(restaurant_id, since, db_path, denied, sees_loss, viewer=viewer)
     except Exception as e:
         print(f"[owner_report] measured dollars unreadable rid={restaurant_id}: {e}")
         measured = None
@@ -355,6 +388,9 @@ def what_worked(restaurant_id, days=DEFAULT_DAYS, viewer=None, db_path=DB_PATH, 
         if s:
             sentences.append(s)
     s = _measured_sentence(measured)
+    if s:
+        sentences.append(s)
+    s = _sales_lift_sentence(measured)
     if s:
         sentences.append(s)
     s = _most_effective_sentence(best, summary.get("by_tag"))

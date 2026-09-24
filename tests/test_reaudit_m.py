@@ -953,7 +953,7 @@ def test_h8_value_headline_is_monthly_by_module_and_filtered(db_path, monkeypatc
     import value_delivered
     rid = _rid(db_path)
 
-    def fake_total(r, db_path=None, since=None, denied_modules=None):
+    def fake_total(r, db_path=None, since=None, denied_modules=None, exclude_metrics=None, exclude_ids=None):
         by = {"labor": 420.0, "inventory": 300.0}
         for m in (denied_modules or ()):
             by.pop(m, None)

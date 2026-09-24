@@ -177,7 +177,10 @@ def test_an_owner_without_the_app_is_emailed_instead(db_path, rid, monkeypatch):
          "title": "Cut Tuesday prep", "metric_label": "Labor %"}], db_path)
 
     assert told == 1 and len(sent) == 1
-    assert "paid off" in sent[0]["subject"]
+    # Says what was measured, never that the change caused it — "A change
+    # you made paid off" did (re-audit A14).
+    assert sent[0]["subject"].startswith("Measured: labor % improved")
+    assert "paid off" not in sent[0]["subject"]
     assert sent[0]["preheader"]
 
 

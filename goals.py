@@ -137,7 +137,9 @@ def summarise(g) -> str:
     target = fmt(g["target"])
     if g["current"] is None:
         return f"{g['label']} → {target}: can't measure it right now ({g.get('current_detail')})."
-    by = f" by {g['deadline']}" if g.get("deadline") else ""
+    # M/D/YY, never the stored ISO deadline (re-audit A34).
+    from time_utils import mdy
+    by = f" by {mdy(g['deadline'])}" if g.get("deadline") else ""
     state = {"met": "met", "moving_right_way": "moving the right way",
              "moving_wrong_way": "moving the wrong way", "flat": "no clear movement yet",
              "missed": "deadline passed without reaching it"}.get(g["state"], g["state"])

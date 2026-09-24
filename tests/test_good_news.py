@@ -288,8 +288,19 @@ def _win(db_path, rid, dollars, key="fix"):
 
 
 def test_savings_milestone_crosses_tiers_once_each(db_path):
+    """The tiers read dollars MEASURED — summed over the days a change was
+    measured and held — not a monthly figure × 12 (re-audit A29/A36)."""
     rid = _restaurant(db_path)
-    _win(db_path, rid, 500.0)                      # $6,000/yr — crosses 1k and 5k
+    _win(db_path, rid, 500.0)
+    conn = get_conn(db_path)
+    oid = conn.execute("SELECT id FROM recommendation_outcomes WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    for i in range(120):                           # 120 measured days x $50 = $6,000: crosses 1k and 5k
+        conn.execute("INSERT INTO outcome_value_days (outcome_id, restaurant_id, day, module, metric, family, "
+                     "sign, dollars, held, counted, basis) VALUES (?,?,?,?,?,?,?,?,1,1,'daily')",
+                     (oid, rid, (date.today() - timedelta(days=121 - i)).isoformat(), "labor", "labor_pct",
+                      "labor_cost", 1, 50.0))
+    conn.commit()
+    conn.close()
     fired = milestones.check_savings(rid, db_path=db_path)
     assert fired and fired["value"] == 5000
     assert milestones.get(rid, "savings:1000", db_path=db_path)

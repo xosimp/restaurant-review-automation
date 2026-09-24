@@ -226,9 +226,14 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             "SELECT verdict FROM recommendation_outcomes WHERE restaurant_id=? AND status='evaluated' AND evaluate_on >= ?",
             (restaurant_id, d90.isoformat())).fetchall()
         f["outcomes_evaluated_90d"] = len(ev)
+        # The share of CLEAR verdicts that improved (re-audit A31): an
+        # unknown or a no-clear-change is not a failure, and counting them in
+        # the denominator read a restaurant with thin data as one whose
+        # changes don't work.
         clear = [r for r in ev if r["verdict"] in ("improved", "worsened")]
-        if ev:
-            f["outcomes_improved_rate_90d"] = round(sum(1 for r in ev if r["verdict"] == "improved") / len(ev), 3)
+        if clear:
+            f["outcomes_improved_rate_90d"] = round(sum(1 for r in clear if r["verdict"] == "improved")
+                                                    / len(clear), 3)
     finally:
         conn.close()
     # People on the floor per role family and daypart, per $1k of sales

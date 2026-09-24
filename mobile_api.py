@@ -1053,7 +1053,7 @@ def _do_mobile_home(current_user):
     # monthly run-rate of what was measured, as this login may see it, with
     # the modules it came from. A filtered figure is not the restaurant's,
     # so it is neither snapshotted nor drawn against its history.
-    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history
+    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history, home_block
     try:
         _vh = _value_headline(rid, user=current_user)
     except Exception as e:
@@ -1062,7 +1062,8 @@ def _do_mobile_home(current_user):
     total_value = _vh["monthly"]
     if _vh.get("restaurant_wide"):
         try:
-            record_value_snapshot(rid, total_value)
+            # The NET figure is the day's point (re-audit A29).
+            record_value_snapshot(rid, _vh.get("net_monthly", total_value))
         except Exception:
             pass  # the chart just has one fewer data point — never worth failing Home over
         value_history = get_value_history(rid, days=365)
@@ -1176,6 +1177,11 @@ def _do_mobile_home(current_user):
         "value_label": _vh.get("label"),
         "value_by_module": _vh.get("by_module") or [],
         "value_history": value_history,
+        # Contract K4 — the same `value` object web Home carries: the net,
+        # what got worse, dollars summed over measured days, unpriced wins
+        # and the sales lift beside total_value_delivered (the improvements).
+        # The phone shows the net when value.worsened.count > 0.
+        "value": home_block(_vh, value_history),
         "quiet_hours_active": quiet_hours_active,
         "alert_quiet_end": restaurant.alert_quiet_end or None,
         # Home's hero subline and its closing receipt — see the helpers.

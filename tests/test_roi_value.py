@@ -138,7 +138,11 @@ def test_comp_rate_is_a_share_of_sales_not_a_total(db_path):
     rid = _restaurant(db_path)
     start = date.today() - timedelta(days=10)
     _sales(db_path, rid, days=10, per_day=1000.0, start=start)
-    _loss(db_path, rid, "comp", (start + timedelta(days=1)).isoformat(), 200.0)
+    # loss_detection writes a row for every day it asked about, zero
+    # included — a day with no row was never asked (re-audit A3).
+    for i in range(10):
+        _loss(db_path, rid, "comp", (start + timedelta(days=i)).isoformat(), 200.0 if i == 1 else 0.0,
+              events=3 if i == 1 else 0)
 
     value, detail = metrics.measure(rid, "comp_rate", start.isoformat(),
                                     (start + timedelta(days=9)).isoformat(), db_path)
@@ -175,6 +179,9 @@ def test_a_daily_and_a_weekly_saving_annualise_on_the_same_month(db_path):
     figure used 52/12 weeks — which is 30.33 days. Two constants for one
     month meant $10/day and $70/week came out different."""
     rid = _restaurant(db_path)
+    # A restaurant that trades every day (re-audit A1 prices a sales day on
+    # the restaurant's own trading days).
+    _sales(db_path, rid, days=28, start=date.today() - timedelta(days=28))
     daily = metrics.monthly_dollars(rid, "sales", 10.0, db_path)
     weekly = metrics.monthly_dollars(rid, "weekly_waste", -70.0, db_path)
     assert abs(daily - weekly) < 0.01

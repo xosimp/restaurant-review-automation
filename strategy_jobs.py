@@ -49,17 +49,28 @@ OUTCOME_WORTH_TELLING = 100.0   # dollars a month
 def run_outcome_evaluations(db_path=DB_PATH):
     """6am operator time: close the trackers whose window ended. The owner
     is told about a win at their own WIN_HOUR (run_outcome_wins) — telling
-    them from here pushed a Pacific owner at 4am and Hawaii at 1am (A-10)."""
+    them from here pushed a Pacific owner at 4am and Hawaii at 1am (A-10).
+
+    One restaurant at a time on its own calendar date (re-audit A8), bounded
+    by wall clock and resumable from a cursor (_bounded_each, re-audit A37):
+    evaluate_due over every restaurant at once read UTC's date for all of
+    them and had no bound at all."""
     import outcomes, goals, ops
-    results = outcomes.evaluate_due(db_path=db_path) or []
-    closed = len(results) if isinstance(results, (list, tuple)) else int(results or 0)
-    achieved = 0
-    for r in _restaurants(db_path):
+    counts = {"outcomes_closed": 0, "goals_achieved": 0}
+
+    def _one(r):
         try:
-            achieved += len(goals.mark_achieved(r.id, db_path=db_path) or [])
+            got = outcomes.evaluate_due(r.id, db_path=db_path, today=outcomes.local_today(r.id, db_path)) or []
+            counts["outcomes_closed"] += len(got) if isinstance(got, (list, tuple)) else int(got or 0)
+        except Exception as e:
+            ops.capture(e, job="evaluate_outcomes", context=f"restaurant_id={r.id}")
+        try:
+            counts["goals_achieved"] += len(goals.mark_achieved(r.id, db_path=db_path) or [])
         except Exception as e:
             ops.capture(e, job="goals_mark_achieved", context=f"restaurant_id={r.id}")
-    return {"outcomes_closed": closed, "goals_achieved": achieved}
+
+    _bounded_each("outcome_evaluations", _one, db_path)
+    return counts
 
 
 def run_outcome_rechecks(db_path=DB_PATH):
@@ -71,11 +82,11 @@ def run_outcome_rechecks(db_path=DB_PATH):
     safe to run twice: a re-check is written once, and each tracker's
     accrued_through is a cursor no day is read past twice. Sends nothing."""
     import outcomes
-    from datetime import date as _date
     counts = {"rechecked": 0, "days_accrued": 0}
-    today = _date.today()
 
     def _one(r):
+        # The restaurant's own date, not the server's UTC one (re-audit A8).
+        today = outcomes.local_today(r.id, db_path)
         counts["rechecked"] += len(outcomes.recheck_due(r.id, db_path=db_path, today=today) or [])
         counts["days_accrued"] += outcomes.accrue_due(r.id, db_path=db_path, today=today)
 
@@ -142,7 +153,7 @@ def _bounded_each(job, fn, db_path, max_seconds=RESULTS_MAX_SECONDS):
 
 
 def _tell_owners_what_worked(results, db_path):
-    """Tell an owner when a change they made paid off.
+    """Tell an owner when a number they changed something about improved.
 
     This is the only notification in the product that is about money the
     owner ALREADY made rather than money they are losing, and it is the one
@@ -153,7 +164,8 @@ def _tell_owners_what_worked(results, db_path):
     pushes on the same morning is how a win becomes noise.
     """
     import ops, push
-    best = {}
+    import outcomes as _oc
+    best, kept = {}, {}
     for row in results:
         if not isinstance(row, dict) or row.get("verdict") != "improved":
             continue
@@ -165,6 +177,14 @@ def _tell_owners_what_worked(results, db_path):
         rid = row.get("restaurant_id")
         if rid is None:
             continue
+        if row.get("id") is not None:
+            # Only a result the value figures count: not a narrower reading
+            # of a family the broader one already measured, and not a labor
+            # share that fell only because sales rose (re-audit A5, A7).
+            if rid not in kept:
+                kept[rid] = _oc.counted_ids(rid, db_path=db_path)
+            if row["id"] not in kept[rid]:
+                continue
         if abs(float(dollars)) > abs(float(best.get(rid, {}).get("dollars_monthly") or 0)):
             best[rid] = row
     told = 0
@@ -172,22 +192,68 @@ def _tell_owners_what_worked(results, db_path):
         try:
             import outcomes as _outcomes
             dollars = abs(float(row["dollars_monthly"]))
-            # The title says what moved, never that the change caused it; the
-            # body is the result's own graded sentence (rec-ROI #23), which
-            # names any other change in the same weeks.
+            # The title says what moved while the change was in place, never
+            # that the change caused it — "A change you made paid off" did
+            # (re-audit A14); the body is the result's own graded sentence
+            # (rec-ROI #23), which names any other change in the same weeks.
             label = row.get("metric_label") or "Your number"
             body = row.get("attribution_label") or _outcomes.win_message(row)
+            money = (f"about ${dollars:,.0f}/month more in sales (revenue, not profit)"
+                     if _outcomes.metrics.family(row.get("metric")) == "sales"
+                     else f"about ${dollars:,.0f}/month, measured")
             if _reach(rid, "outcome_achieved",
-                      f"{label} improved after your change — about ${dollars:,.0f}/month", body,
+                      f"{label} improved while your change was in place — {money}", body,
                       {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
-                      db_path, subject="A change you made paid off",
-                      # A food-cost win is for people who can open Food
-                      # Cost, not every brief recipient (A-15).
-                      permissions=_metric_permissions(row.get("metric"))):
+                      db_path, subject=f"Measured: {_lower_first(label)} improved",
+                      # Only the people who may see this result: its metric's
+                      # module (A-15), and the recommendation behind it — an
+                      # owner-only or loss recommendation's title never
+                      # reaches a manager (re-audit A14).
+                      permissions=_win_permissions(rid, row, db_path)):
                 told += 1
         except Exception as e:
             ops.capture(e, job="outcome_win_push", context=f"restaurant_id={rid}")
     return told
+
+
+def _lower_first(label):
+    s = str(label or "")
+    return s[:1].lower() + s[1:] if s else s
+
+
+def _win_permissions(restaurant_id, row, db_path=DB_PATH):
+    """Every permission a login needs to be told about this result: its
+    metric's (_metric_permissions) and what rec_learning.viewer_sees asks of
+    the recommendation behind it — LOSS_VIEW for a loss, principal
+    (TEAM_INVITE) for an owner-only one, each module's view permission. The
+    same line /outcomes draws for the same login (re-audit A14, A26)."""
+    import outcomes as _outcomes
+    import permissions as _p
+    need = set(_metric_permissions(row.get("metric")) or ())
+    ep = _outcomes.linked_episodes(restaurant_id, db_path=db_path).get(row.get("id"))
+    if ep is None and row.get("source_key"):
+        try:
+            import rec_learning
+            ep = rec_learning.episode_for(restaurant_id, row["source_key"], db_path=db_path)
+        except Exception as e:
+            print(f"[strategy_jobs] win episode unreadable rid={restaurant_id}: {e}")
+            ep = None
+    ep = ep or {"key": row.get("source_key"), "module": None}
+    try:
+        import rec_learning
+        if rec_learning._is_loss(ep):
+            need.add(_p.LOSS_VIEW)
+        if ep.get("owner_only"):
+            need.add(_p.TEAM_INVITE)
+        by_module = {"reviews": _p.REVIEWS_VIEW, "labor": _p.LABOR_VIEW, "schedule": _p.LABOR_VIEW,
+                     "food": _p.FOOD_COST_VIEW, "marketing": _p.MARKETING_VIEW, "guests": _p.MARKETING_VIEW,
+                     "intel": _p.INTEL_VIEW}
+        need.update(by_module[m] for m in rec_learning.modules_of(ep) if m in by_module)
+    except Exception as e:
+        # Fails closed: only the account holder hears about it.
+        print(f"[strategy_jobs] win audience check failed rid={restaurant_id}: {e}")
+        need.add(_p.TEAM_INVITE)
+    return need or None
 
 
 def run_milestones(db_path=DB_PATH):

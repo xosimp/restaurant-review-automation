@@ -57,6 +57,8 @@ from datetime import date, timedelta
 
 import metrics
 from models import DB_PATH
+# M/D/YY in every owner-facing sentence (CLAUDE.md, re-audit A34).
+from time_utils import mdy as _mdy
 
 log = logging.getLogger(__name__)
 
@@ -211,7 +213,7 @@ def records(restaurant_id, today=None, db_path=DB_PATH, keys=None,
             "headline": (f"Best {info['label'].lower()} in "
                          f"{len(measured)} periods: {_fmt(current['value'], info['unit'])}"),
             "summary": (f"{info['label']} came in at {_fmt(current['value'], info['unit'])} "
-                        f"over the {current['detail']} ending {current['end']} — better than "
+                        f"over the {current['detail']} ending {_mdy(current['end'])} — better than "
                         f"any of the {len(prior)} periods before it "
                         f"(previous best {_fmt(runner_up['value'], info['unit'])})."),
             "caveat": CAVEAT,

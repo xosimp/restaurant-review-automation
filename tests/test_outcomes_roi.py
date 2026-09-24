@@ -187,15 +187,17 @@ def test_19_response_hours_with_too_few_replies_is_unknown(db_path):
 # ── #30 baselines matched by weekday and season ─────────────────────────────
 
 def test_30_labor_baseline_holds_the_same_weekdays(db_path):
-    """A 20-day window is not whole weeks: the baseline starts three whole
-    weeks back so it holds the same weekdays as the after-window."""
+    """A 20-day window is not whole weeks: it is measured as three whole
+    weeks (re-audit A21), and the baseline starts three whole weeks back so
+    it holds the same weekdays as the after-window."""
     rid = _rid(db_path)
     t0 = date(2026, 6, 1)
     _days(db_path, rid, t0 - timedelta(days=40), 40)
     o = outcomes.record(rid, "manual", "k20", "Trim", "labor_pct", window_days=20, today=t0, db_path=db_path)
+    assert o["window_days"] == 21
     assert o["baseline_kind"] == "matched weekdays"
     assert o["baseline_start"] == (t0 - timedelta(days=21)).isoformat()
-    assert o["baseline_end"] == (t0 - timedelta(days=2)).isoformat()
+    assert o["baseline_end"] == (t0 - timedelta(days=1)).isoformat()
     assert o["baseline_value"] == 30.0
 
 
@@ -527,7 +529,7 @@ def test_1_worse_results_are_netted_beside_the_improvements(db_path):
             module="inventory")
     v = outcomes.total_value(rid, db_path=db_path)
     assert v["monthly"] == 400.0                     # improvements, as every surface reads them
-    assert v["worsened"] == {"count": 1, "monthly": 150.0}
+    assert v["worsened"] == {"count": 1, "monthly": 150.0, "priced_count": 1}
     assert v["net_monthly"] == 250.0
     assert v["net_by_module"] == {"labor": 400.0, "inventory": -150.0}
     assert "less $150/month" in v["net_note"]
@@ -548,7 +550,7 @@ def test_1_a_worse_result_that_recovered_at_its_recheck_is_no_longer_subtracted(
     rid = _rid(db_path)
     _insert(db_path, rid, "Cheaper cheese", "food_cost_pct", -300.0, "2026-06-01", verdict="worsened",
             recheck_verdict="faded")
-    assert outcomes.total_value(rid, db_path=db_path)["worsened"] == {"count": 0, "monthly": 0.0}
+    assert outcomes.total_value(rid, db_path=db_path)["worsened"] == {"count": 0, "monthly": 0.0, "priced_count": 0}
 
 
 def test_4_waste_and_food_cost_over_the_same_weeks_are_one_win(db_path):
@@ -580,7 +582,7 @@ def test_4_overlapping_losses_in_one_family_are_subtracted_once(db_path):
     rid = _rid(db_path)
     _insert(db_path, rid, "A", "weekly_waste", -100.0, "2026-06-01", verdict="worsened")
     _insert(db_path, rid, "B", "food_cost_pct", -250.0, "2026-06-05", verdict="worsened")
-    assert outcomes.total_value(rid, db_path=db_path)["worsened"] == {"count": 1, "monthly": 250.0}
+    assert outcomes.total_value(rid, db_path=db_path)["worsened"] == {"count": 1, "monthly": 250.0, "priced_count": 1}
 
 
 # ── #5 credited to the recommendation's module ──────────────────────────────
@@ -597,16 +599,22 @@ def test_5_module_comes_from_the_recommendation_not_the_metric(db_path):
                           db_path=db_path)
     assert ask["module"] == "labor"                        # nothing recommended it: the metric's module
     assert outcomes.module_of("sales") == "other"
+    # gate=None: sales is already measured (an automatic start is refused on
+    # the family, re-audit A18) — this is about the module it is credited to.
     campaign = outcomes.record(rid, "slow_day_campaign", "campaign:Wednesday:2026-06-01", "Text",
-                               "weekday_sales:Wednesday", today=date(2026, 6, 1), db_path=db_path)
+                               "weekday_sales:Wednesday", today=date(2026, 6, 1), db_path=db_path, gate=None)
     assert campaign["module"] == "marketing"
 
 
 def test_5_by_module_reads_the_stored_module(db_path):
+    """A sales win is credited to its module — in the sales lift, which is
+    gross revenue and kept out of the savings (re-audit A6)."""
     rid = _rid(db_path)
     _insert(db_path, rid, "Tuesday promo", "sales", 500.0, "2026-06-01", module="marketing")
+    _insert(db_path, rid, "Trim Monday", "labor_pct", 300.0, "2026-09-01", module="labor")
     v = outcomes.total_value(rid, db_path=db_path)
-    assert v["by_module"] == {"marketing": 500.0} and v["wins_by_module"] == {"marketing": 1}
+    assert v["by_module"] == {"labor": 300.0} and v["wins_by_module"] == {"marketing": 1, "labor": 1}
+    assert v["sales_lift"]["by_module"] == {"marketing": 500.0} and v["sales_lift"]["monthly"] == 500.0
 
 
 def test_5_a_denied_metric_is_dropped_whoever_is_credited(db_path):

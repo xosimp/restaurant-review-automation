@@ -1549,7 +1549,7 @@ def _build(current_user, present=True):
     # measured, with where it came from (H-8). A filtered figure is not the
     # restaurant's, so it is neither snapshotted nor drawn against the
     # restaurant-wide history.
-    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history
+    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history, home_block
     try:
         _vh = _value_headline(rid, user=current_user)
     except Exception as e:
@@ -1558,7 +1558,9 @@ def _build(current_user, present=True):
     total_value = _vh["monthly"]
     if _vh.get("restaurant_wide"):
         try:
-            record_value_snapshot(rid, total_value)
+            # The day's point is the NET figure (re-audit A29): a history of
+            # improvements alone rose while things got worse.
+            record_value_snapshot(rid, _vh.get("net_monthly", total_value))
         except Exception as e:
             print(f"[home] value snapshot failed for {rid}: {e}")
         value_history = get_value_history(rid, days=365)
@@ -1751,8 +1753,11 @@ def _build(current_user, present=True):
         "quick_actions": quick,
         "ask_suggestions": ask,
         "upcoming": upcoming[:5],
-        "value": {"total": total_value, "history": value_history, "per": "month",
-                  "label": _vh.get("label"), "by_module": _vh.get("by_module") or []},
+        # Contract K4: beside `total` (the improvements), what got worse, the
+        # net, the dollars summed over measured days, the unpriced wins and
+        # the sales lift (gross revenue, kept apart). A surface shows the net
+        # when worsened.count > 0 (re-audit A29).
+        "value": home_block(_vh, value_history),
         "receipts": receipts,
         "setup_checklist": checklist,
         "quiet_hours_active": is_in_quiet_hours(rid),

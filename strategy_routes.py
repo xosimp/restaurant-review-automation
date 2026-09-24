@@ -56,8 +56,11 @@ def _sees_food(u):
 
 
 def _metric_visible(u, metric):
-    base = (metric or "").split(":", 1)[0]
-    return base not in _FOOD_METRICS or _sees_food(u)
+    """Food cost and waste need FOOD_COST_VIEW; comps and voids need
+    LOSS_VIEW (re-audit A27) — a comp result can name the manager who
+    approved them. One rule, outcomes.metric_visible_to."""
+    import outcomes
+    return outcomes.metric_visible_to(u, metric)
 
 
 def _local_today(u):
@@ -273,25 +276,55 @@ def _do_outcomes_list(u):
     # The recommendation each result measures, so a check-in is only offered
     # where the server has one to attach it to (rec-ROI #21).
     keys = outcomes.checkin_keys(_rid(u), [r["id"] for r in rows])
+    # A result is this login's to see only when its metric is (food cost,
+    # comps and voids are not every login's) AND the recommendation behind
+    # it is (rec_learning.viewer_sees: owner-only, a loss, a module it
+    # lacks) — a manager read the owner-only and comp results here
+    # (re-audit A26).
+    linked = outcomes.linked_episodes(_rid(u))
     out = []
     for r in rows:
-        if not _metric_visible(u, r.get("metric")):
+        if not outcomes.visible_to(u, r, linked=linked):
             continue
         if r["id"] in live:
             r = {**r, **{k: v for k, v in live[r["id"]].items() if k.startswith("interim")}}
+        # `summary` for a result the owner said they never made carries no
+        # dollars, and `counts` is what a surface colours by (contract K7).
         out.append({**r, "summary": outcomes.summarise(r) if r.get("status") != "tracking" else None,
                     "checkin_key": keys.get(r["id"])})
     return {"ok": True, "outcomes": out, "caveat": outcomes.CAUSATION_CAVEAT}, 200
 
 
+def _answerable_episode(u, rid, key):
+    """The recommendation episode a client-sent key answers, or None (contract
+    K2): it must exist, have been shown, and be one this login may see
+    (rec_learning.viewer_sees). A manager POSTing the key of a food-cost
+    recommendation they were never shown read back its running tracker."""
+    import rec_learning
+    ep = rec_learning.episode_for(rid, key)
+    if not ep:
+        return None
+    from models import get_conn
+    conn = get_conn()
+    try:
+        shown = conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND rec_id=? AND event='shown' "
+                             "LIMIT 1", (rid, ep["rec_id"])).fetchone()
+    finally:
+        conn.close()
+    if not shown or not rec_learning.viewer_sees(u, ep):
+        return None
+    return ep
+
+
 def _do_outcome_record(u):
+    import metrics
     import outcomes
     b = _body()
     title = (b.get("title") or "").strip()
-    if not title or not b.get("metric"):
+    if not title or not b.get("metric") or not isinstance(b.get("metric"), str):
         return {"ok": False, "error": "A title and a metric are required."}, 400
     if not _metric_visible(u, b.get("metric")):
-        return _forbidden("Food cost tracking is for logins that can see food cost.")
+        return _forbidden("That number is for logins that can see it.")
     wd = b.get("window_days")
     if wd not in (None, ""):
         try:
@@ -302,31 +335,62 @@ def _do_outcome_record(u):
             return {"ok": False, "error": "Track for between 7 and 180 days."}, 400
     else:
         wd = None
-    source_key = b.get("source_key") or f"manual:{title.lower()[:80]}"
-    try:
-        # One tracker per metric (rec-ROI #3): a second Track on a number
-        # already being measured is answered, not started.
-        res = outcomes.start(_rid(u), b.get("source") or "manual", source_key, title, b["metric"],
-                             user_id=u.get("id"), window_days=wd, module=b.get("module"), gate="metric")
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}, 400
+    rid = _rid(u)
+    given_key = b.get("source_key") if isinstance(b.get("source_key"), str) and b.get("source_key").strip() else None
+    source_key = given_key.strip()[:160] if given_key else f"manual:{title.lower()[:80]}"
+    metric = b["metric"]
+    carried_none = False
+    if given_key:
+        # A key the client sends is an answer to a recommendation: 404
+        # unless this login was shown it and may see it (contract K2).
+        if _answerable_episode(u, rid, source_key) is None:
+            return {"ok": False, "error": "Recommendation not found."}, 404
+        # What the recommendation carries wins over what the client sent: a
+        # DSR action is measured by its kind (reorder: nothing), a slow day
+        # by that weekday's sales (re-audit A24, A11).
+        carried, authoritative = outcomes.metric_for_rec(rid, source_key, body_metric=metric, viewer=u)
+        if authoritative:
+            carried_none = carried is None
+            metric = carried or metric
+    if not carried_none and metrics.known(metric):
+        # A tracker already running on this key is returned only when it is
+        # this number and this login may see it — otherwise refused, never
+        # handed back (re-audit A27).
+        live = outcomes.tracking_for_key(rid, source_key)
+        if live is not None and (metrics.normalize(live["metric"]) != metrics.normalize(metric)
+                                 or not outcomes.visible_to(u, live)):
+            return {"ok": False, "error": "Something else is already being measured for this."}, 409
+    if carried_none:
+        res = {"ok": False, "tracker_refused": outcomes.no_metric_reply()}
+    else:
+        try:
+            # One tracker per metric (rec-ROI #3): a second Track on a number
+            # already being measured is answered, not started.
+            res = outcomes.start(rid, b.get("source") or "manual", source_key, title, metric,
+                                 user_id=u.get("id"), window_days=wd, module=b.get("module"), gate="metric")
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
     o = res.get("outcome") or {}
     # "Track this" on a recommendation is the owner acting on it: the
     # ledger records it as accepted (which also quiets the card while it is
     # measured), so the tracker's verdict lands on a taken episode. Taken
     # even when another tracker already measures the number — the owner
-    # still took it; it just is not measured on its own.
-    if (b.get("source") or "") == "recommendation" and b.get("source_key"):
+    # still took it; it just is not measured on its own. Quiet for the
+    # tracker's whole window, not only 14 days, so the card is not shown
+    # again while its result is still being measured.
+    if (b.get("source") or "") == "recommendation" and given_key:
         try:
             import rec_ledger as _rl
             surface = b.get("surface") if b.get("surface") in _rl.SURFACES else "home"
+            refused_id = ((res.get("tracker_refused") or {}).get("in_flight") or {}).get("id")
             meta = ({"tracking": o.get("id"), "metric": o.get("metric")} if o else
-                    {"metric": b["metric"], "tracker_refused": (res["tracker_refused"].get("in_flight") or {}).get("id")})
-            _rl.record(_rid(u), str(b["source_key"]), "accepted", surface=surface, user_id=u.get("id"),
+                    {"metric": metric, "tracker_refused": refused_id})
+            _rl.record(rid, source_key, "accepted", surface=surface, user_id=u.get("id"),
                        role=u.get("role"), meta=meta,
-                       source_ref=f"track:{o.get('id')}" if o else f"track-refused:{source_key}")
+                       source_ref=f"track:{o.get('id')}" if o else f"track-refused:{source_key}",
+                       silence_days=max(_rl.ACCEPTED_QUIET_DAYS, int(o.get("window_days") or 0)))
             import home_brief as _hb
-            _hb.invalidate(_rid(u))
+            _hb.invalidate(rid)
         except Exception as _tx:
             print(f"[outcomes] tracked recommendation not recorded in the ledger: {_tx}")
     if not res["ok"]:
@@ -341,15 +405,23 @@ def _do_outcome_record(u):
     # rather than a month later.
     warning = None
     if o.get("baseline_value") is None:
+        # The detail can name a date ("no counted inventory value within 7
+        # days of 2026-09-01"): M/D/YY for the owner (re-audit A34).
         warning = (f"Tracking started, but {(o.get('metric_label') or o['metric']).lower()} "
-                   f"can't be read right now ({o.get('baseline_detail') or 'no data'}), so "
-                   f"there may be nothing to compare against.")
+                   f"can't be read right now ({outcomes.owner_title(o.get('baseline_detail')) or 'no data'}), "
+                   f"so there may be nothing to compare against.")
     return {"ok": True, "outcome": o, "tracker": res["tracker"], "warning": warning}, 200
 
 
 def _do_outcome_abandon(u, outcome_id):
+    """Stop tracking. A tracker this login may not see (another module's, a
+    comp result without LOSS_VIEW, an owner-only recommendation's) is left
+    alone with the same {"ok": true} as one that does not exist, so the
+    reply confirms nothing (re-audit A28)."""
     import outcomes
-    outcomes.abandon(_rid(u), outcome_id)
+    row = outcomes.get_outcome(outcome_id)
+    if row and row.get("restaurant_id") == _rid(u) and outcomes.visible_to(u, row):
+        outcomes.abandon(_rid(u), outcome_id)
     return {"ok": True}, 200
 
 
@@ -370,9 +442,15 @@ def _do_value(u):
     # Filtered BEFORE anything is summed. An earlier version of this route
     # stripped by_module and the opportunity items but left the headline
     # total whole, which handed a manager without FOOD_COST_VIEW the margin
-    # dollars straight back by subtraction.
-    denied = set() if _metric_visible(u, "food_cost_pct") else {"inventory"}
-    out = value_delivered.breakdown(rid, denied_modules=denied)
+    # dollars straight back by subtraction. The whole viewer scope now
+    # (re-audit A26): comps and voids without LOSS_VIEW, and every result
+    # whose recommendation this login may not see (owner-only, a loss),
+    # are dropped before total_value, best_ever, cumulative and
+    # unpriced_wins — the owner-only result was a manager's "biggest win".
+    scope = value_delivered.viewer_scope(rid, u)
+    if not _metric_visible(u, "food_cost_pct"):
+        scope["denied_modules"] = set(scope.get("denied_modules") or ()) | {"inventory"}
+    out = value_delivered.breakdown(rid, scope=scope)
     # Every stated rate, beside the four figures (never one of them) — the
     # same object delivered.rates carries, so a surface prices a reply from
     # the server's REPLY_RATE, not its own copy (rec-ROI #12).
@@ -1504,7 +1582,7 @@ def _rec_title(rid, key):
         return None
 
 
-def _start_rec_tracker(rid, key, module, user_id, event="accepted", body_metric=None):
+def _start_rec_tracker(rid, key, module, user_id, event="accepted", body_metric=None, viewer=None):
     """A real before-and-after tracker (outcomes.start) for an answered
     recommendation (rec-ROI #18). Returns (result, metric description):
     result is {"tracker": ...} when one started, {"tracker_refused": ...}
@@ -1518,16 +1596,22 @@ def _start_rec_tracker(rid, key, module, user_id, event="accepted", body_metric=
 
     Automatic, so the family gate (#18): nothing starts while anything in
     the metric's family is already being measured, and the reply says what
-    is and until when."""
+    is and until when.
+
+    `viewer` (the answering login): a metric it may not see is never
+    started from its answer — a body metric it may not read is ignored,
+    and a fallback it may not read is skipped (re-audit A27). The answer
+    routes pass it; None is an internal caller."""
     import metrics
     import outcomes
-    carried, authoritative = outcomes.metric_for_rec(rid, key, body_metric=body_metric)
+    carried, authoritative = outcomes.metric_for_rec(rid, key, body_metric=body_metric, viewer=viewer)
     if carried:
         candidates = (carried,)
     elif authoritative or event != "accepted":
         return ({"tracker_refused": outcomes.no_metric_reply()} if event == "accepted" else None), None
     else:
-        candidates = REC_TRACK_METRICS.get(module or "", ())
+        candidates = tuple(m for m in REC_TRACK_METRICS.get(module or "", ())
+                           if outcomes.metric_visible_to(viewer, m))
     if not candidates:
         return {"tracker_refused": outcomes.no_metric_reply()}, None
     from datetime import date as _date, timedelta as _td

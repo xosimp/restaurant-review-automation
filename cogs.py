@@ -266,18 +266,21 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
         until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS))
 
+    # Owner-facing reasons (they reach Track warnings and the Food Cost
+    # tab): dates M/D/YY (re-audit A34).
+    from time_utils import mdy as _mdy
     opening, opening_day = inventory_value_near(weeks, start)
     if opening is None:
         missing.append({
             "component": "opening inventory",
-            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {start.isoformat()}",
+            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(start)}",
         })
 
     closing, closing_day = inventory_value_near(weeks, end)
     if closing is None:
         missing.append({
             "component": "closing inventory",
-            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {end.isoformat()}",
+            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(end)}",
         })
 
     # Two snapshots that are actually the same count can't bracket a period.
@@ -300,7 +303,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         missing.append({"component": "net sales", "why": sales_why or "unavailable"})
 
     basis = (f"COGS = opening inventory + purchases − closing inventory, over "
-             f"{start.isoformat()} to {end.isoformat()}, divided by POS net sales for the same days.")
+             f"{_mdy(start)} to {_mdy(end)}, divided by POS net sales for the same days.")
 
     payload = {
         "ok": False,
