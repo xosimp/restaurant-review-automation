@@ -1119,12 +1119,14 @@ Return this exact shape:
   "operational_evidence": [{{"module": "labor|food_cost|waste|marketing", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
-  "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence"
+  "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
 }}"""
 
 
-def _diagnosis_inputs(restaurant_id, cluster, db_path):
-    """The prompt's evidence blocks, plus the set of ids the answer may cite."""
+def _diagnosis_inputs(restaurant_id, cluster, db_path, with_texts=False):
+    """The prompt's evidence blocks, plus the set of ids the answer may cite
+    (and, with `with_texts`, the guest texts behind them — untrusted input
+    for the Response Validation Layer, never a source)."""
     conn = get_conn(db_path)
     ids = cluster["review_ids"][:12]
     placeholders = ",".join("?" for _ in ids) if ids else "NULL"
@@ -1161,7 +1163,12 @@ def _diagnosis_inputs(restaurant_id, cluster, db_path):
             conc.append(f"Concentrated on {label} '{c['value']}': {c['count']} of {cluster['mentions']} ({int(c['share']*100)}%)")
     concentration = "\n".join(conc) if conc else \
         "No concentration: these complaints are spread across days, dayparts, dishes and roles."
-    return excerpts, complaints, concentration, {r["id"] for r in rows} | set(ids)
+    allowed = {r["id"] for r in rows} | set(ids)
+    if with_texts:
+        texts = [str(r["text"] or "")[:300] for r in rows] + [str(c.get("complaint") or "")[:160]
+                                                               for c in cluster["complaints"]]
+        return excerpts, complaints, concentration, allowed, [t for t in texts if t.strip()]
+    return excerpts, complaints, concentration, allowed
 
 
 def _operational_lines(ctx) -> dict:
@@ -1238,7 +1245,181 @@ def _operational_block(ctx) -> str:
 OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing")
 
 
-def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None):
+# ── The Response Validation Layer on a diagnosis (both modules) ─────────────
+#
+# A diagnosis is a stored dict of short text fields, not one text: each field
+# is validated on its own (response_validation.validate) on the diagnosis
+# surface, where a name the input never held refuses the WHOLE diagnosis
+# (the previous one stands), "What should change" must be conditional
+# (must_start_with_if), and the cause anchors are the ranked drivers
+# ("likely"; food) and what moved with the problem — where the complaints
+# concentrate, the other modules' lines ("association") — never the
+# recommended action. The engine replaces
+# the old verify_figures + unsupported_names pair; the citation checks,
+# verify_operational_evidence and cap_band stay with each module.
+
+DIAGNOSIS_FIELDS = ("headline", "cause", "alternative_cause", "what_would_confirm",
+                    "recommended_action", "expected_outcome")
+# The findings that mean "a figure here does not trace to the data" — what
+# unsupported_figures has always stored and cap_band reads.
+_FIGURE_RULES = ("F1", "F2", "F3", "F5", "F7", "F8")
+_VERDICT_RANK = {"pass": 0, "caveat": 1, "withhold": 2, "refuse": 3}
+
+
+def merge_validation(verdicts, unsupported=None) -> dict:
+    """One `validation` object ({verdict, caveats, controls, codes,
+    version}) for a diagnosis from its per-field verdicts: the worst verdict,
+    every caveat once, controls only if every field keeps them. A stored
+    unsupported figure (checked when the row was written, against a prompt
+    the read path no longer has) keeps its caveat on every later read."""
+    import response_validation as rv
+    ps = [rv.payload(v) for v in verdicts or () if v is not None]
+    out = {"verdict": "pass", "caveats": [], "controls": True, "codes": [], "version": rv.VERSION}
+    for p in ps:
+        if _VERDICT_RANK.get(p["verdict"], 0) > _VERDICT_RANK[out["verdict"]]:
+            out["verdict"] = p["verdict"]
+        out["caveats"] += [c for c in p["caveats"] if c not in out["caveats"]]
+        out["codes"] += [c for c in p["codes"] if c not in out["codes"]]
+        out["controls"] = out["controls"] and bool(p["controls"])
+    if unsupported:
+        cav = f"Some figures here aren't in your data: {', '.join(str(x) for x in list(unsupported)[:3])}."
+        if not any(c.startswith("Some figures here aren't in your data") for c in out["caveats"]):
+            out["caveats"].append(cav)
+        if "F1" not in out["codes"]:
+            out["codes"].append("F1")
+        out["controls"] = False
+        if _VERDICT_RANK[out["verdict"]] < _VERDICT_RANK["withhold"]:
+            out["verdict"] = "withhold"
+    return out
+
+
+def diagnosis_field_contexts(out: dict, surface: str, restaurant_id, *, facts=(), context_text="",
+                             anchors=(), untrusted=(), policy=None) -> list:
+    """[(field, text, ValidationContext)] for every text field of a
+    diagnosis dict, on `surface` (review_diagnosis / food_diagnosis):
+    "What should change" (expected_outcome) must be conditional
+    (must_start_with_if); other tenants' names are denied."""
+    import response_validation as rv
+    try:
+        import models as _m
+        denied = _m.other_tenant_names(restaurant_id)
+    except Exception:
+        denied = set()
+    out_ctx = []
+    for key in DIAGNOSIS_FIELDS:
+        text = out.get(key)
+        if not text:
+            continue
+        pol = {"action": surface, **(policy or {})}
+        if key == "expected_outcome":
+            pol["must_start_with_if"] = True
+        out_ctx.append((key, str(text), rv.ValidationContext(
+            restaurant_id=restaurant_id, surface=surface, facts=list(facts or ()), context_text=context_text or "",
+            cause_anchors=list(anchors or ()), tenant_names_denied=denied, untrusted=list(untrusted or ()),
+            policy=pol)))
+    return out_ctx
+
+
+def settle_diagnosis_field(out: dict, key: str, shown, verdict, surface: str) -> list:
+    """Put one field's validated text back on the diagnosis and return the
+    figures its verdict could not trace (the old unsupported_figures).
+    Raises ValueError when the engine refused the field (enforce mode): a
+    name the input never held refuses the whole diagnosis ("diagnosis
+    named …"), and the caller keeps the previous one."""
+    import response_validation as rv
+    if verdict.verdict == "refuse" and rv.mode_for(surface) == "enforce":
+        names = [f["span"] for f in verdict.findings if f["rule"] == "N1" and f["span"]]
+        if names:
+            raise ValueError(f"diagnosis named {names[:3]}, who are not in its input")
+        raise ValueError(f"diagnosis {key} refused by validation ({', '.join(verdict.codes)})")
+    out[key] = " ".join(str(shown or "").split()) or None
+    return [f["span"] for f in verdict.findings
+            if f["rule"] in _FIGURE_RULES and f["severity"] != "info" and f.get("span")]
+
+
+def finish_diagnosis_fields(out: dict, verdicts, bad, unsupported=None) -> list:
+    """After every field: the headline and cause must still say something,
+    and out["validation"] is the merged verdict. Returns the untraced
+    figures, once each."""
+    for key in ("headline", "cause"):
+        if key in out and not out.get(key):
+            raise ValueError(f"diagnosis {key} had nothing left after validation")
+    out["validation"] = merge_validation(verdicts, unsupported)
+    return list(dict.fromkeys(bad))
+
+
+def validate_diagnosis_fields(out: dict, surface: str, restaurant_id, *, facts=(), context_text="",
+                              anchors=(), untrusted=(), policy=None, log_it=True, unsupported=None) -> list:
+    """Validate every text field of a diagnosis dict IN PLACE on `surface`
+    and set out["validation"]; returns the untraced figures. Raises
+    ValueError when the diagnosis no longer stands (settle_diagnosis_field,
+    finish_diagnosis_fields). Under RESPONSE_VALIDATION_MODE shadow the
+    fields are left as written and nothing is refused."""
+    import response_validation as rv
+    verdicts, bad = [], []
+    for key, text, ctx in diagnosis_field_contexts(out, surface, restaurant_id, facts=facts,
+                                                   context_text=context_text, anchors=anchors,
+                                                   untrusted=untrusted, policy=policy):
+        shown, v = rv.apply(text, ctx, log_it=log_it)
+        verdicts.append(v)
+        bad += settle_diagnosis_field(out, key, shown, v, surface)
+    return finish_diagnosis_fields(out, verdicts, bad, unsupported)
+
+
+def revalidate_stored_diagnosis(d: dict, surface: str, restaurant_id, *, facts=(), anchors=()) -> dict:
+    """A stored diagnosis re-validated as it is read — the stored rows carry
+    no engine version (no column has room), and get_diagnoses /
+    get_diagnosis already re-filter every old row (cap_band, served
+    operational evidence), so the engine runs there too: the lexical rules
+    (certainty, causal strength, kind flips, benchmarks, other tenants'
+    names, unsafe actions, a non-conditional "What should change") on the
+    current rules, no model call, not logged (a read is not a new verdict).
+
+    The figure and name checks need the prompt the row was written from,
+    which the read path does not have, so the row's own text stands in for
+    it; what the write-time check could not trace is served back from
+    unsupported_figures, with its caveat. Returns d, or raises ValueError
+    when the read no longer stands (the caller leaves it out)."""
+    own = " ".join(str(d.get(k) or "") for k in DIAGNOSIS_FIELDS)
+    extra = " ".join(str(e.get("value") or "") for e in d.get("operational_evidence") or [] if isinstance(e, dict))
+    validate_diagnosis_fields(d, surface, restaurant_id, facts=facts, context_text=own + " " + extra,
+                              anchors=anchors, log_it=False, unsupported=d.get("unsupported_figures"))
+    return d
+
+
+def _cluster_facts(cluster) -> list:
+    """The measured figures a review diagnosis is handed about its cluster,
+    typed: mentions and window (counts), average rating (stars), and each
+    concentration's count and share."""
+    import response_validation as rv
+    c = cluster or {}
+    out = [rv.Fact("reviews.cluster.mentions", c.get("mentions"), "count"),
+           rv.Fact("reviews.cluster.window_days", c.get("window_days"), "count"),
+           rv.Fact("reviews.cluster.avg_rating", c.get("avg_rating"), "★")]
+    for key in ("weekday_pair", "weekday", "daypart", "dish", "role"):
+        con = c.get(key)
+        if isinstance(con, dict):
+            out.append(rv.Fact(f"reviews.cluster.{key}.count", con.get("count"), "count"))
+            if con.get("share") is not None:
+                out.append(rv.Fact(f"reviews.cluster.{key}.share_pct", int(float(con["share"]) * 100), "%"))
+    return [f for f in out if f.value is not None]
+
+
+def diagnosis_anchors(strong=(), weak=()) -> list:
+    """Cause anchors for a diagnosis: measured ranked drivers / concentration
+    lines at "likely", co-movement lines from other modules at
+    "association". A recommended action is never one."""
+    import response_validation as rv
+    out = []
+    for t in strong or ():
+        out += rv.anchor(t, "likely")
+    for t in weak or ():
+        out += rv.anchor(str(t), "association")
+    return out
+
+
+def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None, *, facts=None,
+                        anchors=None, untrusted=None):
     """Reject a diagnosis that cites what it was not given.
 
     The same discipline ai_guard applies to figures, applied to citations. A
@@ -1300,23 +1481,27 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None):
         "expected_outcome": _line("expected_outcome"),
     }
 
-    # Every figure it states has to be one it was handed — the same check the
-    # weekly digest and the insight already run. A diagnosis is the most
-    # quotable thing this module produces; an invented percentage inside a
-    # root-cause paragraph is the hardest kind to catch by eye.
-    from ai_guard import verify_figures
-    joined = " ".join(v for v in (out["cause"], out["alternative_cause"],
-                                  out["what_would_confirm"], out["recommended_action"],
-                                  out["expected_outcome"]) if v)
-    bad = verify_figures(joined, prompt, "review_diagnosis", restaurant_id, check_counts=True)
-    # A person it was never handed (R11, B5 #11 / p15): "Marco, the new
-    # weekend server" and "Chef Luis" were kept though neither was in the
-    # input. A root cause pinned on an invented person is refused whole —
-    # the previous diagnosis stands.
-    from ai_guard import unsupported_names
-    names = unsupported_names(joined, prompt)
-    if names:
-        raise ValueError(f"diagnosis named {names[:3]}, who are not in its input")
+    # Every field through the Response Validation Layer (surface
+    # review_diagnosis): every figure and count it states has to be one it
+    # was handed — a diagnosis is the most quotable thing this module
+    # produces, and an invented percentage inside a root-cause paragraph is
+    # the hardest kind to catch by eye — and a person it was never handed
+    # (R11, B5 #11 / p15: "Marco, the new weekend server", "Chef Luis")
+    # refuses the whole diagnosis, so the previous one stands. The engine
+    # also holds the certainty, causal-strength, kind and tenant rules, and
+    # "What should change" to a conditional. The guest texts it cites are
+    # untrusted: never a source.
+    import response_validation as rv
+    if anchors is None:
+        anchors = diagnosis_anchors(weak=(op_lines or {}).values())
+    verdicts, bad = [], []
+    for key, text, ctx in diagnosis_field_contexts(out, "review_diagnosis", restaurant_id, facts=facts or (),
+                                                   context_text=prompt or "", anchors=anchors,
+                                                   untrusted=untrusted or (), policy={"check_counts": True}):
+        shown, v = rv.apply(text, ctx)
+        verdicts.append(v)
+        bad += settle_diagnosis_field(out, key, shown, v, "review_diagnosis")
+    bad = finish_diagnosis_fields(out, verdicts, bad)
     if bad:
         # Not dropped: an owner reading a cause with one unverified number is
         # better served by seeing it flagged than by seeing a hole. The flag
@@ -1365,8 +1550,8 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             produced.append(prior)
             continue
         try:
-            excerpts, complaints, concentration, allowed = _diagnosis_inputs(
-                restaurant_id, cluster, db_path)
+            excerpts, complaints, concentration, allowed, guest_texts = _diagnosis_inputs(
+                restaurant_id, cluster, db_path, with_texts=True)
             prompt = DIAGNOSE_PROMPT.format(
                 untrusted_note=UNTRUSTED_NOTE,
                 restaurant_name=restaurant.name,
@@ -1397,7 +1582,15 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             # A leading sentence before the JSON failed json.loads (AI-26).
             from ai_utils import parse_json_reply
             result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
-                                         allowed, prompt, restaurant_id, op_lines=op_lines)
+                                         allowed, prompt, restaurant_id, op_lines=op_lines,
+                                         facts=_cluster_facts(cluster),
+                                         # Where the complaints concentrate and what
+                                         # the other modules recorded both moved WITH
+                                         # the complaints: association, not cause.
+                                         anchors=diagnosis_anchors(
+                                             weak=[ln for ln in concentration.split("\n")
+                                                   if ln.startswith("Concentrated")] + list(op_lines.values())),
+                                         untrusted=guest_texts)
             _save_diagnosis(restaurant_id, cluster, result, {}, db_path)
             result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
                            "window_days": cluster["window_days"], "stale": False})
@@ -1541,6 +1734,16 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
             "stale_note": (f"From a read on {_mdy_safe(r['generated_at'])} — it has not been refreshed since."
                            if stale else None),
         })
+        # Re-validated as read, on the current rules (no column holds a
+        # verdict version): a row that no longer stands is left out.
+        try:
+            revalidate_stored_diagnosis(
+                out[-1], "review_diagnosis", restaurant_id,
+                facts=_cluster_facts({"mentions": r["mention_count"], "window_days": r["window_days"]}),
+                anchors=diagnosis_anchors(weak=[e.get("value") for e in _op if isinstance(e, dict)]))
+        except ValueError as e:
+            print(f"[review_intelligence] stored diagnosis {r['category']} no longer stands: {e}")
+            out.pop()
     # The measured confidence of each (K6, confidence audit): evidence from
     # the reviews behind the category, capped by the model's own band and by
     # any unsupported figure — `confidence` stays the band string older
