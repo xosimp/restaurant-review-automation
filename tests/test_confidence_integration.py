@@ -495,3 +495,13 @@ def test_mirrored_floors_and_intervals_stay_in_step():
     for k, n in ((0, 1), (3, 4), (5, 5), (12, 15), (1, 30)):
         lo, hi = ce.wilson(k, n)
         assert rec_learning.wilson(k, n) == (round(lo, 3), round(hi, 3)) == admin_ops._wilson(k, n)
+
+
+def test_one_rating_floor_for_a_window_and_a_night():
+    """thresholds.RATING_MIN_REVIEWS said it was "the same floor
+    metrics.measure('avg_rating') applies" while metrics held its own 5."""
+    import metrics
+    import thresholds
+    assert metrics.RATING_MIN_REVIEWS is thresholds.RATING_MIN_REVIEWS
+    src = inspect.getsource(metrics._avg_rating)
+    assert "< RATING_MIN_REVIEWS" in src and "< 5" not in src

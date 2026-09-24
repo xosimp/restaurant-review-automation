@@ -19,6 +19,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH, REVIEW_TIME_AXIS_BARE
+from thresholds import RATING_MIN_REVIEWS
 
 
 def get_conn(db_path=None):
@@ -105,9 +106,9 @@ def _avg_rating(rid, start, end, param, db_path):
             (rid, _d(start), _d(end))).fetchone()
     finally:
         conn.close()
-    # A rating built on a handful of reviews is noise; the same floor the
-    # rest of the product uses for "is this a trend".
-    if not row or (row["n"] or 0) < 5:
+    # A rating built on a handful of reviews is noise; the one floor the
+    # nightly report's rating reads too (thresholds.RATING_MIN_REVIEWS).
+    if not row or (row["n"] or 0) < RATING_MIN_REVIEWS:
         return None, f"only {row['n'] if row else 0} reviews in this window"
     return round(_f(row["r"]), 2), f"{row['n']} reviews"
 
