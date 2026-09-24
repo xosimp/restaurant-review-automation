@@ -127,6 +127,45 @@ DISH_TYPES = (("pizza", ("pizza", "flatbread", "calzone")), ("burger", ("burger"
 EDIT_HISTORY_MIN_DRAFTS = 3         # accepted drafts of that type before their edits count
 EDIT_HISTORY_LOWER_AT = 0.5         # share of drafted lines the owner changed or removed
 _CONF_STEP = {"high": "medium", "medium": "low", "low": "low"}
+_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
+
+# The most one plate plausibly holds of an ingredient, per kind of measure
+# (R13, B5 #16): 6 lb of salmon a plate was accepted as-is. Past this a line
+# is flagged and reads low.
+PLATE_MAX = {"mass": (2.0, "lb"), "volume": (1.0, "qt"), "count": (12.0, None)}
+
+
+def _lowest(*bands):
+    return min((b for b in bands if b in _CONF_RANK), key=lambda b: _CONF_RANK[b], default="low")
+
+
+def line_confidence(model_band, qty, said_unit, ing_unit, converted, *, estimate, per_plate=True):
+    """(band, note) for one recipe line, decided in code (R9, B5 #9): what
+    code can check sets the ceiling, and the model's own band only lowers it.
+
+    * An estimate (a draft with no card) is never high: nothing measured it.
+    * No unit given, or a unit that does not convert to the ingredient's:
+      low, with a note (a missing unit used to become the ingredient's unit
+      silently and read "ok" — R13).
+    * A converted unit (oz on the card, lb in stock): at most medium.
+    * A per-plate quantity past PLATE_MAX for its measure: low, with a note.
+    """
+    ceiling, note = ("medium" if estimate else "high"), None
+    if not str(said_unit or "").strip():
+        return "low", f"no unit was given; {'it' if not ing_unit else 'the ingredient'} is kept in {ing_unit or 'no unit'}"
+    if converted is None or converted <= 0:
+        return "low", None
+    if norm_unit(said_unit) != norm_unit(ing_unit):
+        ceiling = _lowest(ceiling, "medium")
+    if per_plate:
+        kind = (_UNIT_SIZE.get(norm_unit(ing_unit)) or (None,))[0]
+        limit = PLATE_MAX.get(kind)
+        if limit:
+            cap, unit = limit
+            per = convert_qty(converted, ing_unit, unit) if unit else converted
+            if per is not None and per > cap:
+                return "low", f"{converted:g} {ing_unit} a plate is more than one plate usually holds"
+    return _lowest(ceiling, model_band if model_band in _CONF_RANK else "low"), note
 
 
 def dish_type(name):
@@ -255,15 +294,29 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
                 continue
             if not ing or qty <= 0:
                 continue          # never an ingredient the restaurant does not have
-            conf = ln.get("confidence") if ln.get("confidence") in _CONF_STEP else "low"
+            ing_unit = ing.get("unit") or ""
+            given_unit = str(ln.get("unit") or "").strip()
+            said_unit = given_unit or ing_unit
+            converted = convert_qty(qty, said_unit, ing_unit) if ing_unit else None
+            # The line's confidence is code's (R9): unit given and
+            # convertible, a plausible per-plate amount, an estimate never
+            # high — the model's band only lowers it; the owner's edit
+            # history steps it down.
+            conf, conf_note = line_confidence(ln.get("confidence"), qty, given_unit, ing_unit, converted,
+                                              estimate=True)
             if lower:
                 conf = _CONF_STEP[conf]
-            ing_unit = ing.get("unit") or ""
-            said_unit = ln.get("unit") or ing_unit
-            converted = convert_qty(qty, said_unit, ing_unit) if ing_unit else None
             line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit,
                     "confidence": conf, "source": "estimate", "per": "plate"}
-            if converted is not None and converted > 0:
+            if not given_unit:
+                # A missing unit is flagged, never silently the ingredient's
+                # (R13, B5 #16 / p11).
+                line.update(qty=round(qty, 4), unit_ok=False, unit_note=conf_note)
+            elif conf_note and converted is not None and converted > 0:
+                line.update(qty=round(converted, 4), unit_ok=False, unit_note=conf_note)
+                if norm_unit(said_unit) != norm_unit(ing_unit):
+                    line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
+            elif converted is not None and converted > 0:
                 line["qty"] = round(converted, 4)
                 line["unit_ok"] = True
                 if norm_unit(said_unit) != norm_unit(ing_unit):
@@ -408,7 +461,10 @@ def _card_line(ing, qty, card_unit, confidence, card_yield=None):
     ing_unit = ing.get("unit") or ""
     card_unit = (card_unit or "").strip()
     converted = convert_qty(qty, card_unit or ing_unit, ing_unit) if ing_unit and (card_unit or ing_unit) else None
-    conf = confidence if confidence in _CONF_STEP else "low"
+    # Code's band, the model's only lowering it (R9): a transcription can
+    # read high when the unit is the card's own and converts cleanly.
+    conf, _note = line_confidence(confidence, qty, card_unit, ing_unit, converted, estimate=False,
+                                  per_plate=bool(card_yield))
     line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit, "confidence": conf,
             "source": "transcribed", "card_qty": round(float(qty), 4), "card_unit": card_unit or None,
             "per": "plate" if card_yield else "batch"}

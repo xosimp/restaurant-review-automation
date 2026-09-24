@@ -1193,8 +1193,13 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
             if _dg and _dg.get("cause"):
                 cause_anchors += [_dg.get("cause"), _dg.get("alternative_cause")]
+                # No confidence word in the prompt (R9, B5 #9): the stored
+                # band is the model's own, capped — the owner's figure is the
+                # computed one the screen shows beside the read, and a band
+                # handed to the prompt came back as "medium confidence" in
+                # prose beside a 0% chip.
                 diag_block = (
-                    "\n\nROOT-CAUSE READ (stored, " + str(_dg.get("confidence")) + " confidence"
+                    "\n\nROOT-CAUSE READ (stored"
                     # The read's date, not its age in hours: the prompt is
                     # the stored read's fingerprint, and an hourly age made
                     # every hour a new read (M-7).
@@ -1319,7 +1324,7 @@ This is read on a phone screen — brevity is the whole point. Cut ruthlessly.
 First, write one paragraph of 2 sentences max (never 3-4):
 - Lead with the money: their food cost position or projected month if either is computable above, otherwise the monthly waste projection
 - Name the single largest driver by item name with its dollar amount
-{("- Then one sentence beginning \"Why:\" giving the cause from the ROOT-CAUSE READ, and how confident it is." if has_why else "")}
+{("- Then one sentence beginning \"Why:\" giving the cause from the ROOT-CAUSE READ." if has_why else "")}
 
 Then, on new lines after the paragraph, write 1-3 recommendations:
 - Take them IN THE ORDER the drivers are ranked above. Do not reorder.
@@ -1327,7 +1332,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Maximum of three. Zero is allowed when the data supports none.
 - Number each one: start with "1. ", "2. ", "3. "
 - Hard cap: 30 words per recommendation. Lead with the action.
-- End each one with " — " then its monthly dollar figure, its confidence and how hard it is, exactly as given above (e.g. " — $240/month, high confidence, low effort")
+- End each one with " — " then its monthly dollar figure and how hard it is, exactly as given above (e.g. " — $240/month, low effort"). State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
 - Each must quote a dollar figure from the driver list or the "Savings the data supports" block — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
@@ -1356,8 +1361,8 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     msg = create_with_retry(
         get_client(timeout=45.0),
         model=model_for("inventory_insight"),
-        # The recommendations now carry a dollar figure, a confidence and an
-        # effort level each, and the opening paragraph can carry a Why
+        # The recommendations now carry a dollar figure and an effort level
+        # each, and the opening paragraph can carry a Why
         # sentence. 950 was sized for the old bare-action format and the
         # truncation guard below would have started firing.
         max_tokens=1200,
@@ -1368,6 +1373,11 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("food cost insight was truncated")
+    # A confidence the model writes anyway is taken out (R9, B5 #9 / p14):
+    # "high confidence, low effort" was copied onto a driver whose measured
+    # band was low, and passed every guard.
+    from ai_guard import rewrite_confidence_claims
+    result, _ = rewrite_confidence_claims(result, None)
     # The return value used to be discarded. labor.py appends the marker,
     # client_api.py parses it and mobile_api.py renders it as
     # claim_kinds.insight_unverified — the whole pipeline existed and food

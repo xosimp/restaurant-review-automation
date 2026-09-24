@@ -1028,7 +1028,7 @@ _SELF_SURE_RE = re.compile(
     r"(?:\w+\s+){0,2}?(?:\d{1,3}\s?%\s+)?(?:sure|confident|certain)\b[^.!?\n]*", re.I)
 
 
-def rewrite_confidence_claims(text: str, pct=None) -> tuple:
+def rewrite_confidence_claims(text: str, pct=None, bands: bool = True) -> tuple:
     """(text, n) with every confidence the MODEL stated replaced by the
     computed one or removed. `pct` is the computed K1 percentage (None when
     it is not measurable). A band or percentage phrase ("high confidence",
@@ -1036,7 +1036,9 @@ def rewrite_confidence_claims(text: str, pct=None) -> tuple:
     "confidence is {pct}%"; with no pct the phrase is removed. A
     self-assurance clause ("I'm about 85% sure this pays off", ", and I'm
     highly confident") is removed through the end of its sentence, and a
-    sentence left empty goes with it. `n` counts what was changed."""
+    sentence left empty goes with it. `n` counts what was changed. With
+    bands=False only the self-assurance clauses go — for a read whose input
+    carries a computed band (a rating trend's) it may quote."""
     body = str(text or "")
     n = 0
     label = f"{int(round(pct))}% confidence" if isinstance(pct, (int, float)) else ""
@@ -1051,7 +1053,9 @@ def rewrite_confidence_claims(text: str, pct=None) -> tuple:
         nonlocal n
         n += 1
         return m.group(1) + f"{int(round(pct))}%"
-    if label:
+    if not bands:
+        pass
+    elif label:
         body = _CONF_IS_RE.sub(_is, body)
     else:
         # nothing to swap in: the sentence stating it goes
@@ -1067,7 +1071,8 @@ def rewrite_confidence_claims(text: str, pct=None) -> tuple:
         nonlocal n
         n += 1
         return label
-    body = _CONF_NOUN_RE.sub(_noun, body)
+    if bands:
+        body = _CONF_NOUN_RE.sub(_noun, body)
     if not n:
         return text, 0
     out_lines = []

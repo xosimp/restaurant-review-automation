@@ -375,7 +375,10 @@ def test_h6_drafts_are_labelled_estimates_and_past_edits_lower_confidence(db_pat
     d = [x for x in recipes.list_drafts(rid, db_path=db_path) if x["menu_item_id"] == 9][0]
     line = d["lines"][0]
     assert d["is_estimate"] is True and d["note"].startswith("Estimated by Cavnar")
-    assert line["confidence"] == "medium", "high stepped down: the owner rewrote past pizza drafts"
+    # R9: code sets the ceiling — an estimate is never high, so the model's
+    # "high" reads medium — and the owner's rewrites of past pizza drafts
+    # step that down one more.
+    assert line["confidence"] == "low", "medium (code's ceiling) stepped down: the owner rewrote past pizza drafts"
     assert line["qty"] == pytest.approx(0.25) and line["unit"] == "lb"
     assert "confidence lowered" in d["note"]
 

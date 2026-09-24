@@ -1086,18 +1086,23 @@ def _verify_named_entities(generated: str, context: str) -> list:
 
 def _do_today_confidence(rid, payload):
     """The K1 confidence of the Reviews read's "Do today" line: a
-    model-written suggestion (its read caps evidence at medium) over the
-    reviews of the last 30 days, capped low by any figure the read could
-    not verify. Never raises."""
+    model-written suggestion over the reviews of the last 30 days, flagged
+    as an inference (never high), lowered by the stored diagnosis's CAPPED
+    band when the read rests on one, and capped low by any figure the read
+    could not verify. No hard-coded "medium" model band (R9, B1 M1): the
+    Why? panel said the AI rated itself medium, which it never did. Never
+    raises."""
     try:
         import rec_trust
         from models import get_review_stats as _grs
         n30 = int((_grs(rid) or {}).get("last_30d") or 0)
         unsupported = payload.get("unsupported_figures") or []
-        return rec_trust.assess(rid, "insight_review", evidence={
-            "n": n30, "kind": "reviews", "model_band": "medium", "unverified": len(unsupported),
-            "basis": f"a model-written suggestion from {n30} reviews in the last 30 days"},
-            sources=("reviews",))
+        ev = {"n": n30, "kind": "reviews", "flags": ("inferred",), "unverified": len(unsupported),
+              "basis": f"a model-written suggestion from {n30} reviews in the last 30 days"}
+        dg = payload.get("diagnosis") if isinstance(payload.get("diagnosis"), dict) else None
+        if dg and dg.get("confidence") in ("high", "medium", "low"):
+            ev["model_band"] = dg["confidence"]
+        return rec_trust.assess(rid, "insight_review", evidence=ev, sources=("reviews",))
     except Exception as e:
         print(f"[reviews] do-today confidence unavailable: {e}")
         import confidence_engine
@@ -1437,7 +1442,10 @@ def _do_review_insight(rid):
                 f"Alternative: {_d['alternative_cause'] or 'none offered'}\n"
                 f"How to tell them apart: {_d['what_would_confirm'] or 'not established'}\n"
                 f"Recommended: {_d['recommended_action'] or 'none'}\n"
-                f"Confidence: {_d['confidence']} | rests on reviews "
+                # No confidence band in the prompt (R9, B5 #9): the stored
+                # band is the model's own; the owner's figure is the
+                # computed one shown beside the read.
+                f"Rests on reviews "
                 + ", ".join("#" + str(i) for i in _d['evidence_review_ids'][:5])
                 # The read's DATE, not its age in hours (M-7). The prompt is
                 # the stored read's fingerprint; "produced 5h ago" changed
@@ -1478,7 +1486,8 @@ def _do_review_insight(rid):
             "You are an experienced restaurant operations consultant writing the daily read on "
             "this restaurant's reviews. You are not a summariser: the owner can already see their "
             "counts and their star average on the same screen. Your value is the step after the "
-            "count - what it means operationally, how sure you are, and what to do about it.\n\n"
+            "count - what it means operationally, what it rests on, and what to do about it. The app "
+            "shows a measured confidence beside the read, so state none of your own.\n\n"
             f"{_UN_RI}\n\n"
             f"Restaurant: {rest_name} | Today: {today_str}\n\n"
             "MEASURED (read from the database - these are facts):\n"
@@ -1516,7 +1525,7 @@ def _do_review_insight(rid):
             "Return EXACTLY these lines, in this order, no markdown, no preamble, no extra lines:\n"
             "\U0001f4ca This week: [1 sentence on the most important MEASURED fact. Max 22 words.]"
             f"{why_line}\n"
-            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk and how confident you are in it. "
+            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk and what it rests on. "
             "Omit this line entirely if nothing clears the evidence floor. Max 22 words.]\n"
             "\u2705 Do today: [1 concrete action a manager can start this shift with the staff and "
             "menu they already have. If a guest is named above, name them. Never generic. Max 22 words.]"
@@ -1554,6 +1563,11 @@ def _do_review_insight(rid):
             action="review_insight",
         )
         insight = extract_text(msg).strip()
+        # A confidence the model claims for itself ("I'm fairly sure") is
+        # taken out (R9, B5 #9); a computed trend's band quoted from the
+        # DERIVED block stays.
+        from ai_guard import rewrite_confidence_claims as _rcc
+        insight, _ = _rcc(insight, None, bands=False)
         # Strip any markdown
         import re as _re_ri
         insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
