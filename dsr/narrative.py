@@ -891,8 +891,19 @@ def settle_actions(actions, F, ctx, declined, dropped):
         learned = rec_learning.effectiveness(ctx.restaurant_id, db_path=ctx.db_path)
     except Exception as e:
         _capture(e, ctx.restaurant_id, "effectiveness")
+    # Each action's measured confidence, from the facts it cites (confidence
+    # audit E16): urgency and effort stay the model's labels, but the rank
+    # also weighs how well the cited figures support the action.
+    tctx = None
+    try:
+        import rec_trust
+        tctx = rec_trust.Context(ctx.restaurant_id, db_path=ctx.db_path)
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "confidence context")
+    for a in keyed:
+        a["confidence"] = action_confidence(a, F, ctx, tctx)
     shadow = [{"key": a["key"], "timeframe": URGENCIES[a["urgency"]], "dollars_monthly": a["dollars_monthly"],
-               "effort": a["effort"], "_a": a} for a in keyed]
+               "effort": a["effort"], "confidence": a.get("confidence"), "_a": a} for a in keyed]
     ranked = []
     for s in order_recommendations(shadow, quiet_kinds=quiet, learned=learned):
         a = dict(s["_a"], rank_score=s["rank_score"])
@@ -905,6 +916,33 @@ def settle_actions(actions, F, ctx, declined, dropped):
     # "dsr_email" — through ledger_items() below. The answered check above
     # (silenced keys) is what keeps an answered action out of the report.
     return ranked
+
+
+def action_confidence(action, F, ctx, tctx=None) -> dict:
+    """The K1 confidence of one DSR action: Evidence Strength from the
+    measured facts of the night it cites (N_FULL "night_facts" — the most a
+    line may cite), weakened when the sales block had no gross figure and
+    it cites sales; Historical Accuracy from this restaurant's record of
+    dsr_action; Data Freshness from the sources of the blocks it cites.
+    Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        cites = [c for c in (action.get("cites") or []) if isinstance(c, str)]
+        measured = [c for c in cites if F.has(c)]
+        blocks = sorted({c.split(".", 1)[0] for c in measured})
+        gross_missing = bool(F.details.get("sales.gross_missing") or F.metrics.get("sales.gross_missing"))
+        flags = ("gross_missing",) if (gross_missing and "sales" in blocks) else ()
+        ev = {"n": len(measured), "kind": "night_facts", "flags": flags,
+              "basis": f"{len(measured)} measured figure{'s' if len(measured) != 1 else ''} from the night"
+                       + (f" ({', '.join(blocks)})" if blocks else "")}
+        mods = [{"sales": "labor", "labor": "labor", "food": "inventory"}.get(b, _MODULE.get(b, b)) for b in blocks]
+        return rec_trust.assess(ctx.restaurant_id, action.get("key") or "dsr_action", evidence=ev,
+                                sources=data_freshness.sources_for(mods), db_path=ctx.db_path, ctx=tctx)
+    except Exception as e:
+        _capture(e, getattr(ctx, "restaurant_id", None), "action confidence")
+        import confidence_engine
+        return confidence_engine.unknown()
 
 
 def ledger_items(actions) -> list:
@@ -924,6 +962,8 @@ def ledger_items(actions) -> list:
                     "position": i, "dollar_value": a.get("dollars_monthly"),
                     "evidence_sources": sorted({_MODULE.get(c.split(".", 1)[0], "ops") for c in cites}) or None,
                     "model_written": True,
+                    # Snapshotted at delivery (K3).
+                    "confidence": a.get("confidence") if isinstance(a.get("confidence"), dict) else None,
                     # An action resting on a figure the Manager DSR never shows
                     # (budget, prime cost, loss lines, the Food block) is never
                     # listed to a manager in the recommendation record either.

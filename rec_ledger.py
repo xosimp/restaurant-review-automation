@@ -237,7 +237,26 @@ _ADDED_COLUMNS = (
     # created_at. Without it a card re-priced every day never expired and was
     # never counted as ignored (re-audit B11).
     ("chain_started_at", "TEXT"),
+    # The confidence the owner was shown, snapshotted at delivery (contract
+    # K3, confidence audit): the overall % and each dimension, so what was
+    # said can later be scored against what happened (admin calibration).
+    # NULL confidence_pct = no confidence was shown with it (a surface that
+    # carries none); accuracy/freshness are still recorded for calibration.
+    ("confidence_pct", "INTEGER"),
+    ("evidence_pct", "INTEGER"),
+    ("accuracy_pct", "INTEGER"),
+    ("accuracy_n", "INTEGER"),
+    ("freshness_pct", "INTEGER"),
+    ("freshness_as_of", "TEXT"),
+    ("trust_version", "INTEGER"),
 )
+
+# rec_instances' snapshot columns, in confidence_engine.snapshot's order.
+SNAPSHOT_COLS = ("confidence_pct", "evidence_pct", "accuracy_pct", "accuracy_n", "freshness_pct",
+                 "freshness_as_of", "trust_version")
+# A showing whose overall confidence moved this many points from the
+# episode's last showing is logged in its `shown` meta (confidence_moved).
+CONFIDENCE_MOVE_POINTS = 10
 
 
 # ── keys ─────────────────────────────────────────────────────────────────────
@@ -634,6 +653,20 @@ def _fill_missing(conn, row, attrs, title=None):
         args.append(str(title)[:200])
     if attrs.get("owner_only") and not _col(row, "owner_only"):
         sets.append("owner_only=1")
+    if not _col(row, "confidence_band") and attrs.get("confidence_band"):
+        sets.append("confidence_band=?")
+        args.append(str(attrs["confidence_band"])[:20])
+    # The confidence snapshot is taken at the first showing that has one
+    # and never overwritten: calibration scores what was said when it was
+    # first said (K3). A showing without an overall % (accuracy and
+    # freshness only) never blocks a later one that has it.
+    snap = attrs.get("_snapshot") or {}
+    if snap and _col(row, "confidence_pct") is None and (
+            snap.get("confidence_pct") is not None or all(_col(row, c) is None for c in SNAPSHOT_COLS)):
+        for c in SNAPSHOT_COLS:
+            if snap.get(c) is not None:
+                sets.append(f"{c}=?")
+                args.append(snap[c])
     if sets:
         conn.execute(f"UPDATE rec_instances SET {', '.join(sets)} WHERE rec_id=?", (*args, row["rec_id"]))
 
@@ -681,11 +714,13 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
             if start and (chain is None or start < chain):
                 chain = start
     rec_id = uuid.uuid4().hex
+    snap = attrs.get("_snapshot") or {}
     conn.execute(
         "INSERT INTO rec_instances (rec_id, restaurant_id, key, module, kind, title, dollar_value, confidence_band, "
         "evidence_sources, cross_module, model_written, cavnar_completes, expected_metric, expected_by, first_surface, "
-        "first_position, created_at, last_event_at, tags, owner_only, target, chain_started_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "first_position, created_at, last_event_at, tags, owner_only, target, chain_started_at, "
+        + ", ".join(SNAPSHOT_COLS) + ") "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + ",".join("?" for _ in SNAPSHOT_COLS) + ")",
         (rec_id, rid, key, module, kind, (title or "")[:200] or None,
          _num(attrs.get("dollar_value")), attrs.get("confidence_band"),
          json.dumps(sorted(set(attrs.get("evidence_sources") or []))) if attrs.get("evidence_sources") else None,
@@ -694,7 +729,8 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
          attrs.get("expected_metric"), attrs.get("expected_by"), surface, position, created_at or now,
          created_at or now, _stored_tags(conn, rid, key, module, kind), 1 if attrs.get("owner_only") else 0,
          str(attrs["target"])[:60] if attrs.get("target") not in (None, "") else None,
-         chain if (chain and chain < (created_at or now)) else None))
+         chain if (chain and chain < (created_at or now)) else None,
+         *(snap.get(c) for c in SNAPSHOT_COLS)))
     if replaced:
         _supersede(conn, replaced[0], rid, key, by=rec_id, meta=replaced[1])
     for other in others:
@@ -757,6 +793,53 @@ _PRESENT_ATTRS = ("dollar_value", "confidence_band", "evidence_sources", "cross_
                   "cavnar_completes", "expected_metric", "expected_by", "target", "owner_only")
 
 
+def _snapshots(restaurant_id, items, db_path=DB_PATH) -> dict:
+    """{index in items: snapshot fields} for a batch (contract K3). An item
+    carrying its K1 `confidence` is snapshotted from it. One shown with none
+    (a surface that carries no confidence yet) has its Historical Accuracy
+    and Data Freshness measured here, once per batch through rec_trust, so
+    calibration can still read them — its overall and evidence stay NULL:
+    nothing was shown. Never raises."""
+    out = {}
+    try:
+        import rec_trust
+        import confidence_engine as ce
+        import data_freshness
+    except Exception as e:
+        print(f"[rec_ledger] confidence snapshot unavailable: {e}")
+        return out
+    ctx = None
+    for i, it in enumerate(items or []):
+        conf = it.get("confidence")
+        try:
+            if isinstance(conf, dict) and conf.get("version"):
+                out[i] = rec_trust.snapshot_fields(conf)
+                continue
+            if not str(it.get("key") or "").strip():
+                continue
+            if ctx is None:
+                ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+            acc = ce.accuracy(ctx.record(kind_of(it.get("key"))))
+            fr = ce.freshness(ctx.sources(data_freshness.sources_for(it.get("evidence_sources")
+                                                                     or [it.get("module")])))
+            out[i] = {"confidence_pct": None, "evidence_pct": None, "accuracy_pct": acc.get("pct"),
+                      "accuracy_n": acc.get("n"), "freshness_pct": fr.get("pct"),
+                      "freshness_as_of": fr.get("as_of_iso"), "trust_version": ce.VERSION}
+        except Exception as e:
+            print(f"[rec_ledger] confidence snapshot failed for {it.get('key')}: {e}")
+    return out
+
+
+def _last_shown_pct(conn, rec_id):
+    """The overall confidence % the episode's latest showing carried, or None."""
+    try:
+        row = conn.execute("SELECT meta FROM rec_events WHERE rec_id=? AND event='shown' "
+                           "ORDER BY at DESC, id DESC LIMIT 1", (rec_id,)).fetchone()
+        return (json.loads(row["meta"] or "{}") or {}).get("confidence_pct") if row else None
+    except Exception:
+        return None
+
+
 def local_day(conn, restaurant_id, now=None) -> str:
     """The restaurant's own calendar date (its timezone) as YYYY-MM-DD — the
     day a `shown` is counted once per surface. A UTC day began at 7pm CDT,
@@ -787,6 +870,9 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     out = {}
     if not restaurant_id or not items:
         return out
+    # Measured before the write connection opens (the snapshot reads the
+    # ledger and each source on connections of its own).
+    snaps = _snapshots(restaurant_id, items, db_path=db_path)
     try:
         conn = get_conn(db_path)
     except Exception as e:
@@ -799,6 +885,11 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
             if not key:
                 continue
             attrs = {k: it.get(k) for k in _PRESENT_ATTRS}
+            conf = it.get("confidence") if isinstance(it.get("confidence"), dict) else None
+            if not attrs.get("confidence_band") and conf and conf.get("band"):
+                attrs["confidence_band"] = conf["band"]
+            snap = snaps.get(i) or {}
+            attrs["_snapshot"] = snap
             pos = it.get("position") if it.get("position") is not None else i
             rec_id = _open_or_new(conn, restaurant_id, key, it.get("module"), it.get("kind"), it.get("title"), attrs,
                                   surface, pos)
@@ -808,6 +899,16 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                 # The figure it was shown with, each time (calibration, #43).
                 if _num(attrs.get("dollar_value")) is not None:
                     meta["dollar_value"] = _num(attrs["dollar_value"])
+                # ...and the confidence it was shown with, each time (K3),
+                # noting a move since the episode's last showing (the
+                # confidence change log, CA6 §C).
+                for c in SNAPSHOT_COLS:
+                    if snap.get(c) is not None:
+                        meta[c] = snap[c]
+                if snap.get("confidence_pct") is not None:
+                    before = _last_shown_pct(conn, rec_id)
+                    if before is not None and abs(int(snap["confidence_pct"]) - int(before)) >= CONFIDENCE_MOVE_POINTS:
+                        meta["confidence_moved"] = {"from": int(before), "to": int(snap["confidence_pct"])}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
         kinds = [str(k) for k in (replaces or ()) if k]

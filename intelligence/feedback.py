@@ -329,6 +329,26 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
             from_ledger += n
         if ledger:
             _cursor_set(conn, last)
+        # The confidence the owner was shown with it (confidence audit, K3):
+        # each event takes its episode's snapshot — the latest episode of
+        # the key started on or before the event — as a 0-1 figure, so
+        # intel_confidence_log.mean_confidence stops being NULL by
+        # construction. Filled once; an episode shown with no confidence
+        # leaves it NULL (nothing was said).
+        try:
+            conn.execute(
+                "UPDATE intel_rec_events SET confidence_at = ("
+                "  SELECT i.confidence_pct / 100.0 FROM rec_instances i"
+                "  WHERE i.restaurant_id = intel_rec_events.restaurant_id AND i.key = intel_rec_events.source_key"
+                "    AND i.confidence_pct IS NOT NULL"
+                "    AND substr(i.created_at, 1, 10) <= substr(COALESCE(intel_rec_events.event_at, '9999-12-31'), 1, 10)"
+                "  ORDER BY i.created_at DESC LIMIT 1) "
+                "WHERE confidence_at IS NULL AND EXISTS ("
+                "  SELECT 1 FROM rec_instances i WHERE i.restaurant_id = intel_rec_events.restaurant_id"
+                "    AND i.key = intel_rec_events.source_key AND i.confidence_pct IS NOT NULL"
+                "    AND substr(i.created_at, 1, 10) <= substr(COALESCE(intel_rec_events.event_at, '9999-12-31'), 1, 10))")
+        except Exception as e:           # a database from before the snapshot columns
+            print(f"[intelligence.feedback] confidence_at not filled: {e}")
         # Rows read on an earlier pass are not read again, but the cohort
         # they belong to is today's (a category set or changed since) — one
         # statement per restaurant, touching only rows that differ.

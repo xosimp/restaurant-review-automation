@@ -1124,6 +1124,9 @@ def _do_mobile_home(current_user):
                 "action": (a.get("action") or {}).get("kind") or "open_module",
                 "severity": a.get("severity"),
                 "evidence": a.get("evidence"),
+                # The item's measured confidence (K1/K4) — the same object
+                # web Home carries; older builds ignore the key.
+                "confidence": a.get("confidence"),
                 # The key an answer is recorded against (rec_ledger), and
                 # whether this item may be hidden at all — a critical
                 # health item may not.
@@ -1150,13 +1153,20 @@ def _do_mobile_home(current_user):
             _brief_ready = _brief_payload.get("readiness")
             _brief_quieter = _brief_payload.get("quieter") or []
             _brief_assignees = _brief_payload.get("assignees") or []
+            # Data freshness per source, the stalest date and what
+            # "monitoring" may honestly count (K4) — as web Home has them.
+            _brief_fresh = {"freshness": _brief_payload.get("freshness") or [],
+                            "monitoring": _brief_payload.get("monitoring"),
+                            "data_as_of": ((_brief_payload.get("brief") or {}).get("data_as_of"))}
         else:
             _brief_recs, _brief_wins, _brief_ready = [], [], None
             _brief_quieter, _brief_assignees = [], []
+            _brief_fresh = {"freshness": [], "monitoring": None, "data_as_of": None}
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
         _brief_recs, _brief_wins, _brief_ready = [], [], None
         _brief_quieter, _brief_assignees = [], []
+        _brief_fresh = {"freshness": [], "monitoring": None, "data_as_of": None}
 
     return {
         "ok": True,
@@ -1199,6 +1209,7 @@ def _do_mobile_home(current_user):
         # otherwise have nothing on it.
         "first_look": _home_first_look(restaurant, rstats, labor, inv),
         "readiness": _brief_ready,
+        **_brief_fresh,
         # The restaurant's own clock, so the phone can put the close-out in
         # the day's slot after 8pm and the weekly receipts first on Monday —
         # the same rule the web Home uses.

@@ -823,7 +823,8 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                 f"Reply to the {n} review{'' if n == 1 else 's'} at 2 stars or worse still waiting on an answer",
                 "a guest who complained is waiting, and every later reader sees the silence",
                 ["reviews"], urgency="critical",
-                evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"])
+                evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"],
+                evidence_input={"n": n, "kind": "count", "basis": f"{n} unanswered low-star reviews on file"})
 
     for top in (links or [])[:1]:
         # "link:<kind>:<subject>" — a bare "link:<kind>" meant one "Not for
@@ -831,14 +832,22 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         add(link_key(top), top.get("confirm_by") or top.get("headline"),
             top.get("headline"), top.get("modules") or [], urgency="important",
             evidence=top.get("evidence"), claim_kind="inferred",
-            confirm_by=top.get("confirm_by"), link_headline=top.get("headline"))
+            confirm_by=top.get("confirm_by"), link_headline=top.get("headline"),
+            # Two modules moving together is an inference, never a measured
+            # cause: its evidence is the figures it cites, flagged inferred.
+            evidence_input={"n": len([e for e in (top.get("evidence") or []) if e]), "kind": "evidence_items",
+                            "flags": ("inferred",),
+                            "basis": f"{len(top.get('modules') or [])} modules moving together — an inference, "
+                                     "not a measured cause"})
 
     fx = food_brief.get("fix_first")
     if fx and (fx.get("what") or fx.get("label")):
         add(driver_key(fx), driver_action(fx),
             ("otherwise " + fx["if_ignored"]) if fx.get("if_ignored") else None, ["food_cost"],
             dollars=fx.get("dollars_monthly"), evidence=[fx.get("evidence")],
-            claim_kind="computed", confidence=fx.get("confidence"))
+            claim_kind="computed",
+            dollars_basis="this driver alone, from its own recorded usage and prices, per month",
+            evidence_input=fx.get("evidence_input") or _driver_evidence_input(fx))
     else:
         try:
             import food_cost_intelligence as fci
@@ -852,27 +861,43 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             # module alike; "food_diagnosis" had no subject and one answer
             # silenced every future diagnosis (M-9, H-13).
             from client_api import diagnosis_rec_key
+            import rec_trust
+            _n_ev = rec_trust.verified_evidence_count(dg)
             add(diagnosis_rec_key("diag_food", dg) or "food_diagnosis", dg["recommended_action"],
                 dg.get("cause"), ["food_cost"],
                 dollars=dg.get("dollars_at_stake"), evidence=[dg.get("headline")], claim_kind="inferred",
-                alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
+                alternative=dg.get("alternative_cause"), model_written=True,
+                evidence_input=rec_trust.diagnosis_evidence(dg, _n_ev, "evidence_items",
+                                                            "a diagnosis of this restaurant's own ledger"))
 
     rfx = reviews_brief.get("fix_first")
     if rfx and rfx.get("what"):
         cat = rfx["what"]
+        _mentions = next((int(p.get("mentions") or 0) for p in (reviews_brief.get("biggest_problems") or [])
+                          if p.get("category") == cat), None)
+        if _mentions is None:
+            import re as _re
+            _m = _re.match(r"\s*(\d+)", str(rfx.get("evidence") or ""))
+            _mentions = int(_m.group(1)) if _m else None
         dg = next((d for d in (reviews.get("diagnoses") or []) if d.get("category") == cat
                    and d.get("recommended_action")), None)
         if dg:
             # The diagnosis's action carries the Reviews card's key, so an
             # answer on either holds on both (M-9).
             from client_api import diagnosis_rec_key
+            import rec_trust
+            _n_rv = int(dg.get("mention_count") or _mentions or 0)
             add(diagnosis_rec_key("diag_review", dg) or issue_key(cat), dg["recommended_action"],
                 dg.get("cause"), ["reviews"],
                 evidence=[rfx.get("evidence")], claim_kind="inferred",
-                alternative=dg.get("alternative_cause"), confidence=dg.get("confidence"))
+                alternative=dg.get("alternative_cause"), model_written=True,
+                evidence_input=rec_trust.diagnosis_evidence(dg, _n_rv, "reviews",
+                                                            f"a diagnosis read from {_n_rv} reviews"))
         else:
             add(issue_key(cat), f"Read the {_cat(cat)} complaints and pick one fix for this week",
-                rfx.get("why"), ["reviews"], evidence=[rfx.get("evidence")], claim_kind="computed")
+                rfx.get("why"), ["reviews"], evidence=[rfx.get("evidence")], claim_kind="computed",
+                evidence_input={"n": _mentions, "kind": "reviews",
+                                "basis": f"{_mentions} negative reviews on this theme"})
 
     if labor.get("is_live") and _f(labor.get("potential_savings_monthly")) > 0:
         dow = {k: v for k, v in (labor.get("dow_summary") or {}).items() if v}
@@ -890,12 +915,57 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                 f"{day} runs the heaviest labor % of the week", ["labor"], urgency="important",
                 dollars=labor.get("potential_savings_monthly"),
                 evidence=[f"gap above the {target:g}% target over {labor.get('period_days', 0)} days synced"],
-                claim_kind="computed", same_as="money:labor")
+                claim_kind="computed", same_as="money:labor",
+                # Three labor dollar figures can sit on one Home page; each
+                # says its scope (CA4 F14).
+                dollars_basis="the whole schedule's gap to your target, per month",
+                evidence_input=_labor_evidence_input(labor))
 
     for c in out:
         c["score"] = URGENCY_WEIGHT.get(c["urgency"], 1.0) * max(c["dollars_monthly"] or 0.0, UNPRICED_FLOOR)
     out.sort(key=lambda c: -c["score"])
     return out
+
+
+def _driver_evidence_input(fx):
+    """A food fix_first's evidence input when the brief did not carry it."""
+    try:
+        import food_cost_intelligence as fci
+        kind, item = _driver_parts(fx)
+        return fci.driver_evidence(dict(fx, kind=kind, item=item))
+    except Exception:
+        return {"n": None, "basis": "the ledger"}
+
+
+def _labor_evidence_input(labor):
+    """Evidence for a whole-schedule labor claim: the trading days with
+    sales, the share of shift days that carry sales, and the analysis's
+    partial-data flags (CA3 F4)."""
+    days = int((labor.get("date_range") or {}).get("days") or labor.get("period_days") or 0)
+    missing = len(labor.get("days_missing_sales") or [])
+    flags = tuple(f for f, on in (("days_missing_sales", missing),
+                                  ("hours_are_estimated", labor.get("hours_are_estimated")),
+                                  ("days_with_conflicting_sales", labor.get("days_with_conflicting_sales")))
+                  if on)
+    return {"n": max(0, days - missing), "kind": "trading_days",
+            "coverage": ((days - missing) / float(days)) if days else None, "flags": flags,
+            "basis": f"{max(0, days - missing)} days of shifts with sales" + (f" of {days}" if missing else "")}
+
+
+def one_thing_confidence(restaurant_id, c, db_path=DB_PATH, ctx=None):
+    """The K1 confidence of a one-thing candidate (the Home hero, CA1 H8 —
+    it carried none that any surface showed), from its own evidence input
+    and the sources of the modules it rests on. Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        mods = ["inventory" if m == "food_cost" else m for m in (c.get("modules") or [])]
+        return rec_trust.assess(restaurant_id, c.get("key") or "", evidence=c.get("evidence_input"),
+                                sources=data_freshness.sources_for(mods), db_path=db_path, ctx=ctx)
+    except Exception as e:
+        log.warning("one thing: confidence unavailable: %s", e)
+        import confidence_engine
+        return confidence_engine.unknown()
 
 
 def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
@@ -961,7 +1031,12 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None):
             continue
         if c.get("same_as") and c["same_as"] in silenced:
             continue            # answered under the other name for the same news
-        return dict(c)
+        out = dict(c)
+        # The hero carries its measured confidence (K4), and says whether
+        # the model wrote it.
+        out["confidence"] = one_thing_confidence(restaurant_id, out, db_path=db_path)
+        out["model_written"] = bool(out.get("model_written"))
+        return out
     return None
 
 

@@ -307,19 +307,21 @@ def test_confidence_counts_only_measured_factors_and_is_deterministic(db_path):
 
 
 def test_home_recommendations_carry_confidence_without_changing_their_shape(db_path, monkeypatch):
+    import rec_trust
+    import rec_learning
     rid = _rid(db_path, module_labor=1)
-    seen = {}
-    monkeypatch.setattr(intelligence, "confidence_for", lambda r, kind, metric=None, restaurant=None, db_path=None:
-                        seen.setdefault(kind, {"score": 0.3, "band": "low", "caution": "Low confidence — test.", "factors": []}))
-    # One confidence per card, from its own evidence: the kind's score is
-    # read (so it can adjust the card) but never replaces the card's band.
-    c = home_brief._card_confidence(rid, "trim_day:Monday", "labor_pct", models.get_restaurant(rid, db_path=db_path),
-                                    "medium", "four weeks of shifts")
-    assert "trim_day" in seen
-    assert c["band"] == "medium" and c["reason"] == "four weeks of shifts" and c["adjusted"] is None
-    monkeypatch.setattr(intelligence, "confidence_for", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    c = home_brief._card_confidence(rid, "x:y", None, None, "high", "measured")
-    assert c["band"] == "high"                                                   # never fails the brief
+    ctx = rec_trust.Context(rid, restaurant=models.get_restaurant(rid, db_path=db_path), db_path=db_path)
+    # One measured confidence per card (K1): the card's own evidence, this
+    # restaurant's record of the kind, the freshness of its sources.
+    c = home_brief.card_confidence(ctx, "trim_day:Monday", {"n": 4, "kind": "weekdays",
+                                                            "basis": "4 Mondays in your shift data"})
+    assert c["dimensions"]["evidence"]["pct"] == 100 and c["dimensions"]["accuracy"]["pct"] is None
+    assert c["pct"] == 70 and c["band"] == "medium" and c["label"] == "70% confidence"
+    assert isinstance(c["score"], float) and c["caution"]
+    monkeypatch.setattr(rec_learning, "kind_record", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    c = home_brief.card_confidence(rec_trust.Context(rid, db_path=db_path), "x:y", {"n": 9, "kind": "reviews"})
+    # never fails the brief — and an unreadable record is low, never medium
+    assert c["band"] == "low" and c["pct"] is None and c["score"] == 0.0
 
 
 # ── jobs: bounded, resumable, and the learning pass end to end ───────────────

@@ -878,7 +878,11 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         worsened.append({"what": f"Rating down {abs(trend['change']):.2f}★ over {trend['weeks_above_floor']} weeks",
                          "confidence": trend["confidence"]})
     if stats.get("response_rate", 0) >= 80:
-        improved.append({"what": f"{stats['response_rate']:.0f}% of reviews answered", "confidence": "high"})
+        # The band from the count it rests on (confidence_engine), not a
+        # hand-set "high" (confidence audit E2).
+        import confidence_engine as _ce
+        improved.append({"what": f"{stats['response_rate']:.0f}% of reviews answered",
+                         "confidence": _ce.band(_ce.evidence(n=int(stats.get("total") or 0), kind="reviews")["pct"])})
 
     return {
         "biggest_problems": problems,
@@ -1311,6 +1315,21 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
             "stale_note": (f"From a read on {_mdy_safe(r['generated_at'])} — it has not been refreshed since."
                            if stale else None),
         })
+    # The measured confidence of each (K6, confidence audit): evidence from
+    # the reviews behind the category, capped by the model's own band and by
+    # any unsupported figure — `confidence` stays the band string older
+    # clients decode. One ledger read for the list.
+    try:
+        import rec_trust
+        _ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+        for d in out:
+            n_rv = int(d.get("mention_count") or 0)
+            d["confidence_detail"] = rec_trust.diagnosis_confidence(
+                restaurant_id, f"diag_review:{d.get('category')}", d, n_rv, "reviews",
+                f"{n_rv} reviews on this theme over {d.get('window_days') or 90} days",
+                sources=("reviews",), ctx=_ctx)
+    except Exception as e:
+        print(f"[review_intelligence] diagnosis confidence unavailable: {e}")
     return out
 
 

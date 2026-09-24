@@ -326,22 +326,64 @@ def get_week_start_day(restaurant_id: int) -> int:
         return 0
 
 
+# A lead driver this close to target is inside labor %'s normal swing: its
+# diagnosis never reads high on the data alone.
+DIAGNOSIS_MARGIN_PTS = 3.0
+
+
+def diagnosis_evidence_input(analysis: dict, margin=None) -> dict:
+    """The labor read's Evidence Strength input (confidence_engine.evidence):
+    days of shifts with sales, their share of the shift days, and the
+    partial-data flags the analysis already computes (CA3 F4)."""
+    a = analysis or {}
+    days = int((a.get("date_range") or {}).get("days") or a.get("period_days") or 0)
+    missing = len(a.get("days_missing_sales") or [])
+    with_sales = max(0, days - missing)
+    flags = tuple(f for f, on in (("days_missing_sales", missing),
+                                  ("hours_are_estimated", a.get("hours_are_estimated")),
+                                  ("days_with_conflicting_sales", a.get("days_with_conflicting_sales")),
+                                  ("period_too_short", 0 < int(a.get("period_days") or days or 0) < MIN_DAYS_TO_EXTRAPOLATE))
+                  if on)
+    ev = {"n": with_sales, "kind": "trading_days", "coverage": (with_sales / float(days)) if days else None,
+          "flags": flags,
+          "basis": f"{with_sales} days of shifts with sales" + (f" of {days}" if missing else "")}
+    if margin is not None and margin <= DIAGNOSIS_MARGIN_PTS:
+        ev["cap"] = 74
+        ev["cap_reason"] = f"labor is {max(0.0, margin):.1f} pts over target — inside its normal swing"
+    return ev
+
+
+def _evidence_band(ev_in) -> str:
+    """The band a first reading of this evidence earns: its Evidence Strength
+    with no track record here yet (confidence_engine), as a word for the
+    older clients that decode `confidence` as a string."""
+    import confidence_engine as ce
+    return ce.assemble(ce.evidence(**ev_in), ce.accuracy(None), ce.freshness(()))["band"]
+
+
 def diagnose(analysis: dict) -> dict:
     """The labor read in the same shape the review diagnosis uses — cause,
     alternative_cause, what_would_confirm, operational_evidence, confidence
     — computed from the analysis, not asked of a model (moat audit #2).
 
     Every field is a figure the analysis already holds or a sentence built
-    from one. Confidence is the span and margin of the data, not a mood:
-    high needs 14+ days and a driver more than 3 points over target; a
-    lean period with nothing over target returns cause None and low
-    confidence rather than a manufactured problem."""
+    from one. Confidence is measured, not a mood (confidence audit E15):
+    `evidence_input` is the days of shifts that carry sales over the 28-day
+    window (confidence_engine N_FULL "trading_days"), the share of shift
+    days with sales as coverage, and the analysis's partial-data flags; a
+    lead driver within 3 points of target caps it below high. `confidence`
+    is that evidence's band with no track record yet (it cannot read high on
+    its own — the presenting route adds this restaurant's record and the
+    data's freshness as `confidence_detail`, K1). A lean period with
+    nothing over target returns cause None rather than a manufactured
+    problem."""
     a = analysis or {}
     if not a.get("total_sales") or a.get("sales_data_missing"):
         return {"available": False, "reason": "no sales against the shifts, so there is no labor percentage to read"}
     target = float(a.get("labor_target") or 30)
     overall = float(a.get("overall_labor_pct") or 0)
     period = int(a.get("period_days") or 0)
+    ev_in = diagnosis_evidence_input(a, margin=overall - target)
     evidence = [{"module": "labor", "metric": "labor % over the period", "value": f"{overall}% against a {target:g}% target"}]
     drivers = []
     # 1. a weekday that runs over target repeatedly
@@ -390,7 +432,8 @@ def diagnose(analysis: dict) -> dict:
         return {"available": True, "cause": None,
                 "summary": f"Labor ran {overall}% against {target:g}% over {period} days — nothing over target to diagnose.",
                 "alternative_cause": None, "what_would_confirm": None,
-                "operational_evidence": evidence, "confidence": "low" if period < 14 else "medium"}
+                "operational_evidence": evidence, "confidence": _evidence_band(ev_in),
+                "evidence_input": ev_in}
     cause = drivers[0]
     alt = drivers[1] if len(drivers) > 1 else None
     evidence.append(cause[3])
@@ -401,12 +444,11 @@ def diagnose(analysis: dict) -> dict:
         "overtime": "Check whether the overtime hours fell on the busiest shifts or on the same person covering gaps — the schedule history shows which.",
         "role": "Look at that role's headcount on the two quietest days of the week; that is where a share this high usually hides.",
     }[cause[0]]
-    margin = overall - target
-    confidence = "high" if period >= 14 and margin > 3 else ("medium" if period >= 7 else "low")
     subject = str(subjects.get(cause[0]) or "").strip().lower()
     return {"available": True, "cause": cause[2],
             "alternative_cause": alt[2] if alt else "Sales ran under the period's norm, which raises the percentage without any change in staffing.",
-            "what_would_confirm": confirm, "operational_evidence": evidence, "confidence": confidence,
+            "what_would_confirm": confirm, "operational_evidence": evidence, "confidence": _evidence_band(ev_in),
+            "evidence_input": ev_in,
             "summary": f"Labor ran {overall}% against {target:g}% over {period} days.",
             "driver": f"{cause[0]}:{subject}" if subject else cause[0]}
 

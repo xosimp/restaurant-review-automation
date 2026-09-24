@@ -235,7 +235,10 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
             d["increase_per_plate"] += inc
             d["drivers"].append({"ingredient": ing["name"], "old_price": w["old_price"],
                                  "new_price": w["new_price"], "change_pct": w["change_pct"],
-                                 "per_plate": round(inc, 2)})
+                                 "per_plate": round(inc, 2),
+                                 # How many weekly price readings the rise
+                                 # rests on — the reprice card's evidence.
+                                 "weeks": int(w.get("weeks") or 1)})
 
     out = []
     for d in by_dish.values():

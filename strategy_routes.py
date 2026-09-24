@@ -2499,7 +2499,11 @@ def _present_cross_module(u, fix_first, links):
             items.append({"key": ff["key"], "module": "home", "title": ff.get("what"), "position": 0,
                           "dollar_value": ff.get("dollars_monthly"),
                           "evidence_sources": ff.get("modules") or None,
-                          "cross_module": len(ff.get("modules") or []) > 1})
+                          "cross_module": len(ff.get("modules") or []) > 1,
+                          # The hero's measured confidence, snapshotted at
+                          # delivery (K3) — the pick carries it (K4).
+                          "confidence": ff.get("confidence") if isinstance(ff.get("confidence"), dict) else None,
+                          "model_written": bool(ff.get("model_written"))})
             seen.add(ff["key"])
         out_links = []
         for l in links or []:

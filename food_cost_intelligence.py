@@ -403,12 +403,70 @@ def _waste_weeks(restaurant_id, db_path=DB_PATH) -> dict:
 def _waste_confidence(weeks: int) -> str:
     """A month projected from ONE week of waste (x52/12) is a projection of a
     single observation, not a measured monthly figure (audit #35). Three or
-    more weeks of the item in the offender list is a pattern."""
+    more weeks of the item in the offender list is a pattern.
+
+    No longer read by cost_drivers (its confidence is measured —
+    driver_evidence). Candidate for future cleanup after additional
+    verification."""
     if weeks >= 3:
         return "high"
     if weeks == 2:
         return "medium"
     return "low"
+
+
+def driver_evidence(d: dict) -> dict:
+    """A cost driver's Evidence Strength input (confidence_engine.evidence):
+    what its own measurement rests on, per kind. Replaces the hand-set
+    high/medium bands (audit #35, confidence audit CA1 red flag 8)."""
+    kind = d.get("kind")
+    if kind == "waste":
+        weeks = int(d.get("weeks_of_data") or 1)
+        return {"n": weeks, "kind": "waste_weeks",
+                "basis": ("one week of waste counts projected to a month" if weeks == 1 else
+                          f"an offender in {weeks} of the last 8 weeks of waste counts")}
+    if kind == "portion":
+        return {"n": 1, "kind": "count", "flags": ("inferred",),
+                "basis": "physical counts against recipes — portioning, prep loss or a miscount all fit"}
+    if kind == "price":
+        weeks = int(d.get("price_weeks") or 1)
+        return {"n": weeks, "kind": "price_weeks",
+                "basis": f"{weeks} weekly price reading{'s' if weeks != 1 else ''} of this ingredient"}
+    if kind == "sourcing":
+        return {"n": 1, "kind": "count", "flags": ("list_prices",),
+                "basis": "two suppliers' prices on file for the same unit"}
+    if kind == "menu":
+        lines = int(d.get("recipe_lines") or 0)
+        unreviewed = int(d.get("recipe_unreviewed_lines") or 0)
+        return {"n": 1, "kind": "count",
+                "coverage": ((lines - unreviewed) / float(lines)) if lines else None,
+                "basis": ("this dish's plate cost against its own sales"
+                          + (f"; {unreviewed} of its {lines} recipe lines are an unreviewed draft" if unreviewed else ""))}
+    return {"n": None, "basis": "the ledger"}
+
+
+def _driver_confidence(restaurant_id, drivers, db_path=DB_PATH):
+    """Attach `evidence_input`, `confidence_detail` (K1) and `confidence`
+    (its band) to every driver, reading the ledger and sources once."""
+    try:
+        import rec_trust
+        import data_freshness
+        import business_intelligence as _bi
+        ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+        srcs = data_freshness.sources_for(["inventory"])
+    except Exception as e:
+        print(f"[food_cost_intelligence] driver confidence unavailable: {e}")
+        ctx = None
+    for d in drivers:
+        ev = driver_evidence(d)
+        d["evidence_input"] = ev
+        if ctx is None:
+            import confidence_engine as _ce
+            conf = _ce.unknown()
+        else:
+            conf = rec_trust.assess(restaurant_id, _bi.driver_key(d), evidence=ev, sources=srcs, ctx=ctx)
+        d["confidence_detail"] = conf
+        d["confidence"] = conf.get("band") or "low"
 
 
 def _recipe_provenance(restaurant_id, dish_ids, db_path=DB_PATH) -> dict:
@@ -539,7 +597,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         weeks = max(1, int(_ww.get(str(x["item"]).strip().lower(), 0)))
         drivers.append({
             "kind": "waste", "label": f"{x['item']} waste above tolerance",
-            "dollars_monthly": monthly, "confidence": _waste_confidence(weeks), "difficulty": "low",
+            "dollars_monthly": monthly, "difficulty": "low",
             "weeks_of_data": weeks,
             "evidence": (f"{x['item']} wasted {x.get('waste_pct')}% of what was ordered "
                          f"against a {x.get('waste_tolerance_pct')}% tolerance band, "
@@ -564,9 +622,9 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 "dollars_monthly": v["monthly_cost"],
                 # An inferred gap is a measurement of a discrepancy, not of a
                 # cause. It could be portioning, prep loss, shrink or a bad
-                # count, and nothing here can separate them — so it never
-                # carries high confidence.
-                "confidence": "medium", "difficulty": "medium",
+                # count, and nothing here can separate them — so its evidence
+                # is flagged `inferred` and never reads high (driver_evidence).
+                "difficulty": "medium",
                 "evidence": (f"physical counts came in {v['variance_pct']}% under what recipes "
                              f"predicted for {v['ingredient']} ({v['gap_qty']} {v['unit']} "
                              f"against {v['theoretical_qty']} theoretical)"
@@ -602,7 +660,9 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             _price_drivers.append({
                 "kind": "price", "label": f"{w['item']} price up {abs(w['change_pct']):.0f}%",
                 "dollars_monthly": monthly,
-                "confidence": "high" if w["kind"] == "trend" else "medium",
+                # Weekly price readings behind the rise: its evidence
+                # (driver_evidence); a one-week move is one reading.
+                "price_weeks": int(w.get("weeks") or 1),
                 "difficulty": "medium",
                 "evidence": (f"{w['item']} moved ${_f(w.get('old_price')):.2f} to "
                              f"${_f(w.get('new_price')):.2f}"
@@ -628,7 +688,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 continue
             drivers.append({
                 "kind": "sourcing", "label": f"{c['ingredient']} cheaper from {c['cheapest_supplier']}",
-                "dollars_monthly": monthly, "confidence": "medium", "difficulty": "medium",
+                "dollars_monthly": monthly, "difficulty": "medium",
                 "evidence": (f"{c['cheapest_supplier']} lists it at ${c['cheapest_price']:.2f} vs "
                              f"${c['dearest_price']:.2f} from {c['dearest_supplier']} "
                              f"({c['spread_pct']}% apart, same unit)"),
@@ -670,12 +730,12 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             monthly = _gap_monthly(e)
             p = prov.get(e["id"]) or {"lines": 0, "unreviewed": 0, "ingredients": []}
             unreviewed = p["unreviewed"]
-            confidence = "high" if not unreviewed else ("low" if unreviewed >= p["lines"] else "medium")
             drivers.append({
                 "kind": "menu", "label": f"{e['name']} runs at {fc:g}% food cost",
-                "dollars_monthly": monthly, "confidence": confidence, "difficulty": "high",
+                "dollars_monthly": monthly, "difficulty": "high",
                 "target_pct": target_pct,
                 "recipe_unreviewed_lines": unreviewed,
+                "recipe_lines": p["lines"],
                 "evidence": (f"{e['name']} costs ${e['plate_cost']:.2f} on a "
                              f"${_f(e['sell_price']):.2f} price against your {target_pct:g}% target, "
                              f"{e['units_sold']:g} sold in {il._POPULARITY_WINDOW_DAYS} days"
@@ -689,6 +749,13 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             })
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "menu", _e))
+
+    # Every driver's confidence is measured, not hand-set (confidence audit,
+    # E2): its evidence (weeks as an offender, price readings, reviewed
+    # recipe lines, the inferred-gap flag) through rec_trust — the K1 object
+    # in `confidence_detail`, its band in `confidence` for older clients,
+    # which decode that field as a string.
+    _driver_confidence(restaurant_id, drivers, db_path=db_path)
 
     # The priority model, in order: financial impact first, then confidence,
     # then ease. Difficulty breaks a tie between two drivers worth similar
@@ -1541,7 +1608,7 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         except Exception:
             return fallback
 
-    return {
+    out = {
         "ok": True, "headline": row["headline"], "cause": row["cause"],
         "alternative_cause": row["alternative_cause"],
         "what_would_confirm": row["what_would_confirm"],
@@ -1561,6 +1628,21 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "stale_note": (f"From a read on {_mdy_safe(row['generated_at'])} — it has not been refreshed since."
                        if stale else None),
     }
+    # The measured confidence (K6, confidence audit): evidence from the
+    # verified figures it cites, capped by the model's own band and by any
+    # unsupported figure; `confidence` stays the band string older clients
+    # decode.
+    try:
+        import rec_trust
+        import data_freshness
+        n_ev = rec_trust.verified_evidence_count(out)
+        out["confidence_detail"] = rec_trust.diagnosis_confidence(
+            restaurant_id, "diag_food", out, n_ev, "evidence_items",
+            f"{n_ev} verified figure{'s' if n_ev != 1 else ''} from the ledger behind it",
+            sources=data_freshness.sources_for(["inventory"]), db_path=db_path)
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis confidence unavailable: {e}")
+    return out
 
 
 # ── The eight questions a morning briefing has to answer ────────────────────
@@ -1569,7 +1651,10 @@ def _as_action(d: dict) -> dict:
     """One driver in the shape every consumer of the brief reads."""
     return {"what": d["label"], "dollars_monthly": d["dollars_monthly"],
             "confidence": d["confidence"], "difficulty": d["difficulty"],
-            "evidence": d["evidence"], "if_ignored": d["if_ignored"]}
+            "evidence": d["evidence"], "if_ignored": d["if_ignored"],
+            # The measured confidence (K1) and what it rests on — additive.
+            "confidence_detail": d.get("confidence_detail"), "evidence_input": d.get("evidence_input"),
+            "kind": d.get("kind"), "item": d.get("item")}
 
 
 def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -1642,7 +1727,7 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     return {
         "what_changed": changed or None,
-        "why": ({"cause": diag["cause"], "confidence": diag["confidence"],
+        "why": ({"cause": diag["cause"], "confidence": ((diag.get("confidence_detail") or {}).get("band") or diag["confidence"]), "confidence_detail": diag.get("confidence_detail"),
                  "alternative": diag["alternative_cause"], "stale": diag["stale"],
                  "as_of": diag.get("as_of"), "stale_note": diag.get("stale_note")}
                 if diag else {"cause": None,

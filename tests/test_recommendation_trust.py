@@ -123,12 +123,24 @@ def test_a_card_has_one_confidence_from_its_own_evidence():
     c = card_confidence("high", "12 reviews in 90 days", {"band": "low", "factors": []})
     assert c["band"] == "high" and c["label"] == "High confidence" and c["caution"] is None
     # only a MEASURED record at this restaurant moves it, and by one band
-    down = card_confidence("high", "x", {"factors": [{"name": "restaurant_history", "value": 0.2,
+    # (read from the factor's structured `measured`, never by sniffing its
+    # note — confidence audit E4)
+    down = card_confidence("high", "x", {"factors": [{"name": "restaurant_history", "value": 0.2, "measured": 3,
+                                                     "improved": 0,
                                                      "note": "this restaurant: 0 of 3 measured improved"}]})
     assert down["band"] == "medium" and down["adjusted"] == "down"
-    unmeasured = card_confidence("high", "x", {"factors": [{"name": "restaurant_history", "value": 0.1,
+    assert "held" not in down["reason"] and "0 of 3 measured here improved" in down["reason"]
+    unmeasured = card_confidence("high", "x", {"factors": [{"name": "restaurant_history", "value": 0.1, "measured": 0,
                                                            "note": "this restaurant: 0 of 2 accepted, none measured yet"}]})
     assert unmeasured["band"] == "high"
+    # a note that merely SAYS "measured" moves nothing
+    sniff = card_confidence("high", "x", {"factors": [{"name": "restaurant_history", "value": 0.1,
+                                                      "note": "this restaurant: 0 of 3 measured improved"}]})
+    assert sniff["band"] == "high"
+    # an unknown band is low, never medium (CA6 duplicate #2)
+    assert card_confidence("bogus", "x", None)["band"] == "low"
+    # no stand-in score: the constant 0.3/0.55/0.8 map is gone
+    assert "score" not in c
 
 
 def test_home_cards_never_print_two_confidences(db_path):
@@ -139,8 +151,12 @@ def test_home_cards_never_print_two_confidences(db_path):
     rec = next(r for r in p["recommendations"] if r["key"].startswith("top_issue:"))
     assert rec["confidence"]["label"] and rec["confidence"]["reason"]
     assert "confidence" not in (rec["evidence"] or "")
-    for field in ("why", "timeframe", "impact", "strength", "if_ignored"):
+    for field in ("why", "timeframe", "impact", "if_ignored"):
         assert rec.get(field), field
+    # One verdict per card: the separate `strength` pill is gone (CA4 F1),
+    # the measured confidence (K1) is the only one.
+    assert "strength" not in rec
+    assert set(rec["confidence"]["dimensions"]) == {"evidence", "accuracy", "freshness"}
 
 
 # ── #5 the one thing is an action, ranked by urgency x dollars ─────────────

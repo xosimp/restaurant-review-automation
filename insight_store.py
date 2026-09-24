@@ -191,6 +191,9 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
         import rec_ledger
         batch = [{"key": it["key"], "module": module, "title": (it.get("title") or it.get("text") or "")[:200],
                   "dollar_value": it.get("dollar_value"), "confidence_band": it.get("confidence_band"),
+                  # The measured confidence it is shown with (K1), for the
+                  # ledger's snapshot at delivery (K3).
+                  "confidence": it.get("confidence") if isinstance(it.get("confidence"), dict) else None,
                   "evidence_sources": it.get("evidence_sources") or [module],
                   "model_written": it.get("model_written", True),
                   "cavnar_completes": it.get("cavnar_completes", False),

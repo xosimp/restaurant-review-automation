@@ -1,11 +1,20 @@
-"""The confidence model: how much a recommendation to this restaurant
-should be trusted, from factors that were measured.
+"""The engine's kind-level model: how much a KIND of recommendation is
+supported at this restaurant, from factors that were measured.
 
 score = Σ weight × factor over the factors that could be measured, with
-the weights renormalised over those present. A factor with no data is
-absent, never 0.5 — an unmeasured thing does not vote. Deterministic: the
-same rows produce the same score, so a test can pin it and a reader can
-see why in `factors`.
+the weights renormalised over those present, times coverage (the share of
+the weights that could be measured). A factor with no data is absent, never
+0.5 — an unmeasured thing does not vote. Deterministic: the same rows
+produce the same score, so a test can pin it and a reader can see why in
+`factors`.
+
+It is NOT what an owner sees. Every owner-facing recommendation carries the
+Recommendation Confidence object (contract K1) built by rec_trust.assess
+from three measured dimensions (confidence_engine); this model is read by
+the admin intelligence dashboard. `measurability` (formerly mislabelled
+"historical accuracy") is how often this restaurant's forecasts and
+results could be READ clearly — it says nothing about whether they were
+right, and it feeds nothing called accuracy (CA2 #12).
 """
 from datetime import date, timedelta
 
@@ -15,14 +24,15 @@ from . import privacy, categories, scoring, patterns
 from . import features as _features
 from .stats import shrink
 
+# Sum to 1.0 (a test holds it; INTELLIGENCE_ENGINE.md lists the same).
 WEIGHTS = {
     "restaurant_history": 0.25,
     "platform_evidence": 0.20,
     "type_match": 0.10,
-    "historical_accuracy": 0.15,
+    "measurability": 0.10,
     "data_completeness": 0.15,
     "pattern_support": 0.10,
-    "recent_changes": 0.10,     # applied as a penalty (1 - change score)
+    "recent_changes": 0.10,     # the factor is (1 - change score): calm reads 1, churn reads 0
 }
 HIGH, MEDIUM = 0.70, 0.45
 
@@ -54,9 +64,13 @@ def _recent_changes(restaurant_id, days=14, db_path=DB_PATH) -> tuple[float, str
     return min(1.0, signals / 3.0), ", ".join(notes) or "no operational changes in the last two weeks"
 
 
-def _historical_accuracy(restaurant_id, db_path=DB_PATH):
-    """1 - mean |forecast error| (capped), blended with how often this
-    restaurant's evaluated outcomes read clearly. None when nothing scored."""
+def _measurability(restaurant_id, db_path=DB_PATH):
+    """How READABLE this restaurant's record is: 1 - mean |forecast error|
+    (capped), blended with the share of evaluated outcomes that gave a clear
+    verdict — a worsened result is as clear as an improved one, so this is
+    never a measure of being right (probe: five worsened results score 1.0;
+    CA2 #12). Named `_historical_accuracy` until the confidence audit.
+    None when nothing scored."""
     conn = get_conn(db_path)
     try:
         errs = [abs(float(r[0])) for r in conn.execute(
@@ -79,7 +93,10 @@ def _historical_accuracy(restaurant_id, db_path=DB_PATH):
 
 def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = None, restaurant=None,
           db_path: str = DB_PATH) -> dict:
-    """{score, band, factors:[{name, value, weight, note}], caution}."""
+    """{score, band, factors:[{name, value, weight, note}], caution}.
+
+    `metric` is accepted for the facade's signature and not read: every
+    factor here is per recommendation KIND, not per metric."""
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
@@ -96,7 +113,9 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         else:
             v = shrink(own["acceptance_rate"], own["answered"], prior=0.5)
             note = f"this restaurant: {own['accepted']} of {own['answered']} accepted, none measured yet"
-        factors.append({"name": "restaurant_history", "value": round(v, 3), "note": note})
+        # Structured, so a reader asks `measured` rather than sniffing the note.
+        factors.append({"name": "restaurant_history", "value": round(v, 3), "note": note,
+                        "measured": int(own["measured"] or 0), "improved": int(own.get("improved") or 0)})
 
     # The cohort (else the platform) WITHOUT this restaurant — its own
     # record is the restaurant_history factor above — and a success figure
@@ -128,9 +147,9 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         factors.append({"name": "type_match", "value": 1.0 if ok else 0.4,
                         "note": f"{categories.label(cohort)}: {'enough similar restaurants to compare' if ok else 'too few similar restaurants yet'}"})
 
-    acc, acc_note = _historical_accuracy(restaurant_id, db_path=db_path)
-    if acc is not None:
-        factors.append({"name": "historical_accuracy", "value": acc, "note": acc_note})
+    meas, meas_note = _measurability(restaurant_id, db_path=db_path)
+    if meas is not None:
+        factors.append({"name": "measurability", "value": meas, "note": meas_note})
 
     latest = _features.latest(restaurant_id, db_path=db_path)
     if latest:
@@ -160,14 +179,20 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         why = next((f["note"] for f in sorted(factors, key=lambda f: f["value"]) if f["value"] < 0.5), None)
         caution = "Low confidence — " + (why or "little of this restaurant's own record supports it yet") + ". Treat as a question to check, not a finding."
     elif band == "medium":
-        caution = "Moderate confidence — worth trying, and the tracker will say whether it held."
+        caution = "Medium confidence — worth trying; a tracker measures what follows, before and after."
     if band == "low" and coverage < 0.5 and caution:
         caution = "Low confidence — too little of this restaurant's record is measured yet to judge it. Treat as a question to check, not a finding."
     return {"score": s, "band": band, "coverage": coverage, "factors": factors, "caution": caution,
             "rec_kind": rec_kind, "cohort": cohort}
 
 
-# ── one confidence per card ─────────────────────────────────────────────────
+# ── one confidence per card (superseded) ────────────────────────────────────
+#
+# card_confidence is no longer called by any surface: every owner-facing card
+# carries rec_trust.assess's measured Recommendation Confidence (K1) since the
+# confidence audit (9/24/26). Kept, band logic only — it no longer returns a
+# stand-in `score` — because tests pin its one-step rule.
+# Candidate for future cleanup after additional verification.
 #
 # score() rates a recommendation KIND at a restaurant. Home printed it under
 # cards whose own evidence line already carried a confidence — "high
@@ -205,22 +230,26 @@ def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict =
         asserted anonymous where score() builds it and again here.
 
     A kind with no measured record anywhere leaves the card's own evidence
-    alone. `basis` says which record moved it: own | cohort | platform."""
-    band = evidence_band if evidence_band in BANDS else "medium"
+    alone. `basis` says which record moved it: own | cohort | platform.
+
+    An unknown band is LOW, never medium — the diagnoses' rule (CA6
+    duplicate #2). "Held" is never said: a before/after result is not an
+    outcomes `held` grade, so the wording is the count."""
+    band = evidence_band if evidence_band in BANDS else "low"
     reason = (evidence_reason or "").strip().rstrip(".")
     adjusted, basis = None, None
     factors = (kind_score or {}).get("factors") or []
     own = next((f for f in factors
-                if f.get("name") == "restaurant_history" and "measured" in str(f.get("note") or "")
-                and "none measured" not in str(f.get("note") or "")), None)
+                if f.get("name") == "restaurant_history" and int(f.get("measured") or 0) > 0), None)
     i = BANDS.index(band)
     if own is not None:
+        said = f"{int(own.get('improved') or 0)} of {int(own['measured'])} measured here improved"
         if own["value"] >= KIND_UP_AT and i < 2:
             band, adjusted, basis = BANDS[i + 1], "up", "own"
-            reason += f"; this kind of change has held here before ({own['note'].split(': ', 1)[-1]})"
+            reason += f"; {said}"
         elif own["value"] <= KIND_DOWN_AT and i > 0:
             band, adjusted, basis = BANDS[i - 1], "down", "own"
-            reason += f"; this kind of change has not held here before ({own['note'].split(': ', 1)[-1]})"
+            reason += f"; {said}"
     else:
         prior = next((f for f in factors if f.get("name") == "platform_evidence"), None)
         if (prior is not None and privacy.cohort_ok(prior.get("restaurants"))
@@ -230,13 +259,10 @@ def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict =
             said = f"{who}: {prior['note']}"
             if prior["value"] >= KIND_UP_AT and i < 2:
                 band, adjusted, basis = BANDS[i + 1], "up", prior.get("scope") or "platform"
-                reason += f"; this kind of change has held elsewhere ({said})"
+                reason += f"; {said}"
             elif prior["value"] <= KIND_DOWN_AT and i > 0:
                 band, adjusted, basis = BANDS[i - 1], "down", prior.get("scope") or "platform"
-                reason += f"; this kind of change has not held elsewhere ({said})"
+                reason += f"; {said}"
     return {"band": band, "label": _BAND_LABEL[band], "reason": reason or None, "adjusted": adjusted, "basis": basis,
-            # Kept for older clients, which render `caution` under a low card.
             "caution": (f"Low confidence — {reason}. Treat it as a question to check."
-                        if band == "low" and reason else None),
-            # Always a number: shipped iOS builds decode `score` as non-optional.
-            "score": {"low": 0.3, "medium": 0.55, "high": 0.8}[band]}
+                        if band == "low" and reason else None)}

@@ -349,7 +349,8 @@ def test_the_cohort_prior_moves_a_band_once_the_floor_is_met():
     assert confidence.card_confidence("medium", "x", _prior(0.9, measured=3))["adjusted"] is None
     # this restaurant's own measured record outranks the cohort
     own = _prior(0.9)
-    own["factors"].append({"name": "restaurant_history", "value": 0.2, "note": "this restaurant: 1 of 5 measured improved"})
+    own["factors"].append({"name": "restaurant_history", "value": 0.2, "measured": 5, "improved": 1,
+                           "note": "this restaurant: 1 of 5 measured improved"})
     c = confidence.card_confidence("medium", "x", own)
     assert c["band"] == "low" and c["basis"] == "own"
 

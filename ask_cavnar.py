@@ -1559,21 +1559,71 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # skimmed.
     if consulted and _ACROSS_LABEL in modules and len(modules) > 1:
         modules.remove(_ACROSS_LABEL)
-    # Confidence is a floor, not a judgment of the reasoning: an answer that
-    # consulted nothing, or that states a figure nobody gave it, cannot be
-    # high whatever it sounds like.
-    if unverified:
-        confidence = "low"
-    elif not tools_used:
-        confidence = "medium"
-    elif len(modules) > 1:
-        confidence = "high"
-    else:
-        confidence = "medium"
+    # Confidence is measured from what the tools returned (contract K5),
+    # not from how many modules were consulted — "high whenever two modules
+    # were read" rated breadth, however thin or stale the data (CA5 F14,
+    # CA1 A1). Evidence: the live reads behind the answer (a module read on
+    # sample data counts 0) and the figures that checked out; any figure
+    # that did not check out caps it low. Freshness: the sources of the
+    # modules read. `confidence` stays the band string both shipped clients
+    # decode; the K1 object rides in `confidence_detail`.
+    detail = _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id)
     return {
         "modules_consulted": modules,
         "tools_used": list(dict.fromkeys(tools_used)),
         "depth": depth,
-        "confidence": confidence,
+        "confidence": detail.get("band") or "low",
+        "confidence_detail": detail,
         "unverified_figures": unverified[:5],
     }
+
+
+def _tool_reads(corpus):
+    """(live, sample) counts of the tool payloads the answer was handed: a
+    payload that says it is sample data (is_live false, sample true) is a
+    read of nothing real."""
+    live = sample = 0
+    for c in (corpus or [])[1:]:
+        try:
+            p = json.loads(c) if isinstance(c, str) else None
+        except (TypeError, ValueError):
+            p = None
+        if not isinstance(p, dict) or p.get("error"):
+            continue
+        if p.get("is_live") is False or p.get("sample") is True or p.get("sample_data") is True:
+            sample += 1
+        else:
+            # The business snapshot reads several modules in one call and
+            # says which: each is a read.
+            live += max(1, len([m for m in (p.get("modules_consulted") or []) if m]))
+    return live, sample
+
+
+def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id):
+    """The K1 confidence of one Ask answer. Never raises."""
+    try:
+        import rec_trust
+        import data_freshness
+        from ai_guard import figure_claims
+        live, sample = _tool_reads(corpus)
+        stated = [c for c in figure_claims(answer or "") if not c.get("year")]
+        checked = max(0, len(stated) - len(unverified or []))
+        if not tools_used:
+            n, basis = 1, "your business snapshot only — no module was read for it"
+        elif live == 0 and sample:
+            n, basis = 0, "sample data only — nothing real was read"
+        else:
+            n = live
+            basis = f"{live} live read{'s' if live != 1 else ''} of your data"
+            if sample:
+                basis += f"; {sample} sample read{'s' if sample != 1 else ''} not counted"
+        if stated:
+            basis += f"; {checked} of {len(stated)} figures checked against your data"
+        ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []), "basis": basis,
+              "sample": bool(tools_used) and live == 0 and bool(sample)}
+        return rec_trust.assess(restaurant_id, "ask_answer", evidence=ev,
+                                sources=data_freshness.sources_for(modules))
+    except Exception as e:
+        print(f"[ask_cavnar] answer confidence unavailable: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()

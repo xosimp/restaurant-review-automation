@@ -741,8 +741,12 @@ def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=N
         if d.get("recommended_action"):
             d["rec_key"] = diagnosis_rec_key(prefix, d)
             if d["rec_key"] and (shown is None or i < shown):
+                # The measured confidence (K6) is what the ledger snapshots;
+                # the band the model wrote is not (confidence audit E3/E13).
+                _cd = d.get("confidence_detail") if isinstance(d.get("confidence_detail"), dict) else None
                 items.append({"key": d["rec_key"], "text": d["recommended_action"], "model_written": True,
-                              "confidence_band": d.get("confidence")})
+                              "confidence": _cd,
+                              "confidence_band": (_cd or {}).get("band") or d.get("confidence")})
     kept = {k["key"] for k in insight_store.present_recs(rid, module, surface, items, user_id=user_id)}
     presented = {it["key"] for it in items}
     silenced = None
@@ -1097,6 +1101,26 @@ def _verify_named_entities(generated: str, context: str) -> list:
     return out
 
 
+def _do_today_confidence(rid, payload):
+    """The K1 confidence of the Reviews read's "Do today" line: a
+    model-written suggestion (its read caps evidence at medium) over the
+    reviews of the last 30 days, capped low by any figure the read could
+    not verify. Never raises."""
+    try:
+        import rec_trust
+        from models import get_review_stats as _grs
+        n30 = int((_grs(rid) or {}).get("last_30d") or 0)
+        unsupported = payload.get("unsupported_figures") or []
+        return rec_trust.assess(rid, "insight_review", evidence={
+            "n": n30, "kind": "reviews", "model_band": "medium", "unverified": len(unsupported),
+            "basis": f"a model-written suggestion from {n30} reviews in the last 30 days"},
+            sources=("reviews",))
+    except Exception as e:
+        print(f"[reviews] do-today confidence unavailable: {e}")
+        import confidence_engine
+        return confidence_engine.unknown()
+
+
 def _review_insight_recs(rid, payload):
     """The recommendations in a Reviews read, keyed and logged (audit #21):
     the "Do today" line ("insight_review:<hash>") and each diagnosis's
@@ -1114,12 +1138,17 @@ def _review_insight_recs(rid, payload):
     if m and promote:
         line = m.group(1).strip()
         key = insight_store.line_key("insight_review", line)
+        # The line's OWN confidence (confidence audit E13): it was stored
+        # with the rating-trend slope's band (payload["confidence"]), which
+        # says how steady the rating line is, not how well supported this
+        # action is — and admin's acceptance-by-confidence mixed the two.
+        conf = _do_today_confidence(rid, payload)
         kept = insight_store.present_recs(rid, "reviews", "reviews",
                                           [{"key": key, "text": line, "title": line, "model_written": True,
-                                            "confidence_band": payload.get("confidence")}])
+                                            "confidence": conf, "confidence_band": conf.get("band")}])
         if kept:
             payload["recs"].append({"key": key, "text": line, "kind": "do_today", "rec_key": key,
-                                    "answerable": True})
+                                    "answerable": True, "confidence_detail": conf})
         else:
             payload["insight"] = (text[:m.start()] + text[m.end():]).replace("\n\n\n", "\n\n").strip()
     if payload.get("diagnoses"):
@@ -1802,6 +1831,10 @@ def _ask_meta(meta):
         "modules_consulted": meta.get("modules_consulted") or [],
         "tools_used": meta.get("tools_used") or [],
         "confidence": meta.get("confidence") or "unknown",
+        # The measured confidence (K1/K5): pct, the three dimensions and
+        # their bases. `confidence` stays the band string, because shipped
+        # iOS builds decode it as a String.
+        "confidence_detail": meta.get("confidence_detail"),
         "unverified_figures": meta.get("unverified_figures") or [],
         "depth": meta.get("depth") or "standard",
     }
@@ -2502,6 +2535,21 @@ def present_labor_diagnosis(rid, diag, user_id=None):
     surface like Food's and Reviews' diagnoses (#25), with the contract
     fields `rec_key`, `answerable` and `answered` (an answered check keeps
     its evidence and loses its controls). Never raises."""
+    if diag and diag.get("available") and diag.get("evidence_input"):
+        # The measured confidence (K6, confidence audit E15): the diagnosis's
+        # own evidence, this restaurant's record of the kind and the labor
+        # data's freshness. `confidence` becomes its band, so the word and
+        # the percentage never disagree.
+        try:
+            import rec_trust
+            import data_freshness
+            diag = dict(diag)
+            _k = f"diag_labor:{diag.get('driver') or 'labor'}"
+            diag["confidence_detail"] = rec_trust.assess(rid, _k, evidence=diag["evidence_input"],
+                                                         sources=data_freshness.sources_for(["labor"]))
+            diag["confidence"] = diag["confidence_detail"].get("band") or diag.get("confidence")
+        except Exception as e:
+            print(f"[labor] diagnosis confidence unavailable rid={rid}: {e}")
     if not diag or not diag.get("available") or not diag.get("cause") or not diag.get("what_would_confirm"):
         return diag
     try:
@@ -2512,6 +2560,7 @@ def present_labor_diagnosis(rid, diag, user_id=None):
                else insight_store.line_key("diag_labor", d["cause"]))
         kept = {k["key"] for k in insight_store.present_recs(
             rid, "labor", "labor", [{"key": key, "text": d["what_would_confirm"], "model_written": False,
+                                     "confidence": d.get("confidence_detail"),
                                      "confidence_band": d.get("confidence"), "expected_metric": "labor_pct"}],
             user_id=user_id)}
         d["rec_key"] = key

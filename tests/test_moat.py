@@ -459,7 +459,11 @@ def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path)
     real = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30)
     assert all(isinstance(v, (int, float)) for v in real["dow_summary"].values())
     d = labor.diagnose(_analysis())
-    assert d["available"] and d["confidence"] == "high"
+    # Measured, not hand-set (confidence audit E15): 21 days with sales of a
+    # 28-day window, margin 5 pts — and a first reading with no track record
+    # here cannot read high (K1), so its band is medium.
+    assert d["available"] and d["confidence"] == "medium"
+    assert d["evidence_input"]["n"] == 21 and d["evidence_input"]["kind"] == "trading_days"
     assert d["cause"].startswith("Mondays run 41.0% labor against the 30% target")
     assert d["alternative_cause"].startswith("Overtime premium: 1 person-week")
     assert "Monday" in d["what_would_confirm"]

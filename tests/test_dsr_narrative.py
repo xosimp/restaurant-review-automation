@@ -667,9 +667,12 @@ def test_actions_are_ranked_by_urgency_times_dollars_times_ease(monkeypatch, res
     # which outranks an unpriced next-schedule change (1.5 x 50 x 1.0).
     assert [a["kind"] for a in acts] == ["reduce_waste", "reorder", "adjust_staffing"]
     for a in acts:
+        # ...weighed by each action's measured confidence (confidence audit
+        # E16), which every action now carries.
+        assert a["confidence"]["version"] == 1
         assert a["rank_score"] == home_brief.rank_score(
             {"timeframe": narrative.URGENCIES[a["urgency"]], "dollars_monthly": a["dollars_monthly"],
-             "effort": a["effort"]})
+             "effort": a["effort"], "confidence": a["confidence"]})
     assert acts[0]["rank_score"] > acts[1]["rank_score"] > acts[2]["rank_score"]
 
 

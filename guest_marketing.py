@@ -1074,18 +1074,21 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
 
     ranked = sorted(pool, key=rate, reverse=True)
     best, worst = ranked[0], ranked[-1]
+    seg_diff = (best.get("segment") or "all") != (worst.get("segment") or "all")
+    ev_in = _campaign_evidence(pool, basis, seg_diff)
     if rate(best) == rate(worst):
-        return {"available": True, "cause": None, "confidence": "low",
-                "summary": f"{len(pool)} campaigns measured by {basis}; none stood apart.",
-                "alternative_cause": None, "what_would_confirm": None,
-                "operational_evidence": [{"module": "marketing", "metric": f"{basis} per 100 sent", "value": f"{rate(best):.1f}"}]}
+        return _with_confidence(restaurant_id, {
+            "available": True, "cause": None,
+            "summary": f"{len(pool)} campaigns measured by {basis}; none stood apart.",
+            "alternative_cause": None, "what_would_confirm": None,
+            "operational_evidence": [{"module": "marketing", "metric": f"{basis} per 100 sent", "value": f"{rate(best):.1f}"}]},
+            ev_in, db_path)
     # Owner-facing dates read M/D/YY (audit #16); these were created_at[:10].
     from time_utils import mdy as _mdy
     evidence = [{"module": "marketing", "metric": f"best campaign — {basis} per 100 sent",
                  "value": f"{rate(best):.1f} ({best.get('segment_label') or 'everyone'}, {_mdy(best.get('created_at'))})"},
                 {"module": "marketing", "metric": f"weakest campaign — {basis} per 100 sent",
                  "value": f"{rate(worst):.1f} ({worst.get('segment_label') or 'everyone'}, {_mdy(worst.get('created_at'))})"}]
-    seg_diff = (best.get("segment") or "all") != (worst.get("segment") or "all")
     cause = (f"The {best.get('segment_label') or 'everyone'} segment answered at {rate(best):.1f} {basis} per 100 texts "
              f"against {rate(worst):.1f} for {worst.get('segment_label') or 'everyone'}." if seg_diff else
              f"The message sent {_mdy(best.get('created_at'))} drew {rate(best):.1f} {basis} per 100 texts; "
@@ -1100,12 +1103,50 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
     confirm = ("Send the same message to both segments on the same day, and hold a few guests in each back; "
                "only against those held back does a gap say the text worked." if seg_diff else
                "Send the stronger message's shape again on the weaker one's weekday; if it holds, it was the message.")
-    conf = ("low" if seg_diff else
-            ("high" if basis == "came back" and len(pool) >= 4 else ("medium" if len(pool) >= 3 else "low")))
-    return {"available": True, "cause": cause, "alternative_cause": alt, "what_would_confirm": confirm,
-            "operational_evidence": evidence, "confidence": conf,
-            "summary": f"{len(pool)} campaigns measured by {basis}."
-                       + ("" if basis == "came back" else " Toast check-ins have not been matched yet, so taps stand in.")}
+    return _with_confidence(restaurant_id, {
+        "available": True, "cause": cause, "alternative_cause": alt, "what_would_confirm": confirm,
+        "operational_evidence": evidence,
+        "summary": f"{len(pool)} campaigns measured by {basis}."
+                   + ("" if basis == "came back" else " Toast check-ins have not been matched yet, so taps stand in.")},
+        ev_in, db_path)
+
+
+# No campaign here holds guests back, so no comparison between campaigns can
+# read as the text having caused the visits: evidence is capped at this
+# (below high) until a holdout exists (confidence audit E15, CA1 M7). Two
+# SEGMENTS compared on raw rates have no baseline at all (M-22): low.
+CAMPAIGN_NO_HOLDOUT_CAP = 65
+CAMPAIGN_SEGMENT_CAP = 35
+
+
+def _campaign_evidence(pool, basis, seg_diff) -> dict:
+    """The campaign read's Evidence Strength input: how many measured
+    campaigns (N_FULL "campaigns"), taps standing in for visits flagged as
+    partial, and the holdout / baseline caps."""
+    ev = {"n": len(pool), "kind": "campaigns",
+          "flags": () if basis == "came back" else ("partial",),
+          "basis": f"{len(pool)} campaigns measured by {'guests who came back' if basis == 'came back' else 'link taps'}"}
+    if seg_diff:
+        ev["cap"], ev["cap_reason"] = CAMPAIGN_SEGMENT_CAP, "two segments compared with no baseline for either"
+    else:
+        ev["cap"], ev["cap_reason"] = CAMPAIGN_NO_HOLDOUT_CAP, "no guests were held back, so cause isn't measured"
+    return ev
+
+
+def _with_confidence(restaurant_id, out, ev_in, db_path=DB_PATH):
+    """`confidence_detail` (K1, measured) and `confidence` (its band, for the
+    clients that decode a string) on a campaign diagnosis. Never raises."""
+    out["evidence_input"] = ev_in
+    try:
+        import rec_trust
+        conf = rec_trust.assess(restaurant_id, "diag_campaign", evidence=ev_in, db_path=db_path)
+    except Exception as e:
+        print(f"[guest_marketing] campaign confidence unavailable: {e}")
+        import confidence_engine
+        conf = confidence_engine.unknown()
+    out["confidence_detail"] = conf
+    out["confidence"] = conf.get("band") or "low"
+    return out
 
 
 # ── Win-back (audit #47) ────────────────────────────────────────────────────

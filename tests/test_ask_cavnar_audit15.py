@@ -523,7 +523,12 @@ def test_the_business_snapshot_reports_every_module_it_actually_read(db_path, mo
     assert set(meta["modules_consulted"]) == {"reviews", "food_cost", "labor"}
     assert ask_cavnar._ACROSS_LABEL not in meta["modules_consulted"], \
         "the stand-in label is redundant once the real modules are known"
-    assert meta["confidence"] == "high", "a genuine cross-module read is not single-module"
+    # The snapshot's three modules are three live reads of evidence (K5) —
+    # but no answer reads "high" on breadth alone any more: with no track
+    # record here the measured confidence is capped at 70% (medium).
+    d = meta["confidence_detail"]
+    assert d["dimensions"]["evidence"]["pct"] == 100 and "3 live reads" in d["dimensions"]["evidence"]["basis"]
+    assert meta["confidence"] == d["band"] == "medium" and d["pct"] == 70
 
 
 def test_untrusted_markers_never_reach_the_owners_screen(db_path, monkeypatch):

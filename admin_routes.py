@@ -2546,6 +2546,17 @@ def admin_api_recommendation_calibration(current_user):
     return jsonify(**admin_ops.recommendation_calibration(days=days, restaurant_id=rid))
 
 
+@admin_bp.route("/admin/api/calibration")
+@admin_required
+def admin_api_confidence_calibration(current_user):
+    """Stated Recommendation Confidence against what happened (contract K7,
+    internal only): reliability by decile, Brier, per kind and per
+    dimension, each withheld below its floor. ?days=365&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(365)
+    return jsonify(**admin_ops.confidence_calibration(days=days, restaurant_id=rid))
+
+
 @admin_bp.route("/admin/api/recommendations/missed")
 @admin_required
 def admin_api_missed_detections(current_user):

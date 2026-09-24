@@ -820,7 +820,7 @@ def test_b23_scoring_and_confidence_reach_a_patched_models_get_conn(db, monkeypa
     real = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: seen.append(a) or real(db))
     sc.kind_stats("trim_day")
-    cf._historical_accuracy(1)
+    cf._measurability(1)
     assert len(seen) == 2
 
 

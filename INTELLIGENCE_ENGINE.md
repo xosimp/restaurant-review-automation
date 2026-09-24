@@ -34,10 +34,10 @@ one restaurant ever seeing another's data. Written before implementation
                  │ benchmarks.py  (p25/p50/p75 per cohort per metric)       │
                  │ trends.py      (weekly slope per cohort per metric)      │
                  │ scoring.py     (acceptance and success by rec kind)      │
-                 │ confidence.py  (seven factors → score, band, caution)    │
+                 │ confidence.py  (seven factors → kind score; admin only)  │
                  └────────────────────────────┬──────────────────────────────┘
                                               ▼
-        Ask (tools + context)   Home (confidence on each recommendation)
+        Ask (tools + context)   rec_trust (Recommendation Confidence, K1)
         Admin → Intelligence    Future modules via intelligence.* facade
 ```
 
@@ -92,7 +92,7 @@ Ask, the queue, decisions and the ledger share (legacy
 | `patterns.py` | 2/3 | declarative `HYPOTHESES`; `discover()` per cohort and platform-wide; `active(cohort)` |
 | `benchmarks.py` | 3 | `compute()` weekly; `benchmark(rid, metric)` with percentile and band |
 | `trends.py` | 2/3 | weekly medians per cohort × metric, slope, `emerging()` |
-| `confidence.py` | all | `score(rid, rec_kind, metric)` → `{score, band, factors[], caution}` |
+| `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
 | `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); cohort bands come from `benchmarks.compute`; `starting_headcount` lends a restaurant with no history of its own the cohort median scaled by ITS OWN sales, only over `MIN_COHORT`, through `assert_anonymous`, labelled borrowed |
 | `jobs.py` | — | `run_features()` (bounded, cursor-resumable), `run_learning()` |
@@ -134,8 +134,10 @@ Ask, the queue, decisions and the ledger share (legacy
 
 ## The recommendation pipeline (what changes for the reader)
 
-- Home's recommendations carry `confidence: {score, band, caution}`. Old
-  clients ignore the field; the web and iOS show a low-confidence caption.
+- Every recommendation-bearing payload carries the Recommendation
+  Confidence object (K1, below) from `rec_trust.assess` — not
+  `confidence.score()`, and not `card_confidence` (superseded 9/24/26). Old
+  clients read its `score` (always a number), `band`, `label`, `reason`.
 - Ask gets two tools (`read_restaurant_memory`, `read_platform_intelligence`)
   and one short context section, present only when the cohort clears the
   floor, phrased as "restaurants like yours" with counts and effects only.
@@ -155,13 +157,14 @@ either: one calm factor alone must never read as certainty. Each factor is
 | Restaurant-specific history | 0.25 | own success rate for this kind (n-shrunk toward 0.5) |
 | Cross-restaurant evidence | 0.20 | platform success rate for this kind (n-shrunk) |
 | Restaurant-type match | 0.10 | a category and a cohort that clears the floor |
-| Historical accuracy | 0.15 | this restaurant's scored forecast error and evaluated-outcome clarity |
+| Measurability | 0.10 | how READABLE this restaurant's record is: scored forecast error and the share of evaluated outcomes with a clear verdict. A worsened result is as clear as an improved one, so this is never accuracy (it was mislabelled "historical accuracy" until 9/24/26; CA2 #12) |
 | Data completeness | 0.15 | latest feature row's completeness |
-| Recommendation success rate | 0.10 | pattern support for this kind in the cohort |
-| Recent operational changes | −0.10 | schedule edits, price changes, a new POS in the last 14 days |
+| Pattern support | 0.10 | pattern support for this kind in the cohort |
+| Recent operational changes | 0.10 | the factor is 1 − change: calm reads 1, a schedule edit / price change / POS change in the last 14 days lowers it |
 
-Bands: high ≥ 0.70, medium ≥ 0.45, else low. Low confidence carries a
-caution sentence the surfaces render. Deterministic: same rows → same score.
+The weights sum to 1.0 (a test holds it). Bands: high ≥ 0.70, medium ≥
+0.45, else low. Deterministic: same rows → same score. This model rates a
+KIND; it feeds the admin Intelligence page, never an owner's card.
 
 **Success and acceptance, as `scoring` counts them** (per recommendation —
 restaurant and key — never per event row):
@@ -202,7 +205,10 @@ restaurant's prior (`confidence.score`'s `platform_evidence`,
 (`exclude_restaurant_id`): its own record is weighed against the prior,
 never counted inside it.
 
-**One confidence per card** (`card_confidence`): the card's own evidence
+**One confidence per card** — since 9/24/26 the measured Recommendation
+Confidence (below). The paragraph that follows describes the superseded
+`card_confidence` (band logic kept for its tests; a candidate for future
+cleanup after additional verification): the card's own evidence
 sets its band; the kind's record may move it one step. This restaurant's
 own measured record of the kind comes first. Where it has none, the
 cross-restaurant figure (`platform_evidence` — the cohort's, else the
@@ -213,6 +219,73 @@ asserted anonymous where `score()` builds it and again before a card uses
 it, and the card says "restaurants like yours: X of Y measured … improved"
 — counts only (`basis`: own | cohort | platform). It used to be computed
 and then ignored.
+
+## Recommendation Confidence (`confidence_engine`, `rec_trust`, `data_freshness`)
+
+Every recommendation-bearing payload — Home cards and attention items, the
+one-thing hero, the review / food / labor / campaign diagnosis blocks, food
+cost drivers, Ask answers, DSR actions — carries ONE confidence object
+(contract K1). The owner reads percentages (Will, 9/24/26), so every
+percentage is computed; below a floor a dimension is `null` with a basis
+saying what is needed, never a stand-in.
+
+```
+{"pct": 72 | null, "band": "low|medium|high", "label": "72% confidence" | "Confidence not yet measurable",
+ "reason": "<the weakest dimension's basis>", "score": 0.72 (0.0 when null), "caution": null | "...",
+ "dimensions": {"evidence": {pct, basis, n, kind},
+                "accuracy": {pct|null, basis, n, improved, source: own|cohort|none, low, high},
+                "freshness": {pct|null, basis, as_of (M/D/YY), as_of_iso, stalest}},
+ "version": 1}
+```
+
+Where an older client decodes a field named `confidence` as a STRING (the
+diagnosis blocks, food drivers, Ask's answer), that field stays the band
+word and the object rides beside it as `confidence_detail`.
+
+- **Evidence Strength** = 100 × min(1, n ÷ `N_FULL[kind]`) × coverage ×
+  quality. `N_FULL` is one table with a reason per kind (reviews 8,
+  weekdays 4, weeks 8, waste weeks 4, price weeks 4, trading days 28,
+  posts / campaigns 4, competitors 3, evidence items 3, night facts 3, a
+  direct count 1). Coverage is the share of the window measured. Caps:
+  coverage under `MIN_COVERAGE` (0.7) → ≤ 49; any partial-data flag
+  (days missing sales, estimated hours, gross missing, conflicting sales,
+  inferred, sampled, provisional, period too short) → ≤ 74; any unverified
+  figure → ≤ 35; a model's own band only lowers it (medium ≤ 65, low ≤ 35);
+  sample or demo data → 0 and labelled sample. The owner's "don't trust
+  the data" answer (`dont_trust_data`) caps that kind's evidence at 49 for
+  30 days.
+- **Historical Accuracy** = `rec_learning.kind_record`: this restaurant's
+  shown AND taken episodes of the kind, read only through
+  `learned_verdict` (disowned, conditions-changed, informational, faded
+  and reversed results are never wins), one result per overlapping window,
+  improved ÷ measured shrunk toward even (k = 5), with its 90% Wilson
+  range. Shown only at `MIN_MEASURED_FOR_RATE` (5) own results; else the
+  anonymous cohort's (this restaurant excluded, `cohort_ok`,
+  `assert_anonymous`) at `PRIOR_MIN_MEASURED` (10), labelled "At
+  restaurants like yours"; else `null`.
+- **Data Freshness** = 100 × the minimum over the card's sources of
+  recency × completeness (`data_freshness.SOURCES`, one threshold table:
+  recency is 1 within `grace` days of the expected lag, then falls to 0
+  over `horizon` days; an error — a failing sync, an expired token, two
+  missed review fetches — caps it at half; an unknown age is 0, never
+  current). Sources are dated by the last day the data COVERS (shifts by
+  their last day, counts by the oldest count), not by when a file was
+  written.
+- **Overall** = the geometric mean of the measured dimensions; no evidence
+  → not measurable. No track record here (accuracy null) → at most 70, with
+  a caution. Freshness under 50 → at most 49. Band: ≥ 75 high, 50–74
+  medium, else low.
+
+At delivery `rec_ledger.present_many` snapshots it on the episode
+(`confidence_pct`, `evidence_pct`, `accuracy_pct`, `accuracy_n`,
+`freshness_pct`, `freshness_as_of`, `trust_version`) and on every `shown`
+event, noting a move of 10+ points between showings (`confidence_moved`).
+A surface that shows no confidence yet still gets accuracy and freshness
+snapshotted. `feedback.sync` fills `intel_rec_events.confidence_at` from
+the snapshot. The admin calibration view (`/admin/api/calibration`) scores
+the stated % against learned verdicts: reliability by decile with Wilson
+ranges and a Brier score, per kind and per dimension, each withheld below
+its floor (20; 5 per kind).
 
 ## The per-restaurant effectiveness model (`rec_learning`)
 

@@ -1287,16 +1287,23 @@ def _ras_block(eps):
     took = sum(1 for e in eps if e["accepted"] or e["completed"] or e.get("implemented"))
     # "Improved" only among what was taken: a verdict on an episode nobody
     # took is not the recommendation working, and counting it let the
-    # outcome rate pass 100%.
-    k["improved"] = sum(1 for e in eps if e["improved"] and (e["accepted"] or e["completed"] or e.get("implemented")))
+    # outcome rate pass 100%. Verdicts are read through
+    # rec_learning.learned_verdict (a disowned, conditions-changed,
+    # informational, faded or reversed result is never a win), and the rate
+    # is improved ÷ MEASURED — taken with a clear verdict — not ÷ taken
+    # (confidence audit E13, CA2 #10).
+    _taken = [e for e in eps if e["accepted"] or e["completed"] or e.get("implemented")]
+    k["improved"] = sum(1 for e in _taken if e["improved"])
+    k["measured"] = sum(1 for e in _taken if e.get("measured"))
     rates = {"opened": k["opened"] / n, "accepted": took / n, "completed": k["completed"] / n,
-             # Of what was taken, how much a measured outcome later confirmed.
-             "outcome": (k["improved"] / took) if took else 0.0}
+             # Of what was taken and measured, how much improved.
+             "outcome": (k["improved"] / k["measured"]) if k["measured"] else 0.0}
     acts = sorted(e["hours_to_act"] for e in eps if e["hours_to_act"] is not None)
     out = {"n": n, "shown": sum(1 for e in eps if e["shown"]), "opened": k["opened"], "evidence": k["evidence"],
            "accepted": took, "completed": k["completed"], "implemented": k["implemented"],
            "dismissed": k["dismissed"], "snoozed": k["snoozed"],
            "ignored": k["ignored"], "outcomes": k["outcome"], "improved": k["improved"],
+           "measured": k["measured"],
            "open_rate": round(rates["opened"], 3), "accept_rate": round(rates["accepted"], 3),
            "complete_rate": round(rates["completed"], 3), "outcome_rate": round(rates["outcome"], 3),
            "dismiss_rate": round(k["dismissed"] / n, 3), "ignore_rate": round(k["ignored"] / n, 3),
@@ -1322,6 +1329,7 @@ def _episodes(conn, since, restaurant_id=None):
                               f"ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
         evs.setdefault(e["rec_id"], []).append(e)
     import rec_ledger
+    trackers = _trackers(conn, sorted({i["tracker_id"] for i in inst if i.get("tracker_id")}))
     out = []
     for i in inst:
         es = evs.get(i["rec_id"], [])
@@ -1338,16 +1346,11 @@ def _episodes(conn, since, restaurant_id=None):
         # recommendation twice, and neither was answered nor ignored.
         if i["status"] == "superseded":
             continue
-        verdicts = []
-        for e in es:
-            if e["event"] == "outcome":
-                try:
-                    v = (json.loads(e["meta"] or "{}") or {}).get("verdict")
-                except (TypeError, ValueError):
-                    v = None
-                # "Could not be measured" is not an outcome (ROI #2).
-                if v in ("improved", "worsened", "no_clear_change"):
-                    verdicts.append(v)
+        # The episode's measured result, read ONLY through
+        # rec_learning.learned_verdict (confidence audit E13): the ledger's
+        # first outcome event was taken as the verdict, so a result the
+        # owner disowned or that reversed at its re-check counted as a win.
+        verdict = learned_episode_verdict(es, trackers.get(i.get("tracker_id")))
         answered = names & {"accepted", "completed", "dismissed", "implemented"}
         first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed",
                                                                  "implemented")), None)
@@ -1376,10 +1379,79 @@ def _episodes(conn, since, restaurant_id=None):
                     "evidence": "evidence_viewed" in names, "accepted": "accepted" in names,
                     "completed": "completed" in names, "implemented": "implemented" in names,
                     "dismissed": "dismissed" in names, "snoozed": "snoozed" in names,
-                    "ignored": ignored, "outcome": bool(verdicts), "improved": "improved" in verdicts,
+                    # "Could not be measured" is not an outcome (ROI #2).
+                    "ignored": ignored, "outcome": verdict in _CLEAR, "improved": verdict == "improved",
+                    "measured": verdict in _CLEAR, "verdict": verdict,
+                    # The confidence it was shown with (K3 snapshot).
+                    **{c: _col_or_none(i, c) for c in _SNAPSHOT_COLS},
+                    "reason_codes": sorted({(_meta_of(e) or {}).get("reason_code") for e in es
+                                            if (_meta_of(e) or {}).get("reason_code")}),
                     "hours_to_act": hours, "responder_role": next((e["role"] for e in es if e["event"] in (
                         "accepted", "completed", "dismissed") and e["role"]), None)})
     return out
+
+
+_CLEAR = ("improved", "worsened", "no_clear_change")
+_SNAPSHOT_COLS = ("confidence_pct", "evidence_pct", "accuracy_pct", "accuracy_n", "freshness_pct",
+                  "freshness_as_of", "trust_version")
+_TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
+                 "after_end, recheck_verdict, owner_checkin, source_key")
+
+
+def _col_or_none(row, name):
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def _meta_of(e):
+    try:
+        return json.loads(e.get("meta") or "{}") or {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _trackers(conn, tids):
+    """{tracker id: recommendation_outcomes row} for the episodes' trackers."""
+    out = {}
+    for n in range(0, len(tids), 400):
+        chunk = tids[n:n + 400]
+        marks = ",".join("?" for _ in chunk)
+        try:
+            rows = _rows_dict(conn, f"SELECT {_TRACKER_COLS} FROM recommendation_outcomes WHERE id IN ({marks})",
+                              tuple(chunk))
+        except Exception:
+            rows = _rows_dict(conn, f"SELECT id, status, verdict, dollars_monthly, evaluate_on FROM "
+                                    f"recommendation_outcomes WHERE id IN ({marks})", tuple(chunk))
+        for r in rows:
+            out[r["id"]] = r
+    return out
+
+
+def learned_episode_verdict(events, tracker=None):
+    """An episode's measured result through rec_learning.learned_verdict —
+    the ledger's latest outcome event, else its tracker's current verdict,
+    with the owner's latest check-in — or None when nothing was measured.
+    The same reading rec_learning gives its own record."""
+    import rec_learning
+    verdict = None
+    for e in events or []:
+        if e.get("event") == "outcome":
+            v = _meta_of(e).get("verdict")
+            if v:
+                verdict = v
+    if tracker and tracker.get("status") == "evaluated":
+        verdict = tracker.get("verdict") or verdict or "unknown"
+    if verdict is None:
+        return None
+    checkins = [_meta_of(e) for e in (events or []) if e.get("event") == "checkin"]
+    return rec_learning.learned_verdict(verdict, tracker, checkins[-1] if checkins else None)
+
+
+def _pct_band(pct):
+    import confidence_engine
+    return confidence_engine.band(pct) if pct is not None else "not snapshotted"
 
 
 def _group(eps, key_fn, label_fn=None, min_n=1):
@@ -1441,7 +1513,11 @@ def recommendation_acceptance(days=30, restaurant_id=None):
             "by_cross_module": _group(eps, lambda e: "cross-module" if e["cross_module"] else "one module"),
             "by_model_written": _group(eps, lambda e: "model-written" if e["model_written"] else "rule-written"),
             "by_cavnar_completes": _group(eps, lambda e: "Cavnar prepares it" if e["cavnar_completes"] else "owner does it"),
-            "by_confidence": _group(eps, lambda e: e["confidence_band"]),
+            # By the confidence the owner was SHOWN (the K3 snapshot's
+            # percentage → band) — not the legacy band column, which mixed
+            # card bands, model self-ratings and the review trend's slope
+            # (CA1 X5). Episodes from before the snapshot group apart.
+            "by_confidence": _group(eps, lambda e: _pct_band(e.get("confidence_pct"))),
             "by_role": _group([e for e in eps if e["responder_role"]], lambda e: e["responder_role"]),
             "by_restaurant": by_rest,
             "most_ignored": most_ignored,
@@ -1520,18 +1596,34 @@ def recommendation_calibration(days=365, restaurant_id=None):
     conn = models.get_conn()
     try:
         try:
-            rows = _rows_dict(conn, "SELECT i.kind, i.key, i.status, i.dollar_value, o.verdict, o.dollars_monthly "
+            rows = _rows_dict(conn, "SELECT i.rec_id, i.kind, i.key, i.status, i.dollar_value, o.verdict, "
+                                    "o.dollars_monthly, o.id AS tracker_id, o.status AS tracker_status, "
+                                    "o.recheck_verdict, o.owner_checkin, o.source_key "
                                     "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
                                     f"WHERE {where} AND o.status='evaluated'", tuple(args))
+            _ck = {}
+            for n in range(0, len(rows), 400):
+                chunk = [r["rec_id"] for r in rows[n:n + 400]]
+                marks = ",".join("?" for _ in chunk)
+                for e in _rows_dict(conn, f"SELECT rec_id, meta FROM rec_events WHERE event='checkin' "
+                                          f"AND rec_id IN ({marks}) ORDER BY at, id", tuple(chunk)):
+                    _ck[e["rec_id"]] = _meta_of(e)
         except Exception as e:           # the columns predate this database
             log.warning("recommendation_calibration unavailable: %s", e)
-            rows = []
+            rows, _ck = [], {}
     finally:
         conn.close()
     by = {}
+    import rec_learning
     for r in rows:
         if r["status"] not in ("accepted", "completed", "implemented"):
             continue
+        # The verdict through learned_verdict (confidence audit E13): a
+        # disowned or conditions-changed result is not a pair at all, and a
+        # faded or reversed one realised nothing.
+        r["verdict"] = rec_learning.learned_verdict(
+            r["verdict"], {"recheck_verdict": r.get("recheck_verdict"), "owner_checkin": r.get("owner_checkin"),
+                           "source_key": r.get("source_key")}, _ck.get(r.get("rec_id")))
         k = by.setdefault(r["kind"] or (r["key"] or "").split(":", 1)[0], {"pairs": [], "unpriced": 0})
         if r["verdict"] == "no_clear_change":
             k["pairs"].append((float(r["dollar_value"]), 0.0))
@@ -1557,6 +1649,71 @@ def recommendation_calibration(days=365, restaurant_id=None):
     return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": CALIBRATION_MIN_N, "by_kind": out,
             "total": {"n": sum(r["n"] for r in out), "predicted": round(pred, 2), "realised": round(real, 2),
                       "ratio": round(real / pred, 3) if pred else None}}
+
+
+# ── confidence calibration (K7, internal only) ─────────────────────────────
+#
+# What the owner was told (the Recommendation Confidence % snapshotted at
+# delivery, K3) against what happened: taken episodes with a clear learned
+# verdict, improved = 1. A reliability table by decile, a Brier score, and
+# the same per dimension — each withheld below its floor.
+
+CALIBRATION_FLOOR_N = RAS_MIN_N     # a band's observed rate below this is noise
+
+
+def confidence_calibration(days=365, restaurant_id=None):
+    """{bands:[{range, n, predicted_mean, observed_rate, low, high}], brier,
+    by_kind:[{kind, n, predicted_mean, observed_rate, enough}],
+    by_dimension:{evidence, accuracy, freshness}, floor_n, distrust:{n, by_kind}}.
+    Owners never see a probability; this is Will's view of whether "72%"
+    means 72%."""
+    import models
+    import confidence_engine as ce
+    days = max(1, min(int(days or 365), 730))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    conn = models.get_conn()
+    try:
+        try:
+            eps = _episodes(conn, since, restaurant_id)
+        except Exception as e:           # the ledger / snapshot columns predate this database
+            log.warning("confidence_calibration unavailable: %s", e)
+            eps = []
+    finally:
+        conn.close()
+    scored = [e for e in eps if (e["accepted"] or e["completed"] or e.get("implemented")) and e.get("measured")]
+
+    def pairs(field):
+        return [(e.get(field), 1 if e["improved"] else 0) for e in scored if e.get(field) is not None]
+
+    overall = pairs("confidence_pct")
+    by_kind = []
+    groups = {}
+    for p, y, kind in ((e.get("confidence_pct"), 1 if e["improved"] else 0, e["kind"]) for e in scored
+                       if e.get("confidence_pct") is not None):
+        groups.setdefault(kind, []).append((p, y))
+    for kind, ps in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        enough = len(ps) >= CALIBRATION_MIN_N
+        by_kind.append({"kind": kind, "n": len(ps), "predicted_mean": round(sum(p for p, _ in ps) / len(ps), 1),
+                        "observed_rate": round(100.0 * sum(y for _, y in ps) / len(ps), 1) if enough else None,
+                        "enough": enough})
+    # The owner's "don't trust the data" answers, counted (E14).
+    distrust = [e for e in eps if "dont_trust_data" in (e.get("reason_codes") or [])]
+    dk = {}
+    for e in distrust:
+        dk[e["kind"]] = dk.get(e["kind"], 0) + 1
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "floor_n": CALIBRATION_FLOOR_N,
+            "kind_floor_n": CALIBRATION_MIN_N, "n": len(overall),
+            "bands": ce.reliability(overall, CALIBRATION_FLOOR_N),
+            "brier": ce.brier(overall, CALIBRATION_FLOOR_N),
+            "by_kind": by_kind,
+            "by_dimension": {dim: {"bands": ce.reliability(pairs(f"{dim}_pct"), CALIBRATION_FLOOR_N),
+                                   "brier": ce.brier(pairs(f"{dim}_pct"), CALIBRATION_FLOOR_N),
+                                   "n": len(pairs(f"{dim}_pct"))}
+                             for dim in ("evidence", "accuracy", "freshness")},
+            "distrust": {"n": len(distrust),
+                         "by_kind": sorted(({"kind": k, "n": v} for k, v in dk.items()), key=lambda x: -x["n"])},
+            "rule": ("taken recommendations with a clear verdict read through learned_verdict; improved = 1; "
+                     "an observed rate only at the floor")}
 
 
 def missed_detections(days=30, restaurant_id=None, limit=200):

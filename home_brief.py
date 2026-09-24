@@ -328,6 +328,12 @@ def _pct_delta(cur, prev):
     return round(cur - prev, 1)
 
 
+def pos_health_label(state) -> str:
+    """The provider's name as an owner reads it ("Toast", "RPOWER")."""
+    p = (state or {}).get("provider") or "POS"
+    return {"rpower": "RPOWER", "pos": "POS"}.get(p, p.title())
+
+
 # ── per-location cheap health (portfolio strip) ──────────────────────────────
 
 def _location_signal(conn, r, now):
@@ -344,8 +350,11 @@ def _location_signal(conn, r, now):
     issues = []
     if (urgent.get("n") or 0) > 0:
         issues.append(("critical", f"{_plural(urgent['n'], 'urgent review')} unanswered"))
-    if r.get("toast_restaurant_guid") and r.get("toast_sync_error"):
-        issues.append(("critical", "Toast sync failing"))
+    import pos_health
+    _pos = pos_health.pos_sync_state(r, now=now)
+    if _pos["state"] == "error":
+        # Any provider, RPOWER included (CA3 F6) — not Toast alone.
+        issues.append(("critical", f"{pos_health_label(_pos)} sync failing"))
     connected = bool(r.get("gmb_refresh_token") or r.get("reviews_live"))
     age = _age_days(r.get("last_fetched_at"), now)
     if connected and age is not None and age > 3:
@@ -427,25 +436,41 @@ def invalidate_user(user_id):
         _CACHE.pop(k, None)
 
 
-def _kind_score(rid, key, metric, restaurant):
-    """The intelligence engine's read of this recommendation KIND here — used
-    only to adjust a card's own confidence (intelligence.confidence
-    .card_confidence), never printed beside it."""
-    try:
-        import intelligence
-        return intelligence.confidence_for(rid, str(key).split(":", 1)[0], metric=metric, restaurant=restaurant)
-    except Exception:
-        return None
+def diagnosis_evidence(dg, n, kind, basis, flags=(), coverage=None):
+    """rec_trust.diagnosis_evidence — a stored diagnosis's evidence input."""
+    import rec_trust
+    return rec_trust.diagnosis_evidence(dg, n, kind, basis, flags=flags, coverage=coverage)
 
 
-def _card_confidence(rid, key, metric, restaurant, band, reason):
-    """ONE confidence per card, from the card's own evidence."""
-    try:
-        from intelligence.confidence import card_confidence
-        return card_confidence(band, reason, _kind_score(rid, key, metric, restaurant))
-    except Exception:
-        return {"band": band, "label": f"{band.capitalize()} confidence", "reason": reason, "adjusted": None,
-                "caution": None, "score": {"low": 0.3, "medium": 0.55, "high": 0.8}.get(band, 0.55)}
+def card_confidence(ctx, key, evidence, sources=()):
+    """ONE confidence per card or attention item: the measured
+    Recommendation Confidence (rec_trust.assess, contract K1) — Evidence
+    Strength from what stands behind the card, Historical Accuracy from
+    this restaurant's measured record of the kind, Data Freshness from the
+    sources it rests on. It replaced intelligence.confidence.card_confidence
+    and its stand-in 0.3/0.55/0.8 score (confidence audit, 9/24/26). Never
+    raises; never fails the brief."""
+    import rec_trust
+    return rec_trust.assess(ctx.rid, key, evidence=evidence, sources=sources, ctx=ctx)
+
+
+# Review attention thresholds, the same size both ways (CA1 H7): a 30-day
+# rating that moved RATING_MOVE_STARS against the 30 days before, each side
+# resting on at least REVIEW_MOVE_MIN_N reviews; a negative share that moved
+# NEGATIVE_SHARE_MOVE between the last two weeks and the two before, each
+# side at least REVIEW_MOVE_MIN_N reviews and the moving side at least two
+# negative reviews. Below the floors, nothing is said either way.
+RATING_MOVE_STARS = 0.3
+NEGATIVE_SHARE_MOVE = 0.15
+REVIEW_MOVE_MIN_N = 3
+# A weekday is "the heavy day" only when its gap over the other days
+# exceeds TRIM_GAP_MIN_PTS and TRIM_GAP_SIGMA standard deviations of the
+# other days' labor % (the worst of seven is biased upward — CA2 #14).
+TRIM_GAP_MIN_PTS = 4.0
+TRIM_GAP_SIGMA = 1.64
+# The trim card's monthly dollars need the weekday seen at least this many
+# times (one day is not a rate) and the period at labor.MIN_DAYS_TO_EXTRAPOLATE.
+TRIM_MIN_WEEKDAYS_FOR_DOLLARS = 2
 
 
 # ── what a card is worth doing first ────────────────────────────────────────
@@ -462,12 +487,29 @@ _CONF_WEIGHT = {"high": 1.0, "medium": 0.85, "low": 0.6}
 _UNPRICED = 50.0
 
 
+def _conf_weight(conf) -> float:
+    """The confidence discount on a card's rank: 0.6 at 0%, 1.0 at 100%, from
+    the measured percentage (K1); the band word only for an object without
+    one; 0.85 — neutral — when the card carries no confidence at all."""
+    if not isinstance(conf, dict):
+        return 0.85
+    pct = conf.get("pct")
+    if pct is not None:
+        try:
+            return 0.6 + 0.4 * max(0.0, min(100.0, float(pct))) / 100.0
+        except (TypeError, ValueError):
+            pass
+    if conf.get("version"):
+        return _CONF_WEIGHT["low"]       # measured, and not measurable: low
+    return _CONF_WEIGHT.get(conf.get("band"), 0.85)
+
+
 def rank_score(rec) -> float:
     dollars = rec.get("dollars_monthly")
     return round(_URGENCY.get(rec.get("timeframe"), 1.0)
                  * max(float(dollars or 0), _UNPRICED)
                  * _EASE.get(rec.get("effort"), 0.8)
-                 * _CONF_WEIGHT.get(((rec.get("confidence") or {}).get("band")), 0.85), 2)
+                 * _conf_weight(rec.get("confidence")), 2)
 
 
 def order_recommendations(recs, quiet_kinds=(), learned=None):
@@ -582,6 +624,7 @@ SAME_NEWS = {"publish_drafts": "no_response"}
 # (home_dismissals), never a ledger answer (re-audit B7). Value: the module
 # whose view permission may hide it.
 HOME_SETUP_KEYS = {"google_not_connected": "reviews", "reviews_stale": "reviews", "toast_sync": "labor",
+                   "pos_sync": "labor",
                    "inventory_stale": "food", "post_failed": "marketing", "social_not_connected": "marketing"}
 
 
@@ -608,6 +651,132 @@ def other_days_mean(dow, day) -> float:
     understated the gap it names. 0 when there is nothing to compare."""
     vals = [float(v) for k, v in (dow or {}).items() if v and k != day]
     return sum(vals) / len(vals) if vals else 0
+
+
+def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=False, reviews_on_file=0) -> list:
+    """Home's freshness strip (contract K4): one entry per module and data
+    source — {module, source, state, pct, as_of, as_of_iso, basis} — from
+    data_freshness, plus the legacy key/label/at/note. A module on sample
+    data says so and is never dated; a source that does not apply (a POS not
+    connected) is left out, except that a module with no source at all says
+    what is missing."""
+    import data_freshness
+    out = []
+
+    def entry(module, label, st):
+        out.append({"module": module, "source": st.get("key"), "state": st.get("state"), "pct": st.get("pct"),
+                    "as_of": st.get("as_of"), "as_of_iso": st.get("as_of_iso"), "basis": st.get("basis"),
+                    "error": st.get("error"),
+                    "key": module, "label": label, "at": st.get("as_of_iso"), "note": st.get("basis")})
+
+    def sample(module, label, basis):
+        out.append({"module": module, "source": None, "state": "sample", "pct": None, "as_of": None,
+                    "as_of_iso": None, "basis": basis, "error": None,
+                    "key": module, "label": label, "at": None, "note": basis})
+
+    plan = []
+    if "reviews" in active_keys:
+        plan.append(("reviews", "Reviews", ("reviews",), True))
+    if "labor" in active_keys:
+        plan.append(("labor", "Labor", data_freshness.MODULE_SOURCES["labor"], labor_live))
+    if "inventory" in active_keys:
+        plan.append(("inventory", "Food cost", data_freshness.MODULE_SOURCES["inventory"], inv_live))
+    if "marketing" in active_keys:
+        plan.append(("marketing", "Marketing", data_freshness.MODULE_SOURCES["marketing"], True))
+    if "intel" in active_keys:
+        plan.append(("intel", "Intel", data_freshness.MODULE_SOURCES["intel"], True))
+    for module, label, keys, live in plan:
+        if not live:
+            sample(module, label, "sample data — upload shifts or connect your POS" if module == "labor"
+                   else "sample data — add a count or connect your POS")
+            continue
+        states = ctx.sources(keys)
+        shown = [st for st in states if st.get("state") != "not_connected"]
+        if not shown:
+            st = dict(states[0]) if states else {"key": None, "state": "not_connected", "pct": None}
+            if module == "reviews" and not google_connected and reviews_on_file:
+                st["basis"] = "imported reviews — Google not connected"
+            shown = [st]
+        for st in shown:
+            entry(module, label, st)
+    return out
+
+
+def stalest_as_of(freshness):
+    """M/D/YY of the oldest date among the dated sources, or None."""
+    dated = [f for f in (freshness or []) if f.get("pct") is not None and f.get("as_of_iso")]
+    if not dated:
+        return None
+    return min(dated, key=lambda f: f["as_of_iso"]).get("as_of")
+
+
+def trim_day_read(dow, by_day, labor_target, period_days):
+    """The trim-day card's read, or None (CA2 #14, CA4 F11).
+
+    The heaviest weekday is named only when its gap over the other days
+    exceeds max(TRIM_GAP_MIN_PTS, TRIM_GAP_SIGMA × the standard deviation of
+    the other days' labor %) — the worst of seven averages is biased upward,
+    so "4 points worse" means little where weekdays already swing by 5 — and
+    it runs over the owner's target.
+
+    Its monthly dollars are that day's labor cost above the target on the
+    days that carry sales (a day with no sales figure has no excess to
+    measure), averaged per day × 52 ÷ 12 — and only once the period reaches
+    labor.MIN_DAYS_TO_EXTRAPOLATE and the weekday was seen
+    TRIM_MIN_WEEKDAYS_FOR_DOLLARS times; below either there is no monthly
+    figure, only the gap. Returns {day, pct, others_mean, gap, threshold,
+    n_days, monthly, basis}."""
+    from intelligence.stats import sd as _sd
+    from labor import MIN_DAYS_TO_EXTRAPOLATE
+    vals = {k: float(v) for k, v in (dow or {}).items() if v}
+    if len(vals) < 2:
+        return None
+    worst_day, pct = max(vals.items(), key=lambda kv: kv[1])
+    day = worst_day
+    others = [v for k, v in vals.items() if k != day]
+    # Against the OTHER days only (H-26): a mean that included the day
+    # itself understated the gap it names.
+    mean = other_days_mean(dow, worst_day)
+    spread = _sd(others)
+    threshold = max(TRIM_GAP_MIN_PTS, TRIM_GAP_SIGMA * spread) if spread is not None else TRIM_GAP_MIN_PTS
+    gap = pct - mean
+    if gap < threshold or pct <= float(labor_target):
+        return None
+    excess, n_days = 0.0, 0
+    for dstr, dd in (by_day or {}).items():
+        try:
+            if datetime.strptime(dstr, "%Y-%m-%d").strftime("%A") != day:
+                continue
+        except (TypeError, ValueError):
+            continue
+        sales = dd.get("sales")
+        if sales is None or float(sales) <= 0:
+            continue
+        n_days += 1
+        excess += max(0.0, float(dd.get("labor_cost") or 0) - float(sales) * float(labor_target) / 100.0)
+    monthly, basis = None, None
+    if n_days >= TRIM_MIN_WEEKDAYS_FOR_DOLLARS and int(period_days or 0) >= MIN_DAYS_TO_EXTRAPOLATE:
+        monthly = round(excess / n_days * 52.0 / 12.0, 2) or None
+        if monthly:
+            basis = (f"{day}s only: their labor above your {float(labor_target):g}% target, averaged over "
+                     f"{n_days} {day}s with sales, × 52 ÷ 12")
+    return {"day": day, "pct": pct, "others_mean": mean, "gap": round(gap, 1), "threshold": round(threshold, 1),
+            "n_days": n_days, "monthly": monthly, "basis": basis}
+
+
+def trim_metric(day) -> str:
+    """The metric a trim-day card is tracked on: the weekday's own labor %
+    when metrics registers one (the outcome group's weekday labor metric),
+    else overall labor % — never a metric metrics cannot measure."""
+    try:
+        import metrics
+        reg = getattr(metrics, "_REGISTRY", {}) or {}
+        for name in ("weekday_labor_pct", "labor_pct_weekday"):
+            if name in reg:
+                return f"{name}:{day}"
+    except Exception:
+        pass
+    return "labor_pct"
 
 
 def stock_key(item) -> str:
@@ -888,18 +1057,40 @@ def _build(current_user, present=True):
     upcoming = []
     ask = []
 
+    # What every card's confidence reads once for this build: the ledger,
+    # each source's freshness (labor dated by its own analysis), each kind's
+    # measured record (rec_trust.Context).
+    import rec_trust
+    import data_freshness
+    trust_ctx = rec_trust.Context(rid, restaurant=restaurant,
+                                  freshness_context={"labor": labor if labor_live else None})
+
+    def sources_of(module, extra=()):
+        return tuple(dict.fromkeys(data_freshness.sources_for([module]) + tuple(extra or ())))
+
     def add_attn(key, severity, title, detail, module, action_label, action="open_module", since=None, evidence=None,
-                 rec_key=None):
-        attention.append({"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
-                          "action": {"label": action_label, "kind": action, "module": module},
-                          "since": since, "evidence": evidence, "location": restaurant.location_name or None})
+                 rec_key=None, ev=None, sources=None, **extra):
+        """Every attention item carries the `evidence` line it rests on and
+        ONE measured confidence (K4). `ev` is its Evidence Strength input
+        (confidence_engine.evidence); a setup or health nudge — a fact about
+        the product's own state — is a direct count and reads no data
+        source."""
+        ev = ev or {"n": 1, "kind": "count", "basis": evidence or "the state on file"}
+        srcs = sources if sources is not None else (() if key in HOME_SETUP_KEYS else sources_of(module))
+        item = {"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
+                "action": {"label": action_label, "kind": action, "module": module},
+                "since": since, "evidence": evidence, "location": restaurant.location_name or None,
+                "confidence": card_confidence(trust_ctx, rec_key or ledger_key(key), ev, srcs)}
+        item.update(extra)
+        attention.append(item)
 
     def add_win(key, title, detail, module):
         wins.append({"key": key, "title": title, "detail": detail, "module": module})
 
-    def add_rec(key, title, why, evidence, impact, module, timeframe, strength="moderate",
-                action_label=None, metric=None, *, conf=("medium", None), dollars=None, if_ignored=None,
-                effort=None, alternative=None, action=None, evidence_sources=None, model_written=False):
+    def add_rec(key, title, why, evidence, impact, module, timeframe,
+                action_label=None, metric=None, *, ev=None, sources=None, dollars=None, dollars_basis=None,
+                if_ignored=None, effort=None, alternative=None, action=None, evidence_sources=None,
+                model_written=False):
         """`metric` is what would have to move for this recommendation to have
         worked. It is what makes the card trackable: the client posts it to
         /api/outcomes, which takes the baseline now and re-measures when the
@@ -914,19 +1105,22 @@ def _build(current_user, present=True):
         # Every card answers five questions (#20): what to do (the title,
         # verb first), why now (`why`), what is at stake in dollars when it
         # was measured (`dollars_monthly`, else None — never an invented
-        # figure), how sure (`confidence`: ONE band from the card's own
-        # evidence, which the kind's measured record here may nudge by one
-        # step, #4), and what happens if it is ignored (`if_ignored`).
+        # figure — with `dollars_basis` saying its scope), how sure
+        # (`confidence`: ONE measured Recommendation Confidence, K1 — the
+        # old `strength` pill is gone, CA4 F1), and what happens if it is
+        # ignored (`if_ignored`).
         recs.append({"key": key, "title": title, "why": why, "evidence": evidence, "impact": impact, "module": module,
-                     "timeframe": timeframe, "strength": strength, "metric": metric,
+                     "timeframe": timeframe, "metric": metric,
                      "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title()),
                      "dollars_monthly": round(float(dollars), 2) if dollars else None,
+                     "dollars_basis": dollars_basis if dollars else None,
                      "if_ignored": if_ignored, "effort": effort, "alternative": alternative,
                      # A one-tap finish when there is one (a reprice at the
                      # suggested price), else None and the card opens its module.
                      "action": action,
                      "evidence_sources": evidence_sources or [module], "model_written": bool(model_written),
-                     "confidence": _card_confidence(rid, key, metric, restaurant, conf[0], conf[1])})
+                     "confidence": card_confidence(trust_ctx, key, ev,
+                                                   sources if sources is not None else sources_of(module))})
 
     def add_change(text, tone, module, at=None):
         changes.append({"text": text, "tone": tone, "module": module, "at": at})
@@ -945,27 +1139,33 @@ def _build(current_user, present=True):
         n30 = int(rstats.get("last_30d") or 0)
         prev_avg = float(rating_prev.get("r") or 0)
         prev_n = int(rating_prev.get("n") or 0)
-        last_fetch_age = _age_days(r.get("last_fetched_at"), now)
-
-        # freshness
-        if google_connected:
-            state = "fresh" if (last_fetch_age is not None and last_fetch_age <= 1) else ("stale" if last_fetch_age is not None else "missing")
-            freshness.append({"key": "reviews", "label": "Reviews", "at": r.get("last_fetched_at"), "state": state,
-                              "note": "Google Business connected" if state != "stale" else f"last pulled {int(last_fetch_age)}d ago"})
-        else:
-            freshness.append({"key": "reviews", "label": "Reviews", "at": r.get("last_fetched_at"), "state": "missing" if total == 0 else "manual",
-                              "note": "Google not connected" if total == 0 else "imported reviews — Google not connected"})
+        # last_fetched_at is Chicago local with a 'T' (models); _ts read it
+        # as server-local time. admin_ops.fetched_at_ct reads both styles.
+        try:
+            import admin_ops as _ao_hb
+            _fat = _ao_hb.fetched_at_ct(r.get("last_fetched_at"))
+            last_fetch_age = (now - _fat.astimezone(timezone.utc)).total_seconds() / 86400.0 if _fat else None
+        except Exception:
+            last_fetch_age = _age_days(r.get("last_fetched_at"), now)
+        # Places-only reviews are a sample (five at a time), and say so in
+        # the evidence behind every review card (CA3 F13).
+        _rv_flags = ("sampled",) if (r.get("reviews_live") and not r.get("gmb_refresh_token")) else ()
+        _rv_src = ("reviews",) if google_connected else ()
 
         # attention
         if urgent:
             add_attn("urgent_reviews", "critical", f"{_plural(urgent, 'urgent review')} unanswered",
                      "Low-star reviews mentioning something serious are still waiting on a reply.", "reviews", "Reply now",
-                     evidence=f"{urgent} of {total} reviews flagged urgent")
+                     evidence=f"{urgent} of {total} reviews flagged urgent",
+                     ev={"n": urgent, "kind": "count", "basis": f"{urgent} reviews flagged urgent on file"},
+                     sources=_rv_src)
         if (stale_unanswered.get("n") or 0) > 0 and not urgent:
             n = stale_unanswered["n"]
             add_attn("stale_low_reviews", "important", f"{_plural(n, 'low-star review')} unanswered for 2+ days",
                      "Guests read how you respond. A 48-hour reply keeps the thread on your side.", "reviews", "Answer them",
-                     since="48h+")
+                     since="48h+", evidence=f"{n} reviews at 3 stars or below, unanswered 48h+",
+                     ev={"n": n, "kind": "count", "basis": f"{n} unanswered low-star reviews on file"},
+                     sources=_rv_src)
         if awaiting:
             add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply', 'replies')} drafted, waiting for you",
                      "Replies to reviews from the last 30 days, written in your voice. Approve them in one click and "
@@ -976,7 +1176,9 @@ def _build(current_user, present=True):
                      action="publish_replies",
                      evidence=f"{awaiting} drafted"
                      + (f" · {awaiting_held} urgent or flagged held for you to read" if awaiting_held else "")
-                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""))
+                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
+                     ev={"n": awaiting, "kind": "count", "basis": f"a count of {awaiting} drafts on file"},
+                     sources=_rv_src)
             # The tap publishes exactly what the label counts (approve-all
             # takes a limit, newest first) — not 25 including the history.
             attention[-1]["action"]["count"] = min(awaiting, 25)
@@ -985,7 +1187,9 @@ def _build(current_user, present=True):
             # guest-count effect of answering reviews that had no source (#46).
             add_attn("low_response_rate", "watch", f"Response rate at {rate:.0f}%",
                      f"{int(rstats.get('responded') or 0)} of {total} reviews have a reply.", "reviews", "Answer reviews",
-                     evidence=f"{int(rstats.get('responded') or 0)} of {total} answered")
+                     evidence=f"{int(rstats.get('responded') or 0)} of {total} answered",
+                     ev={"n": total, "kind": "reviews", "basis": f"{total} reviews on file", "flags": _rv_flags},
+                     sources=_rv_src)
         if not google_connected and total == 0:
             add_attn("google_not_connected", "important", "Google Business isn't connected",
                      "Nothing flows in until it is — reviews, drafts, alerts all start here.", "account", "Connect Google",
@@ -999,20 +1203,32 @@ def _build(current_user, present=True):
             last2 = sentiment[-2:]; prior2 = sentiment[-4:-2]
             ln = sum(w["negative"] for w in last2); lt = sum(w["total"] for w in last2)
             pn = sum(w["negative"] for w in prior2); pt = sum(w["total"] for w in prior2)
-            if lt >= 3 and pt >= 3:
+            if lt >= REVIEW_MOVE_MIN_N and pt >= REVIEW_MOVE_MIN_N:
                 lshare = ln / lt; pshare = pn / pt
-                if lshare - pshare >= 0.15 and ln >= 2:
+                if lshare - pshare >= NEGATIVE_SHARE_MOVE and ln >= 2:
+                    # Only a classified theme is named: with none on file
+                    # the line says nothing about a theme (CA4 F15 — it
+                    # used to say "Service").
+                    _theme = (f" {top_issues[0]['label']} is the most-mentioned theme." if top_issues else "")
                     add_attn("negative_trend", "important", f"Negative reviews up to {lshare:.0%} of the last two weeks",
-                             f"Up from {pshare:.0%} the two weeks before. {top_issues[0]['label'] if top_issues else 'Service'} is the most-mentioned theme.", "reviews", "See what changed",
-                             since="2 weeks", evidence=f"{ln} of {lt} negative vs {pn} of {pt}")
-                elif pshare - lshare >= 0.15 and pn >= 2:
+                             f"Up from {pshare:.0%} the two weeks before.{_theme}", "reviews", "See what changed",
+                             since="2 weeks", evidence=f"{ln} of {lt} negative vs {pn} of {pt}",
+                             ev={"n": min(lt, pt), "kind": "reviews", "flags": _rv_flags,
+                                 "basis": f"{lt} reviews in the last two weeks against {pt} the two before"},
+                             sources=_rv_src)
+                elif pshare - lshare >= NEGATIVE_SHARE_MOVE and pn >= 2:
                     add_win("sentiment_improving", "Fewer negative reviews", f"{lshare:.0%} of the last two weeks vs {pshare:.0%} before.", "reviews")
-        # rating movement
-        rating_delta = _pct_delta(avg30, prev_avg) if (n30 >= 3 and prev_n >= 3) else None
-        if rating_delta is not None and rating_delta <= -0.3:
+        # rating movement — the same threshold both ways (CA1 H7)
+        rating_delta = (_pct_delta(avg30, prev_avg)
+                        if (n30 >= REVIEW_MOVE_MIN_N and prev_n >= REVIEW_MOVE_MIN_N) else None)
+        if rating_delta is not None and rating_delta <= -RATING_MOVE_STARS:
             add_attn("rating_drop", "important", f"30-day rating slipped to {avg30:.1f}★",
-                     f"Down from {prev_avg:.1f}★ the previous 30 days across {n30} reviews.", "reviews", "Open reviews", since="30d")
-        elif rating_delta is not None and rating_delta >= 0.2:
+                     f"Down from {prev_avg:.1f}★ the previous 30 days across {n30} reviews.", "reviews", "Open reviews",
+                     since="30d", evidence=f"{n30} reviews this 30 days against {prev_n} the 30 before",
+                     ev={"n": min(n30, prev_n), "kind": "reviews", "flags": _rv_flags,
+                         "basis": f"{n30} reviews in the last 30 days against {prev_n} the 30 before"},
+                     sources=_rv_src)
+        elif rating_delta is not None and rating_delta >= RATING_MOVE_STARS:
             add_win("rating_up", f"30-day rating up to {avg30:.1f}★", f"From {prev_avg:.1f}★ the previous 30 days.", "reviews")
         if rate >= 80 and total >= 10:
             add_win("response_rate", f"{rate:.0f}% of reviews answered",
@@ -1024,8 +1240,9 @@ def _build(current_user, present=True):
             interp = "No reviews yet — connect Google to start." if not google_connected else "Connected — reviews arrive on the next pull."
         elif urgent:
             interp = f"{_plural(urgent, 'urgent review')} need a reply first."
-        elif rating_delta is not None and rating_delta <= -0.3:
-            interp = f"Rating is slipping — {top_issues[0]['label'].lower() if top_issues else 'recent'} complaints are the theme."
+        elif rating_delta is not None and rating_delta <= -RATING_MOVE_STARS:
+            interp = (f"Rating is slipping — {top_issues[0]['label'].lower()} complaints are the theme."
+                      if top_issues else "Rating is slipping.")
         elif awaiting:
             interp = f"{_plural(awaiting, 'drafted reply')} ready to publish."
         else:
@@ -1037,7 +1254,7 @@ def _build(current_user, present=True):
                          "delta": ({"value": f"{rating_delta:+.1f}", "label": "vs prior 30d", "good": rating_delta >= 0} if rating_delta is not None else None),
                          "secondary": [{"label": "Answered", "value": f"{rate:.0f}%"}, {"label": "Urgent", "value": str(urgent)}, {"label": "Awaiting", "value": str(awaiting)}],
                          "interpretation": interp,
-                         "state": "bad" if urgent else ("warn" if (awaiting or (rating_delta is not None and rating_delta <= -0.3) or (total >= 5 and rate < 50)) else ("neutral" if total == 0 else "good")),
+                         "state": "bad" if urgent else ("warn" if (awaiting or (rating_delta is not None and rating_delta <= -RATING_MOVE_STARS) or (total >= 5 and rate < 50)) else ("neutral" if total == 0 else "good")),
                          "spark": spark[-8:], "spark_label": "avg rating · 8 weeks" if len(spark) > 1 else None,
                          "attention": bool(urgent or awaiting), "sample": False, "last_data": r.get("last_fetched_at")})
 
@@ -1050,8 +1267,9 @@ def _build(current_user, present=True):
                     f"{awaiting} guests from the last 30 days have a reply written and not yet posted.",
                     f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered"
                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
-                    "Reputation · response rate", "reviews", "Today", "strong", "Publish now",
-                    metric=None, conf=("high", f"a count of {awaiting} drafts on file"),
+                    "Reputation · response rate", "reviews", "Today", "Publish now",
+                    metric=None, ev={"n": awaiting, "kind": "count", "basis": f"a count of {awaiting} drafts on file"},
+                    sources=_rv_src,
                     if_ignored="those guests, and everyone who reads their reviews, see no reply",
                     effort="low", action={"kind": "publish_replies", "count": min(awaiting, 25)})
         if top_issues and total >= 10:
@@ -1069,9 +1287,11 @@ def _build(current_user, present=True):
                                if d.get("category") == cat and d.get("recommended_action")), None)
                 except Exception:
                     dg = None
-                ev_band = "high" if cnt >= 8 else ("medium" if cnt >= 5 else "low")
                 if dg:
-                    band = dg.get("confidence") if dg.get("confidence") in ("low", "medium", "high") else ev_band
+                    # Evidence is the count of reviews behind it; the model's
+                    # own rating only LOWERS it, never raises it (E3, CA4 F2):
+                    # "High confidence — a diagnosis read from 3 reviews" is
+                    # no longer possible.
                     # The Reviews diagnosis card's own key ("diag_review:<cat>"),
                     # so "Not for us" on either one holds on both (M-9).
                     from client_api import diagnosis_rec_key as _drk_rv
@@ -1081,19 +1301,21 @@ def _build(current_user, present=True):
                             f"{lbl} raised in {cnt} reviews over 90 days"
                             + ((" · " + (dg.get("stale_note") or "diagnosis older than a week").rstrip("."))
                                if dg.get("stale") else ""),
-                            "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate",
+                            "Reviews · rating", "reviews", "This week",
                             "See the reviews", metric=f"complaints:{cat}",
-                            conf=(band, f"a diagnosis read from {cnt} reviews"
-                                  + ("; written over a week ago" if dg.get("stale") else "")),
+                            ev=diagnosis_evidence(dg, cnt, "reviews", f"a diagnosis read from {cnt} reviews",
+                                                  flags=_rv_flags),
+                            sources=_rv_src,
                             if_ignored=f"{lbl.lower()} stays the most-mentioned complaint",
                             effort="medium", alternative=dg.get("alternative_cause"), model_written=True)
                 else:
                     add_rec(f"top_issue:{cat}", f"Read the {cnt} {lbl.lower()} complaints and pick one fix for this week",
                             f"{lbl} is the most-mentioned complaint in the last 90 days.",
                             f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week",
-                            "strong" if cnt >= 5 else "moderate", "See the reviews",
+                            "See the reviews",
                             metric=f"complaints:{cat}",
-                            conf=(ev_band, f"{cnt} reviews in 90 days"),
+                            ev={"n": cnt, "kind": "reviews", "basis": f"{cnt} reviews in 90 days", "flags": _rv_flags},
+                            sources=_rv_src,
                             if_ignored=f"{lbl.lower()} stays the most-mentioned complaint", effort="medium")
         # changes
         if (reviews_since.get("n") or 0) > 0:
@@ -1108,16 +1330,31 @@ def _build(current_user, present=True):
         if urgent:
             brief_lines.append({"text": f"{_plural(urgent, 'urgent review')} unanswered — start there.", "tone": "bad", "module": "reviews"})
         elif n30:
-            brief_lines.append({"text": f"Rating {avg30:.1f}★ over the last 30 days" + (f", {rating_delta:+.1f} vs the month before" if rating_delta is not None else "") + f" · {_plural(n30, 'new review')}.", "tone": "bad" if (rating_delta is not None and rating_delta <= -0.3) else ("good" if (rating_delta or 0) >= 0.2 else "neutral"), "module": "reviews"})
+            brief_lines.append({"text": f"Rating {avg30:.1f}★ over the last 30 days" + (f", {rating_delta:+.1f} vs the month before" if rating_delta is not None else "") + f" · {_plural(n30, 'new review')}.", "tone": "bad" if (rating_delta is not None and rating_delta <= -RATING_MOVE_STARS) else ("good" if (rating_delta or 0) >= RATING_MOVE_STARS else "neutral"), "module": "reviews"})
         if total:
             ask.append("What changed in my reviews this month?")
         if top_issues:
             ask.append(f"What are guests saying about {top_issues[0]['label'].lower()}?")
 
+    # ── POS sync (any provider) ─────────────────────────────────────────────
+    # pos_health reads every provider by name — RPOWER included, which no
+    # Home surface read before (CA3 F6). A failing sync is critical: labor,
+    # sales and depletion stop updating under every card.
+    if "labor" in active_keys or "inventory" in active_keys:
+        import pos_health
+        _pos_state = pos_health.pos_sync_state(r, now=now)
+        if _pos_state["state"] == "error":
+            _pname = pos_health_label(_pos_state)
+            add_attn("pos_sync", "critical", f"{_pname} sync is failing",
+                     f"Last error: {str(_pos_state.get('error') or '')[:120]}. Labor, sales and depletion numbers "
+                     "stop updating until it's fixed.", "account", "Fix connection",
+                     evidence=(f"last good sync {_mdy(_pos_state['last_synced_iso'])}"
+                               if _pos_state.get("last_synced_iso") else "no successful sync on file"),
+                     provider=_pos_state.get("provider"))
+
     # ── Labor ───────────────────────────────────────────────────────────────
     if "labor" in active_keys:
         if not labor_live or not labor:
-            freshness.append({"key": "labor", "label": "Labor", "at": None, "state": "sample", "note": "sample data — upload shifts or connect your POS"})
             snapshot.append({"key": "labor", "label": "Labor", "status": "available", "value": "—", "unit": "",
                              "delta": None, "secondary": [], "interpretation": "Showing sample data until your shifts are in. Upload a shifts export or connect Toast.",
                              "state": "sample", "spark": [], "spark_label": None, "attention": False, "sample": True, "last_data": None,
@@ -1136,19 +1373,37 @@ def _build(current_user, present=True):
             hist_pcts = [h["labor_pct"] for h in labor_hist[::-1] if h.get("labor_pct") is not None]
             prev_pct = hist_pcts[-2] if len(hist_pcts) >= 2 else None
             delta = _pct_delta(pct, prev_pct) if prev_pct is not None else None
-            src_age = _age_days(client_data.get("updated_at"), now)
-            freshness.append({"key": "labor", "label": "Labor", "at": client_data.get("updated_at") or r.get("toast_last_synced"),
-                              "state": "fresh" if (src_age is not None and src_age <= 8) else ("stale" if src_age is not None else "fresh"),
-                              "note": ("Toast synced" if r.get("toast_restaurant_guid") and not r.get("toast_sync_error") else f"{days}-day shift export")})
-            if r.get("toast_restaurant_guid") and r.get("toast_sync_error"):
-                add_attn("toast_sync", "critical", "Toast sync is failing", f"Last error: {str(r['toast_sync_error'])[:120]}. Labor and depletion numbers stop updating until it's fixed.", "account", "Fix connection")
-            if over >= LABOR_OVER_TARGET_PTS:
+            # The analysis's own partial-data flags (CA3 F4): how many of
+            # its shift days carry sales is the coverage every labor claim
+            # rests on, and each flag weakens the evidence.
+            from labor import MIN_DAYS_TO_EXTRAPOLATE as _MIN_DAYS
+            period_days = int(labor.get("period_days") or days or 0)
+            _missing = len(labor.get("days_missing_sales") or [])
+            _with_sales = max(0, days - _missing)
+            _lab_cov = (_with_sales / float(days)) if days else None
+            _lab_flags = tuple(f for f, on in (("days_missing_sales", _missing),
+                                               ("hours_are_estimated", labor.get("hours_are_estimated")),
+                                               ("days_with_conflicting_sales", labor.get("days_with_conflicting_sales")),
+                                               ("period_too_short", period_days < _MIN_DAYS)) if on)
+            _cover_note = f"{_with_sales} of {days} days carry sales" if _missing else ""
+            if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
+                # Never from a cold start: one day of shifts is not "labor
+                # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
                 add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
-                         f"Across the last {days} days of shifts" + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
-                         since=f"{days}d", evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales",
+                         f"Across the last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
+                         + (f"; about ${savings:,.0f}/week recoverable by trimming the overstaffed days." if savings > 0 else "."), "labor", "Open labor",
+                         since=f"{days}d",
+                         evidence=f"${float(labor.get('total_labor_cost') or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales"
+                         + (f" · {_cover_note}" if _cover_note else ""),
                          # The labor alert's key: its latest period.
                          rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
-                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"))
+                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"),
+                         ev={"n": _with_sales, "kind": "trading_days", "coverage": _lab_cov, "flags": _lab_flags,
+                             "basis": f"{_with_sales} days of shifts with sales"
+                                      + (f" of {days}" if _missing else "")},
+                         dollars_weekly=(round(savings, 2) if savings > 0 else None),
+                         dollars_basis=("a week of the whole schedule's gap to your target, all shifts in the period"
+                                        if savings > 0 else None))
             elif over <= 0:
                 add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under your {labor_target:.0f}% target over {days} days.", "labor")
             if ot_now:
@@ -1160,32 +1415,28 @@ def _build(current_user, present=True):
                           f"{ot_now['hours']:g} hours past 40" if prem is not None else
                           f"{ot_now['hours']:g} hours past 40 so far")
                          + (" (from scheduled hours — no clock-ins on file)." if ot_now["estimated"] else "."),
-                         "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n))
+                         "labor", "Open schedule", evidence=", ".join(n for n in ot_now["names"] if n),
+                         ev={"n": n_ot, "kind": "count", "flags": ("hours_are_estimated",) if ot_now["estimated"] else (),
+                             "basis": f"{n_ot} people's hours this payroll week"
+                                      + (" (scheduled, no clock-ins)" if ot_now["estimated"] else "")})
             # day-of-week recommendation
             if len(dow) >= 4:
-                worst_day, worst_pct = max(dow.items(), key=lambda kv: kv[1] or 0)
-                mean = other_days_mean(dow, worst_day)
-                if mean and worst_pct - mean >= 4 and worst_pct > labor_target:
-                    # What that day costs above the owner's own target, from
-                    # the days in the upload — a measured figure, per month.
-                    by_day = labor.get("by_day") or {}
-                    excess, n_days = 0.0, 0
-                    for dstr, dd in by_day.items():
-                        try:
-                            if datetime.strptime(dstr, "%Y-%m-%d").strftime("%A") != worst_day:
-                                continue
-                        except (TypeError, ValueError):
-                            continue
-                        n_days += 1
-                        excess += max(0.0, float(dd.get("labor_cost") or 0) - float(dd.get("sales") or 0) * labor_target / 100.0)
-                    trim_monthly = round(excess / n_days * 52.0 / 12.0, 2) if n_days else None
+                trim = trim_day_read(dow, labor.get("by_day") or {}, labor_target, period_days)
+                if trim:
+                    worst_day, worst_pct, mean = trim["day"], trim["pct"], trim["others_mean"]
+                    n_days = trim["n_days"]
                     add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing on the next schedule",
                             f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
-                            f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% on your other days · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
-                            "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule",
-                            metric="labor_pct", dollars=trim_monthly,
-                            conf=("high" if n_days >= 4 else ("medium" if n_days >= 2 else "low"),
-                                  f"{_plural(n_days, worst_day)} in your shift data"),
+                            f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% on your other days · target {labor_target:.0f}%"
+                            + (f" · {_cover_note}" if _cover_note else ""),
+                            "Labor · weekly cost", "labor", "Next schedule", "Rebuild the schedule",
+                            # The weekday's own labor % when metrics can
+                            # measure it, not overall labor % — any labor
+                            # move was credited to this card (CA2 #14).
+                            metric=trim_metric(worst_day), dollars=trim["monthly"],
+                            dollars_basis=trim["basis"],
+                            ev={"n": n_days, "kind": "weekdays", "coverage": _lab_cov, "flags": _lab_flags,
+                                "basis": f"{_plural(n_days, worst_day)} with sales in your shift data"},
                             if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over your target",
                             effort="medium")
             if delta is not None and delta >= 1.5:
@@ -1202,7 +1453,11 @@ def _build(current_user, present=True):
                              "interpretation": (f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip(),
                              "state": "bad" if over > 6 else ("warn" if over > 0 else "good"),
                              "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": over >= LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False, "last_data": client_data.get("updated_at")})
+                             "attention": over >= LABOR_OVER_TARGET_PTS or bool(ot_now), "sample": False,
+                             # The last day the shifts cover, not when a file
+                             # was written (CA3 F2).
+                             "last_data": (labor.get("date_range") or {}).get("end") or client_data.get("updated_at"),
+                             "coverage_note": _cover_note or None})
             brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
@@ -1211,7 +1466,6 @@ def _build(current_user, present=True):
     # ── Food cost ───────────────────────────────────────────────────────────
     if "inventory" in active_keys:
         if not inv_live or not inv:
-            freshness.append({"key": "inventory", "label": "Food cost", "at": None, "state": "sample", "note": "sample data — add a count or connect your POS"})
             snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available", "value": "—", "unit": "",
                              "delta": None, "secondary": [], "interpretation": "Showing sample data until your inventory is in. Do a quick count or connect Toast for depletion.",
                              "state": "sample", "spark": [], "spark_label": None, "attention": False, "sample": True, "last_data": None,
@@ -1223,12 +1477,16 @@ def _build(current_user, present=True):
             reorder = inv.get("reorder_soon") or []
             waste_items = inv.get("waste_items") or []
             top = waste_items[0] if waste_items else None
-            inv_age = _age_days(r.get("inventory_updated_at"), now)
-            freshness.append({"key": "inventory", "label": "Food cost", "at": r.get("inventory_updated_at"),
-                              "state": "fresh" if (inv_age is not None and inv_age <= 8) else ("stale" if inv_age is not None else "fresh"),
-                              "note": "counts current" if (inv_age is not None and inv_age <= 8) else (f"last count {int(inv_age)}d ago" if inv_age is not None else "inventory on file")})
+            # Counts are dated by the OLDEST count among the counted items
+            # (ingredients.last_recount_at). restaurants.inventory_updated_at
+            # is never written, so this attention could never fire and the
+            # module always read "fresh" (CA3 F9).
+            _inv_state = trust_ctx.sources(("inventory",))[0]
+            inv_age = _inv_state.get("lag_days")
             if inv_age is not None and inv_age > 14:
-                add_attn("inventory_stale", "watch", f"Inventory last counted {int(inv_age)} days ago", "Waste and reorder flags drift the longer the count sits.", "inventory", "Quick count", since=f"{int(inv_age)}d")
+                add_attn("inventory_stale", "watch", f"Oldest inventory count is {int(inv_age)} days old",
+                         "Waste and reorder flags drift the longer the count sits.", "inventory", "Quick count",
+                         since=f"{int(inv_age)}d", evidence=_inv_state.get("basis"))
             # One recommendation per item ("stock_low:Salmon", the alert's own
             # key): an item answered anywhere drops off the card, and the
             # card goes only when every item on it is answered. Keyed to the
@@ -1241,7 +1499,9 @@ def _build(current_user, present=True):
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:CRITICAL_LOW_NAMED]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon",
-                         rec_key=stock_key(crit[0].get("item")))
+                         rec_key=stock_key(crit[0].get("item")),
+                         ev={"n": len(crit), "kind": "count",
+                             "basis": f"{len(crit)} items below par on the last counts and depletion"})
                 # Only the items the card NAMES (its detail lists the
                 # first four) are shown on it: presenting ten logged items
                 # nobody read (re-audit C4). A count, not a ranking.
@@ -1263,8 +1523,11 @@ def _build(current_user, present=True):
                 drivers = (_ev["drivers"].get("drivers") or [])
                 _dg = _fci_hb.get_diagnosis(rid, include_stale=True)
                 if _dg and _dg.get("cause"):
-                    cfo_why = {"cause": _dg["cause"], "confidence": _dg.get("confidence"),
-                               "stale": _dg.get("stale")}
+                    # The measured band (K6), not the one the model gave
+                    # itself (E3); the object rides beside it.
+                    _dgc = _dg.get("confidence_detail") if isinstance(_dg.get("confidence_detail"), dict) else {}
+                    cfo_why = {"cause": _dg["cause"], "confidence": _dgc.get("band") or _dg.get("confidence"),
+                               "confidence_detail": _dgc or None, "stale": _dg.get("stale")}
             except Exception:
                 pass
 
@@ -1281,23 +1544,19 @@ def _build(current_user, present=True):
                 # a second one (#4).
                 import business_intelligence as _bi_hb
                 d0 = drivers[0]
-                _conf_why = {"waste": "counted waste against its own tolerance band",
-                             "portion": "physical counts against recipes — portioning, prep loss or a miscount all fit",
-                             "price": "this ingredient's recorded price history",
-                             "sourcing": "two suppliers' prices on file for the same unit",
-                             "menu": "this dish's plate cost against its own sales"}.get(d0.get("kind"), "the ledger")
                 _alt = None
                 if _dg and _dg.get("alternative_cause") and str(d0.get("item") or "").lower() in json.dumps(_dg.get("drivers") or []).lower():
                     _alt = _dg["alternative_cause"]
                 add_rec(_bi_hb.driver_key(d0), _bi_hb.driver_action(d0),
                         d0["evidence"][:1].upper() + d0["evidence"][1:] + ".",
                         f"${d0['dollars_monthly']:,.0f}/month · {d0['difficulty']} effort",
-                        "Food cost · margin", "inventory", "This week",
-                        "strong" if d0["dollars_monthly"] >= 150 else "moderate", "See the numbers",
+                        "Food cost · margin", "inventory", "This week", "See the numbers",
                         # Waste is tracked against waste, not food cost % (#46).
                         metric="weekly_waste" if d0.get("kind") == "waste" else "food_cost_pct",
                         dollars=d0["dollars_monthly"],
-                        conf=(d0.get("confidence") or "medium", _conf_why),
+                        # The driver's own evidence input, measured by the
+                        # driver (food_cost_intelligence.driver_evidence).
+                        ev=d0.get("evidence_input") or {"n": None, "basis": "the ledger"},
                         if_ignored=d0["if_ignored"][:1].upper() + d0["if_ignored"][1:],
                         effort=d0.get("difficulty"), alternative=_alt)
             elif top and float(top.get("waste_cost") or 0) >= 40:
@@ -1305,10 +1564,11 @@ def _build(current_user, present=True):
                 add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut the {top.get('item', 'top-item')} order — it's the biggest waste line",
                         f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
                         f"${_wc:,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
-                        "strong" if _wc >= 100 else "moderate", "Adjust the order",
+                        "Adjust the order",
                         metric="weekly_waste",
                         dollars=float(top.get("recoverable_cost") or 0) * 52.0 / 12.0 or None,
-                        conf=("medium", "one week of waste counts"),
+                        dollars_basis="one week's recoverable waste on this item × 52 ÷ 12",
+                        ev={"n": 1, "kind": "waste_weeks", "basis": "one week of waste counts"},
                         if_ignored="the same share keeps going in the bin every week", effort="low")
             elif _dg and _dg.get("recommended_action"):
                 # The Food Cost card's key for this diagnosis — its lead
@@ -1319,12 +1579,14 @@ def _build(current_user, present=True):
                 add_rec(_drk_fd("diag_food", _dg) or "food_diagnosis",
                         str(_dg["recommended_action"]).strip().rstrip("."),
                         (_dg.get("cause") or "").strip() or "From the stored food cost diagnosis.",
-                        _dg.get("headline") or "", "Food cost · margin", "inventory", "This week", "moderate",
+                        _dg.get("headline") or "", "Food cost · margin", "inventory", "This week",
                         "See the numbers", metric="food_cost_pct", dollars=_dg.get("dollars_at_stake"),
-                        conf=(_dg.get("confidence") if _dg.get("confidence") in ("low", "medium", "high") else "medium",
-                              "a diagnosis of this restaurant's own ledger"
-                              + (("; " + (_dg.get("stale_note") or "written over a week ago").rstrip(".").lower()
-                                  .replace("from a read on", "read on")) if _dg.get("stale") else "")),
+                        # The data behind it: its verified operational
+                        # evidence entries; the model's own band only lowers
+                        # it (E3, CA4 F2) — Home no longer prefers it.
+                        ev=diagnosis_evidence(_dg, len([e for e in (_dg.get("operational_evidence") or [])
+                                                        if isinstance(e, dict) and e.get("verified", True)]),
+                                              "evidence_items", "a diagnosis of this restaurant's own ledger"),
                         if_ignored="food cost stays where it is", effort="medium",
                         alternative=_dg.get("alternative_cause"), model_written=True)
 
@@ -1346,10 +1608,13 @@ def _build(current_user, present=True):
                         f"{_ing} rose — {x['dish']} now runs at {x.get('food_cost_pct_now')}% food cost, "
                         f"up from {x.get('food_cost_pct_before')}%.",
                         f"about ${x['monthly_margin_lost']:,.0f}/month of margin at today's price",
-                        "Food cost · margin", "inventory", "This week", "moderate", "See the price",
+                        "Food cost · margin", "inventory", "This week", "See the price",
                         metric="food_cost_pct", dollars=x["monthly_margin_lost"],
-                        conf=("high" if x.get("units_sold_30d") else "medium",
-                              f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"),
+                        dollars_basis=x.get("monthly_basis"),
+                        ev={"n": max((int(dv.get("weeks") or 1) for dv in (x.get("drivers") or [{}])), default=1),
+                            "kind": "price_weeks",
+                            "flags": () if x.get("units_sold_30d") else ("no_sales_mix",),
+                            "basis": f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"},
                         if_ignored="every plate keeps selling at the thinner margin", effort="low",
                         action={"kind": "reprice", "dish": x["dish"], "price": x["suggested_price"],
                                 "label": f"Reprice to ${x['suggested_price']:.2f}"})
@@ -1402,18 +1667,17 @@ def _build(current_user, present=True):
                                   f"(${drivers[0]['dollars_monthly']:,.0f}/month)." if drivers else
                                   (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else "No waste flagged this week."))),
                              "why_confidence": (cfo_why or {}).get("confidence"),
+                             "why_confidence_detail": (cfo_why or {}).get("confidence_detail"),
                              "state": "bad" if (crit or (fc_target and fc_pct and fc_pct > fc_target)) else ("warn" if recoverable > 0 else "good"),
                              "spark": [], "spark_label": None,
                              "attention": bool(crit) or recoverable >= 200 or bool(fc_target and fc_pct and fc_pct > fc_target),
-                             "sample": False, "last_data": r.get("inventory_updated_at")})
+                             "sample": False, "last_data": _inv_state.get("as_of_iso")})
             ask.append("Where are my biggest food cost opportunities?")
 
     # ── Marketing ───────────────────────────────────────────────────────────
     if "marketing" in active_keys:
         last_age = _age_days(mkt.get("last_at"), now)
         posted_age = _age_days(mkt.get("last_posted_at"), now)
-        freshness.append({"key": "marketing", "label": "Marketing", "at": mkt.get("last_at"), "state": "fresh" if mkt.get("ig_connected") or mkt.get("fb_connected") else "manual",
-                          "note": ("Instagram connected" if mkt.get("ig_connected") else ("Facebook connected" if mkt.get("fb_connected") else "no social account connected"))})
         if mkt.get("failed"):
             f = mkt["failed"][0]
             add_attn("post_failed", "important", f"{_plural(len(mkt['failed']), 'scheduled post')} failed to publish",
@@ -1424,12 +1688,15 @@ def _build(current_user, present=True):
             # Only what the data shows (#46): "accounts that post weekly hold
             # reach" had no source here — reach is not measured.
             add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days.",
-                    f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "moderate", "Draft a post",
-                    conf=("medium", "the posting gap is measured; what a post does for reach is not"),
+                    f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "Draft a post",
+                    ev={"n": 1, "kind": "count", "flags": ("partial",),
+                        "basis": "the posting gap is measured; what a post does for reach is not"},
                     if_ignored="nothing new goes out to your followers", effort="low")
         elif mkt.get("last_at") is None:
-            add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post",
-                    conf=("medium", "a setup step — nothing to measure yet"),
+            add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "Generate a post",
+                    # A setup step: nothing to measure, so no percentage —
+                    # "Confidence not yet measurable", never a stand-in.
+                    ev={"n": None, "basis": "a setup step — nothing to measure yet"},
                     if_ignored="the Marketing module has nothing to schedule or measure", effort="low")
         if mkt.get("posted_since"):
             add_change(f"{_plural(mkt['posted_since'], 'scheduled post')} went live", "good", "marketing")
@@ -1464,8 +1731,6 @@ def _build(current_user, present=True):
     # ── Intel ───────────────────────────────────────────────────────────────
     if intel is not None:
         age = _age_days(intel.get("updated_at"), now)
-        freshness.append({"key": "intel", "label": "Intel", "at": intel.get("updated_at"), "state": "fresh" if (age is not None and age <= 8) else ("stale" if age is not None else "missing"),
-                          "note": f"{intel['competitors']} competitors tracked" if intel["competitors"] else "no competitors added"})
         snapshot.append({"key": "intel", "label": "Intel", "status": "available", "value": str(intel["recs"]) if intel["competitors"] else "—", "unit": "recommendations" if intel["competitors"] else "",
                          "delta": None, "secondary": [{"label": "Competitors", "value": str(intel["competitors"])}, {"label": "Updated", "value": (f"{int(age)}d ago" if age is not None else "—")}],
                          # Three different states, said apart (M-20): no
@@ -1482,8 +1747,11 @@ def _build(current_user, present=True):
             # comparison, not a finding that neighbours do things "you aren't".
             add_rec("intel_recs", f"Read the {_plural(intel['recs'], 'suggestion')} from this week's competitor comparison",
                     f"The weekly Intel pass compared you with {_plural(intel['competitors'], 'nearby competitor')} {int(age)}d ago.",
-                    f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "moderate", "Open Intel",
-                    conf=("low" if age > 7 else "medium", "a model-written comparison of public listings"),
+                    f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "Open Intel",
+                    # A model-written comparison: the model's read caps it at
+                    # medium whatever the count; its age is Data Freshness.
+                    ev={"n": intel["competitors"], "kind": "competitors", "model_band": "medium",
+                        "basis": f"a model-written comparison of {_plural(intel['competitors'], 'public listing')}"},
                     if_ignored="the suggestions age out at the next weekly pass", effort="medium", model_written=True)
 
     # ── coming-soon modules (compact, never data) ──────────────────────────
@@ -1685,15 +1953,21 @@ def _build(current_user, present=True):
     for _pass in range(2):
         rendered_attention = attention[:HOME_ATTENTION_SHOWN]
         batch = rec_delivery.only_presentable([
+            # Each carries the confidence it is shown with, snapshotted at
+            # delivery (K3).
             *({"key": a["rec_key"], "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"],
-               "position": i} for i, a in enumerate(rendered_attention) if a["answerable"]),
+               "position": i, "confidence": a.get("confidence"),
+               "confidence_band": (a.get("confidence") or {}).get("band")}
+              for i, a in enumerate(rendered_attention) if a["answerable"]),
             # A card that stands for several (critically low: one key per
             # item) shows each of them.
-            *({"key": k, "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"], "position": i}
+            *({"key": k, "module": _LEDGER_MODULE.get(a["module"], "home"), "title": a["title"], "position": i,
+               "confidence": a.get("confidence"), "confidence_band": (a.get("confidence") or {}).get("band")}
               for i, a in enumerate(rendered_attention) if a["answerable"]
               for k in (a.get("rec_keys") or []) if k != a["rec_key"]),
             *({"key": r["key"], "module": _LEDGER_MODULE.get(r["module"], "home"), "title": r["title"],
                "position": 100 + i, "dollar_value": r.get("dollars_monthly"),
+               "confidence": r.get("confidence"),
                "confidence_band": (r.get("confidence") or {}).get("band"),
                "evidence_sources": r.get("evidence_sources"), "model_written": r.get("model_written"),
                "cavnar_completes": bool(r.get("action")), "expected_metric": r.get("metric"),
@@ -1780,6 +2054,14 @@ def _build(current_user, present=True):
 
     readiness = _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt)
 
+    # Data freshness per module and source (K4), from the one registry every
+    # card's Data Freshness reads (data_freshness) — and the stalest date
+    # under the page. The strip used to be built here and rendered nowhere,
+    # with an unknown age reading "fresh" (CA3 F1, CA4 F7).
+    freshness = home_freshness(trust_ctx, active_keys, labor_live, inv_live,
+                               google_connected=google_connected, reviews_on_file=int(rstats.get("total") or 0))
+    data_as_of = stalest_as_of(freshness)
+
     payload = {
         "ok": True,
         "readiness": readiness,
@@ -1790,7 +2072,13 @@ def _build(current_user, present=True):
         "context": {"restaurant_name": restaurant.name, "location_name": restaurant.location_name or None, "group_name": group_name,
                     "view": "location" if group_name else "single", "locations": locations, "portfolio": portfolio, "timezone": str(local_now.tzinfo)},
         "freshness": freshness,
+        # What "Monitoring N signals" may honestly say: only sources that are
+        # current count, beside the stalest date (E7).
+        "monitoring": {"count_live": sum(1 for f in freshness if f.get("state") == "current"),
+                       "sources": sum(1 for f in freshness if f.get("pct") is not None),
+                       "stalest_as_of": data_as_of},
         "brief": {"headline": headline, "tone": headline_tone, "lines": brief_lines[:4], "overnight": overnight,
+                  "data_as_of": data_as_of,
                   "counts": {"critical": critical, "important": important, "watch": sum(1 for a in attention if a["severity"] == "watch"), "wins": len(wins)}},
         "attention": attention[:8],
         "wins": wins[:4],

@@ -555,7 +555,11 @@ def test_the_waste_driver_says_when_it_is_one_week(db_path, monkeypatch):
                   (rid, (date.today() - timedelta(days=wk)).isoformat(), json.dumps({"top_items": ["Salmon"]})))
     c.commit(); c.close()
     w = [d for d in fci.cost_drivers(rid, db_path=db_path)["drivers"] if d["kind"] == "waste"][0]
-    assert w["confidence"] == "high" and w["weeks_of_data"] == 3
+    # Three offender weeks of a four-week pattern: 75% evidence, measured
+    # (confidence audit E2) — and with no track record here the driver's
+    # confidence is capped at 70%: medium, never "high" on a first reading.
+    assert w["weeks_of_data"] == 3 and w["confidence_detail"]["dimensions"]["evidence"]["pct"] == 75
+    assert w["confidence_detail"]["pct"] == 70 and w["confidence"] == "medium"
 
 
 def test_the_menu_driver_uses_the_restaurants_target_and_recipe_provenance(db_path, monkeypatch):
@@ -582,7 +586,10 @@ def test_the_menu_driver_uses_the_restaurants_target_and_recipe_provenance(db_pa
     monkeypatch.setattr(il, "inferred_variance", lambda r: {"material": []})
     out = fci.cost_drivers(rid, db_path=db_path)
     m = [d for d in out["drivers"] if d["kind"] == "menu"][0]
-    assert m["target_pct"] == 28 and m["confidence"] == "medium" and m["recipe_unreviewed_lines"] == 1
+    # Half the recipe is an unreviewed draft: the plate cost's coverage is
+    # 50%, under the 70% floor — low, measured (confidence audit E2).
+    assert m["target_pct"] == 28 and m["confidence"] == "low" and m["recipe_unreviewed_lines"] == 1
+    assert m["confidence_detail"]["dimensions"]["evidence"]["pct"] == 49
     assert "accepted unedited" in m["evidence"] and sorted(m["ingredients"]) == ["Eggs", "Flour"]
 
 
