@@ -135,7 +135,8 @@ struct HomeRecommendations: View {
         // The calibrated figure when the server corrected it by this
         // restaurant's measured results (F6), with the note beside it.
         if let d = rec.statedDollars {
-            out.append("$\(d.commaFormatted)/mo at stake" + (rec.dollarsNote.map { " (\($0))" } ?? ""))
+            // The figure's kind picks its word when the server sends one.
+            out.append("$\(d.commaFormatted)/mo \(OwnerCopy.kindWord(rec.dollarsKind) ?? "at stake")" + (rec.dollarsNote.map { " (\($0))" } ?? ""))
         }
         // What that figure covers (B4 H7).
         if rec.statedDollars != nil, let b = rec.dollarsBasis { out.append(b) }
@@ -175,7 +176,7 @@ struct HomeRecommendations: View {
                         ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home")
                     }
                     if let ignored = rec.ifIgnored {
-                        (Text("If ignored: ").font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)
+                        (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)
                          + Text(ignored).font(.cavnarBody(12.5, weight: 500)).foregroundColor(.cavnarInk3))
                             .fixedSize(horizontal: false, vertical: true)
                     }

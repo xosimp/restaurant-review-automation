@@ -140,7 +140,7 @@ def test_week_loader_svg_is_wider_than_before():
 
 def test_close_button_is_not_undersized_next_to_its_siblings():
     s = _src()
-    i = s.index("AI-Optimized Schedule")
+    i = s.index("Generated schedule · draft")
     j = s.index("</div>\n      </div>", i)
     block = s[i:j]
     assert 'cbtn cbtn-glass cbtn-sm"' not in block

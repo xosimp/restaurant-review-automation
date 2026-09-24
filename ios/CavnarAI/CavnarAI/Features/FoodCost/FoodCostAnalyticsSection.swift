@@ -86,7 +86,9 @@ struct FoodCostAnalyticsSection: View {
                             // month; adding it made the arc a ratio of two
                             // different kinds of quantity.
                             ceiling: max(analytics.recoverableMonthly ?? 0,
-                                         analytics.monthlyWasteProjection ?? 0)
+                                         analytics.monthlyWasteProjection ?? 0),
+                            basis: analytics.recoverableBasisLine,
+                            kind: analytics.recoverableKind
                         )
                     }
                     if !analytics.wasteItems.isEmpty {
@@ -368,7 +370,8 @@ struct FoodCostAnalyticsSection: View {
                             }
                         }
                     }
-                    if let outcome = dg?.expectedOutcome { cfoRow("What should change", outcome, quiet: true) }
+                    // Conditional on the cause, never a promise (NS1 H10).
+                    if let outcome = OwnerCopy.expectedOutcome(dg?.expectedOutcome) { cfoRow(OwnerCopy.expectedOutcomeLabel, outcome, quiet: true) }
                     if let oe = dg?.operationalEvidence, !oe.isEmpty {
                         cfoRow("Cross-checked against",
                                oe.map { "\($0.module): \($0.metric) \($0.value)" }
@@ -466,7 +469,7 @@ struct FoodCostAnalyticsSection: View {
                     if let c = d.trust {
                         ConfidenceLine(confidence: c, recKey: d.recKey, surface: "food", module: "food")
                     }
-                    HomeMixedText.make("\(d.difficulty) effort · if ignored: \(d.ifIgnored)",
+                    HomeMixedText.make("\(d.difficulty) effort · risk if left alone: \(d.ifIgnored)",
                                        size: 11.5, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -589,7 +592,7 @@ struct FoodCostAnalyticsSection: View {
     }
 
     /// Count-up-once hero number — same treatment and same reasoning as
-    /// LaborAnalyticsSection's SavingsTile, just without the label/sublabel/
+    /// LaborAnalyticsSection's LaborStatTile, just without the label/sublabel/
     /// card chrome those tiles carry (heroCard already lays that out
     /// around it). The standard cavnarNumberGlow() (a faint 0.5pt shadow +
     /// a soft 6pt colored glow) reads fine on the app's usual near-black
@@ -877,10 +880,12 @@ struct FoodCostAnalyticsSection: View {
                 Text(item.suggestedOrderLabel)
                     .font(.cavnarNumber(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
-                if let savings = item.savingsVsLast, savings != 0 {
-                    Text(savings > 0 ? "↓ $\(String(format: "%.2f", savings))" : "↑ $\(String(format: "%.2f", -savings))")
-                        .font(.cavnarNumber(14, weight: 700))
-                        .foregroundStyle(savings > 0 ? Color.cavnarGreen : Color.cavnarRed)
+                // A per-order difference against the last order, not money
+                // saved: neutral ink, and it says what it is compared with.
+                if let delta = item.savingsVsLast, delta != 0 {
+                    HomeMixedText.make(delta > 0 ? "↓ $\(String(format: "%.2f", delta)) vs last order"
+                                                 : "↑ $\(String(format: "%.2f", -delta)) vs last order",
+                                       size: 13, weight: 500, color: .cavnarInk3, numberWeight: 700)
                 }
             }
         }

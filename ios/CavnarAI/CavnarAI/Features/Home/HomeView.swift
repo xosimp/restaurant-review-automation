@@ -2,10 +2,10 @@ import SwiftUI
 
 /// Home — the first fold has one job: make the owner feel the AI working.
 ///
-/// Top to bottom: the hero line (the date, "{name} — your restaurant is
-/// running on AI.", and what Cavnar did overnight), the pulse strip of
+/// Top to bottom: the hero line (the date, "{name}" and a line that only
+/// claims AI at work over a live source, and what Cavnar did overnight), the pulse strip of
 /// breathing module chips, the action deck led by the one thing to tap,
-/// the value-delivered band, and a "this week" receipt. No module tiles
+/// the measured-results band, and a "this week" receipt. No module tiles
 /// here — that's the Modules tab's job, not Home's. Everything sits on
 /// HomeObsidianField — black stone with light moving across it — instead
 /// of the old ember aurora.
@@ -472,10 +472,18 @@ struct HomeView: View {
         // a shadow on the whole line — Text concatenation only carries
         // font/colour per segment, not per-segment view modifiers.
         (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber2)
-            + Text(" — your restaurant is running on AI.").foregroundStyle(Color.cavnarInk))
+            + Text(Self.heroTail(liveSources: summary.monitoring?.countLive)).foregroundStyle(Color.cavnarInk))
             .font(.cavnarHeadline(27))
             .lineSpacing(3)
             .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
+    }
+
+    /// The hero's claim about the restaurant is conditional on a live
+    /// source under it (NS1 #14): with nothing connected yet, or nothing
+    /// current, it says what comes next instead.
+    static func heroTail(liveSources: Int?) -> String {
+        (liveSources ?? 0) > 0 ? " \u{2014} your restaurant is running on AI."
+                               : " \u{2014} connect a source and Cavnar AI starts reading it."
     }
 
     private func greetingName(_ summary: HomeSummary) -> String {
@@ -563,7 +571,8 @@ struct HomeView: View {
         if summary.needsAttention.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HomeSectionHeader(kicker: "Needs attention", title: "Start here")
-                AllClearRow()
+                AllClearRow(notClearReason: OwnerCopy.allClear(attentionEmpty: true,
+                                                               monitoring: summary.monitoring).reason)
             }
         } else {
             // The first four, as on the web (its focus card plus three rows):
@@ -627,7 +636,7 @@ struct HomeView: View {
             .background(Color.cavnarPaper.ignoresSafeArea())
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                cavnarTitleToolbar("Value delivered")
+                cavnarTitleToolbar("Measured results")
                 cavnarToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()

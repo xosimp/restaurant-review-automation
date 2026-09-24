@@ -350,7 +350,8 @@ struct ScheduleReviewPanel: View {
         let over = move.over.map { String(format: "%g", $0) } ?? "?"
         let when = [c.date.map { CavnarDate.mdy($0) }, c.shiftStart].compactMap { $0 }.joined(separator: " ")
         var line = "\(move.employee) is \(over)h over. \(c.employee) has room for the \(when) shift"
-        if let saves = c.saves, saves > 0 { line += ", saving about $\(Int(saves.rounded())) in overtime pay" }
+        // A move not yet kept: conditional, an estimate (NS3 labor #13).
+        if let saves = c.saves, saves > 0 { line += ", about $\(Int(saves.rounded())) less overtime pay if you keep it" }
         return line + "."
     }
 

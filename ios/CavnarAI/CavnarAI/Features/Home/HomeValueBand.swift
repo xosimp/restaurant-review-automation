@@ -50,21 +50,36 @@ struct HomeValueBand: View {
     /// The figure drawn: the net when net, else `total` as before.
     private var figure: Int { isNet ? (headline?.figure ?? total) : total }
     private var figureTone: Color { figure < 0 ? .cavnarRed : .cavnarGreen }
+    /// Nothing measured yet: a green glowing "$0" overclaims, and the web
+    /// and ValueChartCard already say it in words (NS1 #3). A net figure
+    /// was measured, whatever its sign.
+    private var nothingMeasured: Bool { !isNet && figure <= 0 }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            ValueBandSparkline(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend,
-                               revealed: revealed)
-                .opacity(hasRealTrend ? 1 : 0.35)
+            // Only a real trend is drawn. The band used to fall back to a
+            // hard-coded rising curve behind the figure, unlabelled — a
+            // synthetic series with no "Illustration only" beside it (NS1
+            // #3, H8). With no trend the backdrop stays empty and the
+            // delta line says tracking has not produced one yet.
+            if hasRealTrend {
+                ValueBandSparkline(values: history.map { Double($0.value) }, revealed: revealed)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 // The period comes from the payload's own `scope` (I7).
-                Text(isNet ? "MEASURED VALUE \u{00B7} NET \(HomeValueBlock.periodCaption(scope: scope))"
-                           : "MEASURED VALUE \u{00B7} \(HomeValueBlock.periodCaption(scope: scope))")
+                Text(isNet ? "MEASURED RESULTS \u{00B7} NET \(HomeValueBlock.periodCaption(scope: scope))"
+                           : "MEASURED RESULTS \u{00B7} \(HomeValueBlock.periodCaption(scope: scope))")
                     .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.6)
                     .foregroundStyle(Color.cavnarEmber2)
 
+                if nothingMeasured {
+                    Text("Nothing measured yet")
+                        .font(.cavnarNumber(30, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarSensitive()
+                } else {
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text(figure < 0 ? "\u{2212}$" : "$")
                     CavnarAnimatableNumber(value: animatedTotal, format: { Self.digits(abs(Int($0.rounded()))) })
@@ -81,6 +96,7 @@ struct HomeValueBand: View {
                 .onChange(of: figure) { _, newValue in
                     guard hasCountedUp else { return }
                     animatedTotal = Double(newValue)
+                }
                 }
 
                 deltaLine
@@ -102,7 +118,7 @@ struct HomeValueBand: View {
             .buttonStyle(.plain)
             .padding(.trailing, 20)
             .padding(.bottom, 18)
-            .accessibilityLabel("Value delivered over time")
+            .accessibilityLabel("Measured results over time")
         }
         .background(
             LinearGradient(colors: [Color.cavnarEmber.opacity(0.08), Color.cavnarPaper.opacity(0)],
@@ -133,6 +149,10 @@ struct HomeValueBand: View {
                 .foregroundStyle(Color.cavnarInk3)
         } else if let contributions {
             Text(contributions)
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+        } else if nothingMeasured {
+            Text("Track a recommendation and its before-and-after result lands here")
                 .font(.cavnarBody(13, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
         } else {
@@ -180,14 +200,6 @@ struct HomeValueBand: View {
         formatter.groupingSeparator = ","
         return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
-
-    // The same illustrative curve ValueChartCard falls back to before a
-    // restaurant has a real trend — drawn faint here, never next to a
-    // fabricated gain (see monthDelta).
-    private static let sampleTrend: [Double] = [
-        0.12, 0.20, 0.17, 0.26, 0.31, 0.27, 0.35, 0.44, 0.39, 0.47,
-        0.43, 0.53, 0.61, 0.56, 0.65, 0.60, 0.70, 0.78, 0.73, 0.85, 1.0,
-    ]
 }
 
 /// The band's backdrop: a smooth green line with a soft fill, revealed

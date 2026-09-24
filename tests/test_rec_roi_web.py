@@ -174,5 +174,5 @@ def test_evidence_opened_on_a_keyed_recommendation_is_recorded():
 
 def test_the_new_surfaces_are_documented_in_the_design_system():
     ds = open(os.path.join(ROOT, "DESIGN_SYSTEM.md"), encoding="utf-8").read()
-    for name in ("recReasonPicker", ".rck", "#panel-recs", "What worked for you", ".hb-vrows"):
+    for name in ("recReasonPicker", ".rck", "#panel-recs", "Measured alongside your changes", ".hb-vrows"):
         assert name in ds, name

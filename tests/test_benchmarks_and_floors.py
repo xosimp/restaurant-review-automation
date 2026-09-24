@@ -186,12 +186,14 @@ def test_both_clients_hide_the_industry_tiles_without_a_figure():
     dash = _read("templates", "dashboard.html")
     assert "labor_industry_pct if savings_breakdown.labor_industry_pct else 34.5" not in dash
     assert "{% set _ind = savings_breakdown.labor_industry_pct %}" in dash
-    assert "{% elif _ind %}<div><div class=\"l\">Vs" in dash
+    assert "{% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}" in dash
     # L7: the verdict is against the owner's target, and the tile says so.
     assert "<span>Vs industry</span>" not in dash and "<span>Vs your target</span>" in dash
     sec = _read("ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborAnalyticsSection.swift")
     assert "industryLow = 33.0" not in sec and "33–36%" not in sec
-    assert "} else if let ind = b.industryPctText {" in sec
+    assert "industryText: b.industryPctText" in sec
+    oc = _read("ios", "CavnarAI", "CavnarAI", "Models", "OwnerCopy.swift")
+    assert "if vsIndustryMonthly > 0, let industryText, !industryText.isEmpty {" in oc
     vm = _read("ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborViewModel.swift")
     assert "laborIndustryPct ?? 34.5" not in vm and "var industryPctText: String?" in vm
 

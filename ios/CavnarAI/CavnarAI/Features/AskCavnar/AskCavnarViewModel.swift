@@ -84,11 +84,18 @@ struct AskEvidence: Decodable, Hashable {
     /// decodes; nil when the server said nothing.
     var confidence: TrustConfidence? = nil
     var unverifiedFigures: [String] = []
+    /// A cause, or a name, the answer states that nothing Cavnar read
+    /// supports (ask_cavnar meta `unsupported_causes` / `unsupported_names`,
+    /// NS1 H1). Shown inline like an untraced figure: the answer stays, the
+    /// claim reads as a guess. Empty from a server that does not send them.
+    var unsupportedCauses: [String] = []
+    var unsupportedNames: [String] = []
 
     /// Nothing worth drawing a strip for. A measured confidence is always
     /// worth its line; a legacy band only when it is low (as before).
     var isEmpty: Bool {
-        guard modules.isEmpty && unverifiedFigures.isEmpty else { return false }
+        guard modules.isEmpty && unverifiedFigures.isEmpty
+                && unsupportedCauses.isEmpty && unsupportedNames.isEmpty else { return false }
         guard let c = confidence, ConfidenceDisplay(c).isRenderable else { return true }
         return !c.isMeasuredShape && c.effectiveBand != "low"
     }
@@ -107,6 +114,22 @@ struct AskEvidence: Decodable, Hashable {
         let noun = unverifiedFigures.count > 1 ? "those figures" : "that figure"
         return "Couldn’t verify \(list) against your data — treat \(noun) as unconfirmed."
     }
+
+    /// "Unsupported cause — …", worded as the web's caveat.
+    var causeWarning: String? {
+        guard let first = unsupportedCauses.first(where: { !$0.isEmpty }) else { return nil }
+        return "Unsupported cause \u{2014} Cavnar AI gave a reason here that nothing it read supports (\u{201C}\(String(first.prefix(120)))\u{201D}). Treat it as a guess, not a finding."
+    }
+
+    /// "Unverified name — …".
+    var nameWarning: String? {
+        let names = unsupportedNames.filter { !$0.isEmpty }
+        guard !names.isEmpty else { return nil }
+        return "Unverified name \u{2014} \(names.prefix(2).joined(separator: ", ")) doesn\u{2019}t appear in anything Cavnar read. Check before acting on it."
+    }
+
+    /// Every warning line, in the order the strip draws them.
+    var warnings: [String] { [warning, causeWarning, nameWarning].compactMap { $0 } }
 }
 
 /// K5 names the answer's metadata `meta`; today's server merges it into the
@@ -361,6 +384,8 @@ final class AskCavnarViewModel {
         var confidenceDetail: TrustConfidence? = nil
         let meta: AskMeta?
         let unverifiedFigures: [String]?
+        var unsupportedCauses: [String]? = nil
+        var unsupportedNames: [String]? = nil
         let messageId: Int?
         let suggestions: [AskSuggestion]?
 
@@ -370,13 +395,17 @@ final class AskCavnarViewModel {
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
             case unverifiedFigures = "unverified_figures"
+            case unsupportedCauses = "unsupported_causes"
+            case unsupportedNames = "unsupported_names"
             case messageId = "message_id"
         }
 
         var evidence: AskEvidence {
             AskEvidence(modules: modulesConsulted ?? [],
                         confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
-                        unverifiedFigures: unverifiedFigures ?? [])
+                        unverifiedFigures: unverifiedFigures ?? [],
+                        unsupportedCauses: unsupportedCauses ?? [],
+                        unsupportedNames: unsupportedNames ?? [])
         }
     }
 

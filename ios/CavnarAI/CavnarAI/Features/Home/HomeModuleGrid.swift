@@ -27,7 +27,7 @@ struct KPITile: View {
                 .foregroundStyle(Color.cavnarEmber)
                 .multilineTextAlignment(.center)
             if let sublabel = module.kpi?.sublabel {
-                Text(sublabel)
+                Text(OwnerCopy.displayLabel(sublabel))
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .multilineTextAlignment(.center)

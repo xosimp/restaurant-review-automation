@@ -323,7 +323,7 @@ struct ReviewsAnalyticsSection: View {
     private func diagnosisCard(_ d: ReviewDiagnosis) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Why this is happening")
+                Text(OwnerCopy.diagnosisHeading)
                     .font(.cavnarBody(11, weight: 700))
                     .tracking(1.1)
                     .textCase(.uppercase)
@@ -386,8 +386,9 @@ struct ReviewsAnalyticsSection: View {
                         }
                     }
                 }
-                if let outcome = d.expectedOutcome {
-                    diagnosisRow("What should change", outcome, quiet: true)
+                // Conditional on the cause, never a promise (NS1 H10).
+                if let outcome = OwnerCopy.expectedOutcome(d.expectedOutcome) {
+                    diagnosisRow(OwnerCopy.expectedOutcomeLabel, outcome, quiet: true)
                 }
                 if !d.operationalEvidence.isEmpty {
                     diagnosisRow(

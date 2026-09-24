@@ -1495,7 +1495,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
 .hb-sub{font-size:14.5px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 /* Shared section-header row (Inbox, Schedule, History, ...) — this had no
-   rule of its own at all, so "optimized to your X% target..." rendered
+   rule of its own at all, so the schedule subtitle ("... X% target ...") rendered
    glued directly onto the h2 text before it with no gap and whatever size
    a bare <small> happens to inherit, rather than the kicker+title+subtitle
    hierarchy every other section on the page actually uses. */
@@ -2203,7 +2203,7 @@ svg:hover .hb-xh{opacity:1}
   var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope='location',_hbRange='1M';
   var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
   var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
-  var PULSE={reviews:'rating',labor:'labor',inventory:'recoverable',marketing:'posts this month',intel:'intel recs'};
+  var PULSE={reviews:'rating',labor:'labor',inventory:'food cost',marketing:'posts this month',intel:'intel recs'};
   var EMBER2='#e8956a',RED='#e05555',GREEN='#2d6a4f';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   var NUM_RE=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
@@ -2607,7 +2607,7 @@ svg:hover .hb-xh{opacity:1}
     var p=document.getElementById('hb-pulse');if(!p)return;
     var chips='';var snaps=d.snapshot||[];
     for(var j=0;j<snaps.length;j++){var s=snaps[j];if(s.status==='coming_soon')continue;var tone=s.sample?'sample':s.state;
-      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(s.value)+(s.key==='reviews'&&s.value!=='—'?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(PULSE[s.key]||s.label))+'</span></button>';}
+      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(s.value)+(s.key==='reviews'&&s.value!=='—'?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label)))+'</span></button>';}
     p.innerHTML=chips;
   }
   // ── hero chart ────────────────────────────────────────────────────────────
@@ -2638,7 +2638,7 @@ svg:hover .hb-xh{opacity:1}
     var big=isNet?v.net_monthly:(+v.total||0),uw=v.unpriced_wins||[];
     var netLine=isNet?'<div class="delta hb-net"><span>'+esc(hbNetSentence(v.net_monthly+(+wz.monthly||0),typeof v.wins==='number'?v.wins:undefined,wz))+'</span></div>':'';
     if(uw.length)netLine+='<div class="delta"><span>plus '+uw.length+' improvement'+(uw.length===1?'':'s')+' with no dollar figure</span></div>';
-    var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
+    var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-kicker">Measured results</div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+(v.caveat?'<div class="delta"><span>'+esc(v.caveat)+'</span></div>':'')+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
@@ -2648,7 +2648,28 @@ svg:hover .hb-xh{opacity:1}
   function tile(key,label,flag,valueHtml,chartHtml,capLeft,capRight,sample){
     return '<div class="hb-sg'+(sample?' sample':'')+'" role="link" tabindex="0" onclick="hbOpen(\''+key+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+key+'\')"><div class="k"><span>'+esc(label)+'</span><i>'+esc(flag||'')+'</i></div><div class="v">'+valueHtml+'</div>'+chartHtml+'<div class="cap"><span>'+capLeft+'</span><span class="hb-num">'+capRight+'</span></div></div>';
   }
-  function sec(s,n,skip){return (s.secondary||[]).filter(function(x){return x.label!==skip;}).slice(0,n).map(function(x){return esc(x.label+' '+x.value);}).join(' · ');}
+  // A secondary line's label as the owner reads it. The labor "Recoverable"
+  // line is the gap above target (an opportunity), never money recovered,
+  // so it reads as the gap (never-say C/NS1 H11).
+  var SEC_LABEL={Recoverable:'Gap to target'};
+  function sec(s,n,skip){return (s.secondary||[]).filter(function(x){return x.label!==skip;}).slice(0,n).map(function(x){return esc((s.key==='labor'&&SEC_LABEL[x.label]?SEC_LABEL[x.label]:x.label)+' '+x.value);}).join(' · ');}
+  // Positive-status contract (DESIGN_SYSTEM.md, Money labels and status): a
+  // good word ("on target") only when the snapshot says the read is live,
+  // at or over its data floor, fresh and complete; otherwise the reason.
+  function hbLaborFlag(l){
+    if(l.state==='bad')return 'over target';if(l.state==='warn')return 'watch';
+    if(l.below_floor)return 'too few days';if(l.stale)return 'out of date';
+    if(l.coverage_note)return 'partial data';
+    return l.state==='good'?'on target':'';
+  }
+  // The food tile's unit comes from the payload (a food cost % or the
+  // recoverable-waste opportunity), never hard-coded: "31.2%" under
+  // "recoverable / mo" read a percentage as dollars (NS3 H2).
+  function hbFoodUnit(inv){
+    var u=String(inv.unit||'');
+    if(u.indexOf('recoverable')>-1||(!u&&String(inv.value||'').charAt(0)==='$'))return 'opportunity / mo · projected';
+    return u||'food cost';
+  }
   function renderSignals(d){
     var ch=d.charts||{},snaps={};(d.snapshot||[]).forEach(function(s){snaps[s.key]=s;});
     var tiles=[];
@@ -2658,11 +2679,11 @@ svg:hover .hb-xh{opacity:1}
         rw.length?'weekly average · '+rw.length+' weeks':'',sec(r,2)));}
     if(snaps.labor){var l=snaps.labor;
       if(l.sample)tiles.push(tile('labor','Labor','sample','<span class="hb-num">—</span>','<div class="ph"><button class="cbtn cbtn-secondary cbtn-sm" onclick="event.stopPropagation();hbOpen(\'labor\')">Add your shifts</button></div>','Lights up with your first shift export or Toast sync.','',true));
-      else{var ld=ch.labor_days||[];tiles.push(tile('labor','Labor · by day',l.state==='bad'?'over target':l.state==='warn'?'watch':'on target','<span class="hb-num">'+esc(l.value)+'</span><small>% of sales</small>'+(l.delta&&l.delta.value.indexOf('pts')>-1?'<span class="dl hb-num '+(l.delta.good?'good':'bad')+'">'+esc(l.delta.value)+'</span>':''),
+      else{var ld=ch.labor_days||[];tiles.push(tile('labor','Labor · by day',hbLaborFlag(l),'<span class="hb-num">'+esc(l.value)+'</span><small>% of sales</small>'+(l.delta&&l.delta.value.indexOf('pts')>-1?'<span class="dl hb-num '+(l.delta.good?'good':'bad')+'">'+esc(l.delta.value)+'</span>':''),
         ld.length?'<div style="color:var(--ink3)">'+bars(ld.map(function(x){return {v:x.pct,l:x.day};}),320,86,EMBER2,{target:ch.labor_target})+'</div>':'<div class="hb-empty" style="height:86px">Day-of-week view needs a fuller export.</div>','labor % by weekday',sec(l,2,'Target')));}}
     if(snaps.inventory){var inv=snaps.inventory;
       if(inv.sample)tiles.push(tile('inventory','Food cost','sample','<span class="hb-num">—</span>','<div class="ph"><button class="cbtn cbtn-secondary cbtn-sm" onclick="event.stopPropagation();hbOpen(\'inventory\')">Add inventory</button></div>','Lights up after a first count or Toast depletion.','',true));
-      else{var ws=ch.waste||[];tiles.push(tile('inventory','Waste · last week',inv.state==='bad'?'needs action':inv.state==='warn'?'watch':'','<span class="hb-num">'+esc(inv.value)+'</span><small>recoverable / mo</small>',
+      else{var ws=ch.waste||[];tiles.push(tile('inventory',String(inv.value||'').indexOf('%')>-1?'Food cost · waste last week':'Waste · last week',inv.state==='bad'?'needs action':inv.state==='warn'?'watch':'','<span class="hb-num">'+esc(inv.value)+'</span><small>'+esc(hbFoodUnit(inv))+'</small>',
         ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0],full:x.item};}),320,86,EMBER2,{labelsOutside:true})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','$ wasted by item',sec(inv,2)));}}
     if(tiles.length<3&&snaps.reviews&&(ch.rating||[]).length>1){var rw2=ch.rating;tiles.push(tile('reviews','Reviews · per week','','<span class="hb-num">'+rw2[rw2.length-1].total+'</span><small>this week</small>','<div style="color:var(--ink3)">'+stacked(rw2.slice(-8),320,86)+'</div>','<span style="color:'+GREEN+'">■</span> positive &nbsp; <span style="color:'+RED+'">■</span> negative',''));}
     if(tiles.length<3&&snaps.marketing){var m=snaps.marketing;tiles.push(tile('marketing','Marketing',m.state==='bad'?'failed post':'','<span class="hb-num">'+esc(m.value)+'</span><small>pieces this month</small>','<div class="hb-empty" style="height:86px;display:flex;align-items:center">'+num(m.interpretation||'')+'</div>','',sec(m,2)));}
@@ -2696,6 +2717,7 @@ svg:hover .hb-xh{opacity:1}
     // too ("Labor — opportunity, $1,200-$2,400/month"), which printed the
     // figure twice (B6 sub-audit). The amount is cut from the label.
     var lb=String(m.label||'').replace(/,?\s*\$[\d,]+(?:\.\d+)?(?:\s*[-–]\s*\$[\d,]+(?:\.\d+)?)?(?:\s*\/\s*(?:month|mo))?/g,'').replace(/[\s,—–-]+$/,'');
+    if(!lb&&m.kind&&typeof cavMoneyKindWord==='function')lb=cavMoneyKindWord(m.kind);
     return fig+'<small>/month'+(lb?' · '+esc(lb.charAt(0).toLowerCase()+lb.slice(1)):'')+'</small>'+(m.basis?hbDollarsBasis(m.basis):'');
   }
   // The one-thing card's key: the recommendation grid never repeats it, so
@@ -2724,12 +2746,13 @@ svg:hover .hb-xh{opacity:1}
       // .pick_one_thing): the top driver's own fix, a diagnosis's
       // recommended action, or the replies that are owed.
       lead=ff.what;if(ff.why)why=ff.why.charAt(0).toUpperCase()+ff.why.slice(1).replace(/\.$/,'')+'.';if(ff.dollars_monthly){var ffa=(typeof ff.dollars_adjusted==='number'&&isFinite(ff.dollars_adjusted))?ff.dollars_adjusted:null;
-        money='$'+num2(ffa!==null?ffa:ff.dollars_monthly)+'<small>/month'+(ffa!==null?' · '+esc(ff.calibration_note||('adjusted from '+(+ff.calibration_n||0)+' measured results')):'')+'</small>'+hbDollarsBasis(ff.dollars_basis);}
+        money='$'+num2(ffa!==null?ffa:ff.dollars_monthly)+'<small>/month'+(ff.dollars_kind&&typeof cavMoneyKindWord==='function'?' · '+esc(cavMoneyKindWord(ff.dollars_kind)):'')+(ffa!==null?' · '+esc(ff.calibration_note||('adjusted from '+(+ff.calibration_n||0)+' measured results')):'')+'</small>'+hbDollarsBasis(ff.dollars_basis);}
       else if(ff.money)money=hbMoneyRange(ff.money);
       if(ff.alternative&&!alt)alt='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(ff.alternative)+'</div>';}
     else if(byKey.fix_first){lead=byKey.fix_first.text.replace(/^If you only do one thing: /,'').replace(/\.$/,'');kick='If you only do one thing';ask=byKey.fix_first.ask;}
     else if(att.length){lead=att[0].title;why=att[0].detail||'';if(att[0].evidence)ev=String(att[0].evidence).split(' · ').filter(function(x){return x;}).slice(0,3);fconf=att[0].confidence_detail||att[0].confidence||null;fkey=att[0].rec_key||att[0].key||'';ask='What should I do about this: '+att[0].title;}
     else if(recs.length){lead=recs[0].title;why=recs[0].why||'';ev=(recs[0].evidence||'').split(' · ').filter(function(x){return x;}).slice(0,3);fconf=recs[0].confidence_detail||recs[0].confidence||null;fkey=recs[0].key||'';ftag=recs[0].model_written?cavConf.claimTag('',true):'';ask='Walk me through this: '+recs[0].title;}
+    else if(!hbAllClear(d)){lead='Nothing flagged yet.';kick='Watching';why=hbNotClearWhy(d);ask='What are you watching for me right now?';}
     else if(byKey.all_clear){lead=byKey.all_clear.text;clear=true;kick='All clear';ask=byKey.all_clear.ask;}
     else{lead='Nothing needs you right now.';clear=true;kick='All clear';why='Cavnar AI is watching. This fills in as your numbers come in.';ask='What are you watching for me right now?';}
     // The biggest dollar opportunity rides along as the figure, unless the
@@ -2840,9 +2863,11 @@ svg:hover .hb-xh{opacity:1}
   function hbRecDollars(r){
     if(!r||!r.dollars_monthly)return '';
     var adj=(typeof r.dollars_adjusted==='number'&&isFinite(r.dollars_adjusted))?r.dollars_adjusted:null;
-    if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo at stake</span>'+hbDollarsBasis(r.dollars_basis);
+    // The figure's kind picks its word when the server sends one.
+    var kw=esc(typeof cavMoneyKindWord==='function'?cavMoneyKindWord(r.dollars_kind||(r.money&&r.money.kind),'at stake'):'at stake');
+    if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo '+kw+'</span>'+hbDollarsBasis(r.dollars_basis);
     var n=+r.calibration_n||0,note=r.calibration_note||(n?'adjusted from '+n+' measured result'+(n===1?'':'s'):'adjusted from measured results');
-    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo at stake</span><span>'+num(note)+'</span>'+hbDollarsBasis(r.dollars_basis);
+    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo '+kw+'</span><span>'+num(note)+'</span>'+hbDollarsBasis(r.dollars_basis);
   }
   function hbRecCard(r,j,skip,isNew,trk,d){
     var c=r.confidence_detail||r.confidence||null,meta=[];
@@ -2858,7 +2883,7 @@ svg:hover .hb-xh{opacity:1}
       +(meta.length||r.dollars_monthly?'<div class="meta">'+hbRecDollars(r)+meta.join('')+'</div>':'')
       +(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
       +(c?cavConfLine(c,{key:r.key,surface:'home',module:'home',cls:'hb-conf'}):'')
-      +(r.if_ignored?'<div class="ig"><b>If ignored:</b> '+num(r.if_ignored)+'</div>':'')
+      +(r.if_ignored?'<div class="ig"><b>Risk if left alone:</b> '+num(r.if_ignored)+'</div>':'')
       +'<div class="ft">'+act+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
       +(r.alternative?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(r.alternative)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding" data-explain-key="'+esc(r.key)+'">Could also be…</button>':'')
       +(who.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-assign-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-assign-detail="'+esc(r.why||'')+'">Assign</button>':'')
@@ -2931,8 +2956,23 @@ svg:hover .hb-xh{opacity:1}
   // "All clear" only when the sources under it are current: nothing flagged
   // on stale data, or with no live source at all, says so (B4 M4).
   function hbStaleSources(d){var fr=(d&&d.freshness)||[],n=0;for(var i=0;i<fr.length;i++){var st=fr[i]&&fr[i].state;if(st==='stale'||st==='unknown')n++;}return n;}
+  // The positive-status contract: "All clear" needs the server's
+  // monitoring.all_clear === true when it sends one (a live source, none
+  // stale, nothing flagged), and no stale source either way. An older
+  // payload with no monitoring object falls back to the freshness list.
+  function hbAllClear(d){var mo=d&&d.monitoring;if(hbStaleSources(d))return false;
+    if(mo&&typeof mo==='object'){if(mo.count_live!=null&&(+mo.count_live)===0)return false;
+      // all_clear is also false while anything is flagged; that case is the
+      // flagged item's own card, so only a quiet page reads it here.
+      if(mo.all_clear===false&&!((d.attention||[]).length))return false;}
+    return true;}
+  function hbNotClearWhy(d){var stale=hbStaleSources(d),mo=d&&d.monitoring;
+    if(stale)return stale+' source'+(stale===1?' is':'s are')+' out of date or undated, so this is not a clean bill.';
+    if(mo&&mo.count_live!=null&&(+mo.count_live)===0)return 'No source under this is current yet, so there is nothing live to watch.';
+    return 'Nothing is flagged, but the sources under it are not all current.';}
   function hbAttnClearHtml(used,d){
     var mo=d&&d.monitoring,stale=hbStaleSources(d),none=mo&&typeof mo==='object'&&mo.count_live!=null&&(+mo.count_live)===0&&(+mo.sources||0)>0;
+    if(!stale&&!none&&!hbAllClear(d))return '<div class="hb-clear warn" id="hb-attn-clear"><span>Nothing flagged — '+esc(hbNotClearWhy(d).charAt(0).toLowerCase()+hbNotClearWhy(d).slice(1))+'</span></div>';
     if(stale||none)return '<div class="hb-clear warn" id="hb-attn-clear"><span>'+(none?'Nothing flagged — but no source under this is current, so there is nothing live to watch.':'Nothing flagged — but <span class="hb-num">'+stale+'</span> source'+(stale===1?' is':'s are')+' out of date or undated, so this is not a clean bill.')+'</span></div>';
     return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
   function renderAttention(d,used){
@@ -3021,7 +3061,7 @@ svg:hover .hb-xh{opacity:1}
     h+=renderFreshness(d);
     var fresh=hbIsFresh(d);
     if(fresh)h+=renderReadiness(d);
-    h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
+    h+='<section class="hb-hero" id="hb-hero" aria-label="Measured results"></section>';
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
@@ -3373,13 +3413,15 @@ svg:hover .hb-xh{opacity:1}
   function renderWorked(w,v){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="What worked for you"><div class="hb-h3"><span>What worked for you</span><span class="cnt">'+esc(f.window||'')+'</span></div>';
+    var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+esc(f.window||'')+'</span></div>';
     if(!w.enough||!ss.length){
       var d=(v&&v.delivered)||{};if(!v||!(d.wins||(d.unpriced_wins||[]).length||d.in_flight||(d.worsened&&d.worsened.count)))return '';
-      return h+'<div class="hb-empty">Not enough yet. Cavnar says what worked once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
+      return h+'<div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
     h+='<div class="hb-tl">';
     for(var i=0;i<ss.length;i++)h+='<div class="it good" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(ss[i])+'</span></div>';
-    return h+'</div><div class="ft" style="margin-top:10px;display:flex;justify-content:flex-end"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">See the whole record →</button></div></section>';
+    // The caveat is never optional under outcomes data (NS1 #18).
+    h+='</div><div class="hb-empty" style="font-size:12px;margin-top:8px">'+esc(f.caveat||'Measured before and after, not proven cause.')+'</div>';
+    return h+'<div class="ft" style="margin-top:10px;display:flex;justify-content:flex-end"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">See the whole record →</button></div></section>';
   }
   function num2(n){return (Math.round(n||0)).toLocaleString();}
   // A centred, branded explanation rather than an inline expand. The body
@@ -3670,8 +3712,8 @@ svg:hover .hb-xh{opacity:1}
       h+='<td class="r hb-num">'+(rv.response_rate!=null?rv.response_rate+'%':'<span class="dim">—</span>')+'</td>';
       h+='<td class="r hb-num">'+(rv.urgent?'<span class="up">'+rv.urgent+'</span>':'<span class="dim">0</span>')+'</td>';
       h+='<td class="r hb-num">'+(rv.awaiting||'<span class="dim">0</span>')+'</td>';
-      h+='<td class="r hb-num hide-m">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':r.labor.over<=0?' <span class="ok">✓</span>':''):'<span class="dim">sample</span>')+'</td>';
-      h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">sample</span>')+'</td>';
+      h+='<td class="r hb-num hide-m">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':(r.labor.over<=0&&r.labor.pct>0&&!r.labor.stale&&!r.labor.partial)?' <span class="ok">✓</span>':''):'<span class="dim">sample</span>')+'</td>';
+      h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo <span class="dim">opportunity</span>'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">sample</span>')+'</td>';
       h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Open →</span></td></tr>';}
     h+='</tbody></table></div>';
     var at=g.attention||[];
@@ -3908,8 +3950,13 @@ svg:hover .hb-xh{opacity:1}
   var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
   var URGENCY={before_service:'Today',this_week:'This week',next_schedule:'Next schedule',next_order:'Next order'};
   var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand'};
+  // A call-out's label sits over a model-written sentence, so it names the
+  // kind of figure and never claims money was saved: the old
+  // largest_money_saving slot is an opportunity slot (NS3 R13), read under
+  // its new name first and its old one after. Keys separated by | are
+  // alternatives, first present wins.
   var CALLS=[['highest_priority_issue','Highest priority'],['biggest_risk','Biggest risk'],['biggest_win','Biggest win'],
-             ['biggest_financial_opportunity','Money on the table'],['largest_money_saving','Largest saving'],
+             ['biggest_financial_opportunity','Biggest opportunity · not captured'],['largest_opportunity|largest_money_opportunity|largest_dollar_gap|largest_money_saving','Largest dollar gap · an opportunity, not savings'],
              ['biggest_staffing_concern','Staffing concern'],['largest_staffing','Staffing'],['largest_guest_experience','Guest experience']];
   var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   var st={kind:null,date:null,version:null,poll:null,tick:null,token:0,view:null,grid:null,expect:null,waits:0};
@@ -4148,7 +4195,7 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
       h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}
     var calls='',seen={};
-    for(var i=0;i<CALLS.length;i++){var c=n[CALLS[i][0]],t=c&&c.text;if(!t||seen[t])continue;seen[t]=1;
+    for(var i=0;i<CALLS.length;i++){var ck=CALLS[i][0].split('|'),c=null;for(var ci=0;ci<ck.length&&!c;ci++)c=n[ck[ci]]||null;var t=c&&c.text;if(!t||seen[t])continue;seen[t]=1;
       calls+='<div class="dr-call"><div class="k">'+esc(CALLS[i][1])+'</div><div class="t">'+prose(t)+'</div></div>';}
     if(calls)h+='<div class="dr-calls">'+calls+'</div>';
     var acts=n.actions_tomorrow||[];
@@ -4158,7 +4205,7 @@ svg:hover .hb-xh{opacity:1}
         // The calibrated figure when this restaurant's measured results
         // of the kind correct it (rec_learning.attach_dollar_calibration).
         var meta='';if(isNum(x.dollars_monthly)){var xa=isNum(x.dollars_adjusted)?x.dollars_adjusted:null;
-          meta+='<span class="usd">'+hn(money(xa!==null?xa:x.dollars_monthly))+'/mo at stake</span>'+(xa!==null?'<span>'+prose(x.calibration_note||('adjusted from '+(+x.calibration_n||0)+' measured results'))+'</span>':'');}
+          meta+='<span class="usd">'+hn(money(xa!==null?xa:x.dollars_monthly))+'/mo '+esc(typeof cavMoneyKindWord==='function'?cavMoneyKindWord(x.dollars_kind,'at stake'):'at stake')+'</span>'+(xa!==null?'<span>'+prose(x.calibration_note||('adjusted from '+(+x.calibration_n||0)+' measured results'))+'</span>':'');}
         if(URGENCY[x.urgency])meta+='<span'+(x.urgency_basis&&!x.urgency_adjusted?' title="'+esc(x.urgency_basis)+'"':'')+'>'+esc(URGENCY[x.urgency])+'</span>';if(x.effort)meta+='<span>'+esc(x.effort)+' effort'+(x.effort_source==='model'?' (Cavnar AI\u2019s estimate)':'')+'</span>';
         // A "Today" the cited facts don't carry is moved to "This week" by
         // the server (dsr/narrative.check_urgency, H13); the line says so.
@@ -4285,7 +4332,13 @@ svg:hover .hb-xh{opacity:1}
       if(has(m,'est_food_cost_pct'))t+=tile('Est. food cost',esc(pct(m.est_food_cost_pct)),(isNum(m.est_food_cost)?hn(money(m.est_food_cost,true))+' by recipe':'')+(isNum(m.recipe_coverage_pct)&&m.recipe_coverage_pct<100?' · '+hn(pct(m.recipe_coverage_pct,0))+' of units sold costed':''));
       if(has(m,'waste_logged'))t+=tile('Waste logged',esc(money(m.waste_logged,true)),isNum(m.waste_inferred)?hn(money(m.waste_counted,true))+' counted · '+hn(money(m.waste_inferred,true))+' inferred':'');
       if(isNum(m.variance_cost))t+=tile('Variance',esc(money(m.variance_cost,true)),isNum(m.variance_items)?hn(cnt(m.variance_items))+' item'+(m.variance_items===1?'':'s')+' over recipe':'');
-      if(isNum(m.recoverable_monthly))t+=tile('Recoverable',esc(money(m.recoverable_monthly))+'<small>/mo</small>');
+      // The cost drivers' monthly total is an opportunity (waste projected
+      // from a week, price rises, gaps to target), never money recovered:
+      // it carries its kind and its basis, and "partial" when a source was
+      // missing (NS1 #7). The renamed key is read first, the old one after.
+      var rk=isNum(m.drivers_at_stake_monthly)?'drivers_at_stake_monthly':(isNum(m.at_stake_monthly)?'at_stake_monthly':'recoverable_monthly');
+      var rd=d.drivers_at_stake||d.at_stake||d.recoverable||{};
+      if(isNum(m[rk]))t+=tile('At stake · opportunity',esc(money(m[rk]))+'<small>/mo</small>',esc(rd.basis||'cost drivers, available — not captured')+(rd.complete===false?' · partial':''));
       if(isNum(m.critical_low))t+=tile('Running low',esc(cnt(m.critical_low))+'<small>critical</small>',isNum(m.low_stock)?hn(cnt(m.low_stock))+' more low':'',m.critical_low>0?'bad':'');
       var h=t?'<div class="hb-stats">'+t+'</div>':'';
       if(est.label)h+=note(esc(est.label));
@@ -4805,9 +4858,10 @@ svg:hover .hb-xh{opacity:1}
   function worked(w){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="What worked for you"><div class="hb-h3"><span>What worked for you</span><span class="cnt">'+esc(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar says what worked once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
-    var h='<section class="hb-card hero hb-focus rh-worked" aria-label="What worked for you"><div class="hb-kicker">What worked for you</div><div class="lead">'+prose(ss[0])+'</div>';
+    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+esc(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
+    var h='<section class="hb-card hero hb-focus rh-worked" aria-label="Measured alongside your changes"><div class="hb-kicker">Measured alongside your changes</div><div class="lead">'+prose(ss[0])+'</div>';
     if(ss.length>1){h+='<div class="more">';for(var i=1;i<ss.length;i++)h+='<div class="why">'+prose(ss[i])+'</div>';h+='</div>';}
+    h+='<div class="why" style="opacity:.75">'+esc(f.caveat||'Measured before and after, not proven cause.')+'</div>';
     return h+'</section>';
   }
   function followed(s){
@@ -5538,7 +5592,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-money{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
 .lb2-money .l{font-size:12px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
 .lb2-money .x{font-family:'Space Grotesk',sans-serif;font-size:17.5px;font-weight:600;color:var(--ink);margin-top:2px}
-.lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}
+.lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}.lb2-money .x.warn{color:var(--hb-warn)}
 .lb2-range{display:flex;gap:2px}
 .lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
 .lb2-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
@@ -5993,6 +6047,10 @@ svg:hover .hb-xh{opacity:1}
      Over target still says so: a partial figure already over is not
      reassuring. #}
   {% set _partial = labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.sales_data_missing) %}
+  {# The positive-status contract (DESIGN_SYSTEM.md, Money labels and
+     positive status): a good word or a green tone only on live, complete
+     data long enough to read against the target. #}
+  {% set _status_ok = labor.is_live and not _partial and not labor.period_too_short_to_project and labor.total_sales %}
   {% if not labor.is_live %}{% set _head = 'Add your shifts to light this up' %}{% set _tone = 'neutral' %}
   {% elif _over > 3 %}{% set _head = _over ~ ' pts over target' %}{% set _tone = 'bad' %}
   {% elif _over > 0 %}{% set _head = 'Slightly over target' %}{% set _tone = 'warn' %}
@@ -6023,11 +6081,11 @@ svg:hover .hb-xh{opacity:1}
       <span id="labor-gap-banner" hidden></span>
     </div>
     <div class="hb-pulse">
-      <span class="hb-chip {{ 'bad' if _over > 3 else ('warn' if _over > 0 else 'good') }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
+      <span class="hb-chip {{ 'bad' if _over > 3 else ('warn' if _over > 0 else ('good' if _status_ok else '')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
       <span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _lt|int }}%</span></span><span class="l">target</span></span>
       <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
       <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _ot }}</span></span><span class="l">in overtime</span></span>
-      <span class="hb-chip {{ 'bad' if _lp > _lt else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-amount" class="hb-num">—</span></span><span class="l">monthly gap</span></span>
+      <span class="hb-chip {{ 'warn' if _lp > _lt and labor.is_live else '' }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-amount" class="hb-num">—</span></span><span class="l">gap to target / mo</span></span>
     </div>
   </div>
 
@@ -6045,16 +6103,20 @@ svg:hover .hb-xh{opacity:1}
     <div class="lb2-sg"><div class="k"><span>Cost by role</span></div><div class="v"><span class="hb-num stat-n">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
       {% if labor.role_summary %}<div class="lb2-donut"><div class="ring"><svg id="role-donut-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg><div class="tot"><div id="role-donut-total"></div><div>total</div></div></div><div id="role-donut-legend"></div></div>{% else %}<div class="hb-empty" style="height:150px;display:flex;align-items:center">Role breakdown appears once shifts carry a role.</div>{% endif %}
       <div class="cap"><span>share of labor cost · hours · headcount</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Vs your target</span><i class="{% if _lp <= _lt %}good{% elif _lp <= _lt + 3 %}warn{% else %}bad{% endif %}">{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div>{# The verdict is against the owner's own target (NS4 L7). The industry figure is by restaurant type (thresholds.labor_industry_benchmark over benchmark_registry, NS4 H3) and null when the registry has no published entry for the type: then no industry tick, label or dollars. #}
+    <div class="lb2-sg"><div class="k"><span>Vs your target</span><i class="{% if not labor.is_live %}{% elif _lp > _lt + 3 %}bad{% elif _lp > _lt %}warn{% elif _status_ok %}good{% endif %}">{% if not labor.is_live %}sample{% elif _lp > _lt + 8 %}needs attention{% elif _lp > _lt + 3 %}above target{% elif _lp > _lt %}slightly over{% elif not _status_ok %}— partial data{% elif _lp <= _lt - 3 %}well under target{% else %}on target{% endif %}</i></div>{# The industry benchmark for this restaurant's type only (benchmark_registry, NS4 H3): no entry, no industry mark. #}
       {% set _ind = savings_breakdown.labor_industry_pct %}
       <div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs <span class="hb-num">{{ _lt }}</span>% target{% if _ind %} · <span class="hb-num">{{ _ind }}</span>% industry benchmark{% endif %}</small></div>
       <div class="lb2-bench"{% if _ind and savings_breakdown.labor_industry_basis %} title="Industry benchmark: {{ savings_breakdown.labor_industry_basis }}"{% endif %}><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span>{% if _ind %}<span style="left:{{ (_ind/50*100)|int }}%;color:var(--hb-bad)">{{ _ind }}%</span>{% endif %}<span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div>{% if _ind %}<div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div>{% endif %}</div></div>
       <div class="lb2-money">
-        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimized / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
-        {% elif _ind %}<div><div class="l">Vs <span class="hb-num">{{ _ind }}</span>% industry / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
-        <div><div class="l">Overtime premium</div><div class="x stat-n {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
+        {# Money labels (DESIGN_SYSTEM.md): the gap above target is an
+           opportunity - "gap to target", its period, never "savings" and
+           never the green "good" tone; the industry figure is a benchmark
+           gap, hidden at $0; sample data carries no dollars (NS3 C3). #}
+        {% if labor.is_live and savings_breakdown.labor_monthly > 0 %}<div><div class="l">Gap to target / mo</div><div class="x warn stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year · projected</div><div class="x stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
+        {% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}<div><div class="l">Under <span class="hb-num">{{ _ind }}</span>% industry / mo</div><div class="x stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year · projected</div><div class="x stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
+        <div><div class="l">Overtime premium · <span class="hb-num">{{ _days }}</span> days</div><div class="x stat-n {{ 'bad' if labor.is_live and savings_breakdown.labor_overtime > 0 }}">{% if labor.is_live and savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
       </div>
-      <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40{% if _ind and savings_breakdown.labor_industry_basis %} · industry {{ _ind }}%: {{ savings_breakdown.labor_industry_basis }}{% endif %}</span></div></div>
+      <div class="cap"><span>{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}gap above target, weekly × 52 ÷ 12 from a {{ _days }}-day window — available, not captured · {% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}a benchmark gap, not savings · {% endif %}overtime at 0.5× on hours over 40{% if _ind and savings_breakdown.labor_industry_basis %} · industry {{ _ind }}%: {{ savings_breakdown.labor_industry_basis }}{% endif %}</span></div></div>
   </div>
   <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
        with a headline count, an ember mark and the thing you do about it —
@@ -6155,9 +6217,12 @@ svg:hover .hb-xh{opacity:1}
   }
   </script>
 
+  {# Whether last year's same days are an input to the next draft (read
+     tolerantly: an older server never sends last_year_available). #}
+  <script>window._SCHED_HAS_LAST_YEAR={{ 'true' if labor.last_year_available else 'false' }};</script>
   <div class="lb2-sched">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar AI<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2><div class="lb2-actions">
-      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate optimized schedule</button>
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, drafted by Cavnar AI<small>generated against your {{ _lt|int }}% target and the staff rules you set — check it before it goes out</small></h2><div class="lb2-actions">
+      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button>
       <!-- Which week: next week by default, the week after, or any date
            inside the wanted week. Sent as week_start. -->
       <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
@@ -6169,16 +6234,16 @@ svg:hover .hb-xh{opacity:1}
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
       <button class="cbtn cbtn-close" aria-label="Close" onclick="document.getElementById('schedule-tooltip').style.display='none'">✕</button>
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:12px">Schedule optimized</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:12px">Schedule generated</div>
       <div style="font-size:14px;color:var(--paper);font-weight:600;margin-bottom:8px">Your CSV is downloading now</div>
       <div style="font-size:12px;color:#c0b8b0;line-height:1.7;margin-bottom:16px">
-        The AI reviewed your shift data and built an optimized schedule targeting your {{labor_target|default(30.0)}}% labor goal.
-        Focus areas: reducing hours on your highest-cost days and smoothing coverage across the week.
+        Cavnar AI drafted a schedule from your shift data against your {{labor_target|default(30.0)}}% labor goal.
+        Check it before you send it — a draft can still miss a rule or run over target.
       </div>
       <div style="background:#1e1a14;border-radius:8px;padding:12px 14px;margin-bottom:16px">
-        <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Estimated impact</div>
-        <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings * 4.33)|int|format_num}}/mo saved</div>
-        <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied — an estimate: this window's weekly overspend (${{ labor.potential_savings|int|format_num }}) × 4.33 weeks, not a measured result</div>
+        <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Gap to target / mo</div>
+        <div style="font-size:13px;color:var(--paper);font-weight:700">{% if labor.is_live and labor.potential_savings_monthly %}~${{ labor.potential_savings_monthly|int|format_num }}/mo{% else %}—{% endif %}</div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:2px">available, not captured — the gap above target projected from this window, not a measured result</div>
       </div>
       <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="cbtn cbtn-primary cbtn-lg cbtn-block">Got it — open the CSV ✓</button>
     </div>
@@ -6189,7 +6254,7 @@ svg:hover .hb-xh{opacity:1}
     <div class="lb2-preview">
       <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
-          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">Generated schedule · draft</div>
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
           <div id="sched-gen-meta"></div>
           <div id="sched-gen-notes" class="sr-note"></div>
@@ -6662,7 +6727,7 @@ svg:hover .hb-xh{opacity:1}
           </div>
         </div>
         {% else %}
-        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:14.5px">No overstaffed days — great work!</div>
+        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:14.5px">{% if _status_ok %}No overstaffed days in this window.{% else %}— no overstaffed days flagged, but the data under this is sample or partial.{% endif %}</div>
         {% endfor %}
         </div>
       </div>
@@ -7092,7 +7157,9 @@ svg:hover .hb-xh{opacity:1}
 
 <div class="hb-wrap">
   {% set _wl = inv.benchmark_label %}
-  {% set _ostock_total = inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0 %}
+  {# The full total the server computed (inventory.overstock_total), not a
+     sum over the rows this page happens to show (NS3 food M10). #}
+  {% set _ostock_total = inv.overstock_total if inv.overstock_total is defined and inv.overstock_total is not none else (inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0) %}
   {# benchmark_state (inventory.py): "not_measured" is a week with nothing logged as waste — never the
      best result, so it never reads "On track" or green (CA4 F11, fix I8). #}
   {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
@@ -7208,10 +7275,10 @@ svg:hover .hb-xh{opacity:1}
    projection and labelled "leaking this month", while the very next card
    showed the same dollars, correctly, as "Tied-up capital". One quantity, two
    meanings, on adjacent cards. #}
-<div class="cap"><span>of ${{ inv.monthly_waste_projection|int|format_num }} in waste this month</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr</span></div></div>
+<div class="cap"><span>of ${{ inv.monthly_waste_projection|int|format_num }}/mo projected waste · from one week's count</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr projected</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Waste ledger · top offenders</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
-      <div class="cap"><span>sorted by cost — the first bar is the thing to fix</span></div></div>
+      <div class="cap"><span>sorted by cost, largest first</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Tied-up capital · overstocked</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
       <div class="fc2-ledger" id="fc2-ledger-stock"></div>
       <div class="cap"><span>current stock vs. par level</span></div></div>
@@ -7240,7 +7307,9 @@ svg:hover .hb-xh{opacity:1}
         {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
         <div class="row"><div class="t"><b>{{ item.item }}</b><span>{% if _grp != 'reduce' %}{{ item.days_remaining }}d left · {% endif %}last order {{ item.last_order_qty|int }}{% if item.unit %} {{ item.unit }}{% endif %}</span></div>
           <div class="q"><div class="l">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div><div class="p">{% if item.suggested_order_qty == 0 %}skip{% else %}{{ item.suggested_order_qty }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}</div>
-            <div class="s {{ 'good' if item.savings_vs_last > 0 else ('bad' if item.savings_vs_last < 0 else 'dim') }}">{% if item.savings_vs_last > 0 %}↓ ${{ "%.2f"|format(item.savings_vs_last) }}{% elif item.savings_vs_last < 0 %}↑ ${{ "{:.2f}".format(item.savings_vs_last * -1) }}{% else %}—{% endif %}</div></div></div>
+            {# A per-order difference against the last order, not money
+               saved: neutral tone, and it says what it is compared with. #}
+            <div class="s dim">{% if item.savings_vs_last > 0 %}↓ ${{ "%.2f"|format(item.savings_vs_last) }} vs last order{% elif item.savings_vs_last < 0 %}↑ ${{ "{:.2f}".format(item.savings_vs_last * -1) }} vs last order{% else %}—{% endif %}</div></div></div>
         {% else %}
         <div class="none">{% if _grp == 'urgent' %}Nothing critical this week{% elif _grp == 'soon' %}Nothing upcoming this week{% else %}No reductions needed{% endif %}</div>
         {% endfor %}
@@ -8137,7 +8206,7 @@ svg:hover .hb-xh{opacity:1}
     <div id="aiv-card"><div id="aiv-body">
     <div class="in2-pre" id="aiv-idle">
       <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
-        <p>More guests are asking AI where to eat before they ever open Maps. This runs real queries through Perplexity's live web search — the same public web, reviews and Google Business Profile data ChatGPT and Google AI read — and shows whether you came up.</p>
+        <p>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</p>
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
     </div>
@@ -8151,7 +8220,7 @@ svg:hover .hb-xh{opacity:1}
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
           <div class="in2-orbit" id="in2-orbit"></div></div>
           <div class="in2-queries" id="in2-queries" hidden></div>
-        <div class="lb2-sg"><div class="k"><span>Listing strength</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
+        <div class="lb2-sg"><div class="k"><span>Listing strength</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of your Google Business Profile fields filled in</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
         </div>
@@ -8162,7 +8231,7 @@ svg:hover .hb-xh{opacity:1}
       </div>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
       <div class="in2-sec" id="aiv-action-plan">
-        <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>What gets you into AI answers</h2><div class="sub">Ranked for this restaurant — the gaps you still have come first.</div></div></div>
+        <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>Gaps in your public record</h2><div class="sub">Your reviews, replies and Google listing — the gaps you still have come first.</div></div></div>
         <div class="in2-road" id="aiv-roadmap-cards"></div>
         <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><b>What happens when you improve this?</b> We check one AI search system — Perplexity — by asking it the kinds of questions a guest would, and seeing whether you come up. What it answers from is Perplexity's business, not something we can see. What we can tell you is that these items are the public record of your restaurant: your reviews, your replies, and the fields on your Google listing. Most independent restaurants have gaps here. Closing them is the part that's in your hands.</div>
       </div>
@@ -9513,7 +9582,12 @@ function _appendAskCavnarEvidence(d) {
   var askConf = window.cavConf ? cavConf.k1(d.confidence_detail, d.confidence) : null;
   var cfHtml = (askConf && window.cavConfLine)
     ? cavConfLine(askConf, {surface: 'ask', module: 'ask', cls: 'ask-eva-cf'}) : '';
-  if (!mods.length && !bad.length && !cfHtml) return;
+  // A cause or a name the answer states that nothing Cavnar read supports
+  // (ask_cavnar meta unsupported_causes / unsupported_names, NS1 H1) is
+  // flagged inline like an untraced figure: the answer stays, the claim
+  // reads as a guess. Read tolerantly - an older server sends neither.
+  var badCauses = d.unsupported_causes || [], badNames = d.unsupported_names || [];
+  if (!mods.length && !bad.length && !badCauses.length && !badNames.length && !cfHtml) return;
   var messages = document.getElementById('ask-cavnar-messages');
   var row = document.createElement('div');
   row.className = 'ask-eva';
@@ -9526,6 +9600,20 @@ function _appendAskCavnarEvidence(d) {
     warn.textContent = 'Couldn’t verify ' + bad.join(', ') + ' against your data — treat '
                      + (bad.length > 1 ? 'those figures' : 'that figure') + ' as unconfirmed.';
     row.appendChild(warn);
+  }
+  if (badCauses.length) {
+    var cw = document.createElement('div');
+    cw.className = 'ask-eva-warn';
+    cw.textContent = 'Unsupported cause — Cavnar AI gave a reason here that nothing it read supports (“'
+                   + String(badCauses[0]).slice(0, 120) + '”). Treat it as a guess, not a finding.';
+    row.appendChild(cw);
+  }
+  if (badNames.length) {
+    var nw = document.createElement('div');
+    nw.className = 'ask-eva-warn';
+    nw.textContent = 'Unverified name — ' + badNames.slice(0, 2).join(', ')
+                   + ' doesn’t appear in anything Cavnar read. Check before acting on it.';
+    row.appendChild(nw);
   }
 
   var chips = document.createElement('div');
@@ -11024,7 +11112,7 @@ function renderReviewDiagnosis(d){
   var h=''
     +'<div class="rv-diag">'
     +'<div class="rv-diag-hd">'
-    +'<span class="t">Why this is happening</span>'
+    +'<span class="t">What the evidence points to</span>'
     +(window.cavConf?cavConf.claimTag('',true):'')
     +'<span class="m">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
     +dg.mention_count+' negative reviews over '+dg.window_days+' days'
@@ -11045,8 +11133,11 @@ function renderReviewDiagnosis(d){
     h+='<div class="rv-diag-row"><div class="k">Do this</div><div class="v">'+_rvEsc(dg.recommended_action)
       +(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'reviews','reviews'):'')+'</div></div>';
   }
-  if(dg.expected_outcome){
-    h+='<div class="rv-diag-row alt"><div class="k">What should change</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
+  /* The model's own forecast is conditional on its cause being right, so
+     it is headed that way and never read as a promise; a line stated as a
+     certainty ("will eliminate", "guaranteed") is not shown (NS1 H10). */
+  if(dg.expected_outcome&&!/\b(guarantee\w*|definitely|certainly|will eliminate)\b/i.test(dg.expected_outcome)){
+    h+='<div class="rv-diag-row alt"><div class="k">If this is the cause, you’d expect…</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
   }
   /* What another module recorded over the same period. The prompt may only
      connect a complaint to a figure by naming that figure, so anything here
@@ -13017,14 +13108,27 @@ function loadLaborInsight(){
       if(msgEl) msgEl.textContent='Unable to calculate gap. Upload shift data to see this.';
       return;
     }
-    if(d.over_target&&d.monthly_gap>0){
-      if(gapEl){ gapEl.textContent='$'+Math.round(d.monthly_gap).toLocaleString(); gapEl.style.color='var(--ember2)'; }
-      if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — that gap is costing around $'+Math.round(d.monthly_gap).toLocaleString()+'/mo. An optimized schedule can help close it.';
-      if(pctEl) pctEl.style.color='#ef9f27';
+    // The positive-status contract (DESIGN_SYSTEM.md, Money labels and
+    // positive status): "On target" only when the read is live, long
+    // enough to project, carries sales, and is under target. Under a week
+    // of data the server returns monthly_gap 0 even when over target, and
+    // sample or no-sales data returns over_target false - both read as a
+    // green tick before (NS1 C4). Anything short of that is a dash and the
+    // server's reason. The gap is an opportunity: its label says so and it
+    // never takes the ember or the green.
+    var gapOk=d.is_live!==false&&d.projectable!==false&&!d.sales_data_missing&&typeof d.current_pct==='number'&&d.current_pct>0;
+    if(d.over_target&&d.monthly_gap>0&&gapOk){
+      if(gapEl){ gapEl.textContent='$'+Math.round(d.monthly_gap).toLocaleString(); gapEl.style.color='var(--hb-warn)'; gapEl.title='Gap to target a month — available, not captured'; }
+      if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — about $'+Math.round(d.monthly_gap).toLocaleString()+'/mo above it, an opportunity projected from this window, not money lost or saved.';
+      if(pctEl) pctEl.style.color='var(--hb-warn)';
+    } else if(gapOk&&d.over_target===false){
+      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='var(--hb-good)'; gapEl.style.fontFamily="'Clash Display',sans-serif"; gapEl.style.fontStyle='normal'; gapEl.title=''; }
+      if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Keep an eye on individual days that spike.';
+      if(pctEl) pctEl.style.color='var(--hb-good)';
     } else {
-      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Clash Display',sans-serif"; gapEl.style.fontStyle='normal'; }
-      if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Great work. Keep an eye on individual days that spike.';
-      if(pctEl) pctEl.style.color='#6fcf97';
+      var why=d.is_live===false?'Sample data — add your shifts':(d.reason||(d.sales_data_missing||!(d.current_pct>0)?'No sales on file for these shifts':'Not enough data to project a month'));
+      if(gapEl){ gapEl.textContent='—'; gapEl.style.color=''; gapEl.title=why; }
+      if(msgEl) msgEl.textContent=why+'.';
     }
   }).catch(function(){
     var gapEl=document.getElementById('gap-amount');
@@ -13051,8 +13155,12 @@ var _schedPollInterval = null;
 // The timings are estimates, never progress. Generation is one model call
 // and the server cannot report a percentage, so this never claims one — the
 // last step simply holds until the schedule arrives.
+// The first step names last year's same days only when the page says that
+// input exists (labor.last_year_available, read tolerantly - an older
+// server never sends it): a progress line is a claim about the inputs, and
+// most restaurants have no year of history (NS1 #21).
 var _SCHED_STEPS = [
-  [0,  "Reading last year's same days"],
+  [0,  window._SCHED_HAS_LAST_YEAR ? "Reading last year's same days" : 'Reading your shift and sales history'],
   [7,  'Checking who is available'],
   [15, 'Balancing against your labor target'],
   [26, 'Weighing operational scores'],
@@ -13118,7 +13226,7 @@ function _schedNotice(btnEl, msg) {
 
 function _schedReset(btnEl) {
   stopScheduleSteps();
-  if (btnEl) btnEl.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (btnEl) btnEl.innerHTML = 'Generate a draft schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   if (btnEl) btnEl.disabled = false;
   if (_schedPollInterval) { clearInterval(_schedPollInterval); _schedPollInterval = null; }
   var _wk = document.getElementById('sched-week'); if (_wk) _wk.remove();
@@ -15990,7 +16098,8 @@ function fc2LoadCfo(){
         if(dg.what_would_confirm){h+='<div class="fc2-row"><div class="k">What would tell them apart</div><div class="v">'+wtEsc(dg.what_would_confirm)+'</div></div>';}
         if(dg.stale_note){h+='<div class="fc2-row alt"><div class="k">As of</div><div class="v">'+wtEsc(dg.stale_note)+'</div></div>';}
         if(dg.recommended_action&&!dg.answered){h+='<div class="fc2-row"><div class="k">Do this first</div><div class="v">'+wtEsc(dg.recommended_action)+(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'food','food'):'')+'</div></div>';}
-        if(dg.expected_outcome){h+='<div class="fc2-row alt"><div class="k">What should change</div><div class="v">'+wtEsc(dg.expected_outcome)+'</div></div>';}
+        // Conditional on the cause, never a promise (NS1 H10).
+        if(dg.expected_outcome&&!/\b(guarantee\w*|definitely|certainly|will eliminate)\b/i.test(dg.expected_outcome)){h+='<div class="fc2-row alt"><div class="k">If this is the cause, you’d expect…</div><div class="v">'+wtEsc(dg.expected_outcome)+'</div></div>';}
         var oe=dg.operational_evidence||[];
         if(oe.length){
           var ol=[];for(var k=0;k<oe.length;k++){ol.push(wtEsc(oe[k].module)+': '+wtEsc(oe[k].metric)+' '+wtEsc(oe[k].value)+(oe[k].verified?' <span class="ck-tag" title="Checked against the stored figure">checked</span>':''));}
@@ -16006,7 +16115,7 @@ function fc2LoadCfo(){
             +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
             +cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
             +'<div class="tags"><span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
-            +'<span class="tag">if ignored: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
+            +'<span class="tag">risk if left alone: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
         }
         h+='</div></div>';
         // What the ranking could not read (fci degraded_sources): a ranking
@@ -16124,7 +16233,10 @@ function fc2LoadRecipeDrafts(note){
         // confidence. The card's own quantity and unit ride in the title.
         var bad=ln.unit_ok===false,tip=[];
         if(bad)tip.push(ln.unit_note||'Unit could not be converted — this line is skipped unless you fix it');
-        tip.push(lc==='low'?'Low confidence — check this line':(lc==='medium'?'Medium confidence — worth a glance':(lc==='high'?'High confidence':'')));
+        // Confidence is a % or nothing, never a band word (NS1 #20): a
+        // measured % when the line carries one, else what to do about it.
+        var lpct=(typeof ln.confidence_pct==='number'&&isFinite(ln.confidence_pct))?Math.round(ln.confidence_pct)+'% support':'';
+        tip.push(lpct||(lc==='low'?'Check this line':(lc==='medium'?'Worth a glance':'')));
         if(ln.card_qty!=null&&(ln.card_unit||'')!==''&&(String(ln.card_qty)!==String(ln.qty)||ln.card_unit!==ln.unit))tip.push('the card said '+ln.card_qty+' '+ln.card_unit);
         if(ln.per==='batch')tip.push('per batch, not per plate');
         if(ln.source==='estimate')tip.push('estimated');else if(ln.source==='transcribed')tip.push('from the card');
@@ -16414,7 +16526,7 @@ function wtDrawKpis(d){
   // at any n, so with two weeks on file this tile used to put a confident
   // "$X/yr" in front of an owner on the strength of a fortnight.
   if(hasT&&n<4){t4v='—';t4c='';t4d='needs '+(4-n)+' more week'+(4-n===1?'':'s')+' before an annual figure means anything';}
-  else if(hasT){if(s.savings_if_at_target>0){t4v=wtMoney(s.savings_if_at_target)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/yr</span>';t4c='good';t4d='if 4-wk waste is brought to target';}else{t4v='$0';t4c='good';t4d='already under target — '+wtMoney(s.annualized_if_target-s.annualized_current)+'/yr below it';}}
+  else if(hasT){if(s.savings_if_at_target>0){t4v=wtMoney(s.savings_if_at_target)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/yr</span>';t4c='';t4d='projected — available if 4-wk waste is brought to target, not captured';}else{t4v='$0';t4c='good';t4d='already under target — '+wtMoney(s.annualized_if_target-s.annualized_current)+'/yr below it';}}
   box.innerHTML=catNote+tile('This week',wtMoney(s.latest),'',t1d)
     +tile('4-week average',wtMoney(s.rolling4),'',t2d)
     +tile('vs target',t3v,t3c,t3d)
@@ -18316,14 +18428,16 @@ function renderAIVisibility(d) {
   };
   var cards = d.roadmap || [];
   var left = 0; for (var pi = 0; pi < cards.length; pi++) if (!cards[pi].done) left++;
-  if (ptsEl) ptsEl.textContent = !cards.length ? '' : (left > 0 ? left + ' action' + (left > 1 ? 's' : '') + ' to grow your score' : 'All steps complete');
-  var html = cards.length ? '' : '<div class="hb-empty">Run the check again to see what gets you into AI answers.</div>';
+  // No promise about the score (NS1 #10): nothing measures what closing a
+  // gap does to it, so the count is of gaps, not of points to be won.
+  if (ptsEl) ptsEl.textContent = !cards.length ? '' : (left > 0 ? left + ' gap' + (left > 1 ? 's' : '') + ' still open' : 'No open gaps');
+  var html = cards.length ? '' : '<div class="hb-empty">Run the check again to see the gaps in your public record.</div>';
   for (var k = 0; k < cards.length; k++) {
     var c = cards[k], known = AIV_ROAD[c.key], look = known || {color: 'var(--ember)', svg: ''};
     var answer = c.answered ? '<span class="rec-ans-done">Answered</span>'
       : ((c.answerable && c.rec_key && typeof recNotForUsHtml === 'function') ? recNotForUsHtml(c.rec_key, 'intel', 'intel') : '');
     html += '<div class="row' + (c.done ? ' done' : '') + '" style="--rc:' + look.color + '"><div class="ic">' + look.svg + '</div><div class="t"><div class="tt"><b>' + esc(c.title) + '</b>'
-      + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + esc(c.impact) + '</span>') + '</div><div class="d">' + esc(c.detail) + '</div><div class="why" id="aiv-why-' + k + '">' + esc(c.why) + '</div><div class="ac">'
+      + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + esc(c.impact_basis ? c.impact : 'open') + '</span>') + '</div><div class="d">' + esc(c.detail) + '</div><div class="why" id="aiv-why-' + k + '">' + esc(c.why) + '</div><div class="ac">'
       + (c.done || !known ? '' : '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-aiv-go="' + esc(c.key) + '">' + esc(c.action) + '</button>')
       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-evidence-key="' + esc(c.rec_key || '') + '" onclick="toggleAivWhy(' + k + ',this)">Why this matters</button>' + answer + '</div></div></div>';
   }
@@ -18639,6 +18753,18 @@ function staggerCards() {
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+/* The word a money figure carries, from its kind field (DESIGN_SYSTEM.md, Money
+   labels): only a measured figure may read as a result; an opportunity is
+   "at stake · not captured", a projection "projected", and so on. An older
+   payload with no kind keeps the caller's default. */
+var CAV_MONEY_KIND = {measured: 'measured', computed: 'computed', estimate: 'estimated',
+  opportunity: 'at stake · not captured', projection: 'projected', forecast: 'forecast',
+  plan: 'budget', benchmark: 'vs benchmark', price: 'price'};
+function cavMoneyKindWord(kind, dflt){
+  var k = String(kind || '').toLowerCase();
+  return CAV_MONEY_KIND.hasOwnProperty(k) ? CAV_MONEY_KIND[k] : (dflt || '');
+}
 
 /* The banner shown above an AI passage the app could not fully stand behind.
    ES5 only, per this file's rules — no template literals, no arrow functions. */
@@ -20975,7 +21101,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(i=0;i<_rv.moves.length;i++){var mv=_rv.moves[i]||{},cd=mv.candidate||{};
         h+='<div class="sr-line warn"><span class="d"></span><span><b>'+esc(mv.employee)+'</b> <span class="hb-num">'+_schedHrs(+mv.hours||0)+'h</span>, <span class="hb-num">'+_schedHrs(+mv.over||0)+'h</span> over &mdash; '
           +esc(cd.employee)+' has room for the '+esc(mdy(cd.date))+' '+esc(cd.shift_start||'')+' shift'
-          +(cd.saves?', saves about <span class="hb-num">$'+Math.round(+cd.saves).toLocaleString()+'</span> in overtime pay':'')+'.</span>'
+          +(cd.saves?', about <span class="hb-num">$'+Math.round(+cd.saves).toLocaleString()+'</span> less overtime pay if you keep it':'')+'.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedMoveOvertime('+i+',this)">Move to '+esc(cd.employee)+'</button>'
           // Move is its yes; a keyed move can also be turned down, with a
           // reason, through the same ledger door (rec-ROI #41, #22).
@@ -21038,7 +21164,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(btn)btn.disabled=true;
     if(mv.rec_key)jsend('/api/recs/event',{key:mv.rec_key,event:'accepted',surface:'schedule_review',module:'schedule'},function(){});
     if(typeof schedAfterEdit==='function')schedAfterEdit();
-    toast('Moved to '+cd.employee+(cd.saves?' \u2014 about $'+Math.round(+cd.saves).toLocaleString()+' of overtime avoided':'')+'. Save to keep it.','success');
+    toast('Moved to '+cd.employee+(cd.saves?' \u2014 about $'+Math.round(+cd.saves).toLocaleString()+' less overtime pay once saved':'')+'. Save to keep it.','success');
   };
   // Email the named standby asking whether they can be on call that day.
   window.schedAskStandby=function(i,btn){

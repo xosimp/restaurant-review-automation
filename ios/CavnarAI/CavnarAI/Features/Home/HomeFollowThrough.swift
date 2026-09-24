@@ -1415,7 +1415,8 @@ struct HomeFollowThrough: View {
             VStack(alignment: .leading, spacing: 8) {
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                     .padding(.vertical, 6)
-                Text("THE PROMISE")
+                // The audit estimated; it promised nothing (NS3 M12).
+                Text("WHAT THE AUDIT ESTIMATED")
                     .font(.cavnarBody(11, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarEmber2)

@@ -1141,6 +1141,10 @@ struct LaborStats: Codable {
     /// that carries either. Lenient; absent on an older server.
     var demandAccuracy: DemandAccuracy? = nil
     var weekProjectionAccuracy: ForecastAccuracy? = nil
+    /// Whether last year's same days are on file for the next schedule —
+    /// the progress step names them only then. Nil from a server that does
+    /// not send it, which reads as "not available".
+    var lastYearAvailable: Bool? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1176,6 +1180,7 @@ struct LaborStats: Codable {
         case dataCaveat = "data_caveat"
         case demandAccuracy = "demand_accuracy"
         case weekProjectionAccuracy = "week_projection_accuracy"
+        case lastYearAvailable = "last_year_available"
     }
 }
 

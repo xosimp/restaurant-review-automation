@@ -1,21 +1,31 @@
 import SwiftUI
 
+/// "All clear" — only when the server says it may be (OwnerCopy.allClear:
+/// `monitoring.all_clear`, a live source, none stale). Otherwise the
+/// reason, with no green tick: nothing flagged on stale data, or with no
+/// live source at all, is not a clean bill (NS1 #8).
 struct AllClearRow: View {
+    /// Nil draws "All clear"; a sentence draws that instead.
+    var notClearReason: String? = nil
+
     var body: some View {
         VStack(spacing: 8) {
             ZStack {
                 Circle()
-                    .fill(Color.cavnarGreen.opacity(0.12))
+                    .fill((notClearReason == nil ? Color.cavnarGreen : Color.cavnarAmber).opacity(0.12))
                     .frame(width: 40, height: 40)
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.cavnarGreen)
+                Image(systemName: notClearReason == nil ? "checkmark" : "clock")
+                    .foregroundStyle(notClearReason == nil ? Color.cavnarGreen : Color.cavnarAmber)
             }
-            Text("All clear")
+            Text(notClearReason == nil ? "All clear" : "Nothing flagged")
                 .font(.cavnarBody(15, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
-            Text("Nothing needs your attention right now")
+            Text(notClearReason.map { $0.replacingOccurrences(of: "Nothing flagged \u{2014} but ", with: "But ") }
+                 ?? "Nothing needs your attention right now")
                 .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarInk3)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)

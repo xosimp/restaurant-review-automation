@@ -15,23 +15,31 @@ import SwiftUI
 /// the schedule actually arrives. Claiming "87%" would be inventing a
 /// number, which is the one thing this product does not do.
 struct ScheduleProgressSteps: View {
+    /// Whether last year's same days are an input to this draft (the
+    /// labor payload's `last_year_available`, read tolerantly). A progress
+    /// line is a claim about the inputs, and most restaurants have no year
+    /// of history (NS1 #21).
+    var lastYearAvailable: Bool = false
+
+    private var steps: [(text: String, after: Double)] { Self.steps(lastYearAvailable: lastYearAvailable) }
+
     /// Each stage and roughly how long the one before it runs.
-    private static let steps: [(text: String, after: Double)] = [
-        ("Reading last year's same days", 0),
+    static func steps(lastYearAvailable: Bool) -> [(text: String, after: Double)] { [
+        (OwnerCopy.firstScheduleStep(lastYearAvailable: lastYearAvailable), 0),
         ("Checking who's available", 7),
         ("Balancing against your labor target", 15),
         ("Weighing operational scores", 26),
         ("Checking leadership requirements", 36),
         ("Building the strongest team it can", 46),
         ("Scoring every shift for quality", 62),
-    ]
+    ] }
 
     @State private var started = Date()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { timeline in
             let elapsed = timeline.date.timeIntervalSince(started)
-            let current = Self.steps.lastIndex(where: { elapsed >= $0.after }) ?? 0
+            let current = steps.lastIndex(where: { elapsed >= $0.after }) ?? 0
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(visible(around: current), id: \.self) { index in
                     row(index: index, current: current)
@@ -46,7 +54,7 @@ struct ScheduleProgressSteps: View {
     /// so the block stays the same height and the eye stays on the live one.
     private func visible(around current: Int) -> [Int] {
         let lower = max(0, current - 2)
-        let upper = min(Self.steps.count - 1, current + 1)
+        let upper = min(steps.count - 1, current + 1)
         return Array(lower...upper)
     }
 
@@ -71,10 +79,10 @@ struct ScheduleProgressSteps: View {
             if live {
                 // The live step shimmers; the others are plain, so exactly
                 // one thing on screen is moving.
-                CavnarShimmerText(text: Self.steps[index].text, color: .cavnarInk)
+                CavnarShimmerText(text: steps[index].text, color: .cavnarInk)
                     .font(.cavnarBody(13.5, weight: 600))
             } else {
-                Text(Self.steps[index].text)
+                Text(steps[index].text)
                     .font(.cavnarBody(13.5, weight: done ? 400 : 400))
                     .foregroundStyle(done ? Color.cavnarInk3 : Color.cavnarInk3.opacity(0.55))
             }

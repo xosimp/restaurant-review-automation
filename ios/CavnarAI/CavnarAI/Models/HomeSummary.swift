@@ -279,19 +279,27 @@ struct HomeFreshnessList: Codable, Hashable {
     }
 }
 
-/// `monitoring: {count_live, stalest_as_of}` — how many sources are
-/// current, and the stalest one's date. Lenient.
+/// `monitoring: {count_live, stalest_as_of, stale, all_clear}` — how many
+/// sources are current, the stalest one's date, how many read stale or
+/// unknown, and whether an "All clear" may be drawn at all (home_brief:
+/// nothing flagged, a live source, none stale). Lenient: `stale` and
+/// `all_clear` are nil from an older server.
 struct HomeMonitoring: Codable, Hashable {
     let countLive: Int?
     let stalestAsOf: String?
+    var stale: Int? = nil
+    var allClear: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case countLive = "count_live"
         case stalestAsOf = "stalest_as_of"
+        case stale
+        case allClear = "all_clear"
     }
 
-    init(countLive: Int?, stalestAsOf: String?) {
+    init(countLive: Int?, stalestAsOf: String?, stale: Int? = nil, allClear: Bool? = nil) {
         self.countLive = countLive; self.stalestAsOf = stalestAsOf
+        self.stale = stale; self.allClear = allClear
     }
 
     init(from decoder: Decoder) throws {
@@ -301,6 +309,8 @@ struct HomeMonitoring: Codable, Hashable {
         countLive = try? c.decodeIfPresent(Int.self, forKey: .countLive)
         let s = (try? c.decodeIfPresent(String.self, forKey: .stalestAsOf)) ?? nil
         stalestAsOf = s.flatMap { ConfidenceDisplay.mdyDate(asOf: $0, asOfISO: nil) }
+        stale = (try? c.decodeIfPresent(Int.self, forKey: .stale)) ?? nil
+        allClear = (try? c.decodeIfPresent(Bool.self, forKey: .allClear)) ?? nil
     }
 }
 
@@ -376,12 +386,17 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     /// month"): one Home can carry three labor figures of different scope
     /// (B4 H7). Absent on an older server.
     var dollarsBasis: String? = nil
+    /// The money figure's kind (measured / opportunity / projection / ...)
+    /// when the server sends one — it picks the chip's word
+    /// (OwnerCopy.kindWord). Absent on an older server: "at stake".
+    var dollarsKind: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
         case key, title, why, evidence, module, metric, confidence, timeframe, impact, strength, alternative, action
         case dollarsMonthly = "dollars_monthly"
         case dollarsBasis = "dollars_basis"
+        case dollarsKind = "dollars_kind"
         case ifIgnored = "if_ignored"
         case timesHidden = "times_hidden"
         case modelWritten = "model_written"
@@ -423,6 +438,7 @@ extension HomeRecommendation {
         calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
         calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)
         dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
+        dollarsKind = (try? c.decodeIfPresent(String.self, forKey: .dollarsKind)) ?? nil
     }
 }
 
@@ -513,7 +529,7 @@ struct HomeWeeklyReceipt: Codable, Identifiable, Hashable {
     var id: String { module + "|" + emphasis + "|" + text }
 }
 
-/// One day's "Total value delivered" figure — see value_delivered.py's
+/// One day's measured-results figure — see value_delivered.py's
 /// record_value_snapshot(). Ascending by date, oldest first.
 struct ValueSnapshot: Codable, Hashable {
     let date: String
