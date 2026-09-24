@@ -122,6 +122,14 @@ def headline(review) -> str:
     """One sentence naming the week, from the metrics that moved."""
     return review_common.headline(review, "week")
 
+def money_word(m) -> str:
+    """How a move's monthly dollars are introduced: "worth about" only for
+    a move the right way; a move the wrong way is "costing about" — "worse
+    than last week, worth about $9,082/month" read a loss as a gain
+    (re-audit C12)."""
+    return {"improved": "worth about", "worsened": "costing about"}.get(m.get("verdict"), "about")
+
+
 def lines(review):
     """Plain sentences for the email body — one per metric. Each says what
     it rests on, and none of them invents a figure it could not measure."""
@@ -138,7 +146,7 @@ def lines(review):
                 "no_clear_change": "in line with"}.get(m["verdict"], "against")
         money = ""
         if m.get("monthly_dollars"):
-            money = f", worth about ${abs(m['monthly_dollars']):,.0f}/month if it holds"
+            money = f", {money_word(m)} ${abs(m['monthly_dollars']):,.0f}/month if it holds"
         out.append(f"{base}, {word} {review['compared_with']}'s "
                    f"{_fmt(m['previous'], m['unit'])}{money}.")
     return out

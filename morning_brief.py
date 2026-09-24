@@ -331,8 +331,12 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path) or set()
             low = [i for i in low if rec_ledger.rec_key("stock_low", i) not in quiet]
         if low:
-            named = ", ".join(low[:3]) + (f" and {len(low) - 3} more" if len(low) > 3 else "")
-            keys = [rec_ledger.rec_key("stock_low", i) for i in low[:10]]
+            named = ", ".join(low[:STOCK_NAMED]) + (f" and {len(low) - STOCK_NAMED} more"
+                                                   if len(low) > STOCK_NAMED else "")
+            # Only the items the line NAMES are its recommendations: "and 3
+            # more" shows nobody which three, and presenting them logged six
+            # items as shown on a line that read three (re-audit C4).
+            keys = [rec_ledger.rec_key("stock_low", i) for i in low[:STOCK_NAMED]]
             lines.append({"key": "stock", "tone": "bad", "rec": keys[0], "recs": keys,
                           "text": f"Running low: {named}.",
                           "ask": "What do I need to order today?"})
@@ -434,12 +438,29 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # (API_REFERENCE.md → Recommendation fields): a keyed line names its key
     # and whether Done / Not for us / Track apply to it — false for the
     # money ranking and the owed replies, which no surface can answer.
+    # A line that stands for several (running low: one key per item it
+    # names) also carries them all as `rec_keys`, so a client's Done / Not
+    # for us can answer every item the line said.
     import rec_delivery
     for l in lines:
         if l.get("rec"):
             l["rec_key"] = l["rec"]
             l["answerable"] = rec_delivery.answerable(l["rec"])
+            if l.get("recs"):
+                l["rec_keys"] = line_keys(l)
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+
+
+# How many items the running-low line names; only those are its keys.
+STOCK_NAMED = 3
+
+
+def line_keys(line) -> list:
+    """Every ledger key one brief line shows: its own, then the others it
+    stands for (running low names up to STOCK_NAMED items)."""
+    if not line or not line.get("rec"):
+        return []
+    return [line["rec"]] + [x for x in (line.get("recs") or []) if x and x != line["rec"]]
 
 
 def _one_line_per_news(lines):
@@ -499,23 +520,46 @@ def _dedupe(restaurant_id, brief, db_path=DB_PATH):
     return dict(brief, lines=kept, deduped=sorted(seen))
 
 
-def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
-    """Every keyed line this brief showed, into rec_ledger (never raises).
-    A line keyed only so an answer elsewhere can silence it — the money
-    ranking (money:*), the owed replies (urgent_reviews) — is not a
-    recommendation anyone can answer and is not presented
-    (rec_delivery.presentable)."""
-    import rec_ledger
+def line_items(lines) -> list:
+    """The ledger items for the brief lines a surface actually showed —
+    each keyed line, and every item a multi-item line names. Only the
+    presentable ones: a line keyed only so an answer elsewhere can silence
+    it — the money ranking (money:*), the owed replies (urgent_reviews) — is
+    not a recommendation anyone can answer (rec_delivery.presentable)."""
     import rec_delivery
     items = [{"key": k, "module": _LINE_MODULE.get(l.get("key"), "home"), "title": l.get("text"),
               "position": i}
-             for i, l in enumerate(brief.get("lines") or []) if l.get("rec")
-             # A line that stands for several (running low: one key per item)
-             # shows each of them.
-             for k in ([l["rec"]] + [x for x in (l.get("recs") or []) if x != l["rec"]])]
-    items = rec_delivery.only_presentable(items)
+             for i, l in enumerate(lines or []) for k in line_keys(l)]
+    return rec_delivery.only_presentable(items)
+
+
+def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
+    """Every keyed line this brief showed, into rec_ledger (never raises)."""
+    import rec_ledger
+    items = line_items(brief.get("lines"))
     if items:
         rec_ledger.present_many(restaurant_id, items, surface, user_id=user_id, db_path=db_path)
+
+
+# The lines Home's "Before service" card renders from GET /morning-brief:
+# every line but the one thing and the money line, which Home shows in its
+# own focus card (presented by the route serving that card).
+HOME_SKIPS = ("fix_first", "money")
+
+
+def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict:
+    """K6: the brief served to a Home view (GET /morning-brief?view=home) —
+    the "Before service" lines, recorded on "home" at most once a day per
+    key (rec_ledger's shown dedupe). Returns {key: rec_id or None}. Never
+    raises."""
+    try:
+        lines = [l for l in (brief.get("lines") or []) if l.get("key") not in HOME_SKIPS]
+        import rec_delivery
+        return rec_delivery.present_now(restaurant_id, "home", line_items(lines), user_id=user_id,
+                                        db_path=db_path)
+    except Exception as e:
+        print(f"[morning_brief] home lines not presented rid={restaurant_id}: {e}")
+        return {}
 
 
 _LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "labor",
@@ -626,28 +670,32 @@ def _watching_text(watching):
     return "I'm watching " + ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
+def push_lines(brief) -> list:
+    """The lines the lock screen shows: the two most actionable, in the
+    order push_text puts them — the only lines the brief push presents."""
+    order = {"action": 0, "bad": 1, "good": 2, "neutral": 3}
+    return sorted(brief.get("lines") or [], key=lambda l: order.get(l.get("tone"), 9))[:2]
+
+
 def push_text(brief, restaurant_name):
     """A title and a two-line body for the lock screen. The lead is the most
     actionable line, not the first — 'one thing to do' beats 'yesterday'."""
-    order = {"action": 0, "bad": 1, "good": 2, "neutral": 3}
-    lines = sorted(brief["lines"], key=lambda l: order.get(l["tone"], 9))
+    lines = push_lines(brief)
     if not lines:
         return None
-    body = lines[0]["text"]
-    if len(lines) > 1:
-        body += " " + lines[1]["text"]
+    body = " ".join(l["text"] for l in lines)
     return {"title": f"Good morning — {restaurant_name}", "body": body[:230]}
 
 
-def _ask_url(prompt, rec=None):
+def _ask_url(prompt, rec=None, rid=None):
     """A link that opens the dashboard and asks that question — the email's
     version of the push's one-tap into Ask (dashboard.html reads ?ask=).
-    `rec` carries the line's ledger key, so the open is recorded against the
-    recommendation it came from (dashboard.html posts it as "opened"). A key
-    that is never presented (rec_delivery.presentable) is not carried: an
-    open with no episode behind it records nothing."""
+    `rec` carries the line's ledger key and `rid` the restaurant, so the
+    page load records the open against the recommendation it came from. A
+    key that is never presented (rec_delivery.presentable) is not carried:
+    an open with no episode behind it records nothing."""
     import rec_delivery
-    return rec_delivery.ask_url(prompt, rec if rec_delivery.presentable(rec) else None, "brief_email")
+    return rec_delivery.ask_url(prompt, rec if rec_delivery.presentable(rec) else None, "brief_email", rid)
 
 
 def _email_html(brief, restaurant_name):
@@ -661,7 +709,7 @@ def _email_html(brief, restaurant_name):
         f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
         # Every line is a question you can ask about it — the email's
         # equivalent of tapping the push, which opens Ask on that line.
-        + (f'<br><a href="{html.escape(_ask_url(l.get("ask"), l.get("rec")), quote=True)}" '
+        + (f'<br><a href="{html.escape(_ask_url(l.get("ask"), l.get("rec"), brief.get("restaurant_id")), quote=True)}" '
            f'style="font-size:13px;color:#c84b2f;text-decoration:none">Ask about this &rarr;</a>'
            if l.get("ask") else "")
         + '</td></tr>'
@@ -811,9 +859,15 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             if lead.get("rec") and rec_delivery.presentable(lead["rec"]):
                 data["rec_key"] = lead["rec"]      # the tap is recorded as "opened" (notifications/opened)
                 data["answerable"] = rec_delivery.answerable(lead["rec"])
+            # Only the two lines the lock screen shows are presented, and
+            # only once a phone took the push (push.fire_push on_delivered):
+            # all of them, at queue time, logged lines nobody saw on pushes
+            # nobody received (re-audit C4).
             push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
-                           data=data, db_path=db_path, user_ids={u["id"]})
-            _safe(_present, restaurant_id, brief, "brief_push", u["id"], db_path)
+                           data=data, db_path=db_path, user_ids={u["id"]},
+                           on_delivered=rec_delivery.when_pushed(restaurant_id, "brief_push",
+                                                                 line_items(push_lines(brief)),
+                                                                 user_id=u["id"], db_path=db_path))
             pushed += 1
         elif u.get("email"):
             from emails import deliver as _deliver, _branded_email, sender as _sender

@@ -723,23 +723,38 @@ def diagnosis_rec_key(prefix, diag):
     return insight_store.line_key(prefix, diag.get("cause") or diag.get("recommended_action") or "")
 
 
-def present_diagnoses(rid, diags, prefix, module, surface, user_id=None):
+def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=None):
     """Give each diagnosis with a recommended action a rec_key, log it as
     shown, and mark one the owner already answered (`answered`: the card
-    keeps its evidence but drops the action and its controls)."""
+    keeps its evidence but drops the action and its controls). Each keyed
+    diagnosis carries the contract fields `rec_key` and `answerable`.
+
+    `shown` is how many of them the clients render (from the front): only
+    those are presented. Reviews sends three and both clients render the
+    first (`diagnosis`); presenting all three logged two nobody saw
+    (re-audit C4). The rest are keyed and marked, never presented."""
     import insight_store
+    import rec_ledger
     diags = [dict(d) for d in (diags or []) if d]
     items = []
-    for d in diags:
+    for i, d in enumerate(diags):
         if d.get("recommended_action"):
             d["rec_key"] = diagnosis_rec_key(prefix, d)
-            if d["rec_key"]:
+            if d["rec_key"] and (shown is None or i < shown):
                 items.append({"key": d["rec_key"], "text": d["recommended_action"], "model_written": True,
                               "confidence_band": d.get("confidence")})
     kept = {k["key"] for k in insight_store.present_recs(rid, module, surface, items, user_id=user_id)}
+    presented = {it["key"] for it in items}
+    silenced = None
     for d in diags:
         if d.get("rec_key"):
-            d["answered"] = d["rec_key"] not in kept
+            if d["rec_key"] in presented:
+                d["answered"] = d["rec_key"] not in kept
+            else:
+                if silenced is None:
+                    silenced = rec_ledger.silenced_keys(rid)
+                d["answered"] = d["rec_key"] in silenced
+            d["answerable"] = not d["answered"]
     return diags
 
 
@@ -1103,11 +1118,14 @@ def _review_insight_recs(rid, payload):
                                           [{"key": key, "text": line, "title": line, "model_written": True,
                                             "confidence_band": payload.get("confidence")}])
         if kept:
-            payload["recs"].append({"key": key, "text": line, "kind": "do_today"})
+            payload["recs"].append({"key": key, "text": line, "kind": "do_today", "rec_key": key,
+                                    "answerable": True})
         else:
             payload["insight"] = (text[:m.start()] + text[m.end():]).replace("\n\n\n", "\n\n").strip()
     if payload.get("diagnoses"):
-        payload["diagnoses"] = present_diagnoses(rid, payload["diagnoses"], "diag_review", "reviews", "reviews")
+        # Both clients render `diagnosis` — the first — and only it.
+        payload["diagnoses"] = present_diagnoses(rid, payload["diagnoses"], "diag_review", "reviews", "reviews",
+                                                 shown=1)
         payload["diagnosis"] = payload["diagnoses"][0] if payload["diagnoses"] else None
     return payload
 
@@ -2220,7 +2238,10 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     out = dict(extra)
     out["insight"] = text if raw else format_insight_html(text, rec_items=recs, surface="marketing",
                                                           module="marketing")
-    out["recs"] = [{"key": r["key"], "text": r["text"]} for r in recs if r.get("controls") and not r.get("answered")]
+    # `rec_key` / `answerable` are the contract every payload carrying a
+    # recommendation shares (API_REFERENCE.md → Recommendation fields).
+    out["recs"] = [{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
+                   for r in recs if r.get("controls") and not r.get("answered")]
     if raw:
         out["rec_items"] = recs
     return out
@@ -2482,14 +2503,36 @@ def labor_insight_items(rid, text, user_id=None):
                              promote="UNVERIFIED:" not in (text or ""))
 
 
-def present_calendar_ideas(rid, ideas, user_id=None):
+def focused_calendar_index(rid, ideas) -> int:
+    """The idea the phone opens its week on: today's (the restaurant's own
+    day), else the first — the rule iOS MarketingView applies (isToday)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(rid).date()
+        short = f"{today.month}/{today.day}"
+        for i, idea in enumerate(ideas or []):
+            if isinstance(idea, dict) and (idea.get("iso_date") == today.isoformat()
+                                           or (not idea.get("iso_date") and idea.get("date") == short)):
+                return i
+    except Exception:
+        pass
+    return 0
+
+
+def present_calendar_ideas(rid, ideas, user_id=None, shown=None):
     """This week's content-calendar ideas as recommendations (#41): each
     carries `rec_key` (marketing.calendar_idea_key), `answered` and
     `answerable`; the ones still open — not written from, not answered —
     are presented on the "marketing" surface when served. Writing from an
     idea records it as accepted (marketing.mark_calendar_idea_used). Every
-    idea stays in the list: the week rail shows all seven days. Mutates and
-    returns `ideas`; never raises."""
+    idea stays in the list: the week rail shows all seven days.
+
+    `shown` names the indexes a client renders the idea TEXT of: the web
+    grid shows all seven (None); the phone shows one day's card at a time,
+    so its routes pass the day it opens on and the phone reports each other
+    day it turns to (POST /mobile/api/marketing/calendar/seen). Presenting
+    all seven from the phone logged six ideas it never showed (re-audit
+    C4). Mutates and returns `ideas`; never raises."""
     if not ideas:
         return ideas
     try:
@@ -2498,7 +2541,9 @@ def present_calendar_ideas(rid, ideas, user_id=None):
         for idea in ideas:
             if isinstance(idea, dict):
                 idea["rec_key"] = calendar_idea_key(idea.get("angle") or idea.get("topic") or "")
-        open_ideas = [i for i in ideas if isinstance(i, dict) and not i.get("written") and (i.get("angle") or i.get("topic"))]
+        open_ideas = [i for n, i in enumerate(ideas)
+                      if isinstance(i, dict) and not i.get("written") and (i.get("angle") or i.get("topic"))
+                      and (shown is None or n in shown)]
         ids = rec_ledger.present_many(rid, [{"key": i["rec_key"], "module": "marketing", "kind": "content_idea",
                                              "title": str(i.get("angle") or i.get("topic"))[:200],
                                              "model_written": True, "position": n}
@@ -2612,9 +2657,17 @@ def present_schedule_result(rid, result, user_id=None):
     presents them under). Predicted edits and the what-if comparison are a
     forecast of the manager's own edits and the evidence behind "Improve
     with Cavnar" — not recommendations — and are not presented. Each item
-    gains `rec_key` and `answerable`. Never raises."""
+    gains `rec_key` and `answerable`. The Shift Quality recommendations the
+    draft carries are presented here too (schedule_engine.present_quality)
+    — no longer when the draft was built, which the nightly auto-draft does
+    with nobody looking (re-audit C1). Never raises."""
     if not isinstance(result, dict):
         return result
+    try:
+        from schedule_engine import present_quality
+        present_quality(rid, result.get("quality"), user_id=user_id)
+    except Exception as e:
+        print(f"[schedule] quality not presented rid={rid}: {e}")
     try:
         import rec_ledger
         import rec_delivery
@@ -2712,8 +2765,8 @@ def inv_insight_api(current_user):
         # these are instead of presenting example data as the owner's own.
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
-                       recs=[{"key": r["key"], "text": r["text"]} for r in recs
-                             if r.get("controls") and not r.get("answered")])
+                       recs=[{"key": r["key"], "text": r["text"], "rec_key": r["key"], "answerable": True}
+                             for r in recs if r.get("controls") and not r.get("answered")])
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -3039,9 +3092,12 @@ def _do_regenerate_draft(review_id, restaurant_id):
         conn = get_conn()
         conn.execute(
             # A fresh model draft: the next edit is compared against THIS
-            # text, so the preserved original restarts with it (audit #41).
+            # text, so the preserved original restarts with it (audit #41),
+            # and so does the edited flag — an owner who edited, regenerated
+            # and approved the new draft as written left draft_edited=1 with
+            # no original, and the approval recorded nothing (re-audit C11).
             "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1, "
-            "original_draft=NULL WHERE id=? AND restaurant_id=? "
+            "original_draft=NULL, draft_edited=0 WHERE id=? AND restaurant_id=? "
             "AND response_status NOT IN ('posted', 'approved')",
             (review_id, restaurant_id)
         )
@@ -3061,10 +3117,29 @@ def _do_regenerate_draft(review_id, restaurant_id):
         return {"ok": False, "error": _safe_err(e)}, 200
 
 
-def _do_save_draft(review_id, restaurant_id, draft_text):
+# The longest reply a save accepts — Google's own limit on a review reply.
+REPLY_SAVE_MAX_CHARS = 4096
+
+
+def _same_words(a, b) -> bool:
+    """Two drafts that differ only in whitespace are the same draft."""
+    return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
+
+
+def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
+    """Store the reply text for a review.
+
+    What counts as the OWNER's edit (reply_edits, the drafter's style note
+    and its examples) is only a change the owner made: a save that changes
+    only whitespace is not an edit, and a rewrite Ask's model wrote at the
+    owner's request (`by_model`, ask_cavnar_tools.edit_review_reply) is a
+    fresh model draft — the next edit is measured against it — never the
+    owner's own words (re-audit C11)."""
     draft = (draft_text or "").strip()
     if not draft:
         return {"ok": False, "error": "Draft cannot be empty"}, 200
+    if len(draft) > REPLY_SAVE_MAX_CHARS:
+        return {"ok": False, "error": f"A reply can be at most {REPLY_SAVE_MAX_CHARS:,} characters."}, 200
     # One conditional write. It used to set response_status='drafted'
     # unconditionally, so a draft saved from a second tab after the reply
     # went live marked a live Google reply as an unsent draft — which
@@ -3082,15 +3157,25 @@ def _do_save_draft(review_id, restaurant_id, draft_text):
     try:
         # original_draft keeps the model's text as it stood before the first
         # edit (suggested vs chosen, audit #41); a save that changes nothing
-        # is not an edit.
-        cur = conn.execute(
-            "UPDATE reviews SET "
-            "original_draft=CASE WHEN COALESCE(draft_response,'') != ? THEN COALESCE(original_draft, draft_response) "
-            "ELSE original_draft END, "
-            "draft_edited=CASE WHEN COALESCE(draft_response,'') != ? THEN 1 ELSE COALESCE(draft_edited, 0) END, "
-            "draft_response=?, response_status='drafted', draft_needs_review=?, draft_review_reason=? "
-            "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
-            (draft, draft, draft, 1 if claims else 0, reason, review_id, restaurant_id))
+        # but whitespace is not an edit.
+        cur_row = conn.execute("SELECT draft_response FROM reviews WHERE id=? AND restaurant_id=?",
+                               (review_id, restaurant_id)).fetchone()
+        edited = 0 if (cur_row is not None and _same_words(cur_row["draft_response"], draft)) else 1
+        if by_model:
+            cur = conn.execute(
+                "UPDATE reviews SET original_draft=NULL, draft_edited=0, "
+                "draft_response=?, response_status='drafted', draft_needs_review=?, draft_review_reason=? "
+                "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
+                (draft, 1 if claims else 0, reason, review_id, restaurant_id))
+        else:
+            cur = conn.execute(
+                "UPDATE reviews SET "
+                "original_draft=CASE WHEN ? THEN COALESCE(original_draft, draft_response) "
+                "ELSE original_draft END, "
+                "draft_edited=CASE WHEN ? THEN 1 ELSE COALESCE(draft_edited, 0) END, "
+                "draft_response=?, response_status='drafted', draft_needs_review=?, draft_review_reason=? "
+                "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
+                (edited, edited, draft, 1 if claims else 0, reason, review_id, restaurant_id))
         conn.commit()
         if cur.rowcount == 1:
             return {"ok": True, "needs_review": bool(claims), "review_reason": reason}, 200
@@ -7215,6 +7300,14 @@ def _m(name):
     return getattr(fn, "__wrapped__", fn)
 
 
+@client_bp.route("/api/home/modules")
+@login_required
+def home_modules_api(current_user):
+    """Web twin of /mobile/api/home/modules (K5): the module tiles alone,
+    building no Home brief and recording nothing."""
+    return _m("mobile_home_modules")(current_user)
+
+
 @client_bp.route("/api/home/brief")
 @login_required
 def home_brief_api(current_user):
@@ -7755,7 +7848,8 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
              for it in parsed.get("recommendation_items") or []]
     kept = insight_store.present_recs(rid, "intel", surface, items, user_id=user_id) if items else []
     return {"ok": True,
-            "recs": [{"key": k["key"], "text": k["text"], "cites": k["cites"]} for k in kept],
+            "recs": [{"key": k["key"], "text": k["text"], "cites": k["cites"], "rec_key": k["key"],
+                      "answerable": True} for k in kept],
             "answered": len(items) - len(kept),
             "withheld_recommendations": parsed.get("withheld_recommendations", 0),
             "unverified": parsed.get("unverified"),

@@ -50,9 +50,9 @@ def sent(monkeypatch):
     monkeypatch.setattr(notify, "_send_alert_email",
                         lambda to, subject, html, restaurant_id=None: out["email"].append((subject, html)) or True)
     monkeypatch.setattr(push, "fire_push",
-                        lambda rid, at, title, body, data=None, db_path=None, user_ids=None:
+                        lambda rid, at, title, body, data=None, db_path=None, user_ids=None, on_delivered=None:
                         out["push"].append({"rid": rid, "type": at, "body": body, "data": data or {},
-                                            "user_ids": user_ids}))
+                                            "user_ids": user_ids, "on_delivered": on_delivered}))
     monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
     return out
 

@@ -124,10 +124,13 @@ def test_stage_records_nothing_outside_a_delivery_and_only_on_flush(db_path):
 
 
 def test_money_ranking_owed_replies_and_pulse_news_are_never_presented():
-    for key in ("money:labor", "money:food_cost", "urgent_reviews", "intraday_pulse:2026-09-23"):
+    for key in ("money:labor", "money:food_cost", "urgent_reviews", "intraday_pulse:2026-09-23",
+                # Shown only where nothing can answer them (re-audit C8).
+                "pulse_cut:2026-09-23:ana", "quiet_night:2026-09-25", "digest_move:7155a2c52f",
+                "monthly_move:approve_replies"):
         assert not rec_delivery.presentable(key) and not rec_delivery.answerable(key)
-    for key in ("link:reviews_x_labor:service:friday", "schedule_to_target:30%", "pulse_cut:2026-09-23:ana",
-                "quiet_night:2026-09-25", "review_requests", "cut_waste:Salmon"):
+    for key in ("link:reviews_x_labor:service:friday", "schedule_to_target:30%", "review_requests",
+                "cut_waste:Salmon"):
         assert rec_delivery.presentable(key) and rec_delivery.answerable(key)
     # Bookkeeping keys are presented (the trail keeps them) but not answerable.
     assert rec_delivery.presentable("standby:2026-09-24:ana") and not rec_delivery.answerable("standby:2026-09-24:ana")
@@ -227,9 +230,11 @@ def test_a_delivered_digest_presents_what_it_rendered_once(db_path, monkeypatch)
     rid, sent = _digest_setup(db_path, monkeypatch, ok=True)
     assert len(sent) == 1
     move = reporter.digest_move_key("Call the fish supplier about Friday.")
-    assert _shown(db_path, rid) == sorted([("cut_waste:Salmon", "weekly_email"), (move, "digest")])
+    # The digest's move is shown in the email and answerable nowhere, so it
+    # is not presented and its link names no recommendation (re-audit C8).
+    assert _shown(db_path, rid) == [("cut_waste:Salmon", "weekly_email")]
     html = sent[0]["payload"]["html"]
-    assert f"rec={move.replace(':', '%3A')}" in html and "src=digest" in html
+    assert "Call the fish supplier" in html and f"rec={move.replace(':', '%3A')}" not in html
 
 
 def test_a_failed_digest_presents_nothing(db_path, monkeypatch):
@@ -253,8 +258,9 @@ def test_the_monthly_email_presents_its_one_thing_and_next_move_only_when_sent(d
     assert _shown(db_path, rid) == []
     outcome["ok"] = True
     emails.send_monthly_summary_email("o@x.test", "Gia Mia", "Sam", restaurant_id=rid)
-    assert _shown(db_path, rid) == sorted([("cut_waste:Salmon", "monthly_email"),
-                                           ("monthly_move:approve_replies", "monthly_email")])
+    # The next move is a setup step the work discharges, answerable nowhere:
+    # rendered, not presented (re-audit C8).
+    assert _shown(db_path, rid) == [("cut_waste:Salmon", "monthly_email")]
 
 
 # ── #6 / #32 the daily report ───────────────────────────────────────────────
@@ -346,7 +352,8 @@ def test_the_brief_push_carries_its_surface_history_id_and_answerable(db_path, m
     fired = []
     monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 7, "email": "o@x.test", "role": "owner"}])
     monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 7, "token": "t"}])
-    monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append(k["data"]))
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: (fired.append(k["data"]),
+                                                            k["on_delivered"] and k["on_delivered"]()))
     monkeypatch.setattr(notify, "record_notification", lambda *a, **k: 41)
     monkeypatch.setattr(morning_brief, "build", lambda *a, **k: {"date": "2026-09-23", "lines": [
         {"key": "schedule", "tone": "action", "rec": "schedule:next-week", "text": "Build it.", "ask": "Build?"},
@@ -492,9 +499,12 @@ def test_a_dashboard_load_from_a_keyed_link_records_one_open(db_path):
     rec_ledger.present(rid, "labor_over:x", "labor", "alert_sms")
     assert rec_delivery.record_link_open(user, {"rec": "labor_over:x", "src": "alert_sms"}) is True
     assert rec_delivery.record_link_open(user, {"rec": "labor_over:x", "src": "alert_sms"}) is False  # same day
-    # With a question in it, dashboard.html's ?ask= handler records the open.
+    # With a question in it too — once a day, like any keyed link: the
+    # dashboard's own ?ask= post had no dedupe (re-audit C14).
+    assert rec_delivery.record_link_open(user, {"rec": "labor_over:x", "src": "weekly_email", "ask": "q"}) is True
     assert rec_delivery.record_link_open(user, {"rec": "labor_over:x", "src": "weekly_email", "ask": "q"}) is False
-    assert [(e["key"], e["surface"]) for e in _events(db_path, rid, "opened")] == [("labor_over:x", "alert_sms")]
+    assert sorted((e["key"], e["surface"]) for e in _events(db_path, rid, "opened")) == \
+        [("labor_over:x", "alert_sms"), ("labor_over:x", "weekly_email")]
 
 
 def test_the_sign_in_redirect_keeps_the_links_query():

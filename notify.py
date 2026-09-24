@@ -500,12 +500,15 @@ def silenced_keys(restaurant_id, db_path: str = DB_PATH) -> set:
 
 
 def _present_alert(restaurant_id, recs, channels, db_path: str = DB_PATH):
+    """What an alert showed, on each channel that DELIVERED it. Only the
+    presentable keys (rec_delivery.presentable). Never raises."""
     if not recs or not channels:
         return
     try:
-        import rec_ledger
+        import rec_delivery
         for ch in channels:
-            rec_ledger.present_many(restaurant_id, [dict(r) for r in recs], _CHANNEL_SURFACE[ch], db_path=db_path)
+            rec_delivery.present_now(restaurant_id, _CHANNEL_SURFACE[ch], [dict(r) for r in recs],
+                                     db_path=db_path)
     except Exception as e:
         print(f"[notify] rec_ledger present failed for rid={restaurant_id}: {e}")
 
@@ -563,19 +566,21 @@ def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH
         return True
 
 
-def alert_url(alert_type=None, review_id=None, rec=None, src=None) -> str:
+def alert_url(alert_type=None, review_id=None, rec=None, src=None, rid=None) -> str:
     """The dashboard URL that answers this alert. `rec`/`src` name the
     recommendation it carries and the channel it was read on, so opening it
-    is recorded as `opened` on that key (rec_delivery.link; #32)."""
+    is recorded as `opened` on that key (rec_delivery.link; #32); `rid` the
+    location it is about, so a group owner's tap lands on that location's
+    trail, not on whichever one their session is on (re-audit C10)."""
     import rec_delivery
     base = config.base_url()
     tab = ALERT_TAB.get(alert_type or "")
     if not tab:
-        return rec_delivery.link(base + "/", rec, src) if rec else base
+        return rec_delivery.link(base + "/", rec, src, rid) if rec else base
     url = f"{base}/?tab={tab}"
     if review_id and tab == "reviews":
         url += f"&review={int(review_id)}"
-    return rec_delivery.link(url, rec, src)
+    return rec_delivery.link(url, rec, src, rid)
 
 
 # The CTA href is stamped in at DELIVERY, not at build: the alert type and
@@ -584,9 +589,10 @@ def alert_url(alert_type=None, review_id=None, rec=None, src=None) -> str:
 CTA_PLACEHOLDER = "https://cavnar.invalid/cta"
 
 
-def _resolve_cta(html: str, alert_type: str = None, review_id: int = None, rec: str = None) -> str:
+def _resolve_cta(html: str, alert_type: str = None, review_id: int = None, rec: str = None,
+                 rid: int = None) -> str:
     return (html or "").replace(CTA_PLACEHOLDER, alert_url(alert_type, review_id, rec=rec,
-                                                           src="alert_email" if rec else None))
+                                                           src="alert_email" if rec else None, rid=rid))
 
 
 # The bare dashboard address an alert SMS ends on ("Respond now ·
@@ -594,7 +600,7 @@ def _resolve_cta(html: str, alert_type: str = None, review_id: int = None, rec: 
 SMS_CTA_TOKEN = "dashboard.cavnar.ai"
 
 
-def keyed_sms_text(sms_text: str, rec: str = None) -> str:
+def keyed_sms_text(sms_text: str, rec: str = None, rid: int = None) -> str:
     """The SMS with its closing dashboard address naming the recommendation
     it carries (…/?rec=<key>&src=alert_sms), so a tap is recorded as
     `opened` on that key when the dashboard loads (#32). Only the LAST bare
@@ -611,7 +617,7 @@ def keyed_sms_text(sms_text: str, rec: str = None) -> str:
     if not rec or not sms_text or SMS_CTA_TOKEN not in sms_text:
         return sms_text
     import rec_delivery
-    keyed = rec_delivery.link(SMS_CTA_TOKEN + "/", rec, "alert_sms")
+    keyed = rec_delivery.link(SMS_CTA_TOKEN + "/", rec, "alert_sms", rid)
     head, _, tail = sms_text.rpartition(SMS_CTA_TOKEN)
     if tail.startswith("/"):
         return sms_text                 # already a path: leave it alone
@@ -1385,7 +1391,8 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
                           h["html"], review_id=h["review_id"], db_path=db_path,
                           value=h.get("value"), recs=meta.get("recs"),
                           audience_types=meta.get("audience_types"),
-                          covered_types=meta.get("covered_types"))
+                          covered_types=meta.get("covered_types"),
+                          text_recs=meta.get("text_recs"))
             sent += 1
         except Exception as e:
             print(f"[notify] held alert {h['id']} failed: {e}")
@@ -1512,7 +1519,7 @@ def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path:
         if skip and all(str(a).strip().lower() in skip for a in alert_recipients(owner_email, restaurant_id)):
             print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
             return False
-    resolved = _resolve_cta(html, alert_type, review_id, rec=rec)
+    resolved = _resolve_cta(html, alert_type, review_id, rec=rec, rid=restaurant_id)
     if skip:
         return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id, skip=skip)
     return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id)
@@ -1521,7 +1528,7 @@ def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path:
 def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
                   html: str, review_id: int = None, db_path: str = DB_PATH,
                   value: float = None, recs: list = None, audience_types=None,
-                  covered_types=None):
+                  covered_types=None, text_recs: list = None):
     """Send one alert on whichever channels this restaurant has on for that
     type, log it, and fire the webhook. The single delivery path: an alert
     raised now goes straight here, and one held through a rush comes here
@@ -1541,9 +1548,16 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     tells the owner (rec_ledger keys). When the owner has already answered
     every one of them anywhere — dismissed it on Home, resolved the issue —
     nothing is sent, unless it is a health alert. Each channel that goes out
-    is presented on its own surface (alert_sms / alert_email / alert_push).
+    is presented on its own surface (alert_sms / alert_email / alert_push)
+    — the push only once a phone took it (push.fire_push on_delivered).
     The push goes only to logins permitted to read the module it is about
     (`audience_types`, default this alert's own type).
+
+    `text_recs` are the recommendations the SHORT channels name — the text
+    and the push. The combined morning alert's text says "3 things this
+    morning. First: …" and names one; its email lists all three. Presenting
+    all three on alert_sms and alert_push logged two recommendations nobody
+    was shown there (re-audit C4). Defaults to `recs`.
     """
     conn = models.get_conn(db_path)
     try:
@@ -1553,6 +1567,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     if not row:
         return
     recs = [r for r in (recs or [alert_rec(alert_type, title=subject, review_id=review_id)]) if r and r.get("key")]
+    text_recs = ([r for r in text_recs if r and r.get("key")] if text_recs is not None else recs)
     if recs and not never_silenced(alert_type):
         quiet = silenced_keys(restaurant_id, db_path)
         if all(r["key"] in quiet for r in recs):
@@ -1639,7 +1654,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     lead_rec = next((r["key"] for r in recs if rec_delivery.presentable(r["key"])), None)
     if via_sms and contacts:
         texted = False
-        text_out = keyed_sms_text(sms_text, lead_rec)
+        text_out = keyed_sms_text(sms_text, lead_rec, restaurant_id)
         for c in contacts:
             texted = bool(send_sms(c["phone"], text_out)) or texted
         if texted:
@@ -1648,6 +1663,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         if _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path,
                         review_id=review_id, covered_types=covered_types, rec=lead_rec):
             channels.append("email")
+    pushed = False
     # Logged BEFORE the push, not after: the push payload now carries the
     # app-icon badge, which is this login's unread count over alert_log. A
     # push sent first badges the phone with a number that excludes the very
@@ -1666,20 +1682,27 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
                 from push import fire_push as _fp
                 # alert_id and rec_key ride the payload so the open names
                 # the notification it answers (#39).
-                _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
-                    data={"alert_type": alert_type, "review_id": review_id, "alert_id": alert_id,
-                          "rec_key": recs[0]["key"] if recs else None,
-                          # The ledger surface a tap is an open on, and
-                          # whether the app may offer Done / Not for us.
-                          "surface": "alert_push",
-                          "answerable": bool(recs) and rec_delivery.answerable(recs[0]["key"])},
-                    db_path=db_path, user_ids=audience)
-                if audience or _has_devices(restaurant_id, db_path):
-                    channels.append("push")
+                # Presented on alert_push once a phone took it — never on
+                # the queueing alone (re-audit C2/C4).
+                queued = _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
+                             data={"alert_type": alert_type, "review_id": review_id, "alert_id": alert_id,
+                                   "rec_key": recs[0]["key"] if recs else None,
+                                   # The ledger surface a tap is an open on, and
+                                   # whether the app may offer Done / Not for us.
+                                   "surface": "alert_push",
+                                   "answerable": bool(recs) and rec_delivery.answerable(recs[0]["key"])},
+                             db_path=db_path, user_ids=audience,
+                             on_delivered=rec_delivery.when_pushed(restaurant_id, "alert_push",
+                                                                   [dict(r) for r in text_recs],
+                                                                   db_path=db_path))
+                pushed = bool(queued)
         except Exception as e:
             print(f"[notify] push for {alert_type} rid={restaurant_id} failed: {e}")
-    _present_alert(restaurant_id, recs, channels, db_path)
-    _note_missed(restaurant_id, alert_type, recs, channels, db_path)
+    # Each channel presents what IT showed: the text the recommendations it
+    # names, the email all of them. The push presents itself on delivery.
+    _present_alert(restaurant_id, text_recs, [c for c in channels if c == "sms"], db_path)
+    _present_alert(restaurant_id, recs, [c for c in channels if c == "email"], db_path)
+    _note_missed(restaurant_id, alert_type, recs, channels + (["push"] if pushed else []), db_path)
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)
@@ -1814,9 +1837,11 @@ def _deliver_combined(restaurant_id, items, db_path):
     # mentions; the email folds into the brief only when the brief covers
     # every item; each item keeps its own recommendation key.
     types = [i.alert_type for i in items]
+    # The text and the push name only the lead item; the email lists them
+    # all (text_recs, re-audit C4).
     _deliver_or_hold(restaurant_id, "daily_briefing", _strip_tags(sms_text), subject, html,
                      db_path=db_path, recs=[r for i in items for r in i.recs],
-                     audience_types=types, covered_types=types)
+                     audience_types=types, covered_types=types, text_recs=list(lead.recs))
     # Each folded type still records itself, so next week's repeat windows
     # (_already_alerted / _recent) and the history behave exactly as before.
     for item in items:
@@ -1830,17 +1855,17 @@ def _strip_tags(text: str) -> str:
 
 def _deliver_or_hold(restaurant_id, alert_type, sms_text, subject, html,
                      db_path=DB_PATH, value=None, review_id=None, recs=None,
-                     audience_types=None, covered_types=None):
+                     audience_types=None, covered_types=None, text_recs=None):
     release_at = rush_release_at(restaurant_id, alert_type, db_path)
     if release_at is not None:
         meta = {k: v for k, v in (("recs", recs), ("audience_types", audience_types),
-                                  ("covered_types", covered_types)) if v}
+                                  ("covered_types", covered_types), ("text_recs", text_recs)) if v}
         hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
                    review_id=review_id, db_path=db_path, value=value, meta=meta or None)
         return
     deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
                   review_id=review_id, db_path=db_path, value=value, recs=recs,
-                  audience_types=audience_types, covered_types=covered_types)
+                  audience_types=audience_types, covered_types=covered_types, text_recs=text_recs)
 
 
 def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,

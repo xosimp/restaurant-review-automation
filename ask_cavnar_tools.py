@@ -978,7 +978,10 @@ def _edit_review_reply(restaurant_id, review_id=None, draft=None):
     text = (draft or "").strip()
     if not text:
         return {"ok": False, "error": "Provide the replacement reply text."}
-    result, status = client_api._do_save_draft(rid, restaurant_id, text)
+    # The model wrote this text: it is a fresh draft, not the owner's edit
+    # (by_model — re-audit C11), so reply-edit learning never mistakes it
+    # for the owner's own words.
+    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True)
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
 
 

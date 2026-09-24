@@ -104,6 +104,8 @@ def test_the_pulse_pushes_once_and_only_to_owners(db_path, monkeypatch):
         "available": True, "off": True, "pct": -25.0, "direction": "behind", "weekday": "Monday",
         "net_sales": 3000, "typical": 4000, "samples": 4, "hour": 16})
     monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 7}])
+    # Push only: to the recipients whose phone can take it (re-audit C2).
+    monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 7}])
     import time_utils
     monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 16, 20))
     fired = []

@@ -1612,6 +1612,18 @@ def mark_posted(review_id, current_user):
                  "WHERE id=? AND restaurant_id=?",
                  (review_id, current_user["restaurant_id"]))
     conn.commit(); conn.close()
+    # The reply is live where the guest wrote (pasted onto Yelp or Facebook
+    # by hand): the alert that asked for it (review:<id>) was implemented,
+    # exactly as a reply Cavnar posted to Google is (client_api, ROI #27).
+    # Only an episode someone was shown is recorded (rec_ledger.implemented)
+    # — re-audit C15. Web and phone share this handler.
+    try:
+        import rec_ledger as _rl_mp
+        _rl_mp.implemented(current_user["restaurant_id"], _rl_mp.rec_key("review", review_id), "reviews",
+                           user_id=current_user.get("id"), role=current_user.get("role"),
+                           source_ref=f"posted:{review_id}", meta={"module": "reviews", "via": "marked_posted"})
+    except Exception as _rle:
+        print(f"[mark-posted] implementation not recorded for review {review_id}: {_rle}")
     try:
         from webhooks import fire_webhook as _fw
         _fw(current_user["restaurant_id"], "response.posted", {

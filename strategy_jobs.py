@@ -820,7 +820,11 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
             # The people who already get the morning brief — owners, and
             # managers the owner put on it. Same audience, same day's numbers.
             import morning_brief
-            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            # Push only, so only the people whose phone can take it: a pulse
+            # "sent" to an audience with no deliverable device reached
+            # nobody, and was recorded as shown all the same (re-audit C2).
+            audience = deliverable_audience(r.id, {u["id"] for u in morning_brief.recipients(r.id, db_path)},
+                                            db_path)
             if not audience:
                 continue
             word = "behind" if p["direction"] == "behind" else "ahead of"
@@ -839,28 +843,28 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
                                                   value=move["dollars"] if move else None)
             data = {"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?", "alert_id": alert_id,
                     "surface": "alert_push"}
-            # "X% behind a typical Friday" is news, not a recommendation —
-            # nothing to answer, so it is not presented (rec_delivery). The
-            # staffing move is: it carries its key and `answerable`, for the
-            # app to offer Done / Not for us on the pulse.
+            # "X% behind a typical Friday" is news, not a recommendation.
+            # The staffing move is advice, but the push is the only place it
+            # is ever shown and the app offers nothing on a push but the tap —
+            # so it is not presented (rec_delivery.NOT_PRESENTED_PREFIXES,
+            # re-audit C8) and says so: `answerable` false, no key to open.
+            # Should a client ever answer it, the hook below presents it on
+            # delivery without another change here.
+            import rec_delivery
             recs = []
             if move:
-                import rec_delivery
-                data["staffing_move"] = dict(move, rec_key=move["key"], answerable=True)
+                ans = rec_delivery.answerable(move["key"])
+                data["staffing_move"] = dict(move, answerable=ans, **({"rec_key": move["key"]} if ans else {}))
                 recs.append({"key": move["key"], "module": "labor", "title": move["text"],
                              "dollar_value": move["dollars"]})
-                data["rec_key"] = move["key"]
-                data["answerable"] = rec_delivery.answerable(move["key"])
+                if ans:
+                    data["rec_key"] = move["key"]
+                data["answerable"] = ans
             push.fire_push(
                 r.id, "intraday_pulse",
                 f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}", body,
-                data=data, db_path=db_path, user_ids=audience)
-            try:
-                if recs:
-                    import rec_ledger
-                    rec_ledger.present_many(r.id, recs, "alert_push", db_path=db_path)
-            except Exception as le:
-                ops.capture(le, job="pre_dinner_pulse_rec", context=f"restaurant_id={r.id}")
+                data=data, db_path=db_path, user_ids=audience,
+                on_delivered=rec_delivery.when_pushed(r.id, "alert_push", recs, db_path=db_path))
             sent += 1
         except Exception as e:
             ops.capture(e, job="pre_dinner_pulse", context=f"restaurant_id={r.id}")
@@ -1006,14 +1010,12 @@ def run_coverage_check(db_path=DB_PATH):
                     meta=meta, db_path=db_path)
                 if token:
                     opened += 1
-                    if fits:
-                        try:
-                            import rec_ledger
-                            rec_ledger.present(r.id, intraday.cover_key(issue), "labor", "issue_sms",
-                                               title=f"Ask {fits[0]['name']} to cover {m['employee']}",
-                                               db_path=db_path)
-                        except Exception as le:
-                            ops.capture(le, job="coverage_rec", context=f"restaurant_id={r.id}")
+                    # The suggested covers are NOT presented here. The text the
+                    # manager gets names the issue, not the covers, and a text
+                    # Twilio refused still recorded "cover" on issue_sms (re-audit
+                    # C3). They are presented where they are rendered: Home's
+                    # open-issues list (GET /issues, strategy_routes) and the
+                    # issue page a person acted on (/i/<token>).
         except Exception as e:
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
     return {"opened": opened}
@@ -1091,8 +1093,12 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
                 data["quiet"] = True
         except Exception as qe:
             print(f"[strategy_jobs] quiet-hours check failed rid={restaurant_id}: {qe}")
+        # Presented on alert_push once a phone took it, never on the
+        # queueing (re-audit C2/C4).
         push.fire_push(restaurant_id, alert_type, title, body, data=data,
-                       db_path=db_path, user_ids=pushed)
+                       db_path=db_path, user_ids=pushed,
+                       on_delivered=(rec_delivery.when_pushed(restaurant_id, "alert_push", [rec], db_path=db_path)
+                                     if rec else None))
     reached = len(pushed)
 
     emailed = [u for u in people if u["id"] not in pushed and u.get("email")]
@@ -1104,14 +1110,17 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
         name = (restaurant.location_name or restaurant.name) if restaurant else "your restaurant"
         # With a recommendation behind it the email links to the dashboard
         # naming it (rec=, src=alert_email), so an open is recorded (#32).
+        # The name and the title are text, not markup: "Rosa & Sons
+        # <Trattoria>" opened a tag the email never closed (re-audit C12).
         body_html = _emails.report_shell(
-            kicker=name,
-            title=title,
+            kicker=_h.escape(name),
+            title=_h.escape(title),
             subtitle="",
             sections=[_emails.report_paragraph(_h.escape(line))
                       for line in (lines or [body])],
             **({"cta_label": "Open your dashboard →",
-                "cta_url": _h.escape(rec_delivery.dashboard_url(rec["key"], "alert_email"))} if rec else {}),
+                "cta_url": _h.escape(rec_delivery.dashboard_url(rec["key"], "alert_email",
+                                                                rid=restaurant_id))} if rec else {}),
         )
         for user in emailed:
             result = _emails.deliver(
@@ -1124,16 +1133,25 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
                 })
             if getattr(result, "ok", False):
                 reached += 1
-    if rec and reached:
-        try:
-            import rec_ledger
-            if pushed:
-                rec_ledger.present_many(restaurant_id, [rec], "alert_push", db_path=db_path)
-            if reached > len(pushed):
-                rec_ledger.present_many(restaurant_id, [rec], "alert_email", db_path=db_path)
-        except Exception as e:
-            print(f"[strategy_jobs] rec_ledger present failed rid={restaurant_id}: {e}")
+    if rec and reached > len(pushed):
+        rec_delivery.present_now(restaurant_id, "alert_email", [rec], db_path=db_path)
     return reached
+
+
+def deliverable_audience(restaurant_id, user_ids, db_path=DB_PATH) -> set:
+    """The logins in `user_ids` with a phone a push can reach right now
+    (push.get_device_tokens for delivery: active logins, unparked tokens).
+    A push-only job sends to this set, and to nobody when it is empty."""
+    import push
+    ids = {int(u) for u in (user_ids or ()) if u}
+    if not ids:
+        return set()
+    try:
+        return {int(t.get("user_id") or 0) for t in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True)
+                                                    or [])} & ids
+    except Exception as e:
+        print(f"[strategy_jobs] device lookup failed rid={restaurant_id}: {e}")
+        return set()
 
 
 def _close_hour(r, local):
@@ -1337,12 +1355,16 @@ def run_demand_opportunity(db_path=DB_PATH):
             out = demand.quiet_night_ahead(r.id, today=local.date(), db_path=db_path)
             if not out.get("available"):
                 continue
+            import morning_brief, notify
+            # Push only: only the people whose phone can take it, checked
+            # before the week is claimed — a week "sent" to nobody's phone
+            # was spent and recorded as shown (re-audit C2).
+            audience = deliverable_audience(r.id, {u["id"] for u in morning_brief.recipients(r.id, db_path)},
+                                            db_path)
+            if not audience:
+                continue
             # Claimed on the ISO WEEK, not the date — once a week at most.
             if not ops.claim_period(f"demand_opportunity:{r.id}", week):
-                continue
-            import morning_brief, notify
-            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
-            if not audience:
                 continue
             if not notify.briefing_allowed(r.id, "demand_opportunity", db_path):
                 continue
@@ -1366,20 +1388,20 @@ def run_demand_opportunity(db_path=DB_PATH):
             rec = {"key": f"quiet_night:{out.get('date') or out['weekday']}", "module": "marketing",
                    "title": f"{out['weekday']} is usually your quietest night",
                    "model_written": bool(drafted)}
+            # The heads-up is shown on the push and nowhere else, and nothing
+            # answers it there — so it is not presented (rec_delivery.
+            # NOT_PRESENTED_PREFIXES, re-audit C8) and says so. The hook
+            # presents it on delivery should a client ever answer it.
+            import rec_delivery
+            ans = rec_delivery.answerable(rec["key"])
             push.fire_push(
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
                 data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted,
-                      "alert_id": alert_id, "rec_key": rec["key"], "surface": "alert_push",
-                      # Approving the drafted fill in Marketing is the
-                      # answer the app can offer beside Not for us.
-                      "answerable": True},
-                db_path=db_path, user_ids=audience)
-            try:
-                import rec_ledger
-                rec_ledger.present_many(r.id, [rec], "alert_push", db_path=db_path)
-            except Exception as le:
-                ops.capture(le, job="demand_opportunity_rec", context=f"restaurant_id={r.id}")
+                      "alert_id": alert_id, "surface": "alert_push", "answerable": ans,
+                      **({"rec_key": rec["key"]} if ans else {})},
+                db_path=db_path, user_ids=audience,
+                on_delivered=rec_delivery.when_pushed(r.id, "alert_push", [rec], db_path=db_path))
             sent += 1
         except Exception as e:
             ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")

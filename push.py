@@ -777,10 +777,37 @@ def _push_executor():
     return _executor
 
 
-def _run_delivery(token_row, alert_type, title, body, data, db_path):
+class OnDelivered:
+    """A caller's "it was delivered" hook, run at most once per push however
+    many of the recipient's devices Apple accepts it on. A recommendation a
+    push carries is shown when the notification reaches a phone — not when
+    it is queued: a push nobody's device took (no device, a dead token, APNs
+    down) showed nobody anything, and was recorded as shown all the same
+    (re-audit C2/C4). Thread-safe; a hook that raises is logged and dropped,
+    never retried."""
+
+    def __init__(self, fn):
+        self._fn = fn
+        self._lock = threading.Lock()
+        self.fired = False
+
+    def __call__(self):
+        with self._lock:
+            if self.fired or self._fn is None:
+                return
+            self.fired = True
+        try:
+            self._fn()
+        except Exception as e:
+            print(f"[push] delivered hook failed: {e}")
+
+
+def _run_delivery(token_row, alert_type, title, body, data, db_path, on_delivered=None):
     global _queued
     try:
-        _deliver(token_row, alert_type, title, body, data, db_path)
+        res = _deliver(token_row, alert_type, title, body, data, db_path)
+        if on_delivered is not None and (res or {}).get("ok"):
+            on_delivered()
     finally:
         with _executor_lock:
             waiting = _overflow_queue()
@@ -854,7 +881,8 @@ def _record_dropped(token_rows, alert_type, db_path=DB_PATH):
         print(f"[push] could not record dropped pushes ({alert_type}): {e}")
 
 
-def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None):
+def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None,
+              on_delivered=None):
     """Fire push to every device registered for this restaurant, on a bounded
     background pool — never blocks the caller. Mirrors webhooks.fire_webhook()'s
     fire-and-forget shape.
@@ -862,8 +890,18 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     `user_ids` narrows delivery to those logins' devices. Every device at a
     restaurant includes managers' and teammates' phones, so anything carrying
     owner-only content (the morning brief's prime cost and loss signals) must
-    pass it — None keeps the everyone-at-the-restaurant behaviour."""
+    pass it — None keeps the everyone-at-the-restaurant behaviour.
+
+    `on_delivered` (a no-argument callable) runs once, on the push pool,
+    after the first device APNs accepted this push on — where a caller
+    records what the notification showed (rec_delivery). It never runs for a
+    push no device took.
+
+    Returns how many devices it was queued for (0: nobody could receive
+    it)."""
     global _queued
+    hook = OnDelivered(on_delivered) if on_delivered is not None else None
+    queued = 0
     # Every payload names the location it is about and the module it opens.
     # A group owner's phone registered at location B receives location A's
     # alerts (get_device_tokens), and with no restaurant_id a tap opened A's
@@ -883,7 +921,8 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                     waiting = _overflow_queue()
                     if len(waiting) < _MAX_PUSH_OVERFLOW:
                         # The pool is busy: wait for a slot rather than drop.
-                        waiting.append((token_row, alert_type, title, body, data, db_path))
+                        waiting.append((token_row, alert_type, title, body, data, db_path, hook))
+                        queued += 1
                         continue
                     full_at = _queued + len(waiting)
                     dropped = tokens[i:]
@@ -901,9 +940,11 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                     pass
                 break
             _push_executor().submit(
-                _run_delivery, token_row, alert_type, title, body, data, db_path
+                _run_delivery, token_row, alert_type, title, body, data, db_path, hook
             )
+            queued += 1
         if dropped:
             _record_dropped(dropped, alert_type, db_path)
     except Exception as e:
         print(f"[push] fire_push error ({alert_type}, rid={restaurant_id}): {e}")
+    return queued

@@ -2382,7 +2382,10 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         except Exception as _wx:
             what_if = {"ran": False, "reason": f"comparison unavailable: {_wx}"}
     # Recommendation kinds this owner has been shown many times and never
-    # once acted on stop being shown; every kind shown is recorded.
+    # once acted on stop being shown. Nothing is RECORDED here: this runs
+    # wherever a schedule is scored — the nightly auto-draft with nobody
+    # looking, a rescore, a build — and a build is not a showing (re-audit
+    # C1). present_quality records what a response actually served.
     try:
         import schedule_intel as _si
         import rec_ledger as _rl
@@ -2403,18 +2406,72 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
             kept.append(rec)
             # The kind travels with the text, so web and iOS never classify
             # a sentence themselves (their copies of the prefix list drifted).
-            items.append({"text": rec, "kind": kind, "key": key})
-            _si.record_recommendation(restaurant_id, kind, rec[:200], "shown")
-        quality["recommendations"] = kept
-        quality["recommendation_items"] = items
-        if items:
-            _rl.present_many(restaurant_id, [{"key": it["key"], "module": "schedule", "title": it["text"][:200],
-                                              "kind": "schedule_" + it["kind"]} for it in items], "schedule_review")
+            items.append({"text": rec, "kind": kind, "key": key, "rec_key": key})
+        # Both clients show at most SHOWN_RECOMMENDATIONS (the web panel's
+        # loop, iOS's block); the list is cut here so what is served is what
+        # is shown, on every client.
+        quality["recommendations"] = kept[:SHOWN_RECOMMENDATIONS]
+        quality["recommendation_items"] = items[:SHOWN_RECOMMENDATIONS]
         if hidden:
             quality["suppressed_recommendation_kinds"] = sorted(hidden)
     except Exception as _rx:
         print(f"[schedule] recommendation filter failed: {_rx}")
     return quality, what_if
+
+
+def mark_next_week_built(restaurant_id, history_id) -> int:
+    """"Next week's schedule isn't built" (schedule:next-week — the brief's
+    line and the queue's item) is discharged by building it: a whole week
+    generated is that recommendation implemented (re-audit C7). Only an
+    episode someone was shown is recorded (rec_ledger.implemented), once
+    per generation. Never raises."""
+    try:
+        import rec_ledger
+        return rec_ledger.implemented(restaurant_id, "schedule:next-week", "schedule_review",
+                                      source_ref=f"generated:{history_id}", meta={"module": "labor"})
+    except Exception as e:
+        print(f"[schedule] next-week not marked implemented: {e}")
+        return 0
+
+
+# The most Shift Quality recommendations a client shows for one week.
+SHOWN_RECOMMENDATIONS = 5
+
+
+def present_quality(restaurant_id, quality, user_id=None):
+    """The quality verdict's recommendations, recorded as shown on
+    "schedule_review" by the response that SERVES them to a person — the
+    generation's status poll, a rescore, apply-fixes, the optimizer, a
+    stored week reopened (re-audit C1) — once a day per recommendation.
+    Also schedule_intel's own "shown" (what decides which kinds go quiet),
+    which was counted by the nightly auto-draft nobody read. Each item gains
+    `rec_key`, `answerable` and `answered`. Mutates and returns `quality`;
+    never raises."""
+    if not isinstance(quality, dict):
+        return quality
+    items = [it for it in (quality.get("recommendation_items") or []) if isinstance(it, dict) and it.get("key")]
+    if not items:
+        return quality
+    try:
+        import rec_delivery
+        import schedule_intel as _si
+        ids = rec_delivery.present_now(
+            restaurant_id, "schedule_review",
+            [{"key": it["key"], "module": "schedule", "title": str(it.get("text") or "")[:200],
+              "kind": "schedule_" + str(it.get("kind") or "other"), "position": i} for i, it in enumerate(items)],
+            user_id=user_id)
+        for it in items:
+            it["rec_key"] = it["key"]
+            it["answered"] = bool(it["key"] in ids and ids[it["key"]] is None)
+            it["answerable"] = rec_delivery.answerable(it["key"]) and not it["answered"]
+            try:
+                _si.record_recommendation(restaurant_id, it.get("kind") or "other",
+                                          str(it.get("text") or "")[:200], "shown")
+            except Exception as e:
+                print(f"[schedule] showing not counted for {it.get('kind')}: {e}")
+    except Exception as e:
+        print(f"[schedule] quality recommendations not presented rid={restaurant_id}: {e}")
+    return quality
 
 
 def _sched_notes_with_findings(restaurant_id, sched_notes):
@@ -3242,6 +3299,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _annotate_history(_history_id, restaurant_id, review=result.get("review"),
                               seconds=result.get("generation_seconds"),
                               weather=result.get("weather_forecast"))
+            # A whole week built discharges "next week's schedule isn't
+            # built"; a partial redo of a few days does not.
+            if _history_id and not _pinned:
+                mark_next_week_built(restaurant_id, _history_id)
             # #50: this week's experiment arm, with the draft's score (internal only).
             try:
                 import schedule_experiments as _sx_rec

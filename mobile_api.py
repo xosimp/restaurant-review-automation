@@ -884,13 +884,14 @@ def _setup_checklist(restaurant, rstats, labor, active_keys):
     return [] if all(st["done"] for st in steps) else steps
 
 
-def _do_mobile_home(current_user):
+def _home_module_tiles(rid, restaurant):
+    """The Modules grid: one tile per module this restaurant has, with its
+    headline figure and pulse. Reads only — no Home brief is built and
+    nothing is presented (re-audit C5: the phone's Modules tab fetched the
+    whole of /mobile/api/home for this list, and every open recorded Home's
+    cards as shown on a screen that renders none of them). Returns the
+    tiles and the reads _do_mobile_home reuses."""
     from models import get_review_stats, get_active_modules
-    rid = current_user["restaurant_id"]
-    restaurant = get_restaurant(rid)
-    if not restaurant:
-        return {"ok": False, "error": "Restaurant not found"}, 404
-
     active_modules = get_active_modules(restaurant)
     active_keys = {m["key"] for m in active_modules}
 
@@ -959,6 +960,29 @@ def _do_mobile_home(current_user):
 
         modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi,
                             "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=inv_live)})
+    return {"modules": modules_out, "active_keys": active_keys, "rstats": rstats, "labor": labor,
+            "inv": inv, "inv_live": inv_live}
+
+
+@mobile_bp.route("/home/modules")
+@mobile_login_required
+def mobile_home_modules(current_user):
+    """K5: the Modules grid on its own — {ok, modules}, the same tiles
+    /mobile/api/home carries. Builds no Home brief and records nothing."""
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    return jsonify(ok=True, modules=_home_module_tiles(current_user["restaurant_id"], restaurant)["modules"]), 200
+
+
+def _do_mobile_home(current_user):
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    _tiles = _home_module_tiles(rid, restaurant)
+    modules_out, active_keys = _tiles["modules"], _tiles["active_keys"]
+    rstats, labor, inv, inv_live = _tiles["rstats"], _tiles["labor"], _tiles["inv"], _tiles["inv_live"]
 
     # "Needs attention" — same three checks and thresholds as the web Home
     # tab's card list (templates/dashboard.html, id="home-attention-list").
@@ -2598,6 +2622,10 @@ def _insight_json(insight_text, rec_items=None):
     }
 
 
+# The Labor read's cache key, shared with the web route (client_api.labor_insight_api).
+LABOR_INSIGHT_CACHE = "labor-insight:"
+
+
 @mobile_bp.route("/labor/insight")
 @mobile_login_required
 def mobile_labor_insight(current_user):
@@ -2611,7 +2639,13 @@ def mobile_labor_insight(current_user):
     # The read's lines are keyed and presented like Food's (#25):
     # insight_rec_keys runs beside insight_recommendations, an answered line
     # is left out, and rec_items carries the contract fields.
-    cached = _capi._cache_get("mobile-labor-insight:" + str(rid))
+    #
+    # ONE cache with the web route ("labor-insight:"): each twin kept its
+    # own, so the phone and the web each generated a read, keyed its lines
+    # by their words, and every load on the other device superseded the
+    # first read's episodes — the owner's open recommendations flip-flopped
+    # between two sets of words (re-audit C6).
+    cached = _capi._cache_get(LABOR_INSIGHT_CACHE + str(rid))
     if cached:
         _recs = _capi.labor_insight_items(rid, cached, user_id=uid)
         return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, user_id=uid),
@@ -2625,7 +2659,7 @@ def mobile_labor_insight(current_user):
         from labor import labor_note
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=staff_notes if staff_notes else None)
-        _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
+        _capi._cache_set(LABOR_INSIGHT_CACHE + str(rid), insight)
         _recs = _capi.labor_insight_items(rid, insight, user_id=uid)
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
                        rec_items=_recs, **_insight_json(insight, _recs))
@@ -2741,6 +2775,10 @@ def mobile_schedule_history_detail(history_id, current_user):
             continue
         preview_rows.append({_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))})
 
+    # A stored week reopened puts its verdict back on screen (web reload,
+    # iOS Labor): its recommendations are shown by this response.
+    from schedule_engine import present_quality
+    present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"))
     return jsonify(ok=True, **detail, preview_rows=preview_rows)
 
 
@@ -2903,7 +2941,16 @@ def _guest_textable_count(restaurant_id):
         return 0
 
 
-def _do_mobile_marketing(restaurant_id):
+def _phone_calendar(restaurant_id, ideas, user_id=None):
+    """The calendar as the phone gets it: every idea keyed and marked, and
+    only the day the phone opens on presented — it shows one day's card at a
+    time (MarketingView focusCard). Each other day is presented when the
+    phone turns to it (/marketing/calendar/seen)."""
+    return _capi.present_calendar_ideas(restaurant_id, ideas, user_id,
+                                        shown={_capi.focused_calendar_index(restaurant_id, ideas)})
+
+
+def _do_mobile_marketing(restaurant_id, user_id=None):
     # Cached read only. This used to call get_content_calendar_ideas()
     # unconditionally, so every open of the Marketing tab fired a Sonnet
     # generation, blocked the tab on it, and produced a different "this week"
@@ -2913,8 +2960,9 @@ def _do_mobile_marketing(restaurant_id):
     return {
         "ok": True,
         "stats": stats,
-        "calendar": _capi.present_calendar_ideas(restaurant_id,
-                                                 _annotate_written(restaurant_id, get_cached_calendar(restaurant_id) or [])),
+        "calendar": _phone_calendar(restaurant_id,
+                                    _annotate_written(restaurant_id, get_cached_calendar(restaurant_id) or []),
+                                    user_id),
         "guest_textable": _guest_textable_count(restaurant_id),
         # Served rather than hardcoded in the app, which had drifted to five
         # types with different labels and no descriptions.
@@ -2926,8 +2974,32 @@ def _do_mobile_marketing(restaurant_id):
 @mobile_bp.route("/marketing")
 @mobile_login_required
 def mobile_marketing(current_user):
-    payload, status = _do_mobile_marketing(current_user["restaurant_id"])
+    payload, status = _do_mobile_marketing(current_user["restaurant_id"], current_user.get("id"))
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/marketing/calendar/seen", methods=["POST"])
+@mobile_login_required
+def mobile_calendar_idea_seen(current_user):
+    """The phone turned to another day of the week rail: that day's idea is
+    on screen now, so it is presented (on "marketing", once a day). Only an
+    open idea of this restaurant's own cached week — a key it never served
+    is refused, so the route cannot mint a showing. {rec_key} ->
+    {ok, rec_key, answered, answerable}."""
+    from marketing import get_cached_calendar
+    rid = current_user["restaurant_id"]
+    key = str((request.get_json(silent=True) or {}).get("rec_key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Which idea?"), 400
+    ideas = _annotate_written(rid, get_cached_calendar(rid) or [])
+    from marketing import calendar_idea_key
+    idx = next((n for n, i in enumerate(ideas)
+                if isinstance(i, dict) and calendar_idea_key(i.get("angle") or i.get("topic") or "") == key), None)
+    if idx is None:
+        return jsonify(ok=False, error="That idea isn't in this week's calendar."), 404
+    idea = _capi.present_calendar_ideas(rid, ideas, current_user.get("id"), shown={idx})[idx]
+    return jsonify(ok=True, rec_key=key, answered=bool(idea.get("answered")),
+                   answerable=bool(idea.get("answerable"))), 200
 
 
 @mobile_bp.route("/marketing/calendar", methods=["POST"])
@@ -2947,7 +3019,7 @@ def mobile_generate_calendar(current_user):
     # impatient taps locked the button for five minutes having generated once.
     just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
     if just_made:
-        return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+        return jsonify(ok=True, calendar=_phone_calendar(
             rid, _annotate_written(rid, just_made), current_user.get("id"))), 200
 
     if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
@@ -2962,11 +3034,11 @@ def mobile_generate_calendar(current_user):
         # back an error and an empty screen.
         existing = get_cached_calendar(rid)
         if existing:
-            return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+            return jsonify(ok=True, calendar=_phone_calendar(
                 rid, _annotate_written(rid, existing), current_user.get("id")), stale=True), 200
         return jsonify(ok=False,
                        error="Couldn't build a calendar right now — try again in a moment."), 200
-    return jsonify(ok=True, calendar=_capi.present_calendar_ideas(
+    return jsonify(ok=True, calendar=_phone_calendar(
         rid, _annotate_written(rid, ideas), current_user.get("id"))), 200
 
 
@@ -3502,7 +3574,8 @@ def mobile_marketing_preview(current_user):
 @mobile_login_required
 def mobile_marketing_insight(current_user):
     payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
-    _items = payload.pop("rec_items", None)
+    # rec_items stays in the payload (the contract fields, as on Labor's).
+    _items = payload.get("rec_items")
     extra = _insight_json(payload.get("insight", ""), _items) if payload.get("insight") and status == 200 else {}
     # ok tracks the status: a paused or failed brief is not a successful one.
     return jsonify(ok=(status == 200), **payload, **extra), status
@@ -6256,6 +6329,10 @@ def mobile_score_schedule(current_user):
                     _resp_changed = changed
             except Exception as _nx:
                 print(f"[schedule] re-notify failed: {_nx}")
+        # The rescored verdict is on the manager's screen: its
+        # recommendations are shown now (re-audit C1).
+        from schedule_engine import present_quality
+        present_quality(rid, quality, user_id=current_user.get("id"))
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,
@@ -6665,7 +6742,10 @@ def mobile_ask_opening(current_user):
         except Exception:
             pass
     try:
-        payload, status = home_brief.build_home_brief(current_user)
+        # Ask's opening is not Home: it renders a few attention titles and
+        # none of Home's cards, so Home is built here without recording
+        # anything as shown (present=False, re-audit C5 / K5).
+        payload, status = home_brief.build_home_brief(current_user, present=False)
         if status != 200:
             return jsonify(ok=True, briefing=[], suggestions=_FALLBACK_ASK_SUGGESTIONS,
                            headline=None), 200

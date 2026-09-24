@@ -198,7 +198,8 @@ def lines(review):
                 "no_clear_change": "in line with"}.get(m["verdict"], "against")
         money = ""
         if m.get("monthly_dollars"):
-            money = f", worth about ${abs(m['monthly_dollars']):,.0f}/month"
+            from weekly_review import money_word
+            money = f", {money_word(m)} ${abs(m['monthly_dollars']):,.0f}/month"
         out.append(f"{base}, {word} {review['compared_with']}'s "
                    f"{_fmt(m['previous'], m['unit'])}{money}{yoy_clause(m)}.")
     if review.get("prime_cost") and review["prime_cost"].get("pct") is not None:

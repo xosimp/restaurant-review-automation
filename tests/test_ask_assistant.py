@@ -76,7 +76,7 @@ def _opening(client, db_path, rid, payload, brief_lines=None):
     m.home_brief = None  # the route imports it itself; make sure that import is the patched one
     del m.home_brief
     orig = home_brief.build_home_brief
-    home_brief.build_home_brief = lambda user: (payload, 200)
+    home_brief.build_home_brief = lambda user, **k: (payload, 200)
     try:
         return client.get("/mobile/api/ask-cavnar/opening", headers=headers).get_json()
     finally:
