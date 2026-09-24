@@ -2686,6 +2686,7 @@ def _dsr_settings_payload(r):
             "fiscal_year_start": getattr(r, "fiscal_year_start", None) or None,
             "fiscal_period_scheme": getattr(r, "fiscal_period_scheme", None) or "4x13",
             "dsr_enabled": bool(getattr(r, "dsr_enabled", 1)),
+            "dsr_notify": bool(getattr(r, "dsr_notify", 0)),
             "dsr_deadline_hour": 4 if hour is None else int(hour),
             "calendar_label": fiscal.label(r, closeout.business_date_for(r))}
 
@@ -2715,8 +2716,8 @@ _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 def _do_dsr_settings_set(u):
     """Any of fiscal_week_start_dow (0=Mon … 6=Sun, or null), fiscal_year_start
     (YYYY-MM-DD, or "" to clear), fiscal_period_scheme ("4x13" | "445"),
-    dsr_enabled, dsr_deadline_hour (0–11, local). The four columns are
-    already in update_restaurant's whitelist."""
+    dsr_enabled, dsr_notify (email + push the finished report), dsr_deadline_hour
+    (0–11, local). Every column is in update_restaurant's whitelist."""
     from dsr import fiscal
     from models import get_restaurant, update_restaurant
     refused = _dsr_owner_only(u)
@@ -2751,6 +2752,8 @@ def _do_dsr_settings_set(u):
         fields["fiscal_period_scheme"] = body["fiscal_period_scheme"]
     if "dsr_enabled" in body:
         fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
+    if "dsr_notify" in body:
+        fields["dsr_notify"] = 1 if body.get("dsr_notify") else 0
     if "dsr_deadline_hour" in body:
         try:
             h = int(body.get("dsr_deadline_hour"))

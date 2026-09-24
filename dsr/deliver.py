@@ -444,6 +444,10 @@ def on_terminal(restaurant, report_id, now_utc=None, db_path=None):
         return dict(out, reason="not a deliverable version")
     if not _allowed():
         return dict(out, reason="not the production scheduler host")
+    if not getattr(restaurant, "dsr_notify", 0):
+        # Off until the owner turns it on (Account → Daily report): the
+        # report still builds and shows in the app, nobody is emailed.
+        return dict(out, reason="delivery is off for this restaurant")
     from dsr.pipeline import local_time
     day = report["business_date"]
     if (local_time(restaurant, now_utc).date() - date.fromisoformat(day)).days > MAX_NIGHT_AGE_DAYS:
@@ -595,7 +599,8 @@ def replaces_closing_summary(restaurant):
     the DSR is on and a POS is connected — exactly the restaurants the DSR
     sweep runs for (dsr.pipeline.run_sweep). Every other restaurant keeps
     the closing summary. Fails toward keeping it."""
-    if not getattr(restaurant, "dsr_enabled", 1):
+    if not getattr(restaurant, "dsr_enabled", 1) or not getattr(restaurant, "dsr_notify", 0):
+        # With delivery off nothing announces the night, so the old push stays.
         return False
     try:
         import pos

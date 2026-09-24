@@ -472,6 +472,7 @@ class Restaurant:
     fiscal_period_scheme: Optional[str] = None    # "4x13" | "445"
     dsr_enabled: int                 = 1
     dsr_deadline_hour: int           = 4          # local hour a still-incomplete night goes out provisional
+    dsr_notify: int                  = 0          # email + push the finished report; off until the owner turns it on
     alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
     push_sound: int                  = 1     # 0 = silent pushes
     auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
@@ -974,6 +975,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "fiscal_period_scheme", "TEXT"),
         ("restaurants", "dsr_enabled", "INTEGER DEFAULT 1"),
         ("restaurants", "dsr_deadline_hour", "INTEGER DEFAULT 4"),
+        ("restaurants", "dsr_notify", "INTEGER DEFAULT 0"),
         # The close-out's DSR fields (closeout.DSR_FIELDS): what the closer
         # knows that no system records. All optional, all the manager's own
         # words; `influence` is Erik's "Influence/Result" column.
@@ -2830,7 +2832,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
-        "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","dsr_enabled","dsr_deadline_hour",
+        "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","dsr_enabled","dsr_deadline_hour","dsr_notify",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
@@ -3187,6 +3189,7 @@ def _restaurant_from_row(row) -> Restaurant:
         fiscal_period_scheme=row["fiscal_period_scheme"] if "fiscal_period_scheme" in row.keys() else None,
         dsr_enabled=row["dsr_enabled"] if "dsr_enabled" in row.keys() and row["dsr_enabled"] is not None else 1,
         dsr_deadline_hour=row["dsr_deadline_hour"] if "dsr_deadline_hour" in row.keys() and row["dsr_deadline_hour"] is not None else 4,
+        dsr_notify=row["dsr_notify"] if "dsr_notify" in row.keys() and row["dsr_notify"] is not None else 0,
         alert_extra_emails=row["alert_extra_emails"] if "alert_extra_emails" in row.keys() else None,
         push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
         auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,

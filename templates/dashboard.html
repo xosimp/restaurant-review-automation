@@ -7581,6 +7581,8 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-rows">
           <div class="ac-row"><div class="l"><b>Build the daily report every night</b><span>After close, from the POS. Owner logins get the owner report; manager logins get the manager report.</span></div>
             <div class="c"><label class="ac-switch"><input type="checkbox" id="as-dsr-enabled" onchange="saveDsrSetting('dsr_enabled')" aria-label="Build the daily report every night"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          <div class="ac-row"><div class="l"><b>Email and push it when it's ready</b><span>Off until you turn it on. The report still builds every night and is always in the app.</span></div>
+            <div class="c"><label class="ac-switch"><input type="checkbox" id="as-dsr-notify" onchange="saveDsrSetting('dsr_notify')" aria-label="Email and push the daily report"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           <div class="ac-row"><div class="l"><b>If data is still missing, send it anyway at</b><span>Marked provisional, then updated on its own when the rest lands.</span></div>
             <div class="c"><select class="ac-select" id="as-dsr-deadline" onchange="saveDsrSetting('dsr_deadline_hour')" aria-label="Provisional deadline"></select></div></div>
           <div class="ac-row"><div class="l"><b>Your week starts on</b><span>The weekly grid runs from this day through the six after it.</span></div>
@@ -15457,6 +15459,7 @@ function loadDsrSettings() {
     if (card) card.hidden = false;
     var s = d.settings || {};
     document.getElementById('as-dsr-enabled').checked = !!s.dsr_enabled;
+    document.getElementById('as-dsr-notify').checked = !!s.dsr_notify;
     var sel = document.getElementById('as-dsr-deadline'), h = '';
     for (var i = 1; i <= 10; i++) {
       h += '<option value="' + i + '"' + (s.dsr_deadline_hour === i ? ' selected' : '') + '>' + (i < 12 ? i + ' am' : '12 pm') + '</option>';
@@ -15502,6 +15505,7 @@ function _dsrRenderCats(d) {
 function saveDsrSetting(field) {
   var v;
   if (field === 'dsr_enabled') v = document.getElementById('as-dsr-enabled').checked;
+  else if (field === 'dsr_notify') v = document.getElementById('as-dsr-notify').checked;
   else if (field === 'dsr_deadline_hour') v = parseInt(document.getElementById('as-dsr-deadline').value, 10);
   else if (field === 'fiscal_week_start_dow') v = parseInt(document.getElementById('as-dsr-dow').value, 10);
   else if (field === 'fiscal_year_start') v = document.getElementById('as-dsr-year').value || '';

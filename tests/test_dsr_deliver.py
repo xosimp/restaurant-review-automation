@@ -83,6 +83,9 @@ def sent(monkeypatch):
 def _restaurant(db, **fields):
     rid = create_restaurant(Restaurant(name="Simple EJ's", owner_email="erik@example.com",
                                        timezone="America/Chicago"), db_path=db)
+    # Delivery is off by default; these restaurants have it on unless a test
+    # says otherwise (test_delivery_is_off_until_the_owner_turns_it_on).
+    fields = dict({"dsr_notify": 1}, **fields)
     update_restaurant(rid, {"open_times_json": json.dumps({d: "11:00am" for d in DAYS}),
                             "close_times_json": json.dumps({d: "11:00pm" for d in DAYS}), **fields}, db_path=db)
     return get_restaurant(rid, db_path=db)
@@ -543,6 +546,23 @@ def test_the_dsr_replaces_the_closing_summary_only_where_it_runs(db, monkeypatch
     assert deliver.replaces_closing_summary(on) is True
     assert deliver.replaces_closing_summary(off) is False
     assert deliver.replaces_closing_summary(no_pos) is False
+    # With delivery off nothing announces the night, so the old push stays.
+    assert deliver.replaces_closing_summary(_restaurant(db, dsr_notify=0)) is False
+
+
+def test_delivery_is_off_until_the_owner_turns_it_on(db, monkeypatch):
+    assert Restaurant(name="x", owner_email="x@x.com").dsr_notify == 0
+    rid = create_restaurant(Restaurant(name="New Co", owner_email="n@x.com"), db_path=db)
+    assert get_restaurant(rid, db_path=db).dsr_notify == 0
+    update_restaurant(rid, {"dsr_notify": 1}, db_path=db)
+    assert get_restaurant(rid, db_path=db).dsr_notify == 1       # the whitelist lets it through
+    r = _restaurant(db, dsr_notify=0)
+    monkeypatch.setattr(deliver, "_allowed", lambda: True)
+    rep = store.create_report(r.id, "2026-09-22", trigger="sweep", db_path=db)
+    store.set_stage(rep["id"], "collecting", db_path=db)
+    store.set_stage(rep["id"], "final", db_path=db)
+    out = deliver.on_terminal(r, rep["id"], now_utc=datetime(2026, 9, 23, 4, 30), db_path=db)
+    assert out["reason"] == "delivery is off for this restaurant" and out["email"] == out["push"] == 0
 
 
 def test_run_closing_summary_stays_quiet_for_a_dsr_restaurant(db, monkeypatch):
