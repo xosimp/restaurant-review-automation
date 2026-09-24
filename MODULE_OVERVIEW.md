@@ -151,6 +151,8 @@ Two halves:
 
 **Prompt caching**: `system` is a list of blocks — static rules with a `cache_control` breakpoint, then the live snapshot. ~9,700 tokens cached per turn. Never interpolate per-restaurant data into the static block.
 
+**The nightly DSR** (`dsr/memory.py`): Ask's snapshot carries last night's report (headline figures by fact key, what was missing, the narrative's lead and actions) and four viewer-aware read tools — `read_dsr`, `find_days` (SQL over `dsr_metrics`), `read_week`, `read_period`. Every read goes through `dsr.access` for the asker (`viewer_restaurant` stamps `_ask_dsr_user`), so a manager never reads the budget, prime cost, comps/voids or food cost here either; `find_days` refuses those metrics outright, and the context cache key carries the DSR view.
+
 **Don't touch casually**: the module-gating in `tool_specs()`, and the read/write split — a tool that reaches an outside effect (email, public post, scheduled deletion) must be `write`, never `read`/`action`. `auto_approve` and `data_retention` are write tools for exactly this reason. And never call `client_api._do_ai_visibility` from the context path: on a cache miss it fires live Perplexity queries.
 
 ---
@@ -180,7 +182,7 @@ Two halves:
 - **Loss**: `loss_detection.py` — comps/voids/refunds from POSes that report them (RPOWER); a spike needs 2× baseline AND $75 AND 4 events; approver concentration attributes to the APPROVING manager. Worded "worth reviewing", never an accusation, and **owner-only** everywhere (routes, digest, brief — never a manager).
 - **Issues**: `issues.py` — an issue texts a consented alert contact a tokenised link (one link per person, hash-only storage); GET on the link has no side effect (link previews), the assignee taps "I'm on it" / "Mark resolved"; unacknowledged issues escalate once; quiet hours hold the text. Bad reviews open issues automatically only where the owner routed a manager.
 - **Invoices**: see `PROMPT_LIBRARY.md` — the model transcribes, Python proposes, the owner confirms.
-- **Morning brief**: deterministic lines, pushed (or emailed) at the restaurant's own hour, never after 2pm local; every line carries an Ask prompt.
+- **Morning brief**: deterministic lines, pushed (or emailed) at the restaurant's own hour, never after 2pm local; every line carries an Ask prompt. Its "yesterday" line reads last night's finished DSR when there is one (`dsr.memory.last_night`: the report's net, its own forecast comparison, labor % where the viewer may read labor, "Provisional" when it was) and falls back to the Labor module's daily history otherwise — the brief never recomputes what the report states.
 - **Pre-shift**: `preshift.py` for the staff portal — relative volume, complaint watch, running-low items, holiday, weather. No money, no individuals.
 
 **Permissions**: `/food-cost/*` paths inherit Food Cost gating (a manager never sees invoice prices or margins); goals/outcomes on food-cost metrics are filtered the same way; loss signals, issue routing and the morning brief are principal-only (`TEAM_INVITE` holders).
