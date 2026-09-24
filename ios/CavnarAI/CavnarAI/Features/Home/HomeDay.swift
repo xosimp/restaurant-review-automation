@@ -37,7 +37,8 @@ struct HomeDayCard: View {
                                     // Track (the brief names no metric).
                                     if let key = line.answerKey {
                                         RecAnswerRow(key: key, surface: "home", module: line.answerModule,
-                                                     answers: [.completed, .notForUs])
+                                                     answers: [.completed, .notForUs],
+                                                     alsoKeys: line.recKeys ?? [])
                                     }
                                 }
                                 Spacer(minLength: 0)
@@ -127,12 +128,15 @@ final class HomeDayViewModel {
         /// replies, which nothing can answer). Both optional: an older
         /// server sends neither, and the line reads as before.
         let recKey: String?
+        /// Every key the line stands for (running low: one per named item).
+        let recKeys: [String]?
         let answerable: Bool?
         var id: String { (key ?? "") + text }
 
         enum CodingKeys: String, CodingKey {
             case key, text, tone, ask, answerable
             case recKey = "rec_key"
+            case recKeys = "rec_keys"
         }
 
         init(from decoder: Decoder) throws {
@@ -142,6 +146,7 @@ final class HomeDayViewModel {
             tone = try? c.decodeIfPresent(String.self, forKey: .tone)
             ask = try? c.decodeIfPresent(String.self, forKey: .ask)
             recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+            recKeys = try? c.decodeIfPresent([String].self, forKey: .recKeys)
             answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
         }
 
@@ -219,7 +224,7 @@ final class HomeDayViewModel {
     func load() async {
         isLoading = true
         defer { isLoading = false }
-        async let b: BriefResponse? = try? client.send("/mobile/api/morning-brief", hapticOnError: false)
+        async let b: BriefResponse? = try? client.send("/mobile/api/morning-brief", query: ["view": "home"], hapticOnError: false)
         async let i: IssuesResponse? = try? client.send("/mobile/api/issues", query: ["status": "unresolved"], hapticOnError: false)
         let (brief, iss) = await (b, i)
         // The focus and money lines have their own cards on Home; an

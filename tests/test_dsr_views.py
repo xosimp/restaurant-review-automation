@@ -435,3 +435,16 @@ def test_the_owner_changes_the_calendar(client, db, monkeypatch):
     _as(monkeypatch, r.id, "manager")
     assert client.post("/api/dsr/settings", json={"dsr_enabled": True}).status_code == 403
     assert get_restaurant(r.id, db_path=db).dsr_enabled == 0
+
+
+def test_the_workbook_says_when_gross_covers_fewer_nights_or_mixes_bases():
+    grid = {"label": "Week", "start": "2026-09-16", "end": "2026-09-22", "categories": [], "days": [],
+            "totals": {"days_measured": 7, "gross_days": 6, "gross_mixed": True}}
+    cells, _s, _z = _cells(xlsx.week_workbook(grid, "Simple EJ's"))
+    notes = [v for v, _st in cells.values() if isinstance(v, str)]
+    assert any("cover 6 of 7 measured nights" in n for n in notes)
+    assert any("mixes two definitions" in n for n in notes)
+    grid["totals"] = {"days_measured": 7, "gross_days": 7, "gross_mixed": False}
+    cells, _s, _z = _cells(xlsx.week_workbook(grid, "Simple EJ's"))
+    notes = [v for v, _st in cells.values() if isinstance(v, str)]
+    assert not any("measured nights" in n or "two definitions" in n for n in notes)

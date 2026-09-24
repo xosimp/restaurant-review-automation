@@ -205,6 +205,10 @@ struct RecAnswerRow: View {
     /// Told once the server has the answer — lets a caller hide the action
     /// the answer belongs to (a reprice card's Set button).
     var onAnswered: ((RecAnswer) -> Void)? = nil
+    /// The other keys one line stands for (the brief's running-low line
+    /// names several items): the same answer is recorded for each, after
+    /// the row's own key succeeds.
+    var alsoKeys: [String] = []
     var client: APIClient = .shared
 
     /// Keyed by the rec key, not just "answered": a row inside a ForEach
@@ -299,6 +303,10 @@ struct RecAnswerRow: View {
                 return
             }
             Haptic.success()
+            for other in alsoKeys where other != key && !other.isEmpty {
+                _ = try? await client.answerRecommendation(key: other, answer: answer, surface: surface,
+                                                           module: module, reasonCode: reason?.code)
+            }
             outcome = Outcome(key: key, answer: answer, message: r.message,
                               trackerLine: RecTrackerNote.extraLine(message: r.message, tracker: r.tracker,
                                                                     refused: r.trackerRefused))

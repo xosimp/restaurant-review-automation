@@ -105,7 +105,7 @@ def test_the_home_hero_shows_net_once_anything_got_worse():
 def test_answerable_brief_lines_carry_done_and_not_for_us_but_not_track():
     follow = _fn("renderFollow")
     assert "l.rec_key&&l.answerable&&typeof recControlsHtml==='function'" in follow
-    assert "recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1})" in follow
+    assert "recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1,also:l.rec_keys||[]})" in follow
     m = re.search(r"var BRIEF_MOD=\{([^}]*)\};", SRC)
     assert m and "stock:'food'" in m.group(1) and "slow_day:'marketing'" in m.group(1)
     ctrl = _fn("recControlsHtml")

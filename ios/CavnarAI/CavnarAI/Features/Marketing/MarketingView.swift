@@ -634,7 +634,18 @@ struct MarketingView: View {
         guard index != selectedDay, viewModel.calendar.indices.contains(index) else { return }
         Haptic.light()
         withAnimation(.easeInOut(duration: 0.25)) { selectedDay = index }
+        // That day's idea is on screen now: the server records it as shown
+        // (only the opening day was recorded with the calendar). Fire and
+        // forget — a failed note never blocks the rail.
+        if let key = viewModel.calendar[index].recKey, !key.isEmpty {
+            Task {
+                _ = try? await APIClient.shared.send("/mobile/api/marketing/calendar/seen", method: .post,
+                                                     body: ["rec_key": key], hapticOnError: false) as SeenReply
+            }
+        }
     }
+
+    private struct SeenReply: Decodable { let ok: Bool? }
 
     private var weekRail: some View {
         ScrollView(.horizontal) {

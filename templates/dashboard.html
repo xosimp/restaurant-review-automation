@@ -2651,7 +2651,7 @@ svg:hover .hb-xh{opacity:1}
     var got={},left=15;
     function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
-    get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
+    get('brief','/api/morning-brief?view=home');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
     get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
     get('cross','/api/cross-module');get('news','/api/good-news');get('miles','/api/milestones');
     get('loss','/api/loss-signals');get('month','/api/monthly-review');get('dsr','/api/dsr?limit=1');
@@ -3015,7 +3015,7 @@ svg:hover .hb-xh{opacity:1}
     // number to measure. The module is the line's own (the server's
     // morning_brief._LINE_MODULE), never the screen's.
     else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];
-      var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1}):'';
+      var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1,also:l.rec_keys||[]}):'';
       h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     h+='</div>';
     // Open issues live in the Needs attention card (hbAttnSetIssues); goals
@@ -3257,10 +3257,9 @@ svg:hover .hb-xh{opacity:1}
     if(!m)return;
     var q='';
     try{q=decodeURIComponent(m[1].replace(/\+/g,' '));}catch(e){q='';}
-    // The brief's links carry the recommendation's key (rec=) and where it
-    // was read (src=): the tap is an "opened" in the ledger.
-    var rk=/[?&]rec=([^&]+)/.exec(window.location.search||''),sr=/[?&]src=([^&]+)/.exec(window.location.search||'');
-    if(rk){try{hbRecEvent(decodeURIComponent(rk[1]),'opened',sr?decodeURIComponent(sr[1]):'brief_email');}catch(e){}}
+    // The link's rec=/src= open is recorded by the server when the page
+    // loads (rec_delivery.record_link_open, deduped per day); posting it here
+    // too counted a tap twice.
     if(window.history&&window.history.replaceState)window.history.replaceState({},'',window.location.pathname+window.location.hash);
     if(q)setTimeout(function(){hbAsk(q);},400);
   }
@@ -10048,7 +10047,10 @@ function recEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){re
 var REC_TRACKABLE={reviews:1,food:1,labor:1};
 function recControlsHtml(key,surface,module,opts){
   var m=module||surface;
-  var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'" ';
+  // opts.also: the other keys one line stands for (running low names
+  // several items); the same answer is recorded for each.
+  var also=(opts&&opts.also&&opts.also.length)?' data-rec-also="'+recEsc(opts.also.join('|'))+'"':'';
+  var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'"'+also+' ';
   return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
     +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
     +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
@@ -10144,6 +10146,11 @@ function recAnswer(btn,extra){
   fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
     if(!d||!d.ok){for(var j=0;j<all.length;j++)all[j].disabled=false;if(picker)picker.unlock();if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t save that','error');return;}
     if(picker)picker.close();
+    var also=(btn.getAttribute('data-rec-also')||'').split('|');
+    for(var a=0;a<also.length;a++){if(!also[a]||also[a]===key)continue;
+      var ab={key:also[a],event:ev,surface:body.surface,module:body.module};if(body.kind)ab.kind=body.kind;
+      if(body.reason_code)ab.reason_code=body.reason_code;if(body.reason)ab.reason=body.reason;
+      fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(ab)}).catch(function(){});}
     if(box){box.style.display='';box.innerHTML='<span class="rec-ans-done">'+recEsc(recAnswerSentence(ev,d))+'</span>';}
     /* The panels keep a five-minute session copy; an answered line must not
        come back from it. */
