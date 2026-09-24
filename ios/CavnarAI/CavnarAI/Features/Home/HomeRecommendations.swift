@@ -132,7 +132,11 @@ struct HomeRecommendations: View {
     /// what it rests on behind "Why?".
     static func chips(_ rec: HomeRecommendation) -> [String] {
         var out: [String] = []
-        if let d = rec.dollarsMonthly, d > 0 { out.append("$\(d.commaFormatted)/mo at stake") }
+        // The calibrated figure when the server corrected it by this
+        // restaurant's measured results (F6), with the note beside it.
+        if let d = rec.statedDollars {
+            out.append("$\(d.commaFormatted)/mo at stake" + (rec.dollarsNote.map { " (\($0))" } ?? ""))
+        }
         if let t = rec.timeframe { out.append(t) }
         if let i = rec.impact { out.append(i) }
         return out

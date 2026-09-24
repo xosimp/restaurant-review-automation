@@ -73,10 +73,18 @@ struct HomeOneThingCard: View {
                         .accessibilityElement(children: .combine)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
-                        if let dollars = ff.dollarsMonthly, dollars > 0 {
-                            (Text("$" + dollars.commaFormatted).font(.cavnarNumber(19, weight: 600))
-                                .foregroundColor(.cavnarInk)
-                             + Text("/month").font(.cavnarBody(12.5, weight: 600)).foregroundColor(.cavnarInk3))
+                        // Calibrated by this restaurant's measured results
+                        // when the server sent it (F6), and said so.
+                        if let dollars = ff.statedDollars {
+                            VStack(alignment: .leading, spacing: 2) {
+                                (Text("$" + dollars.commaFormatted).font(.cavnarNumber(19, weight: 600))
+                                    .foregroundColor(.cavnarInk)
+                                 + Text("/month").font(.cavnarBody(12.5, weight: 600)).foregroundColor(.cavnarInk3))
+                                if let note = ff.dollarsNote {
+                                    HomeMixedText.make(note, size: 12, weight: 500, color: .cavnarInk3)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                         }
                         Spacer(minLength: 0)
                         if ff.alternative != nil {

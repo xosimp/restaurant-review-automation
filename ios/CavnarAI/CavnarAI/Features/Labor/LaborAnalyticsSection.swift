@@ -60,12 +60,12 @@ struct LaborAnalyticsSection: View {
             if b.laborMonthly > 0 {
                 SavingsTile(numericValue: b.laborMonthly, format: formattedDollarsK, label: "Monthly savings", sublabel: "if schedule optimized", startFromZero: startFromZero)
             } else {
-                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs 34.5% avg", startFromZero: startFromZero)
+                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs \(b.industryPctText) avg", startFromZero: startFromZero)
             }
             if b.laborAnnual > 0 {
                 SavingsTile(numericValue: b.laborAnnual, format: formattedDollarsK, label: "Annual savings", sublabel: "extrapolated yearly", startFromZero: startFromZero)
             } else {
-                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. 34.5% industry avg/yr", startFromZero: startFromZero)
+                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. \(b.industryPctText) industry avg/yr", startFromZero: startFromZero)
             }
             if b.laborOvertime > 0 {
                 SavingsTile(numericValue: b.laborOvertime, format: formattedDollarsK, label: "Overtime premium", sublabel: "0.5× rate on hours over 40", tone: Color.cavnarRed, startFromZero: startFromZero)
@@ -159,17 +159,28 @@ struct LaborAnalyticsSection: View {
             // the restaurant's own target — "your target" and "industry
             // average" are two different lines on this same bar, and this
             // sentence is specifically about the second one.
-            let industryMid = (Self.industryLow + Self.industryHigh) / 2
+            // The server's benchmark and its source when sent (I10:
+            // thresholds.LABOR_INDUSTRY_PCT, one figure for web and iOS).
+            let industryMid = stats.savingsBreakdown.laborIndustryPct ?? (Self.industryLow + Self.industryHigh) / 2
             let diff = pct - industryMid
             let isBelow = diff <= 0
-            (Text("Your restaurant is ")
-                + Text(String(format: "%.1f%%", abs(diff))).font(.cavnarNumber(14, weight: 700))
-                + Text(isBelow ? " below" : " above")
-                + Text(" other similar restaurants in the U.S."))
-                .font(.cavnarBody(14))
-                .foregroundStyle(isBelow ? Color.cavnarGreen : Color.cavnarRed)
+            HomeMixedText.make(Self.industryLine(diff: diff, industryText: stats.savingsBreakdown.industryPctText),
+                               size: 14, color: isBelow ? .cavnarGreen : .cavnarRed, numberWeight: 700)
+                .fixedSize(horizontal: false, vertical: true)
+            if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
+                HomeMixedText.make("Benchmark: \(basis).", size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .cavnarCard()
+    }
+
+    /// "3.2 points below the 34.5% industry benchmark" — a difference of two
+    /// percentages is points, and the benchmark is a published figure, not
+    /// "other similar restaurants".
+    static func industryLine(diff: Double, industryText: String) -> String {
+        let pts = String(format: "%.1f", abs(diff))
+        return "Your labor is \(pts) point\(pts == "1.0" ? "" : "s") \(diff <= 0 ? "below" : "above") the \(industryText) industry benchmark"
     }
 
     private func benchmarkBucket(pct: Double, target: Double) -> (label: String, color: Color) {

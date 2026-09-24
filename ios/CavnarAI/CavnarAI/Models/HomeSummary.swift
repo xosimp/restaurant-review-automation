@@ -357,6 +357,11 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     /// True when the model wrote the card's words (K4) — a small
     /// "AI-written" tag.
     let modelWritten: Bool?
+    /// F6: the dollars corrected by this restaurant's measured results
+    /// (RecDollarCalibration). Absent on an older server.
+    var dollarsAdjusted: Double? = nil
+    var calibrationN: Int? = nil
+    var calibrationNote: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
@@ -365,6 +370,16 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
         case ifIgnored = "if_ignored"
         case timesHidden = "times_hidden"
         case modelWritten = "model_written"
+        case dollarsAdjusted = "dollars_adjusted"
+        case calibrationN = "calibration_n"
+        case calibrationNote = "calibration_note"
+    }
+
+    /// The at-stake figure the card states — the calibrated one when sent.
+    var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
+    /// "adjusted from 6 measured results", beside the figure, when it was.
+    var dollarsNote: String? {
+        RecDollarCalibration.note(adjusted: dollarsAdjusted, n: calibrationN, note: calibrationNote)
     }
 }
 
@@ -389,6 +404,42 @@ extension HomeRecommendation {
         action = try? c.decodeIfPresent(HomeRecAction.self, forKey: .action)
         timesHidden = try? c.decodeIfPresent(Int.self, forKey: .timesHidden)
         modelWritten = try? c.decodeIfPresent(Bool.self, forKey: .modelWritten)
+        dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
+        calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
+        calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)
+    }
+}
+
+/// The dollar calibration a recommendation may carry (F6,
+/// rec_learning.attach_dollar_calibration — Home cards, the one thing, DSR
+/// actions): `dollars_adjusted` is the figure corrected by this restaurant's
+/// measured results for the kind (null: show `dollars_monthly` as it is),
+/// `calibration_n` how many results, `calibration_note` the server's words.
+/// Pure, so the rule is pinned by tests.
+enum RecDollarCalibration {
+    /// The figure to show: the adjusted one when the server calibrated it,
+    /// else the raw one; nil when neither is above zero.
+    static func figure(raw: Double?, adjusted: Double?) -> Double? {
+        if let a = adjusted, a > 0 { return a }
+        if adjusted != nil { return nil }
+        guard let r = raw, r > 0 else { return nil }
+        return r
+    }
+
+    /// "adjusted from 6 measured results" — only when the figure WAS
+    /// adjusted; the server's note first, else built from the count.
+    static func note(adjusted: Double?, n: Int?, note: String?) -> String? {
+        guard adjusted != nil else { return nil }
+        if let t = note?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { return t }
+        guard let n, n > 0 else { return nil }
+        return "adjusted from \(n) measured result\(n == 1 ? "" : "s")"
+    }
+
+    /// "$1,240/mo · adjusted from 6 measured results", or the raw "$1,500/mo".
+    static func line(raw: Double?, adjusted: Double?, n: Int?, note: String?) -> String? {
+        guard let f = figure(raw: raw, adjusted: adjusted) else { return nil }
+        let base = "$\(f.commaFormatted)/mo"
+        return self.note(adjusted: adjusted, n: n, note: note).map { base + " \u{00B7} " + $0 } ?? base
     }
 }
 
@@ -526,11 +577,27 @@ struct HomeValueBlock: Codable, Hashable {
     let worsened: Worsened?
     let cumulative: Cumulative?
     let unpricedWins: [UnpricedWin]?
+    /// I7: what kind of figure each is — `monthly` a "monthly_rate",
+    /// `cumulative` a "measured_days_sum" — so no surface prints one under
+    /// the other's name. Absent on an older server (read as those two).
+    var scope: String? = nil
+    var cumulativeScope: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case monthly, worsened, cumulative
+        case monthly, worsened, cumulative, scope
         case netMonthly = "net_monthly"
         case unpricedWins = "unpriced_wins"
+        case cumulativeScope = "cumulative_scope"
+    }
+
+    /// The band's eyebrow for the figure's period: "PER MONTH" for a monthly
+    /// rate (and an older server), "ALL TIME" for an all-time sum — never a
+    /// monthly figure under a lifetime label or the reverse.
+    static func periodCaption(scope: String?) -> String {
+        switch scope?.lowercased() {
+        case "all_time_sum", "measured_days_sum": return "ALL TIME"
+        default: return "PER MONTH"
+        }
     }
 
     init(monthly: Double?, netMonthly: Double?, worsened: Worsened?,
@@ -550,6 +617,8 @@ struct HomeValueBlock: Codable, Hashable {
         worsened = try? c?.decodeIfPresent(Worsened.self, forKey: .worsened)
         cumulative = try? c?.decodeIfPresent(Cumulative.self, forKey: .cumulative)
         unpricedWins = try? c?.decodeIfPresent([UnpricedWin].self, forKey: .unpricedWins)
+        scope = try? c?.decodeIfPresent(String.self, forKey: .scope)
+        cumulativeScope = try? c?.decodeIfPresent(String.self, forKey: .cumulativeScope)
     }
 }
 

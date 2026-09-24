@@ -197,11 +197,15 @@ struct MarketingWindow: Decodable {
     let previous: Bucket
     let change: Change
     let byPlatform: [Platform]
+    /// F2: why the period-over-period changes are null — "Too few posts to
+    /// compare periods — 3 each are needed". Absent on an older server.
+    var changeNote: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case days, posts, reach, engagement, previous, change
         case engagementRate = "engagement_rate"
         case byPlatform = "by_platform"
+        case changeNote = "change_note"
     }
 }
 
@@ -231,10 +235,16 @@ struct MarketingAttribution: Decodable {
         /// the sign of liftPct. Optional: older servers omit both.
         let verdict: String?
         let noiseBandPct: Double?
+        /// F2: the promoted dish's own verdict against its own band (±%) —
+        /// a raw unit % had none. Absent on an older server.
+        var itemVerdict: String? = nil
+        var itemNoiseBandPct: Double? = nil
 
         enum CodingKeys: String, CodingKey {
             case topic, platform, occasion, verdict
             case noiseBandPct = "noise_band_pct"
+            case itemVerdict = "item_verdict"
+            case itemNoiseBandPct = "item_noise_band_pct"
             case postedAt = "posted_at"
             case windowSales = "window_sales"
             case baselineSales = "baseline_sales"
@@ -275,7 +285,14 @@ struct MarketingAttribution: Decodable {
         var detailLine: String? {
             var bits: [String] = []
             if let name = menuItemName, let il = itemLiftPct {
-                bits.append("\(name) \(il > 0 ? "+" : "")\(Int(il.rounded()))% units")
+                // Judged against the dish's own band when the server sent
+                // one (F2): inside it is "no clear change", whatever the sign.
+                if itemVerdict == "no_clear_change" {
+                    bits.append("\(name) units: no clear change"
+                                + (itemNoiseBandPct.map { " (\u{00B1}\(Int($0.rounded()))%)" } ?? ""))
+                } else {
+                    bits.append("\(name) \(il > 0 ? "+" : "")\(Int(il.rounded()))% units")
+                }
             }
             if let n = reviewsMentioning, n > 0 { bits.append("\(n) review\(n == 1 ? "" : "s") mentioned it") }
             if let e = engagementRate { bits.append("\(String(format: "%.1f", e * 100))% engagement") }
@@ -289,12 +306,50 @@ struct MarketingAttribution: Decodable {
         let posts: Int
         let medianLiftPct: Double
         let medianItemLiftPct: Double?
+        /// F2 (CA1 M3): the group's verdict from its posts' own verdicts —
+        /// "lifted" / "dropped" only when more than half say so — and the
+        /// counts behind it. The row is coloured by this, never by the
+        /// median's sign. Absent on an older server.
+        var verdict: String? = nil
+        var verdicts: VerdictCounts? = nil
         enum CodingKeys: String, CodingKey {
-            case group, posts
+            case group, posts, verdict, verdicts
             case medianLiftPct = "median_lift_pct"
             case medianItemLiftPct = "median_item_lift_pct"
         }
         var id: String { group }
+
+        /// The verdict to colour by: the server's, else (older server) the
+        /// median's sign as before.
+        var liftVerdict: Post.LiftVerdict {
+            switch verdict {
+            case "lifted": return .lifted
+            case "dropped": return .dropped
+            case .some: return .noClearChange
+            case .none: return medianLiftPct >= 0 ? .lifted : .dropped
+            }
+        }
+    }
+
+    /// {"lifted": 2, "dropped": 1, "no_clear_change": 4} — lenient.
+    struct VerdictCounts: Decodable, Equatable {
+        var lifted: Int?
+        var dropped: Int?
+        var noClearChange: Int?
+        enum CodingKeys: String, CodingKey {
+            case lifted, dropped
+            case noClearChange = "no_clear_change"
+        }
+        init(lifted: Int? = nil, dropped: Int? = nil, noClearChange: Int? = nil) {
+            self.lifted = lifted; self.dropped = dropped; self.noClearChange = noClearChange
+        }
+        init(from decoder: Decoder) throws {
+            guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+            lifted = try? c.decodeIfPresent(Int.self, forKey: .lifted)
+            dropped = try? c.decodeIfPresent(Int.self, forKey: .dropped)
+            noClearChange = try? c.decodeIfPresent(Int.self, forKey: .noClearChange)
+        }
+        var total: Int { (lifted ?? 0) + (dropped ?? 0) + (noClearChange ?? 0) }
     }
 
     let ok: Bool
@@ -306,9 +361,25 @@ struct MarketingAttribution: Decodable {
     let byKind: [Group]?
     let byOccasion: [Group]?
     let byDish: [Group]?
+    /// F2 (CA1 M3): what the measured posts' own verdicts say, and the
+    /// median's verdict from them — a median is only a "lift" when most
+    /// posts behind it cleared their band. Absent on an older server.
+    var verdicts: VerdictCounts? = nil
+    var medianVerdict: String? = nil
+
+    /// "2 of 7 posts cleared their weekday's normal movement · 1 dropped" —
+    /// nil when the server sent no counts.
+    var verdictLine: String? {
+        guard let v = verdicts, v.total > 0 else { return nil }
+        var s = "\(v.lifted ?? 0) of \(v.total) post\(v.total == 1 ? "" : "s") lifted past their weekday\u{2019}s normal movement"
+        if let d = v.dropped, d > 0 { s += " \u{00B7} \(d) dropped" }
+        if medianVerdict == "no_clear_change" { s += " \u{2014} no clear pattern overall" }
+        return s
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ok, reason, posts, measured, weakest
+        case ok, reason, posts, measured, weakest, verdicts
+        case medianVerdict = "median_verdict"
         case medianLiftPct = "median_lift_pct"
         case byKind = "by_kind"
         case byOccasion = "by_occasion"

@@ -20,6 +20,14 @@ struct AIInsight: Codable, Equatable {
     /// modules that don't send it, and on older cached copies.
     var figuresVerified: Bool? = nil
     var unsupportedFigures: [String]? = nil
+    /// H2: false when the read states a cause no stored diagnosis backs —
+    /// the screen carries CavnarCaveat.unverifiedCauses. H8: the forecast
+    /// computed in Python (`forecast`, an object — not `insight_forecast`,
+    /// the model's text line). Optional: absent on the modules that don't
+    /// send them and on older cached copies.
+    var causesVerified: Bool? = nil
+    var unsupportedCauses: [String]? = nil
+    var computedForecast: ComputedForecast? = nil
 
     enum CodingKeys: String, CodingKey {
         case intro = "insight_intro"
@@ -28,6 +36,9 @@ struct AIInsight: Codable, Equatable {
         case recKeys = "insight_rec_keys"
         case figuresVerified = "figures_verified"
         case unsupportedFigures = "unsupported_figures"
+        case causesVerified = "causes_verified"
+        case unsupportedCauses = "unsupported_causes"
+        case computedForecast = "forecast"
     }
 
     /// The key for the recommendation at `index`, or nil when it has none

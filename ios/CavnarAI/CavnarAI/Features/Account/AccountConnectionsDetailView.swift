@@ -32,6 +32,7 @@ struct AccountConnectionsDetailView: View {
                     posRow("Clover POS", brand: .clover, status: connections.clover,
                            connect: { showingCloverConnect = true },
                            disconnect: { await viewModel.disconnectClover() })
+                    rpowerRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -98,6 +99,14 @@ struct AccountConnectionsDetailView: View {
     private var googleRow: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Google Business", brand: .google, status: connections.googleBusiness)
+            // Where the reviews actually come from (G9): a Places-only
+            // restaurant's are a five-at-a-time sample, not a Business
+            // Profile connection — said in the server's words.
+            if let source = connections.googleBusiness.label,
+               connections.googleBusiness.source != "gbp" {
+                HomeMixedText.make(source, size: 14, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             // "Handshake" — dashes march between the seal and Google while
             // the OAuth round trip is in flight (see CavnarMotion).
@@ -144,6 +153,7 @@ struct AccountConnectionsDetailView: View {
     private var toastRow: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Toast POS", brand: .toast, status: connections.toast)
+            Self.syncStateLine(connections.toast)
 
             if connections.toast.connected {
                 AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
@@ -175,6 +185,7 @@ struct AccountConnectionsDetailView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             header(label, brand: brand, status: status)
+            Self.syncStateLine(status)
 
             if status.connected {
                 AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
@@ -239,6 +250,65 @@ struct AccountConnectionsDetailView: View {
         .cavnarCard()
     }
 
+    // MARK: - Sync state (G3) and the review source (G9)
+
+    /// How the sync is actually going — a connection that stopped syncing
+    /// reads stale here as it does on Home, admin and the status page; an
+    /// error is red. Nothing for a state the server didn't send.
+    @ViewBuilder
+    static func syncStateLine(_ status: ConnectionStatus) -> some View {
+        if let line = status.syncLine {
+            let color: Color = {
+                switch line.tone {
+                case .good: return .cavnarGreen
+                case .warn: return .cavnarAmber
+                case .bad: return .cavnarRed
+                case .neutral: return .cavnarInk3
+                }
+            }()
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                HomeMixedText.make(line.text, size: 13.5, weight: 600, color: color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// RPOWER — connected by Cavnar from its vendor credentials, never from
+    /// the phone — so a status card only, and only once there is something
+    /// to say (G3: it was missing from this list entirely).
+    @ViewBuilder
+    private var rpowerRow: some View {
+        if let rp = connections.rpower, rp.connected || rp.error != nil || rp.lastSynced != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 13) {
+                    GlowBadge(systemImage: "server.rack", size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("RPOWER POS").font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        if let synced = rp.lastSyncedText {
+                            HomeMixedText.make(synced, size: 15.5, color: .cavnarInk3)
+                        }
+                    }
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(rp.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
+                            .frame(width: 6, height: 6)
+                        Text(rp.connected ? "Connected" : "Off")
+                            .font(.cavnarBody(15, weight: 600))
+                            .foregroundStyle(rp.connected ? Color.cavnarGreen : Color.cavnarInk3)
+                    }
+                }
+                Self.syncStateLine(rp)
+                Text("Set up by Cavnar from your RPOWER account \u{2014} contact us to change it.")
+                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .cavnarCard()
+        }
+    }
+
     // MARK: - Shared header
 
     private func header(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
@@ -247,8 +317,8 @@ struct AccountConnectionsDetailView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                if status.connected, let lastSynced = status.lastSynced {
-                    Text("Last synced \(lastSynced)").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
+                if status.connected, let lastSynced = status.lastSyncedText {
+                    HomeMixedText.make(lastSynced, size: 15.5, color: .cavnarInk3)
                 } else if !status.connected {
                     Text("Not connected").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
                 }

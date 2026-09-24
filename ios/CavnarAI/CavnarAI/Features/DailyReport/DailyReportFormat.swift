@@ -217,6 +217,12 @@ extension DSRBlock {
     // Food
 
     var estimateLabel: String? { detail["estimate"]?["label"]?.string }
+    /// I11 (dsr/block_food.py): why the estimated food cost % is withheld —
+    /// under half the units sold have a costed recipe.
+    var foodCoverageNote: String? { detail["estimate"]?["coverage_note"]?.string }
+    /// I11 (dsr/block_reviews.py): why a night with reviews carries no
+    /// rating — "3 reviews — not rated (a rating needs 5)".
+    var ratingNote: String? { detail["rating_note"]?.string }
     var stockBasis: String? { detail["stock"]?["basis"]?.string }
 
     var criticalStock: [StockRow] {

@@ -58,6 +58,22 @@ struct CavnarCaveat: View {
         return CavnarCaveat(title: "Unverified numbers", detail: detail)
     }
 
+    /// A cause the read named that no measured signal backs (H2,
+    /// ai_guard.unsupported_causes): the "because…" the model supplied
+    /// itself. The figures may trace; the why does not.
+    static func unverifiedCauses(_ causes: [String]) -> CavnarCaveat {
+        let named = causes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let detail: String
+        if named.isEmpty {
+            detail = "Cavnar couldn\u{2019}t match the reason this read gives to anything in your data. Treat the why as a guess until you\u{2019}ve checked it."
+        } else if named.count == 1 {
+            detail = "Cavnar couldn\u{2019}t match \u{201C}\(named[0])\u{201D} to anything in your data. Treat that reason as a guess until you\u{2019}ve checked it."
+        } else {
+            detail = "Cavnar couldn\u{2019}t match \(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) to anything in your data. Treat them as guesses until you\u{2019}ve checked."
+        }
+        return CavnarCaveat(title: "Unverified cause", detail: detail)
+    }
+
     /// A name the passage used that was never in the data behind it.
     ///
     /// The figure check cannot catch this — a fabricated guest is not a

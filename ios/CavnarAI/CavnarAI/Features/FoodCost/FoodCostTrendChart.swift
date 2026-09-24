@@ -19,6 +19,10 @@ struct FoodCostTrendChart: View {
     var benchmarkLabel: String?
     var wasteRatePct: Double?
     var totalWasteCostWeek: Double?
+    /// FoodCostAnalytics.wasteState (I8). "not_measured" — purchases on
+    /// file, nothing logged as waste — never draws as a 0.0% result.
+    var wasteState: String? = nil
+    private var notMeasured: Bool { wasteState == "not_measured" }
     /// The target the server computed from the same history these bars come
     /// from. See industryTargetDollar below for what this replaces.
     var target: FoodCostTrendTarget?
@@ -111,7 +115,14 @@ struct FoodCostTrendChart: View {
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
-                if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
+                if notMeasured {
+                    Spacer()
+                    // Nothing logged is not nothing wasted (I8): said, in
+                    // ink, with no rate and no status colour.
+                    Text("No waste logged")
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                } else if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
                     Spacer()
                     HStack(spacing: 5) {
                         Circle().fill(benchmarkColor(benchmarkLabel)).frame(width: 6, height: 6)
@@ -196,7 +207,12 @@ struct FoodCostTrendChart: View {
 
                 // wasteRatePct is only a presence check here — the band label
                 // below doesn't interpolate it.
-                if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
+                if notMeasured {
+                    Text("No waste logged this week \u{2014} not measured, so not scored against the target.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
                         Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
                         Text(target?.pct != nil ? "Your target: \(targetPctLabel) of purchases"

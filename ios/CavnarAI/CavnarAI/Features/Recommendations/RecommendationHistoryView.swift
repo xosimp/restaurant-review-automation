@@ -280,6 +280,12 @@ private struct RecTimelineRow: View {
                 HomeMixedText.make(label, size: 13, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Not counted / the grade / what it was compared with (F1–F3).
+            ForEach(o.measurementNotes, id: \.self) { note in
+                HomeMixedText.make(note + ".", size: 13, weight: 500,
+                                   color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let other = o.otherChangesLine {
                 HomeMixedText.make(other, size: 13, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

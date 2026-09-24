@@ -59,8 +59,9 @@ struct FoodCostQuickEntryView: View {
                         .foregroundStyle(Color.cavnarInk2)
                         .lineSpacing(3)
                     // How the waste forecasts have held up here (K8) — so
-                    // the owner can weigh this one. Nothing when withheld.
-                    if let record = analyticsViewModel.cfo?.brief?.forecastAccuracy?.sentence {
+                    // the owner can weigh this one, with its lean; when the
+                    // record withholds the next forecast, the server's why.
+                    if let record = analyticsViewModel.cfo?.brief?.forecastAccuracy?.line {
                         HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }

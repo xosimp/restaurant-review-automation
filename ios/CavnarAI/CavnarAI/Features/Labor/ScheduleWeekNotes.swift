@@ -7,6 +7,8 @@ import SwiftUI
 /// missing key renders nothing rather than a zero.
 struct ScheduleWeekNotes: View {
     let result: GeneratedSchedule
+    /// K8 from GET /labor — the generated schedule itself doesn't carry it.
+    var demandAccuracy: DemandAccuracy? = nil
 
     @State private var showingTrimmed = false
     @State private var showingStaggered = false
@@ -18,7 +20,7 @@ struct ScheduleWeekNotes: View {
                 caption("Revenue basis: \(source).")
             }
             // How the demand forecast behind that basis has held up (K8).
-            if let record = result.demandAccuracy?.sentence {
+            if let record = (result.demandAccuracy ?? demandAccuracy)?.sentence {
                 caption(record + ".")
             }
             if result.hourlyProfileReady == false {

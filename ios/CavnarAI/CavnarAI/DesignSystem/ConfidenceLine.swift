@@ -15,6 +15,22 @@ extension ConfidenceDisplay.Tone {
     }
 }
 
+extension ServerTone {
+    /// The status colour for a tone the server decided (I10: one table for
+    /// label and colour): good green, warn amber, bad red, neutral ink2.
+    /// Nil when the server sent none — the caller's own fallback applies.
+    /// Never ember: ember is not status (DESIGN_SYSTEM §9).
+    var color: Color? {
+        switch value {
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        case "bad": return .cavnarRed
+        case "neutral": return .cavnarInk2
+        default: return nil
+        }
+    }
+}
+
 // MARK: - The meter
 
 /// A small percentage meter: a Paper3 capsule track with a gradient fill in

@@ -384,7 +384,7 @@ struct ConfidenceDisplay: Equatable {
 /// The small tag that says whether a line was measured, computed, forecast,
 /// inferred — or written by the model (ai_guard.CLAIM_KINDS, K4
 /// `model_written`). Unknown kinds show nothing rather than a guess.
-/// A tone the server decided ("good" / "warn" / "bad"), read leniently — a
+/// A tone the server decided ("good" / "warn" / "bad" / "neutral"), read leniently — a
 /// non-string is nil, so the client's own thresholds apply instead (I10:
 /// one source for label and colour thresholds).
 struct ServerTone: Decodable, Hashable, Sendable {
@@ -396,7 +396,7 @@ struct ServerTone: Decodable, Hashable, Sendable {
         let s = (try? decoder.singleValueContainer().decode(String.self))?
             .trimmingCharacters(in: .whitespaces).lowercased()
         switch s {
-        case "good", "warn", "bad": value = s
+        case "good", "warn", "bad", "neutral": value = s
         case "warning": value = "warn"
         default: value = nil
         }
@@ -463,6 +463,45 @@ struct DemandAccuracy: Codable, Equatable, Sendable {
         }
         guard !parts.isEmpty else { return nil }
         return "Demand forecasts here: " + parts.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// A forecast computed in Python, not written by the model (H8):
+/// `{"kind": "review_rating_week" | "marketing_reach_week", "predicted": 4.3,
+/// "computed": true}` on the reviews and marketing reads. Never throws: a
+/// forecast is supporting detail, and an odd value must not fail the read
+/// it rides on — it just draws nothing.
+struct ComputedForecast: Codable, Equatable, Sendable {
+    var kind: String?
+    var predicted: Double?
+    var computed: Bool?
+
+    enum CodingKeys: String, CodingKey { case kind, predicted, computed }
+
+    init(kind: String? = nil, predicted: Double? = nil, computed: Bool? = nil) {
+        self.kind = kind; self.predicted = predicted; self.computed = computed
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        predicted = try? c.decodeIfPresent(Double.self, forKey: .predicted)
+        computed = try? c.decodeIfPresent(Bool.self, forKey: .computed)
+    }
+
+    /// "Next week's rating, computed from the trend: 4.3★" /
+    /// "Next week's reach per post, carried forward: 1,240" — nil for an
+    /// unknown kind or no figure.
+    var line: String? {
+        guard let p = predicted, p.isFinite else { return nil }
+        switch kind {
+        case "review_rating_week":
+            return "Next week\u{2019}s rating, computed from the trend: " + String(format: "%.1f", p) + "\u{2605}"
+        case "marketing_reach_week":
+            return "Next week\u{2019}s reach per post, carried forward from last week: \(Int(p.rounded()).formatted())"
+        default:
+            return nil
+        }
     }
 }
 

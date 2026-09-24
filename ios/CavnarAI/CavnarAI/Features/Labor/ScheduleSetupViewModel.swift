@@ -49,22 +49,51 @@ struct TimeWindow: Codable, Equatable {
 /// How often somebody has not turned up, measured from the shifts they
 /// were on. Nil when there is nothing to measure it from.
 struct RosterReliability: Codable, Equatable {
+    /// SMOOTHED toward the restaurant's own base rate (I9 — two misses in
+    /// six shifts no longer read as a flat 33%).
     let noShowRate: Double?
     let shortRate: Double?
     let shifts: Int?
+    /// I9 (staff_settings.reliability): the raw count and rate beside the
+    /// smoothed one, the base rate, and the engine's own red line
+    /// (shift_quality.UNRELIABLE_RATE, 20%) with whether this person is past
+    /// it — the same line the scheduler treats them by. Absent on an older
+    /// server.
+    var noShows: Int? = nil
+    var rawNoShowRate: Double? = nil
+    var baseRate: Double? = nil
+    var noShowThreshold: Double? = nil
+    var unreliable: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case shifts
+        case shifts, unreliable
         case noShowRate = "no_show_rate"
         case shortRate = "short_rate"
+        case noShows = "no_shows"
+        case rawNoShowRate = "raw_no_show_rate"
+        case baseRate = "base_rate"
+        case noShowThreshold = "no_show_threshold"
     }
 
-    /// "4% no-show" — a rate is stored as a fraction (0.04) or, on some
-    /// rows, as a percentage already; anything above 1 is taken as one.
+    private static func pct(_ rate: Double) -> Int { Int((rate > 1 ? rate : rate * 100).rounded()) }
+
+    /// "4% no-show (1 of 12 shifts)" — a rate is stored as a fraction (0.04)
+    /// or, on some rows, as a percentage already; anything above 1 is taken
+    /// as one. The raw count rides beside the smoothed rate when sent.
     var noShowLabel: String? {
         guard let rate = noShowRate else { return nil }
-        let pct = rate > 1 ? rate : rate * 100
-        return "\(Int(pct.rounded()))% no-show"
+        var s = "\(Self.pct(rate))% no-show"
+        if let n = noShows, let total = shifts, total > 0 { s += " (\(n) of \(total) shifts)" }
+        if isUnreliable { s += " \u{2014} past the \(Self.pct(noShowThreshold ?? 0.2))% line the scheduler uses" }
+        return s
+    }
+
+    /// Past the engine's own line: the server's `unreliable`, else the
+    /// smoothed rate against `no_show_threshold`; false for an older server.
+    var isUnreliable: Bool {
+        if let unreliable { return unreliable }
+        guard let rate = noShowRate, let line = noShowThreshold else { return false }
+        return rate >= line
     }
 }
 
@@ -282,14 +311,32 @@ struct IntelOutcome: Codable, Equatable {
     let avgHours: Double?
     let avgSales: Double?
     let splh: Double?
+    /// Null when no night in the window was watched at all (F8) — which is
+    /// "not watched", never "no issues".
     let issues: Int?
     let troubled: Bool?
     let rating: Double?
+    /// F8: the server's words for the coverage record — "2 issues", "no
+    /// issues on 3 watched nights", "not watched — coverage wasn't checked
+    /// on these nights" — and how many nights were a reading at all.
+    var issuesLabel: String? = nil
+    var watched: Int? = nil
 
     enum CodingKeys: String, CodingKey {
-        case weeks, splh, issues, troubled, rating
+        case weeks, splh, issues, troubled, rating, watched
         case avgHours = "avg_hours"
         case avgSales = "avg_sales"
+        case issuesLabel = "issues_label"
+    }
+
+    /// What the detail line says about issues: the server's label when sent
+    /// (it tells "no issues on 3 watched nights" from "not watched"); an
+    /// older server's count only when above zero; nothing otherwise — a nil
+    /// or zero count is never printed as "no issues".
+    var issuesText: String? {
+        if let label = issuesLabel?.trimmingCharacters(in: .whitespaces), !label.isEmpty { return label }
+        if let i = issues, i > 0 { return "\(i) \(i == 1 ? "issue" : "issues")" }
+        return nil
     }
 }
 

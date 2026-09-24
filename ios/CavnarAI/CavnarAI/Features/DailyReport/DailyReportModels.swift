@@ -345,13 +345,58 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     /// K1, built from the facts the action cites (E16) — the shared
     /// confidence line under the action. Absent on an older report.
     var confidence: TrustConfidence? = nil
+    /// H13: what the facts the action cites say about "Today" — and, when
+    /// they did not carry it, the move the server made ({from, to, why}:
+    /// "before_service" → "this_week"). Absent on an older report.
+    var urgencyBasis: String? = nil
+    var urgencyAdjusted: UrgencyAdjusted? = nil
+    /// F6 (rec_learning.attach_dollar_calibration): the dollars corrected by
+    /// this restaurant's measured results for the kind — null means show
+    /// `dollars_monthly` as it is — how many results, and the note ("adjusted
+    /// from 6 measured results"). Absent until the server sends them.
+    var dollarsAdjusted: Double? = nil
+    var calibrationN: Int? = nil
+    var calibrationNote: String? = nil
     var id: String { key ?? text }
+
+    struct UrgencyAdjusted: Decodable, Hashable {
+        let from: String?
+        let to: String?
+        let why: String?
+    }
 
     enum CodingKeys: String, CodingKey {
         case text, why, urgency, effort, kind, key, answered, answerable, confidence
         case dollarsMonthly = "dollars_monthly"
         case recKey = "rec_key"
+        case urgencyBasis = "urgency_basis"
+        case urgencyAdjusted = "urgency_adjusted"
+        case dollarsAdjusted = "dollars_adjusted"
+        case calibrationN = "calibration_n"
+        case calibrationNote = "calibration_note"
     }
+
+    /// "Moved from Before service to This week — nothing it cites moved 10%
+    /// (2 points) from what it is compared with." Nil unless the server
+    /// moved it.
+    var urgencyAdjustedLine: String? {
+        guard let adj = urgencyAdjusted, adj.from != nil || adj.to != nil else { return nil }
+        func words(_ s: String?) -> String? {
+            guard let s, !s.isEmpty else { return nil }
+            let w = s.replacingOccurrences(of: "_", with: " ")
+            return w.prefix(1).uppercased() + w.dropFirst()
+        }
+        var s = "Moved"
+        if let f = words(adj.from) { s += " from \(f)" }
+        if let t = words(adj.to) { s += " to \(t)" }
+        if let why = adj.why, !why.isEmpty { s += " \u{2014} \(why)" }
+        return s
+    }
+
+    /// The dollars to show and what corrected them — the adjusted figure
+    /// and its note when the server calibrated it, else the raw figure.
+    var dollarsLine: String? { RecDollarCalibration.line(raw: dollarsMonthly, adjusted: dollarsAdjusted,
+                                                          n: calibrationN, note: calibrationNote) }
 
     /// The key the answer row posts — rec_key, else the action's own key.
     var answerKey: String? {
@@ -402,11 +447,15 @@ struct DSRVerification: Decodable, Hashable {
     let kept: Int?
     let dropped: Int?
     let estimated: Int?
+    /// H13 (dsr/narrative.py): the kept lines resting on measured facts
+    /// only — kept minus estimated, as the server counts it.
+    var measured: Int? = nil
 
-    enum CodingKeys: String, CodingKey { case checked, kept, dropped, estimated, estimates }
+    enum CodingKeys: String, CodingKey { case checked, kept, dropped, estimated, estimates, measured }
 
-    init(checked: Int?, kept: Int?, dropped: Int? = nil, estimated: Int? = nil) {
+    init(checked: Int?, kept: Int?, dropped: Int? = nil, estimated: Int? = nil, measured: Int? = nil) {
         self.checked = checked; self.kept = kept; self.dropped = dropped; self.estimated = estimated
+        self.measured = measured
     }
 
     init(from decoder: Decoder) throws {
@@ -415,6 +464,7 @@ struct DSRVerification: Decodable, Hashable {
         kept = try? c.decodeIfPresent(Int.self, forKey: .kept)
         dropped = Self.count(c, .dropped)
         estimated = Self.count(c, .estimated) ?? Self.count(c, .estimates)
+        measured = try? c.decodeIfPresent(Int.self, forKey: .measured)
     }
 
     /// A count sent as a number or as the list it counts.
@@ -429,6 +479,14 @@ struct DSRVerification: Decodable, Hashable {
     /// such" — nil when nothing was checked.
     var footer: String? {
         guard let checked, let kept, checked > 0 else { return nil }
+        // With the server's own split (H13), "traced to a measured fact"
+        // never covers the lines that rest on an estimate.
+        if let m = measured, let e = estimated, e > 0 {
+            var s = "Every figure above traced to a fact it cites \u{00B7} \(kept) of \(checked) lines kept \u{00B7} "
+                + "\(m) measured, \(e) estimated (labelled as such)"
+            if let d = dropped, d > 0 { s += " \u{00B7} \(d) dropped because a figure didn\u{2019}t trace" }
+            return s
+        }
         var s = "Every figure above traced to a measured fact \u{00B7} \(kept) of \(checked) lines kept"
         if let d = dropped, d > 0 { s += " \u{00B7} \(d) dropped because a figure didn\u{2019}t trace" }
         if let e = estimated, e > 0 { s += " \u{00B7} \(e) estimate\(e == 1 ? "" : "s"), labelled as such" }

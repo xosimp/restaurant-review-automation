@@ -316,6 +316,18 @@ struct DailyReportView: View {
                                         }
                                     }
                                 }
+                                // "Today" the cited facts didn't carry, moved
+                                // and said why (H13).
+                                if let moved = action.urgencyAdjustedLine {
+                                    HomeMixedText.make(moved + ".", size: 12.5, color: .cavnarInk3)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                // The dollars, calibrated by measured results
+                                // when the server corrected them (F6).
+                                if let dollars = action.dollarsLine {
+                                    HomeMixedText.make(dollars, size: 13, weight: 600, color: .cavnarInk2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 // How sure, from the facts it cites (K1).
                                 if let c = action.confidence {
                                     ConfidenceLine(confidence: c, recKey: action.answerKey,
@@ -589,6 +601,12 @@ struct DSRBlockBody: View {
                 DSRStatTile(label: "Variance", value: DSRFormat.money(m("variance_cost")),
                             detail: m("variance_items").map { "\(DSRFormat.count($0)) item\($0 == 1 ? "" : "s")" }),
             ])
+            // The % withheld under the coverage floor, and why (I11) — the
+            // dash above is not a zero.
+            if let note = block.foodCoverageNote {
+                HomeMixedText.make(note, size: 13, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let recoverable = m("recoverable_monthly") {
                 HomeMixedText.make("Recoverable each month: \(DSRFormat.money(recoverable))", size: 14, color: .cavnarInk2)
             }
@@ -639,7 +657,9 @@ struct DSRBlockBody: View {
         VStack(alignment: .leading, spacing: 14) {
             DSRTileRow(tiles: [
                 DSRStatTile(label: "Received", value: DSRFormat.count(m("received"))),
-                DSRStatTile(label: "Average", value: DSRFormat.rating(m("avg_rating"))),
+                // No night rating under the floor (I11): the dash says why.
+                DSRStatTile(label: "Average", value: DSRFormat.rating(m("avg_rating")),
+                            detail: m("avg_rating") == nil ? block.ratingNote : nil),
                 DSRStatTile(label: "Urgent", value: DSRFormat.count(m("urgent")),
                             tone: (m("urgent") ?? 0) > 0 ? .cavnarRed : .cavnarInk),
             ])

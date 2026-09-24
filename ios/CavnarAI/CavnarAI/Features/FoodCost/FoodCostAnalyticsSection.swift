@@ -127,6 +127,7 @@ struct FoodCostAnalyticsSection: View {
                         benchmarkLabel: analytics.benchmarkLabel,
                         wasteRatePct: analytics.wasteRatePct,
                         totalWasteCostWeek: analytics.totalWasteCostWeek,
+                        wasteState: analytics.wasteState,
                         target: viewModel.trendTarget,
                         asOf: analytics.lastUpdated
                     )
@@ -338,7 +339,8 @@ struct FoodCostAnalyticsSection: View {
                     }
                     if let p = cfo.profitability, p.available,
                        let prime = p.primeCostPct, let projected = p.projectedPrimeCost {
-                        profitabilityBlock(p, prime: prime, projected: projected)
+                        profitabilityBlock(p, prime: prime, projected: projected,
+                                           record: cfo.brief?.primeCostAccuracy?.line)
                     }
                     if let cause = dg?.cause {
                         VStack(alignment: .leading, spacing: 6) {
@@ -404,7 +406,7 @@ struct FoodCostAnalyticsSection: View {
     }
 
     private func profitabilityBlock(_ p: FoodCostCFO.Profitability,
-                                    prime: Double, projected: Double) -> some View {
+                                    prime: Double, projected: Double, record: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(prime, specifier: "%.1f")% prime cost")
                 .font(.cavnarNumber(21, weight: 600))
@@ -420,6 +422,12 @@ struct FoodCostAnalyticsSection: View {
                 Text("Projection, not a measurement. \(basis)")
                     .font(.cavnarBody(11))
                     .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // How past month-end projections held up here (K8), so this
+            // one can be weighed — months, not weeks.
+            if let record {
+                HomeMixedText.make(record + ".", size: 12, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -521,11 +529,14 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                         .lineLimit(2, reservesSpace: true)
                         .multilineTextAlignment(.trailing)
-                    HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarGreen, startFromZero: startFromZero)
-                    Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo — waste above tolerance")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.55))
+                    // An OPPORTUNITY (I8, `recoverable_kind`): waste still
+                    // being thrown away, projected from one week — amber
+                    // "available", never a win's green.
+                    HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarAmber, startFromZero: startFromZero)
+                    HomeMixedText.make("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo still being lost \u{2014} an opportunity, not savings",
+                                       size: 14, color: Color.cavnarInk.opacity(0.55))
                         .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(22)

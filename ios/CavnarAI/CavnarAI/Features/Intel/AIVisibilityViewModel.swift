@@ -146,6 +146,18 @@ struct AIVisibilityResult: Decodable {
     /// instead of the client's own thresholds when present. Lenient: an
     /// odd value is nil, never a failed check.
     var presenceTone: ServerTone? = nil
+    /// I10: the listing-strength figure's NAME ("Listing strength") and its
+    /// band in words ("a few gaps", "not measured") — client_api.presence_band.
+    /// The band is `presence_band_label`, not `presence_label`.
+    var presenceLabel: String? = nil
+    var presenceBandLabel: String? = nil
+    /// I4: the AI-visibility chip read from the 90% RANGE, never the point
+    /// (client_api.ai_visibility_band): band "often" | "sometimes" | "rarely"
+    /// | "uncertain" | nil, its words and tone. Absent on an older server,
+    /// which keeps the client's own point breakpoints.
+    var aiScoreBand: String? = nil
+    var aiScoreLabel: String? = nil
+    var aiScoreTone: ServerTone? = nil
     let setupDone: Int?
     let setupTotal: Int?
     let claimKinds: [String: String]?
@@ -166,6 +178,21 @@ struct AIVisibilityResult: Decodable {
     /// other state means the score is not a measurement of this restaurant.
     var scoreIsMeasured: Bool {
         (partial == false || partial == nil) && (locationKnown ?? true) && aiScore != nil
+    }
+
+    /// The AI-visibility chip's words, from the range (I4), sentence-cased —
+    /// "Comes up sometimes", "Somewhere between 30% and 90% — too few
+    /// questions to say more". Nil for an older server.
+    var aiChipText: String? { aiScoreLabel.flatMap(Self.sentenceCase) }
+    /// What the listing figure is called — the server's name for it.
+    var presenceHeading: String { Self.sentenceCase(presenceLabel ?? "") ?? "Listing strength" }
+    /// The listing band in words ("A few gaps"); nil for an older server.
+    var presenceChipText: String? { presenceBandLabel.flatMap(Self.sentenceCase) }
+
+    static func sentenceCase(_ raw: String) -> String? {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = t.first else { return nil }
+        return first.uppercased() + t.dropFirst()
     }
 
     /// Why the score cannot be read as a measurement, or nil.
@@ -215,6 +242,11 @@ struct AIVisibilityResult: Decodable {
         case presenceMeasured = "presence_measured"
         case presenceUnmeasured = "presence_unmeasured"
         case presenceTone = "presence_tone"
+        case presenceLabel = "presence_label"
+        case presenceBandLabel = "presence_band_label"
+        case aiScoreBand = "ai_score_band"
+        case aiScoreLabel = "ai_score_label"
+        case aiScoreTone = "ai_score_tone"
         case setupDone = "setup_done"
         case setupTotal = "setup_total"
         case claimKinds = "claim_kinds"
