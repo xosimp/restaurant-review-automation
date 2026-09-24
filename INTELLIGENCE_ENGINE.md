@@ -57,7 +57,7 @@ other modules need.
 | `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
 | `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
 | `intel_patterns` | discovered patterns: cohort, behaviour, outcome, n with / n without, effect, p, q, confidence, sentence, status | counts and effects only |
-| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean | aggregates over ≥ MIN_COHORT |
+| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, and `vals_json` (the member values, sorted and unlabelled — server-side only, so the band shown to a member can leave its own row out) | stored over ≥ MIN_COHORT; SHOWN only through `benchmarks.published()` (viewer excluded, ≥ 8 others, coarse step, ≤ 8 weeks old) |
 | `intel_confidence_log` | per week × cohort × kind: mean confidence, acceptance, success | aggregates |
 | `job_cursors['intelligence_features']` | where the nightly feature pass stopped | — |
 
@@ -94,7 +94,7 @@ Ask, the queue, decisions and the ledger share (legacy
 | `feedback.py` | 1 | `sync()` derives events; `record()` for new callers |
 | `scoring.py` | 2 | `kind_stats(kind, cohort)`: acceptance, success, median days; `rank_kinds()` |
 | `patterns.py` | 2/3 | declarative `HYPOTHESES`; `discover()` per cohort and platform-wide; `active(cohort)` |
-| `benchmarks.py` | 3 | `compute()` weekly; `benchmark(rid, metric)` with percentile and band |
+| `benchmarks.py` | 3 | `compute()` weekly; `published(cohort, metric, exclude_value)` — what may be shown; `benchmark(rid, metric, cohort_source=)` with standing, `cohort_label` (the cohort used: "All restaurants on Cavnar" for platform), `inferred`, `as_of`; `context_line(b)` — the one prompt wording |
 | `trends.py` | 2/3 | weekly medians per cohort × metric, slope, `emerging()` |
 | `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
@@ -153,7 +153,12 @@ Ask, the queue, decisions and the ledger share (legacy
   clients read its `score` (always a number), `band`, `label`, `reason`.
 - Ask gets two tools (`read_restaurant_memory`, `read_platform_intelligence`)
   and one short context section, present only when the cohort clears the
-  floor, phrased as "restaurants like yours" with counts and effects only.
+  floor, with counts and effects only. Each line names the cohort ACTUALLY
+  used — "other Pizza on Cavnar", or "other restaurants on Cavnar — all
+  types, not a like-for-like cohort" for a platform band — never "restaurants
+  like yours" (NS4 H4); carries the band's as-of date (M/D/YY) and the week
+  of this restaurant's own figure; and says when the type was inferred from
+  the name rather than set (NS4 M5).
 - Every event that answers a recommendation is already recorded; the sync
   turns it into learning. Future modules call `feedback.record` directly.
 
@@ -551,9 +556,35 @@ over the following 90 days") and never a name.
   from the forbidden list (`restaurant_id`, `name`, `owner_email`,
   `employee`, `phone`, `place_id`, `sales`, `revenue`, …) on its way to a
   cross-restaurant surface. The admin dashboard, patterns, benchmarks and
-  Ask context all pass through it, and the tests assert it.
+  Ask context all pass through it, and the tests assert it. It scans string
+  VALUES too (NS6 §B finding 2): a tenant's name (every `restaurants.name`
+  and `location_name` of four or more characters that is not a generic word,
+  cached per process for 60 s and dropped on a restaurant change), a
+  restaurant id written out, or an email address raises. `deny_names`
+  replaces the name list in a test.
 - Effects are rounded (`round_effect`) so a two-member difference cannot be
   reversed into a member's value; below the floor no effect is emitted.
+- **Quartiles are not rounding-safe on their own** (NS4 M6, NS6 §B finding
+  1): linear-interpolated quartiles of five values ARE the 2nd, 3rd and 4th
+  members, so an owner who knew their own figure read three peers' exact
+  labor % off the band. What a restaurant is shown goes through
+  `benchmarks.published()`: its own row taken out of the band (the member
+  values are kept, sorted and unlabelled, in `intel_benchmarks.vals_json`,
+  never selected into a payload), at least `MIN_QUARTILE_N` (8) OTHER
+  restaurants, and each quartile rounded to a coarse per-metric step (0.5
+  points for a %, 0.1★, 0.05 for a rate). Under 8 the band is withheld.
+  `benchmarks.band()` stays internal (staffing scales its median to people).
+- **Nothing stale is served** (NS4 H5): a band older than
+  `MAX_BAND_AGE_WEEKS` (8), this restaurant's own figure older than
+  `MAX_OWN_AGE_WEEKS` (8), and an active pattern not re-confirmed in
+  `MAX_PATTERN_AGE_DAYS` (56) are left out, and every band and pattern
+  carries `as_of`. `patterns.discover` retires every pattern whose cohort
+  has dropped below the floor, not only those among cohorts tested that
+  night.
+- **Outside benchmarks** (an NRA median, an operator rule of thumb, Luca's
+  revenue per star) are not this engine's: they live in
+  `benchmark_registry.py` by restaurant type, and a type with no entry gets
+  no industry figure anywhere.
 - Level 1 reads only `WHERE restaurant_id = ?`. The Ask context names the
   restaurant's own figures only to its own owner.
 

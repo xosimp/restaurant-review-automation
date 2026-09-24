@@ -666,8 +666,19 @@ def parse_insight_sections(text):
     clean_recs = []
     for rec in recs:
         clean = _re.sub(r'^[\d.\-)]+\s*', '', rec).strip()
-        if clean:
-            clean_recs.append(clean)
+        if not clean:
+            continue
+        # "None — nothing in this period calls for a change" is a read with
+        # zero recommendations (NS4 M2: the labor prompt allows 0–3 now),
+        # not a recommendation to answer. It joins the intro as a sentence.
+        _none = _re.match(r'(?i)^(?:none|no recommendations?)\b[\s—–:,.-]*(.*)$', clean)
+        if _none:
+            rest = (_none.group(1) or "").strip()
+            if rest:
+                rest = rest[0].upper() + rest[1:]
+                intro = (intro + (" " if intro else "") + rest).strip()
+            continue
+        clean_recs.append(clean)
     return intro, clean_recs, forecast, unverified
 
 
@@ -1308,6 +1319,31 @@ def _review_insight_recs(rid, payload):
     return payload
 
 
+REVIEW_INSIGHT_WINDOW_DAYS = 28
+
+
+def review_insight_floor_payload(rstats, n_window, floor) -> dict:
+    """The Reviews read when there is too little to read (NS4 C1): fixed
+    copy, no model call, nothing marked verified or measured, no answerable
+    line. `insufficient_data` tells a client to render it as an empty
+    state; one that doesn't know the key still shows plain text."""
+    total = int((rstats or {}).get("total") or 0)
+    if total == 0:
+        text = ("No reviews on file yet, so there is nothing to read. Once reviews come in, Cavnar writes its "
+                "read of them here.")
+        reason = "no reviews on file"
+    else:
+        text = (f"Only {n_window} review{'' if n_window == 1 else 's'} in the last four weeks — too few for a read "
+                f"that means anything. The read comes back once {floor} or more arrive in four weeks; your "
+                "reviews are below.")
+        reason = f"{n_window} reviews in the last {REVIEW_INSIGHT_WINDOW_DAYS} days, under the floor of {floor}"
+    return {"insight": text, "insufficient_data": True, "reason": reason,
+            "window_reviews": int(n_window or 0), "floor": int(floor),
+            "figures_verified": True, "unsupported_figures": [], "names_verified": True, "unsupported_names": [],
+            "causes_verified": True, "unsupported_causes": [], "diagnoses": [], "stale": False,
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
+
+
 def _do_review_insight(rid):
     """The Reviews module's AI read — shared by the web route above and
     mobile_api.py's own /reviews/insight.
@@ -1423,11 +1459,21 @@ def _do_review_insight(rid):
         """, (rid,)).fetchall()
         _conn_ri.close()
 
-        # Build week-over-week string.
         # One shared floor for "is this enough data to call a direction"
         # (notify.MIN_TREND_REVIEWS_PER_WEEK), used by the week-over-week
         # line, the 4-week trend below it and the daily trend alert.
         from notify import MIN_TREND_REVIEWS_PER_WEEK as _MIN_WK
+        # The DATA FLOOR (NS4 C1): below it the model is not called. A
+        # restaurant with no reviews was handed "0 reviews all time, 0 star
+        # lifetime average" under MEASURED, asked for a "Do today" that is
+        # "never generic", and its invented comparisons came back marked
+        # verified. Fixed copy instead — both clients render `insight`.
+        _n_window = sum(int(r["cnt"] or 0) for r in weekly_rows)
+        if int((rstats or {}).get("total") or 0) == 0 or _n_window < _MIN_WK:
+            return _review_insight_recs(rid, review_insight_floor_payload(rstats, _n_window, _MIN_WK)), 200
+
+        # Build week-over-week string.
+        # (The floor above is the same one.)
         wow_str = ""
         if (last_week and this_week
                 and (last_week["cnt"] or 0) >= _MIN_WK and (this_week["cnt"] or 0) >= _MIN_WK):
@@ -1546,7 +1592,10 @@ def _do_review_insight(rid):
             _ev.append(f"Against the {_bench['competitor_count']} competitors Intel tracks: "
                        f"your Google rating is {_bench['our_google_rating']}★ vs a "
                        f"{_bench['competitor_median']}★ median of theirs "
-                       f"({_bench['gap_vs_median']:+.2f}), intel as of {_bench.get('as_of') or 'unknown'}.")
+                       f"({_bench['gap_vs_median']:+.2f}), intel as of {_bench.get('as_of') or 'unknown'}"
+                       # Its stale flag was computed and dropped (NS4 L4).
+                       + (" — STALE: older than Intel's refresh window, so say how old it is if you use it"
+                          if _bench.get("stale") else "") + ".")
         if _locs.get("available") and _locs.get("outlier_themes"):
             _o = _locs["outlier_themes"][0]
             _ev.append(f"Across your locations, {_o['category'].replace('_',' ')} is "
@@ -1557,7 +1606,9 @@ def _do_review_insight(rid):
                        f"all-time average rating: "
                        f"${abs(_money['monthly_low']):,} to ${abs(_money['monthly_high']):,} a month "
                        f"{'at risk' if _money['direction']=='at_risk' else 'of upside'}, "
-                       f"on {_money['sales_source']}. A forecast from a published range, not a measurement.")
+                       f"on {_money['sales_source']}. A forecast from one study's range for independent "
+                       f"restaurants ({_money.get('source') or 'Luca, Harvard Business School, 2016'}), "
+                       f"not a measurement.")
         evidence_block = "\n".join(f"- {e}" for e in _ev) if _ev else "- (nothing above the evidence floor)"
 
         ops_block = _ri._operational_block(_ops_ctx)
@@ -1618,7 +1669,11 @@ def _do_review_insight(rid):
             f"{_UN_RI}\n\n"
             f"Restaurant: {rest_name} | Today: {today_str}\n\n"
             "MEASURED (read from the database - these are facts):\n"
-            f"- {rstats['total']} reviews all time, {rstats['avg_rating']} star lifetime average\n"
+            # A missing average is said as missing, never "0 star" (NS4 C1).
+            f"- {rstats['total']} reviews all time, "
+            + (f"{rstats['avg_rating']} star lifetime average\n" if rstats.get("avg_rating")
+               else "lifetime average rating not measured (no rated reviews)\n")
+            +
             f"- {rstats['positive']} positive / {rstats['negative']} negative / "
             f"{rstats['neutral']} neutral of {rstats['classified']} analysed"
             + (f" ({rstats['unanalysed']} not yet analysed, so the split covers less than the total)"
@@ -2506,6 +2561,9 @@ def _mkt_insight_out(rid, text, raw, extra=None):
 MKT_TREND_MIN_WEEKS = 4
 MKT_TREND_MIN_POSTS = 2
 MKT_TREND_MIN_CHANGE_PCT = 20
+# BEST / WEAK name the top three and bottom three measured posts; under six
+# they overlap, so the same post was both (NS4 L6).
+MKT_BEST_WEAK_MIN_POSTS = 6
 
 
 def _mkt_checks(stored):
@@ -2602,6 +2660,21 @@ def _do_mkt_insight(rid, raw=False):
             _perf_lines = []
             if _perf_rows:
                 _mkt_topics = [r["topic"] for r in _perf_rows if r["topic"]]
+            # BEST and WEAK are rankings: named only over MKT_BEST_WEAK_MIN_POSTS
+            # measured posts (NS4 L6). Under it the top three and bottom three
+            # were the same posts, each called both best and weak.
+            if _perf_rows and len(_perf_rows) < MKT_BEST_WEAK_MIN_POSTS:
+                _few = []
+                for _r in _perf_rows:
+                    _parts = []
+                    if _r["reach"]:       _parts.append(str(int(_r["reach"])) + " reach")
+                    if _r["impressions"]: _parts.append(str(int(_r["impressions"])) + " impr")
+                    if _parts:
+                        _few.append((_r["topic"] or "a post") + " (" + (_r["post_platform"] or "") + "): " + ", ".join(_parts))
+                if _few:
+                    _perf_lines.append("Only " + str(len(_perf_rows)) + " measured post" + ("" if len(_perf_rows) == 1 else "s")
+                                       + " — too few to call any best or weak: " + "; ".join(_few))
+            elif _perf_rows:
                 _sorted = sorted(_perf_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0), reverse=True)
                 for _r in _sorted[:3]:
                     _parts = []
@@ -2647,9 +2720,20 @@ def _do_mkt_insight(rid, raw=False):
                     perf_clause += "\nTrend: " + " ".join(_trend_lines)
                 if _perf_lines:
                     perf_clause += "\n" + "\n".join(_perf_lines)
-                perf_clause += "\nDouble down on BEST topics. Rethink or avoid WEAK ones. Reference the trend when advising."
+                if any(l.startswith(("BEST:", "WEAK:")) for l in _perf_lines):
+                    perf_clause += "\nDouble down on BEST topics. Rethink or avoid WEAK ones. Reference the trend when advising."
+                else:
+                    perf_clause += ("\nToo few measured posts to rank: do not call any topic the best, the weakest or "
+                                    "what works for this audience.")
         except Exception:
             pass
+        if not perf_clause:
+            # No results at all (NS4 L6): the read was asked for "the single
+            # biggest marketing opportunity" with nothing measured and never
+            # said so.
+            perf_clause = ("\n\nSocial performance data: none measured yet. The opportunity comes from the calendar, "
+                           "the menu and the brand above, not from results — say so, and do not claim anything has "
+                           "worked, performed well or performed poorly, or compare with other restaurants.")
         # The FORECAST line is computed after the call (_mkt_forecast, H8),
         # never asked of the model: its projection was unscored.
         forecast_instruction = ""

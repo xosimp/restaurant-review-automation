@@ -25,10 +25,16 @@ _WASTE_TOLERANCE_PCT = {
 _DEFAULT_WASTE_TOLERANCE_PCT = 20
 # Weeks in a month, exactly — 52 / 12. Not 4.3, not 4.33.
 WEEKS_PER_MONTH = 52.0 / 12.0
+# What the 4–5% waste target is, said wherever it is (NS4 H3): Cavnar's
+# starting default until the owner sets their own, not an industry figure.
+WASTE_TARGET_NOTE = "Cavnar's default until you set your own, not an industry figure"
+# The tolerance bands are Cavnar's own allowances, not a published standard
+# (NS4 L3): the basis says so rather than calling the band "normal".
 RECOVERABLE_BASIS = ("Only waste above each category's tolerance band counts — produce 28%, bakery 25%, "
                      "beverage and pantry 20%, protein and dairy 15% of the last order. Waste inside the band "
-                     "is normal trim and spoilage and is never counted. Summed per item from the POS-synced "
-                     "count and projected at 52/12 weeks a month.")
+                     "is left out as expected trim and spoilage (Cavnar's own allowances, not a published "
+                     "standard) and is never counted. Summed per item from the POS-synced count and projected "
+                     "at 52/12 weeks a month.")
 
 # Ingredient keywords relevant to each upcoming holiday/event — shared by
 # get_claude_insights (narrative "heads-up" text) and analyse_inventory
@@ -488,8 +494,12 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     recoverable = round(total_recoverable_week * WEEKS_PER_MONTH)
     annual_recoverable = round(recoverable * 12, 2)
 
-    # Industry benchmark: waste cost as % of what was actually purchased over
-    # the SAME period the waste covers. The bands, exactly as coded below:
+    # Waste rate against Cavnar's STARTING target (waste_trend.
+    # WASTE_TARGET_PCT, 4–5%): not an industry benchmark — no published
+    # source exists for it (benchmark_registry.ABSENT), so the owner-facing
+    # detail says "starting target", never "industry" (NS4 H3). Waste cost as
+    # % of what was actually purchased over the SAME period the waste covers.
+    # The labels (kept: both clients match on them), exactly as coded below:
     # 0 recorded = not measured (nothing logged is not "nothing wasted") |
     # <=4% excellent (at or under the 4-5% target) | <=6% on track |
     # <=10% above average | <=15% concerning | >15% needs attention.
@@ -535,23 +545,23 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     elif waste_rate_pct <= 4:
         benchmark_label  = "Excellent"
         benchmark_tone   = "good"
-        benchmark_detail = "At or below the 4% industry target"
+        benchmark_detail = f"At or under the 4–5% starting target — {WASTE_TARGET_NOTE}"
     elif waste_rate_pct <= 6:
         benchmark_label  = "On Track"
         benchmark_tone   = "good"
-        benchmark_detail = "Near the 4-5% industry target"
+        benchmark_detail = f"Near the 4–5% starting target — {WASTE_TARGET_NOTE}"
     elif waste_rate_pct <= 10:
         benchmark_label  = "Above Average"
         benchmark_tone   = "warn"
-        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
     elif waste_rate_pct <= 15:
         benchmark_label  = "Concerning"
         benchmark_tone   = "bad"
-        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
     else:
         benchmark_label  = "Needs Attention"
         benchmark_tone   = "bad"
-        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
 
     now_chi = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
     # Two different windows, kept apart on purpose.
@@ -912,6 +922,49 @@ SAMPLE_DATA_NOTICE = (
 )
 
 
+def food_prompt_data_lines(analysis: dict) -> tuple:
+    """(waste-rate line, data-window line) for the Food read's prompt.
+
+    NS4 M1: an unmeasured waste rate went in as "0.0% … (industry target is
+    4-5%)" and came back as "well under the industry target". A rate is
+    stated only when it was measured, and against Cavnar's starting target,
+    never "industry". NS4 M3/M4: the window the figures cover and the age of
+    the newest stock count go in, and an old count is said before any
+    ordering advice (critical-low lines carry count_stale)."""
+    from time_utils import mdy as _mdy_fl
+    a = analysis or {}
+    state = a.get("benchmark_state")
+    if state == "measured" and a.get("total_purchased"):
+        waste = (f"- Waste rate: {a.get('waste_rate_pct')}% of ${float(a['total_purchased']):,.2f} purchased, "
+                 f"against the 4–5% starting target ({WASTE_TARGET_NOTE} — never call it an industry target or "
+                 f"compare it to other restaurants; label: {a.get('benchmark_label')}). "
+                 f"Denominator basis: {a.get('purchases_basis')}")
+    elif state == "not_measured":
+        waste = ("- Waste rate: NOT MEASURED — nothing was logged as waste this week, which is not the same as "
+                 "nothing wasted. Do not state a waste rate, do not write 0%, and do not compare waste to any "
+                 "target or to other restaurants.")
+    else:
+        waste = ("- Waste rate: NOT MEASURED — no purchases on file to divide by. Do not state a waste rate or "
+                 "compare it to anything.")
+    cf = a.get("count_freshness") or {}
+    last = cf.get("last_count_at") or a.get("counted_to")
+    age = cf.get("age_days")
+    parts = []
+    if a.get("week_start") and a.get("week_end"):
+        parts.append(f"waste covers {a['week_start']}–{a['week_end']}")
+    if last:
+        parts.append(f"newest stock count {_mdy_fl(str(last)[:10])}"
+                     + (f", {age} day{'' if age == 1 else 's'} ago" if age is not None else ""))
+    else:
+        parts.append("no stock count on file")
+    line = "- Data window: " + "; ".join(parts) + "."
+    if cf.get("stale"):
+        line += (" THE STOCK COUNT IS OLD: days remaining, critically-low items (marked count_stale) and suggested "
+                 "orders rest on a projection from it. Say the count is old before any ordering advice, and do not "
+                 "say an item is out, running out today or needs ordering now on that count alone.")
+    return waste, line
+
+
 def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None,
                         restaurant_id: int = None, items: list = None,
                         is_live: bool = True) -> str:
@@ -1087,9 +1140,12 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         except Exception:
             pass
 
-    from time_utils import restaurant_now_by_id as _rnbi_today
-    today_inv = (_rnbi_today(restaurant_id) if restaurant_id
-                 else datetime.now(ZoneInfo('America/Chicago'))).strftime("%B %d, %Y")
+    from time_utils import restaurant_now_by_id as _rnbi_today, mdy as _mdy_inv
+    _now_inv = (_rnbi_today(restaurant_id) if restaurant_id
+                else datetime.now(ZoneInfo('America/Chicago')))
+    # M/D/YY: the model repeats the date it is handed.
+    today_inv = _mdy_inv(_now_inv)
+    _waste_rate_line, _window_line = food_prompt_data_lines(analysis)
 
     # Seasonal/event awareness — pull upcoming holidays for ordering recommendations
     holiday_context = ""
@@ -1283,13 +1339,14 @@ You are not writing a summary. The owner can already see their waste total and t
 {rest_line}
 {name_line}
 Today's date: {today_inv}
+{_window_line}
 
 Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f} ({analysis['projection_basis']})
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
-- Waste rate vs industry: {analysis['waste_rate_pct']}% of ${analysis['total_purchased']:,.2f} purchased (industry target is 4-5% — label: {analysis['benchmark_label']}). Denominator basis: {analysis['purchases_basis']}{wow_context}{trend_context}{big_8_context}{holiday_context}
+{_waste_rate_line}{wow_context}{trend_context}{big_8_context}{holiday_context}
 
 How "recoverable" is defined: {RECOVERABLE_BASIS}
 {cfo_block}{diag_block}
@@ -1301,7 +1358,7 @@ Overstocked items:
 {json.dumps([{"item": x["item"], "current": x["current_stock"], "par": x["par_level"], "overstock_cost": x["overstock_cost"]} for x in analysis["overstock"][:3]], indent=2)}
 
 Critical low stock:
-{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]} for x in analysis["critical_low"][:12]], indent=2)}
+{json.dumps([dict({"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]}, **({"count_stale": True} if x.get("count_stale") else {})) for x in analysis["critical_low"][:12]], indent=2)}
 
 Savings the data supports (these are the only savings figures that exist — use these, do not compute your own):
 {savings_block}{menu_context}

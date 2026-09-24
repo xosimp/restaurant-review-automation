@@ -271,12 +271,12 @@ textarea{resize:vertical;min-height:60px}
         <div class="form-group">
           <label>Blended hourly rate (wages + taxes + benefits)</label>
           <input type="number" id="hourly_rate" value="{{ restaurant.hourly_rate or 26.0 }}" min="10" max="60" step="0.50">
-          <div class="hint">Used to calculate actual labor cost from hours worked. Industry average $22–28/hr blended.</div>
+          <div class="hint">Used to calculate actual labor cost from hours worked. Take it from a recent payroll report (wages plus employer taxes and benefits, divided by hours) — there is no sourced industry figure to default to.</div>
         </div>
         <div class="form-group">
           <label>Labor % target</label>
           <input type="number" id="labor_target_pct" value="{{ restaurant.labor_target_pct or 30.0 }}" min="15" max="50" step="0.5">
-          <div class="hint">Default is 30%. Adjust if this restaurant has a different target (e.g. fine dining may run 35%, fast casual may target 25%).</div>
+          <div class="hint">Default is 30%. {% if bench_hints and bench_hints.labor %}{{ bench_hints.labor }}{% else %}No published labor benchmark for this restaurant's type, so set the owner's own target.{% endif %}</div>
         </div>
         <div class="form-group">
           <label>Payroll week starts on</label>
@@ -484,12 +484,12 @@ textarea{resize:vertical;min-height:60px}
         <div class="form-group">
           <label>Food cost target %</label>
           <input type="number" id="food_cost_target" value="{{ restaurant.food_cost_target or 30 }}" min="10" max="50" step="1">
-          <div class="hint">Target food cost as % of revenue (typically 28–35%)</div>
+          <div class="hint">Target food cost as % of revenue. {% if bench_hints and bench_hints.food %}{{ bench_hints.food }}{% else %}No published food cost benchmark for this restaurant's type.{% endif %}</div>
         </div>
         <div class="form-group">
           <label>Waste target %</label>
           <input type="number" id="waste_target_pct" value="{{ restaurant.waste_target_pct if restaurant.waste_target_pct is not none else '' }}" min="1" max="20" step="0.1" placeholder="4.5">
-          <div class="hint">Target waste as % of purchases, used by the Food Cost waste-trend chart. Leave blank for the 4.5% industry default.</div>
+          <div class="hint">Target waste as % of purchases, used by the Food Cost waste-trend chart. Leave blank for Cavnar's 4.5% starting default (not an industry figure — none is published).</div>
         </div>
         <div class="form-group">
           <label>Last inventory count</label>

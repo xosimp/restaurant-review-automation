@@ -11,6 +11,77 @@ from emails import html_document as _html_doc  # one definition; emails reads it
 
 from time_utils import mdy as _mdy
 
+# ── The digest's data floor (NS4 C2, M3) ─────────────────────────────────
+# Labor data whose last shift is older than this is not "this week's": the
+# prompt says its age and it does not count as data for the week.
+DIGEST_FRESH_DAYS = 7
+# "The best post" is named only over at least this many measured posts.
+DIGEST_MKT_BEST_MIN_POSTS = 3
+# What the digest says — without a model call — when no enabled module has
+# anything measured this week. The scheduler does not send it at all.
+DIGEST_NO_DATA_HEADLINE = ("Not enough data this week for a read — no new reviews, and nothing new from "
+                           "your other modules.")
+
+
+def labor_data_age_days(end, restaurant_id=None):
+    """Days between the last shift on file and today in the restaurant's
+    own zone, or None when either is unknown."""
+    try:
+        from datetime import date as _date
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id).date() if restaurant_id else datetime.now().date()
+        return (today - _date.fromisoformat(str(end)[:10])).days
+    except Exception:
+        return None
+
+
+def digest_has_data(restaurant, report) -> bool:
+    """Whether any module this restaurant has on measured something for the
+    week the digest covers (NS4 C2): reviews this week; labor whose last
+    shift is within DIGEST_FRESH_DAYS; a live food-cost read with waste or
+    low stock; a measured post in the last 14 days. The scheduler sends no
+    digest without one — it used to skip only when there were no reviews
+    AND no other module switched on, so a switched-on module with nothing in
+    it got a generated email. Never raises (a failed read counts as no data
+    for that module)."""
+    if int(getattr(report, "total_reviews", 0) or 0) > 0:
+        return True
+    rid = getattr(restaurant, "id", None) or getattr(report, "restaurant_id", None)
+    if getattr(restaurant, "module_labor", 0):
+        try:
+            from labor import analyse_shifts_for_restaurant
+            a = analyse_shifts_for_restaurant(rid)
+            end = ((a or {}).get("date_range") or {}).get("end")
+            age = labor_data_age_days(end, rid) if end else None
+            if a and a.get("is_live") and a.get("overall_labor_pct") and age is not None and age <= DIGEST_FRESH_DAYS:
+                return True
+        except Exception:
+            pass
+    if getattr(restaurant, "module_inventory", 0):
+        try:
+            from inventory import analysis_for
+            _inv, live, analysis = analysis_for(rid)
+            if _inv and live and ((analysis or {}).get("waste_items") or (analysis or {}).get("critical_low")):
+                return True
+        except Exception:
+            pass
+    if getattr(restaurant, "module_marketing", 0):
+        try:
+            from models import get_conn as _gc_dh
+            c = _gc_dh()
+            try:
+                n = c.execute("SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? "
+                              "AND post_id IS NOT NULL AND (reach > 0 OR impressions > 0 OR likes > 0) "
+                              "AND created_at >= datetime('now','-14 days')", (rid,)).fetchone()
+            finally:
+                c.close()
+            if n and int(n["n"] or 0) > 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 SENTIMENT_COLOR = {"positive": "#16a34a", "neutral": "#6b7280", "negative": "#dc2626"}
 STAR_FILLED = "★"
 STAR_EMPTY  = "☆"
@@ -110,15 +181,23 @@ _TOPIC_RE = {"labor": r"\b(?:labor|labour|staffing|payroll)\b",
              "reviews": r"(?:\brating|\bstars?\b|★)"}
 
 
-def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=None) -> str | None:
-    """Why one digest line must not be emailed, or None (H9): a name that
-    was never in its input (ai_guard.unsupported_names, the Reviews
-    insight's check), a direction that disagrees with what was measured —
-    or claims one where nothing measured moved — a cause no stored
-    diagnosis holds, and for the ACTION line, when a diagnosis exists, an
-    action that is not its recommendation (the prompt said so; now it is
-    checked)."""
-    from ai_guard import carries_anchor, unsupported_causes, unsupported_names
+def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=None,
+                        untrusted_shingles=None) -> str | None:
+    """Why one digest line must not be emailed, or None (H9): a link, an
+    email address or an injection tell, or six words in a row of a guest's
+    review (NS6 §B finding 4 — the digest is unattended, like the DSR and
+    the weekly plan that already ran these), a name that was never in its
+    input (ai_guard.unsupported_names, the Reviews insight's check), a
+    direction that disagrees with what was measured — or claims one where
+    nothing measured moved — a cause no stored diagnosis holds, and for the
+    ACTION line, when a diagnosis exists, an action that is not its
+    recommendation (the prompt said so; now it is checked)."""
+    from ai_guard import carries_anchor, echoes, injection_residue, unsupported_causes, unsupported_names
+    why = injection_residue(line)
+    if why:
+        return why
+    if untrusted_shingles and echoes(line, untrusted_shingles):
+        return "repeats a guest's review word for word"
     names = unsupported_names(line, prompt)
     if names:
         return f"names {', '.join(names[:3])}, who is not in the data"
@@ -182,6 +261,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         labor_context = ""
         inventory_context = ""
         marketing_context = ""
+        _labor_stale = False
         _facts = {"labor": None, "inventory": None, "marketing": None}
         try:
             from labor import analyse_shifts_for_restaurant
@@ -199,8 +279,19 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     from time_utils import mdy as _mdy_lr
                     labor_context = (f"Labor: {lp:.1f}% of revenue over the {_days_lr} days of shifts "
                                      f"through {_mdy_lr(_dr_lr['end'])}")
+                    # The data's age (NS4 M3): June shifts read in September
+                    # are not this week's labor, and the line says so.
+                    _age_lr = labor_data_age_days(_dr_lr["end"], restaurant_id or report.restaurant_id)
+                    if _age_lr is not None:
+                        labor_context += f" ({_age_lr} day{'' if _age_lr == 1 else 's'} before today"
+                        if _age_lr > DIGEST_FRESH_DAYS:
+                            labor_context += (" — older than this week: name its dates, never call it this "
+                                              "week's labor")
+                            _labor_stale = True
+                        labor_context += ")"
                 else:
                     labor_context = f"Labor: {lp:.1f}% of revenue over the shifts on file"
+                    _labor_stale = True
                 if ot_risk:
                     labor_context += f", {len(ot_risk)} overtime risk"
                 _facts["labor"] = {"pct": float(lp), "direction": None,
@@ -303,11 +394,15 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 (report.restaurant_id,)
             ).fetchall()
             _conn_mkt.close()
-            if _mkt_rows:
+            # "Best" of one post is not a ranking (NS4 L6 / the marketing
+            # read's BEST rule): named only over MKT_BEST_MIN_POSTS measured
+            # posts, with the count said.
+            if len(_mkt_rows) >= DIGEST_MKT_BEST_MIN_POSTS:
                 _best = max(_mkt_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
                 _br = (_best["reach"] or 0) + (_best["impressions"] or 0)
                 if _br > 0:
-                    marketing_context = f"Marketing: best recent post was '{_best['topic']}' ({_br} reach+impr)."
+                    marketing_context = (f"Marketing: of the last {len(_mkt_rows)} measured posts, the best was "
+                                         f"'{_best['topic']}' ({_br} reach+impr).")
                     _facts["marketing"] = {"best_topic": _best["topic"], "best_reach": int(_br),
                                            "measured_posts": len(_mkt_rows)}
         except Exception:
@@ -449,7 +544,13 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
 
         # Pull 1-2 specific notable reviews to call out by name
         specific_reviews = ""
+        # The guest-written words, for the echo check on every line (NS6 §B
+        # finding 4): the digest is unattended, so a line repeating six
+        # words of a review in a row is dropped, like the DSR's and the
+        # weekly plan's.
+        _untrusted_texts = []
         try:
+            from ai_guard import wrap_untrusted as _wrap_rpt
             notable = [r for r in reviews if r.urgency == "high" or r.rating == 5][:2]
             if notable:
                 lines = []
@@ -463,7 +564,13 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     reviewer = ((r.author or "").strip() or "A guest").split()[0]
                     snippet = (r.text or "")[:100].strip()
                     stars = f"{r.rating}★"
-                    lines.append("- " + reviewer + " left a " + stars + " review: " + snippet[:80])
+                    # The name and the snippet are guest-written and go in
+                    # FENCED (NS6 §B finding 4): unfenced, "$85" in a
+                    # review verified a line stating it as a figure, and an
+                    # instruction in one reached an unattended email's prompt.
+                    lines.append(f"- {stars} review, guest's first name then an excerpt:\n"
+                                 + _wrap_rpt(reviewer + "\n" + snippet[:80]))
+                    _untrusted_texts.append(snippet)
                 specific_reviews = "\n" + "\n".join(lines)
             else:
                 specific_reviews = " None particularly notable this week."
@@ -537,7 +644,10 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                         "INVENTORY": bool(inventory_context),
                         "MARKETING": bool(marketing_context)}
         _active = {"LABOR": has_labor, "INVENTORY": has_inventory, "MARKETING": has_marketing}
-        required_lines = ["REVIEWS"]
+        # REVIEWS is required only when there were reviews this week (NS4
+        # C2): at zero it was a forced sentence about a rating of "0.0/5".
+        _has_reviews = int(report.total_reviews or 0) > 0
+        required_lines = ["REVIEWS"] if _has_reviews else []
         for key in ("LABOR", "INVENTORY", "MARKETING"):
             if _active[key] and _module_data[key]:
                 required_lines.append(key)
@@ -550,9 +660,22 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         }
         module_gap_lines = [_MODULE_GAP_COPY[k] for k in ("LABOR", "INVENTORY", "MARKETING")
                             if _active[k] and not _module_data[k]]
+        if not _has_reviews:
+            module_gap_lines.insert(0, "Reviews: no new reviews this week, so there is no rating read.")
+
+        # The DATA FLOOR (NS4 C2): nothing measured this week in any module
+        # means no generation — the model was called at zero reviews with
+        # labor or inventory switched on, and its invented peer comparisons
+        # were emailed. The fixed copy stands instead; the scheduler does not
+        # send it (digest_has_data), and any other caller shows it as is.
+        if not _has_reviews and not any(
+                _module_data[k] and _active[k] and not (k == "LABOR" and _labor_stale)
+                for k in ("LABOR", "INVENTORY", "MARKETING")):
+            return {"headline": DIGEST_NO_DATA_HEADLINE, "_no_data": True, "_data_gaps": module_gap_lines}
+
         module_instruction = f"""
 
-You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {", ".join(required_lines)}.
+You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {", ".join(required_lines) or "none"}.
 - REVIEWS: the rating picture, any multi-week trend that carries a stated confidence, and any urgent reviewer named in the data above
 - LABOR: state the labor % and whether it is trending up or down against prior weeks, using only the figures above
 - INVENTORY: whether waste improved or worsened against last week with the % change given above, and the top waste item named above
@@ -560,11 +683,17 @@ You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {"
 
 Every module NOT in that list is either switched off for this client or reported no data this week. Write NO line for it. Do not infer what it might have said, do not suggest what it might show, and do not refer to it at all. A module with no data is handled outside this summary — inventing a sentence for it would be inventing a fact about this restaurant's week."""
 
+        from ai_guard import UNTRUSTED_NOTE as _UN_RPT
+        # A missing measurement is said as missing, never "0.0/5" (NS4 C2).
+        _avg_line = (f"{report.avg_rating}/5" if _has_reviews and report.avg_rating
+                     else "not measured — no reviews this week")
         prompt = f"""You are the Cavnar AI Consultant writing a weekly digest for {restaurant_name}.
+
+{_UN_RPT}
 
 This week's data:
 - Total reviews: {report.total_reviews}
-- Average rating: {report.avg_rating}/5
+- Average rating: {_avg_line}
 - Positive: {pos}, Negative: {neg}
 - Urgent reviews: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
@@ -591,7 +720,9 @@ Rules:
 - Name a reviewer only from "Notable reviews" above, spelled as it is written there. Name no one if that section is empty.
 - Where a ROOT-CAUSE DIAGNOSIS is given above, the ACTION line comes from its recommendation. Never substitute a cause or a fix of your own — this system cannot confirm one.
 - Where a cross-module observation is given above, you may say the two things moved together. Never say one caused the other.
-- The ACTION line must always be present and must be concrete (a specific call, message, schedule change, or order — not vague advice)"""
+- Never compare this restaurant with other restaurants, "most" restaurants, the "area", "peers", "top-performing" places or an industry average. Nothing above measures any of them.
+- Call a figure "this week's" only when its line above covers this week; a line marked older than this week is named by its dates.
+- The ACTION line must be concrete (a specific call, message, schedule change, or order — not vague advice) and must rest on a figure or diagnosis above. If nothing above supports one, write "ACTION: none this week"."""
 
         msg = create_with_retry(
             client,
@@ -611,6 +742,10 @@ Rules:
             m = _re_rpt.match(r'^(HEADLINE|REVIEWS|LABOR|INVENTORY|MARKETING|ACTION):\s*(.+)$', line)
             if m:
                 parsed[m.group(1).lower()] = m.group(2).strip()
+        # "ACTION: none this week" is the prompt's allowed answer when
+        # nothing supports a move — not a move to email.
+        if _re_rpt.match(r"(?i)^none\b", parsed.get("action") or ""):
+            parsed.pop("action", None)
         if not parsed.get("headline"):
             # This used to fall back to {"headline": raw} — so a response
             # whose format drifted put the model's entire output, preamble
@@ -647,9 +782,13 @@ Rules:
                                    else ("up" if _rating_move > 0 else "down"))}
         _anchors = ([_d0.get("cause"), _d0.get("alternative_cause"), _d0.get("recommended_action")]
                     if _d0 else [])
+        from ai_guard import shingles as _shingles_rpt
+        _untrusted_sh = set()
+        for _t in _untrusted_texts:
+            _untrusted_sh |= _shingles_rpt(_t)
         for key in list(parsed):
             why = digest_line_problem(key, parsed[key], prompt, _directions, _anchors,
-                                      diagnosis=_d0)
+                                      diagnosis=_d0, untrusted_shingles=_untrusted_sh)
             if why:
                 print(f"[digest] dropped {key} line — {why}")
                 try:

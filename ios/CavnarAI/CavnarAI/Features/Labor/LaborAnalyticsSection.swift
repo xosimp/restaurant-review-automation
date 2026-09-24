@@ -57,15 +57,18 @@ struct LaborAnalyticsSection: View {
         // its cell (see SavingsTile's maxHeight) inside a grid whose rows
         // are sized by the taller tile.
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            // The "vs industry" tiles only where the server sent a benchmark
+            // for this restaurant's type (NS4 H3): null means the registry
+            // holds no published figure for it, and nothing is compared.
             if b.laborMonthly > 0 {
                 SavingsTile(numericValue: b.laborMonthly, format: formattedDollarsK, label: "Monthly savings", sublabel: "if schedule optimized", startFromZero: startFromZero)
-            } else {
-                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs \(b.industryPctText) avg", startFromZero: startFromZero)
+            } else if let ind = b.industryPctText {
+                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs \(ind) avg", startFromZero: startFromZero)
             }
             if b.laborAnnual > 0 {
                 SavingsTile(numericValue: b.laborAnnual, format: formattedDollarsK, label: "Annual savings", sublabel: "extrapolated yearly", startFromZero: startFromZero)
-            } else {
-                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. \(b.industryPctText) industry avg/yr", startFromZero: startFromZero)
+            } else if let ind = b.industryPctText {
+                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. \(ind) industry avg/yr", startFromZero: startFromZero)
             }
             if b.laborOvertime > 0 {
                 SavingsTile(numericValue: b.laborOvertime, format: formattedDollarsK, label: "Overtime premium", sublabel: "0.5× rate on hours over 40", tone: Color.cavnarRed, startFromZero: startFromZero)
@@ -88,14 +91,6 @@ struct LaborAnalyticsSection: View {
         return "$\(Int(value))"
     }
 
-    // National Restaurant Association 2024 full-service median range — see
-    // labor.py's own comment for the same figure and its source. Kept here
-    // as the single place the benchmark BAND's position is computed; the
-    // "Industry range: 33–36%" caption text below is the same numbers
-    // spelled out, not a second, independently-maintained source of truth.
-    private static let industryLow = 33.0
-    private static let industryHigh = 36.0
-
     @ViewBuilder
     private func benchmarkBar(_ stats: LaborStats) -> some View {
         let pct = stats.overallLaborPct
@@ -103,12 +98,16 @@ struct LaborAnalyticsSection: View {
         let bucket = benchmarkBucket(pct: pct, target: target)
         let barFill = min(pct / 50 * 100, 100)
         let targetPos = min(target / 50 * 100, 97)
-        let industryStart = min(Self.industryLow / 50 * 100, 100)
-        let industryWidth = max(0, min((Self.industryHigh - Self.industryLow) / 50 * 100, 100 - industryStart))
+        // The industry figure is the server's, by restaurant type
+        // (benchmark_registry, NS4 H3) — a published median, drawn as one
+        // mark, and absent (no mark, no legend, no line) when the registry
+        // has no entry for this type. The client no longer keeps a band.
+        let industry = stats.savingsBreakdown.laborIndustryPct
+        let industryPos = industry.map { min($0 / 50 * 100, 99) }
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Labor % vs industry benchmark")
+                Text(industry == nil ? "Labor % vs your target" : "Labor % vs target and industry")
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(0.4)
                     .foregroundStyle(Color.cavnarInk)
@@ -127,18 +126,16 @@ struct LaborAnalyticsSection: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))
-                    // The industry range is a band (33–36%), not a single
-                    // point, so it gets a shaded region rather than a tick
-                    // — a single line would falsely imply one exact
-                    // "average" value instead of the real reported range.
-                    Rectangle().fill(Color.cavnarInk.opacity(0.35))
-                        .frame(width: geo.size.width * industryWidth / 100)
-                        .offset(x: geo.size.width * industryStart / 100)
                     Capsule().fill(bucket.color)
                         .frame(width: geo.size.width * barFill / 100)
                     Rectangle().fill(Color.cavnarGreen)
                         .frame(width: 2)
                         .offset(x: geo.size.width * targetPos / 100)
+                    if let industryPos {
+                        Rectangle().fill(Color.cavnarInk.opacity(0.55))
+                            .frame(width: 2)
+                            .offset(x: geo.size.width * industryPos / 100)
+                    }
                 }
             }
             .frame(height: 10)
@@ -147,29 +144,30 @@ struct LaborAnalyticsSection: View {
                     Rectangle().fill(Color.cavnarGreen).frame(width: 8, height: 2)
                     Text("Your target (\(Int(target))%)")
                 }
-                HStack(spacing: 4) {
-                    Rectangle().fill(Color.cavnarInk.opacity(0.35)).frame(width: 8, height: 8)
-                    Text("Industry range: 33–36% for full-service restaurants")
+                if let ind = stats.savingsBreakdown.industryPctText {
+                    HStack(spacing: 4) {
+                        Rectangle().fill(Color.cavnarInk.opacity(0.55)).frame(width: 8, height: 2)
+                        Text("Industry benchmark (\(ind))")
+                    }
                 }
             }
             .font(.cavnarBody(14))
             .foregroundStyle(Color.cavnarInk3)
 
-            // Measured against the industry band's midpoint (34.5%), not
-            // the restaurant's own target — "your target" and "industry
-            // average" are two different lines on this same bar, and this
-            // sentence is specifically about the second one.
-            // The server's benchmark and its source when sent (I10:
-            // thresholds.LABOR_INDUSTRY_PCT, one figure for web and iOS).
-            let industryMid = stats.savingsBreakdown.laborIndustryPct ?? (Self.industryLow + Self.industryHigh) / 2
-            let diff = pct - industryMid
-            let isBelow = diff <= 0
-            HomeMixedText.make(Self.industryLine(diff: diff, industryText: stats.savingsBreakdown.industryPctText),
-                               size: 14, color: isBelow ? .cavnarGreen : .cavnarRed, numberWeight: 700)
-                .fixedSize(horizontal: false, vertical: true)
-            if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
-                HomeMixedText.make("Benchmark: \(basis).", size: 12.5, color: .cavnarInk3)
+            // Against the industry figure, not the restaurant's own target —
+            // "your target" and "industry benchmark" are two different marks
+            // on this bar, and this sentence is about the second. Only when
+            // the server sent one, with its source and year.
+            if let industry, let ind = stats.savingsBreakdown.industryPctText {
+                let diff = pct - industry
+                let isBelow = diff <= 0
+                HomeMixedText.make(Self.industryLine(diff: diff, industryText: ind),
+                                   size: 14, color: isBelow ? .cavnarGreen : .cavnarRed, numberWeight: 700)
                     .fixedSize(horizontal: false, vertical: true)
+                if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
+                    HomeMixedText.make("Benchmark: \(basis).", size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .cavnarCard()

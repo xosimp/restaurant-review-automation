@@ -19,9 +19,12 @@ import json
 import math
 from datetime import date, timedelta
 
-# Midpoint of the 4–5% industry band analyse_inventory() benchmarks
-# against; the same figure iOS's FoodCostTrendChart uses for its target
-# rule, so both surfaces draw the line in the same place.
+# Cavnar's STARTING waste target, used until the owner sets their own
+# (restaurants.waste_target_pct): the midpoint of the 4–5% band
+# analyse_inventory() labels against, and the figure iOS's FoodCostTrendChart
+# draws, so both surfaces put the line in the same place. It is not an
+# industry benchmark — no published source for it was ever found, and
+# benchmark_registry.ABSENT says so — so nothing calls it one (NS4 H3).
 WASTE_TARGET_PCT = 4.5
 
 RANGE_WEEKS = {"8w": 8, "13w": 13, "26w": 26, "all": None}
@@ -578,7 +581,7 @@ def implied_target_weekly(analysis=None, weeks=None, target_pct=WASTE_TARGET_PCT
 
 
 def get_waste_target_pct(restaurant_id, db_path=None):
-    """This restaurant's own waste target %, or the industry default (see
+    """This restaurant's own waste target %, or Cavnar's starting default (see
     WASTE_TARGET_PCT) when they haven't set one."""
     from models import get_conn
     conn = get_conn(db_path) if db_path else get_conn()

@@ -735,7 +735,8 @@ def test_m18_benchmark_compares_google_rating_to_google_ratings(db_path):
     import review_intelligence as ri
     rid = _rid(db_path)
     models.update_restaurant(rid, {"competitor_intel": json.dumps(
-        {"competitors": [{"name": "A", "rating": 4.4}, {"name": "B", "rating": 4.6}]})})
+        {"competitors": [{"name": "A", "rating": 4.4}, {"name": "B", "rating": 4.6},
+                         {"name": "C", "rating": 4.5}]})})
     for _ in range(5):
         _review(db_path, rid, rating=4)
     b = ri.competitor_benchmark(rid, db_path=db_path)

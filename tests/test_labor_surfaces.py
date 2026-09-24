@@ -82,7 +82,8 @@ def _labor_payload(monkeypatch, analysis):
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda rid: analysis)
     monkeypatch.setattr(mobile_api, "get_restaurant",
                         lambda rid: types.SimpleNamespace(
-                            labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago"))
+                            labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago",
+                            category="italian"))   # a type with a published labor figure (NS4 H3)
     monkeypatch.setattr(mobile_api, "_staff_constraints_index", lambda rid: {})
     payload, _ = mobile_api._do_mobile_labor(1)
     return payload
@@ -151,7 +152,8 @@ def test_a_failed_analysis_does_not_read_as_zero_percent_on_track(monkeypatch):
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", boom)
     monkeypatch.setattr(mobile_api, "get_restaurant",
                         lambda rid: types.SimpleNamespace(
-                            labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago"))
+                            labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago",
+                            category="italian"))   # a type with a published labor figure (NS4 H3)
     monkeypatch.setattr(mobile_api, "_staff_constraints_index", lambda rid: {})
     payload, _ = mobile_api._do_mobile_labor(1)
     assert payload["analysis_failed"] is True

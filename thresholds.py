@@ -57,30 +57,51 @@ def demand_level(vs_average_pct):
     return "normal"
 
 
-# ── Labor against the industry (CA1 L33, fix I10) ────────────────────────
-# One benchmark for both clients: the web tile used 32% (a pre-pandemic
-# figure) and iOS 34.5%, so the same restaurant saw two dollar figures.
-# 34.5% is the midpoint of the 33-36% full-service range (NRA 2024
-# Restaurant Operations Data Abstract), the band both clients print.
-LABOR_INDUSTRY_PCT = 34.5
-LABOR_INDUSTRY_BASIS = "midpoint of the 33-36% full-service range (NRA 2024 Restaurant Operations Data Abstract)"
+# ── Labor against the industry (CA1 L33, fix I10; NS4 H3) ────────────────
+# One benchmark for both clients, and now by restaurant type. The 34.5%
+# full-service midpoint used to be applied to every restaurant, so a coffee
+# shop at 22% labor was told it "saved" $7,500 a month against a figure for
+# a different kind of business. The comparison is made only where
+# benchmark_registry holds a PUBLISHED entry for the restaurant's type with a
+# stated median (today: the NRA full-service figure, for full-service types).
+# Every other restaurant gets no industry figure at all — the server sends
+# `labor_industry_pct` null and both clients hide the tile.
 LABOR_INDUSTRY_MIN_DAYS = 7
 
 
+def labor_industry_benchmark(restaurant) -> dict | None:
+    """{pct, basis, inferred, entry}: the published labor median for this
+    restaurant's type, or None when the registry has no published entry
+    for it (no entry, no benchmark). The basis names the source and year
+    and says when the type was inferred rather than set."""
+    import benchmark_registry as _br
+    e = _br.for_restaurant("labor_pct", restaurant, published_only=True)
+    if not e or e.get("median") is None:
+        return None
+    basis = f"{e.get('median_basis') or 'published median'}, {e['median']:g}% ({_br.cite(e)})"
+    if e.get("inferred"):
+        basis += f"; {_br.INFERRED_NOTE}"
+    return {"pct": float(e["median"]), "basis": basis, "inferred": bool(e.get("inferred")), "entry": e}
+
+
 def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_estimated=False,
-                              sales_data_missing=False, analysis_failed=False) -> int:
+                              sales_data_missing=False, analysis_failed=False, industry_pct=None) -> int:
     """Monthly dollars this restaurant's labor % runs under the industry
-    midpoint, or 0 when that cannot be said honestly: estimated hours
-    understate labor (and so overstate the gap), missing sales or a
-    sub-week period leave no monthly rate to compare."""
+    figure for its type (`industry_pct`, from labor_industry_benchmark), or
+    0 when that cannot be said honestly: no benchmark for the type,
+    estimated hours understate labor (and so overstate the gap), missing
+    sales or a sub-week period leave no monthly rate to compare."""
+    if industry_pct is None:
+        return 0
     try:
         pct, sales, days = float(overall_pct or 0), float(total_sales or 0), int(period_days or 0)
+        bench = float(industry_pct)
     except (TypeError, ValueError):
         return 0
     if analysis_failed or hours_are_estimated or sales_data_missing or days < LABOR_INDUSTRY_MIN_DAYS or not pct:
         return 0
     monthly_sales = sales / days * 30
-    return max(0, int(round((LABOR_INDUSTRY_PCT - pct) / 100 * monthly_sales)))
+    return max(0, int(round((bench - pct) / 100 * monthly_sales)))
 
 
 # ── Group strongest / weakest (CA1 H13, fix I12) ─────────────────────────

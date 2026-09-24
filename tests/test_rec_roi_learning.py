@@ -351,7 +351,8 @@ def _prior(value, restaurants=6, measured=12, scope="cohort"):
 
 def test_the_cohort_prior_moves_a_band_once_the_floor_is_met():
     c = confidence.card_confidence("medium", "four weeks of shifts", _prior(0.82))
-    assert c["band"] == "high" and c["basis"] == "cohort" and "restaurants like yours" in c["reason"]
+    # Named from the cohort used, never "restaurants like yours" (NS4 H4).
+    assert c["band"] == "high" and c["basis"] == "cohort" and "on Cavnar" in c["reason"] and "like yours" not in c["reason"]
     assert confidence.card_confidence("medium", "x", _prior(0.2))["band"] == "low"
     # below the cohort floor or on too few results it says nothing
     assert confidence.card_confidence("medium", "x", _prior(0.9, restaurants=4))["adjusted"] is None

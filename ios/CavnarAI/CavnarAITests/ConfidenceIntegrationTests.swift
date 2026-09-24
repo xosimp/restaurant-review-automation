@@ -130,7 +130,8 @@ final class ConfidenceIntegrationTests: XCTestCase {
              "demand_accuracy": null, "week_projection_accuracy": null}
             """)
         XCTAssertNil(s.savingsBreakdown.laborIndustryPct)
-        XCTAssertEqual(s.savingsBreakdown.industryPctText, "34.5%")
+        // No benchmark for the type (NS4 H3): nothing to name, never 34.5%.
+        XCTAssertNil(s.savingsBreakdown.industryPctText)
         XCTAssertNil(s.laborUpcoming.first?.label)
         XCTAssertEqual(s.laborUpcoming.first?.planningLine, "Flag it for your next schedule build.")
         XCTAssertEqual(LaborView.forecastRecordLines(s), [])

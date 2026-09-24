@@ -1070,11 +1070,20 @@ def _read_platform_intelligence(restaurant_id):
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     cohort, source = intelligence.cohort_for(r) if r else (None, None)
-    from intelligence import benchmarks as _b, patterns as _p, categories as _c
-    bands = [b for b in _b.all_for(restaurant_id, cohort=cohort)]
-    return {"cohort": cohort, "cohort_label": _c.label(cohort), "cohort_source": source,
+    from intelligence import benchmarks as _b, patterns as _p
+    # Each band names the cohort it was actually read from (a platform band
+    # is "All restaurants on Cavnar", not "like yours"), its size with this
+    # restaurant left out, and its as_of date; an inferred type says so
+    # (NS4 H4/H5/M5, NS6 §B).
+    bands = [b for b in _b.all_for(restaurant_id, cohort=cohort, cohort_source=source)]
+    return {"cohort": cohort, "cohort_label": _b.cohort_label(cohort), "cohort_source": source,
+            "inferred": source == "inferred",
             "benchmarks": bands, "patterns": _p.active(cohort, limit=8),
-            "note": "Aggregates over at least five restaurants; a band marked unavailable means too few similar restaurants yet."}
+            "note": (f"Quartile bands are over at least {_b.MIN_QUARTILE_N} other restaurants (this one left out), "
+                     f"no older than {_b.MAX_BAND_AGE_WEEKS} weeks, each with its as_of date — quote the date and the "
+                     "cohort_label with any band. A band marked unavailable means too few restaurants yet. "
+                     + ("This restaurant's type was inferred from its name, not set by the owner — say so. "
+                        if source == "inferred" else ""))}
 
 
 def _read_decisions(restaurant_id, limit=20, _viewer=None):

@@ -26,9 +26,11 @@ from datetime import date, timedelta
 # current prices.
 DEFAULT_WINDOW_DAYS = 28
 
-# Full-service industry band for food cost as a share of sales. Used only to
-# label a computed figure, never to invent one.
-INDUSTRY_BAND = (28.0, 35.0)
+# The industry band a computed food cost % is labelled against comes from
+# benchmark_registry by the restaurant's type (NS4 H3). The unsourced
+# (28, 35) "full-service" band used to be applied to every restaurant; with
+# no entry for the type there is no industry label at all, only the owner's
+# own target.
 
 # An inventory snapshot this far either side of the window edge is still a
 # fair opening/closing measure. Beyond it the count is too stale to anchor a
@@ -251,9 +253,11 @@ def net_sales_in_window(restaurant_id, start, end):
 MAX_MEASURABLE_PCT = 100.0
 
 
-def band_label(pct, target=None):
+def band_label(pct, target=None, bench=None):
     """How a computed food cost % reads. `target` is the restaurant's own
-    when they've set one; the industry band is the fallback."""
+    when they've set one; `bench` (a benchmark_registry food_cost_pct entry
+    for the restaurant's type) is the fallback. With neither there is no
+    label — never a band for a different kind of restaurant."""
     if pct is None:
         return None, None
     if target:
@@ -262,7 +266,9 @@ def band_label(pct, target=None):
         if pct <= target + 2:
             return "Slightly over", "warn"
         return "Over target", "bad"
-    low, high = INDUSTRY_BAND
+    if not bench:
+        return None, None
+    low, high = bench["low"], bench["high"]
     if pct <= low:
         return "Below the industry band", "good"
     if pct <= high:
@@ -387,12 +393,20 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
                    "or missing sales days, not a measurement",
         }]
         return payload
-    label, tone = band_label(pct, target)
+    import benchmark_registry as _br
+    bench = None if target else _br.for_restaurant("food_cost_pct", restaurant)
+    label, tone = band_label(pct, target, bench=bench)
     payload.update({
         "ok": True,
         "pct": pct,
         "label": label,
         "tone": tone,
         "variance_pts": round(pct - target, 1) if target else None,
+        # Which band the label was read against, with its source, year and
+        # whether the restaurant's type was inferred (NS4 H3, M5).
+        "benchmark": ({"low": bench["low"], "high": bench["high"], "label": bench["label"],
+                       "source": _br.cite(bench), "year": bench.get("year"),
+                       "inferred": bool(bench.get("inferred")), "line": _br.line(bench, "Food cost %")}
+                      if bench else None),
     })
     return payload

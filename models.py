@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     delivery_days   TEXT,                 -- comma-separated weekday abbrevs this client's supplier delivers on, e.g. "Mon,Thu"
     inventory_notes TEXT,                 -- admin notes on how to get data from this client
     food_cost_target REAL DEFAULT 30.0,  -- target food cost % of revenue
-    waste_target_pct REAL,               -- target waste as % of purchases for the Food Cost waste-trend chart; NULL means "use the 4.5% industry default" (waste_trend.WASTE_TARGET_PCT)
+    waste_target_pct REAL,               -- target waste as % of purchases for the Food Cost waste-trend chart; NULL means "use the Cavnar 4.5% starting default" (waste_trend.WASTE_TARGET_PCT; not an industry figure)
     inventory_updated_at TEXT,            -- last time inventory data was uploaded
     -- Tech info
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
@@ -860,6 +860,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
         ("restaurants", "category", "TEXT"),
+        # A cohort band's member values, sorted and unlabelled — server-side
+        # only, so the band shown to a restaurant can leave its own row out
+        # (intelligence.benchmarks.published, NS4 M6).
+        ("intel_benchmarks", "vals_json", "TEXT"),
         # Notifications (alert_log) seen state — same stamp-on-read pattern.
         # Superseded by the per-login notification_reads table (two co-owners
         # share one restaurant row, so one of them opening the bell cleared
@@ -2043,6 +2047,7 @@ def init_db(db_path: str = DB_PATH):
             p75            REAL,
             mean           REAL,
             computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            vals_json      TEXT,
             UNIQUE(cohort, metric, week)
         )""",
         """CREATE TABLE IF NOT EXISTS intel_confidence_log (
