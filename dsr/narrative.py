@@ -907,12 +907,52 @@ def _norm_title(t):
     return " ".join(_WORD_RE.findall(str(t or "").lower()))
 
 
+def traced_cites(action, F):
+    """The cites that trace a figure the action STATES (its text or why): a
+    cite, or a pair of cites, that backs a figure no other cite alone backs
+    — the facts the words actually rest on (R2, B5 #2). A cite nothing in
+    the words uses is the model's choice of what to list, and a model
+    listing more facts must not make its action more confident."""
+    cites = [c for c in dict.fromkeys(action.get("cites") or []) if F.has(c)]
+    texts = [t for t in (action.get("text"), action.get("why")) if t]
+    used = set()
+    for t in texts:
+        base = len(F.untraced(t, []))
+        if not base:
+            continue
+        for c in cites:
+            if len(F.untraced(t, [c])) < base:
+                used.add(c)
+        for a, b in combinations(cites, 2):
+            if a in used and b in used:
+                continue
+            pair = len(F.untraced(t, [a, b]))
+            if pair < base and pair < len(F.untraced(t, [a])) and pair < len(F.untraced(t, [b])):
+                used.update((a, b))
+    return [c for c in cites if c in used]
+
+
+def supporting_cites(action, F):
+    """The cites an action's urgency and confidence may read (R2): those
+    tracing a figure its words state, plus the measured facts of the block
+    the action is about (its kind's home block; "investigate" has none, so
+    only traced cites count). An unrelated moving pair ("sales.net" vs last
+    week, cited beside a bar-shift trim) or a guest count from another block
+    no longer makes it "Today"."""
+    traced = set(traced_cites(action, F))
+    home = (ACTION_KINDS.get(action.get("kind")) or (None,))[0]
+    return [c for c in dict.fromkeys(action.get("cites") or [])
+            if F.has(c) and (c in traced or (home and c.split(".", 1)[0] == home))]
+
+
 def urgency_basis(action, F):
     """(True, why) when the facts an action cites justify "before_service"
     (Today): a cited figure moved at least URGENT_MIN_CHANGE_PCT from the
     comparator it cites with it (URGENT_MIN_POINTS for percentages), or a
-    cited critical/urgent count is above zero. (False, why) otherwise."""
-    cites = [c for c in action.get("cites") or [] if c in F.metrics]
+    cited critical/urgent count is above zero. (False, why) otherwise.
+    Only the SUPPORTING cites count (R2): a figure the words state, or a
+    fact of the action's own block."""
+    cites = [c for c in supporting_cites(action, F) if c in F.metrics]
     for c in cites:
         if (set(c.split(".")[-1].split("_")) & _URGENT_COUNT_TOKENS) and F.metrics[c] > 0 and not _is_pct(c):
             return True, f"{c} is {F.metrics[c]:g}"
@@ -1050,8 +1090,13 @@ def action_confidence(action, F, ctx, tctx=None) -> dict:
     try:
         import rec_trust
         import data_freshness
-        cites = [c for c in (action.get("cites") or []) if isinstance(c, str)]
-        measured = [c for c in cites if F.has(c)]
+        # Only the facts the action's words rest on count (R2, B5 #2): the
+        # cites tracing a figure it states. With none traced, the action's
+        # own block counts once — padding its cite list with more of that
+        # block's facts, or with another block's moving pair, adds nothing.
+        supporting = [c for c in supporting_cites(action, F) if isinstance(c, str)]
+        traced = [c for c in traced_cites(action, F) if c in supporting]
+        measured = traced or supporting[:1]
         blocks = sorted({c.split(".", 1)[0] for c in measured})
         gross_missing = bool(F.details.get("sales.gross_missing") or F.metrics.get("sales.gross_missing"))
         flags = ("gross_missing",) if (gross_missing and "sales" in blocks) else ()

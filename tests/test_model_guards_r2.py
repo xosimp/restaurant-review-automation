@@ -147,3 +147,48 @@ def test_r9_p20_review_diagnosis_k1_reads_the_capped_band(db_path):
     ev = d["confidence_detail"]["dimensions"]["evidence"]
     # the medium cap (65) holds, not the high one
     assert ev["pct"] is not None and ev["pct"] <= confidence_engine.MODEL_CAPS["medium"]
+
+
+# ── R2: DSR urgency and action confidence read only supporting cites (p07) ──
+
+def _dsr_facts():
+    import dsr
+    from dsr import narrative as N
+    R = dsr.READY
+    return N.Facts({"business_date": "2026-09-22", "blocks": {
+        "sales": {"status": R, "metrics": {"net": 19850.4, "net_last_week": 17210.15, "forecast_net": 20500.0}},
+        "labor": {"status": R, "metrics": {"pct": 27.1, "pct_last_week": 26.8, "hours": 212.0, "cost": 5379.0}},
+        "reviews": {"status": R, "metrics": {"count": 6, "urgent_count": 1, "avg_rating": 4.3}},
+        "food": {"status": R, "metrics": {"est_food_cost_pct": 31.2}}}})
+
+
+def test_r2_p07_unrelated_cites_never_raise_urgency_or_evidence(db_path):
+    from dsr import narrative as N
+    F = _dsr_facts()
+    rid = _rid(db_path)
+    ctx = types.SimpleNamespace(restaurant_id=rid, db_path=db_path)
+    base = {"text": "Trim one bar shift on Tuesday.", "why": "Labor ran 27.1% of sales.", "dollars_monthly": None,
+            "urgency": "before_service", "effort": "low", "kind": "adjust_staffing", "subject": None}
+    res = {}
+    for label, cites in [("honest", ["labor.pct"]),
+                         ("sales pair", ["labor.pct", "sales.net", "sales.net_last_week"]),
+                         ("urgent count", ["labor.pct", "reviews.urgent_count"]),
+                         ("padding", ["labor.pct", "labor.hours", "labor.cost", "reviews.count"])]:
+        a = dict(base, cites=cites)
+        assert N.check_item(a, F, action=True) is None
+        a2 = N.check_urgency(a, F)
+        conf = N.action_confidence(dict(a2, key="dsr_action:adjust_staffing:labor"), F, ctx)
+        res[label] = (a2["urgency"], conf["dimensions"]["evidence"]["pct"], conf["pct"])
+    assert all(r == res["honest"] for r in res.values()), res
+    assert res["honest"][0] == "this_week"
+
+
+def test_r2_a_cited_figure_the_words_state_still_counts():
+    from dsr import narrative as N
+    F = _dsr_facts()
+    a = {"text": "Push the patio special on Thursday.", "why": "Sales were $19,850, up 15.3% on last week.",
+         "kind": "push_sales", "cites": ["sales.net", "sales.net_last_week", "reviews.urgent_count"],
+         "urgency": "before_service", "effort": "low", "dollars_monthly": None, "subject": None}
+    assert set(N.traced_cites(a, F)) == {"sales.net", "sales.net_last_week"}
+    assert "reviews.urgent_count" not in N.supporting_cites(a, F)
+    assert N.check_urgency(a, F)["urgency"] == "before_service"      # the stated 15.3% move is real
