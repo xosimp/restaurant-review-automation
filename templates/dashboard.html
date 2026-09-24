@@ -884,6 +884,8 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-fb .q{font-weight:600}
 .ask-fb .rec-ans-done{font-size:12.5px}
 .ask-fb .ac-input{flex:1 1 160px;min-width:0;width:auto;padding:5px 9px;font-size:12.5px;border:1px solid var(--paper3)}
+.ask-fb.note{align-self:stretch;max-width:92%;flex-wrap:nowrap}
+.ask-fb.note .q,.ask-fb.note .cbtn{flex:0 0 auto;white-space:nowrap}
 .ask-compose{display:flex;gap:10px;align-items:center;padding:10px 14px 14px;border-top:1px solid rgba(14,12,10,.06);flex-shrink:0}
 [data-theme="dark"] .ask-compose{border-top-color:rgba(255,255,255,.05)}
 .ask-compose input{flex:1;min-width:0;padding:12px 14px;border-radius:16px;border:1px solid rgba(14,12,10,.08);background:var(--paper2);color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;outline:none;transition:border-color .15s}
@@ -1490,6 +1492,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-hero .hd .hb-kicker{font-size:14px;margin-bottom:10px}
 .hb-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink)}
 .hb-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:10px}
+.hb-hero .big.neg,.hb-hero .delta.bad{color:var(--hb-bad)}
+.hb-hero .delta.hb-net{margin-top:8px}.hb-hero .delta.hb-net+.delta{margin-top:2px}
 .hb-hero .delta{font-size:13px;font-weight:600;color:var(--hb-good);margin-top:6px}
 .hb-hero .delta span{color:var(--ink3);font-weight:400}
 .hb-range{display:flex;gap:2px}
@@ -1735,6 +1739,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-tl .it.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-tl .it.good .d{background:var(--hb-good);color:var(--hb-good)}
 .hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
+.hb-tl .it .t .rec-ans{display:flex;margin-top:6px}
 /* the ledger: sentences with the count in Space Grotesk */
 .fc2-recipe{padding:10px 0;border-bottom:1px solid var(--paper2)}
 .fc2-recipe-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:14.5px;color:var(--ink)}
@@ -2280,11 +2285,20 @@ svg:hover .hb-xh{opacity:1}
     var vals=sel.map(function(p){return +p.value||0;});
     var delta=vals.length>1?vals[vals.length-1]-vals[0]:0;
     var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':'year';
-    var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>a month, measured</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
+    // Net of what got worse (re-audit K4): once anything tracked got worse,
+    // the headline is the improvements LESS those losses, says so, and says
+    // both sides - the improvements alone read as if nothing had gone the
+    // other way. It can be below zero and is never floored. An older server
+    // without the fields shows the measured total, as before.
+    var wz=v.worsened||{},isNet=(+wz.count||0)>0&&typeof v.net_monthly==='number'&&isFinite(v.net_monthly);
+    var big=isNet?v.net_monthly:(+v.total||0),uw=v.unpriced_wins||[];
+    var netLine=isNet?'<div class="delta hb-net"><span>'+esc(hbNetSentence(v.net_monthly+(+wz.monthly||0),typeof v.wins==='number'?v.wins:undefined,wz))+'</span></div>':'';
+    if(uw.length)netLine+='<div class="delta"><span>plus '+uw.length+' improvement'+(uw.length===1?'':'s')+' with no dollar figure</span></div>';
+    var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
-    el.innerHTML=h;countUp(document.getElementById('hb-big'),v.total||0,'$');
+    el.innerHTML=h;countUp(document.getElementById('hb-big'),Math.abs(big),big<0?'−$':'$');
   }
   // ── signals row ───────────────────────────────────────────────────────────
   function tile(key,label,flag,valueHtml,chartHtml,capLeft,capRight,sample){
@@ -2619,7 +2633,19 @@ svg:hover .hb-xh{opacity:1}
   // optional — a 403 (a manager login has no morning brief) or a failure
   // simply leaves that column out, it never blanks Home.
   var TONE={bad:'critical',action:'important',good:'good',neutral:'watch'};
+  var BRIEF_MOD={reviews:'reviews',stock:'food',schedule:'labor',slow_day:'marketing',loss:'ops',money:'home',fix_first:'home'};
   var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
+  // A result's colour. The counts flag is the server's word on whether it still
+  // counts (outcomes.counts_in_delivered): a result the owner said they
+  // never made, one that faded at its re-check, or an alert read is not a
+  // win or a loss of Cavnar's, whatever the number did - so it is neutral,
+  // never green or red (re-audit K7). An older row without that flag is
+  // coloured by its verdict, as before.
+  function hbResTone(r){
+    if(!r)return 'watch';
+    if(r.counts===false)return 'watch';
+    return r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch');
+  }
   var RESULTTONE={improved:'good',worsened:'critical'};
   function hbFollow(){
     var got={},left=15;
@@ -2653,7 +2679,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-stat'+tone+'"><div class="k">'+esc(m.label)+'</div><div class="v hb-num">'+esc(v)+'</div><div class="s">'+(dl?num(dl)+' vs '+esc(r.compared_with):esc(m.why||''))+(yc?'<br>'+num(yc.replace(/^ — /,'')):'')+(m.ask?'<br><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(m.ask)+'">Ask →</button>':'')+'</div></div>';}
       h+='</div>';}
     var res=r.results||[];
-    if(res.length){h+='<div class="hb-h3" style="margin-top:16px"><span>What your changes did</span></div>';for(var j=0;j<Math.min(res.length,3);j++)h+='<div class="hb-row '+(res[j].verdict==='improved'?'good':(res[j].verdict==='worsened'?'critical':'watch'))+'"><span class="d"></span><span class="t wrap">'+num(res[j].summary||res[j].title||'')+'</span></div>';}
+    if(res.length){h+='<div class="hb-h3" style="margin-top:16px"><span>What your changes did</span></div>';for(var j=0;j<Math.min(res.length,3);j++)h+='<div class="hb-row '+hbResTone(res[j])+'"><span class="d"></span><span class="t wrap">'+num(res[j].summary||res[j].title||'')+'</span></div>';}
     var pr=r.priorities||[];
     if(pr.length){h+='<div class="hb-h3" style="margin-top:16px"><span>Worth your time next month</span></div><div class="hb-ledger">';for(var k=0;k<Math.min(pr.length,3);k++){var p=pr[k];var amt=p.is_range?('$'+num2(p.monthly_low)+'–$'+num2(p.monthly_high)+'/mo'):(p.monthly?'$'+num2(p.monthly)+'/mo':'');h+='<span>'+num(p.label+(amt?' · '+amt:''))+'</span>';}h+='</div>';}
     h+='<div class="ft" style="margin-top:14px"><span class="sp"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
@@ -2799,6 +2825,20 @@ svg:hover .hb-xh{opacity:1}
     }
     return h+'</div>';
   }
+  // "$1,517/mo from 1 that improved, less $600/mo from 1 that got worse".
+  // The dollars on each side cover only PRICED results, so each count is a
+  // count of priced results (re-audit D22): worsened.priced_count, not
+  // worsened.count, which also holds the ones no dollar figure exists for -
+  // those are said on their own. monthly is the improvements alone, wins
+  // their count (absent from Home's value block, and then not claimed).
+  function hbNetSentence(monthly,wins,wz){
+    wz=wz||{};
+    var all=+wz.count||0,pc=typeof wz.priced_count==='number'?wz.priced_count:all;
+    var s='$'+num2(monthly)+'/mo '+(typeof wins==='number'?'from '+wins+' that improved':'improved')
+      +', less $'+num2(wz.monthly)+'/mo from '+pc+' that got worse';
+    if(all>pc)s+=' ('+(all-pc)+' more got worse with no dollar figure)';
+    return s;
+  }
   // What Cavnar AI has been worth. Four figures that are never added to each
   // other - a measurement, an estimate, a gap and an alert total are not
   // addends (see value_delivered.py).
@@ -2806,7 +2846,11 @@ svg:hover .hb-xh{opacity:1}
     if(!v)return '';
     var d=v.delivered||{},av=v.avoided||{},op=v.opportunity||{},sf=v.surfaced||{},pr=v.promise||null;
     var wz=d.worsened||{count:0,monthly:0},cum=d.cumulative||{},hasCum=cum.total!==null&&cum.total!==undefined;
-    if(!d.wins&&!d.in_flight&&!(wz.count>0)&&!hasCum&&!(av.hours>0)&&!(op.monthly>0))return '';
+    // Wins that moved a number with no honest dollar price (a rating rise):
+    // measured improvements all the same, so they count toward showing the
+    // card and are listed below it - never given a figure (re-audit D7).
+    var uw=d.unpriced_wins||[];
+    if(!d.wins&&!uw.length&&!d.in_flight&&!(wz.count>0)&&!hasCum&&!(av.hours>0)&&!(op.monthly>0))return '';
     // Four figures as four tiles, because they are four different KINDS of
     // number (a measurement, an estimate at stated rates, an alert total,
     // a gap) and a list made them read as one column that could be added
@@ -2816,8 +2860,9 @@ svg:hover .hb-xh{opacity:1}
     // improvements alone read as if nothing had gone the other way. The
     // net can be below zero and says so; it is never floored at zero.
     var net=isFinite(+d.net_monthly)?+d.net_monthly:(+d.monthly||0);
-    if(wz.count>0)h+='<div class="hb-stat '+(net<0?'bad':'good')+'"><div class="k">Measured, net</div><div class="v hb-num">'+(net<0?'−':'')+'$'+num2(Math.abs(net))+'<small>/mo</small></div><div class="s">$'+num2(d.monthly)+'/mo from '+(d.wins||0)+' that improved, less $'+num2(wz.monthly)+'/mo from '+wz.count+' that got worse</div></div>';
+    if(wz.count>0)h+='<div class="hb-stat '+(net<0?'bad':'good')+'"><div class="k">Measured, net</div><div class="v hb-num">'+(net<0?'−':'')+'$'+num2(Math.abs(net))+'<small>/mo</small></div><div class="s">'+hbNetSentence(d.monthly,d.wins||0,wz)+'</div></div>';
     else if(d.wins>0)h+='<div class="hb-stat good"><div class="k">Measured results</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(d.monthly||0)+'" data-p="$">$'+num2(d.monthly)+'</span><small>/mo</small></div><div class="s">across '+d.wins+' change'+(d.wins===1?'':'s')+(d.annual?' · about $'+num2(d.annual)+' a year if it holds':'')+'</div></div>';
+    else if(uw.length)h+='<div class="hb-stat good"><div class="k">Measured results</div><div class="v hb-num">'+uw.length+'<small>improved</small></div><div class="s">not priced in dollars — what moved is listed below</div></div>';
     else h+='<div class="hb-stat"><div class="k">Measured results</div><div class="v txt" style="font-size:17px;padding-top:4px">Nothing yet</div><div class="s">'+(d.in_flight?d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now':'Track a recommendation and its result lands here')+'</div></div>';
     if(av.hours>0||av.dollars>0){
       // The breakdown opens as a centred modal rather than pushing the
@@ -2843,6 +2888,11 @@ svg:hover .hb-xh{opacity:1}
         +'<div style="opacity:.75">'+esc(d.caveat||'')+'</div>';
       vr+='<div class="hb-row '+(ct<0?'critical':'good')+'"><span class="d"></span><span class="t wrap"><span class="hb-num">'+(ct<0?'−':'')+'$'+num2(Math.abs(ct))+'</span> measured'+(ct<0?' net':'')+(cum.since?' since '+esc(mdy(cum.since)):'')+' <span class="vm">— summed over the days actually measured, net of what got worse</span></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(cbody)+'" data-explain-title="Measured so far">How?</button></div>';}
     if(d.validated>0)vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><span class="hb-num">'+d.validated+'</span> '+(d.validated===1?'result':'results')+' held at '+(d.validated===1?'its':'their')+' re-check with nothing else changing on '+(d.validated===1?'its number':'their numbers')+(d.validated_monthly?' · <span class="hb-num">$'+num2(d.validated_monthly)+'</span>/mo of it':'')+' <span class="vm">— validated</span></span></div>';
+    // Unpriced wins, each said as the server measured it ("Average rating
+    // 4.2★ → 4.5★, improved"), with the recommendation it followed.
+    for(var ui=0;ui<Math.min(uw.length,3);ui++){var u=uw[ui]||{};
+      vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap">'+num(u.line||'')+(u.title?' <span class="vm">— after “'+esc(u.title)+'” · not priced in dollars</span>':' <span class="vm">— not priced in dollars</span>')+'</span></div>';}
+    if(uw.length>3)vr+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><span class="hb-num">'+(uw.length-3)+'</span> more improved with no dollar figure</span></div>';
     if(d.faded>0)vr+='<div class="hb-row watch"><span class="d"></span><span class="t wrap"><span class="hb-num">'+d.faded+'</span> earlier '+(d.faded===1?'win':'wins')+' no longer held at re-check, so '+(d.faded===1?'it no longer counts':'they no longer count')+'</span></div>';
     if(wz.count>0&&net<0&&d.net_note)vr+='<div class="hb-row critical"><span class="d"></span><span class="t wrap">'+num(d.net_note)+'</span></div>';
     if(vr)h+='<div class="hb-vrows">'+vr+'</div>';
@@ -2885,7 +2935,7 @@ svg:hover .hb-xh{opacity:1}
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
     var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="What worked for you"><div class="hb-h3"><span>What worked for you</span><span class="cnt">'+esc(f.window||'')+'</span></div>';
     if(!w.enough||!ss.length){
-      var d=(v&&v.delivered)||{};if(!v||!(d.wins||d.in_flight||(d.worsened&&d.worsened.count)))return '';
+      var d=(v&&v.delivered)||{};if(!v||!(d.wins||(d.unpriced_wins||[]).length||d.in_flight||(d.worsened&&d.worsened.count)))return '';
       return h+'<div class="hb-empty">Not enough yet. Cavnar says what worked once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
     h+='<div class="hb-tl">';
     for(var i=0;i<ss.length;i++)h+='<div class="it good" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(ss[i])+'</span></div>';
@@ -2959,7 +3009,14 @@ svg:hover .hb-xh{opacity:1}
     // than a list: it is read top to bottom once, before service.
     h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt">'+lines.length+'</span>':'')+'</div>';
     if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
-    else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+    // A keyed line the owner can answer carries Done / Not for us (re-audit
+    // K6): the server records these lines as shown on Home, so the answer
+    // belongs beside them. Not Track - a brief line names a move, not a
+    // number to measure. The module is the line's own (the server's
+    // morning_brief._LINE_MODULE), never the screen's.
+    else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];
+      var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1}):'';
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     h+='</div>';
     // Open issues live in the Needs attention card (hbAttnSetIssues); goals
     // and results are built by _hbMeasured below.
@@ -3021,7 +3078,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-goal '+(GOALTONE[o.state]||'watch')+'"><div class="l"><span>'+num(o.summary||o.label)+'</span>'+(pct!=null?'<b>'+pct+'%</b>':'')+'</div>'+(pct!=null?'<div class="bar"><i data-w="'+pct+'"></i></div>':'')+'</div>';}
       h+='</div>';}
     if(res.length||cks.length){h+='<div class="hb-card rail good hb-rise" style="--i:1"><div class="hb-h3"><span>What your changes did</span>'+(cks.length>1?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">'+cks.length+' to check in on →</button>':'')+'</div>';
-      for(var m=0;m<Math.min(res.length,4);m++){var r=res[m];h+='<div class="hb-row '+(r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch'))+'"><span class="d"></span><span class="t wrap">'+num(r.summary||r.title||'')+'</span></div>';}
+      for(var m=0;m<Math.min(res.length,4);m++){var r=res[m];h+='<div class="hb-row '+hbResTone(r)+'"><span class="d"></span><span class="t wrap">'+num(r.summary||r.title||'')+'</span></div>';}
       if(cks.length)h+=recCheckinHtml(cks[0],'home');
       h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div></div>';}
     return h+'</div>';
@@ -3688,9 +3745,13 @@ svg:hover .hb-xh{opacity:1}
 
   var RENDER={
     sales:function(b,p){
-      var m=b.metrics||{},d=b.detail||{},bl=d.baselines||{},h='';
-      var sub=[];
+      var m=b.metrics||{},d=b.detail||{},bl=d.baselines||{},h='',def=d.definition||{};
+      var sub=[],gm=def.gross_missing||[];
       if(isNum(m.gross))sub.push('Gross '+hn(money(m.gross)));
+      // "Everything rung" needs the POS's tax and voids: a night it did not
+      // report them has no gross - said, never the items figure passed off
+      // as everything (re-audit D14).
+      else if(gm.length)sub.push('Gross not measured — the POS didn’t report '+esc(gm.join(' and ')));
       if(isNum(m.transactions))sub.push(hn(cnt(m.transactions))+' checks');
       if(isNum(m.guests))sub.push(hn(cnt(m.guests))+' guests');
       if(isNum(m.avg_ticket))sub.push(hn(money(m.avg_ticket,true))+' avg check');
@@ -3713,10 +3774,12 @@ svg:hover .hb-xh{opacity:1}
         +((d.bottom_items||[]).length?'<div class="hb-h3" style="margin-top:16px"><span>Slowest</span></div>'+itemsTable(d.bottom_items):'')+'</div></div>';
       var loss='',L=[['discounts','Discounts'],['comps','Comps'],['voids','Voids'],['refunds','Refunds']];
       for(var i=0;i<L.length;i++)if(isNum(m[L[i][0]]))loss+=tile(L[i][1],esc(money(m[L[i][0]])));
-      if(isNum(m.tax))loss+=tile('Tax collected',esc(money(m.tax)),'not in gross or net');
+      // Under "everything rung" the tax IS in gross (block_sales.GROSS_BASES).
+      if(isNum(m.tax))loss+=tile('Tax collected',esc(money(m.tax)),def.gross_basis==='all'?'in gross, not net':'not in gross or net');
       if(loss)h+='<div class="hb-stats" style="margin-top:20px">'+loss+'</div>';
-      var def=d.definition||{};
-      if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':''));
+      // Net said as the server defines it for this basis; the POS's own
+      // deduction list only when an older report has no definition.
+      if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+(def.net?' <b>Net</b> is '+esc(def.net)+'.':((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':'')));
       var ly=bl.last_year;if(ly&&ly.source==='pos_sync')h+=note('Last year is the nightly POS sync’s figure for '+esc(md(ly.date))+' — the same weekday a year back.');
       return h;},
     labor:function(b){
@@ -3920,14 +3983,32 @@ svg:hover .hb-xh{opacity:1}
     h+='</tbody><tfoot>'+totalRow('Week',hn(t.days_measured||0)+' of '+hn(days.length)+' measured',t,cols,3);
     var p=g.period_to_date;if(p)h+=totalRow('Period to date',hn(esc(md(p.start)))+' – '+hn(esc(md(p.end))),p,cols,3);
     h+='</tfoot></table></div>';
+    h+=mixedNote([t,p]);
     h+=note('Totals add only the nights that were measured; a comparison uses only the nights that have both sides. A dash was not measured — it is not $0. Last year is the same weekday 52 weeks back: that night’s report, then your imported workbook, then the POS sync.');
     if(owner)h+=budgetEditor(days)+importCard();
     else h+=note('Budget columns are the owner’s and aren’t part of your view.');
     return h;
   }
+  // A total's gross cell says when it covers fewer nights than the net
+  // beside it (gross_days < days_measured: an "everything rung" night the
+  // POS sent no tax or voids for has a net and no gross) and when the range
+  // adds nights built under two gross bases (re-audit D15).
+  function totCell(t,c){
+    var h=cell(t,c);
+    if(c.k!=='gross'||!isNum(t.gross))return h;
+    var bits=[];
+    if(isNum(t.gross_days)&&isNum(t.days_measured)&&t.gross_days<t.days_measured)bits.push(t.gross_days+' of '+t.days_measured+' nights');
+    if(t.gross_mixed)bits.push('mixed bases');
+    return bits.length?h.replace(/<\/td>$/,'<small>'+esc(bits.join(' \u00b7 '))+'</small></td>'):h;
+  }
+  function mixedNote(ts){
+    for(var i=0;i<ts.length;i++)if(ts[i]&&ts[i].gross_mixed)
+      return note('Gross is counted two ways in these nights: items only on some, everything rung (items, tax and voids) on others — the gross totals add both. Net is the same either way.');
+    return '';
+  }
   function totalRow(label,small,t,cols,blanks){
     var h='<tr><td class="day l">'+esc(label)+'<small>'+small+'</small></td>';
-    for(var i=0;i<cols.length;i++)h+=cell(t,cols[i]);
+    for(var i=0;i<cols.length;i++)h+=totCell(t,cols[i]);
     for(var j=0;j<(blanks||0);j++)h+='<td class="tx"></td>';
     return h+'</tr>';
   }
@@ -3942,9 +4023,10 @@ svg:hover .hb-xh{opacity:1}
     h+='</tr></thead><tbody>';
     for(var r=0;r<ws.length;r++){var w=ws[r],wt=w.totals||{};
       h+='<tr><td class="day l"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="week" data-date="'+esc(w.start)+'">'+esc(w.label||'')+'</button><small class="dr-dim" style="display:block;font-size:11px">'+hn(esc(md(w.start)))+' – '+hn(esc(md(w.end)))+'</small></td>';
-      for(var c=0;c<cols.length;c++)h+=cell(wt,cols[c]);
+      for(var c=0;c<cols.length;c++)h+=totCell(wt,cols[c]);
       h+='</tr>';}
     h+='</tbody><tfoot>'+totalRow('Period',hn(t.days_measured||0)+' nights measured',t,cols,0)+'</tfoot></table></div>';
+    h+=mixedNote([t]);
     h+=note('Each week adds only its measured nights. A dash was not measured — it is not $0.');
     if(!owner)h+=note('Budget columns are the owner’s and aren’t part of your view.');
     return h;
@@ -4266,7 +4348,7 @@ svg:hover .hb-xh{opacity:1}
     h+='</div>';
     var best=s.most_effective;
     if(best){var row=null,bt=s.by_tag||[];for(var t=0;t<bt.length;t++)if(bt[t].tag===best.tag&&bt[t].module===best.module)row=bt[t];
-      h+='<div class="rh-best"><span>Most consistently effective for you: <b>'+esc(best.label)+'</b> ('+esc(MOD[best.module]||best.module)+') — '
+      h+='<div class="rh-best"><span>Most often followed by an improvement: <b>'+esc(best.label)+'</b> ('+esc(MOD[best.module]||best.module)+') — '
         +(row?'<span class="hb-num">'+row.improved+'</span> of '+row.measured+' measured results improved':'<span class="hb-num">'+Math.round(best.success_rate*100)+'%</span> of '+best.measured+' measured results improved')+'.</span></div>';}
     return h+'</section>';
   }
@@ -7497,7 +7579,11 @@ svg:hover .hb-xh{opacity:1}
       {% set _tone = 'good' if 'WELL' in name|upper else ('bad' if 'POORLY' in name|upper else 'neutral') %}
       <div class="sec"><div class="st {{ _tone }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ _tone }}">{{ '✓' if _tone == 'good' else ('✗' if _tone == 'bad' else '·') }}</i><span>{{ b }}</span></div>{% endfor %}</div>
       {% endif %}{% endfor %}{% endif %}
-      <div id="in2-recs">{% if recs %}<div class="sec"><div class="st ember">How to improve</div>{% for rec in recs %}<div class="rec"><b>{{ loop.index }}</b><span>{{ rec }}</span></div>{% endfor %}</div>{% endif %}</div>
+      {# The recommendations come from /api/intel/recs (in2LoadRecs) and only
+         from there: it records them as shown and leaves out the ones already
+         answered and any an unverified read withheld. Printing the raw list
+         here showed all of that before the read replaced it (re-audit D21). #}
+      <div id="in2-recs">{% if recs %}<div class="sec" aria-busy="true"><div class="st ember">How to improve</div><div class="dr-pulse wide" style="margin:12px 0 4px" role="status" aria-label="Loading recommendations"><i></i></div></div>{% endif %}</div>
       {% if not _parts or (not _parts.sections and not recs) %}<div style="font-size:13.5px;color:var(--ink2)">{{ _cd.insight }}</div>{% endif %}
     </div>
   </div>
@@ -7589,7 +7675,7 @@ svg:hover .hb-xh{opacity:1}
   function in2LoadRecs(){
     var box=document.getElementById('in2-recs');if(!box)return;
     fetch('/api/intel/recs',{credentials:'same-origin'}).then(apiJson).then(function(d){
-      if(!d||!d.ok)return;
+      if(!d||!d.ok){box.innerHTML='';return;}
       var h='';
       if((d.recs||[]).length){
         h='<div class="sec"><div class="st ember">How to improve</div>';
@@ -7607,7 +7693,7 @@ svg:hover .hb-xh{opacity:1}
         h='<div class="sec"><div class="st ember">How to improve</div><div style="font-size:13.5px;color:var(--ink2)">Nothing worth acting on this week.</div></div>';
       }
       box.innerHTML=h;
-    }).catch(function(){});
+    }).catch(function(){box.innerHTML='';});
   }</script>
 </div><!-- /hb-wrap -->
 </div><!-- /panel-competitor -->
@@ -7721,6 +7807,12 @@ svg:hover .hb-xh{opacity:1}
 .ac-row .l b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
 .ac-row .l span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;line-height:1.5}
 .ac-row .c{flex:none;display:flex;align-items:center;gap:8px}
+/* DSR settings: the years that run differently, listed under their row */
+.ac-row.as-dsr-years{align-items:flex-start}
+.as-dsr-ylist{margin-top:6px}
+.as-dsr-y{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--ac-line)}
+.ac-row .l .as-dsr-y span{display:inline;margin:0;font-size:14px;color:var(--ink2)}
+.ac-row .l .as-dsr-y b{display:inline;font-size:14px}
 .ac-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}
 .ac-kv.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .ac-kv dt{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:0 0 3px}
@@ -8047,8 +8139,15 @@ svg:hover .hb-xh{opacity:1}
             <div class="c"><select class="ac-select" id="as-dsr-dow" onchange="saveDsrSetting('fiscal_week_start_dow')" aria-label="Week starts on"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
           <div class="ac-row"><div class="l"><b>Period 1, Week 1 starts</b><span id="as-dsr-cal">Leave it blank for weeks only, with no period numbers.</span></div>
             <div class="c"><input class="ac-input" type="date" id="as-dsr-year" onchange="saveDsrSetting('fiscal_year_start')" aria-label="Period 1 starts" style="width:170px"></div></div>
-          <div class="ac-row"><div class="l"><b>Periods</b><span>Thirteen periods of four weeks, or quarters of 4-4-5 weeks.</span></div>
-            <div class="c"><select class="ac-select" id="as-dsr-scheme" onchange="saveDsrSetting('fiscal_period_scheme')" aria-label="Period scheme"><option value="4x13">13 &times; 4 weeks</option><option value="445">4-4-5</option></select></div></div>
+          <div class="ac-row"><div class="l"><b>Periods</b><span id="as-dsr-scheme-note">Thirteen periods of four weeks, quarters of 4-4-5, 4-5-4 or 5-4-4 weeks, or your accounting system&rsquo;s own lengths.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-scheme" onchange="dsrSchemePicked()" aria-label="Period scheme"><option value="4x13">13 &times; 4 weeks</option><option value="445">4-4-5</option><option value="454">4-5-4</option><option value="544">5-4-4</option><option value="custom">Custom (from your accounting system)</option></select></div></div>
+          <div class="ac-row" id="as-dsr-custom-row" hidden><div class="l"><b>Your period lengths</b><span>In weeks, in order, comma-separated: 12 or 13 periods of 4 or 5 weeks, totalling 52 or 53.</span></div>
+            <div class="c ac-inline"><input class="ac-input" type="text" id="as-dsr-custom" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,4,5" aria-label="Period lengths in weeks" style="width:230px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="saveDsrSetting('fiscal_period_scheme')">Save</button></div></div>
+          <div class="ac-row"><div class="l"><b>Gross sales means</b><span id="as-dsr-gross-note">Net is the same either way: items after discounts and comps, never tax or voids.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-gross" onchange="saveDsrSetting('dsr_gross_basis')" aria-label="What gross sales means"><option value="items">Items at the price rung</option><option value="all">Everything rung (items, tax and voids)</option></select></div></div>
+          <div class="ac-row as-dsr-years"><div class="l"><b>Years that run differently</b><span>A 53-week year, or any year your accounting system splits its own way. Every other year follows the start and periods above, counted on from the end of the last one listed here.</span>
+              <div id="as-dsr-years" class="as-dsr-ylist"></div></div>
+            <div class="c ac-inline"><input class="ac-input" type="date" id="as-dsr-ystart" aria-label="That year starts" style="width:160px"><input class="ac-input" type="text" id="as-dsr-ylen" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,5,5" aria-label="That year's period lengths" style="width:200px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="dsrAddYear()">Add year</button></div></div>
         </div>
         <div class="ac-card-h" style="margin-top:20px"><div><h3>POS departments</h3><p>Nothing is guessed: a department you haven&rsquo;t placed shows as Unmapped, with its dollars, until you do. A change counts from the next report on.</p></div></div>
         <div class="ac-rows" id="as-dsr-cats"><div class="ac-note">Loading&hellip;</div></div>
@@ -9027,6 +9126,9 @@ document.addEventListener('click', function(e) {
   var yes = b.getAttribute('data-ask-fb') === '1';
   _askFeedbackPost(row, yes, null, function() {
     if (yes) { row.innerHTML = '<span class="rec-ans-done">Thanks \u2014 noted.</span>'; return; }
+    // The note row takes the bubble's width, so the field and Send stay on
+    // one line (a shrink-to-fit row wrapped Send under it - re-audit D20).
+    row.className += ' note';
     row.innerHTML = '<span class="q">What was missing?</span><input class="ac-input" type="text" maxlength="500" placeholder="Optional" aria-label="What was missing">'
       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-fb-note="1">Send</button>';
     var i2 = row.querySelector('input'); if (i2) { i2.focus(); i2.onkeydown = function(ev) { if (ev.keyCode === 13) { var sb = row.querySelector('[data-ask-fb-note]'); if (sb) sb.click(); } }; }
@@ -9137,8 +9239,16 @@ window.sendAskCavnar = function() {
   input.disabled = true;
   btn.disabled = true;
   var loadingBubble = _appendAskCavnarLoadingBubble();
+  // One question, one answer. Once the stream has started the server is
+  // already working on it (and records what it proposes), so a failure
+  // after that point says so instead of asking a second time through the
+  // plain endpoint - that re-ask recorded every proposal twice (re-audit
+  // D19). Only a stream that never started falls back.
+  var _askStarted = false, _askDone = false;
 
   function _finish(d) {
+    if (_askDone) return;
+    _askDone = true;
     input.disabled = false;
     btn.disabled = false;
     input.focus();
@@ -9174,43 +9284,57 @@ window.sendAskCavnar = function() {
     body: JSON.stringify({question: question, conversation_id: window._askConversationId || null})
   }).then(function(resp) {
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
+    _askStarted = true;
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var buffer = '';
     function pump() {
       return reader.read().then(function(res) {
-        if (res.done) return;
+        if (res.done) {
+          // A last event the server closed on without a blank line is
+          // still an event; after it, a stream that ended with no answer
+          // and no error event dropped mid-answer.
+          if (buffer.replace(/\s+/g, '')) { _askEvent(buffer); buffer = ''; }
+          _finish({ok: false, error: 'The connection dropped before the answer finished. Ask again to see it — nothing it suggested was done.'});
+          return;
+        }
         buffer += decoder.decode(res.value, {stream: true});
         var chunks = buffer.split('\n\n');
         buffer = chunks.pop();
-        chunks.forEach(function(chunk) {
-          var line = chunk.replace(/^data: /, '').trim();
-          if (!line) return;
-          var evt;
-          try { evt = JSON.parse(line); } catch (e) { return; }
-          if (evt.type === 'progress') {
-            _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
-          } else if (evt.type === 'answer') {
-            // Rebuilt field by field, so anything the server adds has to be
-            // added here too — the evidence strip silently never rendered on
-            // the streamed path (the normal one) while working fine on the
-            // JSON fallback, because these three were being dropped.
-            _finish({ok: true, answer: evt.answer, truncated: evt.truncated,
-                     proposals: evt.proposals,
-                     modules_consulted: evt.modules_consulted,
-                     confidence: evt.confidence,
-                     unverified_figures: evt.unverified_figures,
-                     message_id: evt.message_id,
-                     suggestions: evt.suggestions});
-          } else if (evt.type === 'error') {
-            _finish({ok: false, error: evt.error});
-          }
-        });
+        chunks.forEach(_askEvent);
         return pump();
       });
     }
+    function _askEvent(chunk) {
+      var line = chunk.replace(/^data: /, '').trim();
+      if (!line) return;
+      var evt;
+      try { evt = JSON.parse(line); } catch (e) { return; }
+      if (evt.type === 'progress') {
+        _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
+      } else if (evt.type === 'answer') {
+        // Rebuilt field by field, so anything the server adds has to be
+        // added here too — the evidence strip silently never rendered on
+        // the streamed path (the normal one) while working fine on the
+        // JSON fallback, because these three were being dropped.
+        _finish({ok: true, answer: evt.answer, truncated: evt.truncated,
+                 proposals: evt.proposals,
+                 modules_consulted: evt.modules_consulted,
+                 confidence: evt.confidence,
+                 unverified_figures: evt.unverified_figures,
+                 message_id: evt.message_id,
+                 suggestions: evt.suggestions});
+      } else if (evt.type === 'error') {
+        _finish({ok: false, error: evt.error});
+      }
+    }
     return pump();
   }).catch(function() {
+    if (_askDone) return;
+    if (_askStarted) {
+      _finish({ok: false, error: 'The connection dropped before the answer finished. Ask again to see it — nothing it suggested was done.'});
+      return;
+    }
     fetch('/api/ask-cavnar', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -9922,12 +10046,12 @@ function recEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){re
    not offered Track at all (M-8). Marketing is not either: a post has no
    honest metric, and its Track used to start a sales tracker (rec-ROI #11). */
 var REC_TRACKABLE={reviews:1,food:1,labor:1};
-function recControlsHtml(key,surface,module){
+function recControlsHtml(key,surface,module,opts){
   var m=module||surface;
   var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'" ';
   return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
     +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
-    +(REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
+    +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
 }
 /* A lone "Not for us" for a line whose own button is its yes (an overtime
    move, a content idea, a roadmap card): the same attributes, the same
@@ -10005,7 +10129,7 @@ function recReasonPicker(after,opts){
 /* The row a picker opens under: a list row keeps its own layout and the
    picker lands below it; an inline answer row gets it right after. */
 function recPickerHost(btn,box){
-  var row=btn.closest?btn.closest('.hb-row,.sr-line,.ac-row,.hb-focus .ft,.hb-rec .ft,.in2-road .ac,.cal-card'):null;
+  var row=btn.closest?btn.closest('.hb-row,.hb-tl .it,.sr-line,.ac-row,.hb-focus .ft,.hb-rec .ft,.in2-road .ac,.cal-card'):null;
   if(row&&row.classList&&row.classList.contains('cal-card'))return box;
   return row||box;
 }
@@ -10103,8 +10227,13 @@ function recCheckinHtml(c,surface){
 }
 function _recCheckinPost(card,didIt,changed,done){
   var bs=card.querySelectorAll('button');for(var i=0;i<bs.length;i++)bs[i].disabled=true;
+  var body={key:card.getAttribute('data-ck-key'),did_it:didIt,conditions_changed:!!changed,surface:card.getAttribute('data-ck-surface')||'home'};
+  /* The check-in names the result it is about (tracker_id): a key can have
+     more than one measured episode, and "the latest episode of the key" was
+     not always the one this card showed (re-audit K1). */
+  var tid=parseInt(card.getAttribute('data-ck-tracker'),10);if(tid>0)body.tracker_id=tid;
   fetch('/api/recs/checkin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({key:card.getAttribute('data-ck-key'),did_it:didIt,conditions_changed:!!changed,surface:card.getAttribute('data-ck-surface')||'home'})})
+    body:JSON.stringify(body)})
     .then(apiJson).then(function(d){
       for(var j=0;j<bs.length;j++)bs[j].disabled=false;
       if(!d||!d.ok){if(typeof toast==='function')toast((d&&d.error)||'Couldn’t save that','error');return;}
@@ -10115,7 +10244,9 @@ function _recCheckinPost(card,didIt,changed,done){
 function _recCheckinRefresh(card,lead){
   var st=card.querySelector('.rck-st'),tid=card.getAttribute('data-ck-tracker');
   if(st)st.innerHTML='<span class="rec-ans-done">'+recEsc(lead)+'</span>';
-  fetch('/api/outcomes',{credentials:'same-origin'}).then(apiJson).then(function(d){
+  /* By id: the list's first page is the newest 50, and an older result
+     would never be in it. */
+  fetch('/api/outcomes?ids='+encodeURIComponent(tid),{credentials:'same-origin'}).then(apiJson).then(function(d){
     var rows=(d&&d.outcomes)||[],o=null;for(var i=0;i<rows.length;i++)if(String(rows[i].id)===String(tid))o=rows[i];
     if(o&&o.attribution_label&&st)st.innerHTML='<span class="rec-ans-done">'+recEsc(lead)+'</span><div class="rck-lab">'+recEsc(o.attribution_label)+'</div>';
     if(typeof window.onRecCheckin==='function')window.onRecCheckin(tid,o);
@@ -13075,17 +13206,33 @@ document.addEventListener('click', function (ev) {
   if (!el || !el.getAttribute) return;
   var action = el.getAttribute('data-rec-action'), text = el.getAttribute('data-rec') || '';
   if (!action) return;
+  /* ✕ is a "Not for us": it asks why first, with the one reason picker, and
+     the code goes with the answer (re-audit K3). Skip sends no code. */
+  if (action === 'dismissed') {
+    var row = el.closest ? el.closest('.sq-rec') : null;
+    recReasonPicker(row || el.parentNode, {
+      onPick: function (code, note, picker) { _sqRecAnswer(el, action, text, code, note, picker); }
+    });
+    return;
+  }
+  _sqRecAnswer(el, action, text, '', '', null);
+});
+function _sqRecAnswer(el, action, text, code, note, picker) {
   var done = cbtnBusy(el, '');
+  var body = {kind: _recKind(text), key: text.slice(0, 200), action: action};
+  if (code) body.reason_code = code;
+  if (note) body.reason = note;
   fetch('/api/labor/schedule/recommendation', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({kind: _recKind(text), key: text.slice(0, 200), action: action})})
+    body: JSON.stringify(body)})
     .then(apiJson).then(function (d) {
       done();
-      if (!d || !d.ok) { toast((d && d.error) || 'Could not record that', 'error'); return; }
+      if (!d || !d.ok) { if (picker) picker.unlock(); toast((d && d.error) || 'Could not record that', 'error'); return; }
+      if (picker) picker.close();
       _recState[text] = action;
       if (_quality) { _quality.suppressed_recommendation_kinds = d.suppressed_kinds || _quality.suppressed_recommendation_kinds || []; renderQualityWarnings(_quality); }
       toast(action === 'accepted' ? 'Noted as done' : 'Noted — not for you', 'success');
-    }).catch(function () { done(); toast('Could not record that', 'error'); });
-});
+    }).catch(function () { done(); if (picker) picker.unlock(); toast('Could not record that', 'error'); });
+}
 function openIntelPanel() {
   var p = document.getElementById('intel-panel');
   if (p && p.style.display === 'none' && window.toggleIntelPanel) toggleIntelPanel();
@@ -16206,12 +16353,80 @@ function loadDsrSettings() {
     sel.innerHTML = h;
     document.getElementById('as-dsr-dow').value = String(s.fiscal_week_start_dow == null ? 0 : s.fiscal_week_start_dow);
     document.getElementById('as-dsr-year').value = s.fiscal_year_start || '';
-    document.getElementById('as-dsr-scheme').value = s.fiscal_period_scheme || '4x13';
+    _dsrShowScheme(s.fiscal_period_scheme || '4x13');
+    var gb = document.getElementById('as-dsr-gross');
+    if (gb) gb.value = s.dsr_gross_basis === 'all' ? 'all' : 'items';
+    _dsrYears = s.fiscal_years || [];
+    _dsrRenderYears();
     _dsrCalLabel(s.calendar_label);
     _dsrCats = d.categories || [];
     _dsrRenderCats(d);
   }).catch(function() {});
 }
+/* The period scheme as stored: one of the four named ones, or the owner's
+   own lengths - which the picker keeps as "Custom" with the lengths in the
+   field below it, instead of a select that silently matched nothing and
+   would have saved 4x13 over it on the next change (re-audit D17). */
+var DSR_SCHEMES = {'4x13': 1, '445': 1, '454': 1, '544': 1};
+var _dsrYears = [];
+function _dsrShowScheme(v) {
+  var sel = document.getElementById('as-dsr-scheme'), row = document.getElementById('as-dsr-custom-row'), inp = document.getElementById('as-dsr-custom');
+  var named = !!DSR_SCHEMES[v];
+  if (sel) sel.value = named ? v : 'custom';
+  if (inp && !named) inp.value = String(v || '').split(',').join(', ');
+  if (row) row.hidden = named;
+}
+function dsrSchemePicked() {
+  var sel = document.getElementById('as-dsr-scheme'), row = document.getElementById('as-dsr-custom-row');
+  if (!sel) return;
+  if (sel.value === 'custom') {
+    if (row) row.hidden = false;
+    var inp = document.getElementById('as-dsr-custom'); if (inp) inp.focus();
+    return;
+  }
+  if (row) row.hidden = true;
+  saveDsrSetting('fiscal_period_scheme');
+}
+function _dsrLengths(raw) {
+  return String(raw || '').replace(/[^0-9,]/g, '').split(',').filter(function(x) { return x !== ''; }).join(',');
+}
+/* The years that run differently (a 53-week year): each one listed with its
+   start (M/D/YY), its length and its periods, and a Remove. */
+function _dsrRenderYears() {
+  var box = document.getElementById('as-dsr-years'); if (!box) return;
+  var h = '';
+  for (var i = 0; i < _dsrYears.length; i++) {
+    var y = _dsrYears[i], ln = y.lengths || [];
+    h += '<div class="as-dsr-y"><span><b>' + (y.fiscal_year ? 'Fiscal ' + _ehEsc(y.fiscal_year) : 'A year') + '</b> from <i class="dr-n">' + _ehEsc(y.start_label || (window.mdy ? window.mdy(y.start) : y.start)) + '</i>'
+       + ' &middot; <i class="dr-n">' + _ehEsc(y.weeks || '') + '</i> weeks &middot; <i class="dr-n">' + _ehEsc(ln.join('-')) + '</i></span>'
+       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dsr-year="' + _ehEsc(y.start) + '">Remove</button></div>';
+  }
+  box.innerHTML = h;
+}
+function _dsrSaveYears(list) {
+  return asPost('/api/dsr/settings', {fiscal_years: list}, 'as-dsr-status', 'Saved').then(function(d) {
+    if (d && d.ok) { _dsrYears = (d.settings && d.settings.fiscal_years) || []; _dsrRenderYears(); _dsrCalLabel(d.settings && d.settings.calendar_label); }
+    return d;
+  });
+}
+function _dsrYearList() {
+  var out = [];
+  for (var i = 0; i < _dsrYears.length; i++) out.push({start: _dsrYears[i].start, lengths: _dsrYears[i].lengths});
+  return out;
+}
+function dsrAddYear() {
+  var st = document.getElementById('as-dsr-ystart'), ln = document.getElementById('as-dsr-ylen');
+  var start = st ? st.value : '', lengths = _dsrLengths(ln ? ln.value : '');
+  if (!start || !lengths) { asFlash('as-dsr-status', 'Give the year its start date and its period lengths.'); return; }
+  var list = _dsrYearList(); list.push({start: start, lengths: lengths});
+  _dsrSaveYears(list).then(function(d) { if (d && d.ok) { if (st) st.value = ''; if (ln) ln.value = ''; } });
+}
+document.addEventListener('click', function(e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-dsr-year]') : null; if (!b) return;
+  var start = b.getAttribute('data-dsr-year'), list = [], all = _dsrYearList();
+  for (var i = 0; i < all.length; i++) if (all[i].start !== start) list.push(all[i]);
+  _dsrSaveYears(list);
+});
 function _dsrCalLabel(label) {
   var el = document.getElementById('as-dsr-cal');
   if (el && label) el.textContent = 'Today falls in ' + label + '. Leave it blank for weeks only, with no period numbers.';
@@ -16248,12 +16463,24 @@ function saveDsrSetting(field) {
   else if (field === 'dsr_deadline_hour') v = parseInt(document.getElementById('as-dsr-deadline').value, 10);
   else if (field === 'fiscal_week_start_dow') v = parseInt(document.getElementById('as-dsr-dow').value, 10);
   else if (field === 'fiscal_year_start') v = document.getElementById('as-dsr-year').value || '';
-  else if (field === 'fiscal_period_scheme') v = document.getElementById('as-dsr-scheme').value;
+  else if (field === 'fiscal_period_scheme') {
+    v = document.getElementById('as-dsr-scheme').value;
+    if (v === 'custom') {
+      v = _dsrLengths((document.getElementById('as-dsr-custom') || {}).value);
+      if (!v) { asFlash('as-dsr-status', 'List your period lengths in weeks.'); return; }
+    }
+  }
+  else if (field === 'dsr_gross_basis') v = document.getElementById('as-dsr-gross').value;
   else return;
   var b = {}; b[field] = v;
   asPost('/api/dsr/settings', b, 'as-dsr-status', 'Saved').then(function(d) {
-    if (d && d.ok) _dsrCalLabel(d.settings && d.settings.calendar_label);
-    else loadDsrSettings();
+    if (d && d.ok) {
+      _dsrCalLabel(d.settings && d.settings.calendar_label);
+      if (field === 'fiscal_period_scheme' && d.settings) _dsrShowScheme(d.settings.fiscal_period_scheme);
+    }
+    /* A refused custom list stays in its field to be corrected; anything
+       else goes back to what is stored. */
+    else if (!(field === 'fiscal_period_scheme' && document.getElementById('as-dsr-scheme').value === 'custom')) loadDsrSettings();
   });
 }
 function _dsrSaveCategory(dept, cat) {
@@ -18096,14 +18323,26 @@ function loadWinback(){
 }
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-winback-id],[data-winback-dismiss]'):null;if(!t||t.disabled)return;
-  e.preventDefault();t.disabled=true;
+  e.preventDefault();
   var box=document.getElementById('guest-winback');
+  /* "Not for us" asks why first, like every other one (re-audit K3): the
+     same reason picker, and its code goes with the dismiss. Skip sends no
+     code; Cancel sends nothing. */
   if(t.hasAttribute('data-winback-dismiss')){
-    fetch('/api/guest-winback/'+t.getAttribute('data-winback-dismiss')+'/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'not_for_us'})}).then(apiJson).then(function(){
-      if(box){box.innerHTML='<span class="rec-ans-done">Noted \u2014 no win-back suggestion for this group.</span>';}
-    }).catch(function(){t.disabled=false;});
+    var id=t.getAttribute('data-winback-dismiss'),row=t.parentNode;
+    recReasonPicker(row,{
+      onPick:function(code,note,picker){
+        var body={kind:'not_for_us'};if(code)body.reason_code=code;if(note)body.reason=note;
+        fetch('/api/guest-winback/'+id+'/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+          if(!d||!d.ok){picker.unlock();if(typeof toast==='function')toast((d&&d.error)||'Couldn\u2019t save that','error');return;}
+          picker.close();
+          if(box){box.innerHTML='<span class="rec-ans-done">Noted \u2014 no win-back suggestion for this group.</span>';}
+        }).catch(function(){picker.unlock();if(typeof toast==='function')toast('Network error','error');});
+      }
+    });
     return;
   }
+  t.disabled=true;
   var m=document.getElementById('guest-winback-msg');
   fetch('/api/guest-winback/'+t.getAttribute('data-winback-id')+'/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m?m.value:''})}).then(apiJson).then(function(d){
     if(!d||!d.ok){t.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t send that','error');return;}

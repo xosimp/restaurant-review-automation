@@ -3040,10 +3040,17 @@ def _dsr_unmapped(rid):
 def _dsr_settings_payload(r):
     import closeout
     from dsr import fiscal
+    from time_utils import mdy
     hour = getattr(r, "dsr_deadline_hour", None)
+    years = []
+    for start, lengths in fiscal.listed_years(r):
+        pos = fiscal.position(r, start)
+        years.append({"start": start.isoformat(), "start_label": mdy(start.isoformat()), "lengths": lengths,
+                      "weeks": sum(lengths), "fiscal_year": pos["fiscal_year"]})
     return {"fiscal_week_start_dow": getattr(r, "fiscal_week_start_dow", None),
             "fiscal_year_start": getattr(r, "fiscal_year_start", None) or None,
             "fiscal_period_scheme": getattr(r, "fiscal_period_scheme", None) or "4x13",
+            "fiscal_years": years,
             "dsr_enabled": bool(getattr(r, "dsr_enabled", 1)),
             "dsr_notify": bool(getattr(r, "dsr_notify", 0)),
             "dsr_gross_basis": getattr(r, "dsr_gross_basis", None) or "items",
@@ -3075,15 +3082,23 @@ _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 def _do_dsr_settings_set(u):
     """Any of fiscal_week_start_dow (0=Mon … 6=Sun, or null), fiscal_year_start
-    (YYYY-MM-DD, or "" to clear), fiscal_period_scheme ("4x13" | "445"),
-    dsr_enabled, dsr_notify (email + push the finished report), dsr_deadline_hour
-    (0–11, local). Every column is in update_restaurant's whitelist."""
+    (YYYY-MM-DD, or "" to clear), fiscal_period_scheme ("4x13" | "445" | "454" |
+    "544" | the period lengths, comma-separated), fiscal_years (the years that
+    differ, [{start, lengths}], or [] / null to clear), dsr_enabled, dsr_notify
+    (email + push the finished report), dsr_gross_basis ("items" | "all"),
+    dsr_deadline_hour (0–11, local). Every column is in update_restaurant's
+    whitelist. A value of the wrong type is a 400 with the reason, never a
+    500."""
+    import json
     from dsr import fiscal
     from models import get_restaurant, update_restaurant
+    from time_utils import mdy
     refused = _dsr_owner_only(u)
     if refused:
         return refused
     body = _body()
+    if not isinstance(body, dict):
+        return {"ok": False, "error": "Send the settings as a JSON object."}, 400
     fields = {}
     if "fiscal_week_start_dow" in body:
         v = body.get("fiscal_week_start_dow")
@@ -3107,23 +3122,39 @@ def _do_dsr_settings_set(u):
                 return {"ok": False, "error": "The year start must be a date."}, 400
             fields["fiscal_year_start"] = d.isoformat()
     if "fiscal_period_scheme" in body:
-        scheme = str(body.get("fiscal_period_scheme") or "").replace(" ", "")
+        raw = body.get("fiscal_period_scheme")
+        if isinstance(raw, list) and all(isinstance(n, int) and not isinstance(n, bool) for n in raw):
+            raw = ",".join(str(n) for n in raw)
+        scheme = raw.replace(" ", "") if isinstance(raw, str) else ""
         if not fiscal.valid_scheme(scheme):
             return {"ok": False, "error": "Pick 13 four-week periods, 4-4-5, 4-5-4 or 5-4-4, or list your "
                                           "periods' lengths in weeks (12 or 13 of 4 or 5, totalling 52 or 53)."}, 400
         fields["fiscal_period_scheme"] = scheme
+    if "fiscal_years" in body:
+        raw = body.get("fiscal_years")
+        if raw is not None and not isinstance(raw, list):
+            return {"ok": False, "error": "List each year as a start date and its period lengths."}, 400
+        rows, err = fiscal.parse_years(raw)
+        if err:
+            return {"ok": False, "error": err}, 400
+        fields["fiscal_years_json"] = (json.dumps([{"start": s.isoformat(), "lengths": n} for s, n in rows])
+                                       if rows else None)
     if "dsr_enabled" in body:
         fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
     if "dsr_notify" in body:
         fields["dsr_notify"] = 1 if body.get("dsr_notify") else 0
     if "dsr_gross_basis" in body:
         from dsr.block_sales import GROSS_BASES
-        if body.get("dsr_gross_basis") not in GROSS_BASES:
+        # A list or an object is unhashable: `in GROSS_BASES` raised and the
+        # route answered 500 (re-audit D16). Only a known string is a basis.
+        basis = body.get("dsr_gross_basis")
+        if not isinstance(basis, str) or basis not in GROSS_BASES:
             return {"ok": False, "error": "Gross is either items only or everything rung (items, tax and voids)."}, 400
-        fields["dsr_gross_basis"] = body["dsr_gross_basis"]
+        fields["dsr_gross_basis"] = basis
     if "dsr_deadline_hour" in body:
+        raw = body.get("dsr_deadline_hour")
         try:
-            h = int(body.get("dsr_deadline_hour"))
+            h = -1 if isinstance(raw, bool) else int(raw)
         except (TypeError, ValueError):
             h = -1
         if not 0 <= h <= 11:
@@ -3136,10 +3167,16 @@ def _do_dsr_settings_set(u):
     r = get_restaurant(_rid(u))
     dow = fields["fiscal_week_start_dow"] if "fiscal_week_start_dow" in fields else getattr(r, "fiscal_week_start_dow", None)
     ys = fields["fiscal_year_start"] if "fiscal_year_start" in fields else getattr(r, "fiscal_year_start", None)
+    want = 0 if dow is None else int(dow)
     if ys:
-        want = 0 if dow is None else int(dow)
         if date.fromisoformat(str(ys)[:10]).weekday() != want:
             return {"ok": False, "error": f"Period 1 has to start on a {_WEEKDAYS[want]}, the first day of your week."}, 400
+    listed = (fiscal.parse_years(fields["fiscal_years_json"])[0] if "fiscal_years_json" in fields
+              else fiscal.listed_years(r))
+    for start, _lengths in listed:
+        if start.weekday() != want:
+            return {"ok": False, "error": f"The year starting {mdy(start)} has to start on a "
+                                          f"{_WEEKDAYS[want]}, the first day of your week."}, 400
     update_restaurant(_rid(u), fields)
     return {"ok": True, "settings": _dsr_settings_payload(get_restaurant(_rid(u)))}, 200
 

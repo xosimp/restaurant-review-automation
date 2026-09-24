@@ -18,8 +18,11 @@ Every figure is read, never computed from a guess:
 
 A day with no report is in the week with its budget and last year and every
 measured figure None — shown as a dash, never a zero. A total sums only the
-days that were measured and says how many (`days_measured`); a comparison is
-made only between figures that were both measured on the same days.
+days that were measured and says how many (`days_measured`, and `<col>_days`
+per column: gross can be measured on fewer nights than net); a comparison is
+made only between figures that were both measured on the same days. Each
+night carries the gross basis it was built under, and a total says which
+bases it added (`gross_bases`, `gross_mixed`).
 
 Budget columns are the owner's: access.redact_grid drops them for a
 manager, the same rule as the nightly report.
@@ -50,14 +53,10 @@ def _diff(value, base):
 
 def period_bounds(restaurant, day):
     """(first, last) day of the fiscal period holding `day`, or None when
-    the restaurant has no fiscal year start (then there are only weeks)."""
-    pos = fiscal.position(restaurant, day)
-    if pos["period"] is None:
-        return None
-    ws = _d(pos["week_start"])
-    start = ws - timedelta(weeks=pos["week"] - 1)
-    lengths = fiscal._period_lengths(getattr(restaurant, "fiscal_period_scheme", None) or "4x13")
-    return start, start + timedelta(weeks=lengths[pos["period"] - 1]) - timedelta(days=1)
+    the restaurant has no fiscal year start (then there are only weeks).
+    The period's length is its own year's: a listed 53-week year's long
+    period is five weeks even when the default scheme's is four."""
+    return fiscal.period_span(restaurant, _d(day))
 
 
 def _metrics(rid, start, end, db_path):
@@ -135,6 +134,16 @@ def _notes(facts):
     return weather, event, fields.get("influence") or None
 
 
+def _gross_basis(facts):
+    """What that night's report called gross ("items" | "all"): the basis it
+    was built under (dsr.block_sales.GROSS_BASES), read from the night itself
+    because the owner can change the setting between nights. A report from
+    before the setting existed was items only."""
+    sales = ((facts or {}).get("blocks") or {}).get("sales") or {}
+    basis = ((sales.get("detail") or {}).get("definition") or {}).get("gross_basis")
+    return basis if isinstance(basis, str) and basis else "items"
+
+
 def _categories(rows):
     seen = []
     for r in rows:
@@ -156,6 +165,12 @@ def _totals(rows, cats):
         t[k], t[f"{k}_days"] = total(k)
     t["cats"] = {c: total(c, lambda r, k: r["cats"].get(k))[0] for c in cats}
     t["days_measured"] = sum(1 for r in rows if r["net"] is not None)
+    # Gross is summed over gross_days, which can be fewer than the nights
+    # measured (an "everything rung" night whose tax or voids the POS didn't
+    # report has a net and no gross); and a range the owner switched bases
+    # inside adds two different kinds of gross - said, never hidden.
+    t["gross_bases"] = sorted({r.get("gross_basis") or "items" for r in rows if r["gross"] is not None})
+    t["gross_mixed"] = len(t["gross_bases"]) > 1
     # Comparisons only over the days that have both sides.
     both_b = [r for r in rows if r["net"] is not None and r["budget_net"] is not None]
     both_ly = [r for r in rows if r["net"] is not None and r["last_year_net"] is not None]
@@ -200,6 +215,7 @@ def _rows(restaurant, start, end, db_path):
             "version": rep["version"] if rep is not None else None,
             "cats": {k[len("sales.cat:"):]: v for k, v in m.items() if k.startswith("sales.cat:")},
             "gross": m.get("sales.gross"), "net": net,
+            "gross_basis": _gross_basis(facts) if rep is not None else None,
             "transactions": m.get("sales.transactions"), "guests": m.get("sales.guests"),
             "budget_gross": b.get("gross"), "budget_net": b.get("net"),
             "last_year_net": ly, "last_year_source": ly_src,
