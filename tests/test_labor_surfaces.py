@@ -258,12 +258,13 @@ def test_uploading_shifts_drops_the_cached_insight():
 
 def test_invented_figures_are_marked_rather_than_shown_as_fact(monkeypatch):
     """verify_figures returns the figures a model stated that are not in
-    its input. labor.py called it and threw the return away."""
+    its input. labor.py called it and threw the return away. The check is
+    the Response Validation Layer's now (F1): a figure the input never held
+    is named in the UNVERIFIED line."""
     monkeypatch.setattr(labor, "create_with_retry",
                         lambda *a, **kw: types.SimpleNamespace(
-                            content=[types.SimpleNamespace(text="Sam, labor ran 31%.")],
+                            content=[types.SimpleNamespace(text="Sam, labor cost $9,999 over this period.")],
                             stop_reason="end_turn"))
-    monkeypatch.setattr("ai_guard.verify_figures", lambda *a, **kw: ["$9,999"])
     analysis = labor.analyse_shifts(labor.load_shifts(), hourly_rate=26.0, labor_target=30.0)
     analysis["is_live"] = True
     text = labor.get_claude_insights(analysis, restaurant_name="R", owner_name="Sam")

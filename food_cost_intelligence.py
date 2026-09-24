@@ -1295,7 +1295,7 @@ Return this exact shape:
   "operational_evidence": [{{"module": "labor|reviews|marketing", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "the single highest-value thing to do first, startable this week with the staff and suppliers they already have, 1 sentence",
-  "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence"
+  "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
 }}"""
 
 
@@ -1432,7 +1432,55 @@ def _pattern_block(wd, seasonal) -> str:
 OPERATIONAL_MODULES = ("labor", "reviews", "marketing")
 
 
-def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None):
+def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
+    """The CFO layer's figures as typed facts for response_validation — the
+    money kinds a model must keep (NS3 R1, H3): each ranked driver's monthly
+    dollars with its value_kind (opportunity or estimate, bound to its item
+    and label), the de-duplicated total or the per-kind subtotals the prompt
+    states, the food cost position (measured, the target a plan), and the
+    month-to-date profitability (measured) with its run-rate month
+    (projection). Shared by the food insight and the food diagnosis."""
+    import response_validation as rv
+    F = rv.Fact
+    out = []
+    drv = drivers or {}
+    kinds = set()
+    for d in (drv.get("drivers") or [])[:6]:
+        if not isinstance(d, dict) or d.get("dollars_monthly") is None:
+            continue
+        k = driver_value_kind(d)
+        kinds.add(k)
+        for ent in {d.get("item"), d.get("label")} - {None, ""}:
+            out.append(F("food.driver.dollars_monthly", d["dollars_monthly"], "$", k, "month", entity=ent))
+    by_kind = {k: v for k, v in (drv.get("totals_by_kind") or {}).items() if v}
+    for k, v in by_kind.items():
+        out.append(F(f"food.drivers.total_{k}", v, "$", k, "month"))
+    total = drv.get("total_monthly_deduplicated", drv.get("total_monthly"))
+    one_kind = set(by_kind) or kinds
+    if total is not None and len(one_kind) == 1:
+        out.append(F("food.drivers.total_monthly_deduplicated", total, "$", next(iter(one_kind)), "month"))
+    fc = food_cost or {}
+    if fc.get("ok"):
+        out += [F("food.cost.pct", fc.get("pct"), "%", "measured"),
+                F("food.cost.target_pct", fc.get("target"), "%", "plan"),
+                F("food.cost.variance_pts", fc.get("variance_pts"), "pts", "computed")]
+        out += [F(f"food.cost.{k}", fc.get(k), "$", "measured")
+                for k in ("cogs", "net_sales", "opening", "purchases", "closing")]
+    pp = profitability or {}
+    if pp.get("available"):
+        out += [F(f"food.profit.{k}", pp.get(k), "%", "measured")
+                for k in ("prime_cost_pct", "food_cost_pct", "labor_pct", "prev_month_prime_pct")]
+        out += [F("food.profit.net_sales_mtd", pp.get("net_sales_mtd"), "$", "measured"),
+                F("food.profit.projected_sales", pp.get("projected_sales"), "$", "projection", "month"),
+                F("food.profit.projected_prime_cost", pp.get("projected_prime_cost"), "$", "projection", "month")]
+        if pp.get("dollars_vs_last_month") is not None:
+            out.append(F("food.profit.projected_vs_last_month", abs(float(pp["dollars_vs_last_month"])), "$",
+                         "projection", "month"))
+    return [f for f in out if f.value is not None]
+
+
+def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None, *, facts=None,
+                        anchors=None):
     """Reject a diagnosis that names a driver it was not given.
 
     The same discipline ai_guard applies to figures, applied to drivers. A
@@ -1491,19 +1539,25 @@ def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None
         "cited_drivers": cited,
     }
 
-    # Every figure it states has to be one it was handed — the check the
-    # insight and the weekly digest already run. A fabricated percentage
-    # inside a CFO's paragraph is the hardest kind to catch by eye.
-    from ai_guard import verify_figures
-    joined = " ".join(v for v in (out["headline"], out["cause"], out["alternative_cause"],
-                                  out["what_would_confirm"], out["recommended_action"],
-                                  out["expected_outcome"]) if v)
-    bad = verify_figures(joined, prompt, "food_cost_diagnosis", restaurant_id)
-    # A person it was never handed is refused whole (R11), as for reviews.
-    from ai_guard import unsupported_names
-    names = unsupported_names(joined, prompt)
-    if names:
-        raise ValueError(f"diagnosis named {names[:3]}, who are not in its input")
+    # Every field through the Response Validation Layer (surface
+    # food_diagnosis), as for reviews: every figure it states has to be one
+    # it was handed — a fabricated percentage inside a CFO's paragraph is the
+    # hardest kind to catch by eye — with its kind (a driver's opportunity is
+    # never "saved"); a person it was never handed refuses it whole (R11);
+    # "What should change" is conditional. The ranked drivers anchor a cause
+    # ("likely"), the other modules' lines only an association.
+    import response_validation as rv
+    from review_intelligence import (diagnosis_anchors, diagnosis_field_contexts, finish_diagnosis_fields,
+                                     settle_diagnosis_field)
+    if anchors is None:
+        anchors = diagnosis_anchors(strong=driver_labels, weak=(op_lines or {}).values())
+    verdicts, bad = [], []
+    for key, text, ctx in diagnosis_field_contexts(out, "food_diagnosis", restaurant_id, facts=facts or (),
+                                                   context_text=prompt or "", anchors=anchors):
+        shown, v = rv.apply(text, ctx)
+        verdicts.append(v)
+        bad += settle_diagnosis_field(out, key, shown, v, "food_diagnosis")
+    bad = finish_diagnosis_fields(out, verdicts, bad)
     if bad:
         out["unsupported_figures"] = bad
     out["confidence"] = cap_band(conf, verified_evidence=len(op), unverified_figures=bad)
@@ -1590,7 +1644,8 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     labels = [d.get("item") or d["label"] for d in drv["drivers"]]
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
                                  labels, prompt, restaurant_id,
-                                 op_lines=_operational_lines(ev["operational"]))
+                                 op_lines=_operational_lines(ev["operational"]),
+                                 facts=typed_facts(drv, ev["food_cost"], ev["profitability"]))
 
     # One "at stake" figure, the same one the web card and iOS header show:
     # what the drivers carry, with no ingredient counted twice (M-10). It
@@ -1707,6 +1762,20 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "stale_note": (f"From a read on {_mdy_safe(row['generated_at'])} — it has not been refreshed since."
                        if stale else None),
     }
+    # Re-validated as read, on the current rules — the row has no column for
+    # a verdict version, and this read already re-filters every old row
+    # (review_intelligence.revalidate_stored_diagnosis). A read that no
+    # longer stands is not served.
+    try:
+        from review_intelligence import diagnosis_anchors, revalidate_stored_diagnosis
+        _drv = [d for d in out["drivers"] if isinstance(d, dict)]
+        revalidate_stored_diagnosis(
+            out, "food_diagnosis", restaurant_id, facts=typed_facts({"drivers": _drv}),
+            anchors=diagnosis_anchors(strong=[d.get("item") or d.get("label") for d in _drv],
+                                       weak=[e.get("value") for e in _op if isinstance(e, dict)]))
+    except ValueError as e:
+        print(f"[food_cost_intelligence] stored diagnosis no longer stands: {e}")
+        return None
     # The measured confidence (K6, confidence audit): evidence from the
     # verified figures it cites, capped by the model's own band and by any
     # unsupported figure; `confidence` stays the band string older clients

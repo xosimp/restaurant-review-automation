@@ -251,8 +251,10 @@ def test_r3_p18_model_stated_confidence_is_rewritten_to_the_computed_one(db_path
         pct = meta["confidence_detail"]["pct"]
         assert "85%" not in answer and "High confidence" not in answer
         assert meta.get("confidence_rewritten") == 1
-        if "High" in said:
-            assert f"{pct}% confidence" in answer
+        # The computed % rides in meta beside the answer; it is no longer
+        # stamped onto one sentence of it (the Response Validation Layer's
+        # C2 — one answer's overall % on a single claim was NS1 M5).
+        assert f"{pct}% confidence" not in answer and meta["validation"]["codes"][:1] == ["C2"]
         assert answer.startswith("Trim the Tuesday bar shift.")
 
 
@@ -322,12 +324,12 @@ def test_r6_p08_the_sixth_invented_figure_is_not_filed(db_path):
     answer = json.dumps(items)
     meta = ask_cavnar._meta(answer, [snapshot], [], [], "standard", rid)
     assert len(meta["unverified_figures"]) == 5 and len(meta["unverified_all"]) == 6
-    anchors = ["Friday dinner is short a cook"]
-    got = {it["title"]: strategy_jobs._plan_item_problem(it, meta["unverified_all"], frozenset(), anchors)
+    ctx = strategy_jobs._plan_context(anchors=["Friday dinner is short a cook"])
+    got = {it["title"]: strategy_jobs._plan_item_problem(it, meta["unverified_all"], ctx)
            for it in strategy_jobs._parse_plan(answer)}
     assert got["Trim Tuesday bar shift"] == "it states a figure nothing it read supports"
     assert got["Cut Friday prep"] == "it states a figure nothing it read supports"
-    assert strategy_jobs._plan_item_problem(brunch, meta["unverified_all"], frozenset(), anchors) == \
+    assert strategy_jobs._plan_item_problem(brunch, meta["unverified_all"], ctx) == \
         "it states a cause no stored diagnosis supports"
     assert got["Retrain host stand"] is None
     # the owner field is a closed list: a name the model wrote never lands
@@ -545,15 +547,21 @@ def test_r11_p09_digest_names_and_r12_directions_on_every_line():
     prompt = "Labor 29.1% (down from 31.0%). Waste $410 (down). Rating 4.4. Notable reviews: none."
     dirs = {"labor": "down", "inventory": "down", "reviews": None}
     diag = {"cause": "Friday dinner is short a cook", "recommended_action": "Add a second line cook on Friday dinner"}
-    anch = [diag["cause"], diag["recommended_action"]]
-    p = reporter.digest_line_problem
-    assert "went up" in p("headline", "Labor climbed to 29.1% and waste rose to $410.", prompt, dirs, anch, diag)
-    assert p("headline", "Rough week: labor rose after the new manager started.", prompt, dirs, anch, diag)
-    assert "Marco" in p("action", "Call Marco and ask him to cover Friday.", prompt, dirs, anch, diag)
-    assert "Marco" in p("action", "Chef Marco should cover Friday dinner as a second line cook.", prompt, dirs,
-                        anch, diag)
-    assert p("inventory", "Waste worsened to $410 after the menu change.", prompt, dirs, anch, diag)
-    assert p("headline", "Labor eased to 29.1% and waste fell to $410.", prompt, dirs, anch, diag) is None
+    # Names are the Response Validation Layer's now (N1), run first on every
+    # line by digest_line_check; the clause-level directions stay the
+    # digest's own rule (digest_line_problem).
+    ctx = reporter.digest_context(None, prompt, diagnosis=diag)
+
+    def p(key, line):
+        return reporter.digest_line_check(key, line, ctx, dirs, diagnosis=diag)[1]
+    assert "went up" in reporter.digest_line_problem("headline", "Labor climbed to 29.1% and waste rose to $410.",
+                                                     dirs, diag)
+    assert p("headline", "Labor climbed to 29.1% and waste rose to $410.")
+    assert p("headline", "Rough week: labor rose after the new manager started.")
+    assert "Marco" in p("action", "Call Marco and ask him to cover Friday.")
+    assert "Marco" in p("action", "Chef Marco should cover Friday dinner as a second line cook.")
+    assert p("inventory", "Waste worsened to $410 after the menu change.")
+    assert p("headline", "Labor eased to 29.1% and waste fell to $410.") is None
 
 
 # ── R13: binding gaps (p03), reply commitments (p10) ────────────────────────

@@ -201,6 +201,57 @@ python3 scripts/repo_inventory.py                     # every rule, by blueprint
   validated outputs the rule fired on. No answer or guest text is stored, so
   none is served. Server only; no web or iOS twin.
 
+## The `validation` object (Response Validation Layer, workstream A)
+
+Every payload that carries model-written text now carries, beside it, the
+engine's structured verdict on that text:
+
+```json
+"validation": {"verdict": "pass|caveat|withhold|refuse",
+               "caveats": ["Some figures here aren't in your data: $4,300.", "..."],
+               "controls": true,
+               "codes": ["F1", "K1"],
+               "version": "rv1"}
+```
+
+- `verdict` — `pass` (nothing found), `caveat` (the text stands; show the
+  caveats beside it), `withhold` (show the text and the caveats, but no
+  controls — no Done / Not for us / Track on its lines), `refuse` (the text
+  was not shown; the payload carries the surface's fixed copy or previous read).
+- `caveats` — owner-facing sentences, already worded; render them as given.
+- `controls` — false whenever the verdict withholds or refuses.
+- `codes` — the rule codes that fired (PROMPT_LIBRARY.md → Response
+  Validation), including rewrites that were applied to the text.
+- `version` — the engine version the text was validated under (a stored read
+  is re-validated when it changes).
+
+Until web and iOS read the object, the text keeps the legacy trailing
+`UNVERIFIED: …` line whenever the verdict has a caveat or withholds controls;
+its words are the caveats. The object appears on:
+- **Food read** — `GET /api/inv-insight` (cached and stale paths too) and the mobile food analytics payload.
+- **Labor read** — `GET /api/labor-insight` (cached and stale paths too) and all three mobile labor returns.
+- **Reviews read** and **Marketing read** — their insight payloads (web and mobile). The Reviews read's
+  `figures_verified` / `causes_verified` / `names_verified` now derive from the verdict's codes, and its
+  Do-today controls also need `validation.controls`; the Marketing read's recommendations are offered only
+  when `validation.controls` is true. Caveats with no flag of their own (a missing disclosure, a topic the
+  data did not hold, a benchmark with no source) appear only in `validation.caveats`.
+- **Intel** — the intel payload (`intel_recs_payload`, mobile `_do_mobile_intel`); the stored blob carries it.
+- **Diagnoses** — each review / food diagnosis dict (merged over its fields).
+- **Generated content** — `POST /api/generate-content` and `/mobile/api/marketing/generate-content` (`validation`
+  beside `content`); `POST /mobile/api/guest-campaign/draft` and its web twin (`validation` beside
+  `message`); regenerate-draft (`validation` beside `draft`, `needs_review`, `review_reason`).
+- **Calendar ideas** — each kept idea carries its own `validation`.
+
+**Ask** (`POST /api/ask-cavnar`, `/mobile/api/ask-cavnar`, both streams'
+`answer` event): `validation` as above, plus `unsupported_causes` (the answer's
+sentences whose cause nothing it read states — each client marks them in
+place) and `unsupported_names` (names nothing it read holds), passed through
+`client_api._ask_meta`. The text itself already carries the engine's rewrites
+(certainty lowered to the computed %, "saved" on an opportunity re-worded, a
+cause lowered to its anchor, "I've sent…" → "queued … for your OK") and its
+drops (another restaurant's name, advice to fire staff or skip a food-safety
+step); an answer with nothing left is replaced by a fixed sentence.
+
 ## Schedule experiments (admin only)
 
 - `GET /admin/api/schedule-experiments` — per experiment and arm: weeks, draft

@@ -991,6 +991,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     big_8_context = ""
     forecast_next_week = None
     forecast_monthly = None
+    menu_notes = ""
     if restaurant_id:
         # Week over week, from the ISO-week series the trend card already
         # computes — not from "the previous snapshot row".
@@ -1129,6 +1130,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         try:
             from models import get_restaurant as _gr_inv
             rest = _gr_inv(restaurant_id)
+            if rest and rest.menu_notes:
+                menu_notes = rest.menu_notes[:300]
             if rest and rest.menu_notes and analysis["waste_items"]:
                 top_waste_item = analysis["waste_items"][0]["item"]
                 # menu_notes is owner-authored free text and reaches the model
@@ -1212,7 +1215,9 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     diag_block = ""
     ranked_labels = []
     ranked_drivers = []         # the drivers themselves, for the figure binding below (H3)
-    cause_anchors = []          # the stored cause and the ranked drivers (H2)
+    cause_anchors = []          # the stored cause and the ranked drivers (H2) — "likely"
+    alt_anchors = []            # the stored alternative cause — an association only
+    cfo_facts = []              # the CFO layer's figures with their kinds (typed_facts)
     if restaurant_id:
         try:
             import food_cost_intelligence as _fci
@@ -1225,6 +1230,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             ranked_labels = [d["label"] for d in (_ev["drivers"].get("drivers") or [])]
             ranked_drivers = list(_ev["drivers"].get("drivers") or [])[:6]
             cause_anchors += [d.get("item") or d.get("label") for d in ranked_drivers]
+            cfo_facts = _fci.typed_facts(_ev["drivers"], _ev["food_cost"], _ev["profitability"])
             _pat = _fci._pattern_block(_ev["weekday"], _ev["seasonal"])
             _acc = _ev["forecast_accuracy"]
             _acc_line = ("\n\nHow accurate past forecasts here have been: "
@@ -1251,7 +1257,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             import food_cost_intelligence as _fci2
             _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
             if _dg and _dg.get("cause"):
-                cause_anchors += [_dg.get("cause"), _dg.get("alternative_cause")]
+                cause_anchors.append(_dg.get("cause"))
+                alt_anchors.append(_dg.get("alternative_cause"))
                 # No confidence word in the prompt (R9, B5 #9): the stored
                 # band is the model's own, capped — the owner's figure is the
                 # computed one the screen shows beside the read, and a band
@@ -1392,7 +1399,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Maximum of three. Zero is allowed when the data supports none.
 - Number each one: start with "1. ", "2. ", "3. "
 - Hard cap: 30 words per recommendation. Lead with the action.
-- End each one with " — " then its dollar figure WITH THE PERIOD IT IS GIVEN IN above and how hard it is (e.g. " — $240/month, low effort", or " — $38 per order, low effort"). Never turn a per-order or weekly figure into a monthly one, and never call any of them saved. State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
+- End each one with " — " then its dollar figure WITH THE PERIOD IT IS GIVEN IN above, labelled for what it is, and how hard it is (e.g. " — $240/month opportunity, low effort", " — about $180/month estimated, medium effort", or " — about $38 per order, low effort"). Never turn a per-order or weekly figure into a monthly one, and never call any of them saved. State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
 - Each must quote a dollar figure from the driver list or the "Dollar figures the data supports" block — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
@@ -1401,17 +1408,38 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}{answered_block}"""
 
 
+    # The Response Validation Layer (surface food_insight) replaces the
+    # module's own guard sequence — the confidence rewrite, the presence
+    # check, the cause check, the item binding and the UNVERIFIED note —
+    # with one context: every money figure typed with its kind (recoverable
+    # is an opportunity projected from one week, never "saved"; the monthly
+    # waste figure a projection; a per-order difference an estimate; the
+    # overstock capital on hand), each item's figures bound to it, the
+    # stored cause and the ranked drivers as the only causes ("likely"), the
+    # alternative an association, an old stock count disclosed, other
+    # tenants' names denied. The prompt backs any figure no typed fact holds.
+    _forecasts = [("food.forecast.waste_next_week", forecast_next_week, "week"),
+                  ("food.forecast.waste_monthly", forecast_monthly, "month")]
+    if forecast_shown is not None:
+        _forecasts += [("food.forecast.shown_week", forecast_shown, "week"),
+                       ("food.forecast.shown_monthly", round(forecast_shown * WEEKS_PER_MONTH, 2), "month")]
+    _ctx = food_read_context(restaurant_id, prompt, analysis,
+                             food_insight_validation_facts(analysis, ranked_drivers, _forecasts, cfo_facts),
+                             cause_anchors, alt_anchors, untrusted=[menu_notes] if menu_notes else ())
+
     # One stored read per restaurant and prompt (audit #22). The prompt IS
     # the data — every figure, driver, diagnosis and the date — so the same
     # figures give the same words on the web and the phone, and a new read
     # is written only when something in it changed. The web and iOS kept
-    # separate five-minute caches and got two different answers.
+    # separate five-minute caches and got two different answers. The read
+    # is stored with the model's own text, so a new engine version
+    # re-validates it (no model call) instead of serving the old verdict.
     _fp = None
     if restaurant_id:
         try:
             import insight_store as _ist
             _fp = _ist.fingerprint(prompt)
-            _stored = _ist.get(restaurant_id, "food", _fp)
+            _stored = _ist.get(restaurant_id, "food", _fp, revalidate=lambda raw: finish_food_read(raw, _ctx))
             if isinstance(_stored, str) and _stored.strip():
                 return _stored
         except Exception as _se:
@@ -1433,43 +1461,125 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("food cost insight was truncated")
-    # A confidence the model writes anyway is taken out (R9, B5 #9 / p14):
-    # "high confidence, low effort" was copied onto a driver whose measured
-    # band was low, and passed every guard.
-    from ai_guard import rewrite_confidence_claims
-    result, _ = rewrite_confidence_claims(result, None)
-    # The return value used to be discarded. labor.py appends the marker,
-    # client_api.py parses it and mobile_api.py renders it as
-    # claim_kinds.insight_unverified — the whole pipeline existed and food
-    # cost was the one module that computed the flag and dropped it, showing
-    # figures nothing could trace back to the data as plain fact.
-    from ai_guard import verify_figures
-    unsupported = verify_figures(result, prompt, "inventory_insight", restaurant_id)
     # Strip any markdown that slips through
     import re as _re_inv
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
     result = _re_inv.sub(r'#{1,6}\s', '', result)
-    # A cause only where it carries the stored root-cause read or a ranked
-    # driver (H2), and each figure bound to the item its sentence names
-    # (H3) — the prompt holds every item's figures, so "presence anywhere"
-    # verified one ingredient's dollars quoted against another.
-    from ai_guard import unbound_figures, unsupported_causes, unverified_note
-    causes = unsupported_causes(result, cause_anchors, job="inventory_insight", restaurant_id=restaurant_id)
-    _ents, _glob = food_insight_facts(analysis, ranked_drivers)
-    misbound = unbound_figures(result, _ents, _glob + [savings_block, position_block, profit_block,
-                                                      forecast_next_week, forecast_monthly],
-                               job="inventory_insight", restaurant_id=restaurant_id)
-    note = unverified_note(unsupported, causes, misbound)
-    if note:
-        result = result.rstrip() + "\n\nUNVERIFIED: " + note
-    if _fp and result.strip():
+    out = finish_food_read(result, _ctx)
+    if _fp and out.strip():
         try:
             import insight_store as _ist2
-            _ist2.put(restaurant_id, "food", _fp, result)
+            _ist2.put(restaurant_id, "food", _fp, out, raw=result)
         except Exception as _pe:
             print(f"[inventory insight store] {_pe}")
-    return result
+    return out
+
+
+# Shown in place of a food read the Response Validation Layer refused
+# (everything it said was dropped, or it could not be checked at all): no
+# figure, no item, no claim — the page's own measured figures stand.
+FOOD_READ_UNCHECKED = ("This food cost read couldn't be checked against your data, so it isn't shown. "
+                       "The figures on this page are unaffected, and a new read is written when your "
+                       "data changes.")
+
+
+def food_insight_validation_facts(analysis: dict, drivers=(), forecasts=(), cfo_facts=()) -> list:
+    """Typed facts for the food read (response_validation). Every figure
+    food_insight_facts binds to an item or the week stays bound
+    (entity_facts, measured), except the money whose kind matters, which is
+    passed once with its kind instead: the week's waste (measured, a week),
+    the monthly waste figure (a projection), recoverable (an opportunity
+    projected from one week of data — 7 data days, so never a year), each
+    item's recoverable cost (an opportunity a week), overstock (capital on
+    hand, measured, no period), the per-order difference (an estimate, no
+    period), the forecasts (projections) and the CFO layer's figures
+    (food_cost_intelligence.typed_facts: each driver with its value_kind)."""
+    import response_validation as rv
+    F = rv.Fact
+    a = analysis or {}
+    typed = {"waste_items": ("recoverable_cost",), "overstock": ("overstock_cost",),
+             "order_reduction": ("savings_vs_last",)}
+    bare = dict(a)
+    for k in ("total_waste_cost_week", "monthly_waste_projection", "recoverable_monthly"):
+        bare[k] = None
+    for key, drop in typed.items():
+        bare[key] = [{k: v for k, v in x.items() if k not in drop} if isinstance(x, dict) else x
+                     for x in (a.get(key) or [])]
+    bare_drivers = [{k: v for k, v in d.items() if k != "dollars_monthly"} for d in drivers or ()
+                    if isinstance(d, dict)]
+    ents, glob = food_insight_facts(bare, bare_drivers)
+    facts = rv.entity_facts(ents, glob)
+    facts += [F("food.waste.week", a.get("total_waste_cost_week"), "$", "measured", "week"),
+              F("food.waste.monthly_projection", a.get("monthly_waste_projection"), "$", "projection", "month"),
+              F("food.recoverable_monthly", a.get("recoverable_monthly"), "$", "opportunity", "month",
+                data_days=7)]
+    for x in a.get("waste_items") or []:
+        if isinstance(x, dict):
+            facts.append(F("food.item.recoverable_cost", x.get("recoverable_cost"), "$", "opportunity", "week",
+                           entity=x.get("item"), data_days=7))
+    for x in a.get("overstock") or []:
+        if isinstance(x, dict):
+            facts.append(F("food.item.overstock_cost", x.get("overstock_cost"), "$", "measured",
+                           entity=x.get("item")))
+    for x in a.get("order_reduction") or []:
+        if isinstance(x, dict):
+            facts.append(F("food.item.savings_vs_last", x.get("savings_vs_last"), "$", "estimate",
+                           entity=x.get("item")))
+    for key, value, period in forecasts or ():
+        facts.append(F(key, value, "$", "projection", period))
+    facts += list(cfo_facts or ())
+    return [f for f in facts if f.value is not None]
+
+
+def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), alt_anchors=(), untrusted=()):
+    """The ValidationContext the food read is checked under (and re-checked
+    under when its stored read is re-validated)."""
+    import response_validation as rv
+    try:
+        import models as _m
+        denied = _m.other_tenant_names(restaurant_id)
+    except Exception:
+        denied = set()
+    data_state = {}
+    cf = (analysis or {}).get("count_freshness") or {}
+    if cf.get("stale"):
+        # The waste figures cover the week; only the count is old, so the
+        # stale source is named rather than the whole read aged (a
+        # data_age_days here would call "waste this week" out of date).
+        last = cf.get("last_count_at")
+        from time_utils import mdy as _mdy_cf
+        as_of = _mdy_cf(str(last)[:10]) if last else None
+        data_state["stale_sources"] = ["stock count" + (f" from {as_of}" if as_of else "")]
+        if as_of:
+            data_state["as_of"] = as_of
+    anchors = []
+    for a in cause_anchors or ():
+        anchors += rv.anchor(a, "likely")
+    for a in alt_anchors or ():
+        anchors += rv.anchor(a, "association")
+    return rv.ValidationContext(restaurant_id=restaurant_id, surface="food_insight", facts=facts,
+                                context_text=prompt, cause_anchors=anchors, tenant_names_denied=denied,
+                                untrusted=list(untrusted or ()), data_state=data_state,
+                                policy={"action": "inventory_insight"})
+
+
+def finish_food_read(text: str, ctx):
+    """The food read to show (a response_validation.Validated str): the
+    engine's text with the legacy UNVERIFIED line when it carries caveats,
+    or FOOD_READ_UNCHECKED when the engine refused it."""
+    import response_validation as rv
+    out = rv.enforce(text, ctx)
+    if str(out).strip():
+        return out
+    try:
+        import ops
+        codes = out.verdict.codes if out.verdict else []
+        ops.capture(RuntimeError(f"food read refused by validation: {', '.join(codes)}"),
+                    job="inventory_insight", context=f"restaurant_id={ctx.restaurant_id}")
+    except Exception:
+        pass
+    return rv.Validated(FOOD_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
 
 
 _UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)

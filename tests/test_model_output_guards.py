@@ -236,7 +236,9 @@ def test_h3_labor_insight_catches_a_figure_attached_to_the_wrong_day(monkeypatch
     _stub_labor(monkeypatch, "Hi, labor ran 34%. Friday ran 38% labor.\n\nRecommendations:\n"
                              "1. Trim Wednesday by one.\n2. Check Friday.\n3. Hold the line.")
     text = labor.get_claude_insights(_labor_analysis(), restaurant_name="R", owner_name="Sam")
-    assert "UNVERIFIED:" in text and "38% (about friday)" in text
+    # The engine's F2 caveat (Response Validation Layer) names the figure.
+    tail = text.split("UNVERIFIED:")[1]
+    assert "wrong day" in tail and "38%" in tail
 
 
 def test_h3_food_insight_binds_figures_to_items():
@@ -273,7 +275,8 @@ def test_h4_the_corpus_is_built_from_verified_history_not_the_raw_messages():
     # Every answer's check is recorded where it is returned — through
     # _finish since R3, which records it under the text actually shown.
     assert src.count("= _finish(_answer_of(") == 3
-    assert "_recorded(answer, meta, restaurant_id)" in inspect.getsource(ask_cavnar._finish)
+    # The text shown is the Response Validation Layer's (workstream A).
+    assert "_recorded(shown, meta, restaurant_id)" in inspect.getsource(ask_cavnar._finish)
 
 
 # ── H5: keyword/model safety disagreements ─────────────────────────────────
@@ -387,8 +390,10 @@ def test_h6_drafts_are_labelled_estimates_and_past_edits_lower_confidence(db_pat
 
 def test_h7_a_plan_item_needs_a_verified_figure_and_no_residue_or_echo():
     import strategy_jobs as sj
-    from ai_guard import shingles
-    guest = shingles("the wait for our table was over an hour on saturday night again")
+    # The residue, echo and cause checks are the Response Validation
+    # Layer's now (I1, K1 on surface "weekly_plan"): the guest's words go in
+    # as untrusted text, the stored causes (none here) as anchors.
+    guest = sj._plan_context(guest_texts=["the wait for our table was over an hour on saturday night again"])
     ok = {"title": "Add a host Saturday", "why": "Labor ran 31.4% on Saturdays"}
     assert sj._plan_item_problem(ok, [], guest) is None
     assert sj._plan_item_problem({"title": "Be nicer", "why": "Guests want it"}, [], guest) \
@@ -398,7 +403,7 @@ def test_h7_a_plan_item_needs_a_verified_figure_and_no_residue_or_echo():
                                  [], guest) == "it repeats a guest's own words"
     assert sj._plan_item_problem(ok, ["31.4%"], guest) == "it states a figure nothing it read supports"
     assert sj._plan_item_problem({"title": "Cut Monday", "why": "Labor ran 31.4% because of the new hire"},
-                                 [], guest, cause_anchors=[]) == "it states a cause no stored diagnosis supports"
+                                 [], guest) == "it states a cause no stored diagnosis supports"
 
 
 # ── H8: forecasts computed in Python and logged ────────────────────────────
@@ -470,17 +475,23 @@ def test_h9_digest_lines_are_checked_for_names_directions_and_causes():
     prompt = "Notable reviews:\n- Ann left a 5★ review: great\nLabor: 31.4% — trending UP from 28.0%"
     dirs = {"labor": "up", "inventory": None, "reviews": "down"}
     diag = {"recommended_action": "Put a manager on the pass for Friday dinner", "cause": "the pass backs up"}
-    anchors = [diag["cause"], diag["recommended_action"]]
-    p = reporter.digest_line_problem
-    assert p("reviews", "Reply to Brenda's review today.", prompt, dirs, anchors) is not None
-    assert p("reviews", "Reply to Ann today.", prompt, dirs, anchors) is None
-    assert p("labor", "Labor fell to 31.4% this week.", prompt, dirs, anchors) == "says labor went down; it went up"
-    assert p("labor", "Labor rose to 31.4% this week.", prompt, dirs, anchors) is None
-    assert p("inventory", "Waste rose this week.", prompt, dirs, anchors) is not None
-    assert p("labor", "Labor is up because of the new cook.", prompt, dirs, anchors) is not None
-    assert p("action", "Run a Tuesday promotion.", prompt, dirs, anchors, diagnosis=diag) \
-        == "is not the diagnosis's recommended action"
-    assert p("action", "Put a manager on the pass Friday dinner.", prompt, dirs, anchors, diagnosis=diag) is None
+    # Names and causes are the Response Validation Layer's now (N1, K1),
+    # run first on every line by digest_line_check; directions and the
+    # ACTION rule stay the digest's own (digest_line_problem).
+    ctx = reporter.digest_context(None, prompt, diagnosis=diag)
+
+    def p(key, line, diagnosis=None):
+        return reporter.digest_line_check(key, line, ctx, dirs, diagnosis=diagnosis)[1]
+    assert p("reviews", "Reply to Brenda's review today.") is not None
+    assert p("reviews", "Reply to Ann today.") is None
+    assert "went up" in p("labor", "Labor fell to 31.4% this week.")
+    assert reporter.digest_line_problem("labor", "Labor fell to 31.4% this week.", dirs) \
+        == "says labor went down; it went up"
+    assert p("labor", "Labor rose to 31.4% this week.") is None
+    assert p("inventory", "Waste rose this week.") is not None
+    assert p("labor", "Labor is up because of the new cook.") is not None
+    assert p("action", "Run a Tuesday promotion.", diagnosis=diag) == "is not the diagnosis's recommended action"
+    assert p("action", "Put a manager on the pass Friday dinner.", diagnosis=diag) is None
 
 
 # ── H10: the complaint phrase is fenced ────────────────────────────────────
@@ -686,11 +697,28 @@ def test_h16_a_decline_on_home_drops_the_dsr_action_and_the_review_line(db_path)
 def test_h16_every_insight_path_runs_the_cause_and_binding_checks():
     """Source pins: a guard nobody calls protects nothing."""
     import inventory, labor, reporter, strategy_jobs
-    assert "unsupported_causes(" in inspect.getsource(labor.get_claude_insights)
-    assert "unbound_figures(" in inspect.getsource(labor.get_claude_insights)
-    assert "unsupported_causes(" in inspect.getsource(inventory.get_claude_insights)
-    assert "unbound_figures(" in inspect.getsource(inventory.get_claude_insights)
-    assert "unsupported_causes(" in inspect.getsource(client_api._do_review_insight)
-    assert "unsupported_causes(" in inspect.getsource(client_api._do_mkt_insight)
-    assert "digest_line_problem(" in inspect.getsource(reporter.generate_ai_digest_summary)
+    # The Labor and Food reads' causes (K1, anchored on the diagnosis and the
+    # ranked drivers) and figure bindings (F2, labor_insight_facts /
+    # food_insight_facts as typed facts) are the Response Validation Layer's.
+    lsrc = inspect.getsource(labor.get_claude_insights)
+    assert "rv.enforce(" in lsrc and "labor_read_context(" in lsrc
+    lctx = inspect.getsource(labor.labor_read_context)
+    assert "labor_insight_facts(" in lctx and "rv.entity_facts(" in lctx and "cause_anchors=anchors" in lctx
+    fsrc = inspect.getsource(inventory.get_claude_insights)
+    assert "finish_food_read(" in fsrc and "food_read_context(" in fsrc and "food_insight_validation_facts(" in fsrc
+    assert "rv.enforce(" in inspect.getsource(inventory.finish_food_read)
+    assert "food_insight_facts(" in inspect.getsource(inventory.food_insight_validation_facts)
+    assert "cause_anchors=anchors" in inspect.getsource(inventory.food_read_context)
+    # The Reviews and Marketing reads' causes (K1), figures and names are the
+    # Response Validation Layer's now, anchored on the diagnosis (Reviews) —
+    # a marketing topic is not a cause.
+    assert "_rv.enforce(" in inspect.getsource(client_api._do_review_insight)
+    assert "cause_anchors=anchors" in inspect.getsource(client_api._review_insight_rv_context)
+    assert "_rv.enforce(" in inspect.getsource(client_api._do_mkt_insight)
+    # The digest's causes, names, figures and echoes are the Response
+    # Validation Layer's now; its own rules still run after it.
+    assert "digest_line_check(" in inspect.getsource(reporter.generate_ai_digest_summary)
+    assert "rv.validate_lines(" in inspect.getsource(reporter.digest_line_check)
+    assert "digest_line_problem(" in inspect.getsource(reporter.digest_line_check)
     assert "_plan_item_problem(" in inspect.getsource(strategy_jobs.run_weekly_plan)
+    assert "rv.validate_lines(" in inspect.getsource(strategy_jobs._plan_item_problem)

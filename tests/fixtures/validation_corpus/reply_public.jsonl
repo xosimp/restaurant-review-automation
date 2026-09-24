@@ -13,8 +13,8 @@
 {"src": "NS1 H6 make it right", "ctx": "reply", "text": "We will make it right on your next visit.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-012"}
 {"src": "NS1 H6 guarantee", "ctx": "reply", "text": "We guarantee your next meal will be perfect.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-013"}
 {"src": "NS1 H6 sourcing", "ctx": "reply", "text": "Our pasta is made fresh daily from local, organic ingredients.", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-014"}
-{"src": "NS2 H8 short-staffed caused", "ctx": "reply", "text": "That night our kitchen was short-staffed, which caused the delay.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "reply_public-015"}
-{"src": "NS2 H8 new server why", "ctx": "reply", "text": "Your server was new that night, which is why the order was wrong.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "reply_public-016"}
+{"src": "NS2 H8 short-staffed caused", "ctx": "reply", "text": "That night our kitchen was short-staffed, which caused the delay.", "expect": {"verdict": "refuse", "rules": ["K1", "P1"]}, "id": "reply_public-015"}
+{"src": "NS2 H8 new server why", "ctx": "reply", "text": "Your server was new that night, which is why the order was wrong.", "expect": {"verdict": "refuse", "rules": ["K1", "P1"]}, "id": "reply_public-016"}
 {"src": "NS2 H8 never happens", "ctx": "reply", "text": "Sorry about the wait - it never happens on a normal night.", "expect": {"verdict": "refuse", "rules": ["C1", "P1"]}, "id": "reply_public-017"}
 {"src": "check_public_reply link", "ctx": "reply", "text": "Thanks! Book again at https://example.com/book", "expect": {"verdict": "refuse", "rules": ["I1", "P1"]}, "id": "reply_public-018"}
 {"src": "never-say term", "ctx": "reply", "text": "Thanks for stopping by our cheap little spot!", "expect": {"verdict": "refuse", "rules": ["P1"]}, "id": "reply_public-019"}

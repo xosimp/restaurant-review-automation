@@ -485,10 +485,15 @@ def test_unsupported_figures_reach_the_unverified_marker():
     """verify_figures was called and its return value discarded, while
     labor.py appends the marker, client_api parses it and mobile_api renders
     it as claim_kinds.insight_unverified — the whole pipeline existed and food
-    cost was the one module that computed the flag and dropped it."""
-    src = open("inventory.py", encoding="utf-8").read()
-    assert "unsupported = verify_figures(" in src
-    assert 'UNVERIFIED: ' in src
+    cost was the one module that computed the flag and dropped it. The check
+    is the Response Validation Layer's now (F1), and the food read keeps the
+    marker the clients parse."""
+    import inventory
+    assert "finish_food_read(" in open("inventory.py", encoding="utf-8").read()
+    ctx = inventory.food_read_context(None, "Waste this week: $160.", {},
+                                      inventory.food_insight_validation_facts({"total_waste_cost_week": 160.0}))
+    out = inventory.finish_food_read("Waste ran $9,400 this week.", ctx)
+    assert "UNVERIFIED:" in out and "$9,400" in out.split("UNVERIFIED:")[1]
 
 
 # ── Authorization ───────────────────────────────────────────────────────────

@@ -157,6 +157,16 @@ def _review_card(r) -> str:
 # The digest's direction check (H9): which way a line says a module moved.
 # For a cost (labor %, waste) "improved" means it fell; for the rating it
 # means it rose. A line with words both ways is left to the figure check.
+#
+# This is a CLAUSE reader with cost semantics, not a figure reader: it reads
+# "Labor improved" (down) and "Waste rose" with no figure in the clause, and
+# a direction claimed where nothing measured moved. ai_guard.claimed_direction
+# — the one figure-direction reader the Response Validation Layer's X1 uses —
+# reads the words around ONE figure ("fell to 31%", "$420 below budget") and
+# has no notion of better-means-down, so this cannot delegate to it without
+# changing what it catches. X1 now also runs on every digest line (the typed
+# facts carry the measured directions); this stays as the digest's own extra
+# rule for what X1 cannot express.
 import re as _re_dir
 _UP_WORDS = r"\b(?:up|rose|rising|risen|increas\w*|higher|climb\w*|grew|growing|jump\w*)\b"
 _DOWN_WORDS = r"\b(?:down|fell|falling|fallen|dropp\w*|decreas\w*|lower|declin\w*|slipp\w*|dipp\w*)\b"
@@ -181,26 +191,21 @@ _TOPIC_RE = {"labor": r"\b(?:labor|labour|staffing|payroll)\b",
              "reviews": r"(?:\brating|\bstars?\b|★)"}
 
 
-def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=None,
-                        untrusted_shingles=None) -> str | None:
-    """Why one digest line must not be emailed, or None (H9): a link, an
-    email address or an injection tell, or six words in a row of a guest's
-    review (NS6 §B finding 4 — the digest is unattended, like the DSR and
-    the weekly plan that already ran these), a name that was never in its
-    input (ai_guard.unsupported_names, the Reviews insight's check), a
-    direction that disagrees with what was measured — or claims one where
-    nothing measured moved — a cause no stored diagnosis holds, and for the
-    ACTION line, when a diagnosis exists, an action that is not its
-    recommendation (the prompt said so; now it is checked)."""
-    from ai_guard import carries_anchor, echoes, injection_residue, unsupported_causes, unsupported_names
-    why = injection_residue(line)
-    if why:
-        return why
-    if untrusted_shingles and echoes(line, untrusted_shingles):
-        return "repeats a guest's review word for word"
-    names = unsupported_names(line, prompt)
-    if names:
-        return f"names {', '.join(names[:3])}, who is not in the data"
+def digest_line_problem(key, line, directions, diagnosis=None) -> str | None:
+    """Why one digest line must not be emailed under the digest's OWN rules,
+    or None — what the Response Validation Layer (run first, per line, by
+    digest_line_check) does not express (H9, R12):
+
+      * a direction that disagrees with what was measured, or one claimed
+        where nothing measured moved, clause by clause, with cost semantics
+        ("labor improved" is down; "the rating improved" is up);
+      * for the ACTION line, when a diagnosis exists, an action that is not
+        its recommendation (the prompt says so; this checks it).
+
+    A link, an injection tell, a six-word echo of a guest's review, a name
+    the input never held, another tenant's name and an unsupported cause are
+    the engine's (I1, N1, T1, K1): this used to run its own copy of each."""
+    from ai_guard import carries_anchor
     if key in ("labor", "inventory", "reviews"):
         text = line
         if key == "reviews":
@@ -228,13 +233,125 @@ def digest_line_problem(key, line, prompt, directions, cause_anchors, diagnosis=
             return f"says {t} went {said}, and nothing measured moved"
         if said and measured and said != measured:
             return f"says {t} went {said}; it went {measured}"
-    causes = unsupported_causes(line, cause_anchors)
-    if causes:
-        return "states a cause no diagnosis supports"
     if key == "action" and diagnosis and diagnosis.get("recommended_action"):
         if not carries_anchor(line, [diagnosis.get("recommended_action"), diagnosis.get("cause")]):
             return "is not the diagnosis's recommended action"
     return None
+
+
+# ── the Response Validation Layer on the digest (surface "digest") ─────────
+#
+# The digest is unattended — nobody reads it before the owner does — so the
+# engine's unattended delivery applies: a rewrite stands (a lowered modal, a
+# softened cause), anything above a caveat drops the line, and a caveat
+# keeps the line with its caveat shown in the email (`_caveats`).
+
+def digest_context(restaurant_id, prompt, facts=(), diagnosis=None, signals=(), untrusted=(),
+                   names_allowed=(), missing_inputs=()):
+    """The digest's ValidationContext: typed facts from the digest's own data
+    dicts (a figure only the prompt states is still backed by `prompt` — the
+    hybrid mode, never less strict than the old presence check); cause
+    anchors — the stored diagnosis's cause ("likely"), its alternative and
+    the measured co-movements ("association"), NEVER its recommended_action;
+    the guest snippets as untrusted text (the six-word echo check); other
+    tenants' names denied; the diagnosis's K1 confidence (none caps a modal
+    at "might")."""
+    import response_validation as rv
+    anchors = []
+    if diagnosis:
+        anchors += rv.anchor(diagnosis.get("cause"), "likely")
+        anchors += rv.anchor(diagnosis.get("alternative_cause"), "association")
+    for s in signals or ():
+        anchors += rv.anchor(s, "association")
+    try:
+        import models as _m_rv
+        denied = _m_rv.other_tenant_names(restaurant_id)
+    except Exception:
+        denied = set()
+    conf = (diagnosis or {}).get("confidence_detail")
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="digest", facts=list(facts or ()), context_text=prompt or "",
+        cause_anchors=anchors, untrusted=[u for u in untrusted or () if u],
+        names_allowed={n for n in names_allowed or () if n}, tenant_names_denied=denied,
+        confidence=conf if isinstance(conf, dict) else None,
+        data_state={"missing_inputs": list(missing_inputs or ())},
+        policy={"action": "weekly_digest"})
+
+
+def digest_line_check(key, line, ctx, directions, diagnosis=None, labor_stale=None):
+    """(text, None, verdict) when the line is emailed — `text` after the
+    engine's rewrites — or (None, why, verdict) when it is dropped. The
+    engine runs first (every rule, on the line alone, unattended), then the
+    digest's own rules (digest_line_problem). `labor_stale` ({"as_of",
+    "age"}) marks the labor data as older than this week for a line about
+    labor, so M1 holds the line to saying so (a caveat the email shows).
+    The ACTION line rests on the diagnosis, so a module with no data this
+    week (missing_inputs) does not hold it. The verdict is logged
+    (ai_validation_log)."""
+    import dataclasses
+    import response_validation as rv
+    ds = dict(ctx.data_state)
+    if key == "action":
+        ds.pop("missing_inputs", None)
+    if labor_stale and (key == "labor" or _re_dir.search(_TOPIC_RE["labor"], line or "", _re_dir.I)):
+        ds.update({"stale_sources": ["labor"], "data_age_days": labor_stale.get("age"),
+                   "as_of": labor_stale.get("as_of")})
+    lctx = dataclasses.replace(ctx, data_state=ds) if ds != ctx.data_state else ctx
+    res = rv.validate_lines([line], lctx)
+    v = res.verdicts[0]
+    rv.log(v, lctx, original=line)
+    if not res.lines:
+        f = next((f for f in v.findings if f["severity"] in ("drop", "refuse")), None)
+        why = (f"{f['rule']}: {f['detail']}" + (f" ({f['span']})" if f.get("span") else "")) if f \
+            else "the validation layer refused it"
+        return None, why, v
+    text = res.lines[0]
+    why = digest_line_problem(key, text, directions, diagnosis=diagnosis)
+    if why:
+        return None, why, v
+    return text, None, v
+
+
+def _digest_facts(report, pos, neg, urgent, module_facts, labor_days=None, rating_move=None,
+                  review_move=None, backlog=None, diagnosis=None) -> list:
+    """The digest prompt's figures as typed facts, from the digest's own
+    data dicts (never re-read from the prose): counts are counts, the rating
+    is a ★ with the week's direction, labor % and the waste change are % with
+    theirs (X1 holds a line to them). A missing measurement is None — it
+    backs nothing (a week with no reviews has no rating, never 0.0). The
+    digest prompt carries no money figure today; a money figure a line
+    states is checked against the prompt text (F1) and read as measured."""
+    import response_validation as rv
+    F = rv.Fact
+    has_reviews = int(getattr(report, "total_reviews", 0) or 0) > 0
+    rdir = None if rating_move is None or abs(rating_move) < 0.05 else ("up" if rating_move > 0 else "down")
+    out = [F("reviews.total", getattr(report, "total_reviews", None), "count"),
+           F("reviews.positive", pos, "count"), F("reviews.negative", neg, "count"),
+           F("reviews.urgent", urgent, "count"),
+           F("rating.avg", report.avg_rating if has_reviews and report.avg_rating else None, "★", direction=rdir)]
+    if review_move is not None:
+        out.append(F("reviews.vs_last_week", review_move, "count", "computed"))
+    if rating_move is not None:
+        out.append(F("rating.vs_last_week", rating_move, "★", "computed"))
+    if backlog:
+        out.append(F("reviews.backlog", backlog, "count"))
+    lab = (module_facts or {}).get("labor") or {}
+    if lab:
+        out += [F("labor.pct", lab.get("pct"), "%", direction=lab.get("direction"), data_days=labor_days),
+                F("labor.from_pct", lab.get("from_pct"), "%"),
+                F("labor.weeks", lab.get("weeks") or None, "count"),
+                F("labor.overtime_risk", lab.get("overtime_risk"), "count")]
+    inv = (module_facts or {}).get("inventory") or {}
+    if inv:
+        out += [F("waste.change_pct", inv.get("waste_change_pct"), "%", direction=inv.get("waste_direction")),
+                F("inventory.critical_low", inv.get("critical_low"), "count")]
+    mkt = (module_facts or {}).get("marketing") or {}
+    if mkt:
+        out += [F("marketing.best_reach", mkt.get("best_reach"), "count"),
+                F("marketing.measured_posts", mkt.get("measured_posts"), "count")]
+    if diagnosis and diagnosis.get("mention_count") is not None:
+        out.append(F("diagnosis.mention_count", diagnosis.get("mention_count"), "count"))
+    return out
 
 
 def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaurant_id=None):
@@ -262,6 +379,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         inventory_context = ""
         marketing_context = ""
         _labor_stale = False
+        _labor_state = None          # {"as_of", "age"} when the labor read is older than this week
+        _labor_days = None           # the days of shifts the labor % covers
         _facts = {"labor": None, "inventory": None, "marketing": None}
         try:
             from labor import analyse_shifts_for_restaurant
@@ -282,12 +401,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     # The data's age (NS4 M3): June shifts read in September
                     # are not this week's labor, and the line says so.
                     _age_lr = labor_data_age_days(_dr_lr["end"], restaurant_id or report.restaurant_id)
+                    _labor_days = _days_lr
                     if _age_lr is not None:
                         labor_context += f" ({_age_lr} day{'' if _age_lr == 1 else 's'} before today"
                         if _age_lr > DIGEST_FRESH_DAYS:
                             labor_context += (" — older than this week: name its dates, never call it this "
                                               "week's labor")
                             _labor_stale = True
+                            _labor_state = {"as_of": _mdy_lr(_dr_lr["end"]), "age": _age_lr}
                         labor_context += ")"
                 else:
                     labor_context = f"Labor: {lp:.1f}% of revenue over the shifts on file"
@@ -517,6 +638,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # fetched_at, so "last week" was whatever happened to sync then.
         wow_context = ""
         _rating_move = None          # this week's average rating minus last week's, for the direction check
+        _review_move = None          # this week's review count minus last week's
         try:
             from datetime import timedelta
             from models import get_reviews_since, get_conn as _gc_r, REVIEW_TIME_AXIS_BARE as _AX_RPT
@@ -534,6 +656,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             _conn_r.close()
             if last_week and last_week["cnt"] > 0:
                 diff = report.total_reviews - last_week["cnt"]
+                _review_move = diff
                 diff_str = f"+{diff}" if diff >= 0 else str(diff)
                 avg_diff = round((report.avg_rating or 0) - (last_week["avg_r"] or 0), 1)
                 _rating_move = avg_diff
@@ -549,6 +672,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # words of a review in a row is dropped, like the DSR's and the
         # weekly plan's.
         _untrusted_texts = []
+        _reviewer_names = []         # the first names the prompt allows a line to use
         try:
             from ai_guard import wrap_untrusted as _wrap_rpt
             notable = [r for r in reviews if r.urgency == "high" or r.rating == 5][:2]
@@ -571,6 +695,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     lines.append(f"- {stars} review, guest's first name then an excerpt:\n"
                                  + _wrap_rpt(reviewer + "\n" + snippet[:80]))
                     _untrusted_texts.append(snippet)
+                    if reviewer != "A":
+                        _reviewer_names.append(reviewer)
                 specific_reviews = "\n" + "\n".join(lines)
             else:
                 specific_reviews = " None particularly notable this week."
@@ -579,6 +705,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
 
         # Response backlog — how many reviews still unresponded
         backlog_context = ""
+        _bl_cnt = None
         try:
             from models import get_conn as _gc_bl
             _conn_bl = _gc_bl()
@@ -753,42 +880,32 @@ Rules:
             # digest is not a digest.
             raise ValueError("weekly digest did not match the expected LABEL: format")
 
-        # Every figure the digest states has to be one it was handed. The
-        # prompt says "be specific with real numbers from the data above",
-        # which instructs the model to state figures and never checked that a
-        # stated figure came from anywhere. A line that invents "$2,400
-        # recoverable" is dropped rather than emailed.
-        from ai_guard import unsupported_figures
-        for key in list(parsed):
-            # Counts too: the prompt forbids an invented count (H3).
-            bad = unsupported_figures(parsed[key], prompt, check_counts=True)
-            if bad:
-                print(f"[digest] dropped {key} line — unsupported figures {bad}")
-                try:
-                    import ops
-                    ops.capture(RuntimeError(f"digest {key} line stated {bad} — not in the input"),
-                                job="weekly_digest", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
-                parsed.pop(key)
-
-        # Names, directions and causes (H9): a figure check passes a line
-        # naming a guest nobody mentioned, saying labor is "up" when it
-        # fell, or stating a cause no diagnosis holds. This email goes out
-        # unread, so each such line is dropped, not caveated.
+        # Every line through the Response Validation Layer (surface
+        # "digest", unattended), then the digest's own rules. The engine
+        # replaces the hand-rolled sequence this ran: the figure and count
+        # check against the prompt (F1, now typed: a rating is a ★, a change
+        # a %, never a bare count), names (N1), causes (K1 — the stored
+        # cause and alternative only, never the recommended action), the
+        # injection and six-word echo checks (I1); and adds what it never
+        # had: certainty (C1), peer and industry comparisons with no
+        # benchmark (B1), other tenants' names (T1), directions against the
+        # typed facts (X1), a stale labor read called this week's (M1) and a
+        # module with no data this week (M2). This email goes out unread, so
+        # a failing line is dropped, not caveated.
         _directions = {"labor": (_facts["labor"] or {}).get("direction"),
                        "inventory": (_facts["inventory"] or {}).get("waste_direction"),
                        "reviews": (None if _rating_move is None or abs(_rating_move) < 0.05
                                    else ("up" if _rating_move > 0 else "down"))}
-        _anchors = ([_d0.get("cause"), _d0.get("alternative_cause"), _d0.get("recommended_action")]
-                    if _d0 else [])
-        from ai_guard import shingles as _shingles_rpt
-        _untrusted_sh = set()
-        for _t in _untrusted_texts:
-            _untrusted_sh |= _shingles_rpt(_t)
+        _rv_ctx = digest_context(
+            restaurant_id or report.restaurant_id, prompt,
+            facts=_digest_facts(report, pos, neg, urgent_count, _facts, _labor_days, _rating_move,
+                                _review_move, _bl_cnt, _d0),
+            diagnosis=_d0, signals=signals, untrusted=_untrusted_texts, names_allowed=_reviewer_names,
+            missing_inputs=["labor"] if (_active["LABOR"] and not _module_data["LABOR"]) else [])
+        _line_caveats = {}
         for key in list(parsed):
-            why = digest_line_problem(key, parsed[key], prompt, _directions, _anchors,
-                                      diagnosis=_d0, untrusted_shingles=_untrusted_sh)
+            text, why, _v = digest_line_check(key, parsed[key], _rv_ctx, _directions, diagnosis=_d0,
+                                              labor_stale=_labor_state)
             if why:
                 print(f"[digest] dropped {key} line — {why}")
                 try:
@@ -798,6 +915,9 @@ Rules:
                 except Exception:
                     pass
                 parsed.pop(key)
+                continue
+            parsed[key] = text
+            _line_caveats[key] = [c for c in _v.actions.get("caveats") or [] if c]
 
         # A module line the prompt did not ask for is, by construction, a line
         # about a module with no data this week — exactly the fabrication the
@@ -825,6 +945,12 @@ Rules:
         # ignored them — they are measured, not generated.
         if signals:
             parsed["_correlations"] = signals
+        # What the validation layer kept a line WITH (a stale source, a
+        # disclosure the line left out): nobody reads this email before the
+        # owner, so the caveat is printed in it rather than dropped.
+        _caveats = list(dict.fromkeys(c for k in parsed for c in _line_caveats.get(k, ())))
+        if _caveats:
+            parsed["_caveats"] = _caveats
         return parsed
     except Exception as e:
         try:
@@ -1287,6 +1413,14 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     # owner can fix to get the module working.
     for gap in (ai_summary.get("_data_gaps") or []):
         sections.append(report_paragraph(_html.escape(gap)))
+
+    # What the validation layer kept a consultant line WITH (a stale source,
+    # a disclosure the line left out) — the same muted footnote as the
+    # co-movements, since the email is the only place the owner reads it.
+    _cavs = ai_summary.get("_caveats") or []
+    if _cavs:
+        sections.append(report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                         + " ".join(_html.escape(c) for c in _cavs[:3]) + "</span>"))
 
     # M/D/YY like every date an owner reads (DESIGN_SYSTEM.md → Dates and
     # times); the header read "Week of September 14, 2026" (re-audit C12).

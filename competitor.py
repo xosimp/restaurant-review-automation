@@ -879,40 +879,9 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         if getattr(msg, "stop_reason", None) == "max_tokens":
             raise ValueError("competitor insight was truncated")
         text = extract_text(msg).strip()
-
-        # Every other AI insight in this codebase runs through this guard —
-        # labor, review, marketing, inventory, email. Competitor intel, the
-        # one whose prompt says "Always use $ signs before dollar amounts",
-        # did not. A figure the model states that was never in its input is
-        # exactly what an owner would act on.
-        from ai_guard import verify_figures
-        unsupported = verify_figures(text, prompt, "competitor_insight", restaurant_id, check_counts=True)
-
-        # And a named restaurant that was never in the competitor list is an
-        # invented competitor, which is the single worst thing this module
-        # can produce.
-        invented = _invented_competitors(text, competitors)
-
-        # A recommendation stands only on reviews it cites that exist. One
-        # citing nothing, or an id that was never handed over, is dropped,
-        # and if none survive the section says so honestly (audit #31).
-        text = _validate_recommendation_citations(text, competitors)
-        # Strengths and weaknesses are cite-checked the same way, and the
-        # price line is computed from the price levels, not written (H11).
-        text = _validate_bullets(text, competitors)
-        text = _with_price_positioning(text, price_positioning(
-            competitors, (restaurant_profile or {}).get("price_level")))
-
-        if unsupported or invented:
-            notes = []
-            if invented:
-                notes.append("names a business that is not in your competitor list: "
-                             + ", ".join(invented[:3]))
-            if unsupported:
-                notes.append("states figures that were not in the data: "
-                             + ", ".join(str(u) for u in unsupported[:3]))
-            text = text.rstrip() + "\n\nUNVERIFIED: " + "; ".join(notes) + "."
-        return text
+        return finish_competitor_insight(text, prompt, competitors, restaurant_name,
+                                         own_price_level=(restaurant_profile or {}).get("price_level"),
+                                         restaurant_id=restaurant_id, owner_name=owner_name)
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         try:
@@ -921,6 +890,207 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         except Exception:
             pass
         return ""
+
+
+# ── the Response Validation Layer on competitor intel (workstream A) ────────
+#
+# One check between the model's text and the owner (surface "intel"). It
+# replaces verify_figures(check_counts) here and adds what intel never had:
+# each rating and review count bound to ITS competitor (F2), causes held to
+# the cited reviews (K1, association strength), another Cavnar tenant's
+# name dropped (T1), injection and certainty rules. The structural
+# validators stay: the recommendation and bullet citation checks, the
+# computed price line, and _invented_competitors (a multi-word business name
+# at a sentence start, which the engine's N1 patterns do not read).
+
+def _intel_context(prompt, competitors, restaurant_name="", restaurant_id=None, owner_name=None, weather=None):
+    """The ValidationContext for one competitor read. Facts: each
+    competitor's Google rating (★) and review count, bound to its name;
+    the prompt backs anything else it states (hybrid). names_allowed: the
+    competitors, the restaurant and its owner — competitors are exempt from
+    the tenant list. Untrusted and association-strength anchors: the review
+    texts the model was handed. Weather is a missing input when the prompt
+    carried no forecast (`weather`: None reads that off the prompt; True
+    when it is not known, so nothing is flagged for it)."""
+    import re as _re
+    import response_validation as rv
+    facts, untrusted, anchors = [], [], []
+    names = {n for n in (restaurant_name, owner_name) if n}
+    for c in competitors or []:
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        names.add(name)
+        slug = _re.sub(r"\W+", "_", name.lower()).strip("_") or "competitor"
+        facts.append(rv.Fact(f"competitor.{slug}.rating", c.get("rating"), "★", "measured", entity=name))
+        facts.append(rv.Fact(f"competitor.{slug}.review_count", c.get("review_count"), "count", "measured",
+                             entity=name))
+        for r in (c.get("reviews") or [])[:5]:
+            t = str((r or {}).get("text") or "")[:250].strip()
+            if t:
+                untrusted.append(t)
+                anchors += rv.anchor(t, "association")
+    tenants = set()
+    if restaurant_id:
+        try:
+            import models as _m
+            tenants = _m.other_tenant_names(restaurant_id)
+        except Exception:
+            tenants = set()
+    if weather is None:
+        weather = "Weather where this restaurant is" in (prompt or "")
+    missing = [] if weather else ["weather"]
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="intel", facts=facts, context_text=prompt or "",
+        cause_anchors=anchors, names_allowed=names, tenant_names_denied=tenants, untrusted=untrusted,
+        confidence=None, data_state={"missing_inputs": missing},
+        policy={"action": "competitor_insight", "check_counts": True})
+
+
+def finish_competitor_insight(raw, prompt, competitors, restaurant_name="", own_price_level=None,
+                              restaurant_id=None, owner_name=None):
+    """The competitor read as the owner gets it, from the model's raw text:
+    the citation checks (recommendations, then the strength and weakness
+    bullets), the Response Validation Layer, the computed price line, and
+    the legacy "UNVERIFIED:" line (every client's recommendation gate reads
+    it) carrying the verdict's caveats and any invented business. Returns a
+    Validated str — "" when refused, which the caller treats as no read."""
+    # A recommendation stands only on reviews it cites that exist. One
+    # citing nothing, or an id that was never handed over, is dropped,
+    # and if none survive the section says so honestly (audit #31).
+    text = _validate_recommendation_citations(raw or "", competitors)
+    # Strengths and weaknesses are cite-checked the same way (H11).
+    text = _validate_bullets(text, competitors)
+    import response_validation as rv
+    ctx = _intel_context(prompt, competitors, restaurant_name, restaurant_id, owner_name)
+    return _checked_intel(rv.enforce(text, ctx, marker=False), ctx, competitors, restaurant_name, own_price_level)
+
+
+def _checked_intel(checked, ctx, competitors, restaurant_name="", own_price_level=None):
+    """After the engine (`checked`, rv.enforce's Validated text, over a read
+    whose citations were already checked — a fresh one, or a stored one
+    being re-validated by current_intel): the computed price line and the
+    legacy marker."""
+    import response_validation as rv
+    verdict = checked.verdict
+    if not str(checked).strip():
+        return rv.Validated("", validation=checked.validation, verdict=verdict)
+    # The price line is computed from the price levels, not written (H11),
+    # so it is added after the check.
+    text = _with_price_positioning(str(checked), price_positioning(competitors, own_price_level))
+    validation = dict(checked.validation or {})
+    notes = []
+    note = rv.legacy_note(verdict)
+    if note:
+        notes.append(note.rstrip("."))
+    # A named restaurant that was never in the competitor list is an invented
+    # competitor, the single worst thing this module can produce. The
+    # restaurant's own name is not one.
+    invented = _invented_competitors(text, list(competitors or []) + [{"name": restaurant_name or ""}])
+    if invented:
+        notes.append("names a business that is not in your competitor list: " + ", ".join(invented[:3]))
+        validation.update({
+            "verdict": "withhold" if validation.get("verdict") in ("pass", "caveat") else validation.get("verdict"),
+            "controls": False,
+            "codes": list(dict.fromkeys(list(validation.get("codes") or []) + ["N1"])),
+            "caveats": list(validation.get("caveats") or []) + [f"A name here isn't in the data: {invented[0]}."]})
+    if notes and rv.mode_for(ctx.surface) == "enforce":
+        text = text.rstrip() + "\n\nUNVERIFIED: " + "; ".join(notes) + "."
+    return rv.Validated(text, validation=validation, verdict=verdict)
+
+
+def intel_blob(competitors, insight, generated_at, closed_custom=None) -> dict:
+    """The restaurants.competitor_intel blob: the read, and beside it the
+    verdict it was shown under (`validation`, carrying the engine's
+    version), so a later engine version re-validates the stored read on the
+    next open (current_intel) instead of serving an old verdict. The model's
+    raw text is deliberately NOT stored here: the whole blob is handed to
+    the web (/api/competitor-intel), and the raw text still holds what the
+    engine took out (another tenant's name, a dropped sentence)."""
+    blob = {"competitors": competitors, "insight": str(insight or ""), "generated_at": generated_at,
+            "closed_custom": closed_custom or []}
+    val = getattr(insight, "validation", None)
+    if val is not None:
+        blob["validation"] = val
+    return blob
+
+
+def _stored_intel_context(competitors) -> str:
+    """The figures a stored read's prompt held about its competitors —
+    name, Google rating, review count, price level, distance, how it was
+    selected — rebuilt from the stored competitor list, for re-validating a
+    read whose prompt was not kept. Review texts stay fenced, as they were."""
+    lines = []
+    for c in competitors or []:
+        if not isinstance(c, dict) or not c.get("name"):
+            continue
+        rating = (str(c["rating"]) + "★") if c.get("rating") else "no rating yet"
+        line = f"- {c['name']} ({rating}, {c.get('review_count') or 0} reviews)"
+        if c.get("price_level"):
+            line += f" Google price level: {_PRICE_WORDS.get(c.get('price_level'), 'not listed')}"
+        if c.get("distance_m"):
+            line += f" About {round(c['distance_m'] / 1000, 1)} km away"
+        if c.get("match_basis"):
+            line += f" How this one was selected: {c['match_basis']}"
+        revs = [f'[{r.get("ref")} · {r.get("rating")}★, {r.get("time") or "date unknown"}] '
+                f'"{str(r.get("text") or "")[:250].strip()}"' for r in (c.get("reviews") or [])[:5] if isinstance(r, dict)]
+        if revs:
+            line += "\n  " + wrap_untrusted("\n  ".join(revs))
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def current_intel(restaurant_id, blob, persist=True):
+    """The stored competitor blob, its read re-validated when it was shown
+    under an older engine version — or before the engine (no `validation`)
+    — with no model call: the shown text, its old "UNVERIFIED:" line and
+    computed price line taken off, is checked again against the stored
+    competitors (their figures rebuilt as the prompt stated them). Weather
+    is not flagged on this path (whether the prompt held a forecast was not
+    kept). Written back — only while the row still holds that same read — so
+    every reader of the row (the web page, Home, Ask) then sees it. Never
+    raises; on any failure the blob comes back as it was."""
+    try:
+        import response_validation as rv
+        if not isinstance(blob, dict):
+            return blob
+        val = blob.get("validation")
+        text = blob.get("insight") or ""
+        if (isinstance(val, dict) and val.get("version") == rv.VERSION) or not str(text).strip():
+            return blob
+        comps = [c for c in (blob.get("competitors") or []) if isinstance(c, dict)]
+        restaurant_name, owner_name = "", None
+        if restaurant_id:
+            try:
+                import models as _m
+                _r = _m.get_restaurant(restaurant_id)
+                restaurant_name = getattr(_r, "name", "") or ""
+                owner_name = getattr(_r, "owner_name", None)
+            except Exception:
+                pass
+        body = _with_price_positioning(rv.strip_marker(text), None)
+        ctx = _intel_context(_stored_intel_context(comps), comps, restaurant_name, restaurant_id, owner_name,
+                             weather=True)
+        out = _checked_intel(rv.enforce(body, ctx, marker=False), ctx, comps, restaurant_name)
+        new = dict(blob, insight=str(out), validation=out.validation)
+        if persist and restaurant_id:
+            import models as _m
+            conn = _m.get_conn()
+            try:
+                row = conn.execute("SELECT competitor_intel FROM restaurants WHERE id=?",
+                                   (restaurant_id,)).fetchone()
+                cur = json.loads(row[0]) if row and row[0] else {}
+                if isinstance(cur, dict) and cur.get("insight") == text and cur.get("validation") == val:
+                    conn.execute("UPDATE restaurants SET competitor_intel=? WHERE id=? AND competitor_intel=?",
+                                 (json.dumps(new), restaurant_id, row[0]))
+                    conn.commit()
+            finally:
+                conn.close()
+            _m._invalidate_request_cache(restaurant_id)
+        return new
+    except Exception as e:
+        print(f"[Competitor] stored read not re-validated: {e}")
+        return blob
 
 
 # Words in a restaurant's name too generic to identify it on their own.
@@ -1318,12 +1488,9 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # today" reads correctly on their dashboard
         from time_utils import restaurant_now
         _now_ct = restaurant_now(restaurant, naive=True)
-        result = {
-            "competitors": competitors,
-            "insight": insight,
-            "generated_at": _now_ct.strftime("%Y-%m-%d"),
-            "closed_custom": _closed_custom,
-        }
+        # The read's verdict and engine version are stored beside it
+        # (intel_blob), so a later engine version re-validates it on read.
+        result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom)
         conn = get_conn()
         conn.execute(
             "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=? WHERE id=?",
@@ -1351,7 +1518,9 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             })
         except Exception:
             pass
-        return {"ok": True, **result}
+        # The model's raw text and the prompt stay in the stored row for
+        # re-validation; they are not part of what a caller is handed.
+        return {"ok": True, **{k: v for k, v in result.items() if k not in ("insight_raw", "validation_input")}}
     except Exception as e:
         print(f"[Competitor] run_competitor_analysis error: {e}")
         from ai_guard import safe_error

@@ -43,6 +43,15 @@ WHAT IS CHECKED, deterministically, on what comes back:
     A failing item is DROPPED, never repaired, and recorded in
     narrative["verification"]. A failing executive summary refuses the
     whole narrative, because it is the lead.
+  * every item also passes the Response Validation Layer (surface "dsr",
+    unattended; Facts.rv_check) against ONLY its cited facts, typed with
+    this module's kinds: it holds the injection, echo, cause and name
+    checks this module used to run itself, and adds certainty (C1),
+    peer/industry comparisons with no benchmark (B1), other tenants' names
+    (T1) and unsafe actions (A2). Anything above a caveat drops the item;
+    its rewrites only ever lower wording (a modal, a causal verb — "drove"
+    reads "may have driven") and are kept on the item. The figure trace
+    and M's money-kind rules below stay this module's own.
   * the operations summary (optional): the manager's opening, because the
     executive summary usually cites the budget and so the Manager DSR lost
     its lead. The lead's checks plus manager-safety — no cite the manager
@@ -75,7 +84,7 @@ from datetime import datetime
 from itertools import combinations
 
 import dsr as _dsr
-from ai_guard import figure_claims, injection_residue, unsupported_causes, unsupported_names, wrap_untrusted
+from ai_guard import figure_claims, wrap_untrusted
 
 SCHEMA_VERSION = 1
 PURPOSE = "dsr_narrative"          # ai_utils.MODELS key and the ai_usage action
@@ -367,8 +376,10 @@ def _detail_numbers(v, out, depth=0):
 
 
 def _shingles(text, n=ECHO_WORDS):
-    words = _WORD_RE.findall(str(text or "").lower())
-    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+    """Every run of `n` words — ai_guard.shingles, the one shingle function
+    (NS6 A3; the same word pattern this module kept its own copy of)."""
+    from ai_guard import shingles
+    return shingles(text, n)
 
 
 class Facts:
@@ -391,11 +402,17 @@ class Facts:
                     self.details[f"{name}.{k}"] = v
             self.block_strings[name] = {s.lower() for s in _strings(b.get("detail") or {}, [])}
         self.untrusted = set()
+        # The manager's and guests' own words, whole — the Response
+        # Validation Layer's untrusted text (its six-word echo check, I1).
+        self.untrusted_texts = []
         for name in ("closeout", "reviews"):
             b = blocks.get(name)
             if isinstance(b, dict):
                 for s in _strings(b.get("detail") or {}, []):
                     self.untrusted |= _shingles(s)
+                    self.untrusted_texts.append(s)
+        self.restaurant_id = facts.get("restaurant_id") if isinstance(facts, dict) else None
+        self._rv_base = None
         day = str((facts or {}).get("business_date") or "")[:10] if isinstance(facts, dict) else ""
         fiscal = (facts or {}).get("fiscal") if isinstance(facts, dict) else None
         fiscal = fiscal if isinstance(fiscal, dict) else {}
@@ -484,6 +501,69 @@ class Facts:
 
     def echoes(self, text):
         return bool(self.untrusted and (_shingles(text) & self.untrusted))
+
+    # ── the Response Validation Layer (surface "dsr") ─────────────────────
+    def rv_facts(self, cites):
+        """The engine's typed facts for a line: ONLY what it cites (a figure
+        is judged against its own cites, as untraced() judges it). Each
+        metric keeps this module's kind (kind_of — M's table, the one
+        source; a vs_ variance is arithmetic on a measurement, "computed")
+        and its period: a monthly key is a month, a weekly a week, anything
+        else one night. A cited detail list's numbers (its size, its
+        numeric fields) are untyped counts, as candidates() reads them."""
+        import response_validation as rv
+        out = []
+        for c in dict.fromkeys(cites or ()):
+            if c in self.metrics:
+                last = c.split(".")[-1]
+                kind = "computed" if last.startswith("vs_") else kind_of(c)
+                out += rv.facts_from_dict({c: self.metrics[c]}, kind_map={c: kind},
+                                          period_map={c: _period_of(c) or "night"})
+            if c in self.details:
+                out += [rv.Fact(key=c, value=v, unit="", kind="measured", period="night")
+                        for v in dict.fromkeys(_detail_numbers(self.details[c], []))]
+        return out
+
+    def rv_context(self, cites):
+        """The line's ValidationContext: its cited facts; the manager's and
+        guests' words as untrusted text; the cause anchors its cites carry
+        (cause_anchors — the things those facts measure, "likely": the DSR
+        stores no diagnosis, so a measured component is the strongest cause
+        a line may name, and "drove" is said as "may have driven"); the names
+        its measured blocks hold; every other tenant's name denied. No
+        confidence: a modal is capped at "might"."""
+        import response_validation as rv
+        if self._rv_base is None:
+            try:
+                import models as _m
+                denied = _m.other_tenant_names(self.restaurant_id)
+            except Exception:
+                denied = set()
+            names = {s for block, strings in self.block_strings.items() if block not in ("closeout", "reviews")
+                     for s in strings if 3 <= len(s) <= 60}
+            self._rv_base = {"denied": denied, "names": names}
+        return rv.ValidationContext(
+            restaurant_id=self.restaurant_id, surface="dsr", facts=self.rv_facts(cites),
+            untrusted=self.untrusted_texts,
+            cause_anchors=[{"text": a, "strength": "likely"} for a in self.cause_anchors(cites)],
+            names_allowed=self._rv_base["names"], tenant_names_denied=self._rv_base["denied"],
+            policy={"action": PURPOSE})
+
+    def rv_check(self, text, cites):
+        """(text, None, None) when the engine keeps the line — after its
+        rewrites (a lowered modal, a softened cause, an estimate labelled) —
+        or (None, why, rule) when it drops it. The whole item is the unit: a
+        failing sentence drops the item, never repaired into a shorter one.
+        The verdict is logged (ai_validation_log)."""
+        import response_validation as rv
+        ctx = self.rv_context(cites)
+        res = rv.validate_lines([text], ctx)
+        v = res.verdicts[0]
+        rv.log(v, ctx, original=text)
+        if res.lines:
+            return res.lines[0], None, None
+        f = next((f for f in v.findings if f["severity"] in ("drop", "refuse")), None)
+        return None, _rv_reason(v), (f or {}).get("rule")
 
     def name_context(self):
         """Every word tonight's measured facts hold (their keys and the
@@ -676,15 +756,16 @@ def _tolerance(claim):
     """How far a stated figure may sit from the fact behind it: the rounding
     its own written precision allows. "$4,212" is 4,212 ± 0.5; "31.4%" is
     ± 0.05; "$4,200" may round to its trailing zeros but never by more than
-    0.5% ("$20,000" is not $19,850); "$2.4k" likewise."""
-    d, mult, v = claim["decimals"], claim.get("mult") or 1.0, abs(claim["value"])
-    if mult != 1.0:
-        return min(0.5 * 10 ** -d * mult, max(0.005 * v, 0.5)) + 1e-9
-    if d > 0:
-        return 0.5 * 10 ** -d + 1e-9
-    digits = str(int(round(v)))
-    zeros = len(digits) - len(digits.rstrip("0")) if v else 0
-    return max(0.5, min(0.5 * 10 ** zeros, 0.005 * v)) + 1e-9
+    0.5% ("$20,000" is not $19,850); "$2.4k" likewise. This module's rule,
+    now ai_guard.precision_tolerance (unhedged) — the one tolerance (NS6 A3).
+
+    The direction reader above (_direction) is NOT moved onto
+    ai_guard.claimed_direction: that one also treats "to"/"at" as fillers,
+    so "Labor fell to 24.2%" reads as down, and a positive labor.pct cite
+    (oriented) would no longer back it — every true "fell to / rose to"
+    line would be dropped."""
+    from ai_guard import precision_tolerance
+    return precision_tolerance(claim)
 
 
 # A line quoting an estimate must say it is one (H13).
@@ -999,35 +1080,31 @@ def check_item(item, F, action=False, lead=False, slot=None):
         return "an action rests on measured figures, never on the manager's notes"
     if lead and all(c.startswith("closeout.") for c in measured):
         return "rests only on the manager's closeout"
-    for text in (item["text"], item.get("why")) if action else (item["text"],):
+    rewritten = {}
+    for field in ("text", "why") if action else ("text",):
+        text = item.get(field)
         if not text:
             continue
-        why = injection_residue(text)
-        if why:
+        # The Response Validation Layer (surface "dsr", unattended) on the
+        # line, against ONLY its cited facts. It replaces this module's own
+        # injection, echo, cause (R5) and name (R11) checks and adds
+        # certainty (C1), peer/industry comparisons with no benchmark (B1),
+        # other tenants' names (T1), unsafe actions (A2) and its kind and
+        # direction reads on the typed cites. Run first so a line that is
+        # both an injection and wrong says why it is an injection.
+        new, why, rule = F.rv_check(text, cites)
+        # The DSR's own figure trace — dates, fiscal weeks, a detail list's
+        # size, the sign against a comparator — and M's money-kind rules,
+        # which the engine does not duplicate. Where the engine dropped the
+        # line on a figure rule (F*), the DSR's own reason is the one given
+        # when it has one: it names the cite that fails.
+        if why and not str(rule or "").startswith("F"):
             return why
-        if F.echoes(text):
-            return "repeats the manager's or a guest's own words"
-        figures = F.untraced(text, cites)
-        if figures:
-            return f"states {', '.join(figures)}, which no cited fact supports"
-        # A cause is checked like a figure (R5, B5 #5): "Sales were $19,850
-        # because the patio reopened" traced every figure and invented why.
-        causes = unsupported_causes(text, F.cause_anchors(cites))
-        if causes:
-            return f"states a cause nothing it cites supports (\"{causes[0][:100]}\")"
-        # A person the facts never name (R11, B5 #11).
-        names = unsupported_names(text, F.name_context())
-        if names:
-            return f"names {', '.join(names[:3])}, who is not in tonight's facts"
-        est = F.estimate_quoted(text, cites)
-        if est and not _ESTIMATE_WORDS.search(text):
-            # The footer says every figure traced to a MEASURED fact; a line
-            # quoting an estimate as if it were one is how that stopped
-            # being true (H13).
-            return f"quotes {est} from an estimate ({', '.join(c for c in cites if is_estimate(c))}) without saying so"
-        why = money_claim_problem(text, cites, F)
-        if why:
-            return why
+        own = _figure_problem(text, cites, F)
+        if own or why:
+            return own or why
+        if new != text:
+            rewritten[field] = new
     if action and item["dollars_monthly"] is not None and not F.monthly_supported(item["dollars_monthly"], cites):
         return (f"puts ${item['dollars_monthly']:,.0f}/month on it, which is not a monthly figure it cites "
                 f"(a night is never multiplied into a month)")
@@ -1037,7 +1114,46 @@ def check_item(item, F, action=False, lead=False, slot=None):
         if backing and all(c in RESTAURANT_WIDE_MONTHLY for c in backing):
             return (f"puts the restaurant-wide ${item['dollars_monthly']:,.0f}/month ({backing[0]}) on "
                     f"{item['subject']} alone")
+    # The item stands: it carries the engine's rewrites (they only ever lower
+    # a claim — a modal, a causal verb — or label an estimate; never a figure).
+    item.update(rewritten)
     return None
+
+
+def _figure_problem(text, cites, F):
+    """This module's own figure and money-kind reasons for one passage, or
+    None: every figure traced to its cites (untraced), an estimate named as
+    one (H13), and M's money-claim rules (money_claim_problem)."""
+    figures = F.untraced(text, cites)
+    if figures:
+        return f"states {', '.join(figures)}, which no cited fact supports"
+    est = F.estimate_quoted(text, cites)
+    if est and not _ESTIMATE_WORDS.search(text):
+        # The footer says every figure traced to a MEASURED fact; a line
+        # quoting an estimate as if it were one is how that stopped being
+        # true (H13).
+        return f"quotes {est} from an estimate ({', '.join(c for c in cites if is_estimate(c))}) without saying so"
+    return money_claim_problem(text, cites, F)
+
+
+# Why the Response Validation Layer dropped a line, in the words the DSR's
+# own checks used for the same thing (dropped[].why, the failure digest).
+def _rv_reason(verdict):
+    f = next((f for f in verdict.findings if f["severity"] in ("drop", "refuse")), None)
+    if f is None:
+        return "the validation layer refused it"
+    rule, span, detail = f["rule"], f.get("span") or "", f.get("detail") or ""
+    if rule == "I1" and "untrusted" in detail:
+        return "repeats the manager's or a guest's own words"
+    if rule == "I1":
+        return detail or "it contains an injection tell"
+    if rule == "N1":
+        return f"names {span}, who is not in tonight's facts"
+    if rule == "K1":
+        return f"states a cause nothing it cites supports (\"{span[:100]}\")"
+    if rule == "T1":
+        return f"names another restaurant ({span})" if span else "names another restaurant"
+    return f"{detail} ({rule}{': ' + span if span else ''})"
 
 
 # Words that put an owner-only subject in the operations summary even with

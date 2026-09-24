@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from ai_utils import create_with_retry, extract_text, get_client, model_for
+import response_validation as rv
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
@@ -1692,84 +1693,273 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     text = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("labor insight was truncated")
-    from ai_guard import verify_figures
-    # The return value is the list of figures the model stated that are not
-    # in its input. It used to be thrown away here, which meant an insight
-    # with invented numbers was captured for the operator and shown to the
-    # owner as fact. verify_figures' own docstring describes the flag this
-    # is for; labor was the one path not wiring it up.
     # A FORECAST line the model wrote anyway is not the forecast (H8): it is
     # removed before anything is checked, and the computed one stands in.
     text = re.sub(r'(?im)^\s*forecast:.*$\n?', '', text).strip()
-    unsupported = verify_figures(text, prompt, "labor_insight", restaurant_id)
     text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
     text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
     text = re.sub(r'#{1,6}\s', '', text)
     text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
-    from ai_guard import unbound_figures, unsupported_causes, unverified_note
-    # Each figure must belong to the day, date, role or person its sentence
-    # names — the prompt is a JSON dump of every day, so presence anywhere
-    # in it verified almost anything (H3, the DSR narrative's claim→cite
-    # binding ported to prose).
-    entities, globals_ = labor_insight_facts(analysis, industry=_bench)
-    misbound = unbound_figures(text, entities, globals_, job="labor_insight", restaurant_id=restaurant_id)
-    # A cause is allowed only where it carries the diagnosis's driver (H2);
-    # the labor prompt had no cause rule at all.
-    anchors = [_diag.get("cause"), _diag.get("alternative_cause")] if _diag.get("cause") else []
-    causes = unsupported_causes(text, anchors, job="labor_insight", restaurant_id=restaurant_id)
-    # A name the prompt never held (R11, B5 #11): the labor read had no
-    # name check at all.
-    from ai_guard import unsupported_names
-    names = unsupported_names(text, prompt)
+    # The Response Validation Layer (surface labor_insight) replaces the old
+    # presence check, day/role binding, cause check and name check: the
+    # figures bound to the day, date, role or person they came from; the gap
+    # above target typed as an opportunity (never "saved") over the days it
+    # rests on; the industry band only as the registry's benchmark; the
+    # diagnosis's driver the only cause ("likely"), its alternative an
+    # association; scheduled hours, a partial period and an old window
+    # disclosed when the read leaves them out.
+    ctx = labor_read_context(analysis, prompt, restaurant_id=restaurant_id, industry=_bench, diag=_diag,
+                             now=_local_now, staff_notes=staff_notes)
+    out = rv.enforce(text, ctx, marker=False)
+    enforcing = rv.mode_for("labor_insight") == "enforce"
+    # The computed forecast is recorded (and later scored) whatever the
+    # read's verdict: it is Python's figure, not the model's.
     fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
+    if fc_line and restaurant_id:
+        try:
+            import insight_store as _ist_fc
+            _ist_fc.record_weekly_forecast(
+                restaurant_id, "labor_week", analysis.get("overall_labor_pct"),
+                basis=f"this period's labor % carried forward ({analysis.get('period_days')} days); "
+                      f"{trend_diff:+.1f} points on the last comparable upload")
+        except Exception as _fe:
+            print(f"[labor forecast log] {_fe}")
+    if not str(out).strip():
+        try:
+            import ops
+            codes = out.verdict.codes if out.verdict else []
+            ops.capture(RuntimeError(f"labor read refused by validation: {', '.join(codes)}"),
+                        job="labor_insight", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return rv.Validated(f"{greeting} " + LABOR_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
+    shown = str(out)
+    # The FORECAST line is computed, not written by the model, so it is added
+    # after validation — and before the legacy UNVERIFIED line, which the
+    # clients read as the text's last section.
     if fc_line:
-        text = text.rstrip() + "\n" + fc_line
-        if restaurant_id:
-            try:
-                import insight_store as _ist_fc
-                _ist_fc.record_weekly_forecast(
-                    restaurant_id, "labor_week", analysis.get("overall_labor_pct"),
-                    basis=f"this period's labor % carried forward ({analysis.get('period_days')} days); "
-                          f"{trend_diff:+.1f} points on the last comparable upload")
-            except Exception as _fe:
-                print(f"[labor forecast log] {_fe}")
-    note = unverified_note(unsupported, causes, misbound, names)
+        shown = shown.rstrip() + "\n" + fc_line
+    note = rv.legacy_note(out.verdict) if enforcing else None
     if note:
-        text = text.rstrip() + "\n\nUNVERIFIED: " + note
-    return text
+        shown = shown.rstrip() + "\n\nUNVERIFIED: " + note
+    return rv.Validated(shown, validation=out.validation, verdict=out.verdict)
 
 
-def schedule_note_problem(bullet, prompt, restaurant_id=None):
-    """Why one of the schedule's "Cavnar AI's note" bullets is dropped, or
-    None (R10, B5 #10): the digest's line checks — a link or injection tell,
-    a figure or count its prompt did not hold, a name outside it, a cause
-    the prompt does not state. The bullets went from the model to the page
-    with no check at all."""
-    from ai_guard import (CAUSAL_RE, _strip_untrusted, causal_clauses, injection_residue, sentences,
-                          unsupported_causes, unsupported_figures, unsupported_names)
-    why = injection_residue(bullet)
-    if why:
-        return why
-    # A missing input the note cannot claim (NS4 M8): "Rain is expected
-    # Friday" passed every check when no forecast was supplied at all.
+# Shown in place of a labor read the Response Validation Layer refused:
+# no figure, no claim — the page's measured figures stand.
+LABOR_READ_UNCHECKED = ("This labor read couldn't be checked against your shift data, so it isn't shown. "
+                        "The figures on this page are unaffected.")
+
+
+def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry=None, diag=None,
+                       now=None, staff_notes=None):
+    """The ValidationContext the labor read is checked under.
+
+    Facts: labor_insight_facts' day / date / role / person bindings
+    (entity_facts), with the gap above target taken out of the globals and
+    typed instead — potential_savings over the period, _weekly and _monthly,
+    each an opportunity with the data days behind it (the weekly and
+    monthly rates only when the period is long enough to state one; the
+    prompt says "not available" otherwise) — and the industry band as the
+    registry's benchmark facts, never a bare global. The prompt backs any
+    other figure it states (hybrid)."""
+    a = analysis or {}
+    entities, globals_ = labor_insight_facts(a, industry=industry)
+    entities.pop("industry", None)            # typed below, from the registry
+    # A role's figures bind to "<role> labor", not to the bare role word: the
+    # engine binds a figure to the LAST entity its sentence names, and "Trim
+    # Sunday by one server — it ran 42.7%" named "server" last, so Sunday's
+    # own figure read as attached to the wrong entity (ai_guard's binding
+    # accepted any entity in the sentence). A role's figure quoted against a
+    # day is still caught.
+    for role in list((a.get("role_summary") or {}).keys()):
+        if str(role) in entities:
+            entities[f"{role} labor"] = entities.pop(str(role))
+    gap = [(k, a.get(k), p) for k, p in (("potential_savings", "period"), ("potential_savings_weekly", "week"),
+                                         ("potential_savings_monthly", "month"))]
+    gap_values = [float(v) for _k, v, _p in gap if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    globals_ = [g for g in globals_ if not (isinstance(g, (int, float)) and
+                                            any(abs(float(g) - v) < 0.005 for v in gap_values))]
+    days = a.get("data_days") or a.get("period_days")
+    facts = rv.entity_facts(entities, globals_)
+    for key, value, period in gap:
+        if period != "period" and a.get("period_too_short_to_project"):
+            continue
+        facts.append(rv.Fact(f"labor.{key}", value, "$", "opportunity", period, data_days=days))
+    if industry:
+        try:
+            import benchmark_registry
+            facts += benchmark_registry.facts(industry)
+        except Exception as e:
+            print(f"[labor] benchmark facts unavailable: {e}")
+    data_state = {}
+    if a.get("hours_are_estimated"):
+        data_state["required_disclosures"] = ["hours_estimated"]
+    if a.get("days_missing_sales"):
+        data_state["partial_flags"] = ["partial_period"]
+    end = ((a.get("date_range") or {}).get("end"))
+    if end:
+        try:
+            from time_utils import mdy as _mdy_w
+            today = (now or datetime.now(ZoneInfo('America/Chicago'))).date()
+            data_state["data_age_days"] = (today - date.fromisoformat(str(end)[:10])).days
+            data_state["as_of"] = _mdy_w(str(end)[:10])
+        except Exception:
+            pass
+    d = diag or {}
+    anchors = (rv.anchor(d.get("cause"), "likely") + rv.anchor(d.get("alternative_cause"), "association")
+               if d.get("cause") else [])
+    try:
+        import models as _m
+        denied = _m.other_tenant_names(restaurant_id)
+    except Exception:
+        denied = set()
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="labor_insight", facts=facts, context_text=prompt,
+        cause_anchors=anchors, tenant_names_denied=denied,
+        untrusted=[str(n.get("notes") or "") for n in (staff_notes or []) if isinstance(n, dict)],
+        data_state=data_state, policy={"action": "labor_insight", "max_data_age_days": LABOR_FRESH_DAYS})
+
+
+# Sentences that tell the model what to do are not data: "heavy rain
+# typically means fewer walk-ins" in the weather paragraph is a rule of
+# thumb handed to the model, and anchoring a note's cause on it let the note
+# repeat it as a finding. A note's cause anchors come from the data blocks
+# only; with no data blocks named, the prompt's causal sentences minus these.
+_INSTRUCTION_RE = re.compile(
+    r"^\s*(?:[-*•]\s*)?(?:do\s+not|don['’]t|never|always|use|keep|make|if|when|only|must|say|write|include|"
+    r"note|follow|check|before|avoid|add|staff|schedule|treat|prefer|respect|confirm|count|split)\b", re.I)
+
+
+def _note_anchors(prompt, data_blocks=None) -> list:
+    from ai_guard import CAUSAL_RE, _strip_untrusted, causal_clauses, sentences
+    src = "\n".join(str(b) for b in data_blocks if b) if data_blocks is not None else (prompt or "")
+    out = []
+    for x in sentences(_strip_untrusted(src)):
+        clauses = causal_clauses(x)
+        if not (CAUSAL_RE.search(x) or clauses) or _INSTRUCTION_RE.match(x):
+            continue
+        out += rv.anchor(x, "likely")
+        # The cause the data block states, on its own: a note that repeats
+        # it ("… because the patio was unusable") carries it, where the
+        # whole data line would ask for words the note has no reason to use.
+        for _conn, clause in clauses:
+            out += rv.anchor(re.sub(r"\([^)]*\)", "", clause).strip(" .;:,"), "likely")
+    return out
+
+
+_NOTE_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_NOTE_MORNING_RE = re.compile(r"\b(?:morning|brunch|breakfast|lunch|opening|opener|day\s*shift|am)\b", re.I)
+_NOTE_NIGHT_RE = re.compile(r"\b(?:dinner|night|evening|close|closing|closer|late|pm)\b", re.I)
+
+
+def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
+    """{role: floor} for the day and daypart one note bullet talks about,
+    from the owner's floors (schedule_rules.role_floors: per role, per
+    daypart, per-day overrides) and whole-day role minimums — the engine's
+    A2 reads {role: n}. A bullet naming no day or daypart gets the smallest
+    floor over the slots it could mean, so only a cut that is below every
+    one of them is called unsafe."""
+    from schedule_requirements import floor_for
+    text = str(bullet or "")
+    days = [d for d in _NOTE_DAYS if re.search(r"\b" + d + r"s?\b", text, re.I)] or list(_NOTE_DAYS)
+    parts = [p for p, pat in (("morning", _NOTE_MORNING_RE), ("night", _NOTE_NIGHT_RE)) if pat.search(text)] \
+        or ["morning", "night"]
+    out = {}
+    for role, spec in (role_floors or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        vals = [floor_for(spec, d, p) for d in days for p in parts]
+        vals = [v for v in vals if v > 0]
+        if vals:
+            out[str(role)] = min(vals)
+    for role, n in (role_minimums or {}).items():
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            out[str(role)] = max(n, out.get(str(role), 0))
+    return out
+
+
+def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=None, keyholders=None):
+    """The ValidationContext each "Cavnar AI's note" bullet is checked under
+    (surface schedule_note). Delivered like a digest line — nobody reads a
+    bullet before the manager does, so anything above a caveat drops it,
+    and injection residue is checked. The prompt backs its figures and
+    counts (check_counts); a name must be in it; a cause needs a data
+    block that states it; a missing weather forecast or demand history
+    (the prompt's markers) makes that topic a claim about nothing; a cut
+    below the owner's role floor or sending home a keyholder is unsafe."""
+    missing = []
+    if NO_WEATHER_MARKER in (prompt or ""):
+        missing.append("weather")
+    if NO_DEMAND_MARKER in (prompt or ""):
+        missing.append("demand")
+    try:
+        import models as _m
+        denied = _m.other_tenant_names(restaurant_id)
+    except Exception:
+        denied = set()
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="schedule_note", delivery="unattended", context_text=prompt or "",
+        cause_anchors=_note_anchors(prompt, data_blocks), tenant_names_denied=denied,
+        data_state={"missing_inputs": missing},
+        policy={"action": "labor_schedule_note", "check_counts": True,
+                "role_floors": dict(floors or {}),
+                "keyholders": [k for k in (keyholders or []) if k]})
+
+
+def _note_reason(verdict) -> str:
+    f = next((f for f in verdict.findings if f["severity"] in ("drop", "refuse", "withhold")), None) or \
+        next((f for f in verdict.findings if f["severity"] != "info"), None)
+    if not f:
+        return "it could not be checked"
+    return f"{f['rule']} ({rv.RULES.get(f['rule'], f['rule'])}): {f['detail'] or f['span']}"
+
+
+def _note_verdict(bullet, prompt, ctx, role_floors=None, role_minimums=None):
+    """(text to keep or None, why dropped or None) for one bullet, under the
+    owner's floors for the day and daypart it talks about."""
+    # The labor module's own weather words (drizzle, thunder, snowfall,
+    # rainfall …) beyond the engine's weather topic: with no forecast, a
+    # bullet about the weather is a claim about nothing (NS4 M8).
     if NO_WEATHER_MARKER in (prompt or "") and _WEATHER_WORDS_RE.search(bullet or ""):
-        return "talks about the weather, and no forecast was supplied"
-    figs = unsupported_figures(bullet, prompt, check_counts=True)
-    if figs:
-        return f"states {', '.join(figs[:3])}, which the schedule's input does not hold"
-    names = unsupported_names(bullet, prompt)
-    if names:
-        return f"names {', '.join(names[:3])}, who is not on the roster"
-    anchors = [x for x in sentences(_strip_untrusted(prompt or "")) if CAUSAL_RE.search(x) or causal_clauses(x)]
-    if unsupported_causes(bullet, anchors):
-        return "states a cause its input does not hold"
-    return None
+        return None, "talks about the weather, and no forecast was supplied"
+    if role_floors or role_minimums:
+        import dataclasses
+        ctx = dataclasses.replace(ctx, policy={**ctx.policy,
+                                               "role_floors": note_floors(bullet, role_floors, role_minimums)})
+    v = rv.validate(str(bullet or ""), ctx)
+    rv.log(v, ctx, original=bullet)
+    if rv.mode_for(ctx.surface) != "enforce":
+        return str(bullet), None
+    if v.verdict not in ("pass", "caveat") or not v.text.strip():
+        return None, _note_reason(v)
+    return v.text, None
 
 
-def _drop_note_bullets(bullets, prompt, restaurant_id=None):
+def schedule_note_problem(bullet, prompt, restaurant_id=None, data_blocks=None, role_floors=None,
+                          keyholders=None):
+    """Why one of the schedule's "Cavnar AI's note" bullets is dropped, or
+    None (R10, B5 #10) — the Response Validation Layer on the bullet
+    (schedule_note_context): an invented figure or count, a name outside
+    the input, a cause no data block states, a link or injection tell, a
+    missing input it talks about, an unsafe staffing action. The bullets
+    went from the model to the page with no check at all."""
+    ctx = schedule_note_context(prompt, restaurant_id, data_blocks, keyholders=keyholders)
+    return _note_verdict(bullet, prompt, ctx, role_floors)[1]
+
+
+def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, role_floors=None,
+                       keyholders=None, role_minimums=None):
+    """The bullets that stand, each after the engine's rewrites (certainty
+    and causal wording lowered); every dropped one is captured."""
+    ctx = schedule_note_context(prompt, restaurant_id, data_blocks, keyholders=keyholders)
     kept = []
     for b in bullets:
-        why = schedule_note_problem(b, prompt, restaurant_id)
+        text, why = _note_verdict(b, prompt, ctx, role_floors, role_minimums)
         if why:
             try:
                 import ops
@@ -1778,7 +1968,7 @@ def _drop_note_bullets(bullets, prompt, restaurant_id=None):
             except Exception:
                 pass
             continue
-        kept.append(b)
+        kept.append(text)
     return kept
 
 
@@ -3137,7 +3327,17 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     # did not hold, no name outside it, no cause it does not state, no link
     # or injection tell. A failing bullet is dropped (the computed "what
     # changed" diff lines stand on their own).
-    summary_bullets = _drop_note_bullets(summary_bullets, prompt, restaurant_id=restaurant_id)
+    summary_bullets = _drop_note_bullets(
+        summary_bullets, prompt, restaurant_id=restaurant_id,
+        # A cause is anchored by what the data blocks state, never by the
+        # prompt's instructions (the weather paragraph's rule of thumb).
+        data_blocks=[yoy_block, events_block,
+                     "" if NO_DEMAND_MARKER in _demand_block else _demand_block,
+                     "\n".join(_w_lines) if weather_forecast else "",
+                     _prior_schedule_block, _headcount_block, _requirements_block, _noshows_block,
+                     _pattern_block],
+        role_floors=role_floors, role_minimums=_role_minimums_dict(role_minimums_json),
+        keyholders=[n for n, v in (leader_flags or {}).items() if v])
 
     return {
         "schedule_csv": csv_clean,

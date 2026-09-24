@@ -440,6 +440,60 @@ def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform)
     return row_id
 
 
+# ── the public-text check (Response Validation Layer) ─────────────────────
+
+def _owner_source(p, topic=""):
+    """What the owner wrote about the restaurant, as one string: the
+    profile fields a marketing prompt is built from, plus the topic the owner
+    asked for. An offer, an award or a sourcing claim whose words are here is
+    theirs to publish (response_validation P1, offer_source)."""
+    p = p or {}
+    parts = [p.get("known_for"), p.get("vibe"), p.get("neighborhood"), p.get("voice"), p.get("menu_notes"), topic]
+    return " ".join(str(x) for x in parts if x)
+
+
+def validate_marketing_text(text, restaurant_id, surface, profile=None, topic="", untrusted=(),
+                            action="marketing_content"):
+    """`text` through response_validation on a public marketing surface
+    (social_post, calendar_idea): an rv.Validated str ("" when refused, in
+    enforce mode) carrying `.verdict`. No marker: public text never had it."""
+    import response_validation as rv
+    ctx = marketing_context(restaurant_id, surface, profile, topic=topic, untrusted=untrusted, action=action)
+    return rv.enforce(text or "", ctx, marker=False)
+
+
+def marketing_context(restaurant_id, surface, profile=None, topic="", untrusted=(), action="marketing_content"):
+    """The ValidationContext for owner-profile marketing text: offer_source
+    is what the owner wrote (_owner_source), never_say the restaurant's list,
+    names the restaurant's own, tenant_names_denied every other tenant."""
+    import response_validation as rv
+    p = profile if profile is not None else get_profile_for_restaurant(restaurant_id)
+    tenants = set()
+    if restaurant_id:
+        try:
+            import models as _m
+            tenants = _m.other_tenant_names(restaurant_id)
+        except Exception:
+            tenants = set()
+    names = {n for n in ((p or {}).get("name"), (p or {}).get("sign_off_name")) if n}
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface=surface, names_allowed=names, tenant_names_denied=tenants,
+        never_say=(p or {}).get("never_say") or "", offer_source=_owner_source(p, topic),
+        untrusted=[u for u in (untrusted or ()) if u], policy={"action": action})
+
+
+def refusal_detail(verdict) -> str:
+    """The first refusing finding, worded for the owner ("the copy contains
+    'x'", "award or ranking claim ('famous')")."""
+    why = next((f for f in (verdict.findings if verdict else []) if f.get("severity") == "refuse"), None)
+    if not why:
+        return "it makes a claim the restaurant never made"
+    detail, span = why.get("detail") or "", why.get("span") or ""
+    if span and span.lower() not in detail.lower():
+        return f"{detail} ('{span}')"
+    return detail
+
+
 def generate_content(content_type: str, topic: str,
                      restaurant_id: int = None) -> str:
     """Generate marketing content for a given type and topic."""
@@ -531,19 +585,19 @@ def generate_content(content_type: str, topic: str,
 
     # This copy is published to Instagram, Facebook and Google Business
     # Profile. Hashtags and links are fine here — a claim the restaurant
-    # cannot make about itself is not.
-    from ai_guard import check_marketing_copy
-    _never = ""
-    if restaurant_id:
-        try:
-            from models import get_restaurant as _gr_mkt
-            _r_mkt = _gr_mkt(restaurant_id)
-            _never = (_r_mkt.never_say or "") if _r_mkt else ""
-        except Exception:
-            _never = ""
-    refusal = check_marketing_copy(result, never_say=_never)
-    if refusal:
-        raise ValueError(f"marketing copy rejected: {refusal}")
+    # cannot make about itself is not. The Response Validation Layer on
+    # social_post (workstream A) replaces the bare check_marketing_copy: the
+    # same closure / health-department / never-say check, plus an offer, an
+    # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
+    # never wrote, fault and inspection claims, another tenant's name.
+    # What the owner wrote is the offer source: the profile the prompt was
+    # built from (known for, vibe, voice, menu notes) and the topic they
+    # asked for. What guests said (the signal block) is never a source.
+    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=topic,
+                                     untrusted=[signal_context] if signal_context else (),
+                                     action="marketing_content")
+    if result.verdict is not None and result.verdict.verdict == "refuse":
+        raise ValueError(f"marketing copy rejected: {refusal_detail(result.verdict)}")
 
     # Log this content for future memory
     log_content(restaurant_id, content_type, topic)
@@ -628,7 +682,7 @@ def get_cached_calendar(restaurant_id: int, max_age_seconds: int = None):
                 return None
             if age > max_age_seconds:
                 return None
-        return json.loads(row["ideas_json"])
+        return _revalidated(restaurant_id, json.loads(row["ideas_json"]))
     except Exception:
         return None
 
@@ -680,6 +734,71 @@ def _with_margin_idea(restaurant_id, ideas, days_map, iso_map):
         return [i for i in ideas if i.get("source") != "menu_margins"] + [idea]
     except Exception:
         return ideas
+
+
+# The fields of a calendar idea that are structure, not words an owner reads
+# as the idea (day, dates, platform and type are enums the code fills in).
+_IDEA_STRUCTURAL = frozenset({"day", "date", "iso_date", "week_range", "platform", "type", "source", "validation",
+                              "rec_key", "written", "shown"})
+
+
+def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=()):
+    """Each model-written idea's text fields through response_validation
+    (calendar_idea). A refused idea is dropped — alone: one bad angle does not
+    cost the owner the week. A kept idea carries `validation` (the verdict
+    payload, whose version lets a cached week be re-checked when the engine
+    changes). Deterministic ideas (source menu_margins) are not model text
+    and pass through untouched."""
+    import response_validation as rv
+    ctx = marketing_context(restaurant_id, "calendar_idea", profile, untrusted=untrusted, action="content_calendar")
+    kept, dropped = [], 0
+    for idea in ideas or []:
+        if not isinstance(idea, dict):
+            continue
+        if idea.get("source") == "menu_margins":
+            kept.append(idea)
+            continue
+        new, refused, verdicts = dict(idea), False, []
+        for k, v in idea.items():
+            if k in _IDEA_STRUCTURAL or not isinstance(v, str) or not v.strip():
+                continue
+            out = rv.enforce(v, ctx, marker=False)
+            if out.verdict is not None and out.verdict.verdict == "refuse":
+                refused = True
+                break
+            new[k] = str(out)
+            verdicts.append(out.validation)
+        if refused:
+            dropped += 1
+            continue
+        worst = max(verdicts, key=lambda x: rv.VERDICTS.index(x["verdict"]) if x else -1, default=None)
+        new["validation"] = worst or {"verdict": "pass", "caveats": [], "controls": True, "codes": [],
+                                      "version": rv.VERSION}
+        kept.append(new)
+    if dropped and not kept:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"content calendar: all {dropped} ideas refused by response validation"),
+                        job="content_calendar", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+    return kept
+
+
+def _revalidated(restaurant_id, ideas):
+    """A cached week, with any idea not checked by this engine version
+    checked now (no model call) — a week cached before the engine, or under
+    an older version, never reaches the owner unchecked."""
+    import response_validation as rv
+    stale = [i for i in ideas or [] if isinstance(i, dict) and i.get("source") != "menu_margins"
+             and ((i.get("validation") or {}).get("version") != rv.VERSION)]
+    if not stale:
+        return ideas
+    week_range = next((i.get("week_range") for i in ideas if isinstance(i, dict) and i.get("week_range")), None)
+    out = _validated_ideas(restaurant_id, ideas)
+    if out and week_range and not out[0].get("week_range"):
+        out[0]["week_range"] = week_range
+    return out
 
 
 def _calendar_ideas(text):
@@ -818,6 +937,10 @@ Rules:
             idea["day"] = day_name
             idea["date"] = days_map.get(day_name, "")
             idea["iso_date"] = iso_map.get(day_name, "")
+        # Each idea's owner-visible text through the Response Validation
+        # Layer (calendar_idea): this had no guard at all (NS6 A2). A
+        # refused idea is dropped on its own; the rest of the week stands.
+        ideas = _validated_ideas(restaurant_id, ideas, p, untrusted=[signal_block] if signal_block else ())
         # Sort by date so calendar always shows Mon→Sun order
         day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
         ideas.sort(key=lambda x: day_order.index(x.get("day","Sunday")) if x.get("day","") in day_order else 7)
