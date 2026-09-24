@@ -124,12 +124,18 @@ def digest_preheader(report, restaurant) -> str:
 
 
 def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None,
-                                   brief: bool = False) -> str:
+                                   brief: bool = False, facts=None) -> str:
     """Ask Claude for one short, warm paragraph personalizing an onboarding/
     summary email using the real activity data passed in `context`. Falls
     back to static copy if the API isn't configured or the call fails —
     an email should never fail to send because personalization couldn't
-    be generated."""
+    be generated.
+
+    `facts` are the figures `context` states, typed (response_validation
+    Facts: counts are counts, a rating a ★), for the Response Validation
+    Layer the paragraph passes before it is sent (surface
+    "email_personalise", unattended). A figure only `context` states is
+    still backed by it (the engine's hybrid mode)."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         return fallback
     try:
@@ -169,16 +175,51 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
         text = extract_text(msg).strip()
         if getattr(msg, "stop_reason", None) == "max_tokens":
             return fallback
-        # This paragraph is written in Will's first person and sent from his
-        # address, so a figure it invents reads as Will personally asserting
-        # it. If any number in it isn't one we handed the model, send the
-        # deterministic fallback copy instead.
-        from ai_guard import verify_figures
-        if verify_figures(text, context, "email_personalization", restaurant_id):
+        if not text:
             return fallback
-        return text if text else fallback
+        # This paragraph is written in Will's first person and sent from his
+        # address, so anything it asserts reads as Will personally asserting
+        # it — and nobody reads it before the client does. It passes the
+        # Response Validation Layer (surface "email_personalise", unattended):
+        # figures and counts against what the model was handed (F1 — this was
+        # verify_figures, which never checked a count), a cause nothing
+        # measured ("answering reviews lifted your rating", K1), a peer or
+        # industry claim (B1, NS4 H1's "ahead of most restaurants I bring
+        # on"), certainty (C1), another tenant's name (T1). A rewrite stands
+        # (a lowered modal); a sentence that fails is dropped; a paragraph
+        # the engine refuses — or one with nothing left — sends the
+        # deterministic fallback copy instead.
+        import response_validation as rv
+        denied = set()
+        if restaurant_id:
+            try:
+                import models as _m_rv
+                denied = _m_rv.other_tenant_names(restaurant_id)
+            except Exception:
+                denied = set()
+        ctx = rv.ValidationContext(restaurant_id=restaurant_id, surface="email_personalise",
+                                   facts=list(facts or ()), context_text=context or "",
+                                   tenant_names_denied=denied,
+                                   policy={"action": "email_personalization", "check_counts": True})
+        out = rv.enforce(text, ctx, marker=False)
+        return str(out) if str(out).strip() else fallback
     except Exception:
         return fallback
+
+
+def _personalise_facts(**figures) -> list:
+    """The figures a personalisation prompt states, typed for the Response
+    Validation Layer: a key with "rating" is a ★ (1–5), anything else a
+    count. None is a figure that was not measured — it backs nothing (a
+    month with no reviews has no rating, never 0)."""
+    import response_validation as rv
+    out = []
+    for key, value in figures.items():
+        if value is None or isinstance(value, bool):
+            continue
+        unit = "★" if "rating" in key else "count"
+        out.append(rv.Fact(key=key, value=value, unit=unit, kind="measured"))
+    return out
 
 def security_stamp(tz: str = None) -> str:
     """"9/2/26 at 3:04 PM CDT" — when a security event happened, in the
@@ -2020,7 +2061,9 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             f"Modules: {'Labor Optimizer, ' if has_labor else ''}{'Food Cost Control' if has_inventory else ''}\n"
             "Write the one-week check-in paragraph referencing this activity naturally."
         )
-        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
+        body_paragraph = generate_email_personalization(
+            ai_context, fallback_paragraph, restaurant_id=restaurant_id,
+            facts=_personalise_facts(**{"reviews.approved": approved_count, "reviews.pending": pending_count}))
 
         deliver(email_type="send_onboarding_day7", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
@@ -2583,7 +2626,9 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
               "totals, so do not recite them all — lead with the one thing that matters most."
         )
         summary_paragraph = generate_email_personalization(
-            ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True)
+            ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True,
+            facts=_personalise_facts(**({"reviews.total": total, "reviews.rating": avg, "reviews.positive": pos,
+                                         "reviews.negative": neg} if total else {"reviews.total": 0})))
 
         import rec_delivery
         with rec_delivery.collect() as shown:
@@ -2758,7 +2803,10 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             f"Modules in use: {', '.join(modules) if modules else 'Review Intelligence'}.\n"
             "Write the 30-day milestone paragraph referencing this real activity — celebratory but genuine, not over the top."
         )
-        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
+        body_paragraph = generate_email_personalization(
+            ai_context, fallback_paragraph, restaurant_id=restaurant_id,
+            facts=_personalise_facts(**{"reviews.handled": total, "reviews.responded": responded,
+                                        "reviews.rating": avg_rating or None}))
 
         deliver(email_type="send_onboarding_day30", restaurant_id=restaurant_id, payload={
             "from": sender("will"),

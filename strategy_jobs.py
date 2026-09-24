@@ -423,11 +423,10 @@ PLAN_ECHO_REVIEW_DAYS = 120
 PLAN_ECHO_REVIEW_LIMIT = 400
 
 
-def _guest_shingles(restaurant_id, db_path=DB_PATH) -> set:
-    """Six-word runs of this restaurant's recent review text — what the
-    weekly plan must never repeat (the DSR narrative's echo rule)."""
-    from ai_guard import shingles
-    out = set()
+def _guest_texts(restaurant_id, db_path=DB_PATH) -> list:
+    """This restaurant's recent review text — what the weekly plan must
+    never repeat six words of (the Response Validation Layer's untrusted
+    text, its I1 echo check)."""
     try:
         from models import get_conn
         conn = get_conn(db_path)
@@ -439,54 +438,112 @@ def _guest_shingles(restaurant_id, db_path=DB_PATH) -> set:
                 (restaurant_id, f"-{PLAN_ECHO_REVIEW_DAYS} days", PLAN_ECHO_REVIEW_LIMIT)).fetchall()
         finally:
             conn.close()
-        for r in rows:
-            out |= shingles(r["text"])
+        return [r["text"] for r in rows if r["text"]]
     except Exception as e:
         print(f"[weekly_plan] guest text unreadable rid={restaurant_id}: {e}")
+        return []
+
+
+def _guest_shingles(restaurant_id, db_path=DB_PATH) -> set:
+    """Six-word runs of this restaurant's recent review text. The plan's
+    echo check is the engine's now (it reads _guest_texts); kept, and
+    reading the same rows, as a candidate for future cleanup after
+    additional verification."""
+    from ai_guard import shingles
+    out = set()
+    for t in _guest_texts(restaurant_id, db_path=db_path):
+        out |= shingles(t)
     return out
 
 
-def _plan_cause_anchors(restaurant_id, db_path=DB_PATH) -> list:
-    """The causes this system holds for a restaurant — the stored review
-    and food cost diagnoses and labor.diagnose's lead driver — the only
+def _plan_anchors(restaurant_id, db_path=DB_PATH) -> list:
+    """The causes this system holds for a restaurant, with their strength —
+    the stored review and food cost diagnoses and labor.diagnose's lead
+    driver: each cause "likely", each alternative "association" (the
+    digest's rules). A recommended action is never an anchor. The only
     causes a plan item may state (H2)."""
+    import response_validation as rv
     out = []
+
+    def add(d):
+        out.extend(rv.anchor(d.get("cause"), "likely") + rv.anchor(d.get("alternative_cause"), "association"))
     try:
         import review_intelligence as _ri
         for d in _ri.get_diagnoses(restaurant_id, db_path=db_path, include_stale=True)[:3]:
-            out += [d.get("cause"), d.get("alternative_cause")]
+            add(d)
     except Exception:
         pass
     try:
         import food_cost_intelligence as _fci
-        d = _fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) or {}
-        out += [d.get("cause"), d.get("alternative_cause")]
+        add(_fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) or {})
     except Exception:
         pass
     try:
         import labor
-        d = labor.diagnose(labor.analyse_shifts_for_restaurant(restaurant_id)) or {}
-        out += [d.get("cause"), d.get("alternative_cause")]
+        add(labor.diagnose(labor.analyse_shifts_for_restaurant(restaurant_id)) or {})
     except Exception:
         pass
-    return [a for a in out if a]
+    return out
 
 
-def _plan_item_problem(item, unverified, guest_shingles=frozenset(), cause_anchors=None):
+def _plan_cause_anchors(restaurant_id, db_path=DB_PATH) -> list:
+    """The anchor texts alone (_plan_anchors without their strengths)."""
+    return [a["text"] for a in _plan_anchors(restaurant_id, db_path=db_path)]
+
+
+def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None):
+    """The weekly plan's ValidationContext (surface "weekly_plan",
+    unattended): the anchors with their strengths (a bare string is a
+    "likely" cause), the guest text as untrusted, every other tenant's name
+    denied, and what Ask's own validation read — its K1 confidence, and its
+    typed facts / prompt text when meta carries them (meta["facts"],
+    meta["context_text"]). Without those the engine checks no figure here:
+    the item's figures are held to Ask's verdict on the answer
+    (meta.unverified_all), which is the engine's own F-rule findings."""
+    import response_validation as rv
+    meta = meta or {}
+    denied = set()
+    if restaurant_id:
+        try:
+            import models as _m
+            denied = _m.other_tenant_names(restaurant_id)
+        except Exception:
+            denied = set()
+    conf = meta.get("confidence_detail")
+    return rv.ValidationContext(
+        restaurant_id=restaurant_id, surface="weekly_plan", facts=list(meta.get("facts") or []),
+        context_text=str(meta.get("context_text") or ""),
+        cause_anchors=[a if isinstance(a, dict) else {"text": a, "strength": "likely"} for a in anchors or ()],
+        untrusted=[t for t in guest_texts or () if t], tenant_names_denied=denied,
+        confidence=conf if isinstance(conf, dict) else None, policy={"action": "weekly_plan"})
+
+
+def _plan_item_problem(item, unverified, ctx=None, unsupported_names=()):
     """Why a plan item is not filed, or None (H7). The plan is filed with
     nobody reading it first, from a snapshot that carries public review
-    text, so an item needs what an owner would have checked: at least one
-    money, percentage or rating figure the answer's verifier traced to what
-    the model read (the prompt's "cite a figure you actually read", now
-    enforced), no figure it could not trace, no link or injection tell
-    (ai_guard.injection_residue), and no six-word echo of a guest's words."""
-    from ai_guard import echoes, figure_claims, injection_residue
+    text, so an item needs what an owner would have checked.
+
+    Its own rules: at least one money, percentage or rating figure the
+    answer's verifier traced to what the model read (the prompt's "cite a
+    figure you actually read", now enforced), no figure it could not trace
+    (meta.unverified_all), and no name Ask's check found nowhere in what it
+    read (meta.unsupported_names — NS6 A2: the plan used to ignore it).
+
+    Then the Response Validation Layer (surface "weekly_plan", unattended)
+    on the title and the why, each as a line: injection residue and the
+    six-word echo of a guest's words (I1 — the plan's own copies of those
+    are gone), a cause no stored diagnosis holds (K1), another tenant's name
+    (T1), peer and industry claims with no benchmark (B1), certainty (C1),
+    unsafe actions (A2). A line the engine drops keeps the item from being
+    filed; its rewrites (a lowered modal, a softened cause) are written back
+    onto the item that is filed. The verdicts are logged."""
+    import re
+    import response_validation as rv
+    from ai_guard import figure_claims
     text = f"{item.get('title') or ''}. {item.get('why') or ''}"
-    why = injection_residue(text)
-    if why:
-        return why
-    if echoes(text, guest_shingles):
-        return "it repeats a guest's own words"
+    for name in (n for n in unsupported_names or () if n):
+        if re.search(r"(?<![\w])" + re.escape(str(name)) + r"(?![\w])", text):
+            return f"it names {name}, who is not in anything it read"
     if _plan_item_unverified(item, unverified):
         return "it states a figure nothing it read supports"
     bad = [u for u in (unverified or []) if u]
@@ -500,10 +557,23 @@ def _plan_item_problem(item, unverified, guest_shingles=frozenset(), cause_ancho
                and not any(c["raw"] in u or u in c["raw"] for u in bad)]
     if not figures:
         return "it cites no verified figure"
-    if cause_anchors is not None:
-        from ai_guard import unsupported_causes
-        if unsupported_causes(text, cause_anchors):
+    if ctx is None:
+        ctx = _plan_context()
+    fields = [f for f in ("title", "why") if str(item.get(f) or "").strip()]
+    res = rv.validate_lines([item[f] for f in fields], ctx)
+    for f, v in zip(fields, res.verdicts):
+        rv.log(v, ctx, original=item[f])
+    if res.dropped:
+        v = next(v for v in res.verdicts if v.verdict == "refuse" or not v.text.strip())
+        f = next((x for x in v.findings if x["severity"] in ("drop", "refuse")), None)
+        if f and f["rule"] == "I1" and "untrusted" in (f.get("detail") or ""):
+            return "it repeats a guest's own words"
+        if f and f["rule"] == "K1":
             return "it states a cause no stored diagnosis supports"
+        return f"{f['detail']} ({f['rule']})" if f else "the validation layer refused it"
+    # Filed with the engine's rewrites — they only ever lower a claim.
+    for f, v in zip(fields, res.verdicts):
+        item[f] = v.text
     return None
 
 
@@ -544,10 +614,15 @@ def run_weekly_plan(db_path=DB_PATH):
             unverified = (_meta or {}).get("unverified_all")
             if unverified is None:
                 unverified = (_meta or {}).get("unverified_figures") or []
-            guest = _guest_shingles(r.id, db_path=db_path)
-            anchors = _plan_cause_anchors(r.id, db_path=db_path)
+            # The Response Validation Layer's context for every item (surface
+            # "weekly_plan", unattended): the stored causes with their
+            # strengths, the review text as untrusted, other tenants' names,
+            # and what Ask's own validation carried in meta.
+            ctx = _plan_context(r.id, _plan_anchors(r.id, db_path=db_path),
+                                _guest_texts(r.id, db_path=db_path), _meta)
+            names = (_meta or {}).get("unsupported_names") or []
             for i, item in enumerate(_parse_plan(answer)):
-                why_not = _plan_item_problem(item, unverified, guest, anchors)
+                why_not = _plan_item_problem(item, unverified, ctx, unsupported_names=names)
                 if why_not:
                     ops.capture(RuntimeError(f"weekly plan item not filed: {why_not}"),
                                 job="weekly_plan", context=f"restaurant_id={r.id}")
