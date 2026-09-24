@@ -769,6 +769,92 @@ def echoes(text: str, untrusted_shingles: set, n: int = ECHO_WORDS) -> bool:
     return bool(untrusted_shingles and (shingles(text, n) & untrusted_shingles))
 
 
+# ── a model's own confidence never reaches an owner as ours (R3, R9) ───────
+#
+# The confidence an owner reads is computed (confidence_engine, the K1
+# object). A model that writes "high confidence" or "I'm about 85% sure"
+# beside it puts a second, unmeasured figure on the same screen — and Ask's
+# 85% passed the figure check because "85 covers" was in the snapshot (B5
+# #3). Prompts no longer ask for one; whatever a model writes anyway is
+# rewritten to the computed figure, or taken out.
+_CONF_WORD = r"(?:very\s+high|fairly\s+high|high|medium|moderate|low|very\s+low)"
+_CONF_NOUN_RE = re.compile(
+    r"\b(?:" + _CONF_WORD + r"[\s-]+(?:confidence|certainty)"
+    r"|\d{1,3}\s?%\s+(?:confidence|confident|sure|certain))\b", re.I)
+# "confidence is low", "Confidence: medium" — the band word alone is swapped.
+_CONF_IS_RE = re.compile(
+    r"\b(confidence(?:\s+(?:level|here|in\s+(?:this|that|it)))?\s*(?:is|:|—|-|of)\s*)(?:"
+    + _CONF_WORD + r"|\d{1,3}\s?%)(?![\w%])", re.I)
+_SELF_SURE_RE = re.compile(
+    r"(?:,?\s*(?:and|so|but)\s+)?\b(?:I['’]?m|I\s+am|we['’]?re|we\s+are|I['’]d\s+say\s+I['’]?m)\s+"
+    r"(?:\w+\s+){0,2}?(?:\d{1,3}\s?%\s+)?(?:sure|confident|certain)\b[^.!?\n]*", re.I)
+
+
+def rewrite_confidence_claims(text: str, pct=None) -> tuple:
+    """(text, n) with every confidence the MODEL stated replaced by the
+    computed one or removed. `pct` is the computed K1 percentage (None when
+    it is not measurable). A band or percentage phrase ("high confidence",
+    "85% sure") becomes "{pct}% confidence"; "confidence is low" becomes
+    "confidence is {pct}%"; with no pct the phrase is removed. A
+    self-assurance clause ("I'm about 85% sure this pays off", ", and I'm
+    highly confident") is removed through the end of its sentence, and a
+    sentence left empty goes with it. `n` counts what was changed."""
+    body = str(text or "")
+    n = 0
+    label = f"{int(round(pct))}% confidence" if isinstance(pct, (int, float)) else ""
+
+    def _clause(m):
+        nonlocal n
+        n += 1
+        return ""
+    body = _SELF_SURE_RE.sub(_clause, body)
+
+    def _is(m):
+        nonlocal n
+        n += 1
+        return m.group(1) + f"{int(round(pct))}%"
+    if label:
+        body = _CONF_IS_RE.sub(_is, body)
+    else:
+        # nothing to swap in: the sentence stating it goes
+        kept_lines = []
+        for line in body.splitlines():
+            parts = re.split(r"(?<=[.!?])\s+", line)
+            keep = [p for p in parts if not _CONF_IS_RE.search(p)]
+            n += len(parts) - len(keep)
+            kept_lines.append(" ".join(keep))
+        body = "\n".join(kept_lines)
+
+    def _noun(m):
+        nonlocal n
+        n += 1
+        return label
+    body = _CONF_NOUN_RE.sub(_noun, body)
+    if not n:
+        return text, 0
+    out_lines = []
+    for line in body.splitlines():
+        line = re.sub(r"\s+([,.;:!?])", r"\1", line)
+        line = re.sub(r",\s*,", ",", line)
+        line = re.sub(r"([,;:—-])\s*([.!?])", r"\2", line)
+        line = re.sub(r"(?:^|(?<=[.!?]))\s*[,;:—-]?\s*[.!?](?=\s|$)", "", line)
+        # a sentence that now opens on the dash its removed phrase led into
+        line = re.sub(r"(?<=[.!?])\s+[—-]\s*(\w)", lambda m: " " + m.group(1).upper(), line)
+        line = re.sub(r"\s*\(\s*\)", "", line)
+        indent = line[:len(line) - len(line.lstrip())]
+        line = indent + re.sub(r"[ \t]{2,}", " ", line.lstrip()).rstrip()
+        out_lines.append(line)
+    return "\n".join(out_lines).strip(), n
+
+
+def checkable_claims(text: str, check_counts: bool = True) -> list:
+    """The figures in `text` the figure check actually checks — money,
+    percentages, star ratings and (with check_counts) counts — for a basis
+    line that says "N of M figures checked" about those kinds only (R3):
+    a bare "top 3" is not a claim, so it is never counted as checked."""
+    return unsupported_figures(text, "", check_counts=check_counts)
+
+
 # ── a model's own confidence only ever lowers a band (H1, K6) ──────────────
 
 BANDS = ("low", "medium", "high")

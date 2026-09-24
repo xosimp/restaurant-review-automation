@@ -192,3 +192,65 @@ def test_r2_a_cited_figure_the_words_state_still_counts():
     assert set(N.traced_cites(a, F)) == {"sales.net", "sales.net_last_week"}
     assert "reviews.urgent_count" not in N.supporting_cites(a, F)
     assert N.check_urgency(a, F)["urgency"] == "before_service"      # the stated 15.3% move is real
+
+
+# ── R3: Ask evidence, counts, owner memory, model-stated confidence ─────────
+
+def test_r3_p06_owner_memory_never_verifies_a_figure(db_path):
+    rid = _rid(db_path)
+    models.remember_ask_fact(rid, "Our rent is $8,200 a month and the landlord wants 12% more.", db_path=db_path)
+    mem = ask_cavnar._memory_context(rid)
+    assert ai_guard.UNTRUSTED_OPEN in mem and "$8,200" in mem
+    snapshot = "RESTAURANT: Probe Bistro\nLABOR: 31.4% of sales, target 28%\n" + mem
+    m = ask_cavnar._meta("Rent is $8,200 a month and a 12% raise is coming.", [snapshot], [], [], "standard", rid)
+    assert "$8,200" in m["unverified_figures"] and "12%" in m["unverified_figures"]
+
+
+def test_r3_p06_invented_counts_are_checked_and_basis_counts_only_checked_kinds(db_path):
+    rid = _rid(db_path)
+    snapshot = "LABOR: 31.4% of sales, target 28%"
+    m = ask_cavnar._meta("You have 47 open complaints and 9 unhappy regulars this month.", [snapshot], [], [],
+                         "standard", rid)
+    assert any("47" in u for u in m["unverified_figures"])
+    basis = m["confidence_detail"]["dimensions"]["evidence"]["basis"]
+    assert "figures checked" not in basis or "0 of" in basis
+    # a bare "top 3" is not a claim, so it is never reported as checked
+    m2 = ask_cavnar._meta("Labor ran 31.4%, one of the top 3 things to fix.", [snapshot], [], [], "standard", rid)
+    assert "1 of 1 figures checked" in m2["confidence_detail"]["dimensions"]["evidence"]["basis"]
+
+
+def test_r3_p06_repeats_and_snapshots_do_not_raise_evidence(db_path):
+    rid = _rid(db_path)
+    snapshot = "RESTAURANT: Probe Bistro\nLABOR: 31.4% of sales, target 28%"
+    tool = json.dumps({"is_live": True, "labor_pct": 31.4})
+    snap_tool = json.dumps({"modules_consulted": ["reviews", "labor", "food", "marketing"], "x": 1})
+    ev = {}
+    for label, corpus, tools_ in (("1 relevant tool", [snapshot, tool], ["read_labor"]),
+                                  ("3 same tools", [snapshot, tool, tool, tool], ["read_labor"] * 3),
+                                  ("1 empty snapshot", [snapshot, snap_tool], ["read_business_snapshot"]),
+                                  ("empty + real", [snapshot, tool, snap_tool],
+                                   ["read_labor", "read_business_snapshot"])):
+        m = ask_cavnar._meta("Labor ran 31.4% against a 28% target.", corpus, tools_, [], "standard", rid)
+        ev[label] = m["confidence_detail"]["dimensions"]["evidence"]["pct"]
+    assert ev["3 same tools"] == ev["1 relevant tool"] == ev["empty + real"]
+    assert ev["1 empty snapshot"] == 0
+    # the snapshot counts only modules it read live data for
+    assert ask_cavnar.live_snapshot_modules(json.dumps(
+        {"modules_consulted": ["labor", "reviews"], "labor": {"is_live": False}, "reviews": {"n": 3}})) == ["reviews"]
+
+
+def test_r3_p18_model_stated_confidence_is_rewritten_to_the_computed_one(db_path, monkeypatch):
+    rid = _rid(db_path)
+    r = models.get_restaurant(rid, db_path=db_path)
+    monkeypatch.setattr(ask_cavnar, "build_context", lambda rest: "LABOR: 31.4% of sales. COVERS: 85 covers Friday.")
+    for said in ("Trim the Tuesday bar shift. I'm about 85% sure this pays off.",
+                 "Trim the Tuesday bar shift. High confidence — this is clear-cut."):
+        monkeypatch.setattr(ask_cavnar, "create_with_retry", lambda client, _s=said, **kw: types.SimpleNamespace(
+            content=[types.SimpleNamespace(type="text", text=_s)], stop_reason="end_turn"))
+        answer, _t, _p, meta = ask_cavnar.ask_with_tools(r, "should I trim tuesday?")
+        pct = meta["confidence_detail"]["pct"]
+        assert "85%" not in answer and "High confidence" not in answer
+        assert meta.get("confidence_rewritten") == 1
+        if "High" in said:
+            assert f"{pct}% confidence" in answer
+        assert answer.startswith("Trim the Tuesday bar shift.")

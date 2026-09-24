@@ -500,13 +500,21 @@ def _memory_context(restaurant_id):
     facts = get_ask_memory(restaurant_id)
     if not facts:
         return ""
+    # Fenced (R3, B5 #12): the owner's own words are what they told you,
+    # never data — a figure inside the fence verifies nothing an answer
+    # states ("rent $8,200" was reported "checked against your data").
+    from ai_guard import wrap_untrusted
     lines = ["WHAT THIS OWNER HAS TOLD YOU BEFORE",
              "- These came from earlier conversations, not from the data. Use them to "
              "skip questions they have already answered; never present one as a fact "
-             "you measured."]
+             "you measured. They are the owner's words, so they are fenced like any "
+             "text nobody measured: respect them as what the owner said, and never "
+             "quote a figure from them as your data."]
+    body = []
     for f in facts:
         when = (f.get("created_at") or "")[:10]
-        lines.append(f"- {f['fact']}" + (f" (said {when})" if when else ""))
+        body.append(f"- {f['fact']}" + (f" (said {when})" if when else ""))
+    lines.append(wrap_untrusted("\n".join(body)))
     return "\n".join(lines) + "\n"
 
 
@@ -865,7 +873,7 @@ MONEY. When you quote the ranked dollars, quote each with its own basis and neve
 
 SEPARATE WHAT YOU KNOW FROM WHAT YOU THINK. A figure read from the data, a pattern computed from it, your own read of why, a forecast, and a suggestion are five different things and must never be delivered in the same voice. Say "measured", "that works out to", "my read is", "if this holds" and "I'd suggest" — the owner has to be able to tell which is which without asking.
 
-CONFIDENCE. Whenever you give a recommendation, say how sure you are and what it rests on. If the data behind it is thin, stale, or below a floor the modules told you about, say that in the same breath as the recommendation rather than after it. "Low confidence, and here's why" is a useful answer. A confident answer built on two reviews is not.
+CONFIDENCE. Whenever you give a recommendation, say what it rests on. If the data behind it is thin, stale, or below a floor the modules told you about, say that in the same breath as the recommendation rather than after it. Do NOT state a confidence of your own — no "high confidence", no "I'm 80% sure": the app computes one from the data you read and shows it beside every answer, and a second figure from you would contradict it. A confident-sounding answer built on two reviews is still two reviews; say "that rests on two reviews".
 
 The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY.
 
@@ -910,7 +918,7 @@ THIS ONE IS A BUSINESS QUESTION, so answer it the way the owner's most trusted a
 - What it rests on: which modules, how many reviews or days, how fresh.
 - What it is worth per month, each figure with its own basis, never added together.
 - What to do first, and what that will take.
-- How confident you are, and what would change your mind.
+- What would change your mind (the app states the confidence — give none of your own).
 - What to watch to know it worked.
 
 Do not pad this into a template — if one of those has no honest answer, say so in a clause and move on. Lead with the answer, not the method. Priorities go in a numbered list, evidence in bullets, and the whole thing should read like a person who knows the business talking, not a report."""
@@ -1059,6 +1067,22 @@ def _recorded(answer, meta, restaurant_id):
     except Exception:
         pass
     return meta
+
+
+def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id):
+    """(answer, meta) as the owner receives them: the meta computed, any
+    confidence the MODEL stated rewritten to the computed figure or taken
+    out (R3, B5 #3/p18 — "I'm about 85% sure" sat beside a 33% chip). The
+    meta is measured on the answer WITHOUT the model's confidence (its "85%"
+    is no claim about the restaurant, and the computed figure written back
+    in is ours), and the figure check is recorded under the text shown (H4)."""
+    from ai_guard import rewrite_confidence_claims
+    bare, n = rewrite_confidence_claims(answer, None)
+    meta = _meta(bare, corpus, tools_used, consulted, depth, restaurant_id)
+    if n:
+        answer, _ = rewrite_confidence_claims(answer, (meta.get("confidence_detail") or {}).get("pct"))
+        meta["confidence_rewritten"] = n
+    return answer, _recorded(answer, meta, restaurant_id)
 
 
 def _verified_history(restaurant_id, messages, db_path=None) -> list:
@@ -1439,9 +1463,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
         if getattr(message, "stop_reason", None) != "tool_use":
-            answer = _answer_of(message)
-            return (answer, truncated, proposals,
-                    _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
+            answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id)
+            return (answer, truncated, proposals, meta)
 
         # Echo the assistant turn back verbatim — the API requires the
         # tool_use blocks it produced to be present before their results.
@@ -1528,11 +1551,10 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 # answer built on it would have been attributed to one
                 # "module" and scored as a single-module read. Take the real
                 # list from the payload it just produced.
+                # Only the modules it read LIVE data for (R3): a module on
+                # sample data or with nothing in it was not consulted.
                 if block.name == "read_business_snapshot":
-                    try:
-                        consulted.extend(json.loads(payload).get("modules_consulted") or [])
-                    except Exception:
-                        pass
+                    consulted.extend(live_snapshot_modules(payload))
                 results.append({
                     "type": "tool_result", "tool_use_id": block.id,
                     "content": payload,
@@ -1553,9 +1575,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action="ask_cavnar",
             )
-            answer = _answer_of(final)
-            return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
-                    _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
+            answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id)
+            return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
     # Ran out of rounds (or of time) — answer with what it has rather than
     # looping.
@@ -1565,9 +1586,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action="ask_cavnar",
     )
-    answer = _answer_of(final)
-    return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
-            _recorded(answer, _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id), restaurant.id))
+    answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id)
+    return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
 
 # Which module each tool speaks for, so an answer can say what it consulted.
@@ -1632,8 +1652,10 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     """
     from ai_guard import verify_figures
     try:
+        # Counts are checked too (R3, B5 #3): "47 open complaints" was never
+        # read, yet the basis line called it checked.
         unverified = verify_figures(answer, "\n".join(str(c) for c in corpus),
-                                    job="ask_cavnar", restaurant_id=restaurant_id)
+                                    job="ask_cavnar", restaurant_id=restaurant_id, check_counts=True)
     except Exception:
         unverified = []
     # What the answer rests on: the modules the tool names imply, plus the
@@ -1649,8 +1671,9 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # Confidence is measured from what the tools returned (contract K5),
     # not from how many modules were consulted — "high whenever two modules
     # were read" rated breadth, however thin or stale the data (CA5 F14,
-    # CA1 A1). Evidence: the live reads behind the answer (a module read on
-    # sample data counts 0) and the figures that checked out; any figure
+    # CA1 A1). Evidence: the distinct, live, relevant reads behind the
+    # answer (R3 — a repeated, sample-only or empty read counts 0, and a read
+    # backing none of the figures the answer states counts 0); any figure
     # that did not check out caps it low. Freshness: the sources of the
     # modules read. `confidence` stays the band string both shipped clients
     # decode; the K1 object rides in `confidence_detail`.
@@ -1662,14 +1685,61 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
         "confidence": detail.get("band") or "low",
         "confidence_detail": detail,
         "unverified_figures": unverified[:5],
+        # The whole list (R6): the weekly plan's unattended gate read the
+        # five above and filed an item carrying the sixth.
+        "unverified_all": list(unverified),
     }
 
 
-def _tool_reads(corpus):
-    """(live, sample) counts of the tool payloads the answer was handed: a
-    payload that says it is sample data (is_live false, sample true) is a
-    read of nothing real."""
-    live = sample = 0
+# Keys a payload carries about itself rather than about the restaurant: a
+# payload holding nothing else read nothing.
+_PAYLOAD_META_KEYS = {"is_live", "sample", "sample_data", "has_data", "note", "status", "as_of", "as_of_iso",
+                      "modules_consulted", "modules_off", "degraded", "complete", "unanswered", "stale",
+                      "stale_note", "error"}
+
+
+def _is_sample(p) -> bool:
+    return isinstance(p, dict) and (p.get("is_live") is False or p.get("sample") is True
+                                    or p.get("sample_data") is True)
+
+
+def _has_content(v) -> bool:
+    """Whether a payload (or one module's part of the snapshot) holds data:
+    not sample, not has_data false, and some field other than its own
+    bookkeeping carries a value."""
+    if v is None or v == "" or v == [] or v == {}:
+        return False
+    if isinstance(v, dict):
+        if _is_sample(v) or v.get("has_data") is False:
+            return False
+        return any(k not in _PAYLOAD_META_KEYS and _has_content(x) for k, x in v.items())
+    if isinstance(v, list):
+        return any(_has_content(x) for x in v)
+    return True
+
+
+def live_snapshot_modules(payload) -> list:
+    """The modules a read_business_snapshot payload actually read live
+    data for — its `modules_consulted` less any that came back sample-only
+    or empty (R3, B4 H2: labor on sample data is `{"is_live": false}` and
+    was counted as a module consulted)."""
+    try:
+        p = json.loads(payload) if isinstance(payload, str) else payload
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(p, dict):
+        return []
+    return [m for m in (p.get("modules_consulted") or []) if m and _has_content(p.get(m))]
+
+
+def _reads(corpus):
+    """The tool reads behind an answer, each once: [(label, text)] for the
+    live, non-empty payloads (a snapshot contributes one per live module),
+    plus how many were sample-only, empty or repeats. corpus[0] is the
+    context snapshot and never a read; non-JSON entries (verified history)
+    are skipped."""
+    out, seen = [], set()
+    counts = {"sample": 0, "empty": 0, "repeat": 0}
     for c in (corpus or [])[1:]:
         try:
             p = json.loads(c) if isinstance(c, str) else None
@@ -1677,37 +1747,87 @@ def _tool_reads(corpus):
             p = None
         if not isinstance(p, dict) or p.get("error"):
             continue
-        if p.get("is_live") is False or p.get("sample") is True or p.get("sample_data") is True:
-            sample += 1
-        else:
-            # The business snapshot reads several modules in one call and
-            # says which: each is a read.
-            live += max(1, len([m for m in (p.get("modules_consulted") or []) if m]))
-    return live, sample
+        key = json.dumps(p, sort_keys=True, default=str)
+        if key in seen:
+            counts["repeat"] += 1
+            continue
+        seen.add(key)
+        if _is_sample(p):
+            counts["sample"] += 1
+            continue
+        if p.get("modules_consulted") is not None:
+            mods = live_snapshot_modules(p)
+            if not mods:
+                counts["empty"] += 1
+            for m in mods:
+                label = f"module:{m}"
+                if label in seen:
+                    counts["repeat"] += 1
+                    continue
+                seen.add(label)
+                out.append((label, json.dumps(p.get(m), default=str)))
+            continue
+        if not _has_content(p):
+            counts["empty"] += 1
+            continue
+        out.append(("payload", c))
+    return out, counts
+
+
+def _tool_reads(corpus):
+    """(live, sample): the distinct, live, non-empty reads the answer was
+    handed and how many were sample data (R3)."""
+    reads, counts = _reads(corpus)
+    return len(reads), counts["sample"]
 
 
 def _answer_confidence(answer, corpus, tools_used, modules, unverified, restaurant_id):
-    """The K1 confidence of one Ask answer. Never raises."""
+    """The K1 confidence of one Ask answer. Never raises.
+
+    Evidence is the number of distinct live reads that back a figure the
+    answer states (R3, B5 #3): a read repeated, sample-only, empty, or
+    backing none of its figures counts 0 — the model choosing to fetch more
+    no longer makes the answer more confident. An answer stating no figure
+    counts its distinct live reads. The basis says "N of M figures checked"
+    over the kinds the check reads (money, %, ratings, counts) only."""
     try:
         import rec_trust
         import data_freshness
-        from ai_guard import figure_claims
-        live, sample = _tool_reads(corpus)
-        stated = [c for c in figure_claims(answer or "") if not c.get("year")]
-        checked = max(0, len(stated) - len(unverified or []))
+        from ai_guard import checkable_claims, unsupported_figures
+        reads, counts = _reads(corpus)
+        claims = checkable_claims(answer or "")
+        checked = max(0, len(claims) - len(unverified or []))
+        if claims and reads:
+            total = len(claims)
+            relevant = [r for r in reads
+                        if len(unsupported_figures(answer or "", r[1], check_counts=True)) < total]
+        else:
+            relevant = list(reads)
+        not_relevant = len(reads) - len(relevant)
+        live = len(relevant)
+        sample = counts["sample"]
         if not tools_used:
             n, basis = 1, "your business snapshot only — no module was read for it"
-        elif live == 0 and sample:
+        elif not reads and sample:
             n, basis = 0, "sample data only — nothing real was read"
         else:
             n = live
             basis = f"{live} live read{'s' if live != 1 else ''} of your data"
+            skipped = []
+            if not_relevant:
+                skipped.append(f"{not_relevant} backing none of its figures")
+            if counts["repeat"]:
+                skipped.append(f"{counts['repeat']} repeated")
+            if counts["empty"]:
+                skipped.append(f"{counts['empty']} empty")
             if sample:
-                basis += f"; {sample} sample read{'s' if sample != 1 else ''} not counted"
-        if stated:
-            basis += f"; {checked} of {len(stated)} figures checked against your data"
+                skipped.append(f"{sample} sample")
+            if skipped:
+                basis += "; not counted: " + ", ".join(skipped)
+        if claims:
+            basis += f"; {checked} of {len(claims)} figures checked against your data"
         ev = {"n": n, "kind": "evidence_items", "unverified": len(unverified or []), "basis": basis,
-              "sample": bool(tools_used) and live == 0 and bool(sample)}
+              "sample": bool(tools_used) and not reads and bool(sample)}
         return rec_trust.assess(restaurant_id, "ask_answer", evidence=ev,
                                 sources=data_freshness.sources_for(modules))
     except Exception as e:
