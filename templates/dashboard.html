@@ -145,8 +145,11 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] input[type="url"],
 [data-theme="dark"] input[type="number"],
 [data-theme="dark"] input[type="password"],
-[data-theme="dark"] textarea,
-[data-theme="dark"] select{background:var(--paper2)!important;color:var(--ink)!important;border-color:var(--paper3)!important;caret-color:var(--ink)!important}
+[data-theme="dark"] textarea{background:var(--paper2)!important;color:var(--ink)!important;border-color:var(--paper3)!important;caret-color:var(--ink)!important}
+/* Selects take the colour only: the `background` shorthand also reset
+   background-image, which is where a custom select draws its arrow
+   (#panel-account .ac-select), so every Account dropdown lost it in dark. */
+[data-theme="dark"] select{background-color:var(--paper2)!important;color:var(--ink)!important;border-color:var(--paper3)!important;caret-color:var(--ink)!important}
 /* Modal inner cards */
 [data-theme="dark"] #pw-modal>div,[data-theme="dark"] #email-modal>div{background:var(--surface)!important}
 /* 2FA modal outer + info box */
@@ -6399,6 +6402,10 @@ svg:hover .hb-xh{opacity:1}
 .ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line);border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
 .ac-input:focus,.ac-select:focus,.ac-textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2)}
 .ac-input[readonly]{color:var(--ink3);background:var(--paper2)}
+/* One field colour in dark mode, typed or not. The dark rule for inputs
+   matches by [type], so a type-less .ac-input (Dashboard logins' Name, the
+   owner's name and phone) stayed on --paper beside its typed neighbours. */
+[data-theme="dark"] .ac-input,[data-theme="dark"] .ac-textarea{background-color:var(--paper2)}
 .ac-textarea{resize:vertical;min-height:64px;line-height:1.5}
 .ac-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}
 .ac-form .wide{grid-column:1 / -1}
