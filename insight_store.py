@@ -417,9 +417,13 @@ def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
 # food cost's waste forecast already uses — once per ISO week, the rule
 # food_cost_intelligence.record_profitability_forecast follows: a projection
 # re-recorded on every page open converges on the actual and scores itself
-# perfect. Kinds: labor_week (labor % of sales), marketing_reach_week
-# (average reach per post), review_rating_week (weekly average rating).
-# Scoring them belongs to forecast_log's own helpers.
+# perfect. Kinds, each recorded in the unit forecast_log scores it in:
+# labor_week (labor % of sales for the ISO week), marketing_reach_week (the
+# week's posts' reach SUMMED — not the per-post figure the brief shows) and
+# review_rating_week (the week's mean star rating). Scoring belongs to
+# forecast_log's own helpers; record_weekly_forecast is the one adapter the
+# three callers go through, so it can be pointed at forecast_log.record(rid,
+# kind, value, period_of=next_week_end(today)) without touching them.
 WEEKLY_FORECAST_KINDS = ("labor_week", "marketing_reach_week", "review_rating_week")
 
 

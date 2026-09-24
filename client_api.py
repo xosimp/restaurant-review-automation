@@ -2372,6 +2372,7 @@ def _do_mkt_insight(rid, raw=False):
         perf_clause = ""
         _trend_lines = []
         _mkt_reach_vals, _mkt_diff = [], None
+        _mkt_week_sums = []
         _mkt_topics = []
         try:
             from models import get_conn as _gc
@@ -2421,6 +2422,10 @@ def _do_mkt_insight(rid, raw=False):
             # a "strategy pivot".
             _reach_vals = [w["avg_reach"] for w in _weekly
                            if w["avg_reach"] and (w["reach_posts"] or 0) >= MKT_TREND_MIN_POSTS]
+            # The same weeks' SUMMED reach — the unit forecast_log scores
+            # marketing_reach_week in (the week's posts' reach added up).
+            _mkt_week_sums = [float(w["avg_reach"]) * int(w["reach_posts"] or 0) for w in _weekly
+                              if w["avg_reach"] and (w["reach_posts"] or 0) >= MKT_TREND_MIN_POSTS]
             if len(_reach_vals) >= MKT_TREND_MIN_WEEKS:
                 _diff_pct = round((_reach_vals[-1] - _reach_vals[0]) / max(_reach_vals[0], 1) * 100)
                 _span = (str(len(_reach_vals)) + " weeks with " + str(MKT_TREND_MIN_POSTS)
@@ -2515,9 +2520,14 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         if _fc_line:
             insight = insight.rstrip() + "\n" + _fc_line
             try:
-                _ist_m.record_weekly_forecast(rid, "marketing_reach_week", _fc_pred,
-                                              basis=f"last week's average reach per post, {len(_mkt_reach_vals)} "
-                                                    f"weeks of {MKT_TREND_MIN_POSTS}+ posts")
+                # Logged in the scorer's unit — the week's SUMMED reach
+                # (last week's, carried forward) — never the per-post
+                # figure the line shows (forecast_log kind contract).
+                if _mkt_week_sums:
+                    _ist_m.record_weekly_forecast(rid, "marketing_reach_week", round(_mkt_week_sums[-1]),
+                                                  basis=f"last week's summed reach carried forward; "
+                                                        f"{len(_mkt_reach_vals)} weeks of "
+                                                        f"{MKT_TREND_MIN_POSTS}+ posts")
             except Exception as _fce:
                 print(f"[MktInsight] forecast not logged: {_fce}")
         _checks = {"figures_verified": not _unsupported, "unsupported_figures": _unsupported,

@@ -435,7 +435,9 @@ def test_h8_marketing_forecast_is_computed_and_logged(db_path, monkeypatch):
     out, _ = client_api._do_mkt_insight(rid, raw=True)
     assert "triple" not in out["insight"] and "expect about 250 per post next week" in out["insight"]
     assert "FORECAST: one short sentence" not in seen["p"]
-    assert out["forecast"]["predicted"] == 250 and _forecasts(db_path, rid, "marketing_reach_week")
+    assert out["forecast"]["predicted"] == 250
+    # Logged in forecast_log's unit for this kind: the week's SUMMED reach.
+    assert [r["predicted"] for r in _forecasts(db_path, rid, "marketing_reach_week")] == [500.0]
 
 
 def test_h8_the_review_next_week_line_is_computed_not_asked_for():
