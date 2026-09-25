@@ -655,6 +655,40 @@ def assemble(ev, acc, fr) -> dict:
     return out
 
 
+CURRENT_FRESHNESS = {"pct": 100, "errors": [], "basis": "every source current"}
+# A confidence impact under this many points is not worth saying.
+IMPACT_MIN_DELTA = 3
+
+
+def impact(ev, acc, fr) -> dict:
+    """{now, when_current, delta} — the same three dimensions scored as they
+    are and again with Data Freshness replaced by a current source. The
+    evidence and track-record caps still bind, so a card held at 70 by "no
+    track record" shows no impact from fresher data. Pure; it re-reads
+    _combine and never writes, so freshness is never counted twice
+    (the Recommendation Confidence Impact, DH5 §2.5)."""
+    now = _combine(ev, acc, fr)["pct"]
+    best = _combine(ev, acc, CURRENT_FRESHNESS)["pct"]
+    if now is None or best is None:
+        return {"now": now, "when_current": best, "delta": None}
+    return {"now": now, "when_current": best, "delta": max(0, best - now)}
+
+
+def freshness_impact(conf) -> dict:
+    """The Recommendation Confidence Impact of one K1 object: {now,
+    when_current, delta, blocked_by, basis} — what the figure would read with
+    every source current, and the stalest source holding it down. None for
+    an unmeasurable or sample conf."""
+    if not isinstance(conf, dict) or conf.get("pct") is None or conf.get("sample"):
+        return None
+    d = conf.get("dimensions") or {}
+    out = impact(d.get("evidence"), d.get("accuracy"), d.get("freshness"))
+    fr = d.get("freshness") or {}
+    out["blocked_by"] = fr.get("stalest") if (out.get("delta") or 0) >= IMPACT_MIN_DELTA else None
+    out["basis"] = fr.get("stalest_basis") or fr.get("basis")
+    return out
+
+
 def unknown(reason="Confidence could not be measured") -> dict:
     """Every dimension unmeasured: low band, never medium (CA6 duplicate #2)."""
     out = {"pct": None, "band": "low", "label": "Confidence not yet measurable", "reason": reason,

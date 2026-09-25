@@ -560,7 +560,7 @@ def get_client(timeout=None):
         return c
 
 
-def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, **kwargs):
+def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, readiness=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.
 
@@ -575,7 +575,16 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     Every call funnels through here, which makes it the one place to log
     spend — pass restaurant_id/action (both optional) and usage is recorded
     to the ai_usage table on success. Neither is forwarded to the Anthropic
-    API; they're popped off before reaching client.messages.create()."""
+    API; they're popped off before reaching client.messages.create().
+
+    `readiness` is data_health.readiness()'s answer for this call (or
+    data_health.NOT_APPLICABLE for a call that rests on no data source). A
+    "refuse" raises DataNotReady before any network call — it costs no
+    tokens — and so does "wait" (unattended output whose data is retrying).
+    None is accepted while call sites adopt it; a source test lists the
+    sites that pass it."""
+    if isinstance(readiness, dict) and readiness.get("decision") in ("refuse", "wait"):
+        raise DataNotReady(readiness)
     if "thinking" not in kwargs and accepts_disabled_thinking(kwargs.get("model"), kwargs):
         kwargs["thinking"] = {"type": "disabled"}
     # anthropic>=0.105 (what Railway installs) rejects `temperature` outright
@@ -995,6 +1004,18 @@ class AIRefused(RuntimeError):
     """The model declined (stop_reason "refusal"). Not an answer, not an empty
     answer: extract_text returns "" for it, which every caller that saved the
     result used to store as a real, empty draft or reply (AI-24)."""
+
+
+class DataNotReady(AIRefused):
+    """The data a call rests on can't be stood on (data_health.readiness said
+    refuse or wait), so the model was never called. An AIRefused, so every
+    caller that already treats a refusal as "no answer, store nothing" does
+    the same here; `readiness` carries the reason and any retry time."""
+
+    def __init__(self, readiness):
+        self.readiness = dict(readiness or {})
+        why = self.readiness.get("reason") or "the data behind this isn't current"
+        super().__init__(f"Not generated: {why}.")
 
 
 def is_refusal(message) -> bool:

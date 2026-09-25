@@ -974,6 +974,23 @@ def _home_module_tiles(rid, restaurant):
             "inv": inv, "inv_live": inv_live}
 
 
+@mobile_bp.route("/data-health")
+@mobile_login_required
+def mobile_data_health(current_user):
+    """Twin of /api/data-health — the Restaurant Data Health Score."""
+    import data_health
+    payload = data_health.payload_for(current_user)
+    return jsonify(**payload), (200 if payload.get("ok") else 400)
+
+
+@mobile_bp.route("/data-health/sync/<source>", methods=["POST"])
+@mobile_login_required
+def mobile_data_health_sync(current_user, source):
+    """Twin of /api/data-health/sync/<source>: one deduplicated Sync now."""
+    body, status = _capi._do_data_health_sync(current_user, source)
+    return jsonify(**body), status
+
+
 @mobile_bp.route("/home/modules")
 @mobile_login_required
 def mobile_home_modules(current_user):

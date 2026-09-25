@@ -1374,6 +1374,38 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
         )""",
         "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1",
+        # The Data Health Engine's sync ledger (data_health.record_attempt):
+        # one row per restaurant and data source, updated in place by every
+        # ingest point — last attempt, last success, error and its class,
+        # consecutive failures and the last 20 outcomes — so "no new data"
+        # is never read the same as "the sync didn't run" (DH5-1).
+        """CREATE TABLE IF NOT EXISTS source_health (
+            restaurant_id        INTEGER NOT NULL,
+            source               TEXT    NOT NULL,
+            provider             TEXT,
+            last_attempt_at      TEXT,
+            last_ok_at           TEXT,
+            first_failed_at      TEXT,
+            last_error           TEXT,
+            error_class          TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            recent               TEXT    NOT NULL DEFAULT '',
+            last_duration_ms     INTEGER,
+            data_through         TEXT,
+            next_retry_at        TEXT,
+            PRIMARY KEY (restaurant_id, source)
+        )""",
+        # One Data Health snapshot per restaurant per day (data_health.
+        # record_daily), so the admin rollup and trend lines never recompute
+        # every restaurant live.
+        """CREATE TABLE IF NOT EXISTS data_health_daily (
+            restaurant_id INTEGER NOT NULL,
+            date          TEXT    NOT NULL,
+            overall       INTEGER,
+            sources_json  TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, date)
+        )""",
         # Resumable-job cursors (scheduler.run_daily_fetch, intelligence.jobs):
         # where the last bounded pass stopped, so the next one starts there.
         # Two callers used to create this table themselves with two different

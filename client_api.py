@@ -8255,6 +8255,60 @@ def home_brief_group_api(current_user):
     return resp, status
 
 
+@client_bp.route("/api/data-health")
+@login_required
+def data_health_api(current_user):
+    """The Restaurant Data Health Score (data_health.snapshot): one line per
+    source, the overall %, what isn't connected, and per module the decision
+    and its confidence impact. Twin: /mobile/api/data-health."""
+    import data_health
+    payload = data_health.payload_for(current_user)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
+SYNCABLE_SOURCES = ("pos",)
+
+
+def _do_data_health_sync(current_user, source):
+    """One "Sync now" for a source, deduplicated: a second tap inside
+    SYNC_NOW_COOLDOWN_MINUTES answers "already syncing" instead of starting
+    another pull that would race the first one's merge (DH5-11). Runs through
+    pos.sync_restaurant, so the attempt is recorded like the nightly one."""
+    import threading
+    import ops
+    rid = current_user.get("restaurant_id")
+    if source not in SYNCABLE_SOURCES:
+        return {"ok": False, "error": "That source can't be synced from here."}, 400
+    import pos
+    name, mod = pos.connected_provider(rid)
+    if not mod:
+        return {"ok": False, "error": "No POS is connected."}, 400
+    if not ops.claim_cooldown(f"sync_now:{rid}:{source}", SYNC_NOW_COOLDOWN_MINUTES):
+        return {"ok": True, "already_syncing": True,
+                "message": "A sync is already running — this updates when it finishes."}, 200
+
+    def _run():
+        try:
+            pos.sync_restaurant(rid, trigger="manual")
+        except Exception as e:
+            print(f"[data_health] sync now failed for {rid}: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "started": True, "provider": name,
+            "message": "Syncing now — this usually takes under a minute."}, 200
+
+
+SYNC_NOW_COOLDOWN_MINUTES = 5
+
+
+@client_bp.route("/api/data-health/sync/<source>", methods=["POST"])
+@login_required
+def data_health_sync_api(current_user, source):
+    body, status = _do_data_health_sync(current_user, source)
+    return jsonify(**body), status
+
+
 @client_bp.route("/api/home/dismiss", methods=["POST"])
 @login_required
 def home_dismiss_api(current_user):

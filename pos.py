@@ -86,18 +86,31 @@ def connected_provider(restaurant_id):
     return None, None
 
 
-def sync_restaurant(restaurant_id):
-    """Sync whichever POS this restaurant uses. Uniform result shape."""
+def sync_restaurant(restaurant_id, trigger="nightly"):
+    """Sync whichever POS this restaurant uses. Uniform result shape. Every
+    attempt — the nightly sweep, a retry, a "Sync now" — is recorded in the
+    Data Health ledger (data_health.record_attempt), so a sync that failed or
+    never ran is never read as a quiet night."""
+    import time as _time
     name, mod = connected_provider(restaurant_id)
     if not mod:
         return {"ok": False, "provider": None, "error": "No POS connected"}
+    t0 = _time.monotonic()
     try:
         result = mod.sync_to_db(restaurant_id) or {}
         result.setdefault("ok", False)
         result["provider"] = name
-        return result
     except Exception as e:
-        return {"ok": False, "provider": name, "error": str(e)}
+        result = {"ok": False, "provider": name, "error": str(e)}
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, "pos", bool(result.get("ok")), provider=name,
+                                   error=None if result.get("ok") else result.get("error"),
+                                   data_through=result.get("data_through"),
+                                   duration_ms=int((_time.monotonic() - t0) * 1000))
+    except Exception as e:
+        log.warning(f"POS sync attempt not recorded for {restaurant_id}: {e}")
+    return result
 
 
 POS_SYNC_MAX_SECONDS = 45 * 60

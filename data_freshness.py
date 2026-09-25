@@ -59,6 +59,21 @@ SOURCES = {
     "weather":    {"label": "Weather",        "expected_lag": 0.0,  "grace": 1.0, "horizon": 2},
     "dsr":        {"label": "Daily report",   "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
 }
+# How often each source is refreshed when everything works, in hours, and
+# the owner's word for it. "Live" is said only of a source refreshed more
+# often than hourly and inside one cadence of its last success (DH5-15): a
+# nightly POS synced at 3:02am is "current through 9/23/26 (synced
+# 3:02am)", never "Live". Weather is fetched on read, so its cadence is
+# its cache life.
+CADENCE = {
+    "pos": (24, "nightly"), "labor": (24, "nightly"), "sales": (24, "nightly"),
+    "reviews": (4, "4× a day"), "inventory": (None, "when you count"),
+    "purchases": (None, "when deliveries are logged"), "marketing": (24, "nightly"),
+    "visibility": (168, "weekly"), "competitor": (168, "weekly"), "weather": (6, "every 6 hours"),
+    "dsr": (24, "nightly, after close"),
+}
+LIVE_WITHIN_HOURS = 1
+
 # A source with an error (a failing sync, an expired token, two missed
 # review fetches, a stale weather copy) is held STRICTLY below the engine's
 # stale threshold (confidence_engine.STALE_BELOW = 50), so an erroring source
@@ -98,6 +113,20 @@ MODULE_SOURCES = {
     "ops": ("dsr", "sales"),
     "dsr": ("dsr", "sales"),
     "daily report": ("dsr", "sales"),       # Ask's label for the DSR tools
+}
+
+# The source a module's advice cannot stand without (DH5 §2.4). Down —
+# unknown, auth failed, or past its horizon — it caps the Data Health
+# Score at BLOCKING_DOWN_CAP and, for unattended output, refuses the model
+# call (data_health.readiness); every other source of the module is
+# advisory: it caveats. Reply drafts and social drafts rest on no source.
+BLOCKING = {
+    "labor": "labor", "schedule": "labor",
+    "inventory": "inventory", "food": "inventory", "food_cost": "inventory",
+    "dsr": "sales", "ops": "sales", "daily report": "sales",
+    "demand": "sales", "campaigns": "sales",
+    "reviews": "reviews", "intel": "competitor", "visibility": "visibility",
+    "marketing": "marketing",
 }
 
 # Ask tools whose module label names no source (or not all of them): what
@@ -652,6 +681,51 @@ def _dsr(r, conn, today, now, ctx, db_path=None):
     return pv
 
 
+# Consecutive failed attempts (source_health, written by
+# data_health.record_attempt) at which a source reads as failing: one for a
+# sync that runs once a day, REVIEW_SLOTS_MISSED_AT for reviews (fetched four
+# times a day), two for weather (fetched on read).
+FAILING_AFTER = {"reviews": REVIEW_SLOTS_MISSED_AT, "weather": 2}
+
+
+def _with_health(res, key, restaurant, conn):
+    """The reader's result with its sync history from source_health: last
+    success and attempt, consecutive failures, reliability over the recent
+    outcomes — and an `error` (held under ERROR_CEILING) once the source has
+    failed FAILING_AFTER times in a row and its reader saw no error of its
+    own, so a sync that stopped working is never read as a quiet day
+    (DH3-13, DH5-1). No row — nothing recorded yet — changes nothing."""
+    rid = _rid(restaurant)
+    if not rid or not isinstance(res, dict):
+        return res
+    try:
+        row = conn.execute("SELECT * FROM source_health WHERE restaurant_id=? AND source=?",
+                           (rid, key)).fetchone()
+    except Exception:
+        return res
+    if not row:
+        return res
+    row = dict(row)
+    recent = str(row.get("recent") or "")
+    fails = int(row.get("consecutive_failures") or 0)
+    res["last_ok_at"] = row.get("last_ok_at")
+    res["last_attempt_at"] = row.get("last_attempt_at")
+    res["consecutive_failures"] = fails
+    res["reliability"] = {"ok": recent.count("1"), "attempts": len(recent)} if recent else None
+    res["error_class"] = row.get("error_class") if fails else None
+    res["next_retry_at"] = row.get("next_retry_at")
+    if fails >= FAILING_AFTER.get(key, 1) and not res.get("error"):
+        since = ce._mdy(str(row.get("first_failed_at") or "")[:10])
+        why = str(row.get("last_error") or "").strip()
+        res["error"] = (f"{SOURCES.get(key, {}).get('label', key)} sync failing"
+                        + (f" since {since}" if since else "") + (f" ({why[:80]})" if why else ""))
+        if res.get("pct") is not None:
+            res["pct"] = min(int(res["pct"]), int(ERROR_CEILING * 100))
+            res["state"] = ce.state(res["pct"])
+            res["basis"] = (str(res.get("basis") or "").strip() + " · " + res["error"]).strip(" ·")
+    return res
+
+
 _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, "inventory": _inventory,
             "purchases": _purchases, "marketing": _marketing, "visibility": _visibility,
             "competitor": _competitor, "weather": _weather, "dsr": _dsr}
@@ -676,7 +750,8 @@ def source_state(restaurant, key, db_path=None, now=None, context=None) -> dict:
         print(f"[data_freshness] no connection: {e}")
         return _result(key, 0, None, f"{SOURCES[key]['label']}: could not be read", state="unknown")
     try:
-        return _READERS[key](restaurant, conn, _today(restaurant, now), now, context, db_path)
+        return _with_health(_READERS[key](restaurant, conn, _today(restaurant, now), now, context, db_path),
+                            key, restaurant, conn)
     except Exception as e:
         print(f"[data_freshness] {key} unreadable for {_rid(restaurant)}: {e}")
         return _result(key, 0, None, f"{SOURCES[key]['label']}: could not be read", state="unknown")
