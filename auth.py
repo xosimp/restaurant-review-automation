@@ -3182,6 +3182,10 @@ _UNGATED_PREFIXES = (
     # held (intelligence.dna.payload_for).
     "/api/dna", "/mobile/api/dna",
     "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
+    # The Command Center (command_center.py) spans modules; its registry and
+    # search are projected by the login's module view permissions inside,
+    # and a proposal is refused by Ask's own tool_allowed.
+    "/api/command/", "/mobile/api/command/",
     "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
     "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",
     "/api/metrics", "/mobile/api/metrics", "/api/value", "/mobile/api/value",

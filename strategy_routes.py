@@ -555,6 +555,37 @@ def _do_actions(u):
     return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u))}, 200
 
 
+# ── the Command Center (command_center.py; Friction audit #14, #48) ──────────
+# The ⌘K palette and the iOS command sheet read these; no model call behind
+# any of them. Free text goes to Ask's own stream, never here.
+
+def _do_command_registry(u):
+    import command_center
+    return command_center.registry(u)
+
+
+def _do_command_search(u):
+    import command_center
+    return command_center.search(u, request.args.get("q", ""))
+
+
+def _do_command_propose(u):
+    """Ask's confirm card for one action, with no model call. Each call
+    writes a "proposed" audit row, so it is bounded like the other routes
+    that write on a tap."""
+    import command_center
+    if _limited(u, "command_propose", 30, 60):
+        return _SLOW_DOWN
+    b = _body()
+    return command_center.propose(u, b.get("action"), b.get("args"))
+
+
+def _do_ask_proposal_reopen(u, proposal_id):
+    """A stored Ask proposal's card again, rebuilt without the model (U4-20)."""
+    import command_center
+    return command_center.reopen(u, proposal_id)
+
+
 def _queue_issue_visible(u, key) -> bool:
     """An issue row in the queue ("issue:<id>") — not a recommendation, and
     never presented to the ledger (issues are finished at source) — may be
@@ -3510,6 +3541,10 @@ _ROUTES = [
     ("/food-cost/invoices/<int:import_id>/apply", ["POST"], _do_invoice_apply, "invoice_apply"),
     ("/actions", ["GET"], _do_actions, "actions_list"),
     ("/actions/snooze", ["POST"], _do_action_snooze, "actions_snooze"),
+    ("/command/registry", ["GET"], _do_command_registry, "command_registry"),
+    ("/command/search", ["GET"], _do_command_search, "command_search"),
+    ("/command/propose", ["POST"], _do_command_propose, "command_propose"),
+    ("/ask-cavnar/proposals/<int:proposal_id>", ["GET"], _do_ask_proposal_reopen, "ask_proposal_reopen"),
     ("/closeout", ["GET"], _do_closeout_get, "closeout_get"),
     ("/closeout", ["POST"], _do_closeout_save, "closeout_save"),
     ("/labor/demand", ["GET"], _do_demand, "demand"),

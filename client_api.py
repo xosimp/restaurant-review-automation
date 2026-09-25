@@ -7081,6 +7081,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
     see and carrying the priority both clients rank by."""
     try:
         import push as _push
+        import nav as _nav
         conn = get_conn()
         rows = conn.execute(
             """SELECT alert_type, review_id, fired_at, priority FROM alert_log
@@ -7108,6 +7109,9 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
                 "fired_at": r["fired_at"],
                 "review_id": r["review_id"],
                 "module": module,
+                # Where the row opens (nav.py): the review, the held
+                # schedule, Ask on the brief's question — not the module top.
+                "nav": _nav.for_notification(r["alert_type"], review_id=r["review_id"]),
                 "priority": priority,
                 "urgent": priority <= _push.P1_ACT_NOW,
                 "unread": bool(seen_at is None or (r["fired_at"] or "") > seen_at),
