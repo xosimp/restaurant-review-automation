@@ -24,6 +24,7 @@
          border-radius:12px;padding:14px 16px;margin-bottom:10px}
   .shift .day{font-size:15px;font-weight:700}
   .shift .date{font-size:12.5px;color:var(--ink3);margin-left:6px;font-weight:400}
+  .shift .date:first-child{margin-left:0}
   .shift .time{font-size:17px;font-weight:700;margin-top:6px;letter-spacing:.01em}
   .shift .meta{font-size:13px;color:var(--ink2);margin-top:4px}
   .shift .note{font-size:13px;color:var(--ember2);margin-top:6px}
@@ -59,7 +60,9 @@
   {% if shifts %}
     {% for s in shifts %}
       <div class="shift">
-        <div><span class="day">{{ s.day or s.date_label }}</span><span class="date">{{ s.date_label }}</span></div>
+        {# The weekday, else nothing: "s.day or s.date_label" printed the
+           date twice when the CSV row had no day (density audit #13). #}
+        <div>{% if s.day %}<span class="day">{{ s.day }}</span>{% endif %}<span class="date">{{ s.date_label }}</span></div>
         <div class="time">{{ s.start }} – {{ s.end }}</div>
         <div class="meta">{{ s.role }}{% if s.hours %} · {{ s.hours }} hrs{% endif %}</div>
         {% if s.notes %}<div class="note">{{ s.notes }}</div>{% endif %}

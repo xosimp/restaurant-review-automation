@@ -73,13 +73,16 @@ _PLACES = (
 # own: "account/notifications". People and Billing are the account holder's.
 _ACCOUNT_SECTIONS = (
     ("restaurant", "Restaurant profile", ("profile", "voice", "hours", "contact"), False),
+    # Its own section since the density round (9/25/26): the nightly
+    # report's calendar and POS departments. Owner-only, like the page.
+    ("report", "Daily report settings", ("daily report", "dsr", "fiscal", "periods", "pos departments"), True),
     ("people", "People", ("people", "team", "logins", "staff", "pins", "invite"), True),
     ("billing", "Billing", ("billing", "subscription", "invoice", "card", "plan"), True),
     ("notifications", "Notifications", ("notifications", "alerts", "digest", "texts", "email"), False),
-    ("automation", "Automation", ("automation", "auto approve", "auto-approve", "autopilot"), False),
+    ("automation", "Automation, AI & memory", ("automation", "auto approve", "auto-approve", "autopilot",
+                                                "memory", "remember", "decisions", "trust"), False),
     ("integrations", "Integrations", ("integrations", "connect", "pos", "toast", "square", "google"), False),
     ("security", "Security", ("security", "password", "two factor", "2fa", "sessions"), False),
-    ("appearance", "Appearance", ("appearance", "theme"), False),
     ("data", "Data", ("data", "export", "retention", "download"), False),
     ("support", "Support", ("support", "help", "contact"), False),
 )
