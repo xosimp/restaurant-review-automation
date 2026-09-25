@@ -1651,6 +1651,20 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
         anchors += rv.anchor(a, "likely")
     for a in alt_anchors or ():
         anchors += rv.anchor(a, "association")
+    # The published food cost figure for this restaurant's type — the band
+    # the FOOD COST POSITION label ("Within the industry band") is read
+    # against (cogs.food_cost_pct) — as benchmark facts, so a sentence that
+    # quotes it binds and names its source and year (B1, BM3-3). No entry
+    # for the type, no fact, and a claim about "the industry" has nothing
+    # to bind to.
+    facts = list(facts or [])
+    if restaurant_id:
+        try:
+            import benchmark_registry as _br_food
+            from models import get_restaurant as _gr_food
+            facts += _br_food.facts(_br_food.for_restaurant("food_cost_pct", _gr_food(restaurant_id)))
+        except Exception as e:
+            print(f"[inventory] food benchmark facts unavailable for {restaurant_id}: {e}")
     return rv.ValidationContext(restaurant_id=restaurant_id, surface="food_insight", facts=facts,
                                 context_text=prompt, cause_anchors=anchors, tenant_names_denied=denied,
                                 untrusted=list(untrusted or ()), data_state=data_state,

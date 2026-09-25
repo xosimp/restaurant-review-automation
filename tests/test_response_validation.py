@@ -34,7 +34,8 @@ def _numbers(text):
 def _allowed_new_numbers(ctx):
     """Numbers a rewrite may bring in from the context itself: a fact's
     value (the canonical opportunity sentence) and a benchmark's source
-    year and n (B1's citation)."""
+    year, n and as-of date (B1's citation: a peer group is always named
+    with how many and as of when, BM3-5)."""
     out = set()
     for f in ctx.facts:
         if f.value is not None:
@@ -43,6 +44,9 @@ def _allowed_new_numbers(ctx):
         for k in ("year", "n"):
             if isinstance(src.get(k), (int, float)):
                 out.add(round(float(src[k]), 2))
+        if f.kind == "benchmark":
+            for d in re.findall(r"\d+", str(src.get("as_of") or f.as_of or "")):
+                out.add(round(float(d), 2))
     return out
 
 
