@@ -265,7 +265,10 @@ def test_a_combined_morning_batch_is_delivered_with_the_unresponded_toggles_off(
     rid = _rid(db_path)
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 1, "alert_labor_over": 1,
                             "labor_target_pct": 30.0, "alert_rating_threshold": 1, "alert_rating_floor": 4.5,
-                            "gbp_rating": 3.9, "al_unres_push": 0, "al_unres_email": 0}, db_path=db_path)
+                            "gbp_rating": 3.9, "al_unres_push": 0, "al_unres_email": 0,
+                            # read just now: an unaged rating is not announced (Data Freshness #38)
+                            "gbp_rating_updated_at": __import__("datetime").datetime.now(
+                                __import__("datetime").timezone.utc).isoformat()}, db_path=db_path)
     _labor_over(db_path, rid)
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path)

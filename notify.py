@@ -293,6 +293,7 @@ ALERT_TAB = {
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
+    "data_source_down": "account", "data_source_restored": "account",
     "while_away": "reviews",
 }
 
@@ -1729,6 +1730,11 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         "critical_low":       (None, None, None),
         "price_spike":        (None, None, None),
         "ai_visibility_drop": (None, None, None),
+        # A data source that stopped updating, and its back-to-normal
+        # notice (check_data_source_alerts): no per-type columns; the global
+        # SMS and email switches answer the channel question.
+        "data_source_down":     (None, None, None),
+        "data_source_restored": (None, None, None),
         # Opted into by alert_competitor_move (default on); the global SMS
         # and email switches answer the channel question.
         "competitor_move":    (None, None, None),
@@ -2590,6 +2596,53 @@ def _short_period(start, end) -> str:
     return mdy_range(str(start)[:10], str(end)[:10])
 
 
+# A Google rating older than this is not announced as the current one: twice
+# the review fetch's cadence (data_freshness.CADENCE["reviews"], 4 hours).
+RATING_MAX_AGE_HOURS = 8
+
+
+def _rating_read_at(row):
+    """restaurants.gbp_rating_updated_at (UTC ISO, gmb.fetch_location_rating)
+    as an aware datetime, or None."""
+    try:
+        from time_utils import parse_stamp
+        return parse_stamp(row["gbp_rating_updated_at"])
+    except Exception:
+        return None
+
+
+def _rating_is_recent(at, now=None) -> bool:
+    from datetime import datetime as _dt, timezone as _tz
+    if at is None:
+        return False
+    now = now or _dt.now(_tz.utc)
+    hours = (now - at).total_seconds() / 3600.0
+    return -1 <= hours <= RATING_MAX_AGE_HOURS      # an hour of clock skew is not "future"
+
+
+def _rating_unreadable(rid, name, at, db_path=DB_PATH) -> bool:
+    """One "can't read your Google rating since …" fact per stale reading
+    (keyed on the stamp it rests on), instead of a threshold alert built on
+    a rating nobody has read lately. Returns whether it was raised."""
+    import ops
+    from time_utils import mdy
+    since = mdy(at.date().isoformat()) if at is not None else None
+    if not ops.claim_period(f"rating_unreadable:{rid}", since or "never"):
+        return False
+    ok = raise_alert(
+        rid, "data_source_down",
+        f"Cavnar AI: {name} — Cavnar can't read your Google rating"
+        + (f" since {since}" if since else "") + ", so rating alerts are paused. dashboard.cavnar.ai",
+        f"Can't read your Google rating — {name}",
+        lines=[("Cavnar hasn't been able to read your Google rating" + (f" since {since}" if since else "")
+                + ", so the rating-threshold alert is paused rather than sent on an old figure."),
+               "Reconnect Google in Account → Connections to resume it."],
+        db_path=db_path, recs=[alert_rec("data_source_down", subject="rating")])
+    if not ok:
+        ops.release_period(f"rating_unreadable:{rid}", since or "never")
+    return ok
+
+
 def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """
     Daily check for negative trend, rating threshold, and labor over target.
@@ -2604,7 +2657,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         SELECT id, name, owner_email, timezone,
                urgent_via_sms, urgent_via_email,
                alert_negative_trend,
-               alert_rating_threshold, alert_rating_floor, gbp_rating,
+               alert_rating_threshold, alert_rating_floor, gbp_rating, gbp_rating_updated_at,
                alert_labor_over, labor_target_pct
         FROM restaurants
         WHERE (COALESCE(alert_negative_trend,0) = 1 OR COALESCE(alert_rating_threshold,0) = 1
@@ -2692,6 +2745,15 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # was told its lifetime 4.5 had "dropped" below a threshold it
             # never set, and a declining one was never told (re-audit A-2).
             floor      = r["alert_rating_floor"] or RATING_FLOOR_DEFAULT
+            # Only a rating read recently (2× the fetch cadence) may be
+            # announced as "dropped": a dead Google token kept a 4.1 in the
+            # column and texted "dropped to 4.1★" every week, and a recovered
+            # 4.5 was never seen (DH3-11, DH1-15). An old one is said ONCE
+            # as what it is — Cavnar can't read the rating.
+            _rating_at = _rating_read_at(r)
+            if gbp_rating is not None and not _rating_is_recent(_rating_at):
+                gbp_rating = None
+                _rating_unreadable(rid, name, _rating_at, db_path)
             if gbp_rating is not None and gbp_rating < floor:
                 sms  = (
                     f"⚠️ {name}: Google rating dropped to {gbp_rating:.1f}★ "
@@ -3212,3 +3274,158 @@ def check_competitor_alerts(db_path: str = DB_PATH, local_hour: int = None, toda
                 pass
             print(f"[notify] competitor alert error rid={rid}: {e}")
     return {"sent": sent}
+
+
+# ── a data source went down, and came back (Data Freshness audit #18) ────────
+#
+# Only a revoked Google token ever told the owner a source had stopped
+# (scheduler's connection_lost); a POS failing all weekend reached Will alone,
+# and only if he looked (DH4-4, DH2-14). This generalises it: once a day per
+# restaurant (10am local, the daily alert window — notify._gated_out's claim
+# is the cursor, so a pass cut short by DAILY_ALERT_PASS_SECONDS resumes on the
+# next hourly pass), each connected source is read from the registry and
+#   - down (stale, of unknown age, or failing — or connected with no first
+#     sync after FIRST_SYNC_GRACE_HOURS) → one data_source_down per source
+#     per ISO week (ops.claim_period, claimed BEFORE the send), saying what it
+#     affects (data_freshness.MODULE_SOURCES reversed) and the one fix;
+#   - current again after a notice this week or last → one
+#     data_source_restored per episode.
+# Both go through raise_alert, so quiet hours, the owner's daily cap and the
+# hard ceiling hold (they are NOT in models.NON_ALERT_TYPES). A send the gates
+# refused gives its claim back, so tomorrow's pass can try again.
+
+DATA_SOURCE_ALERT_KEYS = ("pos", "reviews", "marketing")
+FIRST_SYNC_GRACE_HOURS = 36
+
+
+def _source_label(key, s):
+    prov = {"rpower": "RPOWER"}.get((s or {}).get("provider"), str((s or {}).get("provider") or "").title())
+    return {"pos": f"{prov} (your POS)" if prov else "Your POS", "reviews": "Google reviews",
+            "marketing": "Instagram / Facebook metrics"}.get(key, key)
+
+
+def _first_seen_hours(rid, key, now):
+    """Hours since this source was first seen connected with no first sync
+    (a claim stamped the first time; job_period_claims.claimed_at is UTC)."""
+    import ops
+    job = f"data_source_seen:{rid}:{key}"
+    ops.claim_period(job, "first_sync")
+    try:
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT claimed_at FROM job_period_claims WHERE job_key=?",
+                               (f"{job}:first_sync",)).fetchone()
+        finally:
+            conn.close()
+        from time_utils import parse_stamp
+        at = parse_stamp(row[0]) if row else None
+    except Exception:
+        at = None
+    return None if at is None else (now - at).total_seconds() / 3600.0
+
+
+def _source_is_down(rid, key, s, now):
+    """(down, why) for one registry state."""
+    import data_health as dh
+    if not s or s.get("state") == "not_connected":
+        return False, None
+    if dh.is_pending(s):
+        hours = _first_seen_hours(rid, key, now)
+        if hours is not None and hours >= FIRST_SYNC_GRACE_HOURS:
+            return True, "the first sync hasn't arrived"
+        return False, None
+    if s.get("error") or s.get("state") in ("stale", "unknown"):
+        return True, s.get("error") or s.get("basis")
+    return False, None
+
+
+def _iso_week(d):
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def data_source_pass(rid, db_path: str = DB_PATH, now=None) -> list:
+    """One restaurant: raise what changed. Returns [(source, "down"|"restored")]."""
+    import ops
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    import data_freshness as df
+    import data_health as dh
+    from time_utils import restaurant_now
+    now = now or _dt.now(_tz.utc)
+    r = models.get_restaurant(rid, db_path)
+    if r is None:
+        return []
+    name = r.location_name or r.name
+    local_day = now.astimezone(restaurant_now(r).tzinfo).date()
+    week, last_week = _iso_week(local_day), _iso_week(local_day - _td(days=7))
+    out = []
+    for key in DATA_SOURCE_ALERT_KEYS:
+        mods = dh.affects(key, r)
+        if not mods:
+            continue
+        s = df.source_state(r, key, db_path=db_path, now=now)
+        down, why = _source_is_down(rid, key, s, now)
+        label = _source_label(key, s)
+        job = f"data_source_down:{rid}:{key}"
+        if down:
+            if not ops.claim_period(job, week):
+                continue
+            since = s.get("as_of")
+            affects = ", ".join(mods[:-1]) + (" and " if len(mods) > 1 else "") + mods[-1]
+            fix = dh.fix_hint(key, s)
+            ok = raise_alert(
+                rid, "data_source_down",
+                f"Cavnar AI: {label} for {name} "
+                + (f"hasn't updated since {since}" if since else "has stopped updating")
+                + f". It affects {affects}. To fix: {fix}.",
+                f"{label} stopped updating — {name}",
+                lines=[(f"{label} " + (f"hasn't updated since <strong>{since}</strong>" if since
+                                       else "has stopped updating") + (f" ({why})." if why else ".")),
+                       f"What this affects: {affects}. Advice that rests on it is held at lower "
+                       "confidence until it catches up.",
+                       f"To fix it: {fix}."],
+                db_path=db_path, recs=[alert_rec("data_source_down", subject=key)])
+            if ok:
+                out.append((key, "down"))
+            else:
+                ops.release_period(job, week)
+        elif s.get("state") == "current" and not s.get("error"):
+            told = next((w for w in (week, last_week) if ops.period_claimed(job, w)), None)
+            if told is None or not ops.claim_period(f"data_source_restored:{rid}:{key}", told):
+                continue
+            ok = raise_alert(
+                rid, "data_source_restored",
+                f"Cavnar AI: {label} for {name} is updating again — {s.get('basis') or 'current'}.",
+                f"{label} is back to normal — {name}",
+                lines=[f"{label} is current again: {s.get('basis') or 'current'}.",
+                       "Figures that rest on it read as current again from here."],
+                db_path=db_path, recs=[alert_rec("data_source_restored", subject=key)])
+            if ok:
+                out.append((key, "restored"))
+            else:
+                ops.release_period(f"data_source_restored:{rid}:{key}", told)
+    return out
+
+
+def check_data_source_alerts(db_path: str = DB_PATH, local_hour: int = None, now=None) -> list:
+    """The daily pass over every in-service restaurant (scheduler's
+    run_daily_alert_checks, 10am local). Bounded by DAILY_ALERT_PASS_SECONDS;
+    the per-restaurant day claim (_gated_out) is the cursor."""
+    import ops
+    conn = models.get_conn(db_path)
+    rows = conn.execute("SELECT id, name, timezone FROM restaurants WHERE "
+                        + models.in_service_sql()).fetchall()
+    conn.close()
+    deadline = _pass_deadline(local_hour)
+    sent = []
+    for row in _in_window_only(rows, "id", local_hour):
+        if _past(deadline):
+            break
+        rid = row["id"]
+        if _gated_out(rid, local_hour, "data_sources", db_path):
+            continue
+        try:
+            sent += [(rid,) + x for x in data_source_pass(rid, db_path, now=now)]
+        except Exception as e:
+            ops.capture(e, job="daily_alerts", context=f"data_source rid={rid}")
+    return sent

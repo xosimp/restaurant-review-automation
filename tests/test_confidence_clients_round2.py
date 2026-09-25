@@ -115,7 +115,7 @@ def test_demand_inside_range_is_a_share_of_the_ranged_nights():
 def test_cached_labor_read_keeps_its_older_read_flag():
     """B6#12: the five-minute cache kept the text and dropped stale/stale_note."""
     src = _src()
-    assert "sessionStorage.setItem('labor_insight_meta'" in src
+    assert "cavSet('labor_insight_meta'" in src          # restaurant-scoped (Data Freshness #14)
     assert "laborApplyCaveats(el,cs.figs,cmeta,cs.note)" in src
     assert "laborApplyCaveats(el,cs.figs,null,cs.note)" not in src
 
@@ -292,7 +292,7 @@ def test_a_review_read_error_is_not_tagged_or_cached_as_a_read():
     fn = _fn(_src(), "loadReviewInsight", indent="")
     i = fn.index("fetch('/api/review-insight')")
     after = fn[i:]
-    assert after.index("d.error") < after.index("sessionStorage.setItem('review_insight'")
+    assert after.index("d.error") < after.index("cavSet('review_insight'")   # scoped cache (Data Freshness #14)
 
 
 def test_a_unit_warning_dish_gets_no_cut_or_reprice():

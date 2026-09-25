@@ -274,10 +274,17 @@ def _is_live(key, s, now=None) -> bool:
             and (_utc(now) - last) <= timedelta(hours=hours) and not s.get("error"))
 
 
-def source_line(s, now=None) -> dict:
+def source_line(s, now=None, tz=None, pos_connected=None) -> dict:
     """One source as the owner reads it: {key, label, state, tone, pct,
     health_pct, line, as_of, last_ok_at, synced, cadence, reliability,
-    error, error_class}. tone: ok | warn | bad | off."""
+    error, error_class, pending, expected_by, expected_line, last_sync_local,
+    counts_current, can_sync_now}. tone: ok | warn | bad | off.
+
+    `pending` is a connected source whose first sync has not landed;
+    `expected_by` (ISO-Z) is the next scheduler slot that refreshes it and
+    `expected_line` says it in the restaurant's clock ("POS sync runs
+    tonight 3am"). Shifts and sales ride the POS sync only when a POS is
+    connected (`pos_connected`); uploaded shifts have no schedule."""
     key = s.get("key")
     label = OWNER_LABEL.get(key, s.get("label") or key)
     state = s.get("state")
@@ -285,8 +292,16 @@ def source_line(s, now=None) -> dict:
     synced = ago(s.get("last_ok_at"), now) if s.get("last_ok_at") else ""
     rel = _reliability(s)
     cadence = (df.CADENCE.get(key) or (None, ""))[1]
+    scheduled = key not in ("labor", "sales") or bool(pos_connected)
+    nxt = next_slot(key, now) if (scheduled and state not in ("not_connected", "disconnected")) else None
+    expected = expected_phrase(nxt, tz, now) if nxt else ""
+    pending = is_pending(s)
+    expected_line = f"{SLOT_WORD.get(key, label)} runs {expected}" if expected else None
     if state == "not_connected":
         line, tone = f"{label}: not connected", "off"
+    elif pending:
+        line = (f"{label}: first sync runs {expected}" if expected else f"{label}: first sync pending")
+        tone = "off"
     elif _is_live(key, s, now):
         line, tone = f"{label}: Live ({synced})", "ok"
     else:
@@ -296,7 +311,7 @@ def source_line(s, now=None) -> dict:
             line += f" (synced {synced})"
         if s.get("error") or state in ("stale", "unknown"):
             tone = "bad"
-        elif state == "aging":
+        elif state in ("aging", "disconnected"):
             tone = "warn"
         else:
             tone = "ok"
@@ -306,7 +321,268 @@ def source_line(s, now=None) -> dict:
             "as_of_iso": s.get("as_of_iso"), "last_ok_at": s.get("last_ok_at"), "synced": synced or None,
             "cadence": cadence, "reliability": rel, "error": s.get("error"),
             "error_class": s.get("error_class"), "next_retry_at": s.get("next_retry_at"),
-            "basis": s.get("basis")}
+            "basis": s.get("basis"), "pending": pending,
+            "expected_by": nxt.strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
+            "expected_line": expected_line,
+            "last_sync_local": when_local(s.get("last_ok_at"), tz, now) if s.get("last_ok_at") else None,
+            "counts_current": counts_as_current(s, now),
+            "can_sync_now": key == "pos" and state not in ("not_connected", "disconnected")}
+
+
+# ── when a source next refreshes, in the owner's clock (DH4-18, #27) ───────
+#
+# The scheduler's own slots, in its clock (America/Chicago — scheduler.py's
+# main loop: the POS sync at 3am, the Meta metrics sync at 4am, the review
+# fetch at 8/12/4/8, competitors Monday 6am, AI visibility Monday 7am). The
+# scheduler owns the times; this reads them so a source can say when it next
+# refreshes ("POS sync runs tonight 3am"), and tests/test_data_health_owner.py
+# holds the two in step. (hours, weekday or None for every day)
+SCHED_TZ = "America/Chicago"
+SLOTS = {
+    "pos": ((3,), None), "labor": ((3,), None), "sales": ((3,), None),
+    "reviews": ((8, 12, 16, 20), None), "marketing": ((4,), None),
+    "competitor": ((6,), 0), "visibility": ((7,), 0),
+}
+SLOT_WORD = {"pos": "POS sync", "labor": "Shift sync", "sales": "Sales sync", "reviews": "Review check",
+             "marketing": "Metrics sync", "competitor": "Competitor read", "visibility": "AI visibility check"}
+# A nightly sync that ran at 3:02am still counts as current until the next
+# slot has had this long to finish (job jitter, a slow provider).
+CADENCE_SLACK_HOURS = 2
+
+
+def _tz(restaurant_or_tz=None):
+    from time_utils import restaurant_tz
+    try:
+        return restaurant_tz(restaurant_or_tz or None)
+    except Exception:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(SCHED_TZ)
+
+
+def next_slot(key, now=None):
+    """The next scheduled refresh of source `key` as an aware UTC datetime,
+    or None for a source nothing refreshes on a clock (counts, deliveries —
+    the owner does them — and weather, fetched on read)."""
+    slot = SLOTS.get(key)
+    if not slot:
+        return None
+    from zoneinfo import ZoneInfo
+    hours, weekday = slot
+    local = _utc(now).astimezone(ZoneInfo(SCHED_TZ))
+    for back in range(0, 8):
+        d = (local + timedelta(days=back)).date()
+        if weekday is not None and d.weekday() != weekday:
+            continue
+        for h in sorted(hours):
+            at = datetime(d.year, d.month, d.day, h, tzinfo=local.tzinfo)
+            if at > local:
+                return at.astimezone(timezone.utc)
+    return None
+
+
+def clock(dt) -> str:
+    """"3am", "3:02am", "4pm" — the design system's time (no seconds, no
+    leading zero)."""
+    if dt is None:
+        return ""
+    h = dt.hour % 12 or 12
+    return f"{h}{'' if dt.minute == 0 else f':{dt.minute:02d}'}{'am' if dt.hour < 12 else 'pm'}"
+
+
+def when_local(stamp, tz=None, now=None) -> str:
+    """A stamp in the restaurant's clock, never UTC: "3:02am" today,
+    "9/21/26 · 3:02am" another day. "" when unreadable."""
+    d = stamp if isinstance(stamp, datetime) else _parse(stamp)
+    if d is None:
+        return ""
+    z = _tz(tz)
+    loc = d.astimezone(z)
+    today = _utc(now).astimezone(z).date()
+    if loc.date() == today:
+        return clock(loc)
+    return f"{ce._mdy(loc.date().isoformat())} · {clock(loc)}"
+
+
+def expected_phrase(at, tz=None, now=None) -> str:
+    """When a slot falls, in the owner's words and clock: "today 4pm",
+    "tonight 3am" (the small hours after today), "tomorrow 8am", else
+    "9/28/26 · 6am"."""
+    if at is None:
+        return ""
+    z = _tz(tz)
+    loc = at.astimezone(z)
+    today = _utc(now).astimezone(z).date()
+    days = (loc.date() - today).days
+    if days == 0:
+        return f"{'tonight' if loc.hour >= 18 else 'today'} {clock(loc)}"
+    if days == 1 and loc.hour < 6:
+        return f"tonight {clock(loc)}"
+    if days == 1:
+        return f"tomorrow {clock(loc)}"
+    return f"{ce._mdy(loc.date().isoformat())} · {clock(loc)}"
+
+
+def is_pending(s) -> bool:
+    """Connected, but its first sync has not landed yet: nothing has been
+    read from it, so it is neither current nor broken — it is waiting."""
+    if not s or s.get("state") == "not_connected" or s.get("error"):
+        return False
+    if s.get("never_synced"):
+        return True
+    return (s.get("state") == "unknown" and not s.get("last_ok_at") and not s.get("as_of_iso")
+            and "never" in str(s.get("basis") or "").lower())
+
+
+def counts_as_current(s, now=None) -> bool:
+    """Whether a source may be counted as current on an owner surface ("4
+    current sources", iOS "running on AI"): its state is current, nothing is
+    failing, and — when its sync history is known — it last succeeded within
+    one cadence (plus CADENCE_SLACK_HOURS) of now. A nightly POS synced two
+    days ago can still read 80% by its data date; it is not "live" (DH4-14,
+    DH5-15)."""
+    if not s or s.get("state") != "current" or s.get("error"):
+        return False
+    key = s.get("source") or s.get("key")
+    hours = (df.CADENCE.get(key) or (None, ""))[0]
+    last = _parse(s.get("last_ok_at"))
+    if hours is None or last is None:
+        return True
+    return (_utc(now) - last) <= timedelta(hours=hours + CADENCE_SLACK_HOURS)
+
+
+def affects(key, restaurant=None) -> list:
+    """The owner's names for the enabled modules that rest on source `key`
+    (data_freshness.MODULE_SOURCES, reversed) — "what this affects"."""
+    mods = enabled_modules(restaurant) if restaurant is not None else list(_MODULE_TITLES)
+    out = []
+    for m in mods:
+        if key in df.sources_for([m]):
+            t = module_title(m)
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def fix_hint(key, s=None) -> str:
+    """The one action that fixes a source that stopped updating."""
+    s = s or {}
+    prov = {"rpower": "RPOWER"}.get(s.get("provider"), str(s.get("provider") or "your POS").title()
+                                     if s.get("provider") else "your POS")
+    auth = s.get("error_class") == "auth"
+    return {"pos": (f"Reconnect {prov} in Account → Connections" if auth else
+                    f"Open Account → Connections and tap Sync now on {prov}"),
+            "labor": "Open Account → Connections and tap Sync now, or upload shifts on Labor",
+            "sales": f"Open Account → Connections and tap Sync now on {prov}",
+            "reviews": "Reconnect Google in Account → Connections",
+            "marketing": "Reconnect Instagram or Facebook in Account → Connections",
+            "inventory": "Count your inventory on Food Cost",
+            "purchases": "Log a delivery on Food Cost"}.get(key, _connect_hint(key))
+
+
+def connection_lines(restaurant, now=None, db_path=None) -> dict:
+    """What Account → Connections says about the POS and Google, from the
+    registry (never the sync-run stamp — DH4-2) and in the restaurant's
+    clock (never UTC): {"pos": {...}, "google": {...}}, each {line, tone
+    ok|warn|bad|off, state, last_sync, data_through, next} or None when not
+    connected. Never raises."""
+    out = {"pos": None, "google": None}
+    tz = df._get(restaurant, "timezone")
+    try:
+        s = df.source_state(restaurant, "pos", db_path=db_path, now=now)
+        if s.get("state") != "not_connected":
+            # The ledger's last success, else the provider's own sync stamp
+            # (full time, UTC) — the registry row carries only its date.
+            last = s.get("last_ok_at")
+            if not last:
+                try:
+                    import pos_health
+                    last = pos_health.pos_sync_state(restaurant, now=now).get("last_synced")
+                except Exception:
+                    last = None
+            when = when_local(last, tz, now) if last else ""
+            sales_day = s.get("as_of") if "sales through" in str(s.get("basis") or "") else None
+            nxt = expected_phrase(next_slot("pos", now), tz, now)
+            if s.get("state") == "disconnected":
+                # A POS removed after use keeps its last data's recency
+                # (data_freshness): a warning, and no next sync to promise.
+                line, tone, nxt = "Disconnected" + (f" · Sales through {sales_day}" if sales_day else ""), "warn", ""
+            elif is_pending(s):
+                line, tone = f"Connected — first sync runs {nxt}" if nxt else "Connected — first sync pending", "off"
+            else:
+                bits = []
+                if s.get("error"):
+                    bits.append("Sync failing" + (f" · last good sync {when}" if when else ""))
+                elif when:
+                    bits.append(f"Last sync {when}")
+                bits.append(f"Sales through {sales_day}" if sales_day else "No sales on file yet")
+                line = " · ".join(bits)
+                tone = ("bad" if (s.get("error") or s.get("state") in ("stale", "unknown"))
+                        else "warn" if s.get("state") == "aging" else "ok")
+            out["pos"] = {"line": line, "tone": tone, "state": s.get("state"), "last_sync": when or None,
+                          "data_through": sales_day, "next": nxt or None, "provider": s.get("provider"),
+                          "error": s.get("error"), "pct": s.get("pct")}
+    except Exception as e:
+        print(f"[data_health] pos connection line failed: {e}")
+    try:
+        f = df.review_fetch_state(restaurant, now=now)
+        if f.get("state") != "not_connected":
+            nxt = expected_phrase(next_slot("reviews", now), tz, now)
+            at = None
+            try:
+                import admin_ops
+                at = admin_ops.fetched_at_ct(df._get(restaurant, "last_fetched_at"))
+            except Exception:
+                at = None
+            if f.get("state") == "unknown" and not f.get("future") and at is None:
+                line, tone = (f"First check runs {nxt}" if nxt else "First check pending"), "off"
+            elif f.get("error") or f.get("state") in ("stale", "unknown"):
+                missed = f.get("missed") or 0
+                line = (f"Last check {ce._mdy(f.get('as_of_iso'))}" if f.get("as_of_iso") else "Last check unknown") \
+                    + (f" — {missed} check{'' if missed == 1 else 's'} missed" if missed else "")
+                tone = "bad"
+            else:
+                line = f"Checked {when_local(at, tz, now)}" + (f" · next check {nxt}" if nxt else "")
+                tone = "warn" if f.get("state") == "aging" else "ok"
+            out["google"] = {"line": line, "tone": tone, "state": f.get("state"),
+                             "last_sync": when_local(at, tz, now) if at else None,
+                             "data_through": f.get("as_of"), "next": nxt or None, "error": f.get("error"),
+                             "missed": f.get("missed"), "pct": f.get("pct")}
+    except Exception as e:
+        print(f"[data_health] google connection line failed: {e}")
+    return out
+
+
+def metrics_line(restaurant, now=None, db_path=None):
+    """The Marketing screens' "Metrics synced 9/21/26" line (DH4-8), from
+    the registry's marketing source: {line, tone ok|warn, synced_at, state,
+    error}; tone warn (amber) when the metrics sync is failing, stale or
+    has never run. None when no social account is connected. Never raises."""
+    try:
+        s = df.source_state(restaurant, "marketing", db_path=db_path, now=now)
+    except Exception:
+        return None
+    if not s or s.get("state") == "not_connected":
+        return None
+    at = _parse(s.get("metrics_synced_at"))
+    tz = df._get(restaurant, "timezone")
+    day = ce._mdy(at.astimezone(_tz(tz)).date().isoformat()) if at else None
+    line = f"Metrics synced {day}" if day else "Metrics haven't synced yet"
+    bad = bool(s.get("error")) or s.get("state") in ("stale", "unknown") or not day
+    if s.get("error") and day and "last synced" not in str(s["error"]):
+        line += f" — {s['error']}"
+    elif s.get("error"):
+        line = str(s["error"])
+    return {"line": line, "tone": "warn" if bad else "ok", "synced_at": s.get("metrics_synced_at"),
+            "state": s.get("state"), "error": s.get("error")}
+
+
+def compact(snap) -> dict:
+    """What Home embeds beside its legacy freshness[] (web /api/home/brief,
+    mobile /mobile/api/home): {overall, worst_line}. None when the snapshot
+    could not be read."""
+    if not isinstance(snap, dict) or not snap.get("ok"):
+        return None
+    return {"overall": snap.get("overall"), "worst_line": snap.get("worst_line")}
 
 
 # ── the restaurant ─────────────────────────────────────────────────────────
@@ -343,7 +619,15 @@ def overall(lines, modules) -> dict:
     """{pct, state, label, caps_applied, reason} — the weighted mean of the
     in-use sources' health, held by the named caps. None when nothing is
     connected — never 0, never 100."""
-    in_use = [l for l in lines if l.get("state") != "not_connected" and l.get("health_pct") is not None]
+    # A source waiting on its first sync is neither healthy nor broken:
+    # nothing has been read from it, so it is never scored (it says when
+    # its first sync runs instead).
+    in_use = [l for l in lines if l.get("state") != "not_connected" and l.get("health_pct") is not None
+              and not l.get("pending")]
+    waiting = [l for l in lines if l.get("pending")]
+    if not in_use and waiting:
+        return {"pct": None, "state": "pending", "label": "Waiting for the first sync", "caps_applied": [],
+                "reason": waiting[0].get("line")}
     if not in_use:
         return {"pct": None, "state": "not_connected", "label": "No data sources connected yet",
                 "caps_applied": [], "reason": "Connect a data source to see how current your data is."}
@@ -373,7 +657,7 @@ def overall(lines, modules) -> dict:
         apply("any_stale", ANY_STALE_CAP, stale[0]["line"])
     for m in modules:
         b = df.BLOCKING.get(m)
-        if b and b in by_key and _down({**by_key[b], "pct": by_key[b].get("pct")}):
+        if b and b in by_key and not by_key[b].get("pending") and _down({**by_key[b], "pct": by_key[b].get("pct")}):
             apply("blocking_down", BLOCKING_DOWN_CAP, by_key[b]["line"])
             break
     pct = int(round(pct))
@@ -487,7 +771,9 @@ def snapshot(restaurant_id, restaurant=None, ctx=None, db_path=None, now=None, u
                     keys.append(k)
         states = _states(restaurant, keys, ctx=ctx, db_path=db_path, now=now)
         by_key = {s.get("key"): s for s in states}
-        lines = [source_line(s, now) for s in states]
+        tz = df._get(restaurant, "timezone")
+        pos_on = (by_key.get("pos") or {}).get("state") not in (None, "not_connected", "disconnected")
+        lines = [source_line(s, now, tz=tz, pos_connected=pos_on) for s in states]
         connected = [l for l in lines if l["state"] != "not_connected"]
         not_connected = [{"key": l["key"], "label": l["label"], "next": _connect_hint(l["key"])}
                          for l in lines if l["state"] == "not_connected"]
@@ -498,11 +784,17 @@ def snapshot(restaurant_id, restaurant=None, ctx=None, db_path=None, now=None, u
             mods.append({"module": m, "title": module_title(m), "decision": decision, "reason": reason,
                          "blocking": b, "sources": list(df.sources_for([m])),
                          "confidence_impact": module_impact(restaurant_id, m, by_key, db_path=db_path)})
-        worst = min(connected, key=lambda l: (l["health_pct"] if l["health_pct"] is not None else 101,
-                                              l["label"])) if connected else None
+        scored = [l for l in connected if not l.get("pending")]
+        worst = min(scored, key=lambda l: (l["health_pct"] if l["health_pct"] is not None else 101,
+                                           l["label"])) if scored else None
         out = {"ok": True, "generated_at": _utc(now).strftime("%Y-%m-%dT%H:%M:%SZ"), "overall": ov,
                "worst_line": worst["line"] if worst and (worst["health_pct"] or 0) < 100 else None,
-               "sources": connected, "not_connected": not_connected, "modules": mods}
+               "sources": connected, "not_connected": not_connected, "modules": mods,
+               # How many sources may honestly be called current right now
+               # (counts_as_current — the cadence rule, #27), and what
+               # Account → Connections says about the POS and Google.
+               "count_current": sum(1 for l in connected if l.get("counts_current")),
+               "connections": connection_lines(restaurant, now=now, db_path=db_path)}
     except Exception as e:
         print(f"[data_health] snapshot failed for {restaurant_id}: {e}")
         return {"ok": False, "error": "Data health could not be read right now."}

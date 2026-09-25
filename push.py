@@ -220,6 +220,9 @@ PRIORITY = {
     "schedule_publish_held": P2_OPPORTUNITY, "schedule_publish_pending": P3_INFO,
     "milestone": P3_INFO, "order_send_held": P2_OPPORTUNITY,
     "order_send_pending": P3_INFO, "order_send_voided": P2_OPPORTUNITY,
+    # A data source that stopped updating is worth today; its return is news
+    # (notify.check_data_source_alerts, Data Freshness #18).
+    "data_source_down": P2_OPPORTUNITY, "data_source_restored": P3_INFO,
 }
 # Which module a notification opens — the web tab ids (?tab=). The ONE map:
 # client_api._NOTIFICATION_MODULE is this dict (the bell's rows carry it),
@@ -252,6 +255,7 @@ NOTIFICATION_MODULE = {
     # Not a product module — the web dashboard's bell reads this field
     # directly; iOS's DeepLinkRouter has its own "login" special-case.
     "login": "account", "staff_signin": "account", "connection_lost": "account",
+    "data_source_down": "account", "data_source_restored": "account",
 }
 
 
@@ -270,7 +274,7 @@ ACTIONABLE_TYPES = frozenset({
     "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held",
     "schedule_drafted",
     "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided",
-    "ai_visibility_drop", "issue", "issue_escalated", "connection_lost",
+    "ai_visibility_drop", "issue", "issue_escalated", "connection_lost", "data_source_down",
 })
 
 

@@ -708,7 +708,7 @@ def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=Fals
     def entry(module, label, st):
         out.append({"module": module, "source": st.get("key"), "state": st.get("state"), "pct": st.get("pct"),
                     "as_of": st.get("as_of"), "as_of_iso": st.get("as_of_iso"), "basis": st.get("basis"),
-                    "error": st.get("error"),
+                    "error": st.get("error"), "last_ok_at": st.get("last_ok_at"),
                     "key": module, "label": label, "at": st.get("as_of_iso"), "note": st.get("basis")})
 
     def sample(module, label, basis):
@@ -742,6 +742,17 @@ def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=Fals
         for st in shown:
             entry(module, label, st)
     return out
+
+
+def _data_health_compact(rid, restaurant=None):
+    """data_health.compact(snapshot) for Home, or None — never raises, and
+    a Home build never fails because the score could not be read."""
+    try:
+        import data_health
+        return data_health.compact(data_health.snapshot(rid, restaurant=restaurant))
+    except Exception as e:
+        print(f"[home] data health unavailable for {rid}: {e}")
+        return None
 
 
 def stalest_as_of(freshness):
@@ -1404,6 +1415,22 @@ def _build(current_user, present=True):
                      evidence=(f"last good sync {_mdy(_pos_state['last_synced_iso'])}"
                                if _pos_state.get("last_synced_iso") else "no successful sync on file"),
                      provider=_pos_state.get("provider"))
+        else:
+            # A sync that simply stopped — or keeps running while its sales
+            # stopped arriving — has no error column, and only an amber pill
+            # said so (DH4-2). The registry dates the POS by its last day
+            # carrying sales; stale (or failing in the sync ledger) is a card.
+            _pos_reg = (trust_ctx.sources(("pos",)) or [{}])[0]
+            if _pos_reg.get("state") == "stale" or (_pos_reg.get("error") and _pos_reg.get("state") != "not_connected"):
+                _pname = pos_health_label(_pos_state)
+                add_attn("pos_sync", "critical" if _pos_reg.get("error") else "important",
+                         f"{_pname} data has stopped arriving",
+                         f"{_pos_reg.get('basis') or 'The POS data is out of date'}. Labor, sales and depletion "
+                         "numbers are held at their last good day until it syncs again.",
+                         "account", "Check connection",
+                         evidence=(f"sales through {_pos_reg['as_of']}" if _pos_reg.get("as_of")
+                                   else "no sales on file"),
+                         provider=_pos_state.get("provider"))
 
     # ── Labor ───────────────────────────────────────────────────────────────
     if "labor" in active_keys:
@@ -1941,7 +1968,12 @@ def _build(current_user, present=True):
                                google_connected=google_connected, reviews_on_file=int(rstats.get("total") or 0))
     data_as_of = stalest_as_of(freshness)
     _not_current = [f for f in freshness if f.get("state") in ("stale", "unknown")]
-    _count_live = sum(1 for f in freshness if f.get("state") == "current")
+    # "Live" / "current" is said only of a source that is current by its
+    # data date AND inside one cadence of its last success (data_health's
+    # cadence rule, #27): a nightly POS whose 3am sync stopped two days ago
+    # can still read 80% on its sales date, and it is not live.
+    import data_health as _dh
+    _count_live = sum(1 for f in freshness if _dh.counts_as_current(f, now))
 
     # ── order, brief headline, empty states ────────────────────────────────
     sev_rank = {"critical": 0, "important": 1, "watch": 2}
@@ -2210,6 +2242,11 @@ def _build(current_user, present=True):
         "context": {"restaurant_name": restaurant.name, "location_name": restaurant.location_name or None, "group_name": group_name,
                     "view": "location" if group_name else "single", "locations": locations, "portfolio": portfolio, "timezone": str(local_now.tzinfo)},
         "freshness": freshness,
+        # The Restaurant Data Health Score beside the legacy freshness[]
+        # (which older iOS builds still read): {overall, worst_line}. The
+        # full payload — every source line, what is not connected, each
+        # module's confidence impact — is GET /api/data-health (#21-23).
+        "data_health": _data_health_compact(rid, restaurant),
         # What "Monitoring N signals" may honestly say: only sources that are
         # current count, beside the stalest date (E7).
         # `stale` counts the sources reading stale or unknown; `all_clear`

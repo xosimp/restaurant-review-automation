@@ -725,7 +725,8 @@ def test_m16_unverified_marketing_read_offers_no_controls_and_keeps_its_flag(db_
     web, _ = client_api._do_mkt_insight(rid)
     assert "data-rec-key" not in web["insight"]
     dash = _read("templates", "dashboard.html")
-    assert "sessionStorage.getItem('mkt_brief_check')" in dash
+    # The cache is restaurant-scoped now (cavGet, Data Freshness #14).
+    assert "cavGet('mkt_brief_check')" in dash
     sw = _read("ios", "CavnarAI", "CavnarAI", "Features", "Marketing", "MarketingAnalyticsSection.swift")
     assert "CavnarCaveat.unverifiedFigures(insight.unsupportedFigures" in sw
 

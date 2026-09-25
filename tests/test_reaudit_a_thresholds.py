@@ -98,7 +98,10 @@ def test_the_owners_floor_still_alerts(db_path, sent, monkeypatch):
     rid = _rid(db_path)
     update_restaurant(rid, {"alert_rating_threshold": 1, "urgent_via_sms": 1, "alert_rating_floor": 4.6},
                       db_path=db_path)
-    _raw_set(db_path, rid, gbp_rating=4.5)
+    # A rating read just now: an unaged one is no longer announced as
+    # "dropped" (Data Freshness #38, DH3-11).
+    from datetime import datetime as _dt, timezone as _tz
+    _raw_set(db_path, rid, gbp_rating=4.5, gbp_rating_updated_at=_dt.now(_tz.utc).isoformat())
     notify.check_daily_alerts(db_path=db_path)
     assert len(raised) == 1 and "4.6" in raised[0]
 

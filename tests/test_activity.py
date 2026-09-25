@@ -62,6 +62,18 @@ def test_working_lines_only_name_processes_that_are_armed(db_path):
     assert activity.build(rid, db_path=db_path)["working"] == []
     from models import update_restaurant
     update_restaurant(rid, {"reviews_live": 1}, db_path=db_path)
+    # "Watching" only while the fetch keeps up (Data Freshness #27, DH4-14):
+    # a connection whose fetch never ran says so instead.
+    w = [x["text"] for x in activity.build(rid, db_path=db_path)["working"]]
+    assert "Review checks haven't run yet" in w and not any(x.startswith("Watching") for x in w)
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+                 (_dt.now(_ZI("America/Chicago")).strftime("%Y-%m-%dT%H:%M:%S"), rid))
+    conn.commit()
+    conn.close()
+    activity._CACHE.clear()
     w = [x["text"] for x in activity.build(rid, db_path=db_path)["working"]]
     assert any(x.startswith("Watching for new reviews") for x in w)
     # The 90-day comparison line needs reviews to compare.
