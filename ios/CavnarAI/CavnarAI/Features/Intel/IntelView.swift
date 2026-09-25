@@ -314,6 +314,15 @@ struct IntelView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
             }
+            // n and radius behind the standing, and its tie band (#38) — or
+            // why there is none yet.
+            if let basis = summary.standingLine != nil ? summary.standingBasis
+                : summary.standingWhyNot.map({ "No standing yet \u{2014} " + $0 }) {
+                HomeMixedText.make(basis, size: 12, weight: 500, color: .cavnarInk3)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 

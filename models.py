@@ -2188,6 +2188,68 @@ def init_db(db_path: str = DB_PATH):
             computed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(week, cohort, rec_kind)
         )""",
+        # Effect sizes on measured results (Benchmarking audit BM4-6, Top-50
+        # #25): what a counted result MOVED, not only whether it improved —
+        # the input "restaurants like yours reduced waste 11%" needs.
+        # feedback.sync fills them from recommendation_outcomes and the
+        # episode's rec_instances row, only for a result rec_learning.
+        # learned_verdict counts. effect_pct / effect_z are signed so that
+        # positive means better. After the CREATE, so a fresh file gets them.
+        "ALTER TABLE intel_rec_events ADD COLUMN metric TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN effect_pct REAL",
+        "ALTER TABLE intel_rec_events ADD COLUMN effect_z REAL",
+        "ALTER TABLE intel_rec_events ADD COLUMN baseline_kind TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN after_end TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN tags_json TEXT",
+        # jobs.log_confidence reads the last 365 days, not the whole table.
+        "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_at ON intel_rec_events(event_at)",
+        # Restaurant DNA, level 1 (intelligence/dna.py, BM4 §5): one row per
+        # restaurant-week of its operational profile — {dim: {raw, z, n,
+        # basis, norm}} over ratios, rates and bands only, never dollars
+        # (privacy.assert_anonymous on every row). Written by the bounded
+        # nightly features pass beside intel_features.
+        """CREATE TABLE IF NOT EXISTS intel_dna (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            week           TEXT    NOT NULL,
+            dims_json      TEXT    NOT NULL,
+            coverage       REAL    NOT NULL DEFAULT 0,
+            version        INTEGER NOT NULL DEFAULT 1,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, week)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_dna_week ON intel_dna(week, restaurant_id)",
+        # The Benchmark Engine's comparisons, materialised per restaurant by a
+        # bounded, resumable nightly pass (BM4-14, Top-50 #46), so a request
+        # can be one indexed read (engine.compare(use_cache=True)). The
+        # viewer-dependent `location` kind is never stored.
+        """CREATE TABLE IF NOT EXISTS intel_benchmark_facts (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            metric         TEXT    NOT NULL,
+            week           TEXT    NOT NULL,
+            payload_json   TEXT    NOT NULL,
+            available      INTEGER NOT NULL DEFAULT 0,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, metric, week)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_bm_facts ON intel_benchmark_facts(restaurant_id, metric, computed_at)",
+        # Neighbour predictions (intelligence/predict.py, BM4 §5.3): what
+        # similar restaurants' taken advice moved, minus what the same
+        # metric did where it was not taken. Written by a weekly bounded
+        # job; below the floors every row is unavailable (all of them
+        # today). One row per viewer, kind, metric and week.
+        """CREATE TABLE IF NOT EXISTS intel_effects (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            rec_kind       TEXT    NOT NULL,
+            metric         TEXT    NOT NULL,
+            week           TEXT    NOT NULL,
+            available      INTEGER NOT NULL DEFAULT 0,
+            payload_json   TEXT    NOT NULL,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, rec_kind, metric, week)
+        )""",
         # Cover counts by day. The labor analysis had no way to tell a lean
         # day from a short-staffed one; covers are the one figure that
         # separates them (moat audit #4). Entered or imported, never inferred.

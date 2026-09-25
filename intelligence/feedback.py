@@ -18,6 +18,7 @@ and never answered, in the acceptance denominator (scoring).
 text — so kinds can be compared across restaurants without carrying what
 was said to whom.
 """
+import json
 from datetime import date
 
 import models as _models_mod
@@ -246,6 +247,55 @@ def _repair_once(conn):
     return True
 
 
+def effect_of(tracker) -> dict | None:
+    """What one measured result MOVED (BM4-6, Top-50 #25), from its
+    recommendation_outcomes row: {metric, effect_pct, effect_z,
+    baseline_kind, after_end}, each effect signed so POSITIVE MEANS BETTER
+    (metrics.describe's lower_is_better). effect_pct is the % change of the
+    metric from its baseline (delta_pct, else delta ÷ baseline); effect_z is
+    delta ÷ the restaurant's own noise sigma for one window. None when the
+    metric is unknown. Pure — the caller decides whether the row counts."""
+    t = tracker or {}
+    metric = t.get("metric")
+    if not metric:
+        return None
+    try:
+        import metrics
+        lower = bool(metrics.describe(metric)["lower_is_better"])
+    except Exception:
+        return None
+    sign = -1.0 if lower else 1.0
+
+    def _f(x):
+        try:
+            return None if x is None else float(x)
+        except (TypeError, ValueError):
+            return None
+    delta, base, pct, sigma = _f(t.get("delta")), _f(t.get("baseline_value")), _f(t.get("delta_pct")), \
+        _f(t.get("noise_sigma"))
+    if pct is None and delta is not None and base:
+        pct = delta / base * 100.0
+    z = delta / sigma if (delta is not None and sigma and sigma > 0) else None
+    return {"metric": str(metric)[:80], "effect_pct": round(sign * pct, 2) if pct is not None else None,
+            "effect_z": round(sign * z, 3) if z is not None else None,
+            "baseline_kind": t.get("baseline_kind"), "after_end": str(t.get("after_end") or "")[:10] or None}
+
+
+_EFFECT_COLS = ("metric", "effect_pct", "effect_z", "baseline_kind", "after_end", "tags_json")
+
+
+def _set_effect(conn, restaurant_id, key, eff, tags_json):
+    """Write (or clear, eff None) one measured row's effect columns, only
+    when they differ — the pass re-reads every tracker nightly."""
+    vals = [None] * 5 if eff is None else [eff["metric"], eff["effect_pct"], eff["effect_z"],
+                                            eff["baseline_kind"], eff["after_end"]]
+    vals.append(tags_json if eff is not None else None)
+    sets = ", ".join(f"{c}=?" for c in _EFFECT_COLS)
+    diff = " OR ".join(f"{c} IS NOT ?" for c in _EFFECT_COLS)
+    conn.execute(f"UPDATE intel_rec_events SET {sets} WHERE restaurant_id=? AND source_key=? AND action='measured' "
+                 f"AND ({diff})", (*vals, restaurant_id, str(key)[:200], *vals))
+
+
 def _outcome_of(r):
     """The engine's verdict for one tracker row — rec_learning.learned_verdict,
     the one mapping both readers share (re-audit B9): the owner saying they
@@ -340,6 +390,20 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
         outs = [dict(r) for r in outs]
         counted = _counted_tracker_ids([r for r in outs if not str(r.get("source_key") or "")
                                         .startswith("observed:untaken:")])
+        # What each evaluated result moved and the episode's subject tags
+        # (BM4-6): read beside the verdicts, written only on a result the
+        # learning counts. A database from before a column fills nothing.
+        try:
+            effect_rows = {r["id"]: dict(r) for r in conn.execute(
+                "SELECT id, metric, baseline_value, delta, delta_pct, noise_sigma, baseline_kind, after_end "
+                "FROM recommendation_outcomes WHERE status='evaluated'").fetchall()}
+        except Exception:
+            effect_rows = {}
+        try:
+            episode_tags = {r["tracker_id"]: r["tags"] for r in conn.execute(
+                "SELECT tracker_id, tags FROM rec_instances WHERE tracker_id IS NOT NULL").fetchall()}
+        except Exception:
+            episode_tags = {}
         for r in outs:
             # The kind comes from the key, not the tracker's source: Home's
             # "Done" starts an `observed` tracker under the recommendation's
@@ -368,6 +432,22 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
                     outcome = _outcome_of(r) if r["id"] in counted else "unknown"
                 written += put(r["restaurant_id"], kind, mkey, "measured", outcome=outcome,
                                days_to_effect=days, event_at=r["evaluate_on"], synced_from="recommendation_outcomes")
+                if r.get("id") is not None and effect_rows is not None:
+                    eff = None
+                    if r["id"] in counted and outcome in ("improved", "worsened", "no_clear_change"):
+                        eff = effect_of(effect_rows.get(r["id"]))
+                    tags = episode_tags.get(r["id"])
+                    if eff is not None and not tags:
+                        try:
+                            import rec_ledger
+                            tags = json.dumps(sorted(rec_ledger.tags_for(r["source_key"], kind=kind)))
+                        except Exception:
+                            tags = None
+                    try:
+                        _set_effect(conn, r["restaurant_id"], mkey, eff, tags)
+                    except Exception as e:       # a database from before the effect columns
+                        print(f"[intelligence.feedback] effect not written: {e}")
+                        effect_rows = None
 
         a0 = _cursor_get(conn, ASK_CURSOR)
         asks = conn.execute("SELECT id, restaurant_id, action, summary, outcome, created_at, proposal_id "

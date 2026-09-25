@@ -42,11 +42,14 @@ def recommendation_history(restaurant_id, limit=100, db_path=DB_PATH):
     return feedback.history(restaurant_id, limit=limit, db_path=db_path)
 
 
-def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None):
+def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None,
+                           window_days=None, half_life_days=None):
     """scoring.kind_stats. A cohort figure used as one restaurant's prior
-    passes exclude_restaurant_id so its own rows are not in it."""
+    passes exclude_restaurant_id so its own rows are not in it, and
+    window_days (scoring.PRIOR_WINDOW_DAYS) so it is the recent record."""
     return scoring.kind_stats(rec_kind, cohort=cohort, restaurant_id=restaurant_id, db_path=db_path,
-                              exclude_restaurant_id=exclude_restaurant_id)
+                              exclude_restaurant_id=exclude_restaurant_id, window_days=window_days,
+                              half_life_days=half_life_days)
 
 
 def pattern_discovery(db_path=DB_PATH):
@@ -72,22 +75,86 @@ def cohort_for(restaurant):
     return categories.category_for(restaurant)
 
 
-def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
-    """The short prompt section: own memory lines, then cohort facts only
-    when the cohort clears the floor."""
-    lines = memory.lines(memory.restaurant_memory(restaurant_id, db_path=db_path))
+# Which module's view permission a feature or metric key belongs to (the
+# registry's module, else its name) — so a login denied Labor or Food Cost
+# is never handed those figures through the learning layer (BM1-17).
+_MODULE_PREFIXES = (
+    ("labor", ("labor_", "staff_per_1k", "schedule")),
+    ("inventory", ("food_cost", "waste_", "count_")),
+    ("marketing", ("campaign", "post_", "posts_", "dish_posts", "offer_posts", "occasion_posts", "item_lift",
+                   "guest_list")),
+    ("reviews", ("reviews_", "avg_rating", "reply_", "response_")),
+)
+
+
+def metric_module(key) -> str | None:
+    """The permission-module key (permissions.MODULE_VIEW_PERMISSIONS) a
+    metric or feature belongs to, or None for one no module owns."""
+    m = metrics_registry.meta(key).get("module")
+    if m:
+        return m
+    k = str(key or "")
+    return next((mod for mod, prefixes in _MODULE_PREFIXES if k.startswith(prefixes)), None)
+
+
+def visible(key, denied_modules=None) -> bool:
+    """Whether a login denied `denied_modules` may see metric `key`."""
+    mod = metric_module(key)
+    return not (mod and denied_modules and mod in denied_modules)
+
+
+def _pattern_visible(p, denied_modules=None) -> bool:
+    ev = p.get("evidence") or {}
+    beh = ev.get("behaviour") or []
+    return visible(ev.get("outcome"), denied_modules) and visible(beh[0] if beh else None, denied_modules)
+
+
+def context_bundle(restaurant_id, restaurant=None, db_path=DB_PATH, denied_modules=None) -> tuple:
+    """(lines, facts): context_lines and the response_validation benchmark
+    facts behind every comparison a line states (engine.facts), so a peer
+    claim the model makes from them binds (BM3-3)."""
+    return context_lines(restaurant_id, restaurant=restaurant, db_path=db_path, denied_modules=denied_modules,
+                         with_facts=True)
+
+
+def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH, denied_modules=None, with_facts=False):
+    """The short prompt section: own memory lines, then peer comparisons
+    only where a fair one exists (the Benchmark Engine), then patterns.
+    With `with_facts`, (lines, facts) — see context_bundle.
+    `denied_modules` (the permission-module keys this login may not view)
+    projects lines and facts alike: no labor or food figure for a login
+    denied that module (BM1-17)."""
+    denied = frozenset(denied_modules or ())
+    mem = memory.restaurant_memory(restaurant_id, db_path=db_path)
+    if denied:
+        mem = dict(mem, slopes={k: v for k, v in (mem.get("slopes") or {}).items() if visible(k, denied)})
+    lines = memory.lines(mem)
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
     cohort, src = categories.category_for(restaurant) if restaurant else (None, None)
-    # Each line names the cohort actually used (a platform band is "other
-    # restaurants on Cavnar — all types"), its size with this restaurant
-    # left out, its as-of date, and an inferred type (NS4 H4/H5/M5).
-    for b in benchmarks.all_for(restaurant_id, cohort=cohort, db_path=db_path, cohort_source=src):
-        line = benchmarks.context_line(b)
-        if line:
-            lines.append(line)
-    for p in patterns.active(cohort, db_path=db_path, limit=3):
+    # The Benchmark Engine's comparisons (Benchmarking audit 9/24/26): a
+    # peer band of the restaurant's own type, the all-types band ONLY for a
+    # behaviour metric (an all-types labor or food cost band is never
+    # stated), each line naming how the group was chosen, set or guessed,
+    # how many measured it and the comparison strength (engine.prompt_lines).
+    comps, facts = [], []
+    try:
+        for cm in engine.compare_all(restaurant_id, kinds=("peers", "platform"), restaurant=restaurant,
+                                     db_path=db_path):
+            if not visible(cm.get("metric"), denied):
+                continue
+            if any(c.get("available") for c in cm.get("comparisons") or ()):
+                comps.append(cm)
+                facts += cm.get("facts") or []
+    except Exception as e:
+        print(f"[intelligence] benchmark context for {restaurant_id} unavailable: {e}")
+    lines += engine.prompt_lines(comps)
+    for p in patterns.active(cohort, db_path=db_path, limit=6):
+        if not _pattern_visible(p, denied) or patterns.pooled_on_economics(p):
+            continue
+        if sum(1 for ln in lines if ln.startswith("Pattern")) >= 3:
+            break
         # The pattern's MEASURED figures, never a composite percentage (R9,
         # B1: the strength % mixes weights that were never fitted, and a
         # model handed "strength 62%" can restate it as how sure it is).
@@ -104,7 +171,7 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
             bits.append(f"as of {p['as_of']}")
         lines.append(f"Pattern ({', '.join(bits) or 'measured across the cohort'} — an association, not a cause "
                      f"and not a probability): {p['sentence']}")
-    return lines
+    return (lines, facts) if with_facts else lines
 
 
 # ── the Benchmark Engine (Benchmarking audit 9/24/26) ──────────────────────
@@ -126,3 +193,28 @@ def benchmark_facts(comparisons):
 
 def benchmark_prompt_lines(comparisons):
     return engine.prompt_lines(comparisons)
+
+
+# ── Restaurant DNA and prediction (Benchmarking audit BM4 §5) ───────────────
+# The restaurant's own operational profile, the similarity between two
+# profiles (server-side), and the neighbour prediction fact (dormant below
+# its floors). See intelligence/dna.py and intelligence/predict.py.
+
+def dna_profile(restaurant_id, db_path=DB_PATH, modules=None):
+    from . import dna
+    return dna.profile(restaurant_id, db_path=db_path, modules=modules)
+
+
+def dna_payload(user, db_path=DB_PATH):
+    from . import dna
+    return dna.payload_for(user, db_path=db_path)
+
+
+def dna_distance(a, b, weights=None):
+    from . import dna
+    return dna.distance(a, b, weights)
+
+
+def predict_effect(restaurant_id, rec_kind, metric, tags=None, db_path=DB_PATH):
+    from . import predict
+    return predict.predict_effect(restaurant_id, rec_kind, metric, tags=tags, db_path=db_path)

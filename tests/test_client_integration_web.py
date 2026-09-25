@@ -104,7 +104,8 @@ def test_guessed_names_are_gone():
 def test_not_measured_waste_never_reads_as_on_track():
     src = _dash()
     i_state = src.index("inv.benchmark_state == 'not_measured'")
-    i_good = src.index("{% elif _wl in ['Excellent','On Track'] %}")
+    # The labels read against a target now (Benchmarking #36).
+    i_good = src.index("{% elif _wl in ['Under target','Near target','Over target','Well over target'] %}")
     assert i_state < i_good, "the not-measured branch must be decided before the good one"
     assert "you can claw back" not in src
 
@@ -196,7 +197,8 @@ rid = models.create_restaurant(Restaurant(name="Full Co", owner_email="full@x.te
                                           module_labor=1, module_inventory=1, module_marketing=1))
 models.update_restaurant(rid, {"google_place_id": "ChIJfull", "gbp_rating": 4.8, "gbp_review_count": 300, "category": "italian",
     "competitor_intel": json.dumps({"insight": "Hi.", "competitors": [
-        {"name": "A", "rating": 4.4, "review_count": 200, "reviews": [], "vicinity": "Main St"}, {"name": "B", "rating": 4.2, "review_count": 100, "reviews": [], "vicinity": "Main St"},
+        {"name": "A", "rating": 4.4, "review_count": 200, "reviews": [], "vicinity": "Main St", "match_basis": "same cuisine type and similar price level, within 3km"}, {"name": "B", "rating": 4.2, "review_count": 100, "reviews": [], "vicinity": "Main St", "match_basis": "same cuisine type and similar price level, within 3km"},
+        {"name": "C", "rating": 4.3, "review_count": 150, "reviews": [], "vicinity": "Main St", "match_basis": "same cuisine type and similar price level, within 3km"},
         {"name": "Tiny", "rating": 5.0, "review_count": 3, "rating_is_provisional": True, "reviews": [], "vicinity": "Main St"}]})})
 uid = auth.create_user(rid, "full", "full@x.test", "correct-horse-battery", is_admin=False)
 c = h.app.test_client()

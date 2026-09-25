@@ -101,8 +101,12 @@ enum OwnerCopy {
 
     /// The Labor tab's money tiles. The gap above target is an opportunity —
     /// "Gap to target / mo", available, not captured, in the warn tone;
-    /// the industry figure is a benchmark gap, hidden at $0; sample data
-    /// carries no dollars at all (NS3 C3). Never "savings", never green.
+    /// sample data carries no dollars at all (NS3 C3). Never "savings",
+    /// never green. There is no "$ under industry" tile any more
+    /// (Benchmarking #34, BM3-15): the published figure includes benefits
+    /// and this restaurant's labor is wages from its shifts, so dollars
+    /// "under" it were not a like-for-like gap, and they carried no action.
+    /// The industry parameters stay so every caller compiles unchanged.
     static func laborMoneyTiles(isLive: Bool, monthly: Double, annual: Double,
                                 vsIndustryMonthly: Double, vsIndustryAnnual: Double,
                                 industryText: String?, periodDays: Int?) -> [MoneyTile] {
@@ -114,16 +118,6 @@ enum OwnerCopy {
             if annual > 0 {
                 tiles.append(MoneyTile(value: annual, label: "Per year \u{00B7} projected",
                                        sublabel: window, tone: .neutral))
-            }
-            return tiles
-        }
-        // Only against a published benchmark for this restaurant type (NS4 H3).
-        if vsIndustryMonthly > 0, let industryText, !industryText.isEmpty {
-            var tiles = [MoneyTile(value: vsIndustryMonthly, label: "Under \(industryText) industry / mo",
-                                   sublabel: "a benchmark gap, not savings", tone: .neutral)]
-            if vsIndustryAnnual > 0 {
-                tiles.append(MoneyTile(value: vsIndustryAnnual, label: "Per year \u{00B7} projected",
-                                       sublabel: "vs the \(industryText) industry benchmark", tone: .neutral))
             }
             return tiles
         }

@@ -633,6 +633,28 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .ck-strip .sep{opacity:.6}
 .ck-tag{display:inline-flex;align-items:center;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);background:var(--paper2);border:1px solid var(--paper3);border-radius:999px;padding:2px 7px;line-height:1.3;vertical-align:middle;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.cf-m i,.cf-p-bar i{animation:none;transform:none}}
+/* ── How you compare (Benchmark Engine; DESIGN_SYSTEM §12 "How you
+   compare") ── a composition of existing parts, no new pattern: the
+   .hb-card, its .hb-kicker, the comparison strength drawn as the
+   confidence line (.cf + meter + Why? into the same .cf-p panel), one
+   .hb-row per metric with its tone dot (good green, behind amber via
+   .important, level grey via .watch - never red) and an Ask action, and
+   the Home strip as .hb-fresh pills. */
+.bm-card{margin:0 0 18px}
+.bm-card .bm-who{margin-top:6px;font-size:15px;font-weight:600;color:var(--ink2);line-height:1.45}
+.bm-card .bm-sub{margin-top:2px;font-size:13px;color:var(--ink3)}
+.bm-card .cf{margin-top:8px}
+.bm-card .bm-min{margin-top:10px;font-size:13.5px;color:var(--ink2);line-height:1.5}
+.bm-card .bm-min .w{display:block;color:var(--ink3);font-size:12.5px;margin-top:2px}
+.bm-card .bm-rows{margin-top:10px}
+.bm-card .hb-row{align-items:flex-start;flex-wrap:wrap}
+.bm-card .hb-row .d{margin-top:7px}
+.bm-card .hb-row .t{white-space:normal;line-height:1.45;font-size:15px}
+.bm-card .hb-row .t b{color:var(--ink);font-weight:600}
+.bm-card .hb-row .t .vm{display:block;font-weight:400;font-size:13px;color:var(--ink3)}
+.bm-card .hb-row .m{align-self:center}
+.hb-bench{margin-top:10px}
+.hb-bench .hb-fresh{margin-top:0}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -2259,6 +2281,126 @@ svg:hover .hb-xh{opacity:1}
   window.cavConfLine=line;
 })();
 </script>
+<script id="cav-bench">
+/* ── How you compare (Benchmarking audit 9/24/26, #23 / #18 / #19) ────────
+   Every figure comes from GET /api/benchmarks/card (benchmark_views over
+   intelligence.engine): who the restaurant is compared to, how many, as of
+   when, the comparison strength % with a Why? panel built from the same
+   .cf-p rows as the confidence drawer, the standing per metric, and one
+   Ask action per metric it is behind on. Below the minimum it says so and
+   falls back to the restaurant's own previous 13 weeks. Nothing is
+   computed here: this only draws the server's words. Strength is a
+   percentage, never a word; dates arrive M/D/YY from the server.
+   Module cards: section.bm-card[data-bm-module]. Home: cavBench.strip(el).
+   Group Home: cavBench.locations(lc). */
+(function(){
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  var NUMRX=/(\$?[\d][\d,]*(?:\.\d+)?%?★?)/g;
+  function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUMRX,'<span class="hb-num">$1</span>');}return out;}
+  function isNum(v){return typeof v==='number'&&isFinite(v);}
+  function tone(p){return (window.cavConf&&window.cavConf.tone)?window.cavConf.tone(p):(p==null?'warn':(p>=75?'good':(p>=50?'mid':'warn')));}
+  var ROW={good:'good',warn:'important',neutral:'watch'};
+  var PILL={good:'current',warn:'aging',neutral:'unknown'};
+  function meter(p,cls){return '<span class="'+cls+(p==null?' none':'')+'" aria-hidden="true"><i style="width:'+(p==null?0:p)+'%"></i></span>';}
+  // The Why? panel: the confidence drawer's .cf-p markup, with the
+  // strength's four rows (peer count, band freshness, your own figure, type
+  // match) in place of the confidence's three.
+  function panel(s){
+    var t=tone(s.pct),h='<div class="cf-p">';
+    if(s.meaning)h+='<div class="cf-p-mean">'+esc(s.meaning)+'.</div>';
+    h+='<div class="cf-p-hero '+t+'"><div class="cf-p-big hb-num">'+s.pct+'<small>%</small></div>'+meter(s.pct,'cf-p-bar')+'<div class="cf-p-why">'+num(s.reason||'')+'</div></div>';
+    h+='<div class="cf-p-k">What it rests on</div>';
+    var rs=s.rows||[];
+    for(var i=0;i<rs.length;i++){var r=rs[i],rp=isNum(r.pct)?r.pct:null;
+      h+='<div class="cf-p-row '+tone(rp)+'" data-dim="'+esc(r.key)+'"><div class="cf-p-h"><span class="t">'+esc(r.title)+'</span><span class="v hb-num">'+(rp==null?'—':rp+'%')+'</span></div>'
+        +meter(rp,'cf-p-bar')+(r.basis?'<div class="b">'+num(r.basis)+'</div>':'')+'</div>';}
+    return h+'<div class="cf-p-ft">'+esc(s.footer||'')+'</div></div>';
+  }
+  function strengthLine(s){
+    if(!s||!isNum(s.pct))return '';
+    var t=tone(s.pct);
+    return '<div class="cf '+t+'" data-strength-pct="'+s.pct+'"><span class="cf-m" role="img" aria-label="'+esc(s.label)+'"><i style="width:'+s.pct+'%"></i></span>'
+      +'<b>'+num(s.label)+'</b>'+(s.reason?'<span class="cf-r">— '+num(s.reason)+'</span>':'')
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cf-why" data-explain="'+esc(panel(s))+'" data-explain-title="How strong is this comparison?" data-explain-kicker="Comparison strength" aria-label="Why '+esc(s.label)+'?">Why?</button></div>';
+  }
+  function whoLine(d){
+    var w=d.who||{};if(!w.text)return '';
+    var bits=[];
+    if(w.kind==='peers'&&w.as_of)bits.push('as of '+w.as_of);
+    if(w.kind==='self'&&isNum(w.n))bits.push(w.n+' weeks measured');
+    if(w.kind==='self'&&w.as_of)bits.push('through '+w.as_of);
+    if(w.inferred)bits.push('your type was guessed from your name');
+    return '<div class="bm-who">'+num(w.text)+'</div>'+(bits.length?'<div class="bm-sub">'+num(bits.join(' · '))+'</div>':'');
+  }
+  function rowHtml(r,home){
+    var h='<div class="hb-row '+(ROW[r.tone]||'watch')+'" data-bm-metric="'+esc(r.metric)+'"><span class="d"></span><span class="t"><b>'+esc(r.label)+'</b> '+num(r.value_text)+' — '+esc(r.standing||'')
+      +'<span class="vm">'+num((r.against?'vs '+r.against:'')+(r.middle_text?' ('+r.middle_text+')':'')+(isNum(r.strength_pct)?' · '+r.strength_pct+'% comparison strength':'')+(r.as_of?' · as of '+r.as_of:''))+'</span>'
+      +(r.note?'<span class="vm">'+esc(r.note)+'</span>':'')+'</span>';
+    if(r.action&&r.action.ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(r.action.ask)+'">'+esc(r.action.label||'Ask')+' →</button>';
+    else if(home&&r.open_module)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.open_module)+'">Open →</button>';
+    return h+'</div>';
+  }
+  function minLine(d){
+    var b=d.below_minimum;if(!b||!b.text)return '';
+    return '<div class="bm-min">'+esc(b.text)+(b.why_not?'<span class="w">'+esc('Why: '+b.why_not)+'</span>':'')+'</div>';
+  }
+  function cardHtml(d){
+    var h='<div class="hb-kicker">How you compare</div>'+whoLine(d)+strengthLine(d.strength)+minLine(d);
+    var rs=d.rows||[];
+    if(rs.length){h+='<div class="bm-rows">';for(var i=0;i<rs.length;i++)h+=rowHtml(rs[i],false);h+='</div>';}
+    else h+='<div class="hb-empty">'+num(d.empty||'Nothing to compare yet.')+'</div>';
+    if(isNum(d.unmeasured)&&d.unmeasured>0&&rs.length)h+='<div class="bm-sub" style="margin-top:8px">'+d.unmeasured+' more not measured yet</div>';
+    return h;
+  }
+  function load(module){
+    return fetch('/api/benchmarks/card?module='+encodeURIComponent(module),{credentials:'same-origin'}).then(apiJson);
+  }
+  function fillCards(){
+    var els=document.querySelectorAll('section.bm-card[data-bm-module]');
+    for(var i=0;i<els.length;i++)(function(el){
+      load(el.getAttribute('data-bm-module')).then(function(d){
+        // A login that can't see the module, or a server that can't answer,
+        // draws nothing rather than an empty card.
+        if(!d||!d.ok){el.hidden=true;return;}
+        el.innerHTML=cardHtml(d);el.hidden=false;
+      }).catch(function(){el.hidden=true;});
+    })(els[i]);
+  }
+  // Home: one compact line in the freshness strip's pill shape, behind
+  // first; nothing at all when there is nothing to compare.
+  function strip(el){
+    if(!el)return;
+    load('home').then(function(d){
+      if(!d||!d.ok||!(d.rows||[]).length){el.hidden=true;el.innerHTML='';return;}
+      var w=d.who||{},h='<div class="hb-fresh" aria-label="How you compare"><span class="hb-fresh-k">How you compare'+(w.text?' · '+num(w.text):'')+'</span>';
+      if(d.strength&&isNum(d.strength.pct))h+='<span class="hb-fresh-it"><b>'+d.strength.pct+'%</b> comparison strength</span>';
+      for(var i=0;i<d.rows.length;i++){var r=d.rows[i];
+        h+='<span class="hb-fresh-it '+(PILL[r.tone]||'unknown')+'"><i></i><b>'+esc(r.label)+'</b> '+num(r.value_text)+' · '+esc(r.standing||'')
+          +(r.action&&r.action.ask?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(r.action.ask)+'">Ask →</button>':(r.open_module?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.open_module)+'">Open →</button>':''))+'</span>';}
+      h+='</div>';
+      if(d.below_minimum&&d.below_minimum.text)h+='<div class="bm-sub" style="margin-top:6px;font-size:12.5px;color:var(--ink3)">'+esc(d.below_minimum.text)+'</div>';
+      el.innerHTML=h;el.hidden=false;
+    }).catch(function(){el.hidden=true;});
+  }
+  // The group Home's location-to-location table: each location's figure,
+  // its read against its own normal, and against the owner's other
+  // locations - called only beyond noise, else "in line".
+  function locations(lc){
+    if(!lc||!lc.ok||!(lc.metrics||[]).length)return (lc&&lc.why_not)?'<div class="hb-empty">Locations compared side by side appear once two or more are measured — '+esc(lc.why_not)+'.</div>':'';
+    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare</div><div class="bm-sub">Each against its own normal first, then against your other locations — a gap is called only when it is wider than both locations’ own week-to-week swing.</div>';
+    for(var i=0;i<lc.metrics.length;i++){var m=lc.metrics[i];
+      h+='<div class="hb-sh" style="margin-top:12px"><div><div class="k dim">'+esc(m.label)+'</div></div></div><div class="bm-rows">';
+      for(var j=0;j<(m.locations||[]).length;j++){var l=m.locations[j];
+        h+='<div class="hb-row '+(ROW[l.tone]||'watch')+'"><span class="d"></span><span class="t"><b>'+esc(l.name)+'</b> '+num(l.value_text)+' — '+esc(l.vs_group||'')
+          +'<span class="vm">'+num((l.vs_own?'vs its own normal: '+l.vs_own.replace('your normal','its normal'):'its own normal: not enough history yet')+(l.group_median_text?' · others’ middle '+l.group_median_text:''))+'</span></span></div>';}
+      h+='</div>';}
+    return h+'</div>';
+  }
+  function init(){if(document.querySelector('section.bm-card[data-bm-module]'))fillCards();}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+  window.cavBench={card:cardHtml,panel:panel,strip:strip,locations:locations,fill:fillCards};
+})();
+</script>
 <script>
 (function(){
   // ── Home renderer (ES5) ───────────────────────────────────────────────────
@@ -3134,6 +3276,9 @@ svg:hover .hb-xh{opacity:1}
     // recommendations and hides once complete.
     h+=renderSignals(d);
     h+=renderFreshness(d);
+    // How you compare (Benchmarking #23): the compact strip under the
+    // freshness line, filled by its own read so the brief never waits on it.
+    h+='<div class="hb-bench hb-rise" id="hb-bench" style="--i:2" hidden></div>';
     var fresh=hbIsFresh(d);
     if(fresh)h+=renderReadiness(d);
     h+='<section class="hb-hero" id="hb-hero" aria-label="Measured results"></section>';
@@ -3148,6 +3293,7 @@ svg:hover .hb-xh{opacity:1}
     h+='<section id="hb-follow" aria-label="Follow-through"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:34%;height:11px;margin-bottom:14px"></div><div class="hb-skel" style="width:84%"></div><div class="hb-skel" style="width:62%;margin-top:9px"></div><div class="hb-skel" style="width:71%;margin-top:9px"></div></div></section>';
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
     if(document.getElementById('hb-hero'))renderHero(d);
+    if(window.cavBench)window.cavBench.strip(document.getElementById('hb-bench'));
     hbReveal();hbLiveStart();
     hbFollow();
   }
@@ -3915,6 +4061,11 @@ svg:hover .hb-xh{opacity:1}
       h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo <span class="dim">opportunity</span>'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">sample</span>')+'</td>';
       h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Open →</span></td></tr>';}
     h+='</tbody></table></div>';
+    // Strongest / weakest are the server's (benchmark_views.rank_by_rating):
+    // named only on a gap beyond noise, so a tie says so instead.
+    if(!p.strongest&&p.ranking_basis)h+='<div class="hb-empty">No strongest or weakest location this month — '+esc(p.ranking_basis)+'.</div>';
+    // Location to location on the engine's location kind (Benchmarking #19).
+    if(window.cavBench&&g.location_compare)h+=window.cavBench.locations(g.location_compare);
     var at=g.attention||[];
     h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Needs attention · all locations</span></h3>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
@@ -5502,6 +5653,7 @@ svg:hover .hb-xh{opacity:1}
        Empty and hidden until there is a diagnosis — an owner with three
        reviews should see nothing here rather than a manufactured cause. #}
     <div id="review-diagnosis" hidden></div>
+    <section class="hb-card bm-card" data-bm-module="reviews" hidden aria-label="How you compare"></section>
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
       <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
@@ -5788,7 +5940,9 @@ svg:hover .hb-xh{opacity:1}
 .lb2-bench .bar .fill.good{background:linear-gradient(90deg,#2d6a4f,#4ead7a);box-shadow:0 0 12px rgba(45,106,79,.45)}
 .lb2-bench .bar .fill.bad{background:linear-gradient(90deg,#c0392b,#e05555);box-shadow:0 0 12px rgba(224,85,85,.45)}
 .lb2-bench .bar .tick{position:absolute;top:-4px;width:2px;height:18px;border-radius:1px}
-.lb2-bench .bar .tick.t{background:var(--hb-good)}.lb2-bench .bar .tick.h{background:var(--hb-bad)}
+.lb2-bench .bar .tick.t{background:var(--hb-good)}.lb2-bench .bar .tick.h{background:var(--ink2)}
+/* The industry mark is a reference, not a verdict (Benchmarking #34): neutral ink, its source printed under the bar. */
+.lb2-bench .src{margin-top:8px;font-size:12.5px;color:var(--ink3);line-height:1.45}
 .lb2-money{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
 .lb2-money .l{font-size:12px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
 .lb2-money .x{font-family:'Space Grotesk',sans-serif;font-size:17.5px;font-weight:600;color:var(--ink);margin-top:2px}
@@ -6305,6 +6459,7 @@ svg:hover .hb-xh{opacity:1}
   </section>
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your labor</div><div class="insight-text insight-loading" id="labor-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your shifts…</span></div></div></div>
   <div class="diag" id="lb2-diag" hidden></div>
+  <section class="hb-card bm-card" data-bm-module="labor" hidden aria-label="How you compare"></section>
 
   <div class="lb2-sig" id="lb-panel-analytics">
     <div class="lb2-sg"><div class="k"><span>Week radar · by weekday</span><i id="lb2-radar-flag"></i></div><div class="v"><span id="lb2-radar-n" class="hb-num">—</span><small id="lb2-radar-cap">heaviest day</small></div><div id="lb2-radar"><div class="hb-load" style="height:210px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span>labor % per weekday · dashed ring = target</span></div></div>
@@ -6314,17 +6469,17 @@ svg:hover .hb-xh{opacity:1}
     <div class="lb2-sg"><div class="k"><span>Vs your target</span><i class="{% if not labor.is_live %}{% elif _lp > _lt + 3 %}bad{% elif _lp > _lt %}warn{% elif _status_ok %}good{% endif %}">{% if not labor.is_live %}sample{% elif _lp > _lt + 8 %}needs attention{% elif _lp > _lt + 3 %}above target{% elif _lp > _lt %}slightly over{% elif not _status_ok %}— partial data{% elif _lp <= _lt - 3 %}well under target{% else %}on target{% endif %}</i></div>{# The industry benchmark for this restaurant's type only (benchmark_registry, NS4 H3): no entry, no industry mark. #}
       {% set _ind = savings_breakdown.labor_industry_pct %}
       <div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs <span class="hb-num">{{ _lt }}</span>% target{% if _ind %} · <span class="hb-num">{{ _ind }}</span>% industry benchmark{% endif %}</small></div>
-      <div class="lb2-bench"{% if _ind and savings_breakdown.labor_industry_basis %} title="Industry benchmark: {{ savings_breakdown.labor_industry_basis }}"{% endif %}><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span>{% if _ind %}<span style="left:{{ (_ind/50*100)|int }}%;color:var(--hb-bad)">{{ _ind }}%</span>{% endif %}<span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div>{% if _ind %}<div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div>{% endif %}</div></div>
+      <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span>{% if _ind %}<span style="left:{{ (_ind/50*100)|int }}%;color:var(--ink2)">{{ _ind }}% industry</span>{% endif %}<span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div>{% if _ind %}<div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div>{% endif %}</div>{% if _ind and savings_breakdown.labor_industry_basis %}<div class="src">Industry mark <span class="hb-num">{{ _ind }}</span>%: {{ savings_breakdown.labor_industry_basis }}. It includes benefits; yours is wages from your shifts, so it is a reference, not a like-for-like target.</div>{% endif %}</div>
       <div class="lb2-money">
         {# Money labels (DESIGN_SYSTEM.md): the gap above target is an
            opportunity - "gap to target", its period, never "savings" and
-           never the green "good" tone; the industry figure is a benchmark
-           gap, hidden at $0; sample data carries no dollars (NS3 C3). #}
+           never the green "good" tone; sample data carries no dollars (NS3 C3). #}
         {% if labor.is_live and savings_breakdown.labor_monthly > 0 %}<div><div class="l">Gap to target / mo</div><div class="x warn stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year · projected</div><div class="x stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
-        {% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}<div><div class="l">Under <span class="hb-num">{{ _ind }}</span>% industry / mo</div><div class="x stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year · projected</div><div class="x stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
+        {% endif %}{# The "$ under industry" tiles are gone (Benchmarking #34, BM3-15): dollars "under" a figure that
+           includes benefits, against wages from shifts, is not a like-for-like gap and carried no action. #}
         <div><div class="l">Overtime premium · <span class="hb-num">{{ _days }}</span> days</div><div class="x stat-n {{ 'bad' if labor.is_live and savings_breakdown.labor_overtime > 0 }}">{% if labor.is_live and savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
       </div>
-      <div class="cap"><span>{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}gap above target, weekly × 52 ÷ 12 from a {{ _days }}-day window — available, not captured · {% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}a benchmark gap, not savings · {% endif %}overtime at 0.5× on hours over 40{% if _ind and savings_breakdown.labor_industry_basis %} · industry {{ _ind }}%: {{ savings_breakdown.labor_industry_basis }}{% endif %}</span></div></div>
+      <div class="cap"><span>{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}gap above target, weekly × 52 ÷ 12 from a {{ _days }}-day window — available, not captured · {% endif %}overtime at 0.5× on hours over 40</span></div></div>
   </div>
   <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
        with a headline count, an ember mark and the thing you do about it —
@@ -7379,9 +7534,9 @@ svg:hover .hb-xh{opacity:1}
   {% elif _inv_stale %}{% set _head = 'Counts are out of date' %}{% set _tone = 'warn' %}
   {% elif inv.benchmark_state == 'not_measured' %}{% set _head = 'No waste logged this week' %}{% set _tone = 'neutral' %}
   {% elif inv.benchmark_state == 'no_data' %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}
-  {% elif _wl in ['Excellent','On Track'] %}{% set _head = 'On track' %}{% set _tone = 'good' %}
-  {% elif _wl == 'Above Average' %}{% set _head = 'Waste is above target' %}{% set _tone = 'warn' %}
-  {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
+  {# The server's label against the owner's target (or Cavnar's starting one) - "Under / Near / Over / Well
+     over target" (inventory.py, Benchmarking #36) - said the same way the phone says it, in the server's tone. #}
+  {% elif _wl in ['Under target','Near target','Over target','Well over target'] %}{% set _head = 'Waste is ' ~ _wl|lower %}{% set _tone = inv.benchmark_tone if inv.benchmark_tone in ['good','warn','bad'] else 'neutral' %}
   {% else %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}{% endif %}
   {% if inv.failed %}
   {# The zeros below are placeholders, not measurements. Saying so beats
@@ -7482,9 +7637,10 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </section>
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
+  <section class="hb-card bm-card" data-bm-module="food_cost" hidden aria-label="How you compare"></section>
 
   <div class="lb2-sig">
-    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ (inv.benchmark_tone if inv.benchmark_tone in ['good','warn','bad'] else '') if inv.benchmark_tone is defined and inv.benchmark_tone else ('bad' if _wl in ['Above Average','Concerning','Needs Attention'] else ('good' if _wl in ['Excellent','On Track'] else '')) }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo still being lost · {{ inv.recoverable_kind or 'opportunity' }}</small></div>
+    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ (inv.benchmark_tone if inv.benchmark_tone in ['good','warn','bad'] else '') if inv.benchmark_tone is defined and inv.benchmark_tone else ('bad' if _wl == 'Well over target' else ('warn' if _wl == 'Over target' else ('good' if _wl in ['Under target','Near target'] else ''))) }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo still being lost · {{ inv.recoverable_kind or 'opportunity' }}</small></div>
       <div class="fc2-gauge" id="fc2-gauge"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="shaping" width="36" height="36"></canvas></div></div>
       {# _ostock_total is overstock_units x unit_cost — working capital sitting
    above par, not money leaving each month. It was added to the monthly waste
@@ -7713,7 +7869,10 @@ svg:hover .hb-xh{opacity:1}
       if(d.priced.length){
         html += '<table><tbody>';
         d.priced.forEach(function(item){
-          var band = item.food_cost_pct>=40 ? 'var(--hb-bad)' : (item.food_cost_pct>=32 ? 'var(--hb-warn)' : 'var(--hb-good)');
+          // The server colours each dish against the owner's food-cost
+          // target or the published figure for the type (cost_tone,
+          // Benchmarking #35); with neither it is neutral ink.
+          var band = {good:'var(--hb-good)',warn:'var(--hb-warn)',bad:'var(--hb-bad)'}[item.cost_tone] || 'var(--ink2)';
           html += '<tr><td>'+_mmEsc(item.name)+'</td><td class="num" style="text-align:right;color:var(--ink3)">cost $'+item.plate_cost.toFixed(2)+'</td>';
           html += '<td style="text-align:right"><input class="price" type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)"></td>';
           html += '<td class="num" style="text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td></tr>';
@@ -7721,6 +7880,7 @@ svg:hover .hb-xh{opacity:1}
         html += '</tbody></table>';
       }
       if(d.unpriced.length){ html += '<div style="font-size:11px;color:var(--ink3);margin-top:10px">'+d.unpriced.length+' item'+(d.unpriced.length!==1?'s':'')+' with a recipe but no price set — add one to see their margin.</div>'; }
+      html += '<div style="font-size:11px;color:var(--ink3);margin-top:8px">'+_mmEsc(d.cost_reference&&d.cost_reference.basis?'Colours read against '+d.cost_reference.basis+'.':'No food-cost target and no published figure for your type, so dishes are not coloured — set a target in Settings to colour them.')+'</div>';
       el.innerHTML = html;
     }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t load menu margins</span>'; });
   }
@@ -7831,6 +7991,7 @@ svg:hover .hb-xh{opacity:1}
   </div>
 
   <div class="dh-badge" data-dh-module="marketing" hidden style="margin:-8px 0 16px"></div>
+  <section class="hb-card bm-card" data-bm-module="marketing" hidden aria-label="How you compare"></section>
   <div id="mkt-tab-content">
 
   <!-- AI marketing brief -->
@@ -8353,12 +8514,14 @@ svg:hover .hb-xh{opacity:1}
     {% set own_basis = intel_market.own_rating_basis %}
     {% set own_vs_avg = intel_market.own_vs_market %}
   {% endif %}
+  {# The standing is the server's only (competitor_intel_format.market_standing, Benchmarking #38): at least
+     three rivals matched on cuisine and price, the widened-radius fallback left out, and a symmetric neutral
+     tie band inside the gap's standard error. The template no longer derives one of its own from a flat mean. #}
+  {% if not intel_market or not intel_market.standing %}{% set own_vs_avg = None %}{% endif %}
   {% if not _cd %}{% set _head = 'Meet the neighbors' %}{% set _tone = 'neutral' %}
   {% elif intel_market and intel_market.standing_label %}{% set _head = intel_market.standing_label %}{% set _tone = intel_market.standing_tone or 'neutral' %}
-  {% elif own_vs_avg is none or intel_market %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}
-  {% elif own_vs_avg >= 0.3 %}{% set _head = 'You lead the block' %}{% set _tone = 'good' %}
-  {% elif own_vs_avg >= -0.1 %}{% set _head = 'Neck and neck' %}{% set _tone = 'warn' %}
-  {% else %}{% set _head = 'Behind the block' %}{% set _tone = 'bad' %}{% endif %}
+  {% else %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}{% endif %}
+  {% set _st = intel_market.standing if intel_market else None %}
   {% set _own_word = 'your Google rating (all time)' if own_basis == 'google_all_time' else "your imported reviews' average (not compared with Google's all-time ratings)" %}
   {% set _upd = competitor_updated_at[:10] if competitor_updated_at else None %}
   <div class="hb-top">
@@ -8381,7 +8544,8 @@ svg:hover .hb-xh{opacity:1}
     <div class="hd">
       <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
         {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
-        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if own_vs_avg > 0 else ('bad' if own_vs_avg < 0 else '') }}">{% if own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% elif own_vs_avg < 0 %}▼ {{ own_vs_avg|abs }} below the block{% else %}Tied with the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>{% endif %}
+        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% else %}▼ {{ own_vs_avg|abs }} below the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>
+        {% if intel_market.standing_basis %}<div class="fc2-h1-basis">{{ intel_market.standing_basis }}</div>{% endif %}{% elif intel_market and intel_market.standing_why_not %}<div class="fc2-h1-basis">No standing yet — {{ intel_market.standing_why_not }}</div>{% endif %}
         {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
       </div>
     </div>

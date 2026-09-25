@@ -1062,18 +1062,31 @@ def init_schedule_intel(db_path: str = DB_PATH):
         first_seen     TEXT    NOT NULL,
         shifts_seen    INTEGER NOT NULL DEFAULT 0,
         updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        last_seen      TEXT,
         PRIMARY KEY (restaurant_id, employee_name)
     )""")
+    # The newest shift date ever seen for each name (Benchmarking audit
+    # BM4-8, Top-50 #26), so retention — who stopped appearing — can be
+    # measured (intelligence.dna, dimension B10). A boot ALTER for a table
+    # created before the column; NULL until the next upload fills it.
+    import sqlite3
+    try:
+        conn.execute("ALTER TABLE staff_first_seen ADD COLUMN last_seen TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.commit()
     conn.close()
 
 
 def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
-    """Keep the earliest date and the most shifts ever seen for each name,
-    so tenure survives the rolling upload window."""
+    """Keep the earliest date, the LATEST date and the most shifts ever seen
+    for each name, so tenure — and, from last_seen, retention — survives
+    the rolling upload window. last_seen only ever moves forward (MAX): an
+    older upload re-sent never makes a current employee look departed."""
     if not shifts:
         return
-    first, count = {}, {}
+    first, last, count = {}, {}, {}
     for s in shifts:
         n = (s.get("employee") or "").strip()
         d = (s.get("date") or "")[:10]
@@ -1082,14 +1095,19 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
         count[n] = count.get(n, 0) + 1
         if n not in first or d < first[n]:
             first[n] = d
+        if n not in last or d > last[n]:
+            last[n] = d
     conn = get_conn(db_path)
     try:
         for n in count:
             conn.execute(
-                "INSERT INTO staff_first_seen (restaurant_id, employee_name, first_seen, shifts_seen) VALUES (?,?,?,?) "
+                "INSERT INTO staff_first_seen (restaurant_id, employee_name, first_seen, shifts_seen, last_seen) "
+                "VALUES (?,?,?,?,?) "
                 "ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET first_seen=MIN(first_seen, excluded.first_seen), "
-                "shifts_seen=MAX(shifts_seen, excluded.shifts_seen), updated_at=datetime('now')",
-                (restaurant_id, n, first[n], count[n]))
+                "shifts_seen=MAX(shifts_seen, excluded.shifts_seen), "
+                "last_seen=CASE WHEN last_seen IS NULL OR excluded.last_seen > last_seen THEN excluded.last_seen "
+                "ELSE last_seen END, updated_at=datetime('now')",
+                (restaurant_id, n, first[n], count[n], last[n]))
         conn.commit()
     except Exception as e:
         import ops

@@ -1989,8 +1989,21 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
         # readiness "schedule"), so a note is told a source is stale (DH1-2).
         import data_health as _dh_sn
         data_state = _dh_sn.merge_data_state(data_state, registry_state)
+    # The peer band the prompt stated (schedule_engine's cohort block) as
+    # benchmark facts, so a note quoting it binds to it (B1, BM3-3); with
+    # no such block there are none, and a note's peer claim has nothing to
+    # bind to.
+    bench = []
+    if restaurant_id:
+        try:
+            import schedule_engine as _se_bench
+            if _se_bench.COHORT_BLOCK_HEADER in (prompt or ""):
+                bench = _se_bench.cohort_facts(restaurant_id)
+        except Exception as e:
+            print(f"[labor] schedule note benchmark facts unavailable: {e}")
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="schedule_note", delivery="unattended", context_text=prompt or "",
+        facts=bench,
         cause_anchors=_note_anchors(prompt, data_blocks), tenant_names_denied=denied,
         data_state=data_state,
         policy={"action": "labor_schedule_note", "check_counts": True,

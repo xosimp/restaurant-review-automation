@@ -103,6 +103,13 @@ def _fmt(x, unit=""):
     return f"{x:g}"
 
 
+def _lc(s):
+    """A label mid-sentence: "Counter-service restaurants on Cavnar" →
+    "counter-service restaurants on Cavnar"."""
+    s = str(s or "")
+    return s[:1].lower() + s[1:]
+
+
 def _mdy(d):
     from time_utils import mdy
     return mdy(d) if d else None
@@ -313,6 +320,14 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
            "standing": st, "margin": margin, "comparable": True, "blend": blend,
            "strength": strength(p["n"], p["week"], type_source, platform=(kind == "platform"),
                                 own_stale=own_stale, completeness=completeness, today=today)}
+    # "Measured at k of m" (BM3-8, workstream V): how many of the group
+    # measured this metric that week, of the most that measured any
+    # benchmarked metric — counts only, never a member.
+    try:
+        out["measured"] = int(row.get("n") or 0)
+        out["members"] = max(out["measured"], _members(cohort, row.get("week"), db_path))
+    except Exception:
+        pass
     return out
 
 
@@ -342,6 +357,18 @@ def _peers(restaurant_id, metric, restaurant, db_path, today, rows, industry_ent
     return _band_kind("peers", restaurant_id, metric, key, "set", db_path, today, rows, entry=industry_entry)
 
 
+def _members(cohort, week, db_path):
+    """The most restaurants in `cohort` that measured any benchmarked
+    metric in `week` — the group's size as the stored bands know it."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT MAX(n) AS m FROM intel_benchmarks WHERE cohort=? AND week=?",
+                         (cohort, week)).fetchone()
+    finally:
+        conn.close()
+    return int((r["m"] if r else 0) or 0)
+
+
 def _industry(metric, restaurant):
     m = reg.meta(metric)
     key = m.get("industry")
@@ -357,22 +384,26 @@ def _industry(metric, restaurant):
         # one Cavnar guessed (Benchmarking audit #8, BM2 §6 R1).
         return {"kind": "industry", "available": False,
                 "why_not": "the restaurant's type was guessed from its name — confirm it to see the published figure"}
-    e = benchmark_registry.for_restaurant(key, restaurant, definition=reg.definition(metric))
+    e = benchmark_registry.for_restaurant(key, restaurant)
     if not e:
-        other = benchmark_registry.for_restaurant(key, restaurant)
-        if other and benchmark_registry.definitions_differ(other, reg.definition(metric)):
-            return {"kind": "industry", "available": False,
-                    "why_not": (f"the published figure ({benchmark_registry.cite(other)}) measures "
-                                f"{other.get('median_basis') or 'something else'}, not the same thing as "
-                                f"this restaurant's {m['label'].lower()}, so it isn't compared")}
         return {"kind": "industry", "available": False,
                 "why_not": "no published figure for this restaurant's type"}
-    return {"kind": "industry", "available": True, "source": benchmark_registry.cite(e),
-            "source_kind": e.get("source_kind"), "year": e.get("year"), "label": e.get("label"),
-            "low": e.get("low"), "high": e.get("high"), "median": e.get("median"),
-            "median_basis": e.get("median_basis"), "inferred": bool(e.get("inferred")),
-            "type_source": e.get("category_source"), "line": benchmark_registry.line(e, m.get("label")),
-            "_entry": e}
+    # A figure that measures something else is quoted as CONTEXT with its
+    # definition, never compared (Benchmarking audit #14, BM3-15): the NRA
+    # labor median includes benefits; Cavnar's labor % is wages from shifts.
+    # `comparable` False → no standing, no blend, no dollar gap from it.
+    differs = benchmark_registry.definitions_differ(e, reg.definition(metric))
+    out = {"kind": "industry", "available": True, "source": benchmark_registry.cite(e),
+           "source_kind": e.get("source_kind"), "year": e.get("year"), "label": e.get("label"),
+           "low": e.get("low"), "high": e.get("high"), "median": e.get("median"),
+           "median_basis": e.get("median_basis"), "inferred": bool(e.get("inferred")),
+           "type_source": e.get("category_source"), "line": benchmark_registry.line(e, m.get("label")),
+           "comparable": not differs, "_entry": e}
+    if differs:
+        out["definition_note"] = (f"The published figure is the {e.get('median_basis') or 'published figure'}; "
+                                  f"this restaurant's {m['label'].lower()} is measured differently, so it is "
+                                  "context, not a like-for-like comparison.")
+    return out
 
 
 def _location(restaurant_id, metric, restaurant, db_path, viewer=None):
@@ -418,14 +449,23 @@ def _location(restaurant_id, metric, restaurant, db_path, viewer=None):
 # ── compare ────────────────────────────────────────────────────────────────
 
 def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, db_path=DB_PATH,
-            today=None, rows=None) -> dict:
+            today=None, rows=None, use_cache=False) -> dict:
     """Every comparison for one metric: {version, metric, label, unit,
     better, comparability, own, headline, comparisons[], facts[]}. Never
-    raises: an unreadable kind is unavailable with its reason."""
+    raises: an unreadable kind is unavailable with its reason.
+
+    use_cache: read the nightly materialised row (comparison_cache) when it
+    is fresh and covers `kinds` — never for the viewer-dependent `location`
+    kind, which is always computed live."""
     m = reg.meta(metric)
     if not m:
         return {"version": ENGINE_VERSION, "metric": metric, "available": False, "why_not": "unknown metric"}
     want = tuple(kinds or KINDS)
+    if use_cache and today is None:
+        from . import comparison_cache
+        hit = comparison_cache.read(restaurant_id, metric, kinds=want, db_path=db_path)
+        if hit is not None and hit.get("version") == ENGINE_VERSION:
+            return hit
     if restaurant is None:
         try:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH \
@@ -511,7 +551,7 @@ def compare_all(restaurant_id, module=None, *, kinds=None, viewer=None, restaura
 def headline_text(m, c) -> str:
     label, unit = m["label"], m.get("unit")
     if c["kind"] == "peers":
-        s = (f"Compared to {c['n']} other {c['cohort_label']} (as of {c['as_of']}), your {label.lower()} is "
+        s = (f"Compared to {c['n']} other {_lc(c['cohort_label'])} (as of {c['as_of']}), your {label.lower()} is "
              f"{c['standing']}")
         if c.get("blend"):
             s += f" — {c['blend']['text']}"
@@ -545,15 +585,31 @@ def prompt_lines(comparisons) -> list:
                 continue
             k = c["kind"]
             if k in ("peers", "platform"):
-                who = (f"{c['n']} other restaurants on Cavnar, all types (a behaviour metric, comparable "
-                       "across types)" if k == "platform" else f"{c['n']} other {c['cohort_label']}")
+                # Who the group is and how it was chosen, how many of it
+                # measured this, and how strong the comparison is (BM3-8).
+                if k == "platform":
+                    who = f"{c['n']} other restaurants on Cavnar, all types"
+                    group = ("peer group: every restaurant on Cavnar, all types — a behaviour metric, comparable "
+                             "across types; never call it restaurants like yours")
+                else:
+                    who = f"{c['n']} other {_lc(c['cohort_label'])}"
+                    if categories.is_partition(c.get("cohort")):
+                        # The owner-confirmed partition (Benchmarking #20).
+                        group = (f"peer group: {_lc(c['cohort_label']).replace(' on Cavnar', '')} — split by "
+                                 "how they serve (and bar-led, and menu family for food cost), from the profile "
+                                 f"the owner confirmed; {c.get('orgs') or 'several'} separate owners")
+                    else:
+                        tl = categories.label(c.get("cohort")) if c.get("cohort") else c["cohort_label"]
+                        group = (f"peer group: restaurants of the same type ({tl}), the type inferred from the "
+                                 "restaurant's name, not set by the owner" if c.get("inferred") else
+                                 f"peer group: restaurants of the same type ({tl}), the type set by the owner")
+                measured = (f"measured at {c['measured']} of {c['members']} in the group; "
+                            if c.get("measured") and c.get("members") else "")
                 s = (f"compared to {who}: {c['standing']} (middle {_fmt(c['p50'], unit)}, band "
-                     f"{_fmt(c['p25'], unit)}–{_fmt(c['p75'], unit)}; as of {c['as_of']}; "
-                     f"{c['strength']['pct']}% comparison strength)")
+                     f"{_fmt(c['p25'], unit)}–{_fmt(c['p75'], unit)}; as of {c['as_of']}; {measured}"
+                     f"{c['strength']['pct']}% comparison strength; {group})")
                 if c.get("blend"):
                     s += f" — {c['blend']['text']}"
-                if c.get("inferred"):
-                    s += " — type guessed from the name, not set by the owner"
                 parts.append(s)
             elif k == "self":
                 parts.append(f"vs its own previous {SELF_BASELINE_WEEKS} weeks: {_fmt(c['value'], unit)} against "
@@ -600,6 +656,13 @@ def facts(comparisons, _entries=None) -> list:
                                     "source": dict(src)})
             elif k == "industry":
                 e = (_entries or {}).get(metric)
+                if not e and c.get("source") and c.get("year"):
+                    # A comparison read back from a payload (the entry is
+                    # never sent): the same figures, source and year.
+                    e = {"metric": reg.meta(metric).get("industry") or metric, "category": "type",
+                         "label": c.get("label"), "low": c.get("low"), "high": c.get("high"),
+                         "median": c.get("median"), "unit": "%", "short": c.get("source"), "year": c.get("year"),
+                         "source_kind": c.get("source_kind"), "inferred": bool(c.get("inferred"))}
                 if e:
                     for f in benchmark_registry.facts(e, key_prefix=f"bench.{metric}.industry"):
                         f["source"]["engine_kind"] = "industry"

@@ -164,7 +164,7 @@ struct ConfidenceWhySheet: View {
                     hero(d)
                     AccountSection(kicker: "What it rests on") {
                         ForEach(Array(d.rows.enumerated()), id: \.offset) { i, row in
-                            dimensionRow(row, showsDivider: i < d.rows.count - 1)
+                            ConfidenceDimensionRow(row: row, showsDivider: i < d.rows.count - 1)
                         }
                     }
                     if let caution = d.caution {
@@ -217,7 +217,17 @@ struct ConfidenceWhySheet: View {
         }
     }
 
-    private func dimensionRow(_ row: ConfidenceDisplay.Row, showsDivider: Bool) -> some View {
+}
+
+/// One "What it rests on" row of a Why? sheet — the title and its %, a wide
+/// meter, the basis and detail lines. The confidence sheet's rows, and the
+/// comparison-strength sheet's (HowYouCompareCard), draw through this one
+/// view so the two panels read as one component.
+struct ConfidenceDimensionRow: View {
+    let row: ConfidenceDisplay.Row
+    var showsDivider: Bool = true
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             AccountKVRow(label: row.title, showsDivider: false) {
                 Text(row.value)

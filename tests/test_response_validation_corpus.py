@@ -44,6 +44,12 @@ def build_ctx(case) -> rv.ValidationContext:
     ctx = case["ctx"]
     base = dict(CONTEXTS[ctx]) if isinstance(ctx, str) else dict(ctx)
     base.update(case.get("ctx_patch") or {})
+    # Benchmark facts in their production shape, from the code that makes
+    # them (benchmark_corpus_facts): never hand-built (BM3-2, BM3-4).
+    spec = base.pop("facts_from", None)
+    if spec:
+        import benchmark_corpus_facts
+        base["facts"] = list(base.get("facts") or []) + benchmark_corpus_facts.resolve(spec)
     return rv.ValidationContext(**base)
 
 

@@ -28,6 +28,22 @@ WEEKS_PER_MONTH = 52.0 / 12.0
 # What the 4–5% waste target is, said wherever it is (NS4 H3): Cavnar's
 # starting default until the owner sets their own, not an industry figure.
 WASTE_TARGET_NOTE = "Cavnar's default until you set your own, not an industry figure"
+# The waste label's bands around the target (Benchmarking #36): "Near
+# target" reaches this many points past its top, "Over target" to this
+# multiple of it, and beyond that is "Well over target". Against the 4–5%
+# starting band these are the 6% and 10% the labels always used.
+WASTE_NEAR_PTS = 1.0
+WASTE_WELL_OVER_MULTIPLE = 2.0
+
+
+def _valid_waste_target(pct):
+    """The owner's waste target % when it is a usable one (0 < pct <= 100),
+    else None — the same rule waste_trend.get_waste_target_pct applies."""
+    try:
+        pct = float(pct) if pct is not None else None
+    except (TypeError, ValueError):
+        return None
+    return pct if pct is not None and 0 < pct <= 100 else None
 # The tolerance bands are Cavnar's own allowances, not a published standard
 # (NS4 L3): the basis says so rather than calling the band "normal".
 RECOVERABLE_BASIS = ("Only waste above each category's tolerance band counts — produce 28%, bakery 25%, "
@@ -312,7 +328,7 @@ def parse_inventory_rows(rows):
 def analyse_inventory(items: list[dict], delivery_days: str = None,
                       upcoming_holidays: str = None, today=None,
                       purchases_window: float = None, counted_from: str = None,
-                      counted_to: str = None) -> dict:
+                      counted_to: str = None, waste_target_pct: float = None) -> dict:
     """Compute waste, overstock, and reorder flags.
 
     delivery_days: optional comma-separated weekday abbreviations (e.g.
@@ -501,10 +517,11 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     # source exists for it (benchmark_registry.ABSENT), so the owner-facing
     # detail says "starting target", never "industry" (NS4 H3). Waste cost as
     # % of what was actually purchased over the SAME period the waste covers.
-    # The labels (kept: both clients match on them), exactly as coded below:
+    # The labels (both clients read them and the tone), exactly as coded
+    # below, against the owner's target T when set (else the 4-5% band):
     # 0 recorded = not measured (nothing logged is not "nothing wasted") |
-    # <=4% excellent (at or under the 4-5% target) | <=6% on track |
-    # <=10% above average | <=15% concerning | >15% needs attention.
+    # <=T (4%) under target | <=T+1 (6%) near target | <=2T (10%) over
+    # target | beyond that well over target (Benchmarking #36).
     #
     # purchases_window comes from the receiving ledger (cogs.purchases_in_window)
     # and is the correct denominator. The fallback below is the sum of each
@@ -531,6 +548,23 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     # nothing logged as waste — which is not the same as nothing wasted, so
     # it is never scored as the best result) or "no_data".
     benchmark_state = "measured"
+    # The target the label reads against (Benchmarking #36): the owner's own
+    # waste target when they set one (restaurants.waste_target_pct), else
+    # Cavnar's 4–5% starting band. Either way the label says where the rate
+    # sits against THAT target — "Under / Near / Over / Well over target" —
+    # never "Excellent" or "Above Average", which implied a peer average
+    # that does not exist (BM3-17, BM1-18). A target is not a comparison
+    # with other restaurants, so the Benchmark Engine does not apply here:
+    # the peer and self comparisons of waste live in its How you compare
+    # card (waste_sales_pct_28d), never in this label (#48).
+    _wt = _valid_waste_target(waste_target_pct)
+    _lo, _hi = (_wt, _wt) if _wt is not None else (4.0, 5.0)
+    _tgt_words = f"your {_wt:g}% target" if _wt is not None else "the 4–5% starting target"
+    _tgt_note = "" if _wt is not None else f" ({WASTE_TARGET_NOTE})"
+    waste_target = ({"pct": _wt, "kind": "yours", "basis": f"your waste target, {_wt:g}% of purchases"}
+                    if _wt is not None else
+                    {"pct": None, "low": 4.0, "high": 5.0, "kind": "starting",
+                     "basis": f"Cavnar's 4–5% starting target — {WASTE_TARGET_NOTE}"})
     if not _has_benchmark:
         benchmark_label  = "—"
         benchmark_tone   = "neutral"
@@ -544,26 +578,22 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         benchmark_detail = ("No waste recorded this week — a week with nothing logged is not the "
                             "same as a week with nothing wasted")
         benchmark_state  = "not_measured"
-    elif waste_rate_pct <= 4:
-        benchmark_label  = "Excellent"
+    elif waste_rate_pct <= _lo:
+        benchmark_label  = "Under target"
         benchmark_tone   = "good"
-        benchmark_detail = f"At or under the 4–5% starting target — {WASTE_TARGET_NOTE}"
-    elif waste_rate_pct <= 6:
-        benchmark_label  = "On Track"
+        benchmark_detail = f"At or under {_tgt_words}{_tgt_note}"
+    elif waste_rate_pct <= _hi + WASTE_NEAR_PTS:
+        benchmark_label  = "Near target"
         benchmark_tone   = "good"
-        benchmark_detail = f"Near the 4–5% starting target — {WASTE_TARGET_NOTE}"
-    elif waste_rate_pct <= 10:
-        benchmark_label  = "Above Average"
+        benchmark_detail = f"Near {_tgt_words}{_tgt_note} — you're at {waste_rate_pct}%"
+    elif waste_rate_pct <= _hi * WASTE_WELL_OVER_MULTIPLE:
+        benchmark_label  = "Over target"
         benchmark_tone   = "warn"
-        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
-    elif waste_rate_pct <= 15:
-        benchmark_label  = "Concerning"
-        benchmark_tone   = "bad"
-        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
+        benchmark_detail = f"Over {_tgt_words}{_tgt_note} — you're at {waste_rate_pct}%"
     else:
-        benchmark_label  = "Needs Attention"
+        benchmark_label  = "Well over target"
         benchmark_tone   = "bad"
-        benchmark_detail = f"Starting target is 4–5% ({WASTE_TARGET_NOTE}) — you're at {waste_rate_pct}%"
+        benchmark_detail = f"Well over {_tgt_words}{_tgt_note} — you're at {waste_rate_pct}%"
 
     now_chi = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
     # Two different windows, kept apart on purpose.
@@ -646,6 +676,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "benchmark_tone":           benchmark_tone,
         "benchmark_detail":         benchmark_detail,
         "benchmark_state":          benchmark_state,
+        # What the label reads against: {pct, kind: "yours"|"starting", basis}.
+        "waste_target":             waste_target,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
@@ -953,8 +985,11 @@ def food_prompt_data_lines(analysis: dict) -> tuple:
     a = analysis or {}
     state = a.get("benchmark_state")
     if state == "measured" and a.get("total_purchased"):
+        _wt = (a.get("waste_target") or {})
+        _against = (f"against the owner's own {_wt['pct']:g}% target" if _wt.get("kind") == "yours" and _wt.get("pct")
+                    else f"against the 4–5% starting target ({WASTE_TARGET_NOTE}")
         waste = (f"- Waste rate: {a.get('waste_rate_pct')}% of ${float(a['total_purchased']):,.2f} purchased, "
-                 f"against the 4–5% starting target ({WASTE_TARGET_NOTE} — never call it an industry target or "
+                 f"{_against}{' — ' if _wt.get('kind') != 'yours' else ' ('}never call it an industry target or "
                  f"compare it to other restaurants; label: {a.get('benchmark_label')}). "
                  f"Denominator basis: {a.get('purchases_basis')}")
     elif state == "not_measured":
@@ -1651,6 +1686,20 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
         anchors += rv.anchor(a, "likely")
     for a in alt_anchors or ():
         anchors += rv.anchor(a, "association")
+    # The published food cost figure for this restaurant's type — the band
+    # the FOOD COST POSITION label ("Within the industry band") is read
+    # against (cogs.food_cost_pct) — as benchmark facts, so a sentence that
+    # quotes it binds and names its source and year (B1, BM3-3). No entry
+    # for the type, no fact, and a claim about "the industry" has nothing
+    # to bind to.
+    facts = list(facts or [])
+    if restaurant_id:
+        try:
+            import benchmark_registry as _br_food
+            from models import get_restaurant as _gr_food
+            facts += _br_food.facts(_br_food.for_restaurant("food_cost_pct", _gr_food(restaurant_id)))
+        except Exception as e:
+            print(f"[inventory] food benchmark facts unavailable for {restaurant_id}: {e}")
     return rv.ValidationContext(restaurant_id=restaurant_id, surface="food_insight", facts=facts,
                                 context_text=prompt, cause_anchors=anchors, tenant_names_denied=denied,
                                 untrusted=list(untrusted or ()), data_state=data_state,
@@ -1842,6 +1891,7 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         purchases_window=purchases_window,
         counted_from=counted_from,
         counted_to=counted_to,
+        waste_target_pct=getattr(restaurant, "waste_target_pct", None) if restaurant else None,
     )
     analysis["is_live"] = bool(is_live)
     # Where the week's waste came from (DH1-1): summed from dated waste

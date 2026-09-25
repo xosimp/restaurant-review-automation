@@ -1239,27 +1239,15 @@
     "key": "labor.pct",
     "value": 34.0,
     "unit": "%"
-   },
-   {
-    "key": "benchmark.labor_full_service_low",
-    "value": 33,
-    "unit": "%",
-    "kind": "benchmark",
-    "source": {
-     "source": "NRA",
-     "year": 2024
-    }
-   },
-   {
-    "key": "benchmark.labor_full_service_high",
-    "value": 36,
-    "unit": "%",
-    "kind": "benchmark",
-    "source": {
-     "source": "NRA",
-     "year": 2024
-    }
    }
+  ],
+  "facts_from": [
+   [
+    "registry",
+    "labor_pct",
+    "italian",
+    "set"
+   ]
   ]
  },
  "bench_cohort": {
@@ -1270,33 +1258,21 @@
   "facts": [
    {
     "key": "labor.pct",
-    "value": 29.5,
+    "value": 27.0,
     "unit": "%"
-   },
-   {
-    "key": "benchmark.cohort_labor_p25",
-    "value": 27,
-    "unit": "%",
-    "kind": "benchmark",
-    "source": {
-     "source": "Cavnar cohort",
-     "year": 2026,
-     "cohort_label": "full-service",
-     "n": 8
-    }
-   },
-   {
-    "key": "benchmark.cohort_labor_p75",
-    "value": 31,
-    "unit": "%",
-    "kind": "benchmark",
-    "source": {
-     "source": "Cavnar cohort",
-     "year": 2026,
-     "cohort_label": "full-service",
-     "n": 8
-    }
    }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza",
+    "labor_pct_28d"
+   ],
+   [
+    "engine",
+    "pizza",
+    "reply_rate_30d"
+   ]
   ]
  },
  "bench_platform": {
@@ -1307,21 +1283,16 @@
   "facts": [
    {
     "key": "labor.pct",
-    "value": 29.5,
+    "value": 22.0,
     "unit": "%"
-   },
-   {
-    "key": "benchmark.platform_labor_p75",
-    "value": 33,
-    "unit": "%",
-    "kind": "benchmark",
-    "source": {
-     "source": "Cavnar cohort",
-     "year": 2026,
-     "cohort_label": "platform",
-     "n": 5
-    }
    }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "platform",
+    "reply_rate_30d"
+   ]
   ]
  },
  "bench_small": {
@@ -1333,15 +1304,25 @@
     "unit": "%"
    },
    {
-    "key": "benchmark.cohort_labor_p50",
-    "value": 31.02,
+    "key": "bench.labor_pct_28d.peers.p50",
+    "value": 31.0,
     "unit": "%",
     "kind": "benchmark",
+    "entity": "cohort",
+    "as_of": "9/20/26",
     "source": {
-     "source": "Cavnar cohort",
-     "year": 2026,
-     "cohort_label": "mexican",
-     "n": 3
+     "source": "Cavnar anonymous cohort",
+     "source_kind": "cohort",
+     "engine_kind": "peers",
+     "cohort_label": "Mexican on Cavnar",
+     "n": 6,
+     "min_n": 8,
+     "as_of": "9/20/26",
+     "comparable": true,
+     "restaurant_category": "mexican",
+     "strength_pct": 68,
+     "inferred": false,
+     "standing": "about the middle"
     }
    }
   ]
@@ -1703,6 +1684,194 @@
     "unit": "$",
     "kind": "opportunity",
     "period": "month"
+   }
+  ]
+ },
+ "bench_labor_read": {
+  "surface": "labor_insight",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 36.1,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "registry",
+    "labor_pct",
+    "italian",
+    "set"
+   ]
+  ]
+ },
+ "bench_cohort_plan": {
+  "surface": "weekly_plan",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 27.0,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza",
+    "labor_pct_28d"
+   ]
+  ]
+ },
+ "bench_inferred": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 24.0,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "tacos_inferred",
+    "labor_pct_28d"
+   ]
+  ]
+ },
+ "bench_inferred_middle": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 27.1,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "tacos_middle",
+    "labor_pct_28d"
+   ]
+  ]
+ },
+ "bench_middle": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 29.1,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza_middle",
+    "labor_pct_28d"
+   ]
+  ]
+ },
+ "predict": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 60
+  },
+  "facts": [
+   {
+    "key": "predict.cut_waste.waste_sales_pct_28d.effect_pct",
+    "value": 11.0,
+    "unit": "%",
+    "kind": "prediction",
+    "as_of": "9/20/26",
+    "source": {
+     "source_kind": "prediction",
+     "metric": "waste_sales_pct_28d",
+     "rec_kind": "cut_waste",
+     "n_restaurants": 7,
+     "n_orgs": 7,
+     "n_results": 14,
+     "min_n": 5,
+     "interval": [
+      4.0,
+      17.0
+     ],
+     "similarity_pct": 82
+    }
+   }
+  ]
+ },
+ "predict_strong": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 80
+  },
+  "facts": [
+   {
+    "key": "predict.cut_waste.waste_sales_pct_28d.effect_pct",
+    "value": 11.0,
+    "unit": "%",
+    "kind": "prediction",
+    "as_of": "9/20/26",
+    "source": {
+     "source_kind": "prediction",
+     "metric": "waste_sales_pct_28d",
+     "rec_kind": "cut_waste",
+     "n_restaurants": 7,
+     "n_orgs": 7,
+     "n_results": 14,
+     "min_n": 5,
+     "interval": [
+      4.0,
+      17.0
+     ],
+     "similarity_pct": 82
+    }
+   }
+  ]
+ },
+ "predict_few": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 60
+  },
+  "facts": [
+   {
+    "key": "predict.cut_waste.waste_sales_pct_28d.effect_pct",
+    "value": 11.0,
+    "unit": "%",
+    "kind": "prediction",
+    "as_of": "9/20/26",
+    "source": {
+     "source_kind": "prediction",
+     "metric": "waste_sales_pct_28d",
+     "rec_kind": "cut_waste",
+     "n_restaurants": 3,
+     "n_orgs": 7,
+     "n_results": 14,
+     "min_n": 5,
+     "interval": [
+      4.0,
+      17.0
+     ],
+     "similarity_pct": 82
+    }
    }
   ]
  }

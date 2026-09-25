@@ -3177,6 +3177,10 @@ _UNGATED_PREFIXES = (
     # The Benchmark Engine spans modules; its payload is projected by the
     # login's module view permissions inside (intelligence.engine.payload_for).
     "/api/benchmarks", "/mobile/api/benchmarks",
+    # Restaurant DNA spans modules too: the restaurant's own profile, each
+    # dimension dropped inside when its module's view permission is not
+    # held (intelligence.dna.payload_for).
+    "/api/dna", "/mobile/api/dna",
     "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
     "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
     "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",

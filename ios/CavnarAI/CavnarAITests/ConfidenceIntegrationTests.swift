@@ -191,7 +191,7 @@ final class ConfidenceIntegrationTests: XCTestCase {
             {\(Self.analyticsBase), "benchmark_label": "No waste recorded", "waste_rate_pct": 0}
             """)
         XCTAssertEqual(inferred.wasteState, "not_measured")
-        XCTAssertEqual(try decode(FoodCostAnalytics.self, #"{\#(Self.analyticsBase), "benchmark_label": "Excellent"}"#).wasteState,
+        XCTAssertEqual(try decode(FoodCostAnalytics.self, #"{\#(Self.analyticsBase), "benchmark_label": "Under target"}"#).wasteState,
                        "measured")
         let noData = try decode(FoodCostAnalytics.self, #"{\#(Self.analyticsBase), "benchmark_label": "—", "benchmark_state": null}"#)
         XCTAssertEqual(noData.wasteState, "no_data")

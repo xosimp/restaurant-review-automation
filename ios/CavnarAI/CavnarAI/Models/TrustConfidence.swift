@@ -42,6 +42,10 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         /// Accuracy only: "N% likely to beat doing nothing" — what the
         /// accuracy % means since the support-score decision (9/24/26).
         var beatsLabel: String?
+        /// Accuracy only: the group a cohort stand-in came from, by name
+        /// ("pizza restaurants on Cavnar") — never a generic "other
+        /// restaurants" (Benchmarking #40, BM1-22).
+        var cohortLabel: String?
 
         enum CodingKeys: String, CodingKey {
             case pct, basis, n, improved, source, low, high, stalest
@@ -49,16 +53,17 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             case asOfISO = "as_of_iso"
             case nFull = "n_full"
             case beatsLabel = "beats_label"
+            case cohortLabel = "cohort_label"
         }
 
         init(pct: Int? = nil, basis: String? = nil, n: Int? = nil, improved: Int? = nil,
              source: String? = nil, low: Int? = nil, high: Int? = nil,
              asOf: String? = nil, asOfISO: String? = nil, stalest: String? = nil, nFull: Int? = nil,
-             beatsLabel: String? = nil) {
+             beatsLabel: String? = nil, cohortLabel: String? = nil) {
             self.pct = pct; self.basis = basis; self.n = n; self.improved = improved
             self.source = source; self.low = low; self.high = high
             self.asOf = asOf; self.asOfISO = asOfISO; self.stalest = stalest; self.nFull = nFull
-            self.beatsLabel = beatsLabel
+            self.beatsLabel = beatsLabel; self.cohortLabel = cohortLabel
         }
 
         init(from decoder: Decoder) throws {
@@ -75,6 +80,7 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             stalest = TrustConfidence.text(c, .stalest)
             nFull = TrustConfidence.integer(c, .nFull)
             beatsLabel = TrustConfidence.text(c, .beatsLabel)
+            cohortLabel = TrustConfidence.text(c, .cohortLabel)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -91,6 +97,7 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             try c.encodeIfPresent(stalest, forKey: .stalest)
             try c.encodeIfPresent(nFull, forKey: .nFull)
             try c.encodeIfPresent(beatsLabel, forKey: .beatsLabel)
+            try c.encodeIfPresent(cohortLabel, forKey: .cohortLabel)
         }
 
         /// Sample or demo data: evidence scored 0 with nothing counted
@@ -493,8 +500,12 @@ struct ConfidenceDisplay: Equatable {
         var parts: [String] = [d.beatsLabel ?? "\(pct)% likely to beat doing nothing"]
         if let low = d.low, let high = d.high { parts.append("improved-rate range \(low)\u{2013}\(high)%") }
         var detail = parts.joined(separator: " \u{00B7} ")
-        if d.source == "cohort" {
-            detail = "From other restaurants on Cavnar \u{00B7} " + detail
+        // A cohort stand-in names the group it came from, as the server
+        // labelled it — no label, no prefix (the basis carries the group).
+        // It was a generic "From other restaurants on Cavnar" whatever the
+        // cohort was (Benchmarking #40).
+        if d.source == "cohort", let label = d.cohortLabel, !label.isEmpty {
+            detail = "From " + label + " \u{00B7} " + detail
         }
         return Row(title: title, value: percentText(pct), tone: tone(pct: pct, at: at),
                    basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct))

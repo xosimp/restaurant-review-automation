@@ -8493,6 +8493,49 @@ def benchmarks_api(current_user):
     return resp, (200 if payload.get("ok") else 400)
 
 
+@client_bp.route("/api/dna")
+@login_required
+def dna_api(current_user):
+    """Restaurant DNA (intelligence.dna): this restaurant's own operational
+    profile — each dimension's figure, its trend against 4 weeks ago, how it
+    was measured, and what an unmeasured one needs — projected by the
+    login's module view permissions. Never another restaurant's figure.
+    Twin: /mobile/api/dna."""
+    import intelligence
+    payload = intelligence.dna_payload(current_user)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
+@client_bp.route("/api/benchmarks/card")
+@login_required
+def benchmarks_card_api(current_user):
+    """The "How you compare" card (benchmark_views.card): ?module=labor|
+    food_cost|reviews|marketing for a module's card, ?module=home for Home's
+    strip. Built only from the Benchmark Engine; projected by the login's
+    module view permissions. Twin: /mobile/api/benchmarks/card."""
+    import benchmark_views
+    payload = benchmark_views.card(current_user, request.args.get("module") or None)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
+@client_bp.route("/api/benchmarks/locations")
+@login_required
+def benchmarks_locations_api(current_user):
+    """Location to location (benchmark_views.location_compare): the owner's
+    locations on the engine's `location` kind, gaps called only beyond
+    noise. The group Home carries the same body inside
+    /api/home/brief/group. Twin: /mobile/api/benchmarks/locations."""
+    import benchmark_views
+    payload = benchmark_views.location_compare(current_user)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
 @client_bp.route("/api/data-health")
 @login_required
 def data_health_api(current_user):
