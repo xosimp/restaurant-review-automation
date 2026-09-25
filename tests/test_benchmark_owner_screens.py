@@ -79,7 +79,7 @@ def test_ios_labor_drops_the_points_below_industry_line_and_tolerates_absent_dol
 
 # ── #17: outcome words ─────────────────────────────────────────────────────
 
-def _peers(st, pct=81, cohort="p:full", n=12, label="Full-service restaurants on Cavnar", p50=30.0):
+def _peers(st, pct=81, cohort="p:full", n=12, label="Full-service restaurants on Cavnar AI", p50=30.0):
     return {"kind": "peers", "available": True, "standing": st, "value": 34.0, "n": n, "cohort": cohort,
             "cohort_label": label, "p50": p50, "as_of": "9/20/26", "strength": {"pct": pct}}
 
@@ -227,7 +227,7 @@ def test_the_food_cost_payload_carries_where_its_target_came_from(db_path, monke
     rid = create_restaurant(Restaurant(name="Tgt", owner_email="t@x.test", food_cost_target=30.0), db_path=db_path)
     monkeypatch.setattr(mobile_api, "get_restaurant", lambda r: models.get_restaurant(r, db_path=db_path))
     out = mobile_api.food_target_labelled({"ok": True, "target": 30.0}, rid)
-    assert out["food_cost_target_source"] == "default" and out["food_cost_target_label"] == "Cavnar's starting target"
+    assert out["food_cost_target_source"] == "default" and out["food_cost_target_label"] == "Cavnar AI's starting target"
     kept = mobile_api.food_target_labelled({"food_cost_target_label": "x", "food_cost_target_source": "set"}, rid)
     assert kept["food_cost_target_label"] == "x"
 

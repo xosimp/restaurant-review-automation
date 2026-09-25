@@ -152,7 +152,7 @@ LABOR_DEFAULT_HOURLY_RATE = 26.0
 LABOR_COST_BASES = ("pos_wages", "role_rates", "owner_blended", "default")
 LABOR_COST_BASIS_LABELS = {
     "pos_wages": "wages from your POS", "role_rates": "your per-role pay rates",
-    "owner_blended": "your blended hourly rate", "default": "Cavnar's assumed $26/hr (not your payroll)",
+    "owner_blended": "your blended hourly rate", "default": "Cavnar AI's assumed $26/hr (not your payroll)",
 }
 
 
@@ -194,7 +194,7 @@ def labor_cost_basis(restaurant) -> str:
 TARGET_DEFAULTS = {"labor": 30.0, "food": 30.0}
 _TARGET_FIELDS = {"labor": ("labor_target_pct", "labor_target_source"),
                   "food": ("food_cost_target", "food_cost_target_source")}
-STARTING_TARGET_LABEL = "Cavnar's starting target"
+STARTING_TARGET_LABEL = "Cavnar AI's starting target"
 
 
 def target_source(restaurant, kind) -> str:

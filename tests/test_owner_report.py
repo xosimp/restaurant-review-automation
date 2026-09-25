@@ -186,7 +186,7 @@ def test_the_full_paragraph_matches_its_sources(db):
     assert acc["accept_rate"] == lab["accept_rate"] and acc["enough"] is True
     pct = round(lab["accept_rate"] * 100)
     assert s[0].startswith("Over the past 6 months, you accepted ")
-    assert f"{pct}% of Cavnar's labor recommendations ({acc['taken']} of {acc['n']})" in s[0]
+    assert f"{pct}% of Cavnar AI's labor recommendations ({acc['taken']} of {acc['n']})" in s[0]
     assert "left unanswered" in s[0]
     # Overtime: the overlapping reading is dropped; three results, mean of the stored delta_pct.
     ot = next(c for c in out["facts"]["changes"] if c["metric"] == "overtime_hours")

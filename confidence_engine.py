@@ -468,7 +468,7 @@ def accuracy(record) -> dict:
             (r.get("source") == "cohort" and measured < MIN_MEASURED):
         basis = f"Not enough history yet — {measured} measured, needs {MIN_MEASURED}"
         if c_centre is not None:
-            basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar'}: {pi} of {pm} improved — not counted until your own are in)"
+            basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar AI'}: {pi} of {pm} improved — not counted until your own are in)"
         # cohort_label: the group the stand-in came from, by name, so a client
         # never prefixes a generic "other restaurants on Cavnar" (BM1-22,
         # Benchmarking #40).
@@ -494,7 +494,7 @@ def accuracy(record) -> dict:
     if prior_source == "cohort":
         # The one time peers move the figure — only ever DOWN — the owner is
         # told why (BM3-12, Top-50 #32).
-        basis += (f" — {r.get('prior_label') or 'other restaurants on Cavnar'} saw this rarely help "
+        basis += (f" — {r.get('prior_label') or 'other restaurants on Cavnar AI'} saw this rarely help "
                   f"({pi} of {pm}), which lowers it")
     return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "own",
             "low": int(round(lo * 100)), "high": int(round(hi * 100)),

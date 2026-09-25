@@ -50,7 +50,7 @@ def _weather(ctx):
     use = day or night
     if not use:
         return None, {"basis": "forecast", "summary": None,
-                      "note": "No forecast on file for this date — Cavnar has no observed weather to fall back on."}
+                      "note": "No forecast on file for this date — Cavnar AI has no observed weather to fall back on."}
     temp = use.get("high_f") if day else use.get("low_f")
     bits = [str(use.get("short_forecast") or "").strip()]
     if temp is not None:
@@ -66,7 +66,7 @@ def _weather(ctx):
         "high_f": day.get("high_f") if day else None,
         "low_f": night.get("low_f") if night else None,
         "precip_pct": use.get("precip_pct"),
-        "note": "Forecast, not observed — Cavnar has no source for the weather that actually happened.",
+        "note": "Forecast, not observed — Cavnar AI has no source for the weather that actually happened.",
     }
 
 

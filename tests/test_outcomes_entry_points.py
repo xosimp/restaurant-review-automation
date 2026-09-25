@@ -145,7 +145,7 @@ def test_18_done_on_a_recommendation_that_carries_a_metric_starts_its_tracker(db
     out = _rec_event(rid, {"key": "trim_day:Monday", "event": "completed", "surface": "home"})
     t = out["tracker"]
     assert t["metric"] == "labor_pct" and t["module"] == "labor"
-    assert out["message"] == f"Done — Cavnar won’t suggest it again. Now {t['label_text']}"
+    assert out["message"] == f"Done — Cavnar AI won’t suggest it again. Now {t['label_text']}"
     assert t["label_text"] == f"measuring labor % until {mdy(t['evaluate_on'])}"
     row = outcomes.get_outcome(t["id"])
     assert row["title"] == "Trim Monday lunch" and row["baseline_value"] == 30.0
@@ -157,7 +157,7 @@ def test_18_done_without_a_metric_starts_nothing_and_promises_nothing(db_path):
     out = _rec_event(rid, {"key": "insight_review:x", "event": "completed", "surface": "reviews",
                            "module": "reviews"})
     assert "tracker" not in out and "tracker_refused" not in out
-    assert out["message"] == "Done — Cavnar won’t suggest it again"
+    assert out["message"] == "Done — Cavnar AI won’t suggest it again"
     assert _tracking(db_path, rid) == []
 
 
@@ -203,7 +203,7 @@ def test_11_marketing_track_starts_no_sales_tracker(db_path):
     out = _rec_event(rid, {"key": "insight_marketing:q", "event": "accepted", "surface": "marketing",
                            "module": "marketing"})
     assert "tracker" not in out and out["tracker_refused"]["code"] == "no_metric"
-    assert "hidden for 14 days" in out["message"] and "nothing here Cavnar can measure" in out["message"]
+    assert "hidden for 14 days" in out["message"] and "nothing here Cavnar AI can measure" in out["message"]
     assert _tracking(db_path, rid) == []
     assert "marketing" not in strategy_routes.REC_TRACK_METRICS
     assert 'data-rec-event="accepted"' not in client_api.rec_controls_html("insight_marketing:q", "marketing",

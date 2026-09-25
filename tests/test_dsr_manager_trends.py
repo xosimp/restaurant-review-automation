@@ -246,7 +246,7 @@ def test_the_confidence_is_the_forecasts_measured_record_not_its_inputs():
     track = {"n_ranged": 20, "inside_range_pct": 50.0, "window_days": 30}
     c = tomorrow.confidence(fc, track, wx={"stale": False}, scheduled=17, keeps_events=True)
     assert (c["pct"], c["label"]) == (50, "50%")
-    assert c["track"] == "Cavnar's range held on 10 of the last 20 nights (30-day record)"
+    assert c["track"] == "Cavnar AI's range held on 10 of the last 20 nights (30-day record)"
     assert c["based_on"] == ["8 Sundays of sales history", "its measured record"]
     # Under the record floor, or with no range to rate: no %.
     assert tomorrow.confidence(fc, dict(track, n_ranged=9))["pct"] is None
@@ -333,9 +333,9 @@ def _budget_night(db, r):
     stored tomorrow whose predictions include tomorrow's budget."""
     predictions.record(r.id, SAT - timedelta(days=1), SAT, [
         {"key": "sales_range", "metric": "sales.net", "op": "between", "low": 8000.0, "high": 9500.0,
-         "text": "Sales between $8,000 and $9,500", "basis": "Cavnar's forecast"},
+         "text": "Sales between $8,000 and $9,500", "basis": "Cavnar AI's forecast"},
         {"key": "sales_budget", "metric": "sales.net", "op": "gt", "value": 9500.0,
-         "text": "Sales expected above budget ($9,500)", "basis": "Cavnar's forecast: $9,700 against the budget"}])
+         "text": "Sales expected above budget ($9,500)", "basis": "Cavnar AI's forecast: $9,700 against the budget"}])
     rep = _night(db, r.id, SAT, food=({"est_food_cost_pct": 31.0}, {"stock": {"critical": [{"item": "Buns"}]}}),
                  extra_sales={"budget_net": 9500.0, "vs_budget_net": -500.0, "vs_budget_net_pct": -5.3})
     predictions.grade(r.id, SAT, rep["facts"])

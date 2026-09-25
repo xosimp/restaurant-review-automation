@@ -111,11 +111,11 @@ final class ConfidenceDisplayTests: XCTestCase {
     func testCohortAccuracyNamesItsCohort() {
         // Benchmarking #40: the prefix is the cohort the server named, not a
         // generic "From other restaurants on Cavnar" (which this pinned).
-        let row = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "Mexican on Cavnar: 12 of 15 improved",
+        let row = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "Mexican on Cavnar AI: 12 of 15 improved",
                                                       n: 15, improved: 12, source: "cohort", low: 60, high: 91,
-                                                      cohortLabel: "Mexican restaurants on Cavnar"))
-        XCTAssertEqual(row.detail, "From Mexican restaurants on Cavnar · 80% likely to beat doing nothing · improved-rate range 60–91%")
-        let unnamed = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "Mexican on Cavnar: 12 of 15 improved",
+                                                      cohortLabel: "Mexican restaurants on Cavnar AI"))
+        XCTAssertEqual(row.detail, "From Mexican restaurants on Cavnar AI · 80% likely to beat doing nothing · improved-rate range 60–91%")
+        let unnamed = ConfidenceDisplay.accuracyRow(.init(pct: 80, basis: "Mexican on Cavnar AI: 12 of 15 improved",
                                                           n: 15, improved: 12, source: "cohort", low: 60, high: 91))
         XCTAssertEqual(unnamed.detail, "80% likely to beat doing nothing · improved-rate range 60–91%")
     }

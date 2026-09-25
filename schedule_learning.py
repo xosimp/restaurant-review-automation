@@ -661,7 +661,7 @@ def _feature_phrase(feature, value, edits, seen, row) -> str:
                  "1-3": "among a person's first three shifts that week"}[value]
         return f"{edits} of {seen} shifts {label}" if value == "1-3" else f"{edits} of {seen} shifts that were {label}"
     if feature == "origin":
-        label = {"fill": "rows a fill-in pass added", "optimizer": "rows Cavnar's repair loop wrote",
+        label = {"fill": "rows a fill-in pass added", "optimizer": "rows Cavnar AI's repair loop wrote",
                  "adjusted": "rows an automatic pass retimed or trimmed", "model": "rows the draft wrote"}[value]
         return f"{edits} of {seen} {label}"
     return f"{edits} of {seen}"
@@ -1029,7 +1029,7 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     moving = sorted((k for k, d in report.items() if abs(d["suggested"] - d["current"]) >= 0.05),
                     key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
     watch_note = ("" if base["watched_shifts"] else
-                  " Coverage and no-show issues are not counted: none of these shifts fell on a night Cavnar was watching.")
+                  " Coverage and no-show issues are not counted: none of these shifts fell on a night Cavnar AI was watching.")
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
             "moving": moving,
             "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"])} for o, f in fits.items()},

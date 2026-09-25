@@ -44,6 +44,6 @@
         toast(d.po_number+' received — '+n+' line'+(n===1?'':'s')+' added to stock'+(s?' · '+s+' short':'')+((d.skipped||[]).length?' · '+d.skipped.length+' not on your ingredient list':''),'success');
         loadPurchaseOrders(); if(typeof fc2LoadCountSheet==='function')fc2LoadCountSheet(); }
       else { toast(d.error||'Couldn\'t update','error'); }
-    }).catch(function(){done();toast('Couldn\'t reach Cavnar','error');});
+    }).catch(function(){done();toast('Couldn\'t reach Cavnar AI','error');});
   }
 </script>

@@ -314,7 +314,7 @@ def _attempt_google_post(rid, restaurant_id, google=None):
             # Read from Google's public listing, not the Business Profile
             # connection, so there is no review to attach a reply to. GBP is
             # connected, so saying nothing read as "posted" (MOD A1 R2 #16).
-            return False, ("This review came from Google's public listing, so Cavnar can't post the "
+            return False, ("This review came from Google's public listing, so Cavnar AI can't post the "
                            "reply for you. Copy it and reply on Google directly.")
         result = post_reply(restaurant_id, row["review_name"], row["draft_response"])
         if result["ok"]:
@@ -457,7 +457,7 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
                                                review_text=row["text"] or "", author=row["author"] or "",
                                                action="bulk_approve")
         if not refusal and " ".join(str(_checked_reply).split()) != " ".join(draft_text.split()):
-            refusal = "Cavnar would reword part of this reply before it goes out"
+            refusal = "Cavnar AI would reword part of this reply before it goes out"
         if refusal:
             held_now += 1
             conn = get_conn()
@@ -1587,7 +1587,7 @@ def review_insight_floor_payload(rstats, n_window, floor) -> dict:
     state; one that doesn't know the key still shows plain text."""
     total = int((rstats or {}).get("total") or 0)
     if total == 0:
-        text = ("No reviews on file yet, so there is nothing to read. Once reviews come in, Cavnar writes its "
+        text = ("No reviews on file yet, so there is nothing to read. Once reviews come in, Cavnar AI writes its "
                 "read of them here.")
         reason = "no reviews on file"
     else:
@@ -2152,7 +2152,7 @@ def _do_review_insight(rid, viewer=None):
                 held.update(_fresh_rf(str(_prev_at).replace(" ", "T")[:19], stale_after_days=0))
                 held["stale"] = True
             else:
-                held = {"insight": "Cavnar held today's read back: it said things your reviews don't support. "
+                held = {"insight": "Cavnar AI held today's read back: it said things your reviews don't support. "
                                    "Your reviews are below.",
                         "withheld": True, **rv_flags(None), "diagnoses": _diags[:3],
                         "diagnosis": _diags[0] if _diags else None, "stale": False,
@@ -2646,7 +2646,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
     if not _ASK_SLOTS.acquire(blocking=False):
         def _busy():
             events.put({"type": "error", "error": (
-                "Cavnar is answering a few other questions right now — "
+                "Cavnar AI is answering a few other questions right now — "
                 "try again in a moment.")})
             events.put(None)
         threading.Thread(target=_busy, daemon=True).start()
@@ -2663,7 +2663,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
 
             def _failed():
                 events.put({"type": "error", "error": (
-                    "Cavnar is under heavy load right now — try again in a moment.")})
+                    "Cavnar AI is under heavy load right now — try again in a moment.")})
                 events.put(None)
             threading.Thread(target=_failed, daemon=True).start()
 
@@ -3297,7 +3297,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
                                 job="marketing_insight", context=f"restaurant_id={rid}")
             except Exception:
                 pass
-            _held_m = {"insight": "Cavnar held this week's marketing brief back: it said things your data doesn't "
+            _held_m = {"insight": "Cavnar AI held this week's marketing brief back: it said things your data doesn't "
                                   "support. It tries again the next time this opens.",
                        "withheld": True, "figures_verified": True, "unsupported_figures": [],
                        "causes_verified": True, "unsupported_causes": [], "forecast": None,
@@ -6444,9 +6444,9 @@ def _do_ai_visibility_inner(rid, force=False):
         if (_it.get("kind") == "presence" and not gbp_read and not _it.get("done")
                 and any(w in _it["label"].lower() for w in _listing_labels)):
             _it["measured"] = False
-            _it["unmeasured_reason"] = ("Connect Google Business Profile so Cavnar can read this from your listing"
+            _it["unmeasured_reason"] = ("Connect Google Business Profile so Cavnar AI can read this from your listing"
                                         if not gbp_connected else
-                                        "Cavnar couldn't read your Google listing just now")
+                                        "Cavnar AI couldn't read your Google listing just now")
     presence_items = [i for i in checklist if i.get("kind") == "presence"]
     setup_items    = [i for i in checklist if i.get("kind") == "setup"]
     _presence_measured = [i for i in presence_items if i.get("measured", True)]

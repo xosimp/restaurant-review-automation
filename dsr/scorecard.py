@@ -145,7 +145,7 @@ def _sales(sm, wd):
         return {"key": "sales", "label": "Sales", "measured": False, "value": None,
                 "why": "Sales aren't in for this night"}
     for key, dkey, basis in (("vs_budget_net_pct", "vs_budget_net", "vs budget"),
-                             ("vs_forecast_pct", "vs_forecast", "vs Cavnar's forecast"),
+                             ("vs_forecast_pct", "vs_forecast", "vs Cavnar AI's forecast"),
                              ("vs_last_week_pct", "vs_last_week", f"vs last {wd}")):
         pct, dollars = sm.get(key), sm.get(dkey)
         if _num(pct) and _num(dollars):

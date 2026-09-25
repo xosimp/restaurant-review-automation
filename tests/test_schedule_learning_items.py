@@ -413,7 +413,7 @@ def test_a_new_restaurant_borrows_a_starting_headcount_from_its_cohort(db):
     assert out["ratios"][0]["people_per_1k"] == 0.55
     assert out["headcount"][("Saturday", "night")] == {"Server": 4}
     # The group named as the one used, never "similar restaurants" (NS4 H4).
-    assert "Borrowed" in out["note"] and "9+ counter-service restaurants on Cavnar" in out["note"]
+    assert "Borrowed" in out["note"] and "9+ counter-service restaurants on Cavnar AI" in out["note"]
     shaped = staffing.payload(out)
     assert privacy.assert_anonymous(shaped) is shaped
     assert shaped["headcount"]["Saturday|night"] == {"Server": 4}

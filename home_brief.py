@@ -941,7 +941,7 @@ _RUNG_FAMILY = {"format": (("reviews", "marketing"), "reviews and marketing"),
                 "food": (("inventory",), "food cost")}
 # Only a real comparison is announced: a published figure is context, and
 # "your own normal" was always there.
-_RUNG_WHOM = {"peers": "restaurants like yours", "platform": "every restaurant on Cavnar"}
+_RUNG_WHOM = {"peers": "restaurants like yours", "platform": "every restaurant on Cavnar AI"}
 
 
 def comparison_changes(events, active_keys) -> list:

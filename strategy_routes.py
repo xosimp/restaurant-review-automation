@@ -1718,7 +1718,7 @@ def _do_schedule_optimize(u):
         from datetime import datetime as _dt
         rec_key = _rl.rec_key("optimizer", f"{hid or 'draft'}:{_dt.utcnow().strftime('%Y%m%d%H%M%S')}")
         _rl.present(_rid(u), rec_key, "schedule", "schedule_review", kind="optimizer",
-                    title=f"{len(summary['changes'])} changes from Improve with Cavnar", user_id=u.get("id"),
+                    title=f"{len(summary['changes'])} changes from Improve with Cavnar AI", user_id=u.get("id"),
                     cavnar_completes=True)
     return {"ok": True, "rows": res["rows"], "optimizer": summary, "rec_key": rec_key,
             "quality": quality, "what_if": what_if}, 200
@@ -1915,7 +1915,7 @@ def _do_rec_event(u):
         meta["tracker_id"] = tracker.get("id")
     if event == "completed":
         silence = _rl.SILENCE_DAYS["done"]
-        message = "Done \u2014 Cavnar won\u2019t suggest it again"
+        message = "Done \u2014 Cavnar AI won\u2019t suggest it again"
         if tracker:
             message += f". Now {tracker['label_text']}"
         elif refused and refused.get("code") == "in_flight":
@@ -1929,13 +1929,13 @@ def _do_rec_event(u):
             silence = max(_rl.ACCEPTED_QUIET_DAYS, window)
             tracking = {"metric": tracker["metric"], "label": tracker["label"], "window_days": window,
                         "evaluate_on": tracker.get("evaluate_on")}
-            message = (f"Tracking \u2014 Cavnar will compare {tracker['label'].lower()} over the next "
+            message = (f"Tracking \u2014 Cavnar AI will compare {tracker['label'].lower()} over the next "
                        f"{window} days with the {window} before")
         elif refused and refused.get("code") == "in_flight":
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. {refused['reason']}")
         else:
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
-                       "here Cavnar can measure it against yet")
+                       "here Cavnar AI can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
                     meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True)
     out = {"ok": True, "recorded": ok}
@@ -2275,7 +2275,7 @@ def _auto_publish_offer(rid) -> dict:
     missing = _si_ap.coverage_watch_missing(rid)
     if trust < SCHEDULE_PUBLISH_TRUST_MIN and missing:
         return {"eligible": False, "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN, "missing": missing,
-                "reason": ("Auto-publish needs proof that published weeks ran clean, and Cavnar can't watch "
+                "reason": ("Auto-publish needs proof that published weeks ran clean, and Cavnar AI can't watch "
                            "a shift yet: " + "; ".join(missing) + ".")}
     if trust < SCHEDULE_PUBLISH_TRUST_MIN:
         return {"eligible": False, "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,

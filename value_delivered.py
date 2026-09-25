@@ -360,7 +360,7 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
                 # set none, and the item says so (re-audit #10, R4-26).
                 _tgt = _thr.target_for(restaurant, "labor")
                 _lab_label = ("Scheduling against your target" if _tgt["source"] == "set"
-                              else "Scheduling against Cavnar's starting target")
+                              else "Scheduling against Cavnar AI's starting target")
                 if v > 0:
                     _dated(_lab_items, withheld, restaurant, {"key": "labor", "label": _lab_label,
                                                           "monthly": round(v, 2), "module": "labor",
@@ -485,7 +485,7 @@ def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None, s
 # or what is still available. Clients head each group with its own words.
 VALUE_SECTIONS = (
     {"key": "measured", "heading": "What was measured", "figures": ["delivered"]},
-    {"key": "surfaced", "heading": "What Cavnar surfaced / still available",
+    {"key": "surfaced", "heading": "What Cavnar AI surfaced / still available",
      "figures": ["avoided", "surfaced", "opportunity"]},
 )
 

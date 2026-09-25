@@ -13,13 +13,13 @@ final class ScheduleOptimizerDecodingTests: XCTestCase {
                    "unresolved": [{"date": "2026-10-03", "day": "Saturday", "daypart": "night", "dimension": "leadership",
                                    "text": "Saturday dinner has no bartender authorised to close.", "fixable_by_draft": false}],
                    "evaluations": 212, "seconds": 3.4, "stopped": "no improving move",
-                   "verdict": "Cavnar made 2 changes to the draft, raising Shift Quality from 71 to 84."},
+                   "verdict": "Cavnar AI made 2 changes to the draft, raising Shift Quality from 71 to 84."},
      "gate": {"ran": true, "kept": "regenerated", "focus": ["coverage"], "reason": "The weakest days were regenerated with what was wrong with them."},
      "overtime_forecast": [{"employee": "Ana", "text": "Ana reaches 44h"}],
      "standby_days": [{"date": "2026-10-03", "day": "Saturday", "chance_of_a_no_show": 0.31, "people": 9}],
      "preview_rows": [{"date": "2026-10-03", "day": "Saturday", "employee": "Cara", "role": "Bartender",
                        "shift_start": "4:00pm", "shift_end": "11:00pm", "scheduled_hours": "7",
-                       "notes": "Cavnar: added for coverage"}],
+                       "notes": "Cavnar AI: added for coverage"}],
      "quality": {"checked": true, "score": 84, "band": "good",
                  "confidence": {"score": 41, "level": "low", "summary": "Low confidence",
                                 "reasons": ["9 of 12 scheduled staff have no Operational Score."]},
@@ -42,11 +42,11 @@ final class ScheduleOptimizerDecodingTests: XCTestCase {
         XCTAssertEqual(o.changes?.first?.kind, "add")
         XCTAssertEqual(o.changes?.first?.gain, 6.5)
         XCTAssertEqual(o.unresolved?.first?.dimension, "leadership")
-        XCTAssertEqual(o.headline, "Cavnar improved this draft from 71 to 84 — 2 changes")
+        XCTAssertEqual(o.headline, "Cavnar AI improved this draft from 71 to 84 — 2 changes")
         XCTAssertTrue(o.hasContent)
         XCTAssertEqual(s.gate?.ran, true)
         XCTAssertEqual(s.gate?.kept, "regenerated")
-        XCTAssertEqual(s.previewRows?.first?.notes, "Cavnar: added for coverage")
+        XCTAssertEqual(s.previewRows?.first?.notes, "Cavnar AI: added for coverage")
         // The live optimizer wins over the one stored with the quality.
         XCTAssertEqual(s.optimizerSummary?.beforeScore, 71)
         XCTAssertEqual(s.quality?.optimizer?.beforeScore, 70)

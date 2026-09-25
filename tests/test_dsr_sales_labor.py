@@ -253,7 +253,7 @@ def test_labor_at_cavnars_assumed_rate_withholds_the_dollars_and_keeps_the_hours
     ctx.blocks["sales"] = dsr.block(dsr.READY, metrics={"net": 2000.0})
     b = block_labor.collect(ctx)
     assert b["detail"]["observations"][0]["text"] == \
-        "Labor was 20.0% of sales, at or under Cavnar's starting target of 28%."
+        "Labor was 20.0% of sales, at or under Cavnar AI's starting target of 28%."
 
 
 def test_a_labor_row_synced_mid_service_is_never_the_nights_labor(db, monkeypatch):

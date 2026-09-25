@@ -455,7 +455,7 @@ struct ScheduleReviewPanel: View {
                             if viewModel.isRescoringQuality {
                                 CavnarShimmerText(text: "Saving…")
                             } else {
-                                Text(viewModel.optimizerUnsaved ? "Save Cavnar's changes" : "Save fixes")
+                                Text(viewModel.optimizerUnsaved ? "Save Cavnar AI's changes" : "Save fixes")
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -479,7 +479,7 @@ struct ScheduleReviewPanel: View {
                     } else {
                         HStack(spacing: 6) {
                             Image(systemName: "sparkles").font(.system(size: 12, weight: .semibold))
-                            Text("Improve with Cavnar")
+                            Text("Improve with Cavnar AI")
                         }
                     }
                 }

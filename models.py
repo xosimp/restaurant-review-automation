@@ -7205,7 +7205,7 @@ def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
                 update_restaurant(rid, keep, db_path=db_path)
                 n += 1
         if n:
-            print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar's starting target")
+            print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar AI's starting target")
         return n
     except Exception as e:
         print(f"[backfill] seeded-target check skipped: {e}")

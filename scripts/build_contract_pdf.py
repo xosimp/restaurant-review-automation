@@ -227,7 +227,7 @@ def build(out=OUT):
 
     # ── 1 services ──
     p.h("1", "Services")
-    p.para("Cavnar AI provides its restaurant intelligence platform, delivered through dashboard.cavnar.ai and the Cavnar AI iOS app, made up of the modules selected below. Every module includes the daily Home brief, the weekly digest email, alerts, and Ask Cavnar, which answers questions from the Client’s own data.")
+    p.para("Cavnar AI provides its restaurant intelligence platform, delivered through dashboard.cavnar.ai and the Cavnar AI iOS app, made up of the modules selected below. Every module includes the daily Home brief, the weekly digest email, alerts, and Ask Cavnar AI, which answers questions from the Client’s own data.")
     p.need(28)
     c.setFillColor(INK); c.setFont("ApfelBold", 10); c.drawString(M + 12, p.y - 12, "Modules included")
     c.setFillColor(HexColor("#fdfcfa")); c.setStrokeColor(RULE); c.roundRect(M + 130, p.y - 18, COL - 130, 20, 3, stroke=1, fill=1)

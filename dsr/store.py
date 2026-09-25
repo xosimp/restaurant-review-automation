@@ -632,7 +632,7 @@ def budget_prefill(restaurant_id, week_dates, source, pct=0.0, db_path=DB_PATH) 
         else:
             v = fc.get(d.isoformat())
             if v is not None:
-                row.update(net=round(float(v), 2), **{"from": "Cavnar's forecast"})
+                row.update(net=round(float(v), 2), **{"from": "Cavnar AI's forecast"})
         if row["from"] is None:
             missing.append(d.isoformat())
         else:
@@ -644,7 +644,7 @@ def budget_prefill(restaurant_id, week_dates, source, pct=0.0, db_path=DB_PATH) 
     blank = sorted({k for r in days for k in r.get("clear") or []})
     basis = {"last_week": "Last week's budget, or what the night took where there was none.",
              "last_year": "What the same weekday took a year ago" + (f", {pct:+g}%." if pct else "."),
-             "forecast": "Cavnar's sales forecast for each night, as net."}[source]
+             "forecast": "Cavnar AI's sales forecast for each night, as net."}[source]
     if blank:
         basis += " " + " and ".join(k.capitalize() if i == 0 else k for i, k in enumerate(blank)) + \
                  " left blank for you to fill."

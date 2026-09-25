@@ -61,7 +61,7 @@ def build(forecast, budget_net=None, weather=None, events=None, weekday=None) ->
         return []
     wd = weekday or forecast.get("weekday") or "night"
     typical = forecast.get("typical_sales")
-    basis = f"Cavnar's forecast: the median of the last {forecast.get('samples')} {wd}s"
+    basis = f"Cavnar AI's forecast: the median of the last {forecast.get('samples')} {wd}s"
     out = []
     low, high = forecast.get("low"), forecast.get("high")
     if low is not None and high is not None:
@@ -79,13 +79,13 @@ def build(forecast, budget_net=None, weather=None, events=None, weekday=None) ->
         out.append({"key": "rain", "metric": "sales.net", "op": "lt", "value": float(typical),
                     "text": f"Rain ({int(rain)}% chance) expected to pull sales below a usual {wd} "
                             f"({_money(typical)})",
-                    "basis": "the National Weather Service forecast against Cavnar's typical night"})
+                    "basis": "the National Weather Service forecast against Cavnar AI's typical night"})
     listed = [e for e in (events or []) if e.get("label")]
     if typical is not None and listed and not any(p["key"] == "rain" for p in out):
         names = ", ".join(str(e["label"]) for e in listed[:2])
         out.append({"key": "event", "metric": "sales.net", "op": "gt", "value": float(typical),
                     "text": f"{names} expected to lift sales above a usual {wd} ({_money(typical)})",
-                    "basis": "what you listed for the date against Cavnar's typical night"})
+                    "basis": "what you listed for the date against Cavnar AI's typical night"})
     return out
 
 

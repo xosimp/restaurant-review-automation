@@ -335,7 +335,7 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
         if not lines:
             skipped += 1
             continue
-        note_bits = ["Estimated by Cavnar — check each quantity before accepting"]
+        note_bits = ["Estimated by Cavnar AI — check each quantity before accepting"]
         if lower:
             note_bits.append(f"confidence lowered: you changed {int(hist['rate'] * 100)}% of the lines on "
                              f"{hist['drafts']} past {kind} drafts")

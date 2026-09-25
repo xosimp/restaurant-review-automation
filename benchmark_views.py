@@ -111,7 +111,7 @@ def strength_detail(c) -> dict | None:
         "own": ("your own figure for this measure rests on few days or is older than the group's"
                 if (dims.get("own") if dims.get("own") is not None else 1) < 1
                 else "your own figure for this measure is well measured and current"),
-        "similarity": ("every type of restaurant on Cavnar — a behaviour measure, comparable across types"
+        "similarity": ("every type of restaurant on Cavnar AI — a behaviour measure, comparable across types"
                        if c.get("kind") == "platform" else
                        ("your type was guessed from your name — confirm it in Account to sharpen this"
                         if c.get("inferred") else
@@ -367,7 +367,7 @@ WHY_CLASSES = (
     ("concept", ("set the restaurant's concept", "untyped or 'other'"),
      "Your concept isn't set, so there's no like-for-like group for it yet"),
     ("wage", ("pay rate", "default wage", "default rate"),
-     "Labor cost is on Cavnar's default wage, so it isn't compared with other restaurants — set your pay rates"),
+     "Labor cost is on Cavnar AI's default wage, so it isn't compared with other restaurants — set your pay rates"),
     ("spread", ("too spread out",),
      "Restaurants like yours vary too much on this for a middle to mean anything yet"),
     ("owners", ("separate owners", "one owner's locations"),

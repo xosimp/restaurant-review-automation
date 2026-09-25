@@ -345,7 +345,7 @@ def _remember(restaurant_id, fact, kind="context"):
     """Record something the owner said that should survive this conversation."""
     from models import remember_ask_fact
     try:
-        saved = remember_ask_fact(restaurant_id, fact, kind=kind, source="Ask Cavnar")
+        saved = remember_ask_fact(restaurant_id, fact, kind=kind, source="Ask Cavnar AI")
         return {"remembered": saved["fact"]}
     except ValueError as e:
         return {"error": str(e)}
@@ -1081,8 +1081,8 @@ def _read_schedule_rules(restaurant_id):
         # (schedule_rules.cut_floor). Not a staffing requirement.
         "never_cut_below": _sr.cut_floor_default(r),
         "minors": minors,
-        "note": ("These are the values set in Cavnar, which the schedule is checked against. They are starting "
-                 "values, not legal advice: say them as 'the rule set in Cavnar', never as what the law requires, "
+        "note": ("These are the values set in Cavnar AI, which the schedule is checked against. They are starting "
+                 "values, not legal advice: say them as 'the rule set in Cavnar AI', never as what the law requires, "
                  "and tell the owner to check with counsel for their exact situation."),
     }
 
@@ -1264,8 +1264,8 @@ def _read_platform_intelligence(restaurant_id, _viewer=None):
             "inferred": source == "inferred", "peer_groups": {k: _b.cohort_label(v) for k, v in groups.items()},
             "comparisons": comps, "lines": _eng.prompt_lines(comps), "benchmarks": bands, "patterns": pats,
             "note": (f"Each comparison names its peer group: the restaurant's owner-confirmed peer group on "
-                     f"Cavnar — how it serves (counter, full service, bar-led), split further for labor by bar-led "
-                     f"and for food cost by menu family — or 'other restaurants on Cavnar, all types' (behaviour "
+                     f"Cavnar AI — how it serves (counter, full service, bar-led), split further for labor by bar-led "
+                     f"and for food cost by menu family — or 'other restaurants on Cavnar AI, all types' (behaviour "
                      f"metrics only). Bands are over at least {_b.MIN_QUARTILE_N} other restaurants from "
                      f"several owners (this restaurant's own organisation left out), no older than "
                      f"{_b.MAX_BAND_AGE_WEEKS} weeks. Quote the group, n and as_of with any band; under 75% comparison "
@@ -1686,7 +1686,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_schedule_rules",
-            "description": ("The scheduling rules set in Cavnar for this restaurant: rest between shifts, "
+            "description": ("The scheduling rules set in Cavnar AI for this restaurant: rest between shifts, "
                             "shift and weekly hours limits, meal breaks, the schedule notice rule, the "
                             "jurisdiction pack's starting values, staffing floors, and each minor's age band "
                             "and limits. Call it before answering ANY labor-law, compliance or scheduling-rule "
@@ -2179,8 +2179,8 @@ TOOLS = [
         "spec": {
             "name": "read_platform_intelligence",
             "description": (
-                "HOW THIS RESTAURANT COMPARES WITH OTHER RESTAURANTS ON CAVNAR, for the peer group each comparison "
-                "names — restaurants of its own type on Cavnar, or 'other restaurants on Cavnar, all types' (only "
+                "HOW THIS RESTAURANT COMPARES WITH OTHER RESTAURANTS ON CAVNAR AI, for the peer group each comparison "
+                "names — restaurants of its own type on Cavnar AI, or 'other restaurants on Cavnar AI, all types' (only "
                 "for measures comparable across types, never labor or food cost) — plus the published industry "
                 "figure for its type and statistically tested patterns with counts and effects. Bands are over at "
                 "least 8 other restaurants and no older than 8 weeks; each carries its group, size, as_of date "
@@ -2624,7 +2624,7 @@ TOOLS = [
             "name": "apply_invoice_lines",
             "description": (
                 "Propose applying a scanned supplier invoice's checked lines to ingredient costs — "
-                "only the lines Cavnar could verify (they add up and match one ingredient); flagged "
+                "only the lines Cavnar AI could verify (they add up and match one ingredient); flagged "
                 "lines stay for the owner on the Food Cost invoice card. Omit import_id for the "
                 "newest invoice still waiting. The owner confirms first."
             ),
@@ -3136,7 +3136,7 @@ def fields_shown(body) -> list:
         if k == "draft_hash":
             val = "the order as it stands now (" + val[:8] + ")"
         if k == "use_checked":
-            val = "only the lines Cavnar checked"
+            val = "only the lines Cavnar AI checked"
         if k == "review_ids" and isinstance(v, (list, tuple)):
             val = f"only the {len(v)} listed above"
         out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
@@ -3252,7 +3252,7 @@ def proposal_details(name, args, restaurant_id) -> dict:
                 # Flagged lines and preselected ones Cavnar could not check
                 # (no quantity or total read, no current cost) — both wait
                 # for the owner with the photo in front of them (F2-4).
-                details.append({"label": "Left for you", "value": f"{left} line{'' if left == 1 else 's'} Cavnar "
+                details.append({"label": "Left for you", "value": f"{left} line{'' if left == 1 else 's'} Cavnar AI "
                                                                   "couldn't verify stay on the Food Cost invoice card"})
         elif target:
             po = target["po"]

@@ -400,7 +400,7 @@ def collect(ctx):
         "pct_basis": basis,
         "cost_basis": cost_basis,
         "cost_basis_label": thresholds.LABOR_COST_BASIS_LABELS.get(cost_basis),
-        "cost_note": None if costed else "Set your wage rates to see labor cost — Cavnar won't cost your "
+        "cost_note": None if costed else "Set your wage rates to see labor cost — Cavnar AI won't cost your "
                                          "hours at an assumed $26/hr and call it payroll.",
         # Where the target came from (thresholds.target_for): the clients
         # colour a figure over a target the owner never set amber, not red,

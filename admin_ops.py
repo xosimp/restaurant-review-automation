@@ -1742,7 +1742,7 @@ def recommendation_acceptance(days=30, restaurant_id=None):
             "by_dollars": _group(eps, lambda e: "has a $ figure" if e["has_dollars"] else "no $ figure"),
             "by_cross_module": _group(eps, lambda e: "cross-module" if e["cross_module"] else "one module"),
             "by_model_written": _group(eps, lambda e: "model-written" if e["model_written"] else "rule-written"),
-            "by_cavnar_completes": _group(eps, lambda e: "Cavnar prepares it" if e["cavnar_completes"] else "owner does it"),
+            "by_cavnar_completes": _group(eps, lambda e: "Cavnar AI prepares it" if e["cavnar_completes"] else "owner does it"),
             # By the confidence the owner was SHOWN (the K3 snapshot's
             # percentage → band) — not the legacy band column, which mixed
             # card bands, model self-ratings and the review trend's slope

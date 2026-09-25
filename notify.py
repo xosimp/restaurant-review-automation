@@ -2688,10 +2688,10 @@ def _rating_unreadable(rid, name, at, db_path=DB_PATH) -> bool:
         return False
     ok = raise_alert(
         rid, "data_source_down",
-        f"Cavnar AI: {name} — Cavnar can't read your Google rating"
+        f"Cavnar AI: {name} — Cavnar AI can't read your Google rating"
         + (f" since {since}" if since else "") + ", so rating alerts are paused. dashboard.cavnar.ai",
         f"Can't read your Google rating — {name}",
-        lines=[("Cavnar hasn't been able to read your Google rating" + (f" since {since}" if since else "")
+        lines=[("Cavnar AI hasn't been able to read your Google rating" + (f" since {since}" if since else "")
                 + ", so the rating-threshold alert is paused rather than sent on an old figure."),
                "Reconnect Google in Account → Connections to resume it."],
         db_path=db_path, recs=[alert_rec("data_source_down", subject="rating")])

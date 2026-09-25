@@ -177,7 +177,7 @@ ENTRIES = (
 # table on purpose; `why_absent` says so to anyone who asks.
 ABSENT = {
     "waste_pct_of_purchases": ("No published source was found for the 4–5% waste target the product "
-                               "used; it is Cavnar's starting target, not an industry figure."),
+                               "used; it is Cavnar AI's starting target, not an industry figure."),
     "blended_hourly_rate": ("No sourced, regional figure for a blended hourly rate; the $22–28/hr "
                             "'industry average' had none."),
 }
@@ -366,7 +366,7 @@ def line(e, what=None) -> str:
     unit = e.get("unit") or ""
     if e.get("median") is not None:
         s = (f"{what} for {e['label']}: {e.get('median_basis') or 'published median'} "
-             f"{_num(e['median'])}{unit} ({cite(e)}); Cavnar's target band {band_text(e)} is set from it")
+             f"{_num(e['median'])}{unit} ({cite(e)}); Cavnar AI's target band {band_text(e)} is set from it")
     else:
         s = f"{what} for {e['label']}: {band_text(e)} ({cite(e)})"
     if e.get("inferred"):
@@ -440,7 +440,7 @@ def cohort_facts(b, key_prefix="cohort") -> list:
     (the viewer excluded), as_of the M/D/YY the band was computed."""
     if not b or not b.get("available"):
         return []
-    src = {"source": "Cavnar anonymous cohort", "year": None, "cohort_label": b.get("cohort_label"),
+    src = {"source": "Cavnar AI anonymous cohort", "year": None, "cohort_label": b.get("cohort_label"),
            "n": b.get("n"), "source_kind": "cohort", "inferred": bool(b.get("inferred")),
            "restaurant_category": b.get("cohort")}
     out = []

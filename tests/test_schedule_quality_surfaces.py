@@ -35,7 +35,7 @@ def test_web_shows_what_cavnar_changed_and_what_still_needs_the_owner():
     html = _html()
     assert 'id="sq-optimizer"' in html
     body = _function(html, "renderQualityOptimizer")
-    assert "Cavnar improved this draft from" in body
+    assert "Cavnar AI improved this draft from" in body
     assert "o.changes" in body and ".reason" in body
     assert "Still needs you" in body and "o.unresolved" in body
     # From generation, or from the stored quality when a week is reloaded.
@@ -50,7 +50,7 @@ def test_ios_shows_what_cavnar_changed_and_what_still_needs_the_owner():
     assert "optimizerSummary" in panel and "gate?.reason" in panel
     model = _swift("LaborViewModel.swift")
     assert "struct ScheduleOptimizer" in model and 'case beforeScore = "before_score"' in model
-    assert "Cavnar improved this draft from" in model
+    assert "Cavnar AI improved this draft from" in model
 
 
 # ── 2. Improve with Cavnar ─────────────────────────────────────────────────
@@ -63,7 +63,9 @@ def test_web_improve_with_cavnar_calls_optimize_and_saves_nothing():
     assert "/api/labor/schedule/optimize" in body
     assert "save:true" not in body.replace(" ", "")
     assert "_schedSetDirty(true)" in body            # staged; Save or Discard is the owner's
-    assert "'Cavnar:'" in body                        # the rows it touched are marked
+    # The rows it touched are marked: "Cavnar AI:", or "Cavnar:" on a row
+    # saved before the tag was renamed.
+    assert "/^Cavnar( AI)?:/.test(" in body
 
 
 def test_ios_improve_with_cavnar_calls_optimize_and_saves_nothing():
@@ -72,7 +74,9 @@ def test_ios_improve_with_cavnar_calls_optimize_and_saves_nothing():
     body = model[i:model.index("\n    }\n", i)]
     assert "/mobile/api/labor/schedule/optimize" in body
     assert "hasUnsavedFixes = true" in body
-    assert "Improve with Cavnar" in _swift("ScheduleReviewPanel.swift")
+    assert "Self.isEngineNote(row.notes)" in body   # both the new and the old note tag
+    assert 'n.hasPrefix("Cavnar AI:") || n.hasPrefix("Cavnar:")' in model
+    assert "Improve with Cavnar AI" in _swift("ScheduleReviewPanel.swift")
 
 
 # ── 3. The score's movement ────────────────────────────────────────────────

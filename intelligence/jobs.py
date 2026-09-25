@@ -284,7 +284,7 @@ def ineligible(member, row) -> str | None:
     if member.get("live") is False:
         return "no longer an active customer"
     if (member.get("live_weeks") or 0) < MIN_LIVE_WEEKS:
-        return f"fewer than {MIN_LIVE_WEEKS} weeks live on Cavnar"
+        return f"fewer than {MIN_LIVE_WEEKS} weeks live on Cavnar AI"
     try:
         comp = float((row or {}).get("completeness"))
     except (TypeError, ValueError):

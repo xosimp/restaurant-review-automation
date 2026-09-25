@@ -27,7 +27,7 @@ _DEFAULT_WASTE_TOLERANCE_PCT = 20
 WEEKS_PER_MONTH = 52.0 / 12.0
 # What the 4–5% waste target is, said wherever it is (NS4 H3): Cavnar's
 # starting default until the owner sets their own, not an industry figure.
-WASTE_TARGET_NOTE = "Cavnar's default until you set your own, not an industry figure"
+WASTE_TARGET_NOTE = "Cavnar AI's default until you set your own, not an industry figure"
 # The waste label's bands around the target (Benchmarking #36): "Near
 # target" reaches this many points past its top, "Over target" to this
 # multiple of it, and beyond that is "Well over target". Against the 4–5%
@@ -48,7 +48,7 @@ def _valid_waste_target(pct):
 # (NS4 L3): the basis says so rather than calling the band "normal".
 RECOVERABLE_BASIS = ("Only waste above each category's tolerance band counts — produce 28%, bakery 25%, "
                      "beverage and pantry 20%, protein and dairy 15% of the last order. Waste inside the band "
-                     "is left out as expected trim and spoilage (Cavnar's own allowances, not a published "
+                     "is left out as expected trim and spoilage (Cavnar AI's own allowances, not a published "
                      "standard) and is never counted. Summed per item from the POS-synced count and projected "
                      "at 52/12 weeks a month.")
 
@@ -564,7 +564,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     waste_target = ({"pct": _wt, "kind": "yours", "basis": f"your waste target, {_wt:g}% of purchases"}
                     if _wt is not None else
                     {"pct": None, "low": 4.0, "high": 5.0, "kind": "starting",
-                     "basis": f"Cavnar's 4–5% starting target — {WASTE_TARGET_NOTE}"})
+                     "basis": f"Cavnar AI's 4–5% starting target — {WASTE_TARGET_NOTE}"})
     if not _has_benchmark:
         benchmark_label  = "—"
         benchmark_tone   = "neutral"

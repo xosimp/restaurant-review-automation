@@ -735,7 +735,7 @@ struct ScheduleOptimizer: Codable, Equatable {
     var headline: String? {
         let n = (changes ?? []).count
         guard n > 0, let before = beforeScore, let after = afterScore else { return nil }
-        return "Cavnar improved this draft from \(before) to \(after) — \(n) \(n == 1 ? "change" : "changes")"
+        return "Cavnar AI improved this draft from \(before) to \(after) — \(n) \(n == 1 ? "change" : "changes")"
     }
 
     /// Worth a block at all: something changed, or something is left.
@@ -2483,10 +2483,17 @@ final class LaborViewModel {
         }
     }
 
+    /// A row the repair loop touched: its note starts with the engine's tag,
+    /// "Cavnar AI:" — or "Cavnar:" on a row saved before the tag was renamed.
+    static func isEngineNote(_ notes: String?) -> Bool {
+        let n = notes ?? ""
+        return n.hasPrefix("Cavnar AI:") || n.hasPrefix("Cavnar:")
+    }
+
     /// POST labor/schedule/optimize: the Shift Quality repair loop over the
     /// week on screen. Nothing is stored — the improved rows are shown with
     /// every change and why, and Save (the same one Apply fixes uses) is
-    /// what keeps them. Rows Cavnar touched carry a note starting "Cavnar:".
+    /// what keeps them. Rows Cavnar AI touched carry a note starting "Cavnar AI:".
     func optimize() async {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isOptimizing = true
@@ -2503,7 +2510,7 @@ final class LaborViewModel {
             let changes = response.optimizer?.changes ?? []
             result.optimizer = response.optimizer
             if !changes.isEmpty, let improved = response.rows {
-                for row in improved where (row.notes ?? "").hasPrefix("Cavnar:") { overriddenRows.insert(row.id) }
+                for row in improved where Self.isEngineNote(row.notes) { overriddenRows.insert(row.id) }
                 result.previewRows = improved
                 if let quality = response.quality {
                     scoreDelta = Self.delta(from: result.quality?.score, to: quality.score)

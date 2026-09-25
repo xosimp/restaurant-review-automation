@@ -173,7 +173,7 @@ def test_the_ladder_runs_finest_to_coarsest_and_labels_each_rung():
     assert categories.partition_ladder(prof, "format", {}) == ["sm:full_service"]
     assert categories.partition_label("sm:full_service|bar|t3|v2|u2") == (
         "full-service, bar-led restaurants with an average ticket of $35–60 of similar sales volume in urban "
-        "areas on Cavnar")
+        "areas on Cavnar AI")
     assert categories.rung_note("sm:full_service", "sm:full_service|bar").startswith("a wider group")
     assert categories.rung_note("sm:full_service|bar|t3", "sm:full_service|bar") is None
     for key in categories.partition_ladder(prof, "labor", s):

@@ -128,7 +128,7 @@ final class LaborAnalyticsViewModel {
     static func insightFallbackNote(hasInsight: Bool, serverSaysOlder: Bool, fetchFailed: Bool,
                                     cachedAt: Date?) -> String? {
         guard hasInsight, fetchFailed, !serverSaysOlder else { return nil }
-        return "This is the last read Cavnar finished"
+        return "This is the last read Cavnar AI finished"
             + (cachedAt.map { ", from \(CavnarDate.mdy($0))" } ?? "")
             + ". A new one couldn\u{2019}t be loaded just now."
     }

@@ -235,7 +235,7 @@ struct AccountConnectionsDetailView: View {
                     Task { await viewModel.disconnectInstagram() }
                 }
             } else {
-                Text("Sign in with the Facebook account that manages your page — Cavnar can then publish to both.")
+                Text("Sign in with the Facebook account that manages your page — Cavnar AI can then publish to both.")
                     .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
@@ -318,7 +318,7 @@ struct AccountConnectionsDetailView: View {
                     }
                 }
                 Self.syncStateLine(rp, provider: "rpower", posLine: connections.posLine)
-                Text("Set up by Cavnar from your RPOWER account \u{2014} contact us to change it.")
+                Text("Set up by Cavnar AI from your RPOWER account \u{2014} contact us to change it.")
                     .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }

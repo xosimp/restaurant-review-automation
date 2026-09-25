@@ -140,7 +140,7 @@ final class ConfidenceRound2Tests: XCTestCase {
         XCTAssertEqual(stale.olderReadNote, "From a read on 9/20/26 — the latest one couldn't be written.")
         let bare = try decode(AIInsight.self, #"{"insight_intro": "i", "insight_recommendations": [], "stale": true, "as_of": "2026-09-20"}"#)
         XCTAssertEqual(bare.olderReadNote,
-                       "This is the last read Cavnar completed, from 9/20/26. A new one couldn\u{2019}t be written just now.")
+                       "This is the last read Cavnar AI completed, from 9/20/26. A new one couldn\u{2019}t be written just now.")
         // The cached copy keeps the flag.
         let again = try JSONDecoder.cavnar.decode(AIInsight.self, from: try JSONEncoder.cavnar.encode(stale))
         XCTAssertNotNil(again.olderReadNote)

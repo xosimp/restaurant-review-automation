@@ -688,7 +688,7 @@ actor APIClient {
             // isRequestedCancellation): the connection's certificate was
             // refused — most often a hotel or venue Wi-Fi sign-in page, or
             // a network that inspects encrypted traffic.
-            return APIError(message: "Couldn't open a secure connection to Cavnar. If this Wi-Fi has a "
+            return APIError(message: "Couldn't open a secure connection to Cavnar AI. If this Wi-Fi has a "
                                    + "sign-in page, finish that or switch to cell, then try again.")
         default:
             return APIError(message: "Couldn't reach the server — check your connection and try again.")

@@ -1406,7 +1406,7 @@ def prompt_block(c: Constraints) -> str:
     if pack.get("applied"):
         # Starting values from a pack, never "the law": the Illinois pack's
         # 10-hour rest is the Chicago ordinance's, not the state's (NS5 L13).
-        lines.append(f"- Starting values from the {pack.get('label')} pack (set in Cavnar, not a statement of the law): "
+        lines.append(f"- Starting values from the {pack.get('label')} pack (set in Cavnar AI, not a statement of the law): "
                      + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
     if c.role_requirements:
         lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")

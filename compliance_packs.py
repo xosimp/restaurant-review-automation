@@ -26,7 +26,7 @@ PACKS = {
         "rules": {"meal_break_after_hours": 6, "min_rest_hours": 10},
         "notes": ["A meal period is due on a shift over six hours that spans the midday meal.",
                   "Spread-of-hours pay may apply to a day spanning more than ten hours — not computed here.",
-                  "New York City fast-food employers: predictive scheduling with 14 days' notice (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice)."],
+                  "New York City fast-food employers: predictive scheduling with 14 days' notice (set notice days if that is you — Cavnar AI then holds a week that would reach staff with less notice)."],
     },
     "OR": {
         "label": "Oregon",
@@ -37,15 +37,15 @@ PACKS = {
     "WA": {
         "label": "Washington",
         "rules": {"meal_break_after_hours": 5, "min_rest_hours": 10},
-        "notes": ["Seattle secure scheduling: 14 days' notice and a 10-hour rest for covered employers (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice).",
+        "notes": ["Seattle secure scheduling: 14 days' notice and a 10-hour rest for covered employers (set notice days if that is you — Cavnar AI then holds a week that would reach staff with less notice).",
                   "A meal period is due on a shift over five hours."],
     },
     "IL": {
         "label": "Illinois",
         "rules": {"meal_break_after_hours": 7.5, "min_rest_hours": 10},
-        "notes": ["Chicago Fair Workweek: 14 days' notice for covered employers (set notice days if that is you — Cavnar then holds a week that would reach staff with less notice).",
+        "notes": ["Chicago Fair Workweek: 14 days' notice for covered employers (set notice days if that is you — Cavnar AI then holds a week that would reach staff with less notice).",
                   "The 10-hour rest between shifts is the Chicago ordinance's starting value, not an Illinois state rule.",
-                  "Predictability pay for late changes is not modelled — Cavnar warns when a published week changes inside the notice window.",
+                  "Predictability pay for late changes is not modelled — Cavnar AI warns when a published week changes inside the notice window.",
                   "One day of rest in seven applies to most employees."],
     },
     "MA": {

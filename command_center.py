@@ -227,7 +227,7 @@ def registry(user, _locs=None):
     for action, label, kw, tier in _ACTIONS:
         if action_allowed(user, action, restaurant, view):
             out.append(_cmd("action:" + action, label, kw, "action", tier, action=action, args={}))
-    out.append(_cmd("ask", "Ask Cavnar", ("ask", "question", "why", "how"), "ask", 0, nav="ask"))
+    out.append(_cmd("ask", "Ask Cavnar AI", ("ask", "question", "why", "how"), "ask", 0, nav="ask"))
     return {"ok": True, "commands": out}, 200
 
 
@@ -374,7 +374,7 @@ def _search_chats(user, rid, q):
         s = _score(q, c.get("title"))
         if s:
             out.append((s, {"type": "chat", "id": c["id"], "title": c.get("title") or "A chat with Ask",
-                            "subtitle": "Ask Cavnar chat", "nav": f"ask?conversation={int(c['id'])}"}))
+                            "subtitle": "Ask Cavnar AI chat", "nav": f"ask?conversation={int(c['id'])}"}))
     return out[:_PER_SOURCE]
 
 
@@ -440,7 +440,7 @@ def propose(user, action, args):
     if not isinstance(args, dict):
         args = {}
     if not ask_cavnar_tools.is_write_tool(action):
-        return {"ok": False, "error": "That isn't an action Cavnar can propose."}, 400
+        return {"ok": False, "error": "That isn't an action Cavnar AI can propose."}, 400
     if not action_allowed(user, action):
         return {"ok": False, "error": "That action isn't available to this login."}, 403
     rid = user["restaurant_id"]
@@ -525,7 +525,7 @@ def reopen(user, proposal_id):
     args = _stored_args(action, row)
     p = ask_cavnar_tools.build_proposal(action, args, restaurant_id=rid)
     if not p:
-        return {"ok": False, "error": "That proposal can't be rebuilt — ask Cavnar again."}, 409
+        return {"ok": False, "error": "That proposal can't be rebuilt — ask Cavnar AI again."}, 409
     p["proposal_id"] = pid
     p["tier"] = TIER.get(action, 2)
     p["surface"] = "reopened"

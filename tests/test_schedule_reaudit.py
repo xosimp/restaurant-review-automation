@@ -82,6 +82,11 @@ def test_cavnar_notes_never_reach_an_employee():
     import labor
     assert labor.staff_facing_note("Cavnar: Server strength was under target (swapped with Hana W.)") == ""
     assert labor.staff_facing_note("opener — Cavnar: added to cover Server") == "opener"
+    # The current tag (schedule_optimizer / schedule_solver NOTE_TAG).
+    import schedule_optimizer, schedule_solver
+    assert schedule_optimizer.NOTE_TAG == schedule_solver.NOTE_TAG == "Cavnar AI:"
+    assert labor.staff_facing_note("Cavnar AI: Server strength was under target (swapped with Hana W.)") == ""
+    assert labor.staff_facing_note("opener — Cavnar AI: added to cover Server") == "opener"
 
 
 def test_a_rewrite_that_drops_a_shift_is_not_better():

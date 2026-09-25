@@ -1124,7 +1124,7 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
                     from intelligence import benchmarks as _bm
                     out["prior_label"] = _bm.cohort_label(cohort)
                 except Exception:
-                    out["prior_label"] = "other restaurants on Cavnar"
+                    out["prior_label"] = "other restaurants on Cavnar AI"
                 if not own:
                     out.update(rate=pi / pm, source="cohort")
                     out["low"], out["high"] = wilson(pi, pm)

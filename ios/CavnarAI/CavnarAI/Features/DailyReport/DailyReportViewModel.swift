@@ -349,7 +349,7 @@ final class DailyReportViewModel {
             actionError = error.message
         } catch is CancellationError {
         } catch {
-            actionError = "Couldn\u{2019}t reach Cavnar. Nothing was started."
+            actionError = "Couldn\u{2019}t reach Cavnar AI. Nothing was started."
         }
     }
 
@@ -428,7 +428,7 @@ final class DailyReportListViewModel {
             closeError = error.message
         } catch is CancellationError {
         } catch {
-            closeError = "Couldn\u{2019}t reach Cavnar. Nothing was started."
+            closeError = "Couldn\u{2019}t reach Cavnar AI. Nothing was started."
         }
         return nil
     }

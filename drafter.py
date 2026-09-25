@@ -155,7 +155,7 @@ LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "it": "Itali
 # never-say list, unsupported_commitments, public_reply_claims and its own P1
 # list, so nothing those two caught is lost.
 
-_COMMITMENT_DETAIL = "a commitment nobody told Cavnar was true"
+_COMMITMENT_DETAIL = "a commitment nobody told Cavnar AI was true"
 
 
 def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review_text=None, reviewer_name=None,
@@ -221,7 +221,7 @@ def reply_reason(verdict):
         return None
     refused = [f for f in verdict.findings if f.get("severity") == "refuse"]
     if not refused:
-        return "states something Cavnar cannot confirm"
+        return "states something Cavnar AI cannot confirm"
     first = refused[0]
     detail = first.get("detail") or ""
     # check_public_reply's own wording ("the draft contains a link") reads

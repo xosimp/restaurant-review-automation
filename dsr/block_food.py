@@ -135,7 +135,7 @@ def _estimate(ctx):
                                "AND business_date<? LIMIT 1", (ctx.restaurant_id, since, ctx.day))
         reports_items = bool(had_items) or pos.supports(ctx.restaurant_id, "fetch_order_selections")
         if not reports_items:
-            return empty, {"estimate": None, "note": "Your POS doesn't send item-level sales to Cavnar, "
+            return empty, {"estimate": None, "note": "Your POS doesn't send item-level sales to Cavnar AI, "
                                                       "so food cost can't be estimated from recipes."}, None
         # Said as it stands, never as a promise: no later version of this
         # report is made for item sales.

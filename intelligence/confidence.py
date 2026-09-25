@@ -167,8 +167,8 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
                      "restaurants improved"),
             "scope": scope, "measured": plat["measured"], "restaurants": plat["measured_restaurants"],
             # Named from the cohort actually used (NS4 H4), never "like yours".
-            "cohort_label": (f"{categories.label(cohort).lower()} on Cavnar" if scope == "cohort"
-                             else "restaurants on Cavnar (all types)")}))
+            "cohort_label": (f"{categories.label(cohort).lower()} on Cavnar AI" if scope == "cohort"
+                             else "restaurants on Cavnar AI (all types)")}))
 
     # Type match by the PUBLISHED rule (Benchmarking audit #31, BM2-9): a band
     # this restaurant could actually be shown — its confirmed partition, the
@@ -289,8 +289,8 @@ def card_confidence(evidence_band: str, evidence_reason: str, kind_score: dict =
         if (prior is not None and privacy.cohort_ok(prior.get("restaurants"))
                 and int(prior.get("measured") or 0) >= PRIOR_MIN_MEASURED):
             privacy.assert_anonymous(prior)
-            who = prior.get("cohort_label") or ("restaurants on Cavnar (all types)" if prior.get("scope") != "cohort"
-                                                else "restaurants of this type on Cavnar")
+            who = prior.get("cohort_label") or ("restaurants on Cavnar AI (all types)" if prior.get("scope") != "cohort"
+                                                else "restaurants of this type on Cavnar AI")
             said = f"{who}: {prior['note']}"
             if prior["value"] >= KIND_UP_AT and i < 2:
                 band, adjusted, basis = BANDS[i + 1], "up", prior.get("scope") or "platform"

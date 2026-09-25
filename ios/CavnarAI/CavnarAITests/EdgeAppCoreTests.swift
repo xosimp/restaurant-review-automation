@@ -383,8 +383,8 @@ final class EdgeAppCoreTests: XCTestCase {
 
     func testAStreamRefusalCarriesTheServersOwnMessage() async {
         let (error, _) = await streamError(status: 403,
-                                           body: #"{"ok": false, "error": "Ask Cavnar isn't on your plan yet."}"#)
-        XCTAssertEqual((error as? APIClient.APIError)?.message, "Ask Cavnar isn't on your plan yet.")
+                                           body: #"{"ok": false, "error": "Ask Cavnar AI isn't on your plan yet."}"#)
+        XCTAssertEqual((error as? APIClient.APIError)?.message, "Ask Cavnar AI isn't on your plan yet.")
     }
 
     func testTheStreamAsksNetworkMonitorWhetherTheDeviceIsOffline() throws {

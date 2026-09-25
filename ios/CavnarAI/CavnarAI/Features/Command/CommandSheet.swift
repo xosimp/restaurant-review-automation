@@ -153,7 +153,7 @@ struct CommandSheet: View {
                     chip("Last night", icon: "chart.bar.doc.horizontal") { go("dsr") }
                     chip("Scan invoice", icon: "doc.text.viewfinder") { go("inventory/invoices?scan=camera") }
                     chip("Requests", icon: "person.2") { go("labor/requests") }
-                    chip("Ask Cavnar", icon: "sparkles") { go("ask") }
+                    chip("Ask Cavnar AI", icon: "sparkles") { go("ask") }
                 }
             }
         }

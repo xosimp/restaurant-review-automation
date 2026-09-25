@@ -144,8 +144,8 @@ def test_a_stale_seed_is_reset_to_the_default_value_and_alerts_go_off(db):
 
 def test_target_for_names_whose_target_it_is():
     d = thresholds.target_for(Restaurant(name="D", owner_email="d@x.test"), "food")
-    assert d == {"pct": 30.0, "source": "default", "label": "Cavnar's starting target", "alerts_allowed": False,
-                 "phrase": "Cavnar's starting target of 30%"}
+    assert d == {"pct": 30.0, "source": "default", "label": "Cavnar AI's starting target", "alerts_allowed": False,
+                 "phrase": "Cavnar AI's starting target of 30%"}
     s = thresholds.target_for(Restaurant(name="S", owner_email="s@x.test", food_cost_target=28.0), "food")
     assert s["source"] == "set" and s["label"] == "your target" and s["alerts_allowed"]
 
@@ -153,7 +153,7 @@ def test_target_for_names_whose_target_it_is():
 def test_food_cost_label_and_dish_colours_on_the_starting_target(monkeypatch):
     monkeypatch.setattr(cogs, "_engine_industry_food_cost", lambda r: None)
     r = Restaurant(name="Steak", owner_email="st@x.test", category="steakhouse")
-    assert cogs.band_label(34.0, 30.0, starting=True) == ("Above Cavnar's starting target", "warn")
+    assert cogs.band_label(34.0, 30.0, starting=True) == ("Above Cavnar AI's starting target", "warn")
     ref = cogs.dish_reference(r)
     assert ref["kind"] == "starting_target" and ref["target_source"] == "default"
     assert cogs.dish_tone(45.0, ref) == "warn"            # capped: nobody chose 30
@@ -194,7 +194,7 @@ def test_value_opportunity_names_the_starting_target(db, monkeypatch):
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda r: lab)
     monkeypatch.setattr(value_delivered, "_dated", lambda items, w, r, item, *a: items.append(item))
     it = value_delivered.opportunity(rid, db_path=db)["items"][0]
-    assert it["label"] == "Scheduling against Cavnar's starting target" and it["target_source"] == "default"
+    assert it["label"] == "Scheduling against Cavnar AI's starting target" and it["target_source"] == "default"
 
 
 def test_no_new_bare_target_reads():

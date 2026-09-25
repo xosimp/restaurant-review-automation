@@ -128,13 +128,13 @@ final class ConfidenceIntegrationTests: XCTestCase {
         let s = try decode(LaborStats.self, """
             {\(Self.laborBase),
              "savings_breakdown": {"labor_monthly": 0, "labor_annual": 0, "labor_overtime": 0,
-               "labor_target_label": "Cavnar's starting target", "labor_target_source": "default"},
+               "labor_target_label": "Cavnar AI's starting target", "labor_target_source": "default"},
              "labor_upcoming": [], "demand_accuracy": null, "week_projection_accuracy": null}
             """)
         XCTAssertNil(s.savingsBreakdown.laborVsIndustryMonthly)
         XCTAssertNil(s.savingsBreakdown.laborVsIndustryAnnual)
-        XCTAssertEqual(LaborAnalyticsSection.targetName(s), "Cavnar's starting target")
-        XCTAssertEqual(LaborAnalyticsSection.targetLegend(s, target: 30), "Cavnar's starting target (30%)")
+        XCTAssertEqual(LaborAnalyticsSection.targetName(s), "Cavnar AI's starting target")
+        XCTAssertEqual(LaborAnalyticsSection.targetLegend(s, target: 30), "Cavnar AI's starting target (30%)")
         let older = try decode(LaborStats.self, """
             {\(Self.laborBase),
              "savings_breakdown": {"labor_monthly": 0, "labor_annual": 0, "labor_overtime": 0,
@@ -335,12 +335,12 @@ final class ConfidenceIntegrationTests: XCTestCase {
              "delivered": {"monthly": 1420, "wins": 3, "scope": "monthly_rate",
                            "consistent_monthly": 900, "associated_monthly": 520},
              "sections": [{"key": "measured", "heading": "What was measured", "figures": ["delivered"]},
-                          {"key": "surfaced", "heading": "What Cavnar surfaced / still available",
+                          {"key": "surfaced", "heading": "What Cavnar AI surfaced / still available",
                            "figures": ["avoided", "surfaced", "opportunity"]}]}
             """)
         XCTAssertEqual(v.delivered?.scope, "monthly_rate")
         XCTAssertEqual(v.heading("measured", fallback: "x"), "What was measured")
-        XCTAssertEqual(v.heading("surfaced", fallback: "x"), "What Cavnar surfaced / still available")
+        XCTAssertEqual(v.heading("surfaced", fallback: "x"), "What Cavnar AI surfaced / still available")
         XCTAssertEqual(v.heading("other", fallback: "fallback"), "fallback")
         let d = try XCTUnwrap(v.delivered)
         XCTAssertEqual(RecValueFormat.gradeSplitLine(d),
