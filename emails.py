@@ -1037,6 +1037,52 @@ def report_confidence(conf) -> str:
             f'{esc(label)}</div>')
 
 
+def report_caveats(caveats) -> str:
+    """Every caveat an email carries, as ONE muted footer line (density
+    audit #11): the weekly digest printed up to seven separate caveat
+    paragraphs at the same rhythm as its findings. Duplicates are said
+    once; "" when there are none. A caveat that belongs to one specific
+    signal (a link's innocent reading, a loss signal's note) stays beside
+    that signal and never comes here."""
+    seen = []
+    for c in caveats or ():
+        c = " ".join(str(c or "").split())
+        if c and not c.endswith((".", "!", "?")):
+            c += "."
+        if c and c not in seen:
+            seen.append(c)
+    if not seen:
+        return ""
+    return report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                            f'Caveats: {esc(" ".join(seen))}</span>')
+
+
+def review_kpi_stats(review) -> str:
+    """The week's or month's headline figures as ONE stat row (density audit
+    #11): the first figures an owner could scan used to sit nine sections
+    down. Read from the review's own measured metrics (weekly_review /
+    monthly_review), never recomputed; a metric that could not be measured
+    is left out, not printed as 0. A move beyond the band is toned (better
+    green, worse red); a move inside it stays neutral. "" when nothing was
+    measured."""
+    try:
+        from review_common import fmt as _rfmt
+        tone = {"improved": BRAND["good"], "worsened": BRAND["bad"]}
+        stats = []
+        for m in (review or {}).get("metrics") or []:
+            if m.get("value") is None:
+                continue
+            unit = m.get("unit")
+            value = _rfmt(m["value"], unit)
+            if unit == "★":
+                value = f"{m['value']:.2f}&#9733;"
+            stats.append((value, esc(str(m.get("label") or "")).lower(), tone.get(m.get("verdict"))))
+        return report_stats(stats[:4])
+    except Exception as e:
+        print(f"[review email] kpi row failed: {e}")
+        return ""
+
+
 def report_bullets(items, accent: str = None) -> str:
     """One sentence per line on a thin rule — report_lines without the
     label, for a list whose eyebrow already says what it is (the DSR's went
@@ -2320,11 +2366,15 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         print(f"send_reactivation_email failed: {e}")
 
 
-def _one_thing_block(out, fix_first, src, when, rid=None):
+def _one_thing_block(out, fix_first, src, when, rid=None, loud=False):
     """"If you only do one thing" — the cross-module one thing
     (business_intelligence.pick_one_thing) with a keyed "Ask about this"
     link. Appends to `out` and returns the fix_first it rendered, or None.
-    Never raises."""
+    Never raises.
+
+    `loud` sets it in the report_action frame — the digest's and the
+    monthly review's ONE action (density audit #11), placed right under the
+    figures instead of mid-email with a second "one thing" at the end."""
     import html as _html
     try:
         if not fix_first or not fix_first.get("what"):
@@ -2345,6 +2395,12 @@ def _one_thing_block(out, fix_first, src, when, rid=None):
         import rec_delivery
         key = fix_first.get("key") if rec_delivery.presentable(fix_first.get("key")) else None
         block += report_ask_link(f"Walk me through this: {fix_first['what']}", key, src, rid=rid)
+        if loud:
+            block = (f'<div style="background:{_TINT[BRAND["ember"]]};border-left:3px solid {BRAND["ember"]};'
+                     f'border-radius:0 8px 8px 0;padding:15px 17px">'
+                     + block.replace(report_eyebrow(f"If you only do one thing {when}"),
+                                     report_eyebrow(f"If you only do one thing {when}", BRAND["ember"]), 1)
+                     + '</div>')
         out.append(block)
         return fix_first
     except Exception as e:
@@ -2382,67 +2438,98 @@ def _priority_line(p) -> str:
 
 
 def _weekly_review_sections(restaurant_id):
-    """The week read as a business week rather than a review count.
+    """The weekly review's blocks as a flat list (see _weekly_review_parts),
+    each caveat inline under its own block. The digest itself uses the
+    parts, so it can put the one action under the figures and say every
+    caveat once in a footer line."""
+    p = _weekly_review_parts(restaurant_id)
+    return [b for b in (p.get("against"), p.get("results"), p.get("action"), p.get("priorities"),
+                        p.get("link"), p.get("good_news")) if b]
+
+
+def _weekly_review_parts(restaurant_id, review=None, caveats=None, headline_in_title=False):
+    """The week read as a business week rather than a review count, as
+    named blocks: {"review", "against", "results", "action", "fix_first",
+    "priorities", "link", "good_news"} (each block "" when it has nothing).
 
     The digest is the one thing Cavnar AI sends every single week, so it is
     also the clearest statement the product makes about what it thinks
-    matters — and it said "reviews". These blocks go above the review
-    content, in the same voice as the monthly. Deterministic; see
-    weekly_review.py. Every block is independently guarded, so a module with
-    nothing to say drops out instead of printing a zero.
+    matters — and it said "reviews". Deterministic; see weekly_review.py.
+    Every block is independently guarded, so a module with nothing to say
+    drops out instead of printing a zero.
+
+    `review` is a weekly_review.build the caller already made (the digest
+    builds one for its H1). `caveats`, when a list, collects the generic
+    caveats (the short-window note, the before/after note, "not added
+    together", the good-news note) for the caller's ONE footer line
+    (report_caveats) instead of printing each under its block.
+    `headline_in_title` leaves the headline sentence out of "The week
+    against" — the digest's H1 already says it (density audit #11).
     """
+    parts = {"review": None, "against": "", "results": "", "action": "", "fix_first": None,
+             "priorities": "", "link": "", "good_news": ""}
     if not restaurant_id:
-        return []
+        return parts
     import html as _html
-    out = []
     try:
         import weekly_review
-        review = weekly_review.build(restaurant_id)
+        if review is None:
+            review = weekly_review.build(restaurant_id)
     except Exception as e:
         print(f"[weekly] review build failed: {e}")
-        return []
+        return parts
+    parts["review"] = review
 
     def _list(items):
         return "<br>".join(_html.escape(str(i)) for i in items if i)
 
+    def _caveat(text):
+        if caveats is not None:
+            caveats.append(text)
+            return ""
+        return report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                f'{_html.escape(text)}</span>')
+
     try:
         body = weekly_review.lines(review)
         if body:
-            block = (report_eyebrow("The week against " + review["compared_with"])
-                     + report_paragraph(_html.escape(weekly_review.headline(review)))
-                     + report_paragraph(_list(body)))
+            block = report_eyebrow("The week against " + review["compared_with"])
+            if not headline_in_title:
+                block += report_paragraph(_html.escape(weekly_review.headline(review)))
+            block += report_paragraph(_list(body))
             cost = weekly_review.cost_of_waiting(review)
             if cost:
                 block += report_paragraph(f'<strong>{_html.escape(cost)}</strong>')
-            block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                      f'{_html.escape(weekly_review.WINDOW_CAVEAT)}</span>')
-            out.append(block)
+            block += _caveat(weekly_review.WINDOW_CAVEAT)
+            parts["against"] = block
     except Exception as e:
         print(f"[weekly] metrics block failed: {e}")
     try:
         import outcomes as _o
         if review.get("results"):
-            out.append(report_eyebrow("What your changes did")
-                       + report_paragraph(_list(_o.summarise(r) for r in review["results"][:3]))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
+            parts["results"] = (report_eyebrow("What your changes did")
+                                + report_paragraph(_list(_o.summarise(r) for r in review["results"][:3]))
+                                + _caveat(_o.CAUSATION_CAVEAT))
     except Exception as e:
         print(f"[weekly] results block failed: {e}")
     # The one thing, rendered — it used to be logged as shown in this email
     # without ever appearing in it. Staged, with the priorities below, and
-    # presented only once the digest is delivered (rec_delivery).
-    shown_first = _one_thing_block(out, review.get("fix_first"), "weekly_email", "this week",
-                                   rid=restaurant_id)
+    # presented only once the digest is delivered (rec_delivery). In the
+    # frame of the one action: the digest shows no other.
+    _one = []
+    shown_first = _one_thing_block(_one, review.get("fix_first"), "weekly_email", "this week",
+                                   rid=restaurant_id, loud=True)
+    parts["action"] = _one[0] if _one else ""
+    parts["fix_first"] = shown_first
     priorities = _uncovered_priorities(review.get("priorities"), shown_first)
     try:
         if priorities:
             # The monthly email's note, now on the weekly too (NS3 M5):
             # these are different kinds of figure and are never a total.
-            out.append(report_eyebrow("Worth your time this week")
-                       + report_paragraph(_list(_priority_line(p) for p in priorities))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'These come from different measurements and are not '
-                                          f'added together.</span>'))
+            parts["priorities"] = (report_eyebrow("Worth your time this week")
+                                   + report_paragraph(_list(_priority_line(p) for p in priorities))
+                                   + _caveat("These come from different measurements and are not "
+                                             "added together."))
     except Exception as e:
         print(f"[weekly] priorities block failed: {e}")
     # What two modules saw that neither could see alone. The digest is the
@@ -2474,14 +2561,15 @@ def _weekly_review_sections(restaurant_id):
             if link.get("confirm_by"):
                 block += report_paragraph("To confirm: " + _html.escape(link["confirm_by"]))
             # The innocent reading travels with the signal, never behind a
-            # link the reader has to choose to follow.
+            # link the reader has to choose to follow — and never into the
+            # footer: it belongs to this one finding.
             caution = link.get("not_a_cause") or link.get("alternative")
             if caution:
                 block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'{_html.escape(caution)}</span>')
             block += report_ask_link(f"Tell me more about this: {link['headline']}", lkey, "weekly_email",
                                      rid=restaurant_id)
-            out.append(block)
+            parts["link"] = block
             shown_link = dict(link, key=lkey)
     except Exception as e:
         print(f"[weekly] cross-module block failed: {e}")
@@ -2498,83 +2586,114 @@ def _weekly_review_sections(restaurant_id):
         import good_news as _gn
         news = _gn.all_good_news(restaurant_id, limit=2) or []
         if news:
-            out.append(report_eyebrow("What got better")
-                       + report_paragraph(_list(n["summary"] for n in news))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'{_html.escape(_gn.CAVEAT)}</span>'))
+            parts["good_news"] = (report_eyebrow("What got better")
+                                  + report_paragraph(_list(n["summary"] for n in news))
+                                  + _caveat(_gn.CAVEAT))
     except Exception as e:
         print(f"[weekly] good news block failed: {e}")
-    return out
+    return parts
 
 
 def _monthly_review_sections(restaurant_id, months=1):
-    """The month read like a P&L rather than counted: how the headline
-    numbers moved against the month before, what the owner's own changes
-    did, where their goals stand, and the three things worth fixing next.
+    """The monthly (or quarterly) review's blocks as a flat list (see
+    _monthly_review_parts), each caveat inline under its own block. The
+    group monthly and the quarterly use this; the single-location monthly
+    uses the parts, so its one action sits under the figures."""
+    p = _monthly_review_parts(restaurant_id, months=months)
+    return [b for b in (p.get("against"), p.get("results"), p.get("worked"), p.get("goals"),
+                        p.get("action"), p.get("priorities"), p.get("value"), p.get("promise")) if b]
+
+
+def _monthly_review_parts(restaurant_id, months=1, review=None, caveats=None, headline_in_title=False):
+    """The month read like a P&L rather than counted, as named blocks:
+    {"review", "against", "results", "worked", "goals", "action",
+    "fix_first", "priorities", "value", "promise"} ("" when empty): how the
+    headline numbers moved against the month before, what the owner's own
+    changes did, where their goals stand, and the things worth fixing next.
 
     Deterministic — see monthly_review.py. Every block is optional and
     independently guarded, so a module with nothing to say drops out instead
-    of printing a zero.
+    of printing a zero. `review`, `caveats` and `headline_in_title` as in
+    _weekly_review_parts (density audit #11). The value block keeps its own
+    "not added together" note inline: it is the value rule, said where the
+    figures are.
     """
+    parts = {"review": None, "against": "", "results": "", "worked": "", "goals": "", "action": "",
+             "fix_first": None, "priorities": "", "value": "", "promise": ""}
     if not restaurant_id:
-        return []
+        return parts
     import html as _html
-    out = []
     try:
         import monthly_review
-        review = monthly_review.build(restaurant_id, months=months)
+        if review is None:
+            review = monthly_review.build(restaurant_id, months=months)
     except Exception as e:
         print(f"[monthly] review build failed: {e}")
-        return []
+        return parts
+    parts["review"] = review
 
     def _list(items):
         return "<br>".join(_html.escape(str(i)) for i in items if i)
 
+    def _caveat(text):
+        if caveats is not None:
+            caveats.append(text)
+            return ""
+        return report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                f'{_html.escape(text)}</span>')
+
     try:
         body = monthly_review.lines(review)
         if body:
-            block = (report_eyebrow(("The quarter" if review.get("months", 1) > 1 else "The month")
-                                    + " against " + review["compared_with"])
-                     + report_paragraph(_html.escape(monthly_review.headline(review)))
-                     + report_paragraph(_list(body)))
+            block = report_eyebrow(("The quarter" if review.get("months", 1) > 1 else "The month")
+                                   + " against " + review["compared_with"])
+            if not headline_in_title:
+                block += report_paragraph(_html.escape(monthly_review.headline(review)))
+            block += report_paragraph(_list(body))
             cost = monthly_review.cost_of_waiting(review)
             if cost:
                 block += report_paragraph(
                     f'<strong>{_html.escape(cost)}</strong>')
-            out.append(block)
+            parts["against"] = block
     except Exception as e:
         print(f"[monthly] metrics block failed: {e}")
     try:
         import outcomes as _o
         if review.get("results"):
-            out.append(report_eyebrow("What your changes did")
-                       + report_paragraph(_list(_o.summarise(r) for r in review["results"][:4]))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
+            parts["results"] = (report_eyebrow("What your changes did")
+                                + report_paragraph(_list(_o.summarise(r) for r in review["results"][:4]))
+                                + _caveat(_o.CAUSATION_CAVEAT))
     except Exception as e:
         print(f"[monthly] results block failed: {e}")
-    # "What worked for you" (rec-ROI #28): what the owner followed and what
-    # it was associated with over six months, in sentences built without a
-    # model (owner_report). The monthly goes to the owner, so nothing is
-    # redacted; a clause whose minimum isn't met is simply not there, and
-    # with none met the block is left out rather than padded.
+    # "Measured alongside your changes" (rec-ROI #28): what the owner
+    # followed and what it was associated with over six months, in sentences
+    # built without a model (owner_report). It was headed "What worked for
+    # you", the label DESIGN_SYSTEM.md retired for asserting causation over
+    # before-and-after data; Home and #recs say this now. The monthly goes to
+    # the owner, so nothing is redacted; a clause whose minimum isn't met is
+    # simply not there, and with none met the block is left out.
     try:
         import owner_report as _or
         worked = _or.email_lines(restaurant_id)
         if worked:
-            out.append(report_eyebrow("What worked for you")
-                       + report_paragraph(_list(worked)))
+            parts["worked"] = (report_eyebrow("Measured alongside your changes")
+                               + report_paragraph(_list(worked))
+                               + _caveat("Measured before and after, not proven cause."))
     except Exception as e:
         print(f"[monthly] what-worked block failed: {e}")
     try:
         import goals as _g
         if review.get("goals"):
-            out.append(report_eyebrow("Goals")
-                       + report_paragraph(_list(_g.summarise(x) for x in review["goals"][:4])))
+            parts["goals"] = (report_eyebrow("Goals")
+                              + report_paragraph(_list(_g.summarise(x) for x in review["goals"][:4])))
     except Exception as e:
         print(f"[monthly] goals block failed: {e}")
     span = "next quarter" if review.get("months", 1) > 1 else "next month"
-    shown_first = _one_thing_block(out, review.get("fix_first"), "monthly_email", span, rid=restaurant_id)
+    _one = []
+    shown_first = _one_thing_block(_one, review.get("fix_first"), "monthly_email", span, rid=restaurant_id,
+                                   loud=True)
+    parts["action"] = _one[0] if _one else ""
+    parts["fix_first"] = shown_first
     priorities = _uncovered_priorities(review.get("priorities"), shown_first)
     try:
         import rec_delivery
@@ -2585,17 +2704,16 @@ def _monthly_review_sections(restaurant_id, months=1):
     try:
         if priorities:
             # A quarterly said "next month" here (re-audit C12).
-            out.append(report_eyebrow(f"Worth your time {span}")
-                       + report_paragraph(_list(_priority_line(p) for p in priorities))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'These come from different measurements and are not '
-                                          f'added together.</span>'))
+            parts["priorities"] = (report_eyebrow(f"Worth your time {span}")
+                                   + report_paragraph(_list(_priority_line(p) for p in priorities))
+                                   + _caveat("These come from different measurements and are not "
+                                             "added together."))
     except Exception as e:
         print(f"[monthly] priorities block failed: {e}")
     # What the product has been worth, on the one email an owner reads with
-    # their P&L open. Kept LAST and kept honest: a month with nothing
-    # measured says so rather than reaching for the opportunity figure,
-    # which is what the old Home banner did.
+    # their P&L open. Kept honest: a month with nothing measured says so
+    # rather than reaching for the opportunity figure, which is what the old
+    # Home banner did.
     try:
         import value_delivered as _vd
         v = _vd.breakdown(restaurant_id)
@@ -2625,13 +2743,15 @@ def _monthly_review_sections(restaurant_id, months=1):
             by_section["surfaced"].append(f"${v['opportunity']['monthly']:,.0f}/month still on the table — "
                                           f"available, not captured.")
         shown = [sec for sec in _vd.VALUE_SECTIONS if by_section.get(sec["key"])]
+        blocks = []
         for i, sec in enumerate(shown):
             block = report_eyebrow(sec["heading"]) + report_paragraph(_list(by_section[sec["key"]]))
             if i == len(shown) - 1:
                 block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
                                           f'These are four different measurements and are not '
                                           f'added together. {_html.escape(d["caveat"])}</span>')
-            out.append(block)
+            blocks.append(block)
+        parts["value"] = report_rule().join(blocks)
     except Exception as e:
         print(f"[monthly] value block failed: {e}")
     # The audit, measured. Only where one is linked — see promise.py.
@@ -2643,13 +2763,13 @@ def _monthly_review_sections(restaurant_id, months=1):
             if lines_:
                 from time_utils import mdy as _mdy
                 # M/D/YY, never the stored ISO date (re-audit A34).
-                out.append(report_eyebrow(f"Your audit, {_mdy(cmp['audit_date'])}")
-                           + report_paragraph(_list(lines_))
-                           + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                              f'{_html.escape(cmp["caveat"])}</span>'))
+                parts["promise"] = (report_eyebrow(f"Your audit, {_mdy(cmp['audit_date'])}")
+                                    + report_paragraph(_list(lines_))
+                                    + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                                       f'{_html.escape(cmp["caveat"])}</span>'))
     except Exception as e:
         print(f"[monthly] promise block failed: {e}")
-    return out
+    return parts
 
 
 def _monthly_source_gaps(restaurant_id):
@@ -2841,7 +2961,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             f"Modules in use: {modules_in_use}.\n"
             + (f"Reviews this month: {total} total, {avg} star average, {pos} positive, {neg} negative.\n"
                if total else "No new reviews this month.\n")
-            + "Write the opening line. The stat row directly beneath it already shows the "
+            + "Write the opening line. The stat row directly above it already shows the "
               "totals, so do not recite them all — lead with the one thing that matters most."
         )
         summary_paragraph = generate_email_personalization(
@@ -2851,24 +2971,63 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
 
         import rec_delivery
         with rec_delivery.collect() as shown:
-            sections = _monthly_review_sections(restaurant_id)
+            # Verdict first, one action (density audit #11): the H1 is the
+            # month's verdict and the subject carries it; then one row of
+            # the month's figures; then ONE action — the cross-module one
+            # thing, or "Your next move" only when there is none; then the
+            # replies waiting; then the detail; then every generic caveat
+            # in one footer line. It used to open on the restaurant's name,
+            # put the numbers after the prose, and end on a second "one
+            # thing".
+            caveats = []
+            review = None
+            try:
+                import monthly_review as _mrv
+                review = _mrv.build(restaurant_id) if restaurant_id else None
+            except Exception as e:
+                print(f"[monthly] review build failed: {e}")
+            measured = bool(review and any(m.get("value") is not None for m in review.get("metrics") or []))
+            verdict = _mrv.headline(review) if measured else None
+            parts = (_monthly_review_parts(restaurant_id, review=review, caveats=caveats,
+                                           headline_in_title=measured)
+                     if review else {})
+            kpi = review_kpi_stats(review) if measured else ""
+            kpi_row = (report_eyebrow(month_name + " in numbers") + kpi) if kpi else stats_section
+            one = parts.get("action") or ""
+            needs_reply = ""
+            if one:
+                # The one thing is the action; drafted replies still waiting
+                # are said once, under it, rather than as a second move.
+                if action_key == "monthly_move:approve_replies":
+                    needs_reply = (report_eyebrow("Needs a reply", BRAND["bad"])
+                                   + report_paragraph(_html_esc(action)))
+                else:
+                    action_key = None
+            else:
+                one = action_section
             if action_key:
                 rec_delivery.stage(restaurant_id, "monthly_email",
                                    [{"key": action_key, "module": "home", "title": action[:200]}])
+            sections = [kpi_row, report_paragraph(_html_esc(summary_paragraph)), one, needs_reply,
+                        parts.get("against"), parts.get("results"), parts.get("worked"), parts.get("goals"),
+                        parts.get("priorities"), parts.get("value"), parts.get("promise"),
+                        stats_section if kpi_row is not stats_section else "", lines_section,
+                        report_caveats(caveats)]
+            subject = (f"{_header_text(verdict).rstrip('.')} — {month_name} at {restaurant_name}"
+                       if verdict else f"{month_name} at {restaurant_name} — your Cavnar AI summary")
             result = deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
                 "from": sender("will"),
                 "to": [to_email],
-                "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
+                "subject": subject,
                 "preheader": _monthly_preheader(restaurant_id),
                 "html": report_shell(
                     kicker="Monthly Review",
                     # Text, not markup: "Rosa & Sons <Trattoria>" opened a
                     # tag the email never closed (re-audit C12).
-                    title=_html_esc(restaurant_name),
-                    subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {_html_esc(first)}",
-                    sections=([report_paragraph(_html_esc(summary_paragraph))]
-                              + sections
-                              + [stats_section, lines_section, action_section]),
+                    title=_html_esc(verdict or restaurant_name),
+                    subtitle=(f"{_html_esc(restaurant_name)} &nbsp;&middot;&nbsp; " if verdict else "")
+                    + f"{month_name} {year} &nbsp;&middot;&nbsp; for {_html_esc(first)}",
+                    sections=[x for x in sections if x],
                     cta_label="Open your dashboard →",
                 ),
             })

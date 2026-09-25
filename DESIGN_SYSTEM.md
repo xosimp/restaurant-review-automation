@@ -882,6 +882,39 @@ Three exist. Pick by what the email *is*, not by which is nearest:
 Widths are 560px (`report_shell`) and 480px (`_branded_email`). Do not
 introduce a third.
 
+The morning brief email (`morning_brief._email_html`) and every alert email
+(`notify._alert_email_html`) are on `report_shell` since 9/25/26.
+
+### Reporting email order (weekly digest, monthly review — 9/25/26)
+
+Verdict first, one action. In this order, each part optional:
+
+1. **H1 = the verdict** — the deterministic `weekly_review.headline` /
+   `monthly_review.headline`, when the period measured anything; the
+   restaurant name moves to the subtitle. The **subject** carries the same
+   sentence (`reporter.digest_subject`: "A better week: sales improved — your
+   week at X"). The headline is never repeated in the body.
+2. **One stat row** of the period's figures (`emails.review_kpi_stats`, the
+   review's own measured metrics, toned by verdict, an unmeasured one left
+   out).
+3. **ONE action** — the cross-module one thing (`_one_thing_block(…,
+   loud=True)`, in the `report_action` frame); the model's "This week's move"
+   / "Your next move" only when there is no one thing. Never both.
+4. **Needs a reply** — guests waiting.
+5. The detail: the period against the last, "What your changes did" (once),
+   worth your time, one cross-module finding, module sections, follow-through.
+6. **One caveat footer line** (`report_caveats`): every generic caveat, said
+   once. A caveat that belongs to one signal (a link's innocent reading, a
+   loss note, the value block's "not added together") stays beside it.
+
+The monthly's owner-record block is "Measured alongside your changes" (never
+"What worked for you"). The morning brief email: H1 is a state ("2 things
+need you this morning"), last night's verdict from the shared `access.summary`
+contract under it, at most 5 lines (`morning_brief.EMAIL_MAX_LINES`, the
+lines that need the owner kept first), and "N more in the app →" as the one
+button. An alert email's H1 carries no emoji; when a reply is already drafted
+its button reads "A reply is drafted: read and post it".
+
 ### Every client email owes the reader
 
 - **A preheader.** `emails.deliver()` takes a `preheader` key and injects it

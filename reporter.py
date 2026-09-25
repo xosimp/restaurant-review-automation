@@ -1089,7 +1089,7 @@ Rules:
             pass
         return {}
 
-def _follow_through_sections(restaurant_id, owner_view=False):
+def _follow_through_sections(restaurant_id, owner_view=False, include_results=True, caveats=None):
     """The executive-review half of the weekly digest: what came of the
     changes the owner made, where the goals stand, whether issues got
     handled, and any comp/void pattern worth a look.
@@ -1117,14 +1117,22 @@ def _follow_through_sections(restaurant_id, owner_view=False):
     silenced = _rc.silenced(restaurant_id)
     shown = []
 
+    # `include_results` False: the digest already shows the weekly review's
+    # "What your changes did" — the same outcomes, the same week, said once
+    # (density audit #11). `caveats`, a list, takes the before/after note
+    # for the digest's one footer line.
     try:
         import outcomes
-        res = outcomes.recent_results(restaurant_id, days=7) or []
+        res = (outcomes.recent_results(restaurant_id, days=7) or []) if include_results else []
         if res:
-            out.append(report_eyebrow("What your changes did") + report_paragraph(
+            block = report_eyebrow("What your changes did") + report_paragraph(
                 _list(outcomes.summarise(r) for r in res[:4]))
-                + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                   f'{_html.escape(outcomes.CAUSATION_CAVEAT)}</span>'))
+            if caveats is not None:
+                caveats.append(outcomes.CAUSATION_CAVEAT)
+            else:
+                block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(outcomes.CAUSATION_CAVEAT)}</span>')
+            out.append(block)
     except Exception as e:
         log.warning("digest outcomes block failed: %s", e)
     try:
@@ -1395,52 +1403,99 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
 
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
                                             restaurant_id=restaurant_id)
-    # The AI headline when there is one. When the model call fails it
-    # returns {}, and this used to fall back to "Here's the week at X,
-    # Erik." — a greeting with no information, in the opening slot of the
-    # most-sent email in the product. The deterministic weekly headline is
-    # measured from the same data and says something.
-    ai_headline = ai_summary.get("headline")
-    if not ai_headline:
+    _rid_d = restaurant_id or report.restaurant_id
+
+    # ── The verdict: the H1 and the subject (density audit #11) ────────────
+    # The H1 used to be the restaurant's name and the verdict a body-size
+    # paragraph under it. The verdict is the deterministic weekly headline,
+    # measured from the same data the figures come from; when the week
+    # measured nothing it falls back to the model's headline, then to the
+    # name. The model's own headline, when it wrote one and it says
+    # something different, stays as the opening sentence — said once.
+    review = None
+    try:
+        import weekly_review as _wr
+        review = _wr.build(_rid_d)
+    except Exception as _hl_err:
+        print(f"[digest] weekly review build failed: {_hl_err}")
+    verdict, verdict_measured = None, False
+    if review and any(m.get("value") is not None for m in review.get("metrics") or []):
         try:
-            import weekly_review as _wr
-            ai_headline = _wr.headline(_wr.build(restaurant_id or report.restaurant_id))
+            verdict, verdict_measured = _wr.headline(review), True
         except Exception as _hl_err:
             print(f"[digest] deterministic headline failed: {_hl_err}")
-            ai_headline = f"Here's the week at {restaurant_name}, {first_name}."
+    ai_headline = ai_summary.get("headline")
+    if not verdict:
+        verdict = ai_headline or f"Here's the week at {restaurant_name}, {first_name}."
+    opening = ai_headline if (ai_headline and ai_headline.strip() != verdict.strip()) else None
 
-    sections = [report_paragraph(_html.escape(ai_headline))]
+    # Every generic caveat, said ONCE in a footer line (report_caveats):
+    # the digest printed up to seven of them at the same rhythm as its
+    # findings. A caveat that belongs to one signal stays beside it.
+    caveats = []
 
-    # Cross-module co-movements. These are MEASURED (floats compared to
-    # floats in generate_ai_digest_summary), not generated — they were only
-    # ever passed to the model as prompt context, so a model failure threw
-    # away the one part of this email that relates two modules to each
-    # other. Rendered here so they survive it.
-    _correlations = ai_summary.get("_correlations") or []
-    if _correlations:
-        sections.append(
-            report_eyebrow("Moving together")
-            + report_paragraph("<br><br>".join(_html.escape(c) for c in _correlations[:2]))
-            + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                               f'Co-movements, not proven causes — two things moved in the '
-                               f'same weeks.</span>'))
-
-    # ── The week as a business week ────────────────────────────────────────
-    # This digest is the one thing Cavnar AI sends every single week, and it
-    # opened with a review count — so the clearest weekly statement the
-    # product made about what matters was "reviews". The monthly email was
-    # rebuilt to read like a P&L; these blocks are the same four questions
-    # over seven days, in the same voice, above the review content. Owner
-    # view only: they carry money, and a manager's digest should not.
+    # ── The week as a business week (owner view only: it carries money) ────
+    wparts = {}
     if owner_view:
         try:
-            from emails import _weekly_review_sections
-            sections.extend(_weekly_review_sections(restaurant_id or report.restaurant_id))
+            from emails import _weekly_review_parts
+            wparts = _weekly_review_parts(_rid_d, review=review, caveats=caveats,
+                                          headline_in_title=verdict_measured) or {}
         except Exception as e:
             print(f"[digest] weekly review sections failed: {e}")
 
-    # ── Review Intelligence ────────────────────────────────────────────────
-    sections.append(
+    # ── One row of the week's figures, first ───────────────────────────────
+    kpi_row = ""
+    if owner_view and review:
+        from emails import review_kpi_stats
+        stats = review_kpi_stats(review)
+        if stats:
+            kpi_row = report_eyebrow("The week in numbers") + stats
+
+    # ── ONE action ──────────────────────────────────────────────────────────
+    # The cross-module one thing (fix_first) when there is one; the model's
+    # move only when there is not — never both. The digest used to print
+    # the one thing mid-email and a second "This week's move" at the very
+    # end, with no de-dup between them.
+    action = wparts.get("action") or ""
+    if not action and ai_summary.get("action"):
+        # A real recommendation (model-written, its figures checked against
+        # its input): keyed, with an "Ask about this" link that records the
+        # click, and staged so it is presented only once the digest is sent.
+        # A move the owner already answered is not said again.
+        from emails import report_ask_link
+        move_key = digest_move_key(ai_summary["action"])
+        import review_common as _rc_mv
+        from emails import report_confidence
+        # "Not for us" to the same advice anywhere is a no here too (T2).
+        if (move_key not in _rc_mv.silenced(_rid_d)
+                and not move_declined(_rid_d, move_key, ai_summary["action"])):
+            _mv_conf = move_confidence(_rid_d, move_key, report, text=ai_summary["action"])
+            action = report_action("This week's move", _html.escape(ai_summary["action"])
+                                   + report_confidence(_mv_conf)
+                                   + report_ask_link(f"Walk me through this: {ai_summary['action']}",
+                                                     move_key, "digest"))
+            try:
+                import rec_delivery
+                rec_delivery.stage(_rid_d, "digest",
+                                   [{"key": move_key, "module": "home", "title": ai_summary["action"][:200],
+                                     "model_written": True, "kind": "digest_move", "confidence": _mv_conf}])
+            except Exception as e:
+                print(f"[digest] move not staged: {e}")
+
+    # ── Needs a reply: a guest is waiting, so it sits under the action ─────
+    needs_reply = ""
+    if urgent:
+        quotes = ""
+        for r in urgent[:2]:
+            quotes += report_quote(
+                _html.escape((r.author or "Guest")[:24]),
+                "★" * r.rating, snip(r.text), BRAND["bad"])
+        needs_reply = report_eyebrow("Needs a reply", BRAND["bad"]) + quotes
+
+    # ── Module detail ──────────────────────────────────────────────────────
+    modules = []
+    modules.append(
         report_eyebrow("Review Intelligence", tag=rating_label, tag_color=rating_color) +
         report_stats([
             (rating_value, "avg rating", rating_color),
@@ -1451,7 +1506,6 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
         ]) + note(ai_summary.get("reviews"))
     )
 
-    # ── Labor Optimizer ────────────────────────────────────────────────────
     try:
         if _rest and _rest.module_labor:
             from labor import analyse_shifts_for_restaurant
@@ -1463,7 +1517,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
                 import thresholds as _thr_d
                 _tgt_d = _thr_d.target_for(_rest, "labor")
                 l_color, l_label = labor_tag(lp, _tgt_d["pct"], BRAND, starting=not _tgt_d["alerts_allowed"])
-                sections.append(
+                modules.append(
                     report_eyebrow("Labor Optimizer", tag=l_label, tag_color=l_color) +
                     report_stats([
                         (f"{lp}%", "labor ratio", l_color),
@@ -1474,7 +1528,6 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     except Exception:
         pass
 
-    # ── Food Cost Control ──────────────────────────────────────────────────
     try:
         from inventory import analysis_for
         items, _inv_live, inv = (None, False, {})
@@ -1492,7 +1545,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
                             f'margin-top:12px">Biggest single loss: '
                             f'<span style="color:{BRAND["ink"]};font-weight:600">'
                             f'{_html.escape(str(top_waste[0]["item"]))}</span></div>')
-            sections.append(
+            modules.append(
                 report_eyebrow("Food Cost Control", tag=i_label, tag_color=i_color) +
                 report_stats([
                     (w_value, "waste this week", i_color),
@@ -1504,56 +1557,48 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
     except Exception:
         pass
 
-    # ── Marketing (no weekly figures to report — the sentence is the whole
-    #    section, so it only appears when there is genuinely something) ─────
+    # Marketing: no weekly figures to report — the sentence is the whole
+    # section, so it only appears when there is genuinely something.
     if _rest and getattr(_rest, "module_marketing", False) and ai_summary.get("marketing"):
-        sections.append(report_eyebrow("Marketing Autopilot")
-                        + note(ai_summary.get("marketing"), top=0))
-
-    # ── The reviews themselves ─────────────────────────────────────────────
-    if urgent:
-        quotes = ""
-        for r in urgent[:2]:
-            quotes += report_quote(
-                _html.escape((r.author or "Guest")[:24]),
-                "★" * r.rating, snip(r.text), BRAND["bad"])
-        sections.append(report_eyebrow("Needs a reply", BRAND["bad"]) + quotes)
+        modules.append(report_eyebrow("Marketing Autopilot")
+                       + note(ai_summary.get("marketing"), top=0))
 
     top_pos = next((r for r in reviews if r.sentiment == "positive" and r.rating >= 4), None)
     if top_pos:
-        sections.append(
+        modules.append(
             report_eyebrow("Highlight of the week", BRAND["good"]) +
             report_quote(
                 _html.escape((top_pos.author or "Guest")[:24]),
                 "★" * top_pos.rating, snip(top_pos.text), BRAND["good"]))
 
-    sections.extend(_follow_through_sections(restaurant_id or report.restaurant_id, owner_view=owner_view))
+    # ── Cross-module: one item ─────────────────────────────────────────────
+    # The co-movements are MEASURED (floats compared to floats in
+    # generate_ai_digest_summary), not generated, so they survive a model
+    # failure. "What connects" is the stronger read (evidence, how to
+    # confirm, the innocent reading); the co-movements show only when there
+    # is no link this week.
+    _correlations = ai_summary.get("_correlations") or []
+    moving = ""
+    if _correlations and not wparts.get("link"):
+        moving = (report_eyebrow("Moving together")
+                  + report_paragraph("<br><br>".join(_html.escape(c) for c in _correlations[:2])))
+        caveats.append("Co-movements are not proven causes — two things moved in the same weeks.")
 
-    if ai_summary.get("action"):
-        # A real recommendation (model-written, its figures checked against
-        # its input): keyed, with an "Ask about this" link that records the
-        # click, and staged so it is presented only once the digest is sent.
-        # A move the owner already answered is not said again.
-        from emails import report_ask_link
-        _rid_mv = restaurant_id or report.restaurant_id
-        move_key = digest_move_key(ai_summary["action"])
-        import review_common as _rc_mv
-        from emails import report_confidence
-        # "Not for us" to the same advice anywhere is a no here too (T2).
-        if (move_key not in _rc_mv.silenced(_rid_mv)
-                and not move_declined(_rid_mv, move_key, ai_summary["action"])):
-            _mv_conf = move_confidence(_rid_mv, move_key, report, text=ai_summary["action"])
-            sections.append(report_action("This week's move", _html.escape(ai_summary["action"])
-                                          + report_confidence(_mv_conf)
-                                          + report_ask_link(f"Walk me through this: {ai_summary['action']}",
-                                                            move_key, "digest")))
-            try:
-                import rec_delivery
-                rec_delivery.stage(_rid_mv, "digest",
-                                   [{"key": move_key, "module": "home", "title": ai_summary["action"][:200],
-                                     "model_written": True, "kind": "digest_move", "confidence": _mv_conf}])
-            except Exception as e:
-                print(f"[digest] move not staged: {e}")
+    # "What your changes did" once: the weekly review's results when it has
+    # them, else the follow-through's (outcomes over the last seven days).
+    # Both read evaluated outcomes for the same week, and the digest printed
+    # the same heading, and likely the same rows, twice.
+    follow = _follow_through_sections(_rid_d, owner_view=owner_view,
+                                      include_results=not wparts.get("results"), caveats=caveats)
+
+    sections = [kpi_row]
+    if opening:
+        sections.append(report_paragraph(_html.escape(opening)))
+    sections += [action, needs_reply,
+                 wparts.get("against"), wparts.get("results"), wparts.get("priorities"),
+                 wparts.get("link") or moving, wparts.get("good_news")]
+    sections += modules
+    sections += follow
 
     # Modules this client pays for that reported nothing this week. The digest
     # used to instruct the model to write a line for these anyway ("always
@@ -1565,36 +1610,59 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
         sections.append(report_paragraph(_html.escape(gap)))
 
     # What the validation layer kept a consultant line WITH (a stale source,
-    # a disclosure the line left out) — the same muted footnote as the
-    # co-movements, since the email is the only place the owner reads it.
-    _cavs = ai_summary.get("_caveats") or []
-    if _cavs:
-        sections.append(report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                         + " ".join(_html.escape(c) for c in _cavs[:3]) + "</span>"))
+    # a disclosure the line left out) — in the footer line with the rest,
+    # since the email is the only place the owner reads it.
+    caveats.extend((ai_summary.get("_caveats") or [])[:3])
+    from emails import report_caveats
+    sections.append(report_caveats(caveats))
+    sections = [x for x in sections if x]
 
     # M/D/YY like every date an owner reads (DESIGN_SYSTEM.md → Dates and
     # times); the header read "Week of September 14, 2026" (re-audit C12).
     from time_utils import restaurant_now_by_id as _rnbi_html, mdy as _mdy_html
-    week_label = "Week of " + _mdy_html(_rnbi_html(restaurant_id or report.restaurant_id).date())
+    week_label = "Week of " + _mdy_html(_rnbi_html(_rid_d).date())
 
     return {"sections": sections, "week_label": week_label, "location_label": location_label,
-            "rating": report.avg_rating, "total": report.total_reviews}
+            "rating": report.avg_rating, "total": report.total_reviews,
+            "headline": verdict, "headline_measured": verdict_measured}
 
 
-def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
-                restaurant_id: int = None, owner_view: bool = False) -> str:
-    """One restaurant's digest in the standard shell."""
+def render_digest(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
+                  restaurant_id: int = None, owner_view: bool = False) -> dict:
+    """One restaurant's digest in the standard shell, with its subject:
+    {"html", "subject", "headline"}. The H1 is the week's verdict and the
+    restaurant's name moves to the subtitle (density audit #11); the
+    subject carries the same verdict, so every week's subject is no longer
+    the identical "Your week at X"."""
     from emails import report_shell
     p = _digest_parts(report, restaurant_name, owner_name, restaurant_id, owner_view)
     cta_label, cta_url = digest_cta(restaurant_id or getattr(report, "restaurant_id", None))
-    return report_shell(
+    headline = p.get("headline") or restaurant_name
+    html = report_shell(
         kicker="Weekly Digest",
-        title=_html.escape(restaurant_name),
-        subtitle=f"{p['week_label']}{p['location_label']}",
+        title=_html.escape(headline),
+        subtitle=f"{_html.escape(restaurant_name)}{p['location_label']} &middot; {p['week_label']}",
         sections=p["sections"],
         cta_label=cta_label,
         cta_url=cta_url,
     )
+    return {"html": html, "headline": headline,
+            "subject": digest_subject(restaurant_name, headline if p.get("headline_measured") else None)}
+
+
+def digest_subject(restaurant_name: str, headline: str = None) -> str:
+    """"A better week: sales improved — your week at Gia Mia". The verdict
+    only when it was measured; a week that measured nothing keeps the
+    plain subject rather than leading with "Not enough data"."""
+    name = " ".join(str(restaurant_name or "").split())
+    head = " ".join(str(headline or "").split()).rstrip(".")
+    return f"{head} — your week at {name}" if head else f"Your week at {name}"
+
+
+def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
+                restaurant_id: int = None, owner_view: bool = False) -> str:
+    """One restaurant's digest in the standard shell (render_digest's HTML)."""
+    return render_digest(report, restaurant_name, owner_name, restaurant_id, owner_view)["html"]
 
 
 _DIGEST_CTA_DEFAULT = ("Open your dashboard →", "https://dashboard.cavnar.ai")
@@ -1665,6 +1733,10 @@ def render_group_html(items: list, owner_name: str = None, group_name: str = Non
         label = rest.location_name or rest.name
         tag = f"{p['rating']:.1f}&#9733;" if p.get("rating") else None
         sections.append(report_eyebrow(_html.escape(label), color=BRAND["ember"], tag=tag))
+        # There is no per-location H1 in the group email, so the location's
+        # verdict leads its own sections.
+        if p.get("headline"):
+            sections.append(report_paragraph(f"<strong>{_html.escape(p['headline'])}</strong>"))
         sections.extend(p["sections"])
     week_label = parts[0][1]["week_label"] if parts else ""
     return report_shell(
