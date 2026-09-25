@@ -14,6 +14,8 @@ just registers thin Jinja-filter wrappers around these.
 """
 import re
 
+import thresholds as _thr
+
 
 def normalize_intel_text(text):
     """Strip markdown, em-dashes to hyphens, ensure section headers are on
@@ -258,34 +260,99 @@ def extract_recs(text):
 # the welcome email (first_look) took a flat mean of whatever Places
 # returned. The same restaurant could lead its block on one surface and
 # trail it on another. This is the phone's definition, for every surface.
+#
+# Local market standing (Benchmarking #38; BM1-13, BM3-18). "Behind the
+# block" rested on one bar 8 km away: the standing had no minimum, admitted
+# the rivals competitor.py's widened-radius fallback picked up (no cuisine
+# and no price match), let one high-volume venue dominate the average, and
+# painted a tie amber. Now:
+#   * a standing needs MARKET_MIN_MATCHED rated rivals matched on cuisine
+#     AND price (or added by the owner, who chose them as the competition);
+#   * a rival from the widened search never enters the average;
+#   * one venue's weight is capped at MARKET_WEIGHT_CAP_REVIEWS reviews —
+#     past that its rating's standard error is negligible, so more reviews
+#     buy it no more say;
+#   * n and the radius travel with the standing (`standing_basis`);
+#   * "level" is a symmetric, neutral band inside the standard error of the
+#     gap (thresholds.RATING_SIGMA over both sides' review counts, never
+#     under MARKET_TIE_MIN_STARS), so a tie is neither a win nor amber.
 
-# A lead needs a real gap; "neck and neck" covers the band either side.
-# Stars, against the review-weighted market average.
+MARKET_MIN_MATCHED = 3
+MARKET_WEIGHT_CAP_REVIEWS = 500
+# The published rating step: a gap of one step is always a tie.
+MARKET_TIE_MIN_STARS = 0.1
+# The lead a standing needed before the tie band was measured; still the
+# band when the owner's own review count is unknown (the conservative bar).
 MARKET_LEAD_STARS = 0.3
+# The old lower edge of the (asymmetric, amber) "neck and neck" band. No
+# longer read: the tie band is symmetric and measured (market_standing).
+# Candidate for future cleanup after additional verification.
 MARKET_LEVEL_STARS = -0.1
+
+# competitor.py's match_basis strings, by selection pass.
+_MATCHED_BASES = ("same cuisine type and similar price level", "added by you")
+_WIDENED_BASES = ("widened search",)
+
+
+def market_member(c) -> str:
+    """How a competitor entered the set: "matched" (same cuisine and similar
+    price, or added by the owner), "cuisine_only" (price not matched),
+    "widened" (the doubled-radius fallback: no cuisine, no price) or
+    "unknown" (a read stored before selection provenance existed)."""
+    basis = str((c or {}).get("match_basis") or "").strip().lower()
+    if not basis:
+        return "unknown"
+    if basis.startswith(_WIDENED_BASES):
+        return "widened"
+    if basis.startswith(_MATCHED_BASES):
+        return "matched"
+    return "cuisine_only"
 
 
 def market_rating(competitors) -> dict:
-    """The competitor set's rating, weighted by review volume, leaving out
-    provisional ratings (a four-review venue at 5.0 would otherwise pull the
-    market the owner is measured against). Unrated places are absent, never
-    a zero. {"market_rating", "market_rating_reviews", "market_rating_n"}."""
+    """The competitor set's rating, weighted by review volume (each venue
+    capped at MARKET_WEIGHT_CAP_REVIEWS), leaving out provisional ratings
+    (a four-review venue at 5.0 would otherwise pull the market the owner
+    is measured against) and every rival the widened-radius fallback picked
+    up. Unrated places are absent, never a zero.
+    {"market_rating", "market_rating_reviews", "market_rating_n",
+     "market_matched_n", "market_excluded_widened", "market_radius_km",
+     "market_effective_reviews"}."""
     rated = []
+    widened = 0
     for c in competitors or []:
         try:
             r = float(c.get("rating") or 0)
             n = int(c.get("review_count") or 0)
         except (TypeError, ValueError, AttributeError):
             continue
-        if r and not c.get("rating_is_provisional"):
-            rated.append((r, n))
+        if not r or c.get("rating_is_provisional"):
+            continue
+        member = market_member(c)
+        if member == "widened":
+            widened += 1
+            continue
+        dist = c.get("distance_m")
+        try:
+            dist = float(dist) if dist is not None else None
+        except (TypeError, ValueError):
+            dist = None
+        rated.append((r, n, member, dist))
     if not rated:
-        return {"market_rating": None, "market_rating_reviews": 0, "market_rating_n": 0}
-    total_reviews = sum(n for _r, n in rated)
-    weighted = (sum(r * n for r, n in rated) / total_reviews) if total_reviews > 0 else \
-        sum(r for r, _n in rated) / len(rated)
-    return {"market_rating": round(weighted, 1), "market_rating_reviews": total_reviews,
-            "market_rating_n": len(rated)}
+        return {"market_rating": None, "market_rating_reviews": 0, "market_rating_n": 0,
+                "market_matched_n": 0, "market_excluded_widened": widened, "market_radius_km": None,
+                "market_effective_reviews": 0}
+    weights = [min(max(n, 0), MARKET_WEIGHT_CAP_REVIEWS) for _r, n, _m, _d in rated]
+    total_w = sum(weights)
+    weighted = (sum(r * w for (r, _n, _m, _d), w in zip(rated, weights)) / total_w) if total_w > 0 else \
+        sum(r for r, _n, _m, _d in rated) / len(rated)
+    dists = [d for _r, _n, _m, d in rated if d is not None]
+    return {"market_rating": round(weighted, 1), "market_rating_reviews": sum(n for _r, n, _m, _d in rated),
+            "market_rating_n": len(rated),
+            "market_matched_n": sum(1 for _r, _n, m, _d in rated if m == "matched"),
+            "market_excluded_widened": widened,
+            "market_radius_km": round(max(dists) / 1000.0, 1) if dists else None,
+            "market_effective_reviews": total_w}
 
 
 def own_rating(gbp_rating=None, gbp_review_count=None, sample_rating=None, sample_count=None) -> dict:
@@ -302,21 +369,55 @@ def own_rating(gbp_rating=None, gbp_review_count=None, sample_rating=None, sampl
     return {"own_rating": None, "own_rating_basis": None, "own_rating_count": None}
 
 
+def standing_margin(own_count, market_effective_reviews) -> float:
+    """The half-width of the "level" band, in stars: one standard error of
+    the gap (thresholds.RATING_SIGMA over the owner's review count and the
+    market's effective count), never under MARKET_TIE_MIN_STARS; the old
+    MARKET_LEAD_STARS bar when the owner's count is unknown."""
+    try:
+        n_own = int(own_count or 0)
+    except (TypeError, ValueError):
+        n_own = 0
+    if n_own <= 0:
+        return MARKET_LEAD_STARS
+    try:
+        n_mkt = float(market_effective_reviews or 0)
+    except (TypeError, ValueError):
+        n_mkt = 0.0
+    var = 1.0 / n_own + (1.0 / n_mkt if n_mkt > 0 else 0.0)
+    return round(max(MARKET_TIE_MIN_STARS, _thr.RATING_SIGMA * var ** 0.5), 2)
+
+
 def market_standing(own: dict, market: dict) -> dict:
     """Where the owner stands against the market, from market_rating() and
     own_rating(). Compared only when the own rating is Google's all-time
     one — an imported sample is not the same kind of number as the
-    competitors' ratings, and a rough month in the sample read as losing to
-    the market. {"own_vs_market", "standing": "ahead" | "level" | "behind" |
-    None, "standing_label", "standing_tone"}."""
-    o, m = (own or {}).get("own_rating"), (market or {}).get("market_rating")
-    if o is None or m is None or (own or {}).get("own_rating_basis") != "google_all_time":
-        return {"own_vs_market": None, "standing": None, "standing_label": None, "standing_tone": "neutral"}
+    competitors' ratings — and only on MARKET_MIN_MATCHED matched rivals.
+    {"own_vs_market", "standing": "ahead" | "level" | "behind" | None,
+     "standing_label", "standing_tone", "standing_basis", "standing_margin",
+     "standing_why_not"}."""
+    own, market = own or {}, market or {}
+    o, m = own.get("own_rating"), market.get("market_rating")
+    none = {"own_vs_market": None, "standing": None, "standing_label": None, "standing_tone": "neutral",
+            "standing_basis": None, "standing_margin": None, "standing_why_not": None}
+    if o is None or m is None or own.get("own_rating_basis") != "google_all_time":
+        return none
+    matched = int(market.get("market_matched_n") or 0)
+    if matched < MARKET_MIN_MATCHED:
+        return dict(none, standing_why_not=(
+            f"needs {MARKET_MIN_MATCHED} nearby restaurants matched on cuisine and price with a settled "
+            f"rating (has {matched})"))
     gap = round(float(o) - float(m), 1)
-    if gap >= MARKET_LEAD_STARS:
+    margin = standing_margin(own.get("own_rating_count"), market.get("market_effective_reviews"))
+    if gap > margin:
         standing, label, tone = "ahead", "You lead the block", "good"
-    elif gap >= MARKET_LEVEL_STARS:
-        standing, label, tone = "level", "Neck and neck", "warn"
-    else:
+    elif gap < -margin:
         standing, label, tone = "behind", "Behind the block", "bad"
-    return {"own_vs_market": gap, "standing": standing, "standing_label": label, "standing_tone": tone}
+    else:
+        standing, label, tone = "level", "About level with the block", "neutral"
+    radius = market.get("market_radius_km")
+    basis = (f"{matched} restaurant{'' if matched == 1 else 's'} matched on cuisine and price"
+             + (f" within {radius:g} km" if radius else "")
+             + f" · a gap inside ±{margin:.1f}★ reads as level")
+    return {"own_vs_market": gap, "standing": standing, "standing_label": label, "standing_tone": tone,
+            "standing_basis": basis, "standing_margin": margin, "standing_why_not": None}

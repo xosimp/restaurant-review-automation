@@ -129,7 +129,11 @@ def test_multi_location_portfolio_never_averages(db_path):
     b = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Uptown")
     c = get_conn(db_path)
     _review(c, b, 1, urgency="high")
-    for i in range(3):
+    # Five reviews each: the group's ranking floor is the platform's rating
+    # floor since Benchmarking #19 (it ranked on three).
+    for i in range(4):
+        _review(c, b, 2)
+    for i in range(5):
         _review(c, a, 5, status="posted")
     c.commit(); c.close()
     u = _user(a, role="owner")
@@ -225,7 +229,9 @@ def test_group_brief_lists_every_location_without_averaging(db_path, monkeypatch
     a = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Downtown")
     b = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Uptown")
     c = get_conn(db_path)
-    for i in range(4):
+    # Five reviews each: the ranking floor is the platform's rating floor
+    # since Benchmarking #19 (this seeded four and ranked on three).
+    for i in range(5):
         _review(c, a, 5, status="posted", days_ago=3)
     for i in range(4):
         _review(c, b, 2, days_ago=3)

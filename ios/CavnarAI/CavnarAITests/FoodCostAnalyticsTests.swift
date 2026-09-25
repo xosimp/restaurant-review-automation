@@ -28,7 +28,7 @@ final class FoodCostAnalyticsTests: XCTestCase {
          "recoverable_monthly": 300.0, "annual_recoverable": 3600.0,
          "total_waste_cost_week": 347.0, "monthly_waste_projection": 1505.0,
          "annual_waste_projection": 18660.0, "waste_rate_pct": 4.8,
-         "benchmark_label": "On Track", "benchmark_detail": "Near the 4-5% industry target",
+         "benchmark_label": "Near target", "benchmark_detail": "Near the 4–5% starting target — you're at 4.8%",
          "total_stock_value": 8940.0, "total_items": 24,
          "week_start": "8/13/26", "week_end": "8/20/26", "last_updated": "8/20/26"}
         """
@@ -54,7 +54,7 @@ final class FoodCostAnalyticsTests: XCTestCase {
         XCTAssertEqual(analytics.annualWasteProjection, 18660.0)
         XCTAssertEqual(analytics.annualRecoverable, 3600.0)
         XCTAssertEqual(analytics.wasteRatePct, 4.8)
-        XCTAssertEqual(analytics.benchmarkLabel, "On Track")
+        XCTAssertEqual(analytics.benchmarkLabel, "Near target")
         XCTAssertEqual(analytics.totalItems, 24)
 
         XCTAssertEqual(analytics.priceWatch.count, 1)

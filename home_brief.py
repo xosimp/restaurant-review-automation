@@ -1749,8 +1749,17 @@ def _build(current_user, present=True):
             # A week with no waste logged is not_measured (inventory), never a
             # win: nothing recorded is not "under control" (CA4 F11).
             _waste_measured = inv.get("benchmark_state") != "not_measured"
-            if recoverable <= 0 and fc_pct is None and _waste_measured:
-                add_win("waste_low", "Waste is under control", f"{inv.get('benchmark_label') or 'Low'} waste rate" + (f" ({waste_rate}%)" if waste_rate is not None else "") + " this week.", "inventory")
+            # The win says what the label says — where the rate sits against
+            # the owner's target (or Cavnar's starting one), never
+            # "Excellent" (Benchmarking #36) — and only when it is under or
+            # near it.
+            _wl = inv.get("benchmark_label") or ""
+            if recoverable <= 0 and fc_pct is None and _waste_measured and inv.get("benchmark_tone") == "good" \
+                    and _wl in ("Under target", "Near target"):
+                _wt_basis = (inv.get("waste_target") or {}).get("basis") or "the 4–5% starting target"
+                add_win("waste_low", f"Waste is {_wl.lower()}",
+                        (f"{waste_rate}% of purchases this week" if waste_rate is not None else "This week")
+                        + f" — {_wl.lower()} against {_wt_basis}.", "inventory")
             elif fc_target is not None and fc_pct is not None and fc_pct <= fc_target:
                 add_win("food_cost_on_target", f"Food cost {fc_pct}% — on target",
                         f"At or under your own {fc_target}% target over the last 28 days.", "inventory")
@@ -2212,15 +2221,16 @@ def _build(current_user, present=True):
     if len(locations) > 1:
         needing = [l for l in locations if l["health"] in ("critical", "important")]
         # The group's one ranking floor (thresholds.GROUP_RANK_MIN_REVIEWS,
-        # fix I12): a location is "strongest" on a rating with that many
-        # reviews behind it — this ranked on any rating at all.
-        from thresholds import GROUP_RANK_MIN_REVIEWS as _GRMR
-        best = max((l for l in locations if l.get("rating_30d") and (l.get("reviews_30d") or 0) >= _GRMR),
-                   key=lambda l: (l["rating_30d"], l["reviews_30d"]), default=None)
+        # fix I12, now the platform's rating floor) and the group brief's one
+        # ranking rule (benchmark_views.rank_by_rating, Benchmarking #19): a
+        # location is "strongest" only on a gap beyond noise.
+        import benchmark_views as _bv_p
+        _rank_p = _bv_p.rank_by_rating([{"id": l["id"], "name": l["name"], "rating": l.get("rating_30d"),
+                                         "n": l.get("reviews_30d")} for l in locations])
         worst = max(locations, key=lambda l: ({"critical": 3, "important": 2, "watch": 1, "healthy": 0}[l["health"]], l["attention"]))
         portfolio = {"total": len(locations), "healthy": sum(1 for l in locations if l["health"] == "healthy"), "needing": len(needing),
                      "biggest_issue": ({"location": worst["name"], "id": worst["id"], "issue": worst["top_issue"]} if worst["top_issue"] else None),
-                     "strongest": ({"location": best["name"], "id": best["id"], "rating": best["rating_30d"]} if best else None)}
+                     "strongest": _rank_p["strongest"]}
 
     charts = {
         "rating": [{"label": _mdy(w.get("label"), (w.get("week_key") or "")[:4]), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
@@ -2466,10 +2476,16 @@ def build_group_brief(current_user, fresh=False):
         for i in l["issues"]:
             attention.append({**i, "location": l["name"], "restaurant_id": l["id"], "severity_rank": rank[i["severity"]]})
     attention.sort(key=lambda a: (a["severity_rank"], a["location"]))
-    from thresholds import GROUP_RANK_MIN_REVIEWS as _GRMR
-    rated = [l for l in locs if l["reviews"]["rating_30d"] and l["reviews"]["reviews_30d"] >= _GRMR]
-    best = max(rated, key=lambda l: (l["reviews"]["rating_30d"], l["reviews"]["reviews_30d"]), default=None)
-    worst = min(rated, key=lambda l: (l["reviews"]["rating_30d"], -l["reviews"]["reviews_30d"]), default=None)
+    # Strongest and weakest (Benchmarking #19; BM1-19, BM3-18, BM4-11): the
+    # platform's rating floor (thresholds.GROUP_RANK_MIN_REVIEWS, now
+    # RATING_MIN_REVIEWS), each location read against its own normal first,
+    # and a name only when the gap is beyond noise — a 4.6 against a 4.5 on
+    # a dozen reviews each is not a strongest and a weakest.
+    import benchmark_views as _bv
+    _rank = _bv.rank_by_rating([{"id": l["id"], "name": l["name"], "rating": l["reviews"]["rating_30d"],
+                                 "n": l["reviews"]["reviews_30d"]} for l in locs])
+    for l in locs:
+        l["reviews"]["vs_own"] = _rank["vs_own"].get(l["id"])
     heaviest = max([l for l in locs if l["labor"]], key=lambda l: l["labor"]["over"], default=None)
     critical = sum(1 for a in attention if a["severity"] == "critical")
     needing = [l for l in locs if l["health"] in ("critical", "important")]
@@ -2486,10 +2502,19 @@ def build_group_brief(current_user, fresh=False):
         "locations": locs, "attention": attention[:12],
         "portfolio": {"total": len(locs), "healthy": sum(1 for l in locs if l["health"] == "healthy"), "needing": len(needing),
                       "urgent_reviews": sum(l["reviews"]["urgent"] for l in locs), "awaiting": sum(l["reviews"]["awaiting"] for l in locs),
-                      "strongest": ({"location": best["name"], "id": best["id"], "rating": best["reviews"]["rating_30d"]} if best else None),
-                      "weakest": ({"location": worst["name"], "id": worst["id"], "rating": worst["reviews"]["rating_30d"]} if worst and worst is not best else None),
+                      "strongest": _rank["strongest"],
+                      "weakest": _rank["weakest"],
+                      "ranking_basis": _rank["basis"],
                       "heaviest_labor": ({"location": heaviest["name"], "id": heaviest["id"], "pct": heaviest["labor"]["pct"], "over": heaviest["labor"]["over"]} if heaviest and heaviest["labor"]["over"] > 0 else None),
                       "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None)},
     }
+    # Location to location on the engine's `location` kind (#19): each
+    # location against its own normal, then against the others, a gap
+    # called only beyond noise. Never raises into the brief.
+    try:
+        payload["location_compare"] = _bv.location_compare(current_user)
+    except Exception as e:
+        print(f"[group] location comparison failed: {e}")
+        payload["location_compare"] = None
     _cache_put(key, payload)
     return payload, 200

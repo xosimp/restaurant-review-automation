@@ -108,6 +108,12 @@ struct IntelSummary: Decodable {
     var standing: String? = nil
     var standingLabel: String? = nil
     var standingTone: ServerTone? = nil
+    /// Benchmarking #38: how many matched rivals and how far out the
+    /// standing rests on, and the tie band ("3 restaurants matched on
+    /// cuisine and price within 2.4 km · a gap inside ±0.1★ reads as
+    /// level"); or why there is no standing yet.
+    var standingBasis: String? = nil
+    var standingWhyNot: String? = nil
 
     /// "You lead the block · +0.3★ against the market" — nil when the
     /// server made no comparison.
@@ -172,6 +178,8 @@ struct IntelSummary: Decodable {
         case standing
         case standingLabel = "standing_label"
         case standingTone = "standing_tone"
+        case standingBasis = "standing_basis"
+        case standingWhyNot = "standing_why_not"
         case stale
         case ageDays = "age_days"
         case asOf = "as_of"

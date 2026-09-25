@@ -44,14 +44,21 @@ struct FoodCostTrendChart: View {
     // beside it. This is the one color used for both, always.
     private static let industryBandColor = Color(red: 0.95, green: 0.85, blue: 0.45)
 
-    private func benchmarkColor(_ label: String) -> Color {
+    /// The server's waste label against the owner's target (or Cavnar's
+    /// starting one) — "Under / Near / Over / Well over target"
+    /// (inventory.py, Benchmarking #36), the same words the web says. The
+    /// old "Excellent / Above Average" implied a peer average that does not
+    /// exist.
+    static func benchmarkColor(_ label: String) -> Color {
         switch label {
-        case "Excellent", "On Track": return .cavnarGreen
-        case "Above Average", "Concerning": return .cavnarAmber
-        case "Needs Attention": return .cavnarRed
+        case "Under target", "Near target": return .cavnarGreen
+        case "Over target": return .cavnarAmber
+        case "Well over target": return .cavnarRed
         default: return .cavnarInk3
         }
     }
+
+    private func benchmarkColor(_ label: String) -> Color { Self.benchmarkColor(label) }
 
     private var average: Double {
         guard !weeks.isEmpty else { return 0 }
@@ -166,7 +173,10 @@ struct FoodCostTrendChart: View {
                                 .clipShape(Capsule())
                         }
                     if let industryTargetDollar {
-                        RuleMark(y: .value("Industry target", industryTargetDollar))
+                        // "Your target" — what VoiceOver reads for this
+                        // line. It is the owner's target (or Cavnar's
+                        // starting one), never an industry figure (#36).
+                        RuleMark(y: .value("Your target", industryTargetDollar))
                             .foregroundStyle(Self.industryBandColor)
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             .annotation(position: .top, alignment: .leading) {

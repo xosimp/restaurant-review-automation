@@ -31,6 +31,7 @@ final class MenuMarginsViewModel {
         let best: MenuMarginItem?
         let worst: MenuMarginItem?
         let highestFoodCost: MenuMarginItem?
+        let costReference: MenuCostReference?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
@@ -39,6 +40,7 @@ final class MenuMarginsViewModel {
             case averageBasis = "average_basis"
             case hasSalesData = "has_sales_data"
             case highestFoodCost = "highest_food_cost"
+            case costReference = "cost_reference"
         }
     }
 
@@ -54,7 +56,8 @@ final class MenuMarginsViewModel {
                                      uncosted: r.uncosted ?? [],
                                      averageFoodCostPct: r.averageFoodCostPct,
                                      averageBasis: r.averageBasis, hasSalesData: r.hasSalesData,
-                                     best: r.best, worst: r.worst, highestFoodCost: r.highestFoodCost)
+                                     best: r.best, worst: r.worst, highestFoodCost: r.highestFoodCost,
+                                     costReference: r.costReference)
         } catch let error as APIClient.APIError {
             if data == nil { errorMessage = error.message }
         } catch is CancellationError {
@@ -170,15 +173,21 @@ struct MenuMarginsSheet: View {
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
                 .cavnarSensitive()
-            // The basis matters more than the number. 28-35% is a
-            // revenue-weighted rule of thumb; an unweighted mean of per-dish
-            // percentages counts a $3 side the same as the entree carrying
-            // the night's revenue, and comparing one to the other could send
-            // an owner to reprice a menu that is already healthy.
+            // The basis matters more than the number. An unweighted mean of
+            // per-dish percentages counts a $3 side the same as the entree
+            // carrying the night's revenue. The figure it is read against is
+            // the server's (the owner's target or the published band for the
+            // type; Benchmarking #35) — the app no longer quotes a 28–35%
+            // band that was the same for every kind of restaurant.
             Text(data.hasSalesData == true
-                 ? "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price, weighted by what actually sold. Most kitchens aim for 28–35%."
-                 : "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price. No sales data yet, so every dish counts equally — that isn't directly comparable to the 28–35% rule of thumb, which is weighted by revenue.")
+                 ? "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price, weighted by what actually sold."
+                 : "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price. No sales data yet, so every dish counts equally.")
                 .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(data.costReference?.basis.map { "Dish colours read against \($0)." }
+                 ?? "No food-cost target and no published figure for your type, so dishes are not coloured \u{2014} set a target in Account to colour them.")
+                .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }

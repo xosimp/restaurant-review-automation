@@ -28,6 +28,11 @@ struct MenuProfitability: Decodable {
     /// Highest food cost percentage. Still worth surfacing — just not as
     /// "worst dish", which now means the smallest contribution.
     let highestFoodCost: MenuMarginItem?
+    /// What every dish's colour reads against (Benchmarking #35): the
+    /// owner's food-cost target, or the top of the published band for the
+    /// restaurant's type — nil when there is neither, and then no dish is
+    /// coloured. The server decides; the app keeps no band of its own.
+    var costReference: MenuCostReference? = nil
 
     enum CodingKeys: String, CodingKey {
         case priced, unpriced, unmapped, uncosted, best, worst
@@ -35,6 +40,7 @@ struct MenuProfitability: Decodable {
         case averageBasis = "average_basis"
         case hasSalesData = "has_sales_data"
         case highestFoodCost = "highest_food_cost"
+        case costReference = "cost_reference"
     }
 
     var isEmpty: Bool { priced.isEmpty && unpriced.isEmpty && unmapped.isEmpty && uncosted.isEmpty }
@@ -67,19 +73,36 @@ struct MenuMarginItem: Decodable, Identifiable, Hashable {
         case unitsSold = "units_sold"
         case totalContribution = "total_contribution"
         case uncostedIngredients = "uncosted_ingredients"
+        case costTone = "cost_tone"
     }
 
-    /// The industry rule of thumb is roughly 28–35% food cost; below that is
-    /// healthy, above ~40% is the dish to look at. Used only for the row's
-    /// accent colour, never to state a verdict the number doesn't support.
+    /// The server's colour for this dish (`cost_tone`: good / warn / bad /
+    /// neutral), read against the owner's food-cost target or the published
+    /// band for the restaurant's type (Benchmarking #35; BM3-16). The 32/40
+    /// band the app used to keep was the same for a steakhouse and a bar.
+    var costTone: String? = nil
+
+    /// The row's accent colour — only what the server decided; no tone (an
+    /// older server, or no target and no published figure) is neutral.
     var costBand: MenuCostBand {
-        guard let pct = foodCostPct else { return .unknown }
-        if pct >= 40 { return .high }
-        if pct >= 32 { return .watch }
-        return .healthy
+        guard foodCostPct != nil else { return .unknown }
+        switch costTone {
+        case "good": return .healthy
+        case "warn": return .watch
+        case "bad": return .high
+        default: return .unknown
+        }
     }
 }
 
 enum MenuCostBand {
     case healthy, watch, high, unknown
+}
+
+/// `cost_reference` — {pct, kind: "target" | "published" | "rule_of_thumb" |
+/// "vendor", basis}: what the dish colours were read against.
+struct MenuCostReference: Decodable, Hashable {
+    let pct: Double?
+    let kind: String?
+    let basis: String?
 }

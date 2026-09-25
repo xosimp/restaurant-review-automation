@@ -1602,20 +1602,28 @@ def render_group_html(items: list, owner_name: str = None, group_name: str = Non
     for rest, rep in items:
         parts.append((rest, _digest_parts(rep, rest.name, owner_name, rest.id, True)))
     # The group's one ranking floor (thresholds.GROUP_RANK_MIN_REVIEWS, fix
-    # I12) — Home's group brief ranks on the same one, so the email and the
-    # dashboard never name different leaders.
-    from thresholds import GROUP_RANK_MIN_REVIEWS
-    rated = [(r, p) for r, p in parts if p.get("rating") and (p.get("total") or 0) >= GROUP_RANK_MIN_REVIEWS]
+    # I12, now the platform's rating floor) and Home's one ranking rule
+    # (benchmark_views.rank_by_rating, Benchmarking #19): each location
+    # against its own normal first, and a leader and a trailer named only
+    # on a gap beyond noise — so the email and the dashboard never name
+    # different leaders, and never name one on a coin flip.
+    from thresholds import GROUP_RANK_MIN_REVIEWS  # noqa: F401  (the floor rank_by_rating applies)
+    import benchmark_views as _bv
+    rank = _bv.rank_by_rating([{"id": r.id, "name": r.location_name or r.name, "rating": p.get("rating"),
+                                "n": p.get("total")} for r, p in parts])
     sections = []
-    if len(rated) >= 2:
-        best = max(rated, key=lambda x: x[1]["rating"])
-        worst = min(rated, key=lambda x: x[1]["rating"])
+    best, worst = rank.get("strongest"), rank.get("weakest")
+    if best and worst:
         sections.append(report_paragraph(
             f"Across {len(items)} locations this week: "
-            f"<strong>{_html.escape(best[0].location_name or best[0].name)}</strong> led at "
-            f"{best[1]['rating']:.1f}&#9733;, "
-            f"<strong>{_html.escape(worst[0].location_name or worst[0].name)}</strong> trailed at "
-            f"{worst[1]['rating']:.1f}&#9733;."))
+            f"<strong>{_html.escape(best['location'] or '')}</strong> led at "
+            f"{float(best['rating']):.1f}&#9733;, "
+            f"<strong>{_html.escape(worst['location'] or '')}</strong> trailed at "
+            f"{float(worst['rating']):.1f}&#9733;."))
+    elif rank.get("level"):
+        sections.append(report_paragraph(
+            f"Across {len(items)} locations this week, the ratings are within noise of each other — "
+            "no location stands out."))
     for i, (rest, p) in enumerate(parts):
         if i:
             sections.append(report_rule(30))
