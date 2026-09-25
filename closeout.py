@@ -96,8 +96,20 @@ def save(restaurant_id, fields, user_id=None, submitted_by=None, business_date=N
         conn.commit()
     finally:
         conn.close()
+    # Only what this filing CHANGED is acted on. Every re-save sends all ten
+    # fields, so fixing a typo in the shift notes re-zeroed the 86'd item
+    # over the night's receiving and re-opened its miss (F2-8). An 86 acts
+    # on the items it newly names; a callout on a changed line.
+    acts = {}
+    if "eighty_sixed" in values:
+        before = {p.lower() for p in _phrases(existing.get("eighty_sixed") or "")}
+        new_items = [p for p in _phrases(values.get("eighty_sixed") or "") if p.lower() not in before]
+        if new_items:
+            acts["eighty_sixed"] = ", ".join(new_items)
+    if "callouts" in values and (values.get("callouts") or None) != (existing.get("callouts") or None):
+        acts["callouts"] = values.get("callouts")
     try:
-        _act_on(restaurant_id, day, values, restaurant, db_path=db_path)
+        _act_on(restaurant_id, day, acts, restaurant, db_path=db_path)
     except Exception as e:
         import ops
         ops.capture(e, job="closeout_actions", context=f"restaurant_id={restaurant_id}")
@@ -167,13 +179,45 @@ def _phrases(text):
     return [p.strip(" .") for p in parts if p and p.strip(" .")]
 
 
+_FILLER = {"86", "86d", "86ed", "eighty", "sixed", "out", "of", "the", "ran", "run", "we", "no", "all",
+           "our", "for", "tonight", "today", "sold", "is", "are", "was", "were", "on", "at", "in", "and"}
+
+
+def _words(text):
+    """Whole words, lowercased, a plural's trailing s taken off ("eggs" and
+    "egg" are one word; "eggplant" is another)."""
+    import re
+    out = set()
+    for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if w in _FILLER or len(w) < 2:
+            continue
+        if w.endswith("oes") and len(w) > 4:
+            w = w[:-2]
+        elif w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+            w = w[:-1]
+        out.add(w)
+    return out
+
+
 def _match_ingredient(phrase, ingredients):
-    """The one ingredient whose name the phrase contains (or that contains
-    the phrase). Two candidates is no match — an 86 that says "chicken"
-    must not zero both chicken thighs and chicken stock."""
-    low = phrase.lower()
-    hits = [i for i in ingredients if i["name"] and (i["name"].lower() in low or low in i["name"].lower())]
-    return hits[0] if len(hits) == 1 else None
+    """The one ingredient the phrase names, by WHOLE words: every word of
+    the ingredient's name is in the phrase ("86 chicken breast"), or else
+    every word of the phrase is in the name ("chicken" -> a lone "Chicken
+    Thighs"). Two candidates is no match — an 86 that says "chicken" must
+    not zero both chicken thighs and chicken stock. Substrings matched
+    "egg" to Eggplant and "oil" to Boiled Peanuts (F2-8)."""
+    said = _words(phrase)
+    if not said:
+        return None
+    named = [(i, _words(i["name"])) for i in ingredients if i.get("name")]
+    whole = [(i, w) for i, w in named if w and w <= said]
+    if whole:
+        # Several names fully said: the most specific one, if it is unique.
+        top = max(len(w) for _i, w in whole)
+        best = [i for i, w in whole if len(w) == top]
+        return best[0] if len(best) == 1 else None
+    part = [i for i, w in named if w and said <= w]
+    return part[0] if len(part) == 1 else None
 
 
 def get(restaurant_id, business_date, db_path=DB_PATH):

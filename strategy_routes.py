@@ -731,15 +731,20 @@ def _do_auto_draft_set(u):
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule.")
     from models import update_restaurant
+    from client_api import log_account_event
     b = _body()
     fields = {}
     if "enabled" in b:
-        fields["auto_draft_schedule"] = 1 if b["enabled"] else 0
+        # _flag: "false" from a client is off, not on (F2-14).
+        fields["auto_draft_schedule"] = 1 if _flag(b["enabled"]) else 0
     if "external_tool" in b:
         fields["external_scheduling_tool"] = (str(b["external_tool"] or "").strip()[:60]) or None
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
     update_restaurant(_rid(u), fields)
+    if "auto_draft_schedule" in fields:
+        log_account_event(_rid(u), "auto_draft_changed", current_user=u,
+                          detail="on" if fields["auto_draft_schedule"] else "off")
     return _do_auto_draft_get(u)
 
 
@@ -814,15 +819,19 @@ def _do_auto_order_get(u):
 
 
 def _do_auto_order_set(u):
-    if not _sees_food(u):
-        return _forbidden("Only someone who can see food cost can change ordering.")
+    # A standing rule to spend with suppliers unattended is the owner's, as
+    # auto-publish is the schedule sender's: FOOD_COST_VIEW is a viewing
+    # grant ("Food cost & margins") and switched on automatic ordering (F2-14).
+    if not _principal(u):
+        return _forbidden("Only the account owner can turn automatic ordering on or off.")
     from models import update_restaurant
     from client_api import log_account_event
     b = _body()
     if "enabled" not in b:
         return {"ok": False, "error": "Nothing to change."}, 400
-    update_restaurant(_rid(u), {"auto_order_trusted": 1 if b["enabled"] else 0})
-    log_account_event(_rid(u), "auto_order_changed", current_user=u, detail="on" if b["enabled"] else "off")
+    on = _flag(b["enabled"])
+    update_restaurant(_rid(u), {"auto_order_trusted": 1 if on else 0})
+    log_account_event(_rid(u), "auto_order_changed", current_user=u, detail="on" if on else "off")
     return _do_auto_order_get(u)
 
 
@@ -843,7 +852,38 @@ def _do_count_sheet_get(u):
             # The web's Suppliers block reads these; the order draft groups by them.
             "supplier_name": r.get("supplier_name") or "",
             "supplier_email": r.get("supplier_email") or ""} for r in rows]
-    return {"ok": True, "items": out, "count": len(out)}, 200
+    # Where the ledger stood when the sheet opened. Sent back with the
+    # count, it lets the save ask about a delivery posted in between (F2-7).
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        mark = conn.execute("SELECT COALESCE(MAX(id), 0) AS m FROM ingredient_stock_events WHERE restaurant_id=?",
+                            (_rid(u),)).fetchone()["m"]
+    finally:
+        conn.close()
+    return {"ok": True, "items": out, "count": len(out), "ledger_mark": int(mark or 0)}, 200
+
+
+def _deliveries_since(rid, mark, ids, day):
+    """{ingredient_id: {"qty", "name", "unit"}} — receiving posted after the
+    sheet opened (event id > `mark`) for these ingredients, dated on or
+    before the count."""
+    from models import get_conn as _gc
+    if not ids:
+        return {}
+    conn = _gc()
+    try:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(
+            "SELECT e.ingredient_id, SUM(e.qty) AS qty, i.name, i.unit FROM ingredient_stock_events e "
+            "JOIN ingredients i ON i.id=e.ingredient_id AND i.restaurant_id=e.restaurant_id "
+            f"WHERE e.restaurant_id=? AND e.event_type='receiving' AND e.id>? AND e.event_date<=? "
+            f"AND e.ingredient_id IN ({marks}) GROUP BY e.ingredient_id",
+            (rid, int(mark), day, *ids)).fetchall()
+    finally:
+        conn.close()
+    return {r["ingredient_id"]: {"qty": float(r["qty"] or 0), "name": r["name"], "unit": r["unit"] or ""}
+            for r in rows}
 
 
 def _do_count_sheet_save(u):
@@ -873,6 +913,30 @@ def _do_count_sheet_save(u):
             return {"ok": False, "error": "A count can't be dated in the future."
                     if parsed > _local_today(u) else "Pick the count date from the calendar."}, 400
         day = parsed.isoformat()
+    # A delivery received after the sheet was opened (F2-7): the count was
+    # typed in after it, and whether it was TAKEN before the truck came is
+    # the one thing the ledger cannot know. Asked, not guessed — "counted"
+    # (the count includes it) or "after" (it arrived after the count, so it
+    # is added to what was counted). A client that does not send its
+    # ledger_mark is not asked.
+    try:
+        mark = int(b.get("ledger_mark")) if b.get("ledger_mark") not in (None, "") else None
+    except (TypeError, ValueError):
+        mark = None
+    choice = b.get("deliveries") if b.get("deliveries") in ("counted", "after") else None
+    arrived = {}
+    if mark is not None:
+        ids = []
+        for it in items:
+            try:
+                ids.append(int((it or {}).get("ingredient_id")))
+            except (TypeError, ValueError, AttributeError):
+                pass
+        arrived = _deliveries_since(_rid(u), mark, sorted(set(ids)), day or _local_today(u).isoformat())
+        if arrived and not choice:
+            return {"ok": False, "needs_confirm": True,
+                    "deliveries": [{"ingredient_id": k, **v} for k, v in sorted(arrived.items())],
+                    "error": "A delivery was received after you opened this sheet — does your count include it?"}, 409
     written, skipped = 0, []
     for it in items:
         try:
@@ -884,6 +948,8 @@ def _do_count_sheet_save(u):
         if qty < 0 or qty > 1e7:
             skipped.append(it)
             continue
+        if choice == "after" and ing_id in arrived:
+            qty = round(qty + arrived[ing_id]["qty"], 3)
         try:
             inventory_ledger.record_recount(_rid(u), ing_id, qty, event_date=day, source="count_sheet")
             written += 1
@@ -2478,9 +2544,30 @@ def _do_delayed_pending(u):
     return {"ok": True, "actions": delayed.pending(_rid(u))}, 200
 
 
+def _may_undo(u, kind) -> bool:
+    """Undoing a queued send is the power to make that send: a week to
+    staff is the schedule sender's, a supplier order is food cost's, and
+    anything else is the owner's. With no check, a view-only manager's
+    lock-screen Undo stopped the owner's auto-publish (F3-13)."""
+    if kind in ("schedule_publish", "schedule_changes_send"):
+        return _may_publish(u)
+    if kind == "order_send":
+        return _sees_food(u)
+    return _principal(u)
+
+
 def _do_delayed_cancel(u, action_id):
     import delayed
     from client_api import log_account_event
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT kind FROM delayed_actions WHERE id=? AND restaurant_id=?",
+                           (int(action_id), _rid(u))).fetchone()
+    finally:
+        conn.close()
+    if row and not _may_undo(u, row["kind"]):
+        return _forbidden("Your login can't stop this — ask whoever can send it.")
     ok = delayed.cancel(_rid(u), int(action_id), actor=u)
     if ok:
         log_account_event(_rid(u), "delayed_action_cancelled", current_user=u, detail=f"#{action_id}")
@@ -3584,21 +3671,45 @@ def _do_people_list(u):
     return {"ok": True, "people": people.list_people(_rid(u))}, 200
 
 
+def _sees_pay(u):
+    """Per-role pay rates: the owner and whoever sends the schedule (the
+    people who cost it). A teammate login holds every module's view but
+    not SCHEDULE_PUBLISH, and was shown everyone's wage (F2-20)."""
+    return _principal(u) or _may_publish(u)
+
+
+def _person_payload(u, p, can_edit):
+    p["can_edit"] = bool(can_edit)
+    p["can_manage_login"] = _principal(u)
+    # What the sheet may send: role and pay rate are read-only here — the
+    # role comes from the shifts someone works, the rate from Labor's
+    # per-role rates — and a job title is the owner's (F3-5).
+    p["editable"] = {"role": False, "pay_rate": False,
+                     "job_title": bool(_principal(u) and p.get("has_login"))}
+    pr = p.get("pay_rate")
+    if isinstance(pr, dict):
+        # The same figure flat, for a client that reads a number.
+        p["pay_rate_amount"] = pr.get("rate")
+    return p
+
+
 def _do_person_get(u, key):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the team.")
     import people
-    p = people.get_person(_rid(u), key)
+    try:
+        p = people.get_person(_rid(u), key, include_pay=_sees_pay(u))
+    except people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
     if not p:
         return {"ok": False, "error": "That person isn't on the roster."}, 404
-    p["can_edit"] = _may_rate(u)
-    p["can_manage_login"] = _principal(u)
-    return {"ok": True, "person": p}, 200
+    return {"ok": True, "person": _person_payload(u, p, _may_rate(u))}, 200
 
 
 def _do_person_set(u, key):
     """Partial update: each field goes to the store that already owns it
-    (people.update_person). A PIN or job title is the owner's."""
+    (people.update_person). A PIN or job title is the owner's; a changed
+    role or pay rate is refused in words, never dropped under "Saved" (F3-5)."""
     if not _may_rate(u):
         return _forbidden("Your login can view the team but not change it.")
     import people
@@ -3612,9 +3723,9 @@ def _do_person_set(u, key):
         log_account_event(_rid(u), "person_updated", current_user=u,
                           detail=f"{person['name']}: {', '.join(c for c in changed if c != 'pin') or 'PIN'}"
                                  + (" (PIN reset)" if "pin" in changed and len(changed) > 1 else ""))
-    person["can_edit"] = True
-    person["can_manage_login"] = _principal(u)
-    return {"ok": True, "person": person, "changed": changed}, 200
+    if not _sees_pay(u):
+        person.pop("pay_rate", None)
+    return {"ok": True, "person": _person_payload(u, person, True), "changed": changed}, 200
 
 
 # ── The draft that is waiting to go out (Friction audit #4, #16) ─────────────
@@ -3680,7 +3791,8 @@ def _do_publish_check(u):
     # `acknowledge: [keys it showed]`, so a blocker that appears between
     # this read and the press is not acknowledged by it (F2-9).
     return {"ok": True, "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
-            "published_at": row["published_at"], "blockers": blockers, "blocker_items": items, "reach": summary,
+            "published_at": row["published_at"], "blockers": blockers,
+            "blocker_keys": [b["key"] for b in items], "blocker_items": items, "reach": summary,
             "unsent_changes": unsent,
             "texts_available": people.staff_sms_ready(),
             "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
@@ -3725,7 +3837,12 @@ def _targets_payload(rid):
 def _do_targets_get(u):
     if not _sees_labor(u) and not _principal(u):
         return _forbidden()
-    return {"ok": True, "targets": _targets_payload(_rid(u)), "can_edit": _principal(u)}, 200
+    t = _targets_payload(_rid(u))
+    if not _sees_pay(u):
+        # Wages are the owner's and the schedule sender's (F2-20).
+        t["role_rates"], t["hourly_rate"] = {}, None
+        t["sources"].pop("hourly_rate", None)
+    return {"ok": True, "targets": t, "can_edit": _principal(u), "sees_pay": _sees_pay(u)}, 200
 
 
 def _do_targets_set(u):
@@ -3779,6 +3896,15 @@ def _do_targets_set(u):
         upd["role_rates_json"] = _json.dumps(rates) if rates else None
     if not upd:
         return {"ok": False, "error": "Nothing to change."}, 400
+    # This card is where the owner states a target, one field per save: a
+    # value submitted here is theirs even when it equals the seeded one
+    # (typing 30% to confirm Cavnar's starting 30%). update_restaurant only
+    # marks a CHANGED value 'set', for forms that re-send defaults, so the
+    # source is named explicitly — the pattern models.py prescribes (F2-20).
+    from models import TARGET_SOURCE_FIELDS
+    for _tf, _sf in TARGET_SOURCE_FIELDS.items():
+        if upd.get(_tf) not in (None, ""):
+            upd[_sf] = "set"
     before = get_restaurant(_rid(u))
     update_restaurant(_rid(u), upd)
     changed = [k for k in upd if getattr(before, k, None) != upd[k]]

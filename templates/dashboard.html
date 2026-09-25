@@ -4756,7 +4756,11 @@ svg:hover .hb-xh{opacity:1}
     var body=(btn&&btn.getAttribute('data-body'))||'{}';
     fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:body})
       .then(apiJson).then(function(d){
-        if(d&&d.ok){if(d.queued)toast('Queued \u2014 undo from the Cavnar AI strip','success');hbRefetchOpen();hbSoft(false);return;}
+        if(d&&d.ok){if(d.queued)toast('Queued \u2014 undo from the Cavnar AI strip','success');
+          /* Time off approved over a published week: the decide route's
+             warning says who is still on it; Labor offers the redo (F2-5). */
+          if(d.warning){toast(d.warning,'warning');if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);}
+          hbRefetchOpen();hbSoft(false);return;}
         if(btn)btn.disabled=false;
         // The publish gate on "Send now": the warnings go on screen under
         // the item, and the one button that names them sends it knowingly.
@@ -5899,7 +5903,9 @@ svg:hover .hb-xh{opacity:1}
       var filled=0;
       for(var i=0;i<(d.days||[]).length;i++){var r=d.days[i];if(!r.from)continue;filled++;
         var g=document.querySelector('#dr-bud input[data-bd="gross"][data-date="'+r.date+'"]'),nt=document.querySelector('#dr-bud input[data-bd="net"][data-date="'+r.date+'"]');
-        if(g&&isNum(r.gross))g.value=Math.round(r.gross);if(nt&&isNum(r.net))nt.value=Math.round(r.net);}
+        /* A filled night takes this source alone: a field it has no figure
+           for is cleared, never left from another source (F2-19). */
+        if(g)g.value=isNum(r.gross)?Math.round(r.gross):'';if(nt)nt.value=isNum(r.net)?Math.round(r.net):'';}
       if(s)s.textContent=filled?(d.basis+(d.missing&&d.missing.length?' '+d.missing.length+' night'+(d.missing.length===1?'':'s')+' had nothing to go on.':'')+' Not saved yet.'):'Nothing to go on for these nights yet.';
     }).catch(function(){done();if(s)s.textContent='Couldn’t reach Cavnar.';});
   }
@@ -11485,6 +11491,15 @@ function _runAskCavnarProposal(p, card, btn, onDone) {
     } else if (d.ok) {
       _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
+      /* A decision the route flags (time off over a published week, F2-5):
+         the warning stays on the card, and Labor offers the redo. */
+      if (d.warning) {
+        var warn = document.createElement('div');
+        warn.className = 'err';
+        warn.textContent = d.warning;
+        card.appendChild(warn);
+        if (window.lb2AfterTimeOff) lb2AfterTimeOff(d);
+      }
       if (typeof onDone === 'function') onDone(d);
       /* Something changed: Home re-reads (friction #12). */
       if (window.hbDirty) hbDirty();

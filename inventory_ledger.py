@@ -11,10 +11,10 @@ double-count.
 
 A 'recount' event stores the absolute counted quantity and is the ledger's
 anchor: current_stock = latest recount.qty + receiving since - depletion
-since - waste since, where "since" means "inserted after that recount"
-(ordered by row id, not event_date — entries are almost always logged
-same-day as they occur, and id ordering sidesteps same-day tie-breaking
-entirely). Every ingredient always has at least one recount because CSV
+since - waste since. "Latest" and "since" are by event_date, then row id
+within one date: a count entered after a delivery but dated before it must
+not erase the delivery (F2-7), and a depletion posted late for a night
+before the count must not be subtracted from it. Every ingredient always has at least one recount because CSV
 migration inserts one, so there's no "no recount yet" special case.
 
 db_conn/get_conn are imported lazily inside each function (not at module
@@ -133,8 +133,9 @@ def waste_in_window(restaurant_id, end=None, days=WASTE_WINDOW_DAYS, conn=None) 
             "last_by_ingredient": lasts, "logged": logged, "last_event": last}
 
 
-def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None) -> float:
-    """Stock on hand for one ingredient, from the ledger.
+def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None, as_of: str = None) -> float:
+    """Stock on hand for one ingredient, from the ledger — at the end of
+    `as_of` (an ISO date) when given, else now.
 
     `restaurant_id` is optional only because every existing caller already
     checks ownership before reaching here. Pass it: this function reads and
@@ -142,25 +143,37 @@ def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None) 
     is one unguarded future caller away from computing one restaurant's stock
     from another's events. When given, it is enforced on every read.
     """
-    scope = " AND restaurant_id=?" if restaurant_id is not None else ""
-    extra = (restaurant_id,) if restaurant_id is not None else ()
+    own = " AND restaurant_id=?" if restaurant_id is not None else ""
+    own_args = (restaurant_id,) if restaurant_id is not None else ()
+    scope, extra = own, own_args
+    if as_of:
+        scope += " AND event_date<=?"
+        extra = extra + (str(as_of)[:10],)
+    # The anchor is the count TAKEN last — newest event_date, then newest
+    # row on that date — and what counts after it is anything dated later,
+    # or the same day and entered after it. By row id alone, a count typed
+    # in after a delivery but dated before it erased the delivery: stock 45
+    # after a 40 lb delivery read 6 once Monday's count of 6 was entered on
+    # Tuesday (F2-7). The same rule keeps a late-posted depletion for a
+    # night before the count from being subtracted twice.
     recount = conn.execute(
-        "SELECT id, qty FROM ingredient_stock_events "
-        f"WHERE ingredient_id=?{scope} AND event_type='recount' ORDER BY id DESC LIMIT 1",
+        "SELECT id, qty, event_date FROM ingredient_stock_events "
+        f"WHERE ingredient_id=?{scope} AND event_type='recount' ORDER BY event_date DESC, id DESC LIMIT 1",
         (ingredient_id, *extra)
     ).fetchone()
     if not recount:
         row = conn.execute(
-            f"SELECT current_stock FROM ingredients WHERE id=?{scope}",
-            (ingredient_id, *extra)).fetchone()
+            f"SELECT current_stock FROM ingredients WHERE id=?{own}",
+            (ingredient_id, *own_args)).fetchone()
         return row["current_stock"] if row else 0.0
 
     stock = recount["qty"]
     deltas = conn.execute(
         "SELECT event_type, COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
-        f"WHERE ingredient_id=?{scope} AND id>? AND event_type IN ('receiving','depletion','waste') "
+        f"WHERE ingredient_id=?{scope} AND (event_date>? OR (event_date=? AND id>?)) "
+        "AND event_type IN ('receiving','depletion','waste') "
         "GROUP BY event_type",
-        (ingredient_id, *extra, recount["id"])
+        (ingredient_id, *extra, recount["event_date"], recount["event_date"], recount["id"])
     ).fetchall()
     for d in deltas:
         if d["event_type"] == "receiving":
@@ -213,10 +226,12 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
         # quantity off a bare integer; the guarantee belongs in the query.
         recount_date = None
         if agg and agg["recount_id"]:
+            # The count taken last, by date — the same anchor as the stock
+            # figure (F2-7), not the row typed in last.
             r = conn.execute(
-                "SELECT event_date FROM ingredient_stock_events WHERE id=? AND restaurant_id=?",
-                (agg["recount_id"], restaurant_id)).fetchone()
-            recount_date = r["event_date"] if r else None
+                "SELECT MAX(event_date) AS d FROM ingredient_stock_events WHERE ingredient_id=? AND "
+                "restaurant_id=? AND event_type='recount'", (ingredient_id, restaurant_id)).fetchone()
+            recount_date = r["d"] if r else None
 
         # The cached figure every order, valuation and COGS read is never
         # below zero. Negative stock is not a kitchen: it is a recipe typed in
@@ -324,15 +339,19 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             conn.rollback()
             return {"ok": False, "error": "That ingredient isn't this restaurant's."}
-        expected = _compute_current_stock(conn, ingredient_id)
+        # What the ledger expected on the day the count was taken — not
+        # today: a count dated before a delivery is compared with the stock
+        # before that delivery, or the delivery read as waste (F2-7).
+        expected = _compute_current_stock(conn, ingredient_id, as_of=event_date_str)
         gap = round(expected - counted_qty, 3)
 
-        # The waste event (if any) must be inserted BEFORE the recount, so
-        # its row id is lower than the recount's — it explains why the
-        # count came in below expectation, it isn't stock that vanished
-        # AFTER the recount. _compute_current_stock only sums events with
-        # id > the anchor recount's id, so inserting waste afterward would
-        # double-subtract the same gap the recount's own qty already bakes in.
+        # The waste event (if any) must be inserted BEFORE the recount, on
+        # the same date, so its row id is lower than the recount's — it
+        # explains why the count came in below expectation, it isn't stock
+        # that vanished AFTER the recount. _compute_current_stock only sums
+        # same-day events with id > the anchor recount's id, so inserting
+        # waste afterward would double-subtract the gap the recount's own
+        # qty already bakes in.
         inferred_waste = 0.0
         if gap > 0 and not infer_waste:
             log.info(f"[inventory_ledger] recount for ingredient {ingredient_id} ({source}): "

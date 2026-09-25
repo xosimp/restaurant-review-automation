@@ -89,19 +89,51 @@ def list_people(restaurant_id, db_path=None) -> list:
                     "active": row["active"], "has_login": row["has_login"],
                     "phone": c.get("phone") or "", "email": c.get("email") or ""})
     out.sort(key=lambda p: (not p["active"], p["name"].lower()))
+    # Two names that slug alike ("Jo-Ann" and "Jo Ann", "José" and "Jos")
+    # each get a key of their own — the slug plus a short, stable tag of the
+    # name — so each opens its own record (F2-13).
+    counts = {}
+    for p in out:
+        counts[p["key"]] = counts.get(p["key"], 0) + 1
+    for p in out:
+        if counts[p["key"]] > 1:
+            p["key"] = _distinct_key(p["name"])
     return out
 
 
+def _distinct_key(name) -> str:
+    import hashlib
+    tag = hashlib.sha1(" ".join(str(name or "").split()).casefold().encode("utf-8")).hexdigest()[:4]
+    return f"{person_key(name)}-{tag}".strip("-")
+
+
+class AmbiguousPerson(LookupError):
+    """Two people on the roster share one key ("Jo-Ann" and "Jo Ann" are
+    both jo-ann; "José" and "Jos" both jos)."""
+
+
 def find(restaurant_id, key, db_path=None):
-    """The list row for a key (or a name typed as-is), or None."""
+    """The list row for a key (or a name typed as-is), or None. Raises
+    AmbiguousPerson when the key names more than one person: an edit to
+    the second used to land on the first (F2-13)."""
     want = str(key or "").strip()
     if not want:
         return None
     slug = person_key(want)
-    for p in list_people(restaurant_id, db_path=db_path):
-        if p["key"] == want or p["key"] == slug:
+    everyone = list_people(restaurant_id, db_path=db_path)
+    # A key as the list gave it, or a name typed exactly as it is on file.
+    for p in everyone:
+        if p["key"] == want:
             return p
-    return None
+    typed = " ".join(want.split()).casefold()
+    exact = [p for p in everyone if " ".join(p["name"].split()).casefold() == typed]
+    if len(exact) == 1:
+        return exact[0]
+    hits = [p for p in everyone if person_key(p["name"]) == slug]
+    if len(hits) > 1:
+        raise AmbiguousPerson(f"Two people share that name ({', '.join(p['name'] for p in hits[:3])}) "
+                              "— open them from the list.")
+    return hits[0] if hits else None
 
 
 def _pay_rate(restaurant_id, role, db_path):
@@ -126,7 +158,7 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
     import staff_settings
     from models import get_capabilities, get_staff_availability
     db = _db(db_path)
-    row = find(restaurant_id, key, db_path=db)
+    row = find(restaurant_id, key, db_path=db)      # AmbiguousPerson propagates to the route
     if not row:
         return None
     name, k = row["name"], staff_settings.name_key(row["name"])
@@ -197,12 +229,61 @@ def update_person(restaurant_id, key, fields, updated_by=None, may_manage_logins
     import staff_settings
     from models import set_staff_contact, set_capability, CapabilityError
     db = _db(db_path)
-    row = find(restaurant_id, key, db_path=db)
+    try:
+        row = find(restaurant_id, key, db_path=db)
+    except AmbiguousPerson as e:
+        raise PersonError(str(e))
     if not row:
         raise PersonError("That person isn't on the roster.")
     name = row["name"]
     f = dict(fields or {})
     changed = []
+    # Every refusal before any write: a PIN refused after the contacts and
+    # rating were already saved answered 400 over a partial write (F2-13).
+    member = None
+    if "pin" in f or "job_title" in f:
+        if not may_manage_logins:
+            raise PersonError("Only the account owner can change a staff login.")
+        member = next((m for m in _memberships(restaurant_id, db)
+                       if staff_settings.name_key(m.get("employee_name")) == staff_settings.name_key(name)), None)
+        if not member:
+            raise PersonError(f"{name} has no staff login yet — add one in Account → People.")
+        if "pin" in f:
+            from auth import validate_pin, PinError
+            try:
+                validate_pin(str(f.get("pin") or ""))
+            except PinError as pe:
+                raise PersonError(str(pe))
+    if "email" in f:
+        email = str(f.get("email") or "").strip()
+        if email and "@" not in email:
+            raise PersonError("That doesn't look like an email address.")
+    if "phone" in f:
+        _p, perr = staff_settings.clean_phone(f.get("phone"))
+        if perr:
+            raise PersonError(perr)
+    # Role and pay rate have no store here: a role is the one the shifts
+    # carry, a rate is the role's (Labor → Targets & rates). The same value
+    # echoed back is fine; a changed one is refused in words — it used to be
+    # dropped while the sheet said "Saved." (F3-5).
+    if "role" in f:
+        want = " ".join(str(f.get("role") or "").split())
+        if want.casefold() != " ".join(str(row.get("role") or "").split()).casefold():
+            raise PersonError("A role comes from the shifts someone works, so it can't be changed here"
+                              + (" — their staff-portal job title can." if row.get("has_login") else "."))
+    if "pay_rate" in f:
+        v = f.get("pay_rate")
+        if isinstance(v, dict):
+            v = v.get("rate")
+        if v not in (None, ""):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                raise PersonError("Pay rate must be a number.")
+            current = _pay_rate(restaurant_id, row.get("role"), db).get("rate")
+            if current is None or abs(v - float(current)) > 0.005:
+                raise PersonError(f"Pay is set per role — change the {row.get('role') or 'role'} rate in "
+                                  "Labor → Targets & rates.")
 
     settings = {k: f[k] for k in _SETTINGS_FIELDS if k in f}
     if settings:
@@ -241,13 +322,7 @@ def update_person(restaurant_id, key, fields, updated_by=None, may_manage_logins
             raise PersonError(str(e))
         changed.append("can_close")
 
-    if "pin" in f or "job_title" in f:
-        if not may_manage_logins:
-            raise PersonError("Only the account owner can change a staff login.")
-        member = next((m for m in _memberships(restaurant_id, db)
-                       if staff_settings.name_key(m.get("employee_name")) == staff_settings.name_key(name)), None)
-        if not member:
-            raise PersonError(f"{name} has no staff login yet — add one in Account → People.")
+    if member is not None:
         from auth import set_membership_pin, validate_pin, PinError, update_membership_details
         if "pin" in f:
             try:
@@ -318,6 +393,66 @@ def reach(restaurant_id, names, db_path=None) -> dict:
         out[n] = {"push_user_id": uid if uid in tokens else None, "sms": sms,
                   "email": ((contacts.get(k) or {}).get("email") or "").strip() or None}
     return out
+
+
+def tell(restaurant_id, name, title, lines, *, email_type="staff_notice", channel=None, db_path=None):
+    """One notice to one person on staff, on the channel `reach` picks —
+    the app, a text they agreed to, email as the fallback — the same order
+    a published week uses. Returns "push", "sms", "email" or None (nobody
+    could be reached, or every channel failed).
+
+    Staff notices went by email only, so a person with no address on file
+    was never told their drop was approved, their swap went through or
+    their time off was decided (F2-5, F2-12). `lines` are plain sentences;
+    the first is the push/text body."""
+    import html as _h
+    lines = [str(x) for x in (lines or []) if str(x or "").strip()] or [title]
+    db = _db(db_path)
+    if channel is None:
+        try:
+            channel = reach(restaurant_id, [name], db_path=db).get(name) or {}
+        except Exception as e:
+            print(f"[people] reach failed rid={restaurant_id}: {e!r}")
+            channel = {}
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db)
+        place = (getattr(r, "location_name", None) or getattr(r, "name", None) or "your restaurant") if r else "your restaurant"
+    except Exception:
+        place = "your restaurant"
+    if channel.get("push_user_id"):
+        try:
+            import push
+            if push.fire_push(restaurant_id, "staff_schedule", f"{title} — {place}", " ".join(lines)[:220],
+                              data={"kind": "staff_notice", "module": "staff"}, db_path=db,
+                              user_ids=[channel["push_user_id"]]):
+                return "push"
+        except Exception as e:
+            print(f"[people] staff push failed rid={restaurant_id}: {e!r}")
+    if channel.get("sms"):
+        try:
+            import notify
+            from config import base_url
+            if notify.send_sms(channel["sms"], f"{place}: {' '.join(lines)} {base_url()}/staff "
+                                               "Reply STOP to stop these texts.", use_case="staff"):
+                return "sms"
+        except Exception as e:
+            print(f"[people] staff text failed rid={restaurant_id}: {e!r}")
+    if channel.get("email"):
+        try:
+            import emails
+            from config import base_url
+            html = emails.report_shell(kicker=_h.escape(place), title=_h.escape(title), subtitle="",
+                                       sections=[emails.report_paragraph(_h.escape(x)) for x in lines],
+                                       cta_label="Open the staff portal", cta_url=base_url() + "/staff")
+            res = emails.deliver(email_type=email_type, restaurant_id=restaurant_id, payload={
+                "from": emails.sender("client"), "to": [channel["email"]],
+                "subject": f"{title} — {place}", "preheader": lines[0][:120], "html": html})
+            if getattr(res, "ok", False):
+                return "email"
+        except Exception as e:
+            print(f"[people] staff email failed rid={restaurant_id}: {e!r}")
+    return None
 
 
 def reach_summary(reachable: dict) -> dict:

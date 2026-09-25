@@ -195,6 +195,7 @@ def test_an_acknowledgement_by_keys_does_not_cover_a_blocker_that_appeared_since
     body = r.get_json()
     assert r.status_code == 409 and body["new_blockers"] == ["Ana — Monday: a new breach"]
     assert [b["key"] for b in body["blocker_items"]] == ["hours_over", "rule:x"]
+    assert body["blocker_keys"] == ["hours_over", "rule:x"]
     assert mail["sent"] == []
     r = _app(db).test_client().post("/mobile/api/labor/publish-schedule",
                                     json={"schedule_id": hid, "acknowledge": ["hours_over", "rule:x"]},
@@ -213,6 +214,7 @@ def test_publish_check_returns_each_blocker_with_its_key(db, monkeypatch):
     with app.test_request_context(f"/?schedule_id={hid}"):
         out, status = strategy_routes._do_publish_check({"restaurant_id": rid, "is_admin": True})
     assert status == 200 and out["blocker_items"] == [{"key": "hours_over", "text": "10h over"}]
+    assert out["blocker_keys"] == ["hours_over"] and out["blockers"] == ["10h over"]
 
 
 # ── F2-2: a save of a sent week tells nobody; Send tells the people it moved ─
@@ -337,3 +339,330 @@ def test_a_manager_cannot_rewrite_hours_or_closures(db):
     owner = app.test_client().post("/mobile/api/account/hours", json={"closures": ["2026-12-25"]},
                                    headers=_bearer(db, rid))
     assert owner.status_code == 200 and owner.get_json()["closures"] == ["2026-12-25"]
+
+
+# ── helpers for the handler-level tests ─────────────────────────────────────
+
+def _call(fn, user, *args, body=None, query=""):
+    app = Flask(__name__)
+    with app.test_request_context("/" + query, method="POST" if body is not None else "GET", json=body):
+        return fn(user, *args)
+
+
+def _user(rid, role="client", uid=1, **kw):
+    return dict({"id": uid, "restaurant_id": rid, "role": role, "is_admin": False, "username": role}, **kw)
+
+
+@pytest.fixture
+def staff_out(monkeypatch):
+    """Every channel people.tell uses, recorded; nothing leaves."""
+    out = {"push": [], "sms": [], "email": []}
+    monkeypatch.setattr(push, "fire_push", lambda rid, t, title, body, data=None, user_ids=None, **k:
+                        out["push"].append((t, list(user_ids or []), body)) or 1)
+    monkeypatch.setattr(notify, "send_sms", lambda to, msg, use_case="alert": out["sms"].append((to, msg)) or True)
+    monkeypatch.setattr(emails, "deliver", lambda payload=None, restaurant_id=None, email_type=None, **k:
+                        out["email"].append((payload["to"][0], payload["subject"], email_type)) or emails.SendResult(True))
+    return out
+
+
+# ── F2-5: a time-off decision reaches the person who asked ──────────────────
+
+def test_a_time_off_decision_is_told_to_the_requester(db, staff_out):
+    rid = _restaurant(db)
+    _contacts(db, rid, "Ana")
+    row, err = time_off.request_time_off(rid, "Ana", "2099-01-05", "2099-01-06", today=dt.date(2098, 12, 1))
+    assert not err
+    staff_out["email"].clear()
+    time_off.decide(rid, row["id"], True, decided_by=1)
+    assert [(to, et) for to, _s, et in staff_out["email"]] == [("ana@x.com", "time_off")]
+    assert "approved" in staff_out["email"][0][1].lower()
+
+
+# ── F2-6: a request reaches whoever can decide it, brief or not ─────────────
+
+def test_a_request_reaches_a_decider_who_turned_the_brief_off_with_its_id(db, monkeypatch):
+    rid = _restaurant(db)
+    auth.init_auth(db_path=db)
+    push.init_push(db_path=db)
+    uid = auth.create_user(rid, "gm", "gm@x.com", "pw", db_path=db)
+    conn = models.get_conn(db)
+    conn.execute("UPDATE users SET role='manager' WHERE id=?", (uid,))
+    conn.execute("INSERT INTO login_prefs (user_id, restaurant_id, morning_brief) VALUES (?,?,0)", (uid, rid))
+    conn.commit()
+    conn.close()
+    assert not [u for u in __import__("morning_brief").recipients(rid, db) if u["id"] == uid]
+    sent = []
+    monkeypatch.setattr(emails, "deliver", lambda payload=None, **k: sent.append(payload["to"][0]) or emails.SendResult(True))
+    pushed = []
+    monkeypatch.setattr(push, "fire_push", lambda rid_, t, title, body, data=None, **k: pushed.append(data) or 1)
+    row, err = time_off.request_time_off(rid, "Ana", "2099-01-05", "2099-01-05", today=dt.date(2098, 12, 1))
+    assert not err
+    assert "gm@x.com" in sent
+
+
+def test_a_time_off_request_push_carries_its_id_for_approve_and_deny(db, monkeypatch):
+    rid = _restaurant(db)
+    got = []
+    monkeypatch.setattr(strategy_jobs, "_reach", lambda r, t, title, body, data, dbp, **k: got.append((t, data, k)))
+    row, _ = time_off.request_time_off(rid, "Ana", "2099-01-05", "2099-01-05", today=dt.date(2098, 12, 1))
+    t, data, kw = got[0]
+    assert t == "shift_request" and data["request_id"] == row["id"] and data["request_kind"] == "time_off"
+    assert kw.get("deciders") is True
+    assert push._category("shift_request", data) == push.CATEGORY_REQUEST
+    assert push.nav_for("shift_request", data) == f"request/time_off-{row['id']}"
+
+
+# ── F2-11: "schedule drafted" never goes to every phone ─────────────────────
+
+def test_the_drafted_push_goes_to_nobody_when_no_publisher_gets_the_brief(db, monkeypatch):
+    import ops
+    rid = _restaurant(db)
+    r = models.get_restaurant(rid)
+    monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
+    monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "done"})
+    fired = []
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append(k.get("user_ids")) or 1)
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 9, "role": "member", "grants": []}])
+
+    class _SE:
+        @staticmethod
+        def _run_schedule_job(job_id, rid_):
+            return None
+    strategy_jobs._draft_one(r, db, _SE, lambda k: None)
+    assert fired == []
+
+
+# ── F2-12: shift-request outcomes use the person's own channel ──────────────
+
+def test_a_shift_request_outcome_reaches_someone_with_no_email_by_text(db, staff_out, monkeypatch):
+    rid = _restaurant(db)
+    monkeypatch.setattr(people, "reach", lambda r, names, db_path=None: {
+        n: {"push_user_id": None, "sms": "+15550001111", "email": None} for n in names})
+    n = shift_requests._email_staff(rid, ["Ana"], "Your shift is off your schedule", ["Approved."], db)
+    assert n == 1 and staff_out["sms"] and not staff_out["email"]
+
+
+# ── F2-7: a count dated before a delivery does not erase it ─────────────────
+
+def _ingredient(db_path, rid, name, cost=4.0):
+    conn = models.get_conn(db_path)
+    i = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost, par_level, current_stock, "
+                     "avg_daily_usage, is_active) VALUES (?,?,?,?,10,0,3,1)", (rid, name, "lb", cost)).lastrowid
+    conn.commit()
+    conn.close()
+    return i
+
+
+def test_a_count_entered_after_a_delivery_but_dated_before_it_keeps_the_delivery(db):
+    import inventory_ledger as il
+    rid = _restaurant(db)
+    i = _ingredient(db, rid, "Beef")
+    il.record_recount(rid, i, 5, event_date="2026-09-20")
+    il.record_receiving(rid, i, 40, event_date="2026-09-23")
+    out = il.record_recount(rid, i, 6, event_date="2026-09-22")
+    conn = models.get_conn(db)
+    try:
+        assert il._compute_current_stock(conn, i, rid) == 46
+    finally:
+        conn.close()
+    # ... and the late count was compared with the stock ON its date (5), not today's 45.
+    assert out["inferred_waste_qty"] == 0
+
+
+def test_the_count_sheet_asks_about_a_delivery_posted_after_it_opened(db):
+    import inventory_ledger as il
+    import strategy_routes
+    rid = _restaurant(db)
+    i = _ingredient(db, rid, "Beef")
+    il.record_recount(rid, i, 5, event_date="2026-09-20")
+    owner = _user(rid)
+    sheet, _ = _call(strategy_routes._do_count_sheet_get, owner)
+    il.record_receiving(rid, i, 40)                                    # the truck, after the sheet opened
+    body = {"items": [{"ingredient_id": i, "counted": 6}], "ledger_mark": sheet["ledger_mark"]}
+    out, status = _call(strategy_routes._do_count_sheet_save, owner, body=body)
+    assert status == 409 and out["needs_confirm"] and out["deliveries"][0]["qty"] == 40
+    out, status = _call(strategy_routes._do_count_sheet_save, owner, body=dict(body, deliveries="after"))
+    assert status == 200
+    conn = models.get_conn(db)
+    try:
+        assert il._compute_current_stock(conn, i, rid) == 46
+    finally:
+        conn.close()
+
+
+# ── F2-8: an 86 matches whole words and acts once ───────────────────────────
+
+def test_an_86_of_egg_does_not_zero_eggplant():
+    import closeout
+    ings = [{"id": 1, "name": "Eggplant"}, {"id": 2, "name": "Boiled Peanuts"}]
+    assert closeout._match_ingredient("egg", ings) is None
+    assert closeout._match_ingredient("86'd oil", ings) is None
+    assert closeout._match_ingredient("eggs", ings + [{"id": 3, "name": "Eggs"}])["id"] == 3
+    assert closeout._match_ingredient("chicken breast", [{"id": 4, "name": "Chicken"},
+                                                         {"id": 5, "name": "Chicken Breast"}])["id"] == 5
+    assert closeout._match_ingredient("chicken", [{"id": 6, "name": "Chicken Thighs"},
+                                                  {"id": 7, "name": "Chicken Stock"}]) is None
+
+
+def test_re_filing_a_close_out_does_not_zero_the_86_again(db, monkeypatch):
+    import closeout
+    import inventory_ledger as il
+    rid = _restaurant(db, module_inventory=1)
+    i = _ingredient(db, rid, "Eggs")
+    counts = []
+    monkeypatch.setattr(il, "record_recount", lambda *a, **k: counts.append(a[1]) or {"recount_id": 1})
+    r = models.get_restaurant(rid)
+    fields = {k: "" for k in closeout.FIELDS}
+    closeout.save(rid, dict(fields, eighty_sixed="eggs"), business_date="2026-09-24", restaurant=r)
+    closeout.save(rid, dict(fields, eighty_sixed="eggs", shift_notes="fixed a typo"),
+                  business_date="2026-09-24", restaurant=r)
+    assert counts == [i]
+
+
+# ── F2-13: a refused PIN writes nothing; two alike names are two people ─────
+
+def test_a_refused_pin_leaves_the_other_fields_unwritten(db):
+    rid = _restaurant(db)
+    with pytest.raises(people.PersonError):
+        people.update_person(rid, "ana", {"phone": "+15551234567", "pin": "1234"}, may_manage_logins=False)
+    assert not [c for c in models.get_staff_contacts(rid) if c["employee_name"] == "Ana" and c.get("phone")]
+
+
+def test_two_names_that_slug_alike_each_open_their_own_record(db):
+    rid = _restaurant(db, people_=("Jo-Ann", "Jo Ann"))
+    rows = people.list_people(rid)
+    keys = [p["key"] for p in rows]
+    assert len(set(keys)) == 2
+    for p in rows:
+        assert people.find(rid, p["key"])["name"] == p["name"]
+    # The bare slug, which names neither exactly, is refused — never the first.
+    with pytest.raises(people.AmbiguousPerson):
+        people.find(rid, "jo_ann")
+
+
+# ── F3-5: role and pay rate are refused in words, pay rate read as a number ─
+
+def test_a_changed_role_or_pay_rate_is_refused_not_saved_silently(db):
+    import strategy_routes
+    rid = _restaurant(db)
+    owner = _user(rid)
+    got, status = _call(strategy_routes._do_person_get, owner, "ana")
+    p = got["person"]
+    assert status == 200 and p["editable"]["role"] is False and p["editable"]["pay_rate"] is False
+    assert "pay_rate_amount" in p
+    out, status = _call(strategy_routes._do_person_set, owner, "ana", body={"role": "Bartender"})
+    assert status == 400 and "role" in out["error"].lower()
+    out, status = _call(strategy_routes._do_person_set, owner, "ana", body={"pay_rate": 99})
+    assert status == 400 and "rate" in out["error"].lower()
+    # The same values echoed back with a real change beside them save.
+    out, status = _call(strategy_routes._do_person_set, owner, "ana",
+                        body={"role": p["role"], "pay_rate": p["pay_rate"], "email": "ana@new.com"})
+    assert status == 200 and out["changed"] == ["email"]
+
+
+# ── F2-14: switches read "false" as off; ordering is the owner's ────────────
+
+def test_the_automation_switches_read_false_as_off_and_auto_order_is_the_owners(db):
+    import strategy_routes
+    rid = _restaurant(db, auto_draft_schedule=1)
+    out, status = _call(strategy_routes._do_auto_draft_set, _user(rid), body={"enabled": "false"})
+    assert status == 200 and out["enabled"] is False
+    out, status = _call(strategy_routes._do_auto_order_set, _user(rid, role="manager", grants=["food_cost.view"]),
+                        body={"enabled": True})
+    assert status == 403
+    out, status = _call(strategy_routes._do_auto_order_set, _user(rid), body={"enabled": "false"})
+    assert status == 200 and out["enabled"] is False
+
+
+# ── F2-18: a receiving that fails partway can be retried ────────────────────
+
+def test_a_po_receive_that_fails_partway_reopens_and_posts_only_whats_missing(db, monkeypatch):
+    import inventory_ledger as il
+    rid = _restaurant(db)
+    a, b = _ingredient(db, rid, "Beef"), _ingredient(db, rid, "Kale")
+    models.record_purchase_order(rid, "Sysco", "s@x.com", [{"item": "Beef", "qty": 4, "ingredient_id": a},
+                                                           {"item": "Kale", "qty": 2, "ingredient_id": b}], 40,
+                                 db_path=db)
+    po = models.get_conn(db).execute("SELECT id FROM purchase_orders WHERE restaurant_id=?", (rid,)).fetchone()["id"]
+    real = il.record_receiving
+    calls = {"n": 0}
+
+    def flaky(*a_, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("database is locked")
+        return real(*a_, **k)
+    monkeypatch.setattr(il, "record_receiving", flaky)
+    out, status = client_api._do_receive_po(_user(rid), po, {})
+    assert status == 503 and out["retry"] is True
+    assert _one(db, "SELECT status FROM purchase_orders WHERE id=?", po)["status"] == "sent"
+    out, status = client_api._do_receive_po(_user(rid), po, {})
+    assert status == 200
+    n = _one(db, "SELECT COUNT(*) AS n FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='receiving'", rid)["n"]
+    assert n == 2, "each line went into stock once"
+
+
+# ── F2-19: a prefilled night takes one source ───────────────────────────────
+
+def test_a_forecast_prefill_names_gross_to_clear(db, monkeypatch):
+    from dsr import store
+    import demand
+    rid = _restaurant(db)
+    mon = dt.date(2026, 9, 21)
+    monkeypatch.setattr(demand, "week_projection", lambda r, dates, db_path=None: {"by_day": {mon.isoformat(): 3000}})
+    out = store.budget_prefill(rid, [mon], "forecast", db_path=db)
+    assert out["days"][0]["clear"] == ["gross"] and "Gross left blank" in out["basis"]
+
+
+# ── F2-20: a submitted target is the owner's; pay is not every login's ─────
+
+def test_confirming_a_seeded_target_marks_it_set(db):
+    import strategy_routes
+    rid = _restaurant(db)
+    models.update_restaurant(rid, {"labor_target_pct": 30, "labor_target_source": "seeded"})
+    out, status = _call(strategy_routes._do_targets_set, _user(rid), body={"labor_target_pct": 30})
+    assert status == 200 and out["targets"]["sources"]["labor_target_pct"] == "set"
+
+
+def test_a_teammate_login_does_not_see_pay_rates(db):
+    import strategy_routes
+    rid = _restaurant(db)
+    models.update_restaurant(rid, {"role_rates_json": json.dumps({"Server": 14.5}), "hourly_rate": 15})
+    member = _user(rid, role="member")
+    out, _ = _call(strategy_routes._do_targets_get, member)
+    assert out["targets"]["role_rates"] == {} and out["targets"]["hourly_rate"] is None
+    p, _ = _call(strategy_routes._do_person_get, member, "ana")
+    assert "pay_rate" not in p["person"]
+    out, _ = _call(strategy_routes._do_targets_get, _user(rid, role="manager"))
+    assert out["targets"]["role_rates"] == {"Server": 14.5}
+
+
+# ── F3-3: the approve answer says whether the reply is live ─────────────────
+
+def test_approve_says_when_google_is_not_connected(db, monkeypatch):
+    import gmb
+    rid = _restaurant(db)
+    conn = models.get_conn(db)
+    rv = conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, fetched_at, "
+                      "draft_response, response_status) VALUES (?,?,?,?,?,?,datetime('now'),?,?)",
+                      (rid, "google", "g-1", "Pat", 5, "Great", "Thanks Pat!", "drafted")).lastrowid
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(gmb, "is_connected", lambda r: False)
+    out, status = client_api._do_approve(rv, rid, auto=False)
+    assert status == 200 and out["ok"] and out["auto_posted"] is False
+    assert out["post_status"] == "not_connected" and "isn't on Google" in out["post_note"]
+
+
+# ── F3-13: undoing a queued send takes the power to send it ─────────────────
+
+def test_a_view_only_login_cannot_undo_the_owners_auto_publish(db):
+    import strategy_routes
+    rid = _restaurant(db)
+    act = delayed.schedule(rid, "schedule_publish", {"schedule_id": 1, "automatic": True}, 60)
+    out, status = _call(strategy_routes._do_delayed_cancel, _user(rid, role="member"), act["id"], body={})
+    assert status == 403
+    assert [a["id"] for a in delayed.pending(rid)] == [act["id"]]
+    out, status = _call(strategy_routes._do_delayed_cancel, _user(rid, role="manager"), act["id"], body={})
+    assert status == 200 and delayed.pending(rid) == []

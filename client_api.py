@@ -228,10 +228,47 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
         fire_response_approved_alert(restaurant_id, rid, posted=auto_posted)
     except Exception:
         pass
+    return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
+
+
+def _post_payload(rid, restaurant_id, auto_posted, post_error) -> dict:
+    """The approve / retry answer, saying outright whether the reply is
+    live. `ok` is the approval; a client that read only `ok` (the lock-screen
+    "Approve & post") showed nothing when Google refused or was never
+    connected, which reads as posted (F3-3). `post_status`: posted | failed
+    (post_error says why) | not_connected (a Google review, Google Business
+    not connected; post_note says so) | not_google (nothing to post to)."""
     payload = {"ok": True, "auto_posted": auto_posted}
     if post_error:
         payload["post_error"] = post_error
-    return payload, 200
+    if auto_posted:
+        payload["post_status"] = "posted"
+    elif post_error:
+        payload["post_status"] = "failed"
+    else:
+        payload["post_status"] = _unposted_reason(rid, restaurant_id)
+        if payload["post_status"] == "not_connected":
+            payload["post_note"] = ("Approved, but Google Business isn't connected, so the reply isn't on "
+                                    "Google yet. Post it there yourself, or connect Google in Account.")
+    return payload
+
+
+def _unposted_reason(rid, restaurant_id) -> str:
+    """Why an approved reply was not posted when no attempt failed."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT platform FROM reviews WHERE id=? AND restaurant_id=?",
+                               (rid, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if row and row["platform"] == "google":
+            from gmb import is_connected
+            if not is_connected(restaurant_id):
+                return "not_connected"
+    except Exception as e:
+        print(f"[approve] post status unknown for review {rid}: {e}")
+    return "not_google"
 
 
 def _attempt_google_post(rid, restaurant_id, google=None):
@@ -345,10 +382,7 @@ def _do_retry_post(rid, restaurant_id):
     if row["response_status"] != "approved" or row["platform"] != "google":
         return {"ok": False, "error": "Only an approved Google reply that hasn't posted yet can be retried."}, 400
     auto_posted, post_error = _attempt_google_post(rid, restaurant_id)
-    payload = {"ok": True, "auto_posted": auto_posted}
-    if post_error:
-        payload["post_error"] = post_error
-    return payload, 200
+    return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
 
 
 def _do_approve_all(restaurant_id, limit=25):
@@ -8215,6 +8249,18 @@ def _po_line_key(item):
     return str(item.get("ingredient_id") or ("name:" + str(item.get("item") or "").strip().lower()))
 
 
+def _po_line_posted(rid, ingredient_id, note_head) -> bool:
+    """Whether this PO already put this ingredient into stock."""
+    conn = get_conn()
+    try:
+        return conn.execute(
+            "SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND ingredient_id=? "
+            "AND event_type='receiving' AND source='purchase_order' AND substr(note, 1, ?)=? LIMIT 1",
+            (rid, ingredient_id, len(note_head), note_head)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def _do_receive_po(current_user, po_id, data):
     """Close a purchase order AND put what arrived into stock.
 
@@ -8257,24 +8303,46 @@ def _do_receive_po(current_user, po_id, data):
     from models import mark_purchase_order_received
     if not mark_purchase_order_received(rid, po_id):
         return {"ok": False, "error": "That order is already received, or isn't yours."}, 404
+    # Each line's receiving event carries the PO number at the head of its
+    # note, so a line already in stock is never posted twice. A failure
+    # partway (a lock timeout) used to leave the order "received" with only
+    # some lines in stock and no retry; now the order is reopened and a
+    # retry posts only what is missing (F2-18).
+    note_head = f"{row['po_number']} from "
     posted, short, skipped = [], [], []
-    for it in items:
-        name = str(it.get("item") or it.get("name") or "").strip()
-        ordered = float(it.get("qty") or 0)
-        qty = overrides.get(_po_line_key(it), ordered)
-        if qty < ordered:
-            short.append({"item": name, "ordered": ordered, "received": qty})
-        if not it.get("ingredient_id"):
-            skipped.append(name)
-            continue
-        if qty <= 0:
-            continue
-        ev = inventory_ledger.record_receiving(rid, int(it["ingredient_id"]), qty, source="purchase_order",
-                                               note=f"{row['po_number']} from {row['supplier_name'] or row['supplier_email']}")
-        if ev:
-            posted.append({"item": name, "qty": qty, "unit": it.get("unit") or ""})
-        else:
-            skipped.append(name)
+    try:
+        for it in items:
+            name = str(it.get("item") or it.get("name") or "").strip()
+            ordered = float(it.get("qty") or 0)
+            qty = overrides.get(_po_line_key(it), ordered)
+            if qty < ordered:
+                short.append({"item": name, "ordered": ordered, "received": qty})
+            if not it.get("ingredient_id"):
+                skipped.append(name)
+                continue
+            if qty <= 0:
+                continue
+            if _po_line_posted(rid, int(it["ingredient_id"]), note_head):
+                posted.append({"item": name, "qty": qty, "unit": it.get("unit") or "", "earlier": True})
+                continue
+            ev = inventory_ledger.record_receiving(rid, int(it["ingredient_id"]), qty, source="purchase_order",
+                                                   note=note_head + (row['supplier_name'] or row['supplier_email'] or ""))
+            if ev:
+                posted.append({"item": name, "qty": qty, "unit": it.get("unit") or ""})
+            else:
+                skipped.append(name)
+    except Exception as e:
+        _ops.capture(e, job="receive_purchase_order", context=f"restaurant_id={rid} po_id={po_id}")
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE purchase_orders SET status='sent', received_at=NULL "
+                         "WHERE id=? AND restaurant_id=? AND status='received'", (po_id, rid))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": False, "retry": True, "posted": posted,
+                "error": "Part of this delivery could not be put into stock. Try again — "
+                         "lines already in stock won't be added twice."}, 503
     log_account_event(rid, "purchase_order_received", current_user,
                       detail=f"{row['po_number']}: {len(posted)} line{'' if len(posted) == 1 else 's'} into stock"
                              + (f", {len(short)} short" if short else ""))
@@ -8866,6 +8934,9 @@ def _ack_gate(review, acknowledge):
 
 def _needs_ack(review, unacked, schedule_id):
     return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
+            # The keys, parallel to `blockers` (and as {key, text} items):
+            # the client sends back `acknowledge: [the keys it showed]` (F2-9).
+            "blocker_keys": [b["key"] for b in review["blockers"]],
             "blocker_items": review["blockers"], "new_blockers": [b["text"] for b in unacked],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409

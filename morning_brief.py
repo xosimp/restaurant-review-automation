@@ -1087,13 +1087,17 @@ def _email_html(brief, restaurant_name):
             f'Open Cavnar AI and ask about any line.</p>')
 
 
-def recipients(restaurant_id, db_path=DB_PATH):
+def recipients(restaurant_id, db_path=DB_PATH, include_opted_out=False):
     """Everyone who gets this restaurant's brief: its console logins whose
     brief preference is on (owners and managers by default — the point is
     that the people running the floor start the day informed), plus the
     group owner whose login lives on another location. Never employees (PIN
     identities, no console) and never admin logins. Each carries the grants
-    their brief is built with."""
+    their brief is built with.
+
+    `include_opted_out`: every such console login, brief preference or not —
+    for a notice that waits on someone's decision (a staff request), which
+    turning the brief off must not silence (F2-6)."""
     from auth import _grants_for, morning_brief_default
     from permissions import CONSOLE_ROLES, normalize_role
     conn = get_conn(db_path)
@@ -1119,7 +1123,7 @@ def recipients(restaurant_id, db_path=DB_PATH):
                 continue
             seen.add(u["id"])
             on = morning_brief_default(u["role"]) if prefs.get(u["id"]) is None else bool(prefs[u["id"]])
-            if not on:
+            if not on and not include_opted_out:
                 continue
             u["grants"] = _grants_for(conn, u["id"], restaurant_id)
             u["restaurant_id"] = restaurant_id

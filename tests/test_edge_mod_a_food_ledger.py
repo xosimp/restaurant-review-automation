@@ -142,8 +142,8 @@ def test_two_simultaneous_recounts_of_one_ingredient_infer_waste_once(db_path, m
     barrier = threading.Barrier(2)
     real = il._compute_current_stock
 
-    def read_then_wait(conn, ingredient_id, restaurant_id=None):
-        v = real(conn, ingredient_id, restaurant_id)
+    def read_then_wait(conn, ingredient_id, restaurant_id=None, **kw):
+        v = real(conn, ingredient_id, restaurant_id, **kw)
         try:
             barrier.wait(timeout=2)
         except threading.BrokenBarrierError:
@@ -242,7 +242,10 @@ def test_a_count_sheet_with_a_non_iso_or_future_date_is_refused(db_path, monkeyp
 
 def test_a_count_sheet_with_an_iso_date_is_written(db_path, monkeypatch):
     rid = _rid(db_path)
-    iid = _ingredient(db_path, rid, name="Basil", stock=10)
+    # The opening stock was stated before the count's date: the ledger
+    # orders counts by the day they were taken (F2-7), so a count dated
+    # before a later anchor would not replace it.
+    iid = _ingredient(db_path, rid, name="Basil", stock=10, anchor=date.today() - timedelta(days=2))
     day = (date.today() - timedelta(days=1)).isoformat()
     out, status = _count_sheet(monkeypatch, rid, {"date": day, "items": [{"ingredient_id": iid, "counted": 4}]})
     assert status == 200 and out["written"] == 1
