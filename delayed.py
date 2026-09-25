@@ -325,11 +325,27 @@ def _run_order_send(restaurant_id, payload, db_path):
         out = {"ok": False, "error": "Nothing left to order."}
         _tell_owner_order_not_sent(restaurant_id, payload, out["error"], db_path)
         return out
+    # The owner's edited quantities (friction audit U2-15), applied only
+    # after the draft they edited proved unchanged above.
+    drafts = None
+    if payload.get("lines") and len(groups) == 1:
+        from inventory import apply_order_edits
+        try:
+            edited = apply_order_edits(groups[0], payload["lines"])
+        except ValueError:
+            edited = None
+        if not edited or not edited["items"]:
+            out = {"ok": False, "error": "The edited order had nothing left to send."}
+            _tell_owner_order_not_sent(restaurant_id, payload, out["error"], db_path)
+            return out
+        drafts = {groups[0]["supplier_email"].lower(): groups[0]["items"]}
+        groups = [edited]
     # An order the trusted-supplier rule queued is 'automatic'; one the
     # owner sent through their own undo window is theirs (ordering.supplier_trust).
     sent, failed = _send_supplier_orders(restaurant_id, get_restaurant(restaurant_id), groups, AUTOMATION_ACTOR,
                                          resend=bool(payload.get("resend")),
-                                         source="automatic" if payload.get("automatic") else "owner")
+                                         source="automatic" if payload.get("automatic") else "owner",
+                                         drafts=drafts)
     if not sent:
         _tell_owner_order_not_sent(restaurant_id, payload,
                                    (failed[0].get("error") if failed else None) or "It could not be sent.", db_path)

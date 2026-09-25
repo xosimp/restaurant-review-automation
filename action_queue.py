@@ -247,12 +247,17 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     if getattr(restaurant, "module_inventory", 0) and _sees(viewer, "inventory"):
         try:
             import invoices
-            pending = [i for i in invoices.list_imports(restaurant_id, db_path=db_path)
-                       if not i.get("applied_at")]
+            # Includes a trusted supplier's invoice with lines left for a
+            # person, and the action opens the invoice itself - it used to
+            # open Food Cost's empty invoice card (friction audit U2-2).
+            pending = invoices.pending_imports(restaurant_id, db_path=db_path)
             if pending:
+                import nav as _nav
                 add("invoice:pending", "invoice",
                     f"{len(pending)} scanned invoice{'' if len(pending) == 1 else 's'} not applied",
-                    "important", {"label": "Review costs", "module": "inventory"},
+                    "important", {"label": "Review costs", "module": "inventory",
+                                  "nav": (_nav.path("invoice", pending[0]["id"]) if len(pending) == 1
+                                          else _nav.path("inventory", "invoices"))},
                     detail="Ingredient costs still say the old price", module="inventory",
                     count=len(pending))
         except Exception:

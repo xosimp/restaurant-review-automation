@@ -763,9 +763,44 @@ def get_gbp_listing(restaurant_id: int) -> dict:
             "website":     data.get("websiteUri", ""),
             "description": data.get("profile", {}).get("description", ""),
             "has_hours":   bool(data.get("regularHours", {}).get("periods")),
+            # The hours themselves, per weekday, so Account can offer them
+            # instead of fourteen blank time boxes (friction audit U2-19).
+            "hours":       regular_hours(data.get("regularHours")),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+_GBP_DAYS = {"MONDAY": "Monday", "TUESDAY": "Tuesday", "WEDNESDAY": "Wednesday", "THURSDAY": "Thursday",
+             "FRIDAY": "Friday", "SATURDAY": "Saturday", "SUNDAY": "Sunday"}
+
+
+def regular_hours(block) -> dict:
+    """GBP regularHours -> {"open": {"Monday": "11:00"}, "close": {"Monday": "22:00"}}.
+
+    One open and one close per weekday - the shape Account stores. A day
+    with two periods (lunch, then dinner) keeps its earliest open and its
+    last close; a period that closes past midnight keeps the close time
+    ("01:00"), the same way an owner types it. A day Google lists nothing
+    for is left out, never filled with a guess."""
+    open_, close_ = {}, {}
+    for p in (block or {}).get("periods") or []:
+        day = _GBP_DAYS.get(str(p.get("openDay") or "").upper())
+        if not day:
+            continue
+        o = p.get("openTime") or {}
+        c = p.get("closeTime") or {}
+        ot = f"{int(o.get('hours') or 0) % 24:02d}:{int(o.get('minutes') or 0):02d}"
+        ct = f"{int(c.get('hours') or 0) % 24:02d}:{int(c.get('minutes') or 0):02d}"
+        if day not in open_ or ot < open_[day]:
+            open_[day] = ot
+        # The later close wins; a close past midnight (earlier than its open)
+        # counts as later than any same-day close.
+        prev = close_.get(day)
+        rank = (ct < ot, ct)
+        if prev is None or rank > (prev < open_[day], prev):
+            close_[day] = ct
+    return {"open": open_, "close": close_}
 
 
 def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:

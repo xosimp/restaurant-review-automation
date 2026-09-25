@@ -29,6 +29,10 @@
               padding:15px 12px;color:var(--ink);font-family:inherit;font-size:15.5px;
               font-weight:600;cursor:pointer;text-align:left;transition:border-color .12s,background .12s}
   .who button:hover{border-color:var(--ember)}
+  .who-find{width:100%;box-sizing:border-box;margin:0 0 12px;background:var(--card);border:1px solid var(--line);
+            border-radius:12px;padding:13px 14px;color:var(--ink);font-family:inherit;font-size:16px}
+  .who-find:focus{outline:none;border-color:var(--ember)}
+  .who button.last{border-color:var(--ember2)}
   .who button .r{display:block;font-size:12px;font-weight:400;color:var(--ink3);margin-top:3px}
 
   .pinstep{display:none}
@@ -94,6 +98,9 @@
       <h1>Who's starting a shift?</h1>
       <p class="sub">Tap your name, then enter your PIN.</p>
       {% if roster %}
+        {# Type-to-filter for a long roster (friction audit U2-29): a flat
+           list of seventy names is a scroll per shift. #}
+        {% if roster|length > 8 %}<input type="search" id="who-find" class="who-find" placeholder="Type your name" aria-label="Find your name" autocomplete="off">{% endif %}
         <div class="who">
           {% for person in roster %}
           <button type="button" data-id="{{ person.membership_id }}" data-name="{{ person.name }}">
@@ -239,9 +246,35 @@
   };
 
   var picks = document.querySelectorAll('.who button');
+  /* Whoever signed in last on this device goes first (U2-29) - a
+     per-device convenience only, so storage failing changes nothing. */
+  var LAST_KEY = 'cav_staff_last_' + String(PORTAL).slice(0, 8);
+  try {
+    var last = window.localStorage ? localStorage.getItem(LAST_KEY) : null;
+    if (last) {
+      for (var li = 0; li < picks.length; li++) {
+        if (picks[li].getAttribute('data-id') === last) {
+          picks[li].className = 'last';
+          picks[li].parentNode.insertBefore(picks[li], picks[li].parentNode.firstChild);
+          break;
+        }
+      }
+    }
+  } catch (e) {}
+  var find = $('who-find');
+  if (find) {
+    find.addEventListener('input', function(){
+      var q = String(find.value || '').toLowerCase().replace(/^\s+|\s+$/g, '');
+      for (var fi = 0; fi < picks.length; fi++) {
+        var nm = String(picks[fi].getAttribute('data-name') || '').toLowerCase();
+        picks[fi].style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
+      }
+    });
+  }
   for (var i = 0; i < picks.length; i++) {
     picks[i].addEventListener('click', function(){
       membershipId = parseInt(this.getAttribute('data-id'), 10);
+      try { if (window.localStorage) localStorage.setItem(LAST_KEY, String(membershipId)); } catch (e2) {}
       $('who-name').textContent = this.getAttribute('data-name');
       $('pick').style.display = 'none';
       $('pinstep').className = 'pinstep on';

@@ -2155,11 +2155,19 @@ def mobile_food_cost_cfo(current_user):
         _dg = _fci.get_diagnosis(rid, include_stale=True)
         _dg = (_capi.present_diagnoses(rid, [_dg], "diag_food", "food", "food",
                                        user_id=current_user.get("id")) or [None])[0] if _dg else None
+        _drivers = _fci.cost_drivers(rid)
+        # Each driver names where it is acted on (friction audit U4-9): a
+        # price or sourcing driver opens the order, a portion driver its
+        # dish's price, waste the count - as a nav path both clients open.
+        for _d in (_drivers or {}).get("drivers") or []:
+            _act = _fci.driver_action(_d)
+            if _act:
+                _d["act"] = _act
         return jsonify(
             ok=True,
             brief=brief,
             diagnosis=_dg,
-            drivers=_fci.cost_drivers(rid),
+            drivers=_drivers,
             profitability=brief.get("profitability"),
             claim_kinds={
                 "food_cost_pct": "measured", "drivers": "computed", "why": "inferred",
@@ -2253,20 +2261,34 @@ def mobile_send_supplier_order(current_user):
 @mobile_bp.route("/food-cost/purchase-orders")
 @mobile_login_required
 def mobile_purchase_orders(current_user):
-    from models import get_purchase_orders
-    status = request.args.get("status") or None
-    return jsonify(ok=True, orders=get_purchase_orders(current_user["restaurant_id"], status=status))
+    """See client_api.purchase_orders_for - money withheld without
+    FOOD_COST_VIEW (a manager receiving a delivery, U2-27)."""
+    return jsonify(ok=True, orders=_capi.purchase_orders_for(current_user, request.args.get("status") or None))
 
 
 @mobile_bp.route("/food-cost/purchase-orders/<int:po_id>/received", methods=["POST"])
 @mobile_login_required
 def mobile_receive_purchase_order(current_user, po_id):
-    """Close a PO. The stored line items are what receiving pre-fills from,
-    so the count is confirmed against what was ordered rather than retyped."""
-    from models import mark_purchase_order_received
-    if not mark_purchase_order_received(current_user["restaurant_id"], po_id):
-        return jsonify(ok=False, error="That order is already received, or isn't yours."), 404
-    return jsonify(ok=True)
+    """Close a PO and post what arrived into stock - the one body is
+    client_api._do_receive_po (`lines` carries a short line's quantity)."""
+    payload, status = _capi._do_receive_po(current_user, po_id, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/food-cost/ingredients", methods=["POST"])
+@mobile_login_required
+def mobile_create_ingredient(current_user):
+    """See client_api._do_create_ingredient."""
+    payload, status = _capi._do_create_ingredient(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/food-cost/waste", methods=["POST"])
+@mobile_login_required
+def mobile_log_waste(current_user):
+    """See client_api._do_log_waste."""
+    payload, status = _capi._do_log_waste(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
 
 
 def _food_cost_trust_block(rid):
@@ -4658,6 +4680,10 @@ def _do_mobile_account(current_user):
         "open_times_json": getattr(restaurant, "open_times_json", None) or None,
         "close_times_json": getattr(restaurant, "close_times_json", None) or None,
         "skip_holidays": getattr(restaurant, "skip_holidays", None) or None,
+        # The scheduler's closed dates (ISO), which POST /account/hours
+        # "closures" now writes (U2-3). skip_holidays is the marketing
+        # holiday-skip list, not closures.
+        "closures": __import__("schedule_rules").closures(restaurant)["closed_dates"],
     }
     # Where a 2FA code actually goes, masked, for the Security sheet's
     # status tile ("Text · •••-0142" / "Email · ma***@giamia.com").
@@ -6251,6 +6277,14 @@ def mobile_hours(current_user):
     """See client_api._do_account_hours."""
     payload, status = _capi._do_account_hours(current_user["restaurant_id"],
                                               request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/hours/google")
+@mobile_login_required
+def mobile_hours_google(current_user):
+    """See client_api._do_account_hours_google."""
+    payload, status = _capi._do_account_hours_google(current_user["restaurant_id"])
     return jsonify(**payload), status
 
 

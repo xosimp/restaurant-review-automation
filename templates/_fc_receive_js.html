@@ -1,0 +1,47 @@
+{# Receiving deliveries into stock (friction audit U2-12), shared by the full
+   Food Cost panel and the counts-only panel a manager without margins gets
+   (U2-27). Money is withheld by the server for that login, so nothing here
+   shows a cost. ES5 only. #}
+<script>
+  // Deliveries (U2-12): "Received as ordered" puts every line into stock;
+  // "Some were short" opens the lines to change what arrived first.
+  var _poOpen = {};
+  function _rcvEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function loadPurchaseOrders(){
+    var el = document.getElementById('po-history');if(!el)return;
+    fetch('/api/food-cost/purchase-orders?status=sent').then(apiJson).then(function(d){
+      if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
+      var html = '<div class="hb-kicker" style="margin-top:14px">Waiting to arrive</div>';_poOpen={};
+      d.orders.slice(0,8).forEach(function(po){
+        _poOpen[po.id]=po;
+        html += '<div class="row" data-po="'+po.id+'"><div><b>'+_rcvEsc(po.po_number)+'</b> · '+_rcvEsc(po.supplier_name||po.supplier_email)+(po.sent_at?' · sent '+_rcvEsc(mdy(po.sent_at)):'')+' · <span class="hb-num">'+(po.items||[]).length+'</span> item'+((po.items||[]).length===1?'':'s')+'</div>';
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" onclick="receivePO('+po.id+',this)" class="cbtn cbtn-secondary cbtn-sm">Received as ordered</button><button type="button" onclick="poShort('+po.id+')" class="cbtn cbtn-text cbtn-sm">Some were short</button></div></div><div data-po-short="'+po.id+'" hidden></div>';
+      });
+      el.innerHTML = html;
+    }).catch(function(){});
+  }
+  function poShort(id){
+    var box=document.querySelector('[data-po-short="'+id+'"]'),po=_poOpen[id];if(!box||!po)return;
+    if(!box.hidden){box.hidden=true;return;}
+    var h='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Item</th><th class="r">Ordered</th><th class="r">Arrived</th></tr></thead><tbody>';
+    (po.items||[]).forEach(function(it){var key=it.ingredient_id?String(it.ingredient_id):('name:'+String(it.item||'').toLowerCase());
+      h+='<tr><td>'+_rcvEsc(it.item)+'</td><td class="r hb-num">'+(+it.qty||0)+' '+_rcvEsc(it.unit||'')+'</td><td class="r"><input class="fc2-inv-in" type="number" min="0" step="0.5" inputmode="decimal" aria-label="'+_rcvEsc(it.item)+' arrived" data-po-qty="'+_rcvEsc(key)+'" value="'+(+it.qty||0)+'"></td></tr>';});
+    box.innerHTML=h+'</tbody></table></div><div class="fc2-count-ft"><span class="ac-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="receivePO('+id+',this,true)">Receive these</button></div>';
+    box.hidden=false;
+  }
+  function receivePO(id, btn, withLines){
+    var body={},lines=[];
+    if(withLines){var ins=document.querySelectorAll('[data-po-short="'+id+'"] input[data-po-qty]');
+      for(var i=0;i<ins.length;i++){var q=parseFloat(ins[i].value),k=ins[i].getAttribute('data-po-qty');if(!(q>=0)){toast('Quantities are numbers, 0 or more','error');return;}
+        lines.push(k.indexOf('name:')===0?{item:k.slice(5),qty:q}:{ingredient_id:parseInt(k,10),qty:q});}
+      body.lines=lines;}
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Receiving'):function(){};
+    fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+      done();
+      if(d.ok){ var n=(d.posted||[]).length,s=(d.short||[]).length;
+        toast(d.po_number+' received — '+n+' line'+(n===1?'':'s')+' added to stock'+(s?' · '+s+' short':'')+((d.skipped||[]).length?' · '+d.skipped.length+' not on your ingredient list':''),'success');
+        loadPurchaseOrders(); if(typeof fc2LoadCountSheet==='function')fc2LoadCountSheet(); }
+      else { toast(d.error||'Couldn\'t update','error'); }
+    }).catch(function(){done();toast('Couldn\'t reach Cavnar','error');});
+  }
+</script>

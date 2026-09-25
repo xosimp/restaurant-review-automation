@@ -2726,7 +2726,10 @@ def test_hours_route_persists_and_ignores_junk(client, db_path):
     p = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["profile"]
     assert p["open_times_json"] == '{"Monday": "11:00am"}'
     assert p["close_times_json"] == '{"Monday": "10:00pm"}'
-    assert p["skip_holidays"] == "2026-01-01,2026-12-25"
+    # Closures are the scheduler's closed dates now (friction audit U2-3);
+    # this used to pin them landing in skip_holidays, the marketing list.
+    assert p["closures"] == ["2026-01-01", "2026-12-25"]
+    assert p["skip_holidays"] is None
 
 
 def test_data_retention_route_and_purge(client, db_path):

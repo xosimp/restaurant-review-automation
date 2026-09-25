@@ -2096,6 +2096,43 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     }
 
 
+def apply_order_edits(group, lines):
+    """One supplier's drafted order with the owner's quantities (friction
+    audit U2-15: the order was sent sight-unseen, with no way to change a
+    line). `lines`: [{"ingredient_id" or "item", "qty"}] - a line not named
+    keeps its drafted quantity, 0 takes it off the order. Only lines already
+    on the draft can be changed; nothing is added. Returns a new group with
+    its total and draft_hash recomputed (the hash of what is actually sent,
+    so the already-sent guard compares like with like), or raises
+    ValueError for a quantity that is not a number from 0 to 100,000."""
+    import math
+    want = {}
+    for ln in lines or []:
+        if not isinstance(ln, dict):
+            continue
+        key = str(ln.get("ingredient_id") or ("name:" + str(ln.get("item") or "").strip().lower()))
+        try:
+            q = float(ln.get("qty"))
+        except (TypeError, ValueError):
+            raise ValueError("Each quantity must be a number, 0 or more.")
+        if not math.isfinite(q) or q < 0 or q > 100000:
+            raise ValueError("Each quantity must be a number, 0 or more.")
+        want[key] = round(q, 3)
+    rows = []
+    for r in group.get("items") or []:
+        key = str(r.get("ingredient_id") or ("name:" + str(r.get("item") or "").strip().lower()))
+        q = want.get(key, r.get("qty"))
+        if not q:
+            continue
+        row = dict(r, qty=q, line_cost=round(float(q) * float(r.get("unit_cost") or 0), 2))
+        if key in want and q != r.get("qty"):
+            row["edited_from"] = r.get("qty")
+        rows.append(row)
+    out = dict(group, items=rows, total_cost=round(sum(r["line_cost"] for r in rows), 2))
+    out["draft_hash"] = draft_hash([out]) if rows else None
+    return out
+
+
 def draft_hash(group_list) -> str:
     """Stable fingerprint of a supplier-order draft: who it goes to, what is
     on it, and how much of each."""

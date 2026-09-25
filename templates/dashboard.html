@@ -1201,6 +1201,16 @@ function saveFcCustomItem(inp){
     if(badge){badge.textContent='ERROR';badge.className='fc-save-badge err';}
   });
 }
+// The ledger-filled price monitor opens read-only (U2-14); Edit lets the
+// owner override a row and submit, as before.
+function fcEditPrices(btn) {
+  var sec = document.getElementById('fc2-tracker'); if (!sec) return;
+  var ins = sec.querySelectorAll('.fc2-in[readonly]');
+  for (var i = 0; i < ins.length; i++) ins[i].removeAttribute('readonly');
+  sec.className += ' editing';
+  if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+  if (ins.length && ins[0].focus) ins[0].focus();
+}
 function submitFoodCostCount() {
   var rows = document.querySelectorAll('#fc-rows tr');
   var items = [];
@@ -1562,7 +1572,7 @@ function loadFailed(el, d){
     {% set _badge_n = (rstats.awaiting_approval or 0) + (rstats.needs_response or 0) %}
     {% if mod_reviews %}<button class="tab" role="tab" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if _badge_n > 0 %}background:var(--ember)!important;color:white{% else %}display:none{% endif %}">{{_badge_n if _badge_n > 0 else ''}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab" role="tab" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
-    {% if mod_inventory %}<button class="tab" role="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
+    {% if mod_inventory %}<button class="tab" role="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% elif fc_enter_only %}<button class="tab" role="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Counts</button>{% endif %}
     {% if mod_marketing %}<button class="tab" role="tab" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
     {% if restaurant.google_place_id and is_full_tier %}<button class="tab" role="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab" role="tab" id="tab-account" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
@@ -2355,6 +2365,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-count-row .n small{color:var(--ink3);font-size:12px}
 .fc2-count-row input{width:96px;text-align:right}
 .fc2-count-ft{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
+/* One-line waste log under the count sheet (U2-32): the count footer's row. */
+.fc2-waste-log{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--hb-line2)}
+.fc2-waste-log .k{font-size:12.5px;font-weight:600;color:var(--ink3);margin-right:4px}
 .hb-ledger{display:flex;flex-wrap:wrap;gap:8px}
 .hb-ledger span{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
 .hb-ledger span .hb-num{color:var(--ink);font-weight:700}
@@ -4113,7 +4126,10 @@ svg:hover .hb-xh{opacity:1}
     // Each link is a recommendation with its own key (rec-ROI #26): its
     // evidence opening is recorded, and it answers like any module line.
     var lkey=l.rec_key||'';
-    h+='<div class="ft"><span class="sp"></span>'+(alt?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding"'+(lkey?' data-explain-key="'+esc(lkey)+'"':'')+'>Could also be…</button>':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc('Tell me more about this: '+l.headline)+'">Ask about this →</button>'
+    // "Do something about it" (U4-9): the server names where the fix is done
+    // (business_intelligence.link_action) as a nav path.
+    var lact=(l.act&&l.act.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cav-go="'+esc(l.act.nav)+'">'+esc(l.act.label||'Open')+'</button>':'';
+    h+='<div class="ft">'+lact+'<span class="sp"></span>'+(alt?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding"'+(lkey?' data-explain-key="'+esc(lkey)+'"':'')+'>Could also be…</button>':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc('Tell me more about this: '+l.headline)+'">Ask about this →</button>'
       +(lkey&&l.answerable&&typeof recControlsHtml==='function'?recControlsHtml(lkey,'home','home'):'')+'</div>';
     if(ls.length>1){
       h+='<div class="hb-h3" style="margin-top:22px"><span>Also</span></div>';
@@ -5024,6 +5040,10 @@ svg:hover .hb-xh{opacity:1}
 .dr-grid tfoot td.day small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
 .dr-bud{margin-top:16px}
 .dr-bud-grid{display:grid;grid-template-columns:130px minmax(0,160px) minmax(0,160px);gap:8px 12px;align-items:center;margin-top:12px}
+/* Budget prefill row (U2-11): the sources, then the editable grid below. */
+.dr-bud-pre{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}
+.dr-bud-pre .k{font-size:12.5px;font-weight:600;color:var(--ink3)}
+.dr-bud-ly{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink3)}
 .dr-bud-grid .h{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
 .dr-bud-grid .d{font-size:14px;color:var(--ink2)}
 .dr-bud-ft,.dr-imp-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
@@ -5729,6 +5749,13 @@ svg:hover .hb-xh{opacity:1}
   function budgetEditor(days){
     var h='<section class="hb-card dr-bud" id="dr-bud" hidden aria-label="Budget"><div class="hb-h3"><span>Budget for the week</span></div>'
       +'<div class="hb-empty">Gross and net for each night, the way your sheet has them. Leave a night blank for no budget — nothing carries over on its own.</div>'
+      // Prefill (U2-11): fills the boxes from a source you pick; nothing is
+      // saved until Save budget, and a night with nothing to go on stays blank.
+      +'<div class="dr-bud-pre"><span class="k">Start from</span>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="last_week" data-start="'+esc(days.length?days[0].date:'')+'">Same as last week</button>'
+      +'<span class="dr-bud-ly"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="last_year" data-start="'+esc(days.length?days[0].date:'')+'">Last year</button><input class="ac-input ac-num" type="number" step="1" min="-50" max="100" id="dr-bud-pct" value="0" aria-label="Last year plus this percent" style="max-width:70px">%</span>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="forecast" data-start="'+esc(days.length?days[0].date:'')+'">Cavnar’s forecast</button>'
+      +'<span class="ac-status" id="dr-bud-pre-status"></span></div>'
       +'<div class="dr-bud-grid"><span class="h">Night</span><span class="h">Gross</span><span class="h">Net</span>';
     for(var i=0;i<days.length;i++){var d=days[i];
       h+='<span class="d">'+esc((d.weekday||'')+' '+md(d.date))+'</span>'
@@ -5756,6 +5783,20 @@ svg:hover .hb-xh{opacity:1}
       if(!d||!d.ok){if(s)s.textContent=(d&&d.error)||'Couldn’t save the budget.';return;}
       if(typeof toast==='function')toast('Budget saved','success');loadGrid('week',st.date||(st.grid&&st.grid.start));
     }).catch(function(){done();if(s)s.textContent='The answer didn’t arrive — reload the week to see what saved.';});
+  }
+  function prefillBudget(btn){
+    var from=btn.getAttribute('data-from'),start=btn.getAttribute('data-start'),s=el('dr-bud-pre-status');
+    var ins=document.querySelectorAll('#dr-bud input[data-bd]'),n=Math.max(1,Math.round(ins.length/2));
+    var pct=from==='last_year'?(parseFloat((el('dr-bud-pct')||{}).value)||0):0;
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Filling'):function(){};
+    fetch('/api/dsr/budget/prefill?start='+encodeURIComponent(start)+'&from='+encodeURIComponent(from)+'&pct='+encodeURIComponent(pct)+'&days='+n,{credentials:'same-origin'}).then(apiJson).then(function(d){done();
+      if(!d||!d.ok){if(s)s.textContent=(d&&d.error)||'Couldn’t fill the budget.';return;}
+      var filled=0;
+      for(var i=0;i<(d.days||[]).length;i++){var r=d.days[i];if(!r.from)continue;filled++;
+        var g=document.querySelector('#dr-bud input[data-bd="gross"][data-date="'+r.date+'"]'),nt=document.querySelector('#dr-bud input[data-bd="net"][data-date="'+r.date+'"]');
+        if(g&&isNum(r.gross))g.value=Math.round(r.gross);if(nt&&isNum(r.net))nt.value=Math.round(r.net);}
+      if(s)s.textContent=filled?(d.basis+(d.missing&&d.missing.length?' '+d.missing.length+' night'+(d.missing.length===1?'':'s')+' had nothing to go on.':'')+' Not saved yet.'):'Nothing to go on for these nights yet.';
+    }).catch(function(){done();if(s)s.textContent='Couldn’t reach Cavnar.';});
   }
   function importFile(btn){
     var inp=el('dr-imp-file'),s=el('dr-imp-status'),ul=el('dr-imp-err'),f=inp&&inp.files&&inp.files[0];
@@ -5800,6 +5841,7 @@ svg:hover .hb-xh{opacity:1}
     else if(a==='bud-open'){e.preventDefault();var bx=el('dr-bud');if(bx){bx.hidden=false;var f1=bx.querySelector('input');if(f1)f1.focus();bx.scrollIntoView({behavior:'smooth',block:'nearest'});}}
     else if(a==='bud-close'){e.preventDefault();var bc=el('dr-bud');if(bc)bc.hidden=true;}
     else if(a==='bud-save'){e.preventDefault();saveBudget(t);}
+    else if(a==='bud-prefill'){e.preventDefault();prefillBudget(t);}
     else if(a==='import'){e.preventDefault();importFile(t);}
     else if(a==='settings'){e.preventDefault();goSettings();}
   });
@@ -6740,6 +6782,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-op .fc2-import{margin-top:10px}
 .lb2-op .cap{font-size:13.5px;color:var(--ink3);margin-top:16px;padding-top:12px;border-top:1px solid var(--hb-line2);display:flex;justify-content:space-between;gap:10px}
 .lb2-cov{display:flex;flex-wrap:wrap;gap:8px}
+.lb2-cov-offer{margin-top:8px;font-size:13.5px;color:var(--ink3)}
 .lb2-cov span{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink2);background:var(--sf-recess);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 12px 3px 3px}
 @media(max-width:820px){.lb2-ops{grid-template-columns:1fr}}
 .lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
@@ -8253,6 +8296,9 @@ svg:hover .hb-xh{opacity:1}
 .fc2-table .rm:hover{color:var(--ember)}
 .fc2-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap}
 .fc2-submit .l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+/* Ledger-filled price monitor (U2-14): read-only until Edit prices. */
+.fc2-ledger-rows:not(.editing) .fc2-submit{display:none}
+.fc2-ledger-rows:not(.editing) .fc2-in[readonly]{background:transparent;border-color:transparent}
 #fc-submit-pill{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(78,173,122,.12);border:1px solid rgba(78,173,122,.3);border-radius:8px}
 #fc-pill-line1{font-size:12.5px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
 #fc-pill-line2{font-size:10px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
@@ -8267,6 +8313,12 @@ svg:hover .hb-xh{opacity:1}
 .fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
 .fc2-tool .g b{font-size:14px;font-weight:600;color:var(--ink)}
 .fc2-tool .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
+/* The Order card's per-supplier lines (U2-15) - the same rows as the tools. */
+.fc2-send .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
+.fc2-send .g b{font-size:14px;font-weight:600;color:var(--ink)}
+.fc2-send .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
+.fc2-sup-order{margin-bottom:14px}
+.fc2-sup-order .fc2-inv-in{max-width:84px}
 /* A tool with nothing to show says what is missing and where it is fixed. */
 .fc2-tool-empty{margin-top:4px;padding:14px 16px;border-radius:12px;background:var(--sf-recess);border:1px dashed var(--hb-line);font-size:14.5px;line-height:1.5}
 .fc2-tool-empty b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
@@ -8466,7 +8518,7 @@ svg:hover .hb-xh{opacity:1}
     <div id="fc2-wsrc" class="fc2-cov fc2-pos" hidden></div>
   </div>
   <section id="fc2-recipes" class="fc2-block" aria-label="Recipes" hidden></section>
-  <section id="fc2-count" class="fc2-block" aria-label="Count sheet" hidden></section>
+  <section id="fc2-count" class="fc2-block" aria-label="Count sheet" data-nav="inventory/count" hidden></section>
   <section id="fc2-suppliers" class="fc2-block" aria-label="Suppliers" hidden></section>
 
   <section class="lb2-hero" aria-label="Waste trend">
@@ -8511,15 +8563,18 @@ svg:hover .hb-xh{opacity:1}
       <div class="cap"><span>current stock vs. par level</span></div></div>
   </div>
 
-  <div class="fc2-sec" id="fc2-menu">
+  <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu">
     <div class="hd"><div><div class="hb-kicker">Menu · margin and what guests say</div><h2>Your dishes, scored</h2><div class="sub">Each dish's margin next to what reviews say about it, with one move for each. Built from your recipes, POS sales and review mentions.</div></div></div>
     <div id="fc2-score-body"><div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div></div>
     <div id="fc2-reprice-body"></div>
   </div>
 
-  <div class="fc2-sec" id="fc2-invoice">
+  <div class="fc2-sec" id="fc2-invoice" data-nav="inventory/invoices">
     <div class="hd"><div><div class="hb-kicker">Invoices · keep ingredient costs current</div><h2>Scan a supplier invoice</h2><div class="sub">Photo or PDF. Cavnar reads the prices and proposes updates — nothing changes until you confirm each line.</div></div>
       <div><input type="file" id="fc2-inv-file" accept="image/jpeg,image/png,image/webp,application/pdf" style="display:none" onchange="fc2InvoiceScan(this)"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="document.getElementById('fc2-inv-file').click()">Upload invoice</button></div></div>
+    {# Scanned invoices still waiting on the owner (U2-2): they used to live
+       only in page memory, so a reload orphaned them while Home kept asking. #}
+    <div id="fc2-inv-pending" hidden></div>
     <div id="fc2-inv-body"></div>
   </div>
 
@@ -8550,6 +8605,15 @@ svg:hover .hb-xh{opacity:1}
     {% else %}
     <div class="fc2-ok"><i></i>Your ordering looks well-calibrated this week — no adjustments needed.</div>
     {% endif %}
+    {# One Order card (friction audit U2-15/16): the lines to send, grouped
+       by supplier with editable quantities, loaded when the card is first
+       on screen - the "Load" button and the sight-unseen send are gone.
+       Deliveries are received below it, into stock (U2-12). #}
+    <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
+      <div class="hb-kicker" style="margin:18px 0 8px">Send to suppliers</div>
+      <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
+      <div id="po-history" class="fc2-po"></div>
+    </div>
   </div>
 
   {% if inv.price_watch %}
@@ -8563,16 +8627,21 @@ svg:hover .hb-xh{opacity:1}
   </div>
   {% endif %}
 
-  <div class="fc2-sec" id="fc2-tracker">
-    <div class="hd"><div><div class="hb-kicker">Key ingredient price monitor</div><h2>This week's prices</h2><div class="sub">Fill in price per unit right after an invoice arrives — drift against last week is flagged automatically.</div></div>
+  {# U2-14: for a ledger account the rows come from the ingredient list
+     (hosted_dashboard, from_pantry) - invoices keep the prices current and
+     usage is computed from sales - so they are read-only until Edit. #}
+  {% set _fc_ledger = food_cost_data and food_cost_data.current and food_cost_data.current.from_pantry %}
+  <div class="fc2-sec{{ ' fc2-ledger-rows' if _fc_ledger }}" id="fc2-tracker">
+    <div class="hd"><div><div class="hb-kicker">Key ingredient price monitor</div><h2>This week's prices</h2><div class="sub">{% if _fc_ledger %}From your ingredient list — scanned invoices keep these prices current and usage comes from your sales. Edit only to override.{% else %}Fill in price per unit right after an invoice arrives — drift against last week is flagged automatically.{% endif %}</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        {% if _fc_ledger %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" id="fc-edit-prices" onclick="fcEditPrices(this)">Edit prices</button>{% if food_cost_data.current.typed_at %}{% set _ta=food_cost_data.current.typed_at %}<div class="sub">Last typed <span class="hb-num">{{ _ta[5:7]|int }}/{{ _ta[8:10]|int }}/{{ _ta[2:4] }}</span></div>{% endif %}{% endif %}
         {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}
         <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
         <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none"></span>
       </div>
     </div>
     <div class="fc2-track">
-      {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] %}
+      {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] and not _fc_ledger %}
       <div id="fc-drift-saved">
         {% set curr_map = {} %}
         {% for it in food_cost_data.current['items'] %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
@@ -8598,7 +8667,7 @@ svg:hover .hb-xh{opacity:1}
         <tbody id="fc-rows">
           {% if food_cost_data and food_cost_data.current %}
             {% for _fci in food_cost_data.current['items'] %}
-            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="{{ _fci.price }}" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="{{ _fci.usage }}" step="0.1" min="0" placeholder="0"></td><td></td></tr>
+            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"{{ ' readonly' if _fc_ledger }}></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.price }}" step="0.01" min="0" placeholder="0.00"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.usage }}" step="0.1" min="0" placeholder="0"{{ ' readonly' if _fc_ledger }}></td><td></td></tr>
             {% endfor %}
           {% else %}
             {% for _fci in [{"name":"Chicken Breast","unit":"lb"},{"name":"Beef/Steak","unit":"lb"},{"name":"Salmon / Fish","unit":"lb"},{"name":"Shrimp","unit":"lb"},{"name":"Heavy Cream","unit":"qt"},{"name":"Butter","unit":"lb"},{"name":"Produce (misc)","unit":"case"}] %}
@@ -8626,12 +8695,10 @@ svg:hover .hb-xh{opacity:1}
   </div>
 
   <div class="fc2-sec" id="fc2-tools">
-    <div class="hd"><div><div class="hb-kicker">Tools</div><h2>Margins and ordering</h2><div class="sub">Plate cost and margin for every priced dish, and this week's suggested order emailed to each supplier.</div></div></div>
+    <div class="hd"><div><div class="hb-kicker">Tools</div><h2>Menu margins</h2><div class="sub">Plate cost and margin for every priced dish. Sending this week's order lives on the order card above.</div></div></div>
     <div class="fc2-tools">
-      <div class="fc2-tool"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="cbtn cbtn-secondary cbtn-sm">Load</button></div><div class="bd" id="mm-body">See plate cost and margin for every priced dish.</div></div>
-      <div class="fc2-tool"><div class="ch"><span>Send order to suppliers</span><button onclick="loadOrderDraft()" class="cbtn cbtn-secondary cbtn-sm">Load</button></div><div class="bd" id="so-body">Email this week's suggested order to each supplier.</div></div>
+      <div class="fc2-tool" data-nav="inventory/margins"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="cbtn cbtn-text cbtn-sm">Refresh</button></div><div class="bd" id="mm-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div></div>
     </div>
-    <div id="po-history" class="fc2-po"></div>
   </div>
   <div style="display:none"><span id="fc-tab-tracker"></span><span id="fc-tab-analytics"></span><span id="fc-panel-tracker"></span><span id="fc-panel-analytics"></span></div>
 
@@ -8752,8 +8819,25 @@ svg:hover .hb-xh{opacity:1}
       else { toast(d.error||'Couldn\'t save price','error'); }
     });
   }
+  // One Order card (friction audit U2-15/16). Each supplier's lines with an
+  // editable quantity; a changed quantity goes with the send as "lines",
+  // checked against the draft the owner saw (draft_hash). Sending is an
+  // outward action, so it asks once, inline, naming the supplier, the
+  // count and the total - never a browser confirm(). ES5 only.
+  var _soGroups = {};
+  function _soMoney(n){return '$'+Math.round(+n||0).toLocaleString();}
+  function _soTotals(email){
+    var box=document.querySelector('[data-sup="'+email+'"]');if(!box)return null;
+    var ins=box.querySelectorAll('input[data-so-qty]'),tot=0,n=0,i;
+    for(i=0;i<ins.length;i++){var q=parseFloat(ins[i].value);if(!(q>0))continue;n++;tot+=q*(+ins[i].getAttribute('data-cost')||0);
+      var lc=box.querySelector('[data-so-line="'+ins[i].getAttribute('data-so-qty')+'"]');if(lc)lc.textContent=_soMoney(q*(+ins[i].getAttribute('data-cost')||0));}
+    var g=_soGroups[email]||{},btn=box.querySelector('[data-so-send]'),t=box.querySelector('[data-sup-total]');
+    if(t)t.textContent=_soMoney(tot);
+    if(btn&&!btn.disabled)btn.textContent='Send to '+(g.supplier_name||email)+' · '+_soMoney(tot);
+    return {n:n,total:tot};
+  }
   function loadOrderDraft(){
-    var el = document.getElementById('so-body');
+    var el = document.getElementById('so-body');if(!el)return;
     el.innerHTML = cavnarLoading('Building this week\'s order…',22,'working');
     fetch('/api/food-cost/order-draft').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
@@ -8761,68 +8845,122 @@ svg:hover .hb-xh{opacity:1}
       if(!groups.length){
         var un=(d.unassigned||[]).length,title,why;
         if(d.is_live===false){title='Nothing to order yet';why=d.notice||'Food Cost is showing example data.';}
-        else if(un){title='Suppliers needed';why=un+' item'+(un===1?' is':'s are')+' due but no supplier is set on '+(un===1?'it':'them')+'. Add a supplier to each ingredient in the app (Food Cost \u2192 ingredient) and this fills in.';}
+        else if(un){title='Suppliers needed';why=un+' item'+(un===1?' is':'s are')+' due but no supplier is set on '+(un===1?'it':'them')+'. Set one in the Suppliers block above and this fills in.';}
         else{title='Nothing to order';why='Nothing is below par this week.';}
         el.innerHTML='<div class="fc2-tool-empty"><b>'+_mmEsc(title)+'</b><span>'+_mmEsc(why)+'</span></div>';
         loadPurchaseOrders();return;
       }
-      _soDraftHash = d.draft_hash || null;
+      _soDraftHash = d.draft_hash || null;_soGroups={};
       var html = '';
       groups.forEach(function(g){
-        html += '<div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</span></div>';
-        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="cbtn cbtn-primary cbtn-sm">Send ($'+(g.total_cost||0).toFixed(0)+')</button></div>';
+        _soGroups[g.supplier_email]=g;
+        html += '<div class="fc2-sup-order" data-sup="'+_mmEsc(g.supplier_email)+'"><div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+' · '+_mmEsc(g.supplier_email)+'</span></div><span class="hb-num" data-sup-total>'+_soMoney(g.total_cost)+'</span></div>';
+        html += '<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Item</th><th class="r">Quantity</th><th class="r">Line</th></tr></thead><tbody>';
+        g.items.forEach(function(it){var key=it.ingredient_id?String(it.ingredient_id):('name:'+String(it.item||'').toLowerCase());
+          html+='<tr><td><b>'+_mmEsc(it.item)+'</b>'+(it.trimmed_for_waste?'<div class="why">trimmed for last week’s waste</div>':'')+'</td>'
+            +'<td class="r"><input class="fc2-inv-in" type="number" min="0" step="0.5" inputmode="decimal" aria-label="'+_mmEsc(it.item)+' quantity" data-so-qty="'+_mmEsc(key)+'" data-drafted="'+(+it.qty||0)+'" data-cost="'+(+it.unit_cost||0)+'" data-sup-of="'+_mmEsc(g.supplier_email)+'" value="'+(+it.qty||0)+'"> '+_mmEsc(it.unit||'')+'</td>'
+            +'<td class="r hb-num" data-so-line="'+_mmEsc(key)+'">'+_soMoney(it.line_cost)+'</td></tr>';});
+        html += '</tbody></table></div><div class="fc2-count-ft"><span class="ac-status" data-sup-status></span><button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-send="'+_mmEsc(g.supplier_email)+'">Send to '+_mmEsc(g.supplier_name||g.supplier_email)+' · '+_soMoney(g.total_cost)+'</button></div>';
+        html += '<div class="fc2-inv-note" data-sup-confirm hidden></div></div>';
       });
       // Items due with no supplier set are not on any order above. They
       // were listed only when there were no groups at all, so one assigned
       // supplier hid every unassigned item (MOD-FC-20).
       var unassigned = d.unassigned || [];
       if(unassigned.length){
-        html += '<div class="g"><div><b>No supplier set</b><span>'+unassigned.length+' item'+(unassigned.length!==1?'s are':' is')+' due but on no order: '+_mmEsc(unassigned.map(function(u){return u.item;}).join(', '))+'. Add a supplier to '+(unassigned.length===1?'it':'each')+' in the app (Food Cost → ingredient).</span></div></div>';
+        html += '<div class="g"><div><b>No supplier set</b><span>'+unassigned.length+' item'+(unassigned.length!==1?'s are':' is')+' due but on no order: '+_mmEsc(unassigned.map(function(u){return u.item;}).join(', '))+'. Set a supplier on '+(unassigned.length===1?'it':'each')+' in the Suppliers block above.</span></div></div>';
       }
       el.innerHTML = html;
       loadPurchaseOrders();
     }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t build the order</span>'; });
   }
   var _soDraftHash = null;
+  document.addEventListener('input',function(e){var t=e.target;if(t&&t.getAttribute&&t.getAttribute('data-so-qty')!==null)_soTotals(t.getAttribute('data-sup-of'));});
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-so-send],[data-so-go],[data-so-cancel]'):null;if(!t||t.disabled)return;
+    var email=t.getAttribute('data-so-send')||t.getAttribute('data-so-go')||t.getAttribute('data-so-cancel'),box=document.querySelector('[data-sup="'+email+'"]');if(!box)return;
+    var cf=box.querySelector('[data-sup-confirm]');
+    if(t.getAttribute('data-so-cancel')!==null){if(cf)cf.hidden=true;return;}
+    if(t.getAttribute('data-so-go')!==null){sendSupplierOrder(email,t,t.getAttribute('data-resend')==='1');return;}
+    var tt=_soTotals(email)||{n:0,total:0};
+    if(!tt.n){if(typeof toast==='function')toast('Every line is at 0 — nothing to send','error');return;}
+    if(cf){cf.innerHTML='Email <b>'+_mmEsc(email)+'</b> an order for <span class="hb-num">'+tt.n+'</span> item'+(tt.n===1?'':'s')+', <span class="hb-num">'+_soMoney(tt.total)+'</span>? <button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-go="'+_mmEsc(email)+'">Send it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-so-cancel="'+_mmEsc(email)+'">Not yet</button>';cf.hidden=false;}
+  });
   function sendSupplierOrder(email, btn, resend){
-    btn.disabled = true; btn.textContent = 'Sending…';
+    var box=document.querySelector('[data-sup="'+email+'"]'),g=_soGroups[email]||{},lines=[],ins=box?box.querySelectorAll('input[data-so-qty]'):[],i;
+    for(i=0;i<ins.length;i++){var q=parseFloat(ins[i].value);if(!(q>=0)){if(typeof toast==='function')toast('Quantities are numbers, 0 or more','error');return;}
+      if(q!==+ins[i].getAttribute('data-drafted')){var k=ins[i].getAttribute('data-so-qty');lines.push(k.indexOf('name:')===0?{item:k.slice(5),qty:q}:{ingredient_id:parseInt(k,10),qty:q});}}
+    var done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Sending'):function(){};
     // The hash of the draft on screen goes back with the send, so what is
     // emailed is what was reviewed; a changed draft comes back 409 and is
-    // reloaded rather than sent (MOD-FC-8).
+    // reloaded rather than sent (MOD-FC-8). The supplier's own hash, so
+    // another supplier's lines moving does not stop this one.
+    var body={supplier_email: email, draft_hash: g.draft_hash||_soDraftHash, resend: !!resend};
+    if(lines.length)body.lines=lines;
     fetch('/api/food-cost/send-order', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({supplier_email: email, draft_hash: _soDraftHash, resend: !!resend})
+      body: JSON.stringify(body)
     }).then(apiJson).then(function(d){
-      if(d.ok){ toast(d.queued&&d.queued.length?('Order goes out in '+d.undo_minutes+' min — undo from the Cavnar AI strip'):'Order sent','success'); btn.textContent=d.queued&&d.queued.length?'Queued ✓':'Sent ✓'; loadPurchaseOrders(); return; }
-      btn.disabled=false; btn.textContent='Send';
-      if(d.already_sent && !resend){
-        if(window.confirm(d.error||'This order already went. Send it again?')){ sendSupplierOrder(email, btn, true); }
-        return;
+      done();
+      var cf=box&&box.querySelector('[data-sup-confirm]'),st=box&&box.querySelector('[data-sup-status]'),main=box&&box.querySelector('[data-so-send]');
+      if(d.ok){
+        if(cf)cf.hidden=true;
+        if(main){main.disabled=true;main.textContent=d.queued&&d.queued.length?'Queued ✓':'Sent ✓';}
+        toast(d.queued&&d.queued.length?('Order goes out in '+d.undo_minutes+' min — undo from the Cavnar AI strip'):'Order sent','success'); loadPurchaseOrders(); return; }
+      if(d.already_sent && !resend && cf){
+        cf.innerHTML=_mmEsc(d.error||'This order already went. Send it again?')+' <button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-go="'+_mmEsc(email)+'" data-resend="1">Send it again</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-so-cancel="'+_mmEsc(email)+'">Leave it</button>';
+        cf.hidden=false;return;
       }
+      if(st)st.textContent=d.error||'Couldn\'t send order';
       toast(d.error||'Couldn\'t send order','error');
       if(d.stale){ loadOrderDraft(); }
-    });
+    }).catch(function(){done();toast('Couldn\'t reach Cavnar','error');});
   }
-  function loadPurchaseOrders(){
-    var el = document.getElementById('po-history');
-    fetch('/api/food-cost/purchase-orders?status=sent').then(apiJson).then(function(d){
-      if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
-      var html = '<div class="hb-kicker">Recent purchase orders</div>';
-      d.orders.slice(0,8).forEach(function(po){
-        html += '<div class="row"><div><b>'+_mmEsc(po.po_number)+'</b> · '+_mmEsc(po.supplier_name||po.supplier_email)+'</div>';
-        html += '<button onclick="receivePO('+po.id+',this)" class="cbtn cbtn-secondary cbtn-sm">Mark received</button></div>';
-      });
-      el.innerHTML = html;
-    }).catch(function(){});
-  }
-  function receivePO(id, btn){
-    btn.disabled = true;
-    fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST'}).then(apiJson).then(function(d){
-      if(d.ok){ toast('Marked received','success'); loadPurchaseOrders(); }
-      else { toast(d.error||'Couldn\'t update','error'); btn.disabled=false; }
-    });
-  }
+  // Auto-load the order card and the margins table the first time each is
+  // on screen - the "Load" buttons were implementation clicks (U2-16).
+  // cavnarWhenVisible is defined in a later script, so this waits for the
+  // document.
+  document.addEventListener('DOMContentLoaded',function(){
+    function whenSeen(id,fn){var el=document.getElementById(id);if(!el)return;if(typeof cavnarWhenVisible==='function')cavnarWhenVisible(el,fn);else fn();}
+    whenSeen('fc2-order-send',loadOrderDraft);
+    whenSeen('mm-body',loadMenuMargins);
+  });
+  // Nav paths (nav.py): "order/<supplier email>" opens the order card on
+  // that supplier; "inventory/order" is the card's data-nav section.
+  if(typeof cavNavRegister==='function')cavNavRegister('order',function(p){
+    cavNavOpenModule('inventory');
+    var who=String(p.rest[0]||'').toLowerCase(),card=document.getElementById('fc2-order-send');
+    function go(){var el=(who&&document.querySelector('[data-sup="'+who.replace(/"/g,'')+'"]'))||card;if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});}
+    if(!document.querySelector('[data-sup]'))loadOrderDraft();
+    setTimeout(go,400);
+    return true;
+  });
   </script>
+  {% include '_fc_receive_js.html' %}
 </div><!-- /hb-wrap -->
+</div>{% elif fc_enter_only %}
+{# Counts-only Food Cost (friction audit U2-27): a manager without the margins
+   counts the walk-in, logs waste and receives deliveries. The routes behind
+   it are the FOOD_COST_ENTER paths, and none of them returns a dollar. #}
+<div class="panel" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh;position:relative">
+<style>
+/* The counts-only panel carries the few Food Cost rules it uses; the full
+   panel's stylesheet renders only with the margins (mod_inventory). */
+.fc2-block{position:relative;margin-top:22px;padding:22px 24px 20px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card)}
+.fc2-bh{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}.fc2-bh .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}.fc2-bh h3{margin:2px 0 4px;font-size:18px;color:var(--ink)}.fc2-bh .sub{font-size:13.5px;color:var(--ink3)}
+.fc2-sec{margin-top:34px;padding-top:22px}
+.fc2-mt{width:100%;border-collapse:collapse;font-size:14px}.fc2-mt th{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:8px 10px 8px 0;border-bottom:1px solid var(--hb-line)}.fc2-mt td{padding:10px 10px 10px 0;border-bottom:1px solid var(--hb-line2);color:var(--ink)}.fc2-mt td.r,.fc2-mt th.r{text-align:right}
+.fc2-inv-in{width:92px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:14px;text-align:right}
+.fc2-po{margin-top:14px}.fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}.fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
+</style>
+<div class="hb-wrap">
+  <div class="hb-top"><div><div class="hb-kicker">Food Cost &middot; stock</div><h1 class="hb-h1">Counts &amp; deliveries</h1><div class="hb-sub">Count what&rsquo;s on hand, log what was thrown out, and receive what arrived. Costs and margins stay with the owner.</div></div></div>
+  <section id="fc2-count" class="fc2-block" aria-label="Count sheet" data-nav="inventory/count" hidden></section>
+  <div class="fc2-sec" id="fc2-orders"><div class="fc2-send" id="fc2-order-send" data-nav="inventory/order"><div id="po-history" class="fc2-po"></div></div></div>
+  {% include '_fc_receive_js.html' %}
+  <script>
+  window.FC_ENTER_ONLY = true;
+  </script>
+</div>
 </div>{% endif %}<!-- /panel-inventory -->
 
 <!-- MARKETING -->
@@ -9986,8 +10124,15 @@ svg:hover .hb-xh{opacity:1}
       <div class="ac-card" style="margin-top:14px">
         <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Used when generating schedules and when the AI mentions your hours. Leave a day blank if it varies.</p></div>
           <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
+        {# Prefill (friction audit U2-19): Google's listed hours, and Monday's
+           times copied to every day. Neither saves on its own - Save hours does. #}
+        <div class="ac-inline" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="asHoursFromGoogle(this)">Fill from Google</button><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="asHoursSameEveryDay()">Same every day</button></div>
         <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
-        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="12/25/2026, 1/1/2027"></div>
+        {# One closures list (U2-3): the scheduler's closed dates, the same
+           ones Labor -> Scheduling rules shows. The draft leaves them empty. #}
+        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closure-new">Closed on these dates <small>the schedule leaves them empty &middot; the same list as Labor &rarr; Scheduling rules</small></label>
+          <div id="as-closures" style="margin:6px 0"></div>
+          <div class="ac-inline" style="gap:8px"><input class="ac-input" type="date" id="as-closure-new" aria-label="A date you are closed" style="max-width:180px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="asAddClosure()">Add date</button></div></div>
       </div>
 
       <!-- Restaurant profile (Benchmarking audit #7): who Cavnar compares this
@@ -11957,6 +12102,8 @@ function loadResponsePerf(days){
   }).catch(function(){body.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
 window.switchFcTab = function(tab) {
+  // Counts-only (U2-27): the stock work and nothing that reads a margin.
+  if(window.FC_ENTER_ONLY){ if(typeof fc2LoadCountSheet==='function')fc2LoadCountSheet(); if(typeof loadPurchaseOrders==='function')loadPurchaseOrders(); return; }
   // Tracker and Analytics are one page now; this just lights it up once.
   if(!invLoaded) loadInvInsight();
   if(typeof renderFcGauge==='function') renderFcGauge();
@@ -14696,12 +14843,23 @@ function lb2LoadCovers(){
     if(nEl)nEl.textContent=String(days.length);
     if(flag)flag.textContent=days.length?('day'+(days.length===1?'':'s')+' on file \u00b7 about '+Math.round(tot/days.length)+' a day'):'no counts yet';
     if(vEl)vEl.className='v'+(days.length?' ember':'');
-    if(!days.length){el.textContent='No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.';return;}
+    // What the POS counted on nights nobody entered (U2-18): offered for one
+    // tap, never written on its own - a guest count is not always a cover.
+    var off=d.pos_offers||[],oh='';
+    for(i=0;i<off.length&&i<3;i++)oh+='<div class="lb2-cov-offer">POS counted <b class="hb-num">'+esc(off[i].guests)+'</b> guests on '+esc(mdy(off[i].date))+' — <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cov-pos="'+esc(off[i].date)+'" data-cov-n="'+esc(off[i].guests)+'">use it</button></div>';
+    if(!days.length){el.innerHTML=esc('No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.')+oh;return;}
     var h='<div class="lb2-cov">';
     for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';
-    el.innerHTML=h+'</div>';
+    el.innerHTML=h+'</div>'+oh;
   }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});
 }
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-cov-pos]'):null;if(!t||t.disabled)return;
+  var done=cbtnBusy(t,'Saving…');
+  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({from_pos:true,rows:[{date:t.getAttribute('data-cov-pos'),covers:+t.getAttribute('data-cov-n')}]})}).then(apiJson).then(function(d){
+    done();if(typeof toast==='function')toast(d&&d.ok&&d.written?'Saved':((d&&(d.error||(d.errors||[])[0]))||'Could not save'),d&&d.ok&&d.written?'success':'error');lb2LoadCovers();
+  }).catch(function(){done();});
+});
 function lb2SaveCover(btn){
   var dt=(document.getElementById('lb2-cov-date')||{}).value,n=(document.getElementById('lb2-cov-n')||{}).value;
   if(!dt||n===''){if(typeof toast==='function')toast('Pick a date and a count','error');return;}
@@ -17882,7 +18040,10 @@ function fc2LoadCfo(){
             +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
             +cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:x.rec_key||x.key,surface:'food',module:'food',cls:'fc2-drv-cf'})
             +'<div class="tags"><span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
-            +'<span class="tag">risk if left alone: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
+            +'<span class="tag">risk if left alone: '+wtEsc(x.if_ignored)+'</span></div>'
+            // Where it is acted on (U4-9), a nav path from the server.
+            +(x.act&&x.act.nav?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cav-go="'+wtEsc(x.act.nav)+'">'+wtEsc(x.act.label||'Open')+' →</button>':'')
+            +'</div></div>';
         }
         h+='</div></div>';
         // What the ranking could not read (fci degraded_sources): a ranking
@@ -17989,6 +18150,11 @@ function fc2LoadRecipeDrafts(note){
     var ds=d.drafts||[];
     var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'What each dish is made of is what every plate cost and margin rests on. Drafts wait here until you accept them.');
     if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
+    // Accept every confident draft at once (U2-24): only drafts whose every
+    // line carries a measured support of FC2_SURE_PCT% or more, with units
+    // that converted and no batch yield to fill. The rest stay one by one.
+    var sure=fc2ConfidentDrafts(ds);
+    if(sure.length>1)h+='<div class="fc2-count-ft" style="justify-content:flex-start;margin:0 0 10px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-accept-all="'+esc(sure.join(','))+'">Accept '+sure.length+' confident recipes</button><span class="ac-status">every line at '+FC2_SURE_PCT+'% support or more · the rest wait for you</span></div>';
     for(var i=0;i<ds.length;i++){var dr=ds[i];
       // What kind of draft this is (recipes._draft_flags, H6): a model's
       // estimate from the ingredient list, or a transcribed recipe card.
@@ -18034,6 +18200,24 @@ function fc2LoadRecipeDrafts(note){
     if(note){var stn=document.getElementById('fc2-menu-status');if(stn)stn.textContent=note;}
   }).catch(function(){});
 }
+var FC2_SURE_PCT=80;
+function fc2ConfidentDrafts(ds){
+  var out=[],i,j;
+  for(i=0;i<(ds||[]).length;i++){var dr=ds[i],ls=dr.lines||[],ok=ls.length>0&&!dr.needs_yield;
+    for(j=0;ok&&j<ls.length;j++){var ln=ls[j];
+      if(ln.unit_ok===false||typeof ln.confidence_pct!=='number'||!isFinite(ln.confidence_pct)||ln.confidence_pct<FC2_SURE_PCT)ok=false;}
+    if(ok)out.push(dr.id);}
+  return out;
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept-all]'):null;if(!t||t.disabled)return;
+  var ids=String(t.getAttribute('data-recipe-accept-all')||'').split(','),n=0,done=cbtnBusy(t,'Writing…');
+  (function next(){
+    if(!ids.length){done();if(typeof toast==='function')toast(n+' recipe'+(n===1?'':'s')+' written','success');fc2LoadRecipeDrafts();return;}
+    var id=ids.shift();if(!id){next();return;}
+    fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/accept',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(apiJson).then(function(d){if(d&&d.ok)n++;next();}).catch(function(){next();});
+  })();
+});
 function fc2DraftRecipes(btn,missingOnly){
   var ta=document.getElementById('fc2-menu-text'),st=document.getElementById('fc2-menu-status');
   var menu=missingOnly?'':((ta&&ta.value)||'');
@@ -18155,8 +18339,26 @@ function fc2LoadCountSheet(){
     for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
       h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'" aria-label="Count for '+esc(it.name)+'"></label>';}
     h+='</div><div class="fc2-count-ft"><span class="ac-status" id="fc2-count-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2SaveCount(this)">Save count</button></div>';
+    // One line of waste (U2-32): what was thrown out, logged as counted
+    // waste instead of surfacing later as an unexplained recount gap.
+    var wo='';for(var w=0;w<d.items.length;w++)wo+='<option value="'+esc(d.items[w].ingredient_id)+'">'+esc(d.items[w].name)+(d.items[w].unit?' ('+esc(d.items[w].unit)+')':'')+'</option>';
+    h+='<div class="fc2-waste-log" data-nav="inventory/waste"><span class="k">Log waste</span><select class="ac-select" id="fc2-waste-ing" aria-label="What was thrown out">'+wo+'</select>'
+      +'<input type="number" min="0" step="any" class="ac-input ac-num" id="fc2-waste-qty" placeholder="qty" aria-label="How much" style="max-width:90px">'
+      +'<select class="ac-select" id="fc2-waste-why" aria-label="Why"><option value="spoiled">spoiled</option><option value="expired">expired</option><option value="overprepped">over-prepped</option><option value="dropped">dropped</option><option value="returned">sent back</option><option value="other">other</option></select>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2LogWaste(this)">Log it</button></div>';
     el.innerHTML=h;el.hidden=false;
   }).catch(function(){});
+}
+function fc2LogWaste(btn){
+  var ing=(document.getElementById('fc2-waste-ing')||{}).value,q=parseFloat((document.getElementById('fc2-waste-qty')||{}).value),why=(document.getElementById('fc2-waste-why')||{}).value;
+  if(!ing||!(q>0)){if(typeof toast==='function')toast('Pick what and how much','error');return;}
+  var done=cbtnBusy(btn,'Logging…');
+  fetch('/api/food-cost/waste',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ingredient_id:parseInt(ing,10),qty:q,reason:why})}).then(apiJson).then(function(d){
+    done();
+    if(!d||!d.ok){if(typeof toast==='function')toast((d&&d.error)||'Couldn’t log that','error');return;}
+    if(typeof toast==='function')toast('Logged '+q+(d.unit?' '+d.unit:'')+' of '+d.name+' as waste','success');
+    fc2LoadCountSheet();
+  }).catch(function(){done();});
 }
 function fc2SaveCount(btn){
   var rows=document.querySelectorAll('#fc2-count input[data-ing]'),items=[];
@@ -18830,9 +19032,11 @@ function openAlertsModal() {
   msg.textContent = '';
   fetch('/api/alert-settings').then(apiJson).then(function(d) {
     if (!d.ok) return;
-    var c = d.contacts || [];
-    document.getElementById('alert-c1-name').value  = (c[0] && c[0].name)  || '';
-    document.getElementById('alert-c1-phone').value = (c[0] && c[0].phone) || '';
+    var c = d.contacts || [], ow = d.owner || {};
+    // With no contact saved, contact 1 starts as the owner (U2-26); it is
+    // only a contact once saved with the consent box ticked.
+    document.getElementById('alert-c1-name').value  = (c[0] && c[0].name)  || (!c.length && ow.name)  || '';
+    document.getElementById('alert-c1-phone').value = (c[0] && c[0].phone) || (!c.length && ow.phone) || '';
     document.getElementById('alert-c2-name').value  = (c[1] && c[1].name)  || '';
     document.getElementById('alert-c2-phone').value = (c[1] && c[1].phone) || '';
     var s = d.settings || {};
@@ -18982,7 +19186,7 @@ function loadAccountSettings() {
 
     var h = d.hours || {};
     buildAccountHoursGrid(h.open || {}, h.close || {});
-    document.getElementById('as-closures').value = (h.closures || []).join(', ');
+    asRenderClosures(h.closures || []);
 
     document.getElementById('as-retention').value = String(d.data_retention_months || 0);
     document.getElementById('as-login-notify').checked = !!d.login_notify;
@@ -19421,14 +19625,58 @@ function saveAccountHours() {
     if (o && o.value) open[d] = o.value;
     if (c && c.value) close[d] = c.value;
   }
-  var raw = (document.getElementById('as-closures').value || '').split(',');
+  var chips = document.querySelectorAll('#as-closures [data-cdate]');
   var closures = [];
-  for (var j = 0; j < raw.length; j++) {
-    var v = raw[j].replace(/^\s+|\s+$/g, '');
-    if (v) closures.push(v);
-  }
+  for (var j = 0; j < chips.length; j++) closures.push(chips[j].getAttribute('data-cdate'));
   asPost('/api/account-settings/hours', { open: open, close: close, closures: closures },
          'as-hours-status', 'Saved').then(function() { loadAccountSettings(); });
+}
+// Closed dates as chips (U2-3), the same control Labor's rules use. The
+// remove button is the shared [data-cdate-x] listener; Save hours sends
+// whatever chips are left.
+function asClosureChip(iso) {
+  return '<span class="rul-ov" data-cdate="' + _ehEsc(iso) + '">' + _ehEsc(typeof mdy === 'function' ? mdy(iso) : iso)
+    + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-cdate-x="1" title="Remove" aria-label="Remove this date">✕</button></span>';
+}
+function asRenderClosures(list) {
+  var box = document.getElementById('as-closures'); if (!box) return;
+  var h = '';
+  for (var i = 0; i < list.length; i++) h += asClosureChip(list[i]);
+  box.innerHTML = h || '<span class="ac-note" style="margin:0">No closed dates.</span>';
+}
+function asAddClosure() {
+  var inp = document.getElementById('as-closure-new'), box = document.getElementById('as-closures');
+  if (!inp || !box) return;
+  var v = (inp.value || '').replace(/^\s+|\s+$/g, '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { toast('Pick a date', 'error'); return; }
+  if (box.querySelector('[data-cdate="' + v + '"]')) return;
+  var empty = box.querySelector('.ac-note'); if (empty) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', asClosureChip(v)); inp.value = '';
+  var st = document.getElementById('as-hours-status'); if (st) st.textContent = 'Not saved yet';
+}
+// Hours prefill (U2-19): Google's listed hours fill the grid; nothing is
+// saved until Save hours.
+function asHoursFromGoogle(btn) {
+  var done = typeof cbtnBusy === 'function' ? cbtnBusy(btn, 'Reading Google') : function() {};
+  fetch('/api/account-settings/hours/google', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    done();
+    if (!d || !d.ok) { toast((d && d.error) || 'Couldn’t read your Google hours', 'error'); return; }
+    buildAccountHoursGrid(d.open || {}, d.close || {});
+    var st = document.getElementById('as-hours-status'); if (st) st.textContent = 'From Google — not saved yet';
+  }).catch(function() { done(); toast('Couldn’t reach Google', 'error'); });
+}
+function asHoursSameEveryDay() {
+  var src = null, i;
+  for (i = 0; i < AS_DAYS.length; i++) {
+    var o = document.getElementById('as-open-' + AS_DAYS[i]), c = document.getElementById('as-close-' + AS_DAYS[i]);
+    if (o && c && (o.value || c.value)) { src = {o: o.value, c: c.value, day: AS_DAYS[i]}; break; }
+  }
+  if (!src) { toast('Fill in one day first', 'error'); return; }
+  for (i = 0; i < AS_DAYS.length; i++) {
+    var oi = document.getElementById('as-open-' + AS_DAYS[i]), ci = document.getElementById('as-close-' + AS_DAYS[i]);
+    if (oi) oi.value = src.o; if (ci) ci.value = src.c;
+  }
+  var st = document.getElementById('as-hours-status'); if (st) st.textContent = src.day + '’s hours on every day — not saved yet';
 }
 
 // Restaurant profile (Benchmarking audit #7). ES5 only.
@@ -21093,12 +21341,70 @@ function revokeOtherSessions(btn){
     fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(apiJson).then(function(d){
       inp.value='';
       if(!d||!d.ok){body.innerHTML='<div class="hb-empty" style="color:var(--red)">'+_fcEsc((d&&d.error)||'Couldn\'t read that invoice.')+'</div>';return;}
-      _fcInv=d.invoice;renderInvoice();
+      _fcInv=d.invoice;renderInvoice();fc2LoadPendingInvoices();
     }).catch(function(){inp.value='';body.innerHTML='<div class="hb-empty" style="color:var(--red)">Couldn\'t upload that file.</div>';});
   };
+  // Pending invoices (U2-2): every scan still waiting on the owner, listed
+  // at the top of the card from the server, so a reload never orphans one.
+  // A row opens the invoice through the same renderInvoice.
+  window.fc2LoadPendingInvoices=function(){
+    var el=document.getElementById('fc2-inv-pending');if(!el)return;
+    fetch('/api/food-cost/invoices',{credentials:'same-origin'}).then(apiJson).then(function(d){
+      var rows=[],list=(d&&d.invoices)||[],i;
+      for(i=0;i<list.length;i++)if(list[i].pending&&!(_fcInv&&_fcInv.id===list[i].id))rows.push(list[i]);
+      if(!rows.length){el.hidden=true;el.innerHTML='';return;}
+      var h='<div class="hb-kicker" style="margin-bottom:6px">Waiting on you · '+rows.length+' scanned invoice'+(rows.length===1?'':'s')+'</div><div class="fc2-po">';
+      for(i=0;i<rows.length;i++){var r=rows[i];
+        h+='<div class="row"><div><b>'+_fcEsc(r.supplier||'Supplier not read')+'</b>'+(r.invoice_date?' · '+_fcEsc(window.mdy?window.mdy(r.invoice_date):r.invoice_date):'')+' · <span class="hb-num">'+(+r.waiting||0)+'</span> line'+((+r.waiting||0)===1?'':'s')+' to check</div>'
+          +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2OpenInvoice('+(+r.id)+')">Open</button></div>';}
+      el.innerHTML=h+'</div>';el.hidden=false;
+    }).catch(function(){});
+  };
+  window.fc2OpenInvoice=function(id){
+    var body=document.getElementById('fc2-inv-body');if(!body)return false;
+    body.innerHTML='<div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div>';
+    fetch('/api/food-cost/invoices/'+encodeURIComponent(id),{credentials:'same-origin'}).then(apiJson).then(function(d){
+      if(!d||!d.ok){body.innerHTML='<div class="hb-empty">'+_fcEsc((d&&d.error)||'That invoice isn\'t here any more.')+'</div>';return;}
+      _fcInv=d.invoice;renderInvoice();fc2LoadPendingInvoices();
+      var sec=document.getElementById('fc2-invoice');if(sec&&sec.scrollIntoView)sec.scrollIntoView({behavior:'smooth',block:'start'});
+    }).catch(function(){body.innerHTML='<div class="hb-empty">Couldn\'t open that invoice.</div>';});
+    return true;
+  };
+  // Any [data-cav-go="<nav path>"] button opens that path - the "Do
+  // something about it" links on cross-module findings and cost drivers
+  // (friction audit U4-9). One delegated listener.
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-cav-go]'):null;if(!t||t.disabled)return;
+    e.preventDefault();if(typeof cavNav==='function')cavNav(t.getAttribute('data-cav-go'));
+  });
+  // Nav paths (nav.py): "invoice/<id>" opens that scan on Food Cost;
+  // "inventory/invoices" is the card's own data-nav section.
+  if(typeof cavNavRegister==='function')cavNavRegister('invoice',function(p){
+    var id=parseInt(p.rest[0],10);
+    cavNavOpenModule('inventory');
+    if(!id){var s=document.getElementById('fc2-invoice');if(s&&s.scrollIntoView)s.scrollIntoView({behavior:'smooth',block:'start'});return true;}
+    return fc2OpenInvoice(id);
+  });
+  // A line that matches no ingredient can become one (U2-23), prefilled
+  // with its description, unit and the cost the invoice implies.
+  document.addEventListener('change',function(e){
+    var t=e.target;if(!t||!t.getAttribute||t.getAttribute('data-inv-ing')===null||t.value!=='__new')return;
+    var v=_fcInv,idx=parseInt(t.getAttribute('data-inv-ing'),10),l=v&&v.lines&&v.lines[idx];if(!l){t.value='';return;}
+    var costEl=document.querySelector('[data-inv-cost="'+idx+'"]'),cost=costEl&&parseFloat(costEl.value)>0?parseFloat(costEl.value):(l.unit_price||null);
+    t.disabled=true;
+    fetch('/api/food-cost/ingredients',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:l.description,unit:l.unit||'',unit_cost:cost})}).then(apiJson).then(function(d){
+      t.disabled=false;
+      if(!d||!d.ok){t.value='';if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t add that ingredient','error');return;}
+      v.ingredients=(v.ingredients||[]).concat([{id:d.ingredient.id,name:d.ingredient.name,unit:d.ingredient.unit}]);
+      l.ingredient_id=d.ingredient.id;l.selected=true;if(cost&&l.proposed_cost==null)l.proposed_cost=cost;
+      renderInvoice();
+      if(typeof toast==='function')toast(d.ingredient.name+' added to your ingredients','success');
+    }).catch(function(){t.disabled=false;t.value='';});
+  });
   function renderInvoice(){
     var body=document.getElementById('fc2-inv-body'),v=_fcInv;if(!body||!v)return;
-    var opts='<option value="">— pick —</option>';
+    var opts='<option value="">— pick —</option><option value="__new">+ New ingredient from this line</option>';
     for(var k=0;k<(v.ingredients||[]).length;k++){var ing=v.ingredients[k];opts+='<option value="'+ing.id+'">'+_fcEsc(ing.name)+(ing.unit?' ('+_fcEsc(ing.unit)+')':'')+'</option>';}
     var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(window.mdy?window.mdy(v.invoice_date):v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
     if(v.total_check&&!v.total_check.plausible)h+='<div class="fc2-inv-note">Lines add up to '+_fcMoney(v.total_check.lines_sum)+' against an invoice total of '+_fcMoney(v.total_check.invoice_total)+' — some lines may be misread. Check them against the paper.</div>';
@@ -21131,7 +21437,7 @@ function revokeOtherSessions(btn){
     fetch('/api/food-cost/invoices/'+v.id+'/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:sel})})
       .then(apiJson).then(function(d){
         if(!d||!d.ok){if(msg){msg.style.color='var(--red)';msg.textContent=(d&&d.error)||'Couldn\'t update.';}return;}
-        v.applied_at='just now';v.awaiting_owner=false;renderInvoice();
+        v.applied_at='just now';v.awaiting_owner=false;renderInvoice();fc2LoadPendingInvoices();
         if(typeof toast==='function')toast(d.updated.length+' ingredient cost'+(d.updated.length===1?'':'s')+' updated','success');
       }).catch(function(){if(msg){msg.style.color='var(--red)';msg.textContent='Couldn\'t reach Cavnar.';}});
   };
@@ -21142,7 +21448,7 @@ function revokeOtherSessions(btn){
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
     if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); if (typeof loadOpsSettings === 'function') loadOpsSettings(); }
-    if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); }
+    if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); fc2LoadPendingInvoices(); }
     if (n === 'marketing' && !_gcLoaded) {
       _gcLoaded = true;
       loadGuestContactsSummary();

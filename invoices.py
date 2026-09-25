@@ -381,15 +381,54 @@ def list_imports(restaurant_id, limit=20, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, supplier, invoice_date, created_at, applied_at, applied_json "
-            "FROM invoice_imports WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
+            "SELECT * FROM invoice_imports WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
             (restaurant_id, limit)).fetchall()
     finally:
         conn.close()
-    return [{"id": r["id"], "supplier": r["supplier"], "invoice_date": r["invoice_date"],
-             "created_at": r["created_at"], "applied_at": r["applied_at"],
-             "updated": len(json.loads(r["applied_json"])) if r["applied_json"] else 0}
-            for r in rows]
+    out = []
+    for r in rows:
+        applied = json.loads(r["applied_json"]) if r["applied_json"] else []
+        try:
+            lines = (json.loads(r["lines_json"] or "{}") or {}).get("lines") or []
+        except Exception:
+            lines = []
+        # `pending` is what the owner still owes this invoice: never applied,
+        # or applied by the trusted-supplier rule with lines left for a person
+        # (mark_applied's awaiting_owner). Pending imports lived only in page
+        # memory, so after a reload Home kept asking about an invoice no
+        # screen could open (friction audit U2-2).
+        tagged = mark_applied({"lines": [dict(ln) for ln in lines]}, applied,
+                              bool(r["auto_applied"]) if "auto_applied" in r.keys() else False)
+        waiting = sum(1 for ln in tagged["lines"] if not ln.get("applied"))
+        out.append({"id": r["id"], "supplier": r["supplier"], "invoice_date": r["invoice_date"],
+                    "created_at": r["created_at"], "applied_at": r["applied_at"],
+                    "updated": len(applied),
+                    "lines": len(lines), "waiting": waiting if (not r["applied_at"] or tagged["awaiting_owner"]) else 0,
+                    "pending": (not r["applied_at"]) or bool(tagged["awaiting_owner"])})
+    return out
+
+
+def checked_selections(invoice) -> list:
+    """The selections apply() takes for every line of a loaded import that
+    Cavnar preselected and has not been applied: matched to one ingredient,
+    with a proposed cost. What "apply the checked lines" means when it is
+    not a person ticking boxes (Ask's apply_invoice_lines)."""
+    out = []
+    for ln in (invoice or {}).get("lines") or []:
+        if ln.get("applied") or not ln.get("selected"):
+            continue
+        if not ln.get("ingredient_id") or not ln.get("proposed_cost"):
+            continue
+        out.append({"index": ln.get("index"), "ingredient_id": ln["ingredient_id"],
+                    "unit_cost": ln["proposed_cost"]})
+    return out
+
+
+def pending_imports(restaurant_id, db_path=DB_PATH):
+    """The scanned invoices still waiting on the owner, newest first - what
+    Home's "N scanned invoices not applied" counts and Food Cost lists."""
+    return [i for i in list_imports(restaurant_id, db_path=db_path)
+            if i.get("pending", not i.get("applied_at"))]
 
 
 # ── 3. apply ──────────────────────────────────────────────────────────────────

@@ -2610,6 +2610,49 @@ TOOLS = [
             "input_schema": {"type": "object", "properties": {}},
         },
     },
+    # Friction audit (9/25/26), Command Center phase 3: a scanned invoice
+    # and a delivery can be finished from Ask. Both confirm; the lines and
+    # quantities come from the stored invoice and PO, never the model.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/food-cost/invoices/{import_id}/apply",
+                  "mobile": "/mobile/api/food-cost/invoices/{import_id}/apply", "method": "POST"},
+        "summary": "Update ingredient costs from the {invoice} invoice",
+        "module": "module_inventory",
+        "spec": {
+            "name": "apply_invoice_lines",
+            "description": (
+                "Propose applying a scanned supplier invoice's checked lines to ingredient costs — "
+                "only the lines Cavnar could verify (they add up and match one ingredient); flagged "
+                "lines stay for the owner on the Food Cost invoice card. Omit import_id for the "
+                "newest invoice still waiting. The owner confirms first."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "import_id": {"type": "integer",
+                              "description": "A scanned invoice's id. Omit for the newest one waiting."}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/food-cost/purchase-orders/{po_id}/received",
+                  "mobile": "/mobile/api/food-cost/purchase-orders/{po_id}/received", "method": "POST"},
+        "summary": "Receive {po} as ordered and add it to stock",
+        "module": "module_inventory",
+        "spec": {
+            "name": "receive_purchase_order",
+            "description": (
+                "Propose marking a sent supplier order as received exactly as ordered, which adds "
+                "every line to on-hand stock. If anything arrived short, tell the owner to receive "
+                "it on the Food Cost order card instead, where each quantity can be changed. Omit "
+                "po_id for the oldest order still open. The owner confirms first."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "po_id": {"type": "integer",
+                          "description": "The purchase order's id. Omit for the oldest one still open."}}},
+        },
+    },
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -2880,6 +2923,25 @@ def build_proposal(name, tool_input, restaurant_id=None):
         summary = summary.replace("{who}", who or f"request #{request_id}")
         args = {k: v for k, v in args.items() if k != "request_id"}
 
+    # An invoice or a purchase order is addressed the same way: its id goes
+    # in the path. With no id the newest waiting invoice / oldest open order
+    # is taken, and one that is not this restaurant's, or not waiting, is no
+    # proposal at all (friction audit, Command Center phase 3).
+    if name in ("apply_invoice_lines", "receive_purchase_order"):
+        target = _invoice_or_po(name, args, restaurant_id)
+        if not target:
+            return None
+        key = "import_id" if name == "apply_invoice_lines" else "po_id"
+        for surface in ("web", "mobile"):
+            route[surface] = route[surface].replace("{" + key + "}", str(target["id"]))
+        summary = summary.replace("{invoice}", target.get("label") or "scanned").replace(
+            "{po}", target.get("label") or "the order")
+        args = {k: v for k, v in args.items() if k != key}
+        if name == "apply_invoice_lines":
+            # The route applies the lines the stored invoice marks checked;
+            # the model never names lines or costs.
+            args["use_checked"] = True
+
     out = {
         "action": name,
         "summary": summary,
@@ -2919,7 +2981,37 @@ _FIELD_LABELS = {
     "severity": "Severity", "assignee_contact_id": "Assigned contact #", "caption": "Caption",
     "image_url": "Image", "topic": "Topic", "name": "Name", "email": "Email",
     "decision": "Answer",
+    "use_checked": "Lines",
 }
+
+
+def _invoice_or_po(name, args, restaurant_id):
+    """{"id", "label", "lines"/"items"} for the invoice or purchase order a
+    proposal acts on - the one named, else the newest waiting invoice or the
+    oldest open order. None when there is no such row for this restaurant."""
+    if restaurant_id is None:
+        return None
+    try:
+        want = int(args.get("import_id" if name == "apply_invoice_lines" else "po_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    if name == "apply_invoice_lines":
+        import invoices
+        pending = invoices.pending_imports(restaurant_id)
+        row = next((p for p in pending if p["id"] == want), None) if want else (pending[0] if pending else None)
+        if not row:
+            return None
+        inv = invoices.get_import(restaurant_id, row["id"]) or {}
+        checked = invoices.checked_selections(inv)
+        if not checked:
+            return None
+        return {"id": row["id"], "label": row.get("supplier") or None, "invoice": inv, "checked": checked}
+    from models import get_purchase_orders
+    open_pos = sorted(get_purchase_orders(restaurant_id, status="sent", limit=50), key=lambda p: (p["sent_at"] or "", p["id"]))
+    po = next((p for p in open_pos if p["id"] == want), None) if want else (open_pos[0] if open_pos else None)
+    if not po:
+        return None
+    return {"id": po["id"], "label": f"{po['po_number']} from {po['supplier_name'] or po['supplier_email']}", "po": po}
 
 
 def proposal_args(name, tool_input) -> dict:
@@ -3013,6 +3105,8 @@ def fields_shown(body) -> list:
         val = _shown(v)
         if k == "draft_hash":
             val = "the order as it stands now (" + val[:8] + ")"
+        if k == "use_checked":
+            val = "only the lines Cavnar checked"
         out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
     return out
 
@@ -3077,6 +3171,25 @@ def proposal_details(name, args, restaurant_id) -> dict:
         details.append({"label": "Order total", "value": _money(stake)})
         if not orders.get("is_live", True):
             details.append({"label": "Note", "value": "Sample data — nothing real would be ordered."})
+    elif name in ("apply_invoice_lines", "receive_purchase_order"):
+        target = _invoice_or_po(name, args, restaurant_id) or {}
+        if name == "apply_invoice_lines" and target:
+            by_idx = {ln.get("index"): ln for ln in (target["invoice"].get("lines") or [])}
+            for s in target["checked"][:8]:
+                ln = by_idx.get(s["index"]) or {}
+                details.append({"label": ln.get("ingredient_name") or ln.get("description") or "Line",
+                                "value": f"{_money(ln.get('current_cost')) or '—'} → {_money(s['unit_cost'])}"})
+            left = sum(1 for ln in (target["invoice"].get("lines") or []) if not ln.get("applied")) - len(target["checked"])
+            if left > 0:
+                details.append({"label": "Left for you", "value": f"{left} flagged line{'' if left == 1 else 's'} "
+                                                                  "stay on the Food Cost invoice card"})
+        elif target:
+            po = target["po"]
+            stake = round(float(po.get("total_cost") or 0), 2)
+            for it in (po.get("items") or [])[:8]:
+                details.append({"label": str(it.get("item") or "Item"),
+                                "value": f"{it.get('qty')} {it.get('unit') or ''}".strip()})
+            details.append({"label": "Order total", "value": _money(stake)})
     elif name in ("approve_review", "draft_review_reply", "retract_review_reply"):
         row = _review_row(restaurant_id, args.get("review_id"))
         if row:

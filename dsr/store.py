@@ -463,6 +463,81 @@ def budgets_for(restaurant_id, start, end, db_path=DB_PATH):
     return {r["business_date"]: {"gross": r["gross"], "net": r["net"]} for r in rows}
 
 
+PREFILL_SOURCES = ("last_week", "last_year", "forecast")
+LAST_YEAR_DAYS = 364     # the same weekday a year back (dsr.block_sales)
+
+
+def _measured(restaurant_id, day, db_path):
+    """{"gross", "net"} measured for one night: the report's sales metrics,
+    else an imported workbook row. A figure not measured is None, never 0."""
+    from datetime import date as _date
+    iso = day.isoformat() if isinstance(day, _date) else str(day)[:10]
+    got = {}
+    for key in ("gross", "net"):
+        s = metric_series(restaurant_id, f"sales.{key}", iso, iso, db_path=db_path)
+        got[key] = round(float(s[0][1]), 2) if s else None
+    if got["gross"] is None and got["net"] is None:
+        h = history_for(restaurant_id, iso, iso, db_path=db_path).get(iso) or {}
+        got = {"gross": h.get("gross"), "net": h.get("net")}
+    return got
+
+
+def budget_prefill(restaurant_id, week_dates, source, pct=0.0, db_path=DB_PATH) -> dict:
+    """Suggested budget figures for a week the owner then edits and saves
+    (friction audit U2-11: fourteen blank boxes every week). Nothing is
+    written here. `source`:
+
+      last_week  each night's budget from seven days before, else what that
+                 night actually took;
+      last_year  what the same weekday took 52 weeks back (report or
+                 imported workbook), raised by `pct` percent;
+      forecast   Cavnar's sales forecast for the night (demand.forecast_day)
+                 as the net figure - it forecasts one sales figure, so gross
+                 is left for the owner.
+
+    Returns {"days": [{"date", "gross", "net", "from"}], "missing": [dates
+    with nothing to suggest], "basis": one line saying what was used}. A
+    night with no source is left blank and named, never filled with 0."""
+    from datetime import date as _date, timedelta
+    if source not in PREFILL_SOURCES:
+        raise ValueError(f"source must be one of {PREFILL_SOURCES}")
+    dates = [d if isinstance(d, _date) else _date.fromisoformat(str(d)[:10]) for d in week_dates]
+    days, missing = [], []
+    factor = 1.0 + float(pct or 0) / 100.0
+    fc = None
+    if source == "forecast":
+        import demand
+        fc = demand.week_projection(restaurant_id, dates, db_path=db_path).get("by_day") or {}
+    for d in dates:
+        row = {"date": d.isoformat(), "gross": None, "net": None, "from": None}
+        if source == "last_week":
+            prev = d - timedelta(days=7)
+            b = budgets_for(restaurant_id, prev, prev, db_path=db_path).get(prev.isoformat())
+            if b and (b.get("gross") is not None or b.get("net") is not None):
+                row.update(gross=b.get("gross"), net=b.get("net"), **{"from": "last week's budget"})
+            else:
+                m = _measured(restaurant_id, prev, db_path)
+                if m["gross"] is not None or m["net"] is not None:
+                    row.update(gross=m["gross"], net=m["net"], **{"from": "last week's sales"})
+        elif source == "last_year":
+            m = _measured(restaurant_id, d - timedelta(days=LAST_YEAR_DAYS), db_path)
+            if m["gross"] is not None or m["net"] is not None:
+                row.update(gross=round(m["gross"] * factor, 2) if m["gross"] is not None else None,
+                           net=round(m["net"] * factor, 2) if m["net"] is not None else None,
+                           **{"from": "last year" + (f" {pct:+g}%" if pct else "")})
+        else:
+            v = fc.get(d.isoformat())
+            if v is not None:
+                row.update(net=round(float(v), 2), **{"from": "Cavnar's forecast"})
+        if row["from"] is None:
+            missing.append(d.isoformat())
+        days.append(row)
+    basis = {"last_week": "Last week's budget, or what the night took where there was none.",
+             "last_year": "What the same weekday took a year ago" + (f", {pct:+g}%." if pct else "."),
+             "forecast": "Cavnar's sales forecast for each night, as net. Gross is yours to fill."}[source]
+    return {"days": days, "missing": missing, "basis": basis}
+
+
 def set_category(restaurant_id, pos_name, category, db_path=DB_PATH):
     name = str(pos_name or "").strip()
     cat = str(category or "").strip()
