@@ -284,7 +284,7 @@ struct HomeRecommendations: View {
                     }
                 }
             } label: {
-                Text(viewModel.tracked.contains(rec.key) ? "Tracking" : "Track this")
+                Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(viewModel.tracked.contains(rec.key)
                                      ? Color.cavnarGreen : Color.cavnarEmber2)
@@ -332,7 +332,7 @@ struct HomeRecommendations: View {
                         }
                     }
                 } label: {
-                    Text(viewModel.tracked.contains(rec.key) ? "Tracking" : "Track this")
+                    Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
                         .font(.cavnarBody(13, weight: 700))
                         .foregroundStyle(viewModel.tracked.contains(rec.key)
                                          ? Color.cavnarGreen : Color.cavnarEmber2)

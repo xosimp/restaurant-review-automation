@@ -44,7 +44,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
         switch self {
         case .completed: return "Done"
         case .notForUs:  return "Pass"
-        case .accepted:  return "Track"
+        case .accepted:  return "Measure it"
         }
     }
 

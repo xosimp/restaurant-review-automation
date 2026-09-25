@@ -219,7 +219,7 @@ def test_how_you_compare_rows_are_slim_with_one_why_drawer():
     row = js[js.index("function rowHtml(r,home){"):js.index("function profileAction(a){")]
     assert "rowDetail(" not in row, "a row reads label, value and standing only"
     card = js[js.index("function cardHtml(d){"):js.index("function load(module){")]
-    assert '<details class="bm-why"><summary>Why? · who, how strong, as of when</summary>' in card
+    assert '<details class="bm-why"><summary>Why?</summary>' in card   # one short label (9/25/26)
     assert "r.strength_pct!==cardPct" in js
 
 

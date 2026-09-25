@@ -202,7 +202,9 @@ def test_web_diagnosis_forecast_is_conditional():
     s = _dash()
     assert s.count("If this is the cause, you’d expect…") == 2
     assert s.count("guarantee\\w*|definitely|certainly|will eliminate") == 2
-    assert "What the evidence points to" in s
+    # Simplified 9/25/26: the Reviews card leads "Most likely cause" and
+    # keeps the rest behind "More detail".
+    assert '<span class="t">Most likely cause</span>' in s and "<summary>More detail</summary>" in s
 
 
 def _fn(src, name):

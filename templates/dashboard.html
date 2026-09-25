@@ -3075,23 +3075,34 @@ svg:hover .hb-xh{opacity:1}
     if(a.can_edit===false)return h+'<span class="w">The account owner can confirm it in Account.</span>';
     return h+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-bm-profile="1">'+esc(a.label||'Confirm your profile')+' →</button>';
   }
-  function minLine(d){
+  // One short line (owner, 9/25/26): the full reason - the engine's text,
+  // its why-not and the empty-state sentence said the same thing three
+  // times - moves into the card's Why? drawer (cardHtml).
+  function minLine(d,hasRows){
     var b=d.below_minimum;if(!b||!b.text)return '';
-    return '<div class="bm-min">'+esc(b.text)+(b.why_not?'<span class="w">'+esc('Why: '+b.why_not)+'</span>':'')+profileAction(b.action)+'</div>';
+    var a=b.action,prof=a&&a.kind==='profile';
+    var t=prof&&a.can_edit!==false?'Confirm your restaurant profile to see how you compare with restaurants like yours.'
+      :(hasRows?'Compared with your own history for now.':'Not enough to compare yet.');
+    return '<div class="bm-min">'+esc(t)+(prof&&a.can_edit!==false?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-bm-profile="1">'+esc(a.label||'Confirm your profile')+' →</button>':'')+'</div>';
   }
   // The verdict first: the rows, then one Why? drawer holding who the
   // restaurant is compared to, the comparison strength (its own Why? panel
   // still opens from there) and each row's basis and dates (#34).
   function cardHtml(d){
-    var h='<div class="hb-kicker">How you compare</div>'+minLine(d);
     var rs=d.rows||[],cardPct=(d.strength&&isNum(d.strength.pct))?d.strength.pct:null;
+    var ml=minLine(d,rs.length>0);
+    var h='<div class="hb-kicker">How you compare</div>'+ml;
     if(rs.length){h+='<div class="bm-rows">';for(var i=0;i<rs.length;i++)h+=rowHtml(rs[i],false);h+='</div>';}
-    else h+='<div class="hb-empty">'+num(d.empty||'Nothing to compare yet.')+'</div>';
-    if(isNum(d.unmeasured)&&d.unmeasured>0&&rs.length)h+='<div class="bm-sub" style="margin-top:8px">'+d.unmeasured+' more not measured yet</div>';
+    else if(!ml)h+='<div class="hb-empty">Nothing to compare yet.</div>';
     var dt='';
     for(var j=0;j<rs.length;j++){var rd=rowDetail(rs[j],cardPct);if(rd)dt+='<div class="bm-dt"><b>'+esc(rs[j].label)+':</b> '+num(rd)+'</div>';}
-    var why=whoLine(d)+strengthLine(d.strength)+dt;
-    if(why)h+='<details class="bm-why"><summary>Why? · who, how strong, as of when</summary>'+why+'</details>';
+    var bm=d.below_minimum,full='';
+    if(bm&&bm.text){full='<div class="bm-dt">'+num(bm.text)+'</div>';
+      if(bm.why_not)full+='<div class="bm-dt">'+esc('Why: '+bm.why_not)+'</div>';
+      if(bm.action&&bm.action.suggestion)full+='<div class="bm-dt">'+esc(bm.action.suggestion)+'</div>';
+      if(bm.action&&bm.action.kind==='profile'&&bm.action.can_edit===false)full+='<div class="bm-dt">The account owner can confirm it in Account.</div>';}
+    var why=full+whoLine(d)+strengthLine(d.strength)+dt;
+    if(why)h+='<details class="bm-why"><summary>Why?</summary>'+why+'</details>';
     return h;
   }
   function load(module){
@@ -3731,7 +3742,7 @@ svg:hover .hb-xh{opacity:1}
       body:JSON.stringify({source:'recommendation',source_key:key,title:title,metric:metric})})
     .then(apiJson).then(function(d){
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
-      if(btn){btn.textContent='Tracking';}
+      if(btn){btn.textContent='Measuring';}
       // Tracking is taking the recommendation (the server records it as
       // accepted), so the card leaves and the brief is re-read - the same
       // as iOS, without rebuilding all of Home (friction #12).
@@ -4027,7 +4038,7 @@ svg:hover .hb-xh{opacity:1}
     else if(ff&&ff.what){var fAct=(lk&&lk.act&&lk.act.nav)?lk.act:null,fMod=(ff.modules||[])[0]||ff.module||'';
       if(fAct)h+='<button type="button" class="cbtn cbtn-primary" data-cav-go="'+esc(fAct.nav)+'">'+esc(fAct.label||'Open')+'</button>';
       else if(fMod&&MODLABEL[fMod])h+='<button type="button" class="cbtn cbtn-primary" data-open-module="'+esc(fMod)+'">Open '+esc(MODLABEL[fMod])+'</button>';}
-    else if(!clear&&!ff&&!att.length&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
+    else if(!clear&&!ff&&!att.length&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Measure it</button>';}
     h+=fAns;
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-ask" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
@@ -4054,7 +4065,7 @@ svg:hover .hb-xh{opacity:1}
       // never a hand-built JS string literal in an onclick: esc() turns an
       // apostrophe into &#39;, the HTML parser turns it back, and the JS
       // that reaches the engine is a syntax error.
-      var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>':'';
+      var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Measure it</button>':'';
       h+=hbRecCard(r,j,skip,isNew,trk,d);}
     try{var keep={};for(var sk in seen)if(seen.hasOwnProperty(sk))keep[sk]=1;for(var nk in seenNow)if(seenNow.hasOwnProperty(nk))keep[nk]=1;localStorage.setItem('cavnar_recs_seen',JSON.stringify(keep));}catch(e){}
     h+='</div>';
@@ -7119,6 +7130,16 @@ svg:hover .hb-xh{opacity:1}
 .rv-diag-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--hb-line2)}
 .rv-diag-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
 .rv-diag-hd .m{font-size:12px;color:var(--ink3)}
+.rv-diag-hd{justify-content:space-between}
+.rv-diag-cause{font-size:16.5px;line-height:1.55;color:var(--ink);font-weight:500}
+.rv-diag-do{margin-top:12px;font-size:15px;line-height:1.55;color:var(--ink2)}
+.rv-diag-do b{color:var(--ink)}
+.rv-diag-ans{margin-top:6px}
+.rv-diag-more{margin-top:14px;border-top:1px solid var(--hb-line2);padding-top:10px}
+.rv-diag-more>summary{list-style:none;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ember);display:inline-flex;gap:6px;align-items:center}
+.rv-diag-more>summary::-webkit-details-marker{display:none}
+.rv-diag-more>summary:after{content:'\203A';font-size:17px;line-height:1;font-weight:700;transition:transform .15s ease}
+.rv-diag-more[open]>summary:after{transform:rotate(90deg)}
 .rv-diag-bd{padding:14px 16px;display:flex;flex-direction:column;gap:13px}
 .rv-diag-row{display:flex;flex-direction:column;gap:3px}
 .rv-diag-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
@@ -7332,7 +7353,7 @@ svg:hover .hb-xh{opacity:1}
 /* Disclosure headings read as headings (9/25/26): the kicker and its line
    a size up, and the chevron a clear ember button, not a tiny grey glyph. */
 .rv2-analytics>summary,.hb-results>summary{font-size:15.5px;align-items:center}
-.rv2-analytics>summary .hb-kicker,.hb-results>summary .hb-kicker{font-size:13.5px}
+details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{font-size:15.5px!important;letter-spacing:.1em}   /* the same size as its line (owner, 9/25/26) */
 .rv2-analytics[open]>summary:after,.hb-results[open]>summary:after{transform:rotate(90deg)}
 .rv2-analytics>summary:focus-visible,.hb-results>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
@@ -13451,6 +13472,12 @@ var RV_CLAIM_NAMES={this_week:'this week',watch:'what to watch',do_today:'do tod
 function renderReviewClaims(el,d){
   if(!el||!d||!window.cavConf)return;
   var old=el.parentNode&&el.parentNode.querySelector('.rv-claims-box');if(old)old.parentNode.removeChild(old);
+  // Simplified (owner, 9/25/26): the read no longer carries the row of
+  // claim tags (AI-written / Measured / Computed / Inferred) or the trend's
+  // strength line - the rating trend is charted right above it, and the
+  // tags read as jargon to an owner. The read's own kicker says it is
+  // Cavnar AI's.
+  return;
   var h=cavConf.claimStrip(d.claim_kinds,RV_CLAIM_NAMES,!!d.insight);
   // The trend's strength is a measured percentage (trend_strength_pct:
   // how consistently the weekly moves agree with the slope, scaled by the
@@ -13492,7 +13519,7 @@ function recControlsHtml(key,surface,module,opts){
   var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'"'+also+' ';
   return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
     +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>'
-    +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
+    +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b.replace('type="button"','type="button" title="Cavnar AI checks this number before and after you act, and tells you whether it moved"')+'data-rec-event="accepted">Measure it</button>':'')+'</span>';
 }
 /* A lone "Not for us" for a line whose own button is its yes (an overtime
    move, a content idea, a roadmap card): the same attributes, the same
@@ -13522,7 +13549,12 @@ function recTrackerLine(d){
    started is said as "Measuring \u2026 until M/D/YY"; a refused one keeps the
    server's message, which already carries the reason. */
 function recAnswerSentence(ev,d){
+  // One short sentence (owner, 9/25/26: "Noted - hidden for 14 days.
+  // Already measuring average rating until 10/23/26. One change per number
+  // at a time, so..." was unreadable): a refused tracker keeps only its
+  // first sentence.
   var txt=_recAnsweredText(ev,d),tl=recTrackerLine(d);
+  if(d&&!d.tracker&&tl)tl=tl.split(/\.\s/)[0].replace(/\.$/,'');
   if(d&&d.tracker)return ev==='completed'?'Done \u2014 '+tl.charAt(0).toLowerCase()+tl.slice(1):tl;
   if(tl&&txt.indexOf(tl)<0)txt+='. '+tl;
   return txt;
@@ -13795,10 +13827,9 @@ function renderSeverityStrip(d){
     s.title=t.total+' in the last '+(d.severity.days||90)+' days, '+t.open+' still open';
     box.appendChild(s);
   }
-  /* Reviews the analyser has not placed in a tier yet (H14 exposes the
-     count) are said as such, never folded into "minor". */
-  var unc=+((d.severity&&d.severity.unclassified)||d.unclassified||0);
-  if(unc>0){var u=document.createElement('span');u.className='s unclassified';u.innerHTML='<span class="n">'+unc+'</span> not yet classified';u.title='Not placed in a severity tier yet, so not counted above';box.appendChild(u);any=true;}
+  /* "N not yet classified" is no longer drawn (owner, 9/25/26: noise on
+     the read); the tiers above count only classified reviews, as before,
+     and never fold the rest into "minor". */
   box.hidden=!any;
 }
 /* The diagnosis card. Renders nothing at all when there is no diagnosis —
@@ -13832,36 +13863,30 @@ function renderReviewDiagnosis(d){
      "medium confidence" - the model's own rating - is the .cf line with
      its evidence, track record and freshness behind Why?. A read from
      before the object shipped still says its band. */
-  var cfl=cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'reviews',module:'reviews'});
+  // Simplified (owner, 9/25/26 - "way too wordy"): the cause, how sure as
+  // a pill, and what to do with its answers. Everything else - what else
+  // could explain it, what would tell them apart, what to expect, the
+  // cross-check, the date and the reviews it rests on - is one "More
+  // detail" disclosure.
+  var cfl=cavConfLine(cavConf.k1(dg.confidence_detail,dg.confidence),{key:dg.rec_key,surface:'reviews',module:'reviews',pill:1});
   var h=''
     +'<div class="rv-diag">'
-    +'<div class="rv-diag-hd">'
-    +'<span class="t">What the evidence points to</span>'
-    +(window.cavConf?cavConf.claimTag('',true):'')
-    +'<span class="m">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
-    +dg.mention_count+' negative reviews over '+dg.window_days+' days'
-    +(dg.stale?' · older read':'')+'</span>'
-    +'</div><div class="rv-diag-bd">'
-    +(cfl?'<div class="rv-diag-row"><div class="k">How sure</div>'+cfl+'</div>':'')
-    +'<div class="rv-diag-row"><div class="k">Most likely cause</div><div class="v">'+_rvEsc(dg.cause)+'</div></div>';
-  if(dg.alternative_cause){
-    h+='<div class="rv-diag-row alt"><div class="k">It could also be</div><div class="v">'+_rvEsc(dg.alternative_cause)+'</div></div>';
-  }
-  if(dg.what_would_confirm){
-    h+='<div class="rv-diag-row"><div class="k">What would tell them apart</div><div class="v">'+_rvEsc(dg.what_would_confirm)+'</div></div>';
-  }
-  if(dg.stale_note){
-    h+='<div class="rv-diag-row alt"><div class="k">As of</div><div class="v">'+_rvEsc(dg.stale_note)+'</div></div>';
-  }
+    +'<div class="rv-diag-hd"><span class="t">Most likely cause</span>'+(cfl||'')+'</div>'
+    +'<div class="rv-diag-bd">'
+    +'<div class="rv-diag-cause">'+_rvEsc(dg.cause)+'</div>';
   if(dg.recommended_action&&!dg.answered){
-    h+='<div class="rv-diag-row"><div class="k">Do this</div><div class="v">'+_rvEsc(dg.recommended_action)
-      +(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'reviews','reviews'):'')+'</div></div>';
+    h+='<div class="rv-diag-do"><b>Do this:</b> '+_rvEsc(dg.recommended_action)
+      +(dg.rec_key?'<div class="rv-diag-ans">'+recControlsHtml(dg.rec_key,'reviews','reviews')+'</div>':'')+'</div>';
   }
+  var more='<div class="rv-diag-row"><div class="k">Based on</div><div class="v">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
+    +dg.mention_count+' negative reviews over '+dg.window_days+' days'+(dg.stale_note?' · '+_rvEsc(dg.stale_note):'')+'</div></div>';
+  if(dg.alternative_cause)more+='<div class="rv-diag-row alt"><div class="k">It could also be</div><div class="v">'+_rvEsc(dg.alternative_cause)+'</div></div>';
+  if(dg.what_would_confirm)more+='<div class="rv-diag-row"><div class="k">How to tell</div><div class="v">'+_rvEsc(dg.what_would_confirm)+'</div></div>';
   /* The model's own forecast is conditional on its cause being right, so
      it is headed that way and never read as a promise; a line stated as a
      certainty ("will eliminate", "guaranteed") is not shown (NS1 H10). */
   if(dg.expected_outcome&&!/\b(guarantee\w*|definitely|certainly|will eliminate)\b/i.test(dg.expected_outcome)){
-    h+='<div class="rv-diag-row alt"><div class="k">If this is the cause, you’d expect…</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
+    more+='<div class="rv-diag-row alt"><div class="k">If this is the cause, you’d expect…</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
   }
   /* What another module recorded over the same period. The prompt may only
      connect a complaint to a figure by naming that figure, so anything here
@@ -13870,14 +13895,15 @@ function renderReviewDiagnosis(d){
   if(oe.length){
     var ol=[];
     for(var k=0;k<oe.length;k++){ol.push(_rvEsc(String(oe[k].module||'').replace(/_/g,' '))+': '+_rvEsc(oe[k].metric)+' '+_rvEsc(oe[k].value)+(oe[k].verified?' <span class="ck-tag" title="Checked against the stored figure">checked</span>':''));}
-    h+='<div class="rv-diag-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
+    more+='<div class="rv-diag-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
   }
   var ids=dg.evidence_review_ids||[];
   if(ids.length){
     var bl='';
     for(var j=0;j<ids.length;j++){bl+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-review-id="'+ids[j]+'">Review #'+ids[j]+'</button>';}
-    h+='<div class="rv-diag-row"><div class="k">Reviews this rests on</div><div class="rv-diag-ev">'+bl+'</div></div>';
+    more+='<div class="rv-diag-row"><div class="k">Reviews this rests on</div><div class="rv-diag-ev">'+bl+'</div></div>';
   }
+  h+='<details class="rv-diag-more"><summary>More detail</summary>'+more+'</details>';
   h+='</div></div>'+money;
   box.innerHTML=h;
   box.hidden=false;
