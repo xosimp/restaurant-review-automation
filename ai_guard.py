@@ -1629,19 +1629,27 @@ def served_operational_evidence(entries) -> list:
 # ── how old is this, and does the reader need telling ──────────────────────
 
 # Competitor sets move: a competitor closes, reprices, or picks up 200
-# reviews. Intel past this is still worth showing — it is the only intel
-# there is — but it must not read as current.
+# reviews. Intel past its stale point is still worth showing — it is the
+# only intel there is — but it must not read as current. The stale point is
+# the registry's now (one freshness rule, DH3-18 / DH5-3): freshness() with
+# no stale_after_days asks data_freshness.is_stale(source, age), which for
+# "competitor" is stale from day 15 — exactly this constant's "> 14". Kept
+# because tests and older callers may pin the name. Candidate for future
+# cleanup after additional verification.
 STALE_AFTER_DAYS = 14
 
 
-def freshness(updated_at, stale_after_days: int = STALE_AFTER_DAYS) -> dict:
+def freshness(updated_at, stale_after_days: int = None, source: str = "competitor") -> dict:
     """{"as_of", "age_days", "stale"} for a stored AI result.
 
     The timestamp was already carried alongside competitor intel, but the
     claims themselves never said when they were true — so a summary written
     six weeks ago read exactly like one written this morning, including when
     it was quoted into Ask Cavnar's context with the date left behind.
-    """
+
+    `stale` is the freshness registry's rule for `source` (data_freshness.
+    is_stale) unless the caller names its own `stale_after_days` (0: past
+    its window by definition — a fallback read)."""
     from datetime import datetime, timezone
     if not updated_at:
         return {"as_of": None, "age_days": None, "stale": True}
@@ -1659,8 +1667,16 @@ def freshness(updated_at, stale_after_days: int = STALE_AFTER_DAYS) -> dict:
     # is M/D/YY like every owner-facing date (M-26); it read "from
     # 2026-09-21". The ISO date stays beside it for anything that compares.
     from time_utils import mdy
+    if stale_after_days is None:
+        try:
+            import data_freshness
+            stale = data_freshness.is_stale(source, age)
+        except Exception:
+            stale = age > STALE_AFTER_DAYS
+    else:
+        stale = age > stale_after_days
     return {"as_of": mdy(when.strftime("%Y-%m-%d")), "as_of_iso": when.strftime("%Y-%m-%d"),
-            "age_days": age, "stale": age > stale_after_days}
+            "age_days": age, "stale": stale}
 
 
 # ── what kind of claim is this ─────────────────────────────────────────────

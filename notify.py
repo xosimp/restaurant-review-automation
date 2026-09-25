@@ -2575,7 +2575,19 @@ def _no_response_is_news(restaurant_id, n, db_path: str = DB_PATH) -> bool:
 
 # A labor snapshot older than this is history, not news. The alert used to
 # take the most recently SAVED row with no bound on the period it covered.
+# Superseded by the registry (one freshness rule, DH1-10): the alert reads a
+# period only while data_freshness calls shifts that old not stale
+# (_labor_alert_max_age_days) — at 21 days it texted as news a period every
+# labor card called out of date. Kept because tests and older callers may
+# pin the name. Candidate for future cleanup after additional verification.
 LABOR_ALERT_MAX_PERIOD_AGE_DAYS = 21
+
+
+def _labor_alert_max_age_days() -> int:
+    """The oldest a labor period's last day may be for the over-target alert:
+    the last age the registry does not call stale."""
+    import data_freshness
+    return max(0, data_freshness.stale_after_days("labor") - 1)
 # ...and at least this long: labor.MIN_DAYS_TO_EXTRAPOLATE, the floor under
 # which a period is reported as-is and never projected (CA3 F5).
 LABOR_ALERT_MIN_PERIOD_DAYS = 7
@@ -2788,7 +2800,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                   AND total_sales > 0
                   AND julianday(period_end) - julianday(period_start) + 1 >= ?
                 ORDER BY period_end DESC, saved_at DESC LIMIT 1
-            """, (rid, f"-{LABOR_ALERT_MAX_PERIOD_AGE_DAYS} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
+            """, (rid, f"-{_labor_alert_max_age_days()} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
             c2.close()
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]

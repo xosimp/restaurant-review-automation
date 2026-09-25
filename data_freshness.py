@@ -164,6 +164,8 @@ TOOL_SOURCES = {
     "read_decisions": ("sales", "labor", "reviews"),
     "read_platform_intelligence": ("labor", "sales", "reviews", "inventory"),
     "read_demand_forecast": ("sales", "pos", "weather"),
+    # The Data Health answer reads every source (DH5 §2.6).
+    "read_data_health": tuple(SOURCES),
 }
 
 
@@ -315,13 +317,49 @@ def age_pct(key, lag_days, completeness=1.0, error=False):
 _score = age_pct
 
 
-def stale_after_days(key) -> float:
-    """The data age, in days, past which `key` reads stale (its pct falls
-    under confidence_engine.AGING_AT) — the registry's stale point, for a
-    caller that holds a date rather than a source reading (prime cost's
-    labor period, DH1-3)."""
-    cfg = SOURCES[key]
-    return cfg["expected_lag"] + cfg["grace"] + cfg["horizon"] * (1 - ce.AGING_AT / 100.0)
+# ── one freshness rule (DH1-10, DH3-18, DH5-3) ─────────────────────────────
+#
+# Every "is it stale?" question outside this module asks one of these three,
+# so a labor prompt, the digest, Ask, the admin console and a K1 card name
+# the same data by the same state: current | aging | stale (confidence_engine
+# .state over age_pct) | unknown (no age). Present-tense wording ("this
+# week", "today", "currently") is allowed only while the state is current.
+
+def state_for(key, lag_days, completeness=1.0, error=False) -> str:
+    """The registry's state for data of source `key` that is `lag_days`
+    old: current | aging | stale, or unknown when the age is unknown."""
+    if lag_days is None or key not in SOURCES:
+        return "unknown"
+    return ce.state(age_pct(key, lag_days, completeness, error))
+
+
+def is_stale(key, lag_days, completeness=1.0, error=False) -> bool:
+    """True when data of source `key` that is `lag_days` old is out of date
+    (stale or of unknown age) — the one stale rule."""
+    return state_for(key, lag_days, completeness, error) in ("stale", "unknown")
+
+
+def current_within_days(key) -> int:
+    """The largest whole lag (days) at which source `key` still reads
+    current — the window present-tense wording is allowed in. A policy
+    that needs a day count (a validation limit, an admin cut) reads this
+    instead of keeping its own constant."""
+    if key not in SOURCES:
+        return 0
+    n = 0
+    while n < 400 and state_for(key, n + 1) == "current":
+        n += 1
+    return n
+
+
+def stale_after_days(key) -> int:
+    """The smallest whole lag (days) at which source `key` reads stale."""
+    if key not in SOURCES:
+        return 0
+    n = 0
+    while n < 400 and not is_stale(key, n):
+        n += 1
+    return n
 
 
 def _future(d, today):
@@ -807,7 +845,7 @@ def _marketing(r, conn, today, now, ctx, db_path=None):
     # succeeded more than METRICS_SYNC_STALE_DAYS ago is an error on this
     # source, whatever the token says.
     sync = _metrics_sync(r, conn, ctx)
-    note = ""
+    ok = None
     if sync is None:
         err = err or "Post metrics sync state could not be read"
     elif not sync:
@@ -820,11 +858,20 @@ def _marketing(r, conn, today, now, ctx, db_path=None):
             err = err or "Post metrics have never synced"
         elif (now - ok).total_seconds() / 86400.0 > METRICS_SYNC_STALE_DAYS:
             err = err or f"Post metrics last synced {ce._mdy(ok.date().isoformat())}"
-        if ok is not None:
-            note = f"metrics synced {ce._mdy(ok.date().isoformat())}"
-    extra = " · ".join(x for x in (err, note) if x)
-    out = _data_date_state("marketing", d, today, "Last post", 1.0, extra, error=err)
+    # Dated by the LAST METRICS SYNC (DH1-12): the reach and engagement
+    # figures are as current as the nightly sync that refreshed them, not as
+    # the owner's last post — a restaurant posting every two weeks read
+    # "stale" (capped at 49) the morning after a clean sync. The last post
+    # stays in the basis as activity. With no successful sync on file the
+    # last post dates it, as before, and the error holds it low.
+    posted = f"last post {ce._mdy(d.isoformat())}"
+    if ok is not None and not _future(ok.date(), today):
+        extra = " · ".join(x for x in (err, posted) if x)
+        out = _data_date_state("marketing", ok.date(), today, "Post metrics synced", 1.0, extra, error=err)
+    else:
+        out = _data_date_state("marketing", d, today, "Last post", 1.0, err or "", error=err)
     out["metrics_synced_at"] = sync.get("last_ok_at") if sync else None
+    out["last_post_iso"] = d.isoformat()
     return out
 
 

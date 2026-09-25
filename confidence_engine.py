@@ -153,15 +153,24 @@ QUALITY = {
     "hours_are_estimated": 0.8,    # hours from the schedule, no clock-ins on file
     "gross_missing": 0.8,          # the POS did not give gross sales
     "days_with_conflicting_sales": 0.9,
-    "stale_read": 0.8,             # a stored model read over a week old
+    "stale_read": 0.8,             # a stored model read past its refresh (its TTL)
     "sampled": 0.8,                # Google Places returns five reviews at a time
     "list_prices": 0.8,            # supplier list prices, not what was paid
     "no_sales_mix": 0.8,           # a per-plate figure with no units sold
 }
 # Flags that mean the figure covers only part of what it claims: each caps
-# evidence at PARTIAL_CAP (on top of any QUALITY multiplier).
+# evidence at PARTIAL_CAP (on top of any QUALITY multiplier). `stale_read`
+# (a stored read past its refresh — its own age also weighs in Data
+# Freshness through rec_trust's diagnosis pseudo-source, DH3-1) and
+# `changed_since` (the owner changed something after the data window —
+# a reprice, a published schedule, a target, a recommendation marked done:
+# the figure describes the business before it, DH3-14) are partial too.
 PARTIAL_FLAGS = ("days_missing_sales", "hours_are_estimated", "gross_missing", "days_with_conflicting_sales",
-                 "partial", "inferred", "sampled", "provisional", "period_too_short")
+                 "partial", "inferred", "sampled", "provisional", "period_too_short", "stale_read",
+                 "changed_since")
+# The note each of those partial flags carries when it is the only one.
+_PARTIAL_NOTES = {"stale_read": "a stored read not refreshed since it was written",
+                  "changed_since": "a change since the data window isn't reflected yet"}
 
 # ── Historical Accuracy ────────────────────────────────────────────────────
 MIN_MEASURED = 5            # rec_learning.MIN_MEASURED_FOR_RATE (held in step by a test)
@@ -344,12 +353,16 @@ def p_greater(at, bt, ad, bd) -> float:
 # ── the three dimensions ───────────────────────────────────────────────────
 
 def evidence(n=None, kind="count", coverage=None, flags=(), model_band=None, unverified=0, sample=False,
-             basis=None, n_full=None, cap=None, cap_reason=None, corroborating=0) -> dict:
+             basis=None, n_full=None, cap=None, cap_reason=None, corroborating=0, read_age_days=None,
+             read_as_of_iso=None) -> dict:
     """{pct, basis, n, n_full, kind, corroborating} — Evidence Strength.
     `n` None means the card has no sample to weigh (a setup step): pct
     None, never a guess. `cap` is a caller's documented ceiling (a campaign
     read with no holdout) and `cap_reason` says why. `corroborating` is how
-    many OTHER modules' verified figures agree (bounded, B4 M2)."""
+    many OTHER modules' verified figures agree (bounded, B4 M2).
+    `read_age_days` / `read_as_of_iso` ride on a stored read's input
+    (rec_trust.diagnosis_evidence) for Data Freshness, never Evidence
+    Strength: accepted here so the input stays one dict, and ignored."""
     basis = (str(basis).strip().rstrip(".") if basis else "")
     full = float(n_full or N_FULL.get(kind) or 1)
     full_out = int(full) if float(full).is_integer() else full
@@ -383,7 +396,10 @@ def evidence(n=None, kind="count", coverage=None, flags=(), model_band=None, unv
         notes.append(f"only {int(round(cov * 100))}% of the window measured")
     if any(f in PARTIAL_FLAGS for f in flags) and pct > PARTIAL_CAP:
         pct = PARTIAL_CAP
-        notes.append("partial data" if "inferred" not in flags else "an inference, not a measured cause")
+        partial = [f for f in dict.fromkeys(flags) if f in PARTIAL_FLAGS]
+        notes.append("an inference, not a measured cause" if "inferred" in flags else
+                     _PARTIAL_NOTES[partial[0]] if len(partial) == 1 and partial[0] in _PARTIAL_NOTES else
+                     "partial data")
     if unverified and pct > UNVERIFIED_CAP:
         pct = UNVERIFIED_CAP
         notes.append("a figure could not be verified")

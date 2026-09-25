@@ -365,6 +365,7 @@ Review ({rating}/5 stars, {sentiment}):
 
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
+    import data_health
     message = create_with_retry(
         get_client(),
         model=model_for("drafter"),
@@ -381,6 +382,8 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="draft_response",
+        # Rests on no data source: a reply to one review, written from that review.
+        readiness=data_health.NOT_APPLICABLE,
     )
     if is_refusal(message):
         # extract_text returns "" for a refusal, which was saved as an empty

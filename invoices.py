@@ -135,8 +135,11 @@ def extract(restaurant_id, data, media_type, client=None):
     from ai_utils import create_with_retry, get_client
     check_upload(data, media_type)
     client = client or get_client()
+    import data_health
     msg = create_with_retry(
         client, restaurant_id=restaurant_id, action="invoice_extract",
+        # Rests on no data source: invoice OCR the owner confirms line by line.
+        readiness=data_health.NOT_APPLICABLE,
         model=MODEL, max_tokens=8000,
         output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
         messages=[{"role": "user", "content": [_content_block(data, media_type),

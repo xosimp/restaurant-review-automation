@@ -168,8 +168,11 @@ def _call_claude(prompt):
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
     from ai_utils import create_with_retry, extract_text, get_client
     client = get_client()
+    import data_health
     msg = create_with_retry(client, model=MODEL, max_tokens=1800, system=SYSTEM,
-                            messages=[{"role": "user", "content": prompt}], action="audit_notes_read")
+                            messages=[{"role": "user", "content": prompt}], action="audit_notes_read",
+                            # Rests on no data source: internal notes from the auditor's own input.
+                            readiness=data_health.NOT_APPLICABLE)
     return extract_text(msg)
 
 

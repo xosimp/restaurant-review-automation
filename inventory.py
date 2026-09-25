@@ -1459,9 +1459,19 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     if forecast_shown is not None:
         _forecasts += [("food.forecast.shown_week", forecast_shown, "week"),
                        ("food.forecast.shown_monthly", round(forecast_shown * WEEKS_PER_MONTH, 2), "month")]
+    # The readiness gate before the call (DH5-2): the food read rests on
+    # the counts, the POS and sales. Interactive, so a source that is down
+    # caveats rather than refuses; the model is told each source's age in
+    # the DATA STATE block, and the registry's stale sources reach the
+    # validation layer beside the read's own (DH1-2, DH3-7).
+    import data_health as _dh_food
+    from ai_utils import with_data_state as _with_ds_food
+    _ready_food = _dh_food.readiness(restaurant_id, "food") if restaurant_id else _dh_food.NOT_APPLICABLE
+    prompt = _with_ds_food(prompt, _ready_food)
     _ctx = food_read_context(restaurant_id, prompt, analysis,
                              food_insight_validation_facts(analysis, ranked_drivers, _forecasts, cfo_facts),
-                             cause_anchors, alt_anchors, untrusted=[menu_notes] if menu_notes else ())
+                             cause_anchors, alt_anchors, untrusted=[menu_notes] if menu_notes else (),
+                             registry_state=_ready_food.get("data_state"))
 
     # One stored read per restaurant and prompt (audit #22). The prompt IS
     # the data — every figure, driver, diagnosis and the date — so the same
@@ -1493,6 +1503,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="inventory_insight",
+        readiness=_ready_food,
     )
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
@@ -1606,9 +1617,13 @@ def food_stale_sources(restaurant_id, restaurant=None, db_path=None) -> dict:
         return {}
 
 
-def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), alt_anchors=(), untrusted=()):
+def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), alt_anchors=(), untrusted=(),
+                      registry_state=None):
     """The ValidationContext the food read is checked under (and re-checked
-    under when its stored read is re-validated)."""
+    under when its stored read is re-validated). `registry_state` is
+    data_health.readiness's data_state: its stale sources join the read's
+    own — never its age or the POS's present-tense state, which would call
+    "waste this week" (measured from the counts) out of date."""
     import response_validation as rv
     try:
         import models as _m
@@ -1627,6 +1642,10 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
         data_state = {"stale_sources": ["stock count" + (f" from {as_of}" if as_of else "")]}
         if as_of:
             data_state["as_of"] = as_of
+    if registry_state:
+        import data_health as _dh_fc
+        data_state = _dh_fc.merge_data_state(data_state, {k: v for k, v in registry_state.items()
+                                                          if k == "stale_sources"})
     anchors = []
     for a in cause_anchors or ():
         anchors += rv.anchor(a, "likely")

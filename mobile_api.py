@@ -2769,9 +2769,10 @@ def mobile_labor_insight(current_user):
     # by their words, and every load on the other device superseded the
     # first read's episodes — the owner's open recommendations flip-flopped
     # between two sets of words (re-audit C6).
-    cached = _capi._cache_get(LABOR_INSIGHT_CACHE + str(rid))
+    # Keyed on the figures it narrates too (client_api.labor_cached_read).
+    _an = _capi.labor_analysis_safe(rid)
+    cached = _capi.labor_cached_read(rid, _an)
     if cached:
-        _an = _capi.labor_analysis_safe(rid)
         _recs = _capi.labor_insight_items(rid, cached, user_id=uid, analysis=_an)
         # `validation`: the Response Validation verdict the read carries
         # (workstream A); None until labor.labor_note returns a Validated str.
@@ -2782,12 +2783,12 @@ def mobile_labor_insight(current_user):
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        analysis = analyse_shifts_for_restaurant(rid)
+        analysis = _an if _an is not None else analyse_shifts_for_restaurant(rid)
         staff_notes = get_staff_notes(rid)
         from labor import labor_note
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=staff_notes if staff_notes else None)
-        _capi._cache_set(LABOR_INSIGHT_CACHE + str(rid), insight)
+        _capi.labor_cache_put(rid, analysis, insight)
         _recs = _capi.labor_insight_items(rid, insight, user_id=uid, analysis=analysis)
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
                        rec_items=_recs, validation=_rv_of(insight),

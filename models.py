@@ -3066,6 +3066,12 @@ def _check_numeric_fields(updates):
             raise ValueError(f"{k} must be a number, not {v!r}") from None
 
 
+# The owner's targets: a change to one is recorded as an activity_log
+# `target_change` event (update_restaurant), which rec_trust reads as a
+# change since a recommendation's data window (DH3-14).
+OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target")
+
+
 def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                       expected_version: int = None):
     """Update any restaurant fields by dict.
@@ -3147,6 +3153,19 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                              (updates["docusign_envelope_id"], restaurant_id))
             except Exception as _env_e:
                 print(f"[update_restaurant] envelope history not recorded for {restaurant_id}: {_env_e}")
+        # A target the owner changes is an owner change the figures before
+        # it don't reflect (DH3-14): recorded as a `target_change` event, read
+        # by rec_trust.owner_changes. Only a real change — a settings save
+        # that re-sends the same value records nothing.
+        _targets = {k: updates[k] for k in OWNER_TARGET_FIELDS if k in updates}
+        _old_targets = None
+        if _targets:
+            try:
+                _row_t = conn.execute(f"SELECT {', '.join(_targets)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_targets = dict(_row_t) if _row_t else None
+            except Exception:
+                _old_targets = None
         if expected_version is None:
             conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
                          values + [restaurant_id])
@@ -3160,6 +3179,18 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                    (restaurant_id,)).fetchone()
                 conn.close()
                 raise StaleWrite(int((row["row_version"] or 0) if row else 0))
+        if _old_targets is not None:
+            for _k, _v in _targets.items():
+                try:
+                    _was = _old_targets.get(_k)
+                    if _was is not None and _v is not None and abs(float(_was) - float(_v)) < 1e-9:
+                        continue
+                    if _was is None and _v is None:
+                        continue
+                    conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?,?,?)",
+                                 (restaurant_id, "target_change", json.dumps({"field": _k, "from": _was, "to": _v})))
+                except Exception as _tc_e:
+                    print(f"[update_restaurant] target change not recorded for {restaurant_id}: {_tc_e}")
         conn.commit()
     finally:
         try:

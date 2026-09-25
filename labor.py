@@ -1436,18 +1436,45 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     except Exception:
         answered = ()
     import hashlib
+    # The restaurant's own calendar day is part of the key (DH3-2, DH4-13):
+    # the note's prompt says "Today's date" and how many days old the last
+    # shift is, so when a POS stops syncing — the analysis, and so its
+    # fingerprint, frozen — Monday's "labor is running 34% this week" was
+    # served on Friday, with no staleness caveat, until the next deploy.
     key = (restaurant_id, _analysis_fingerprint(analysis)
-           + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else ""))
+           + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else "")
+           + ":" + _note_local_day(restaurant_id))
     hit = _NOTE_CACHE.get(key)
     if hit is not None:
-        return hit
+        return hit[0]
     note = get_claude_insights(analysis, restaurant_id=restaurant_id, **kwargs)
     if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
         _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
     for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
         _NOTE_CACHE.pop(k, None)          # one state per restaurant
-    _NOTE_CACHE[key] = note
+    # Stored with when the model wrote it, so the Labor tab's "as of" is
+    # the note's own age, not the five-minute route cache's (DH3-2).
+    from datetime import timezone as _tz_note
+    _NOTE_CACHE[key] = (note, datetime.now(_tz_note.utc).replace(tzinfo=None))
     return note
+
+
+def _note_local_day(restaurant_id) -> str:
+    """The restaurant's local calendar date, ISO — the labor note's day."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date().isoformat()
+    except Exception:
+        return datetime.now(ZoneInfo('America/Chicago')).date().isoformat()
+
+
+def note_generated_at(restaurant_id):
+    """When the restaurant's current labor note was written (naive UTC
+    datetime), or None when no note is held."""
+    for k, v in list(_NOTE_CACHE.items()):
+        if k[0] == restaurant_id and isinstance(v, tuple) and len(v) == 2:
+            return v[1]
+    return None
 
 
 def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
@@ -1680,6 +1707,20 @@ If nothing in the figures calls for a change, write the "Recommendations:" line 
 Never compare this restaurant with other restaurants, "most restaurants", "similar restaurants" or an industry figure other than the one given above (and only with its source).
 The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}{answered_block}"""
 
+    # The readiness gate before the call (DH5-2): shifts, the POS and sales,
+    # read from the analysis this note narrates. The Labor tab is
+    # interactive, so a source that is down caveats; the DATA STATE block
+    # tells the model how current each is, and its stale sources reach M1.
+    import data_health as _dh_lab
+    from ai_utils import with_data_state as _with_ds_lab
+    if restaurant_id:
+        import rec_trust as _rt_lab
+        _ready_lab = _dh_lab.readiness(restaurant_id, "labor", ctx=_rt_lab.Context(
+            restaurant_id, freshness_context={"labor": analysis}))
+    else:
+        _ready_lab = _dh_lab.NOT_APPLICABLE
+    prompt = _with_ds_lab(prompt, _ready_lab)
+
     msg = create_with_retry(
         get_client(),
         model=model_for("labor_insight"),
@@ -1687,6 +1728,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="labor_insight",
+        readiness=_ready_lab,
     )
     # Strip any markdown that slips through
     import re
@@ -1709,7 +1751,8 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # association; scheduled hours, a partial period and an old window
     # disclosed when the read leaves them out.
     ctx = labor_read_context(analysis, prompt, restaurant_id=restaurant_id, industry=_bench, diag=_diag,
-                             now=_local_now, staff_notes=staff_notes)
+                             now=_local_now, staff_notes=staff_notes,
+                             registry_state=_ready_lab.get("data_state"))
     out = rv.enforce(text, ctx, marker=False)
     enforcing = rv.mode_for("labor_insight") == "enforce"
     # The computed forecast is recorded (and later scored) whatever the
@@ -1752,7 +1795,7 @@ LABOR_READ_UNCHECKED = ("This labor read couldn't be checked against your shift 
 
 
 def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry=None, diag=None,
-                       now=None, staff_notes=None):
+                       now=None, staff_notes=None, registry_state=None):
     """The ValidationContext the labor read is checked under.
 
     Facts: labor_insight_facts' day / date / role / person bindings
@@ -1806,6 +1849,11 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
             data_state["as_of"] = _mdy_w(str(end)[:10])
         except Exception:
             pass
+    if registry_state:
+        # The registry's stale sources and present-tense state (data_health.
+        # readiness) beside the read's own window (DH3-7, DH5-3).
+        import data_health as _dh_lrc
+        data_state = _dh_lrc.merge_data_state(data_state, registry_state)
     d = diag or {}
     anchors = (rv.anchor(d.get("cause"), "likely") + rv.anchor(d.get("alternative_cause"), "association")
                if d.get("cause") else [])
@@ -1818,11 +1866,16 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
     # "never cut below" default (A2; schedule_rules.cut_floor).
     import schedule_rules as _sr
     cut = _sr.cut_policy(restaurant_id) if restaurant_id else {}
+    # "This week" only while the registry calls the shifts current (one
+    # freshness rule, DH5-3) — not LABOR_FRESH_DAYS, which allowed it for
+    # days the Labor card beside the note already read "out of date".
+    import data_freshness as _df_lrc
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="labor_insight", facts=facts, context_text=prompt,
         cause_anchors=anchors, tenant_names_denied=denied,
         untrusted=[str(n.get("notes") or "") for n in (staff_notes or []) if isinstance(n, dict)],
-        data_state=data_state, policy={"action": "labor_insight", "max_data_age_days": LABOR_FRESH_DAYS, **cut})
+        data_state=data_state, policy={"action": "labor_insight",
+                                       "max_data_age_days": _df_lrc.current_within_days("labor"), **cut})
 
 
 # Sentences that tell the model what to do are not data: "heavy rain
@@ -1890,7 +1943,8 @@ def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
     return out
 
 
-def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=None, keyholders=None):
+def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=None, keyholders=None,
+                          registry_state=None):
     """The ValidationContext each "Cavnar AI's note" bullet is checked under
     (surface schedule_note). Delivered like a digest line — nobody reads a
     bullet before the manager does, so anything above a caveat drops it,
@@ -1918,10 +1972,16 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
         default = _sr.cut_floor_default(_m.get_restaurant(restaurant_id) if restaurant_id else None)
     except Exception:
         default = _sr.cut_floor_default(None)
+    data_state = {"missing_inputs": missing}
+    if registry_state:
+        # The registry's state of what the schedule rests on (data_health.
+        # readiness "schedule"), so a note is told a source is stale (DH1-2).
+        import data_health as _dh_sn
+        data_state = _dh_sn.merge_data_state(data_state, registry_state)
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="schedule_note", delivery="unattended", context_text=prompt or "",
         cause_anchors=_note_anchors(prompt, data_blocks), tenant_names_denied=denied,
-        data_state={"missing_inputs": missing},
+        data_state=data_state,
         policy={"action": "labor_schedule_note", "check_counts": True,
                 "role_floors": dict(floors or {}), "cut_floor_default": default,
                 "keyholders": [k for k in (keyholders or []) if k]})
@@ -1969,10 +2029,11 @@ def schedule_note_problem(bullet, prompt, restaurant_id=None, data_blocks=None, 
 
 
 def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, role_floors=None,
-                       keyholders=None, role_minimums=None):
+                       keyholders=None, role_minimums=None, registry_state=None):
     """The bullets that stand, each after the engine's rewrites (certainty
     and causal wording lowered); every dropped one is captured."""
-    ctx = schedule_note_context(prompt, restaurant_id, data_blocks, keyholders=keyholders)
+    ctx = schedule_note_context(prompt, restaurant_id, data_blocks, keyholders=keyholders,
+                                registry_state=registry_state)
     kept = []
     for b in bullets:
         text, why = _note_verdict(b, prompt, ctx, role_floors, role_minimums)
@@ -2005,9 +2066,12 @@ def _labor_forecast_line(analysis: dict, trend_diff) -> str:
             f"next week near {cur:g}% (a projection, not a measurement).")
 
 
-# The labor data is "current" for this many days after its last shift: past
-# it the prompt forbids "this week" / "today" wording and says how old the
-# figures are (NS4 M3). Ask's _staleness uses the same week.
+# Superseded by the registry (one freshness rule, DH1-10 / DH5-3): whether
+# the labor figures are current is data_freshness.state_for("labor", age) —
+# labor_window_line and labor_read_context read it — so the prompt, M1 and
+# the Labor card name the same data by the same state. Kept because tests
+# and older callers may pin the name. Candidate for future cleanup after
+# additional verification.
 LABOR_FRESH_DAYS = 7
 
 # The schedule prompt states a missing input rather than omitting it (NS4
@@ -2016,6 +2080,27 @@ LABOR_FRESH_DAYS = 7
 # calls a day busy or slow "for this restaurant" is.
 NO_WEATHER_MARKER = "NO WEATHER FORECAST"
 NO_DEMAND_MARKER = "NO DEMAND HISTORY"
+
+
+def weather_prompt_rows(forecast) -> tuple:
+    """([prompt line per forecast row], every row stale). A row weather.py
+    marks `stale` (a fallback copy past FORECAST_STALE_HOURS) is labelled
+    "(forecast from M/D/YY, not refreshed)"; when every row is stale the
+    caller writes NO_WEATHER_MARKER instead (DH3-16). ([], False) for no
+    forecast at all."""
+    from time_utils import mdy as _mdy_wx
+    rows = [w for w in (forecast or []) if isinstance(w, dict)]
+    lines = []
+    for w in rows:
+        precip = f", {w['precip_pct']}% chance of rain" if w.get("precip_pct") else ""
+        stale = ""
+        if w.get("stale"):
+            when = _mdy_wx(str(w.get("as_of") or "")[:10]) if w.get("as_of") else ""
+            stale = (f" (forecast from {when}, not refreshed)" if when
+                     else " (an old forecast of unknown age, not refreshed)")
+        lines.append(f"  {w.get('date')} ({w.get('day_name')}): {w.get('high_f')}°F, "
+                     f"{w.get('short_forecast')}{precip}{stale}")
+    return lines, bool(rows) and all(w.get("stale") for w in rows)
 # Weather words only — not "forecast" (the demand forecast is real input),
 # "hot"/"cold" (the hot line) or "patio" (a section people work).
 _WEATHER_WORDS_RE = re.compile(r"\b(?:weather|rain(?:y|s|ing|ed|fall)?|snow\w*|storm\w*|temperatures?|"
@@ -2049,11 +2134,16 @@ def industry_prompt_line(entry) -> str:
             + benchmark_registry.line(entry, "Labor %"))
 
 
-def labor_window_line(analysis: dict, now=None) -> tuple:
+def labor_window_line(analysis: dict, now=None, restaurant_id=None) -> tuple:
     """(prompt line, fresh) — the dates the labor figures cover and how old
-    the last shift is. Past LABOR_FRESH_DAYS the line forbids present-tense
-    wording ("this week", "today") about the figures (NS4 M3)."""
+    the last shift is. `fresh` is the registry's rule (data_freshness.
+    state_for("labor", age) is "current", DH5-3): past it the line forbids
+    present-tense wording ("this week", "today") about the figures (NS4
+    M3), exactly when the Labor card calls the same shifts aging or out of
+    date. The age is taken on the restaurant's own calendar: `now` in its
+    zone, or restaurant_id's local now — never Chicago for everyone."""
     from time_utils import mdy, mdy_range
+    import data_freshness as _df_w
     dr = (analysis or {}).get("date_range") or {}
     start, end = dr.get("start"), dr.get("end")
     days = int(dr.get("days") or (analysis or {}).get("period_days") or 0)
@@ -2062,6 +2152,9 @@ def labor_window_line(analysis: dict, now=None) -> tuple:
                 "\"today\" about them.", False)
     age = None
     try:
+        if now is None and restaurant_id:
+            from time_utils import restaurant_now_by_id
+            now = restaurant_now_by_id(restaurant_id)
         today = (now or datetime.now(ZoneInfo('America/Chicago'))).date()
         age = (today - date.fromisoformat(str(end)[:10])).days
     except Exception:
@@ -2071,7 +2164,7 @@ def labor_window_line(analysis: dict, now=None) -> tuple:
     if age is None:
         return line + "; its age is unknown — do not say \"this week\" or \"today\" about it.", False
     line += f"; the last shift on file is {age} day{'' if age == 1 else 's'} before today."
-    fresh = age <= LABOR_FRESH_DAYS
+    fresh = _df_w.state_for("labor", age) == "current"
     if not fresh:
         line += (f" These figures are {age} days old: name the period by its dates and never call them "
                  "\"this week\", \"today\", \"currently\" or \"right now\".")
@@ -2653,11 +2746,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build weather forecast block — NWS only forecasts ~7 days out, so this
     # may cover fewer than all 7 days; that's expected, not an error.
     _weather_block = ""
+    # A stale copy of the forecast (weather.py's fallback, up to 72 hours
+    # old) is labelled as such, and when every row is stale there is no
+    # forecast to plan on (DH3-16): the prompt said "rain Friday" from a
+    # 70-hour-old copy as if it were this morning's.
+    _w_lines, _w_all_stale = weather_prompt_rows(weather_forecast)
+    if _w_all_stale:
+        weather_forecast = []
     if weather_forecast:
-        _w_lines = []
-        for w in weather_forecast:
-            precip = f", {w['precip_pct']}% chance of rain" if w.get("precip_pct") else ""
-            _w_lines.append(f"  {w['date']} ({w['day_name']}): {w['high_f']}°F, {w['short_forecast']}{precip}")
         _weather_block = ("\n\nWeather forecast for next week — a MODEST nudge on top of TYPICAL "
                           "HEADCOUNT and the per-day targets above, never a replacement for them. Heavy "
                           "rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
@@ -3232,6 +3328,16 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
+    # The readiness gate before the call (DH5-2): a schedule rests on the
+    # shifts, the POS, sales and the weather. The owner asked for it, so a
+    # source that is down caveats (the DATA STATE block tells the model how
+    # current each is) rather than refusing the schedule.
+    import data_health as _dh_sched
+    from ai_utils import with_data_state as _with_ds_sched
+    _ready_sched = (_dh_sched.readiness(restaurant_id, "schedule") if restaurant_id
+                    else _dh_sched.NOT_APPLICABLE)
+    prompt = _with_ds_sched(prompt, _ready_sched)
+
     _t0 = time.time()
     _call = dict(
         model=model_for("schedule"),
@@ -3263,7 +3369,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     try:
         # Background job, long output: up to 16,000 tokens is minutes of
         # generation, well past the request-path default.
-        msg = create_with_retry(get_client(timeout=360.0), **_call)
+        msg = create_with_retry(get_client(timeout=360.0), readiness=_ready_sched, **_call)
     except Exception as _e:
         # A deployment whose SDK or model refuses the format contract gets
         # the CSV text contract instead, once, rather than no schedule.
@@ -3353,7 +3459,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
                      _prior_schedule_block, _headcount_block, _requirements_block, _noshows_block,
                      _pattern_block],
         role_floors=role_floors, role_minimums=_role_minimums_dict(role_minimums_json),
-        keyholders=[n for n, v in (leader_flags or {}).items() if v])
+        keyholders=[n for n, v in (leader_flags or {}).items() if v],
+        registry_state=_ready_sched.get("data_state"))
 
     return {
         "schedule_csv": csv_clean,

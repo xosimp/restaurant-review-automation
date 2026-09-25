@@ -483,19 +483,27 @@ def _plan_anchors(restaurant_id, db_path=DB_PATH) -> list:
     digest's rules). A recommended action is never an anchor. The only
     causes a plan item may state (H2)."""
     import response_validation as rv
+    import rec_trust
     out = []
 
-    def add(d):
-        out.extend(rv.anchor(d.get("cause"), "likely") + rv.anchor(d.get("alternative_cause"), "association"))
+    def add(d, strength="likely"):
+        if not strength:
+            return
+        out.extend(rv.anchor(d.get("cause"), strength) + rv.anchor(d.get("alternative_cause"), "association"))
+    # A stored diagnosis's own age counts (DH3-9): past its refresh it is an
+    # association only, and past rec_trust.STALE_ANCHOR_MAX_DAYS no anchor —
+    # a six-week-old cause no longer licenses causal wording the plan files
+    # unattended.
     try:
         import review_intelligence as _ri
         for d in _ri.get_diagnoses(restaurant_id, db_path=db_path, include_stale=True)[:3]:
-            add(d)
+            add(d, rec_trust.diagnosis_anchor_strength(d))
     except Exception:
         pass
     try:
         import food_cost_intelligence as _fci
-        add(_fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) or {})
+        _fd = _fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) or {}
+        add(_fd, rec_trust.diagnosis_anchor_strength(_fd))
     except Exception:
         pass
     try:
@@ -511,7 +519,44 @@ def _plan_cause_anchors(restaurant_id, db_path=DB_PATH) -> list:
     return [a["text"] for a in _plan_anchors(restaurant_id, db_path=db_path)]
 
 
-def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None):
+# The weekly plan's modules, each with the words that put a plan item on it
+# (a held module's items are not filed — DH5-2).
+PLAN_MODULES = (
+    ("reviews", "module_reviews", r"\b(?:reviews?|rating|stars?|guests?\s+(?:said|wrote|complain\w*))\b"),
+    ("labor", "module_labor", r"\b(?:labou?r|staff\w*|schedul\w*|shifts?|overtime|servers?|cooks?|payroll)\b"),
+    ("food_cost", "module_inventory", r"\b(?:food\s+cost|waste|inventory|orders?|prep|portions?|suppliers?|"
+                                       r"invoices?|counts?|stock)\b"),
+    ("marketing", "module_marketing", r"\b(?:posts?|instagram|facebook|marketing|social|campaigns?|reach)\b"),
+)
+
+
+def plan_holds(restaurant, db_path=DB_PATH) -> dict:
+    """{module: why} for the weekly plan's modules whose data can't be stood
+    on this week (data_health.unattended_hold): the plan is told not to
+    propose an action about them, and an item about one is not filed."""
+    import data_health
+    out = {}
+    rid = getattr(restaurant, "id", None)
+    for module, flag, _pat in PLAN_MODULES:
+        if not getattr(restaurant, flag, 1):
+            continue
+        why = data_health.unattended_hold(rid, module, db_path=db_path if db_path != DB_PATH else None)
+        if why:
+            out[module] = why
+    return out
+
+
+def plan_item_held(item, holds) -> str | None:
+    """The held module a plan item is about, or None."""
+    import re
+    text = f"{(item or {}).get('title') or ''}. {(item or {}).get('why') or ''}"
+    for module, _flag, pat in PLAN_MODULES:
+        if module in (holds or {}) and re.search(pat, text, re.I):
+            return module
+    return None
+
+
+def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None, data_state=None):
     """The weekly plan's ValidationContext (surface "weekly_plan",
     unattended): the anchors with their strengths (a bare string is a
     "likely" cause), the guest text as untrusted, every other tenant's name
@@ -540,6 +585,8 @@ def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None):
         cause_anchors=[a if isinstance(a, dict) else {"text": a, "strength": "likely"} for a in anchors or ()],
         untrusted=[t for t in guest_texts or () if t], tenant_names_denied=denied,
         confidence=conf if isinstance(conf, dict) else None,
+        # The registry's state of what the plan read (DH1-2, DH3-7).
+        data_state=dict(data_state or meta.get("data_state") or {}),
         policy={"action": "weekly_plan", **cut})
 
 
@@ -632,8 +679,17 @@ def run_weekly_plan(db_path=DB_PATH):
             continue    # attempts for this week are spent; the claim stays
         try:
             from ask_cavnar import ask_with_tools
-            answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None,
-                                                           read_only=True)
+            # The readiness gate, per module (DH5-2): a module whose data
+            # can't be stood on this week is held — the plan is told so, and
+            # an item about it is not filed — while the others still plan.
+            holds = plan_holds(r, db_path=db_path)
+            question = WEEKLY_PLAN_PROMPT
+            if holds:
+                question += ("\n\nHELD THIS WEEK — the data behind these isn't current, so propose no action "
+                             "about them: " + "; ".join(f"{m.replace('_', ' ')} ({why})" for m, why in holds.items())
+                             + ".")
+            answer, _trunc, _props, _meta = ask_with_tools(r, question, history=[], user=None,
+                                                           read_only=True, delivery="unattended")
             # The FULL list (R6, B5 #6): unverified_figures is cut to five for
             # the screen, and the sixth invented figure was filed unattended.
             unverified = (_meta or {}).get("unverified_all")
@@ -647,7 +703,9 @@ def run_weekly_plan(db_path=DB_PATH):
                                 _guest_texts(r.id, db_path=db_path), _meta)
             names = (_meta or {}).get("unsupported_names") or []
             for i, item in enumerate(_parse_plan(answer)):
-                why_not = _plan_item_problem(item, unverified, ctx, unsupported_names=names)
+                held = plan_item_held(item, holds)
+                why_not = (f"it is about {held.replace('_', ' ')}, whose data isn't current ({holds[held]})"
+                           if held else _plan_item_problem(item, unverified, ctx, unsupported_names=names))
                 if why_not:
                     ops.capture(RuntimeError(f"weekly plan item not filed: {why_not}"),
                                 job="weekly_plan", context=f"restaurant_id={r.id}")
@@ -1929,7 +1987,11 @@ def quiet_night_confidence(restaurant_id, key, out, db_path=DB_PATH) -> dict:
     try:
         import rec_trust
         n = out.get("samples")
-        return rec_trust.assess(restaurant_id, key, sources=("sales",), db_path=db_path, evidence={
+        import data_freshness
+        # The demand sources (sales, the POS, the weather — #28, DH3-5): a
+        # failing POS lowers the heads-up; "sales" alone never carried its error.
+        return rec_trust.assess(restaurant_id, key, sources=data_freshness.sources_for(["demand"]),
+                                db_path=db_path, evidence={
             "n": n, "kind": "weekdays",
             "basis": f"{n} past {out.get('weekday')}s against a typical day" if n is not None else "the weekday's history"})
     except Exception as e:

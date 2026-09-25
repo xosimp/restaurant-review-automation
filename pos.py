@@ -429,6 +429,14 @@ def save_synced_shifts(restaurant_id, csv_str, source):
                                 analysis.get("costed_labor", analysis["total_labor_cost"]), analysis["total_sales"])
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
+    # The synced figures just changed: the cached Labor read (and Home and
+    # Ask, which invalidate_insight_cache clears with it) must not narrate
+    # the pre-sync numbers for the rest of its window (DH4-21, #46).
+    try:
+        import client_api
+        client_api.invalidate_insight_cache(restaurant_id)
+    except Exception as e:
+        log.warning(f"[{source} sync] insight cache not cleared: {e}")
     return len(new_rows)
 
 

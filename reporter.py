@@ -12,9 +12,25 @@ from emails import html_document as _html_doc  # one definition; emails reads it
 from time_utils import mdy as _mdy
 
 # ── The digest's data floor (NS4 C2, M3) ─────────────────────────────────
-# Labor data whose last shift is older than this is not "this week's": the
-# prompt says its age and it does not count as data for the week.
+# Superseded by the registry (one freshness rule, DH1-10 / DH5-3): labor is
+# "this week's" only while data_freshness.state_for("labor", age) is current,
+# and counts as data for the week while it is not stale (labor_is_usable /
+# labor_is_current below). Kept because tests and older callers may pin the
+# name. Candidate for future cleanup after additional verification.
 DIGEST_FRESH_DAYS = 7
+
+
+def labor_is_current(age) -> bool:
+    """Labor `age` days old may be called this week's (registry: current)."""
+    import data_freshness
+    return age is not None and data_freshness.state_for("labor", age) == "current"
+
+
+def labor_is_usable(age) -> bool:
+    """Labor `age` days old counts as data for the week (registry: not
+    stale) — named by its dates when it is not current."""
+    import data_freshness
+    return age is not None and not data_freshness.is_stale("labor", age)
 # "The best post" is named only over at least this many measured posts.
 DIGEST_MKT_BEST_MIN_POSTS = 3
 # What the digest says — without a model call — when no enabled module has
@@ -37,8 +53,8 @@ def labor_data_age_days(end, restaurant_id=None):
 
 def digest_has_data(restaurant, report) -> bool:
     """Whether any module this restaurant has on measured something for the
-    week the digest covers (NS4 C2): reviews this week; labor whose last
-    shift is within DIGEST_FRESH_DAYS; a live food-cost read with waste or
+    week the digest covers (NS4 C2): reviews this week; labor the registry
+    does not call stale (labor_is_usable); a live food-cost read with waste or
     low stock; a measured post in the last 14 days. The scheduler sends no
     digest without one — it used to skip only when there were no reviews
     AND no other module switched on, so a switched-on module with nothing in
@@ -53,7 +69,7 @@ def digest_has_data(restaurant, report) -> bool:
             a = analyse_shifts_for_restaurant(rid)
             end = ((a or {}).get("date_range") or {}).get("end")
             age = labor_data_age_days(end, rid) if end else None
-            if a and a.get("is_live") and a.get("overall_labor_pct") and age is not None and age <= DIGEST_FRESH_DAYS:
+            if a and a.get("is_live") and a.get("overall_labor_pct") and labor_is_usable(age):
                 return True
         except Exception:
             pass
@@ -186,6 +202,11 @@ def claimed_direction(text: str, cost: bool) -> str | None:
 
 
 # The measured topics a digest clause can claim a direction about (R12).
+# The registry's owner labels (data_health.OWNER_LABEL) each digest topic
+# rests on, for the per-line present-tense rule in digest_line_check.
+_NOT_CURRENT_BY_TOPIC = {"labor": ("Shifts", "POS sales", "Sales"), "reviews": ("Reviews",),
+                         "marketing": ("Marketing metrics",), "inventory": ()}
+
 _TOPIC_RE = {"labor": r"\b(?:labor|labour|staffing|payroll)\b",
              "inventory": r"\b(?:waste|food\s+cost|inventory)\b",
              "reviews": r"(?:\brating|\bstars?\b|★)"}
@@ -247,7 +268,7 @@ def digest_line_problem(key, line, directions, diagnosis=None) -> str | None:
 # keeps the line with its caveat shown in the email (`_caveats`).
 
 def digest_context(restaurant_id, prompt, facts=(), diagnosis=None, signals=(), untrusted=(),
-                   names_allowed=(), missing_inputs=()):
+                   names_allowed=(), missing_inputs=(), registry_state=None):
     """The digest's ValidationContext: typed facts from the digest's own data
     dicts (a figure only the prompt states is still backed by `prompt` — the
     hybrid mode, never less strict than the old presence check); cause
@@ -257,9 +278,13 @@ def digest_context(restaurant_id, prompt, facts=(), diagnosis=None, signals=(), 
     tenants' names denied; the diagnosis's K1 confidence (none caps a modal
     at "might")."""
     import response_validation as rv
+    import rec_trust
     anchors = []
-    if diagnosis:
-        anchors += rv.anchor(diagnosis.get("cause"), "likely")
+    # A stale diagnosis anchors an association only, and one past
+    # rec_trust.STALE_ANCHOR_MAX_DAYS nothing (DH3-9).
+    strength = rec_trust.diagnosis_anchor_strength(diagnosis) if diagnosis else None
+    if strength:
+        anchors += rv.anchor(diagnosis.get("cause"), strength)
         anchors += rv.anchor(diagnosis.get("alternative_cause"), "association")
     for s in signals or ():
         anchors += rv.anchor(s, "association")
@@ -278,8 +303,34 @@ def digest_context(restaurant_id, prompt, facts=(), diagnosis=None, signals=(), 
         cause_anchors=anchors, untrusted=[u for u in untrusted or () if u],
         names_allowed={n for n in names_allowed or () if n}, tenant_names_denied=denied,
         confidence=conf if isinstance(conf, dict) else None,
-        data_state={"missing_inputs": list(missing_inputs or ())},
+        data_state=_merge_registry({"missing_inputs": list(missing_inputs or ())}, registry_state),
         policy={"action": "weekly_digest", **cut})
+
+
+def _merge_registry(base, registry_state):
+    """The digest's own data_state with the registry's (data_health.
+    readiness over the modules it reads) folded in — DH1-2, DH3-7."""
+    if not registry_state:
+        return base
+    import data_health
+    return data_health.merge_data_state(base, registry_state)
+
+
+def _digest_hold(restaurant_id, module, analysis=None):
+    """Why the digest leaves `module` out this week, or None. The readiness
+    gate (data_health.readiness, unattended): refuse or wait holds the
+    module's line. A blocking source that is not connected is left to the
+    module's own data check (its is_live / has-data tests already decide a
+    module with nothing in it), so only data that is there but can't be
+    stood on is held. Never raises (None)."""
+    try:
+        import data_health
+        import rec_trust
+        ctx = rec_trust.Context(restaurant_id, freshness_context={"labor": analysis} if analysis else None)
+        return data_health.unattended_hold(restaurant_id, module, ctx=ctx)
+    except Exception as e:
+        print(f"[digest] readiness unavailable for {restaurant_id}/{module}: {e}")
+        return None
 
 
 def digest_line_check(key, line, ctx, directions, diagnosis=None, labor_stale=None):
@@ -297,6 +348,15 @@ def digest_line_check(key, line, ctx, directions, diagnosis=None, labor_stale=No
     ds = dict(ctx.data_state)
     if key == "action":
         ds.pop("missing_inputs", None)
+    # The registry's present-tense rule per line (DH5-3): "this week" is held
+    # to a source's date only on a line about that source — aging shifts
+    # say nothing about this week's reviews.
+    nc = ds.pop("not_current", None) or []
+    if nc:
+        topics = {key} | {t for t, pat in _TOPIC_RE.items() if _re_dir.search(pat, line or "", _re_dir.I)}
+        mine = [x for x in nc if any(x in _NOT_CURRENT_BY_TOPIC.get(t, ()) for t in topics)]
+        if mine:
+            ds["not_current"] = mine
     if labor_stale and (key == "labor" or _re_dir.search(_TOPIC_RE["labor"], line or "", _re_dir.I)):
         ds.update({"stale_sources": ["labor"], "data_age_days": labor_stale.get("age"),
                    "as_of": labor_stale.get("as_of")})
@@ -386,9 +446,22 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         _labor_state = None          # {"as_of", "age"} when the labor read is older than this week
         _labor_days = None           # the days of shifts the labor % covers
         _facts = {"labor": None, "inventory": None, "marketing": None}
+        # The readiness gate, per module (DH5-2): the digest is unattended,
+        # so a module whose blocking source is down (unknown age, past its
+        # horizon, credentials refused) drops its line — said as a data gap
+        # with the reason — and the rest of the email still sends.
+        _rid_dg = restaurant_id or report.restaurant_id
+        _held = {}
+        _labor_an = None             # the analysis the labor line reads, for the registry's labor source
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(report.restaurant_id)
+            _labor_an = labor if labor and labor.get("is_live") else None
+            if labor and labor.get("is_live") and labor.get("overall_labor_pct"):
+                _why_l = _digest_hold(_rid_dg, "labor", analysis=labor)
+                if _why_l:
+                    _held["LABOR"] = _why_l
+                    labor = None
             # is_live: the bundled sample week is never this restaurant's labor.
             if labor and labor.get("is_live") and labor.get("overall_labor_pct"):
                 lp = labor.get("overall_labor_pct", 0)
@@ -408,9 +481,13 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     _labor_days = _days_lr
                     if _age_lr is not None:
                         labor_context += f" ({_age_lr} day{'' if _age_lr == 1 else 's'} before today"
-                        if _age_lr > DIGEST_FRESH_DAYS:
+                        # The registry's one rule (DH5-3): "this week's" only
+                        # while the shifts are current; data for the week
+                        # (the floor) only while they are not stale.
+                        if not labor_is_current(_age_lr):
                             labor_context += (" — older than this week: name its dates, never call it this "
                                               "week's labor")
+                        if not labor_is_usable(_age_lr):
                             _labor_stale = True
                             _labor_state = {"as_of": _mdy_lr(_dr_lr["end"]), "age": _age_lr}
                         labor_context += ")"
@@ -468,6 +545,11 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             from inventory import analysis_for
             inv, inv_live, analysis = analysis_for(report.restaurant_id)
             if inv and inv_live:
+                _why_i = _digest_hold(_rid_dg, "food")
+                if _why_i:
+                    _held["INVENTORY"] = _why_i
+                    inv = None
+            if inv and inv_live:
                 waste = analysis.get("waste_items", [])
                 low = analysis.get("critical_low", [])
                 top_waste = waste[0]["item"] if waste else None
@@ -519,6 +601,11 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 (report.restaurant_id,)
             ).fetchall()
             _conn_mkt.close()
+            if len(_mkt_rows) >= DIGEST_MKT_BEST_MIN_POSTS:
+                _why_m = _digest_hold(_rid_dg, "marketing")
+                if _why_m:
+                    _held["MARKETING"] = _why_m
+                    _mkt_rows = []
             # "Best" of one post is not a ranking (NS4 L6 / the marketing
             # read's BEST rule): named only over MKT_BEST_MIN_POSTS measured
             # posts, with the count said.
@@ -607,13 +694,24 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         _d0 = None
         try:
             import review_intelligence as _ri_rpt
-            _dg = _ri_rpt.get_diagnoses(report.restaurant_id, include_stale=True)
+            import rec_trust as _rt_rpt
+            # A stored diagnosis's own age counts (DH3-1, DH3-9): a stale one
+            # is only an association, named with the date it was written, and
+            # past rec_trust.STALE_ANCHOR_MAX_DAYS it is no anchor at all —
+            # six-week-old causal wording no longer passes as "likely".
+            _dg = [d for d in _ri_rpt.get_diagnoses(report.restaurant_id, include_stale=True)
+                   if _rt_rpt.diagnosis_anchor_strength(d)]
             if _dg:
                 _d0 = _dg[0]
+                _old_d0 = _rt_rpt.diagnosis_anchor_strength(_d0) != "likely"
                 diagnosis_context = (
                     f"\n\nROOT-CAUSE DIAGNOSIS for the '{_d0['category'].replace('_',' ')}' cluster "
-                    f"({_d0['mention_count']} negative reviews, {digest_confidence_text(_d0)}):\n"
-                    f"- Most likely cause: {_d0['cause']}\n"
+                    f"({_d0['mention_count']} negative reviews, {digest_confidence_text(_d0)}"
+                    + (f"; written {_d0.get('as_of')} — an older read: a possible cause, never the likely one"
+                       if _old_d0 and _d0.get("as_of") else
+                       ("; an older read: a possible cause, never the likely one" if _old_d0 else ""))
+                    + "):\n"
+                    + (f"- Possible cause: {_d0['cause']}\n" if _old_d0 else f"- Most likely cause: {_d0['cause']}\n")
                     + (f"- Alternative: {_d0['alternative_cause']}\n" if _d0.get("alternative_cause") else "")
                     + (f"- What would confirm it: {_d0['what_would_confirm']}\n" if _d0.get("what_would_confirm") else "")
                     + (f"- Recommended: {_d0['recommended_action']}\n" if _d0.get("recommended_action") else "")
@@ -789,7 +887,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             "INVENTORY": "Food cost: no inventory counted this week, so there is no waste read. Submit a count to get one.",
             "MARKETING": "Marketing: no post performance recorded this week, so there is nothing to measure yet.",
         }
-        module_gap_lines = [_MODULE_GAP_COPY[k] for k in ("LABOR", "INVENTORY", "MARKETING")
+        # A module the readiness gate held (its data is there but can't be
+        # stood on) says why, rather than that nothing was recorded.
+        _HELD_COPY = {"LABOR": "Labor: the shift data isn't current ({why}), so there is no labor read this week.",
+                      "INVENTORY": "Food cost: the counts aren't current ({why}), so there is no waste read this week.",
+                      "MARKETING": "Marketing: the post metrics aren't current ({why}), so there is nothing to "
+                                   "measure this week."}
+        module_gap_lines = [(_HELD_COPY[k].format(why=_held[k]) if k in _held else _MODULE_GAP_COPY[k])
+                            for k in ("LABOR", "INVENTORY", "MARKETING")
                             if _active[k] and not _module_data[k]]
         if not _has_reviews:
             module_gap_lines.insert(0, "Reviews: no new reviews this week, so there is no rating read.")
@@ -855,6 +960,24 @@ Rules:
 - Call a figure "this week's" only when its line above covers this week; a line marked older than this week is named by its dates.
 - The ACTION line must be concrete (a specific call, message, schedule change, or order — not vague advice) and must rest on a figure or diagnosis above. If nothing above supports one, write "ACTION: none this week"."""
 
+        # The readiness of what this email reads (DH5-2): the sources of the
+        # modules that reported, in the DATA STATE block and in every line's
+        # validation. A module held above is already out; "digest" has no
+        # blocking source of its own, so this never refuses the email.
+        import data_health as _dh_dig
+        import data_freshness as _df_dig
+        _dig_mods = (["reviews"] if _has_reviews else []) + [
+            m for k, m in (("LABOR", "labor"), ("INVENTORY", "food"), ("MARKETING", "marketing"))
+            if _active[k] and _module_data[k]]
+        import rec_trust as _rt_dig
+        _ready_dig = _dh_dig.readiness(_rid_dg, "digest", delivery="unattended",
+                                       ctx=_rt_dig.Context(_rid_dg, freshness_context=(
+                                           {"labor": _labor_an} if _labor_an else None)),
+                                       sources=_df_dig.sources_for(_dig_mods) or ("reviews",),
+                                       include_not_connected=False)
+        from ai_utils import with_data_state as _with_ds_dig
+        prompt = _with_ds_dig(prompt, _ready_dig)
+
         msg = create_with_retry(
             client,
             model=model_for("reporter"),
@@ -862,6 +985,7 @@ Rules:
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="weekly_digest",
+            readiness=_ready_dig,
         )
         raw = extract_text(msg).strip()
         if getattr(msg, "stop_reason", None) == "max_tokens":
@@ -905,7 +1029,8 @@ Rules:
             facts=_digest_facts(report, pos, neg, urgent_count, _facts, _labor_days, _rating_move,
                                 _review_move, _bl_cnt, _d0),
             diagnosis=_d0, signals=signals, untrusted=_untrusted_texts, names_allowed=_reviewer_names,
-            missing_inputs=["labor"] if (_active["LABOR"] and not _module_data["LABOR"]) else [])
+            missing_inputs=["labor"] if (_active["LABOR"] and not _module_data["LABOR"]) else [],
+            registry_state=_ready_dig.get("data_state"))
         _line_caveats = {}
         for key in list(parsed):
             text, why, _v = digest_line_check(key, parsed[key], _rv_ctx, _directions, diagnosis=_d0,
@@ -1140,16 +1265,30 @@ def waste_tag(waste, brand):
     return f"${w:,.0f}", brand["bad"], "High waste"
 
 
-def move_confidence(restaurant_id, key, report) -> dict:
+def move_sources(text) -> tuple:
+    """The sources "This week's move" rests on: the reviews, plus each
+    module its words name — a move about labor or waste rests on the shifts
+    or the counts too, and a failing POS must lower it (DH3-5, #28)."""
+    import data_freshness
+    mods = ["reviews"]
+    for topic, module in (("labor", "labor"), ("inventory", "food")):
+        if _re_dir.search(_TOPIC_RE[topic], text or "", _re_dir.I):
+            mods.append(module)
+    return data_freshness.sources_for(mods)
+
+
+def move_confidence(restaurant_id, key, report, text=None) -> dict:
     """The K1 confidence of the digest's "This week's move" (T1): a
     model-written action over this week's reviews (N_FULL "reviews"),
     flagged inferred, its figures already checked against the input (a line
     that failed is dropped before it gets here); this restaurant's record of
-    digest_move; the reviews' freshness. Never raises."""
+    digest_move; the freshness of what the move is about (move_sources —
+    the reviews, and the shifts or counts when it names labor or waste).
+    Never raises."""
     try:
         import rec_trust
         n = int(getattr(report, "total_reviews", 0) or 0)
-        return rec_trust.assess(restaurant_id, key, sources=("reviews",), evidence={
+        return rec_trust.assess(restaurant_id, key, sources=move_sources(text), evidence={
             "n": n, "kind": "reviews", "flags": ("inferred",),
             "basis": f"a model-written move from {n} review{'s' if n != 1 else ''} this week"})
     except Exception as e:
@@ -1396,7 +1535,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
         # "Not for us" to the same advice anywhere is a no here too (T2).
         if (move_key not in _rc_mv.silenced(_rid_mv)
                 and not move_declined(_rid_mv, move_key, ai_summary["action"])):
-            _mv_conf = move_confidence(_rid_mv, move_key, report)
+            _mv_conf = move_confidence(_rid_mv, move_key, report, text=ai_summary["action"])
             sections.append(report_action("This week's move", _html.escape(ai_summary["action"])
                                           + report_confidence(_mv_conf)
                                           + report_ask_link(f"Walk me through this: {ai_summary['action']}",

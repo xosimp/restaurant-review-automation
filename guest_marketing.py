@@ -832,6 +832,7 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         "Return ONLY the message text, nothing else."
     )
     client = get_client()
+    import data_health
     message = create_with_retry(
         client,
         model=model_for("guest_marketing"),
@@ -839,6 +840,8 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant.id,
         action="guest_campaign_draft",
+        # Rests on no data source: guest SMS copy from the owner's offer.
+        readiness=data_health.NOT_APPLICABLE,
     )
     text = extract_text(message).strip()
     if getattr(message, "stop_reason", None) == "max_tokens":

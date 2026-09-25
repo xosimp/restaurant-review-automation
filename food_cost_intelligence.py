@@ -912,8 +912,8 @@ def _labor_stale_why(restaurant_id, analysis, period_end, today, db_path=DB_PATH
     if end is None:
         return "the labor period has no end date, so how current it is is unknown"
     limit = _df.stale_after_days("labor")
-    if (today - end).days > limit:
-        return (f"shifts on file end {_mdy_ls(end.isoformat())}, more than {int(limit)} days ago — "
+    if (today - end).days >= limit:
+        return (f"shifts on file end {_mdy_ls(end.isoformat())}, {(today - end).days} days ago — "
                 "an old labor share is not applied to this month")
     try:
         from models import get_restaurant
@@ -1705,6 +1705,21 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         if prior_top == drv["drivers"][0]["label"]:
             return prior
 
+    # The readiness gate before the call (DH5-2). A diagnosis is written by
+    # the scheduler with nobody reading it first and then re-served for a
+    # day, so it is unattended: counts past their horizon or of unknown age
+    # refuse it (the prior diagnosis stands; no counts at all is the driver
+    # floor's to decide); anything else caveats through the DATA STATE block.
+    import data_health as _dh_fd
+    _ready_fd = _dh_fd.unattended_readiness(restaurant_id, "food_cost",
+                                            db_path=db_path if db_path != DB_PATH else None)
+    from ai_utils import is_held as _held_fd
+    if _held_fd(_ready_fd):
+        return {"ok": False, "reason": f"data not ready: {_ready_fd.get('reason')}",
+                "retry_after": _ready_fd.get("retry_after")}
+    _op_block = _operational_block(ev["operational"])
+    if _ready_fd.get("prompt_block"):
+        _op_block = f"{_op_block}\n\n{_ready_fd['prompt_block']}"
     prompt = DIAGNOSE_PROMPT.format(
         untrusted_note=UNTRUSTED_NOTE,
         restaurant_name=restaurant.name,
@@ -1715,14 +1730,14 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         profit_block=_profit_block(ev["profitability"]),
         trust_block=_trust_block(ev["coverage"], ev["waste_sources"]),
         pattern_block=_pattern_block(ev["weekday"], ev["seasonal"]),
-        operational_block=_operational_block(ev["operational"]),
+        operational_block=_op_block,
         cause_vocabulary=CAUSE_VOCABULARY,
     )
     client = get_client()
     msg = create_with_retry(
         client, model=model_for("food_cost_diagnosis"),
         max_tokens=900, messages=[{"role": "user", "content": prompt}],
-        restaurant_id=restaurant_id, action="food_cost_diagnosis")
+        restaurant_id=restaurant_id, action="food_cost_diagnosis", readiness=_ready_fd)
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("food cost diagnosis was truncated")
     # A leading sentence before the JSON failed json.loads (AI-26).

@@ -253,7 +253,7 @@ def _labor_context(restaurant_id):
     # could tell whether "your labor is 31%" described this morning or a
     # sync that stopped three weeks ago, and both would state it the same way.
     if rng.get("start") and rng.get("end"):
-        lines.append(f"- These cover {rng['start']} to {rng['end']}{_staleness(rng['end'])}")
+        lines.append(f"- These cover {rng['start']} to {rng['end']}{_staleness(rng['end'], restaurant_id)}")
     lines.extend(_recent_days_lines(restaurant_id))
     return "\n".join(lines) + "\n"
 
@@ -272,21 +272,45 @@ def _labor_gap_line(a):
             f"a month — the gap above target over the {a.get('period_days', 0)} days synced, projected to a month")
 
 
-def _staleness(last_date):
-    """" — as of today", or how far behind the data has fallen."""
+def _staleness(last_date, restaurant_id=None, key="labor"):
+    """" — as of today", or how far behind the data has fallen.
+
+    Measured on the RESTAURANT's calendar (DH1-14, #47): the server's
+    date.today() on a UTC host is tomorrow after 7pm Central, so "through
+    yesterday" was off by a day. Whether it is current is the registry's
+    one rule (data_freshness.state_for, DH5-3), not a 7-day cut of its own:
+    past current the line says the figures are not this week's."""
     from datetime import date, datetime as _dt
+    import data_freshness
     try:
         last = _dt.strptime(str(last_date)[:10], "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return ""
-    days = (date.today() - last).days
+    days = (_local_today(restaurant_id) - last).days
     if days <= 0:
         return " — through today"
     if days == 1:
         return " — through yesterday"
-    if days <= 7:
+    state = data_freshness.state_for(key, days)
+    if state == "current":
         return f" — the last day of data is {days} days ago"
+    if state == "aging":
+        return (f" — the last day of data is {days} days ago, so these are not this week's figures: "
+                "name their dates")
     return f" — NOTE: the last day of data is {days} days ago, so these are not current"
+
+
+def _local_today(restaurant_id=None):
+    """The restaurant's local calendar date (the server's only when there is
+    no restaurant to ask)."""
+    from datetime import date
+    if restaurant_id:
+        try:
+            from time_utils import restaurant_now_by_id
+            return restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            pass
+    return date.today()
 
 
 def _recent_days_lines(restaurant_id):
@@ -312,7 +336,7 @@ def _recent_days_lines(restaurant_id):
     # be much older than it. Saying "most recent days" without saying how
     # recent invited the model to answer "how is today going" with a figure
     # from last year.
-    out = [f"- Most recent days with recorded sales{_staleness(rows[0]['date'])}:"]
+    out = [f"- Most recent days with recorded sales{_staleness(rows[0]['date'], restaurant_id, key='sales')}:"]
     for r in rows:
         out.append(f"    {r['day_of_week']} {r['date']}: ${float(r['sales'] or 0):,.0f} sales, "
                    f"{float(r['labor_pct'] or 0):.1f}% labor, "
@@ -1176,7 +1200,7 @@ def _typed_facts(corpus) -> list:
     return facts[:600]
 
 
-def _validation_context(corpus, restaurant_id, confidence=None, actions_done=()):
+def _validation_context(corpus, restaurant_id, confidence=None, actions_done=(), data_state=None):
     """The Response Validation Layer's context for one Ask answer."""
     import response_validation as rv
     text = "\n".join(str(c) for c in corpus or [])
@@ -1204,6 +1228,7 @@ def _validation_context(corpus, restaurant_id, confidence=None, actions_done=())
         restaurant_id=restaurant_id, surface="ask", facts=_typed_facts(corpus), context_text=text,
         untrusted=_untrusted_blocks(corpus), cause_anchors=_cause_anchors(corpus),
         names_allowed=allowed, tenant_names_denied=denied, confidence=confidence,
+        data_state=dict(data_state or {}),
         policy={"action": "ask_cavnar", "check_counts": True, "actions_done": done, "context_facts": True, **cut})
 
 
@@ -1228,7 +1253,27 @@ def _engine_flags(verdict) -> tuple:
             list(dict.fromkeys(names)))
 
 
-def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions_done=()):
+def answer_data_state(restaurant_id, tools_used, consulted=(), snapshot_keys=()) -> dict:
+    """The registry's data_state for one Ask answer (DH3-7): over the
+    sources the tools it ran actually read (data_freshness.sources_for_tools
+    — the same sources its K1 freshness is measured over), or the snapshot's
+    when it ran none. Every stale, unknown or failing source goes to M1 as a
+    stale source, and the period sources that are not current hold "this
+    week" to their date. {} when nothing is known. Never raises."""
+    try:
+        import data_freshness
+        import data_health
+        keys = data_freshness.sources_for_tools(tools_used or (), _modules_for(tools_used or ()) + list(consulted or ()))
+        keys = keys or tuple(snapshot_keys or ())
+        if not keys or not restaurant_id:
+            return {}
+        return data_health.readiness(restaurant_id, "ask", sources=keys).get("data_state") or {}
+    except Exception as e:
+        print(f"[ask_cavnar] answer data state unavailable: {e}")
+        return {}
+
+
+def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions_done=(), snapshot_keys=()):
     """(answer, meta) as the owner receives them, through the Response
     Validation Layer (workstream A). Two passes over one context: the first
     finds what does not check out (figures, causes, names — the flags the
@@ -1238,12 +1283,19 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     anchor, "I've sent…" → queued for your OK) and drops what may not stand
     (another tenant's name, an unsafe action). The text carries the
     rewrites; meta carries the findings and the structured `validation`
-    object. The figure check is recorded under the text shown (H4)."""
+    object. The figure check is recorded under the text shown (H4). The
+    context carries the registry's data_state over what the answer read
+    (answer_data_state), so a stale source is disclosed deterministically,
+    not only when the system prompt was followed (DH3-7)."""
     import dataclasses
     import response_validation as rv
-    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done)
+    _ds = answer_data_state(restaurant_id, tools_used, consulted, snapshot_keys)
+    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done, data_state=_ds)
     first = rv.validate(answer, ctx)
     meta = _meta(answer, corpus, tools_used, consulted, depth, restaurant_id, verdict=first)
+    # Carried out so an unattended caller (the weekly plan) checks its items
+    # under the same data state (strategy_jobs._plan_context).
+    meta["data_state"] = dict(_ds)
     ctx = dataclasses.replace(ctx, confidence=meta.get("confidence_detail"))
     shown, verdict = rv.apply(answer, ctx)
     if not str(shown or "").strip():
@@ -1340,6 +1392,7 @@ BRIEF_SURFACE_SUFFIX = _DEPTH_BRIEF
 # doing, not a function name.
 _TOOL_LABELS = {
     "read_business_snapshot": "Looking across the whole business",
+    "read_data_health": "Checking how current your data is",
     "read_schedule_rules": "Checking the scheduling rules set here",
     "read_review_brief": "Ranking your review problems",
     "set_auto_approve": "Getting that auto-approve change ready",
@@ -1466,8 +1519,13 @@ def suggestion_confidence(restaurant_id, key, meta=None) -> dict:
         ev = {"n": n, "kind": ev_dim.get("kind") or "evidence_items", "flags": ("inferred",),
               "sample": n == 0 and ev_dim.get("pct") == 0,
               "basis": "a suggestion written from " + (str(ev_dim.get("basis") or "the answer's reads"))}
+        # The same sources the answer's own K1 is measured over — what each
+        # tool actually read (sources_for_tools, #28): sources_for(modules)
+        # left out the outcomes, goals, platform and demand tools' sources,
+        # so a suggestion disagreed with the answer it came from.
         return rec_trust.assess(restaurant_id, key, evidence=ev,
-                                sources=data_freshness.sources_for(m.get("modules_consulted") or []))
+                                sources=data_freshness.sources_for_tools(m.get("tools_used") or [],
+                                                                         m.get("modules_consulted") or []))
     except Exception as e:
         print(f"[ask_cavnar] suggestion confidence unavailable: {e}")
         import confidence_engine
@@ -1549,8 +1607,19 @@ def _feedback_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
+def snapshot_sources(restaurant) -> tuple:
+    """The data_freshness sources behind Ask's snapshot for this viewer: the
+    sources of every module the (viewer's) restaurant has on."""
+    try:
+        import data_health
+        import data_freshness
+        return data_freshness.sources_for(data_health.enabled_modules(restaurant))
+    except Exception:
+        return ()
+
+
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
-                   read_only=False):
+                   read_only=False, delivery="interactive"):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -1603,6 +1672,19 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     if user is not None:
         restaurant = tools.viewer_restaurant(restaurant, user)
     context = build_context(restaurant)
+    # The readiness gate before the first call (DH5-2, DH1-2): the model is
+    # told how current each source behind the snapshot is (the DATA STATE
+    # block) before it writes — Ask knew only after answering (the K1 figure
+    # in _finish). "ask" has no blocking source of its own, so an
+    # interactive question is never refused; the weekly plan passes
+    # delivery="unattended" and holds its modules itself.
+    import data_health as _dh_ask
+    from ai_utils import with_data_state as _with_ds_ask
+    _snapshot_keys = snapshot_sources(restaurant)
+    _ready_ask = (_dh_ask.readiness(restaurant.id, "ask", delivery=delivery, sources=_snapshot_keys,
+                                    restaurant=restaurant, include_not_connected=False)
+                  if _snapshot_keys and getattr(restaurant, "id", None) else _dh_ask.NOT_APPLICABLE)
+    context = _with_ds_ask(context, _ready_ask)
     depth = _depth_for(question, brief=brief)
     system_blocks = _system_blocks(restaurant.name, context, depth)
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
@@ -1676,12 +1758,13 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             tools=tool_specs,
             restaurant_id=restaurant.id,
             action="ask_cavnar",
+            readiness=_ready_ask,
         )
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
         if getattr(message, "stop_reason", None) != "tool_use":
             answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                                   actions_done=actions_done)
+                                   actions_done=actions_done, snapshot_keys=_snapshot_keys)
             return (answer, truncated, proposals, meta)
 
         # Echo the assistant turn back verbatim — the API requires the
@@ -1798,10 +1881,10 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 get_client(), model=model, max_tokens=max_tokens,
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
-                restaurant_id=restaurant.id, action="ask_cavnar",
+                restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
             )
             answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                                   actions_done=actions_done)
+                                   actions_done=actions_done, snapshot_keys=_snapshot_keys)
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
     # Ran out of rounds (or of time) — answer with what it has rather than
@@ -1810,10 +1893,10 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         get_client(), model=model, max_tokens=max_tokens,
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
-        restaurant_id=restaurant.id, action="ask_cavnar",
+        restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
     )
     answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                           actions_done=actions_done)
+                           actions_done=actions_done, snapshot_keys=_snapshot_keys)
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
 
@@ -1832,6 +1915,8 @@ _UNTAGGED_MODULE = {
     # A stand-in only: replaced by the real list as soon as the snapshot
     # reports which modules it actually read.
     "read_business_snapshot": _ACROSS_LABEL,
+    # Reads every source (data_freshness.TOOL_SOURCES) — about the data, not a module.
+    "read_data_health": "data health",
 }
 
 
