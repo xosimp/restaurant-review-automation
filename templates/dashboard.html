@@ -367,7 +367,31 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .calc-tip-light:hover .tip-icon{color:var(--ink2)}
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
 
-.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:relative}
+/* The module tabs stay under the header while a long panel scrolls
+   (Friction audit #29); --cav-chrome is header + tabs, measured (cavChrome). */
+/* --scrim: the one backdrop behind a modal (the explain card's tone). */
+:root{--cav-chrome:93px;--z-modal:10000;--scrim:rgba(14,12,10,.6)}
+.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:sticky;top:56px;z-index:99}
+[data-nav]{scroll-margin-top:calc(var(--cav-chrome) + 16px)}
+/* The in-module section rail (cavRailBuild): addressable sections of the
+   open module, sticky under the tabs. */
+.cav-rail{position:sticky;top:var(--cav-chrome);z-index:40;display:flex;gap:4px;overflow-x:auto;margin:-8px 0 16px;padding:8px 0;background:var(--bg-base);border-bottom:1px solid var(--line-hi);scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.cav-rail::-webkit-scrollbar{display:none}
+.cav-rail .cav-rail-i{white-space:nowrap;flex-shrink:0}
+/* A focused item arriving from a link: one ember ring that fades. */
+@keyframes cavFlash{0%{box-shadow:0 0 0 0 var(--ember)}30%{box-shadow:0 0 0 3px var(--ember)}100%{box-shadow:0 0 0 0 transparent}}
+.cav-flash{animation:cavFlash 1.5s ease-out;border-radius:10px}
+@media (prefers-reduced-motion:reduce){.cav-flash{animation:none;outline:2px solid var(--ember);outline-offset:2px}}
+/* One stacking level for every modal (cModal). */
+.cmodal{z-index:var(--z-modal)!important}
+/* cField: an inline, pre-filled field where prompt() used to be. */
+.cav-field{margin:8px 0 12px;padding:12px;border:1px solid var(--line-hi);border-radius:10px;background:var(--surface)}
+.cav-field-l{display:block;font-size:13px;color:var(--ink2);margin-bottom:6px}
+.cav-field-r{display:flex;gap:8px;align-items:center}
+.cav-field-r .ac-input{flex:1;min-width:0}
+.cav-field-h{font-size:12.5px;color:var(--ink3);margin-top:6px}
+.cav-field-h:empty,.cav-field-e:empty{display:none}
+.cav-field-e{font-size:13px;color:var(--red);margin-top:6px}
 /* Clash Display, not Apfel — a tab names a whole module/screen, the same
    heading role an ingredient row's own name plays in the Food Cost tracker
    (also Clash Display) or a navigationTitle now plays on iOS. */
@@ -980,6 +1004,9 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
 .toast.toast-warning{background:var(--amber-bg);color:#92400e;border-left-color:var(--amber)}
 .toast.show{animation:toastBounce .52s ease forwards}
+.toast.has-act{display:flex;align-items:center;gap:14px}
+.toast.has-act.show{pointer-events:auto}
+.toast .toast-act{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}
 .load-err{color:var(--red)}
 /* The one toast that stays: an ended session (CLIENT-13). Top of the page, clickable, no timer. */
 .toast.toast-sticky{top:24px;bottom:auto;pointer-events:auto;opacity:1;animation:none;display:flex;align-items:center;gap:14px;max-width:calc(100vw - 32px)}
@@ -1442,6 +1469,7 @@ function loadFailed(el, d){
       <span class="hdr-user">{{ restaurant.owner_name or current_user.username }}</span>
     </div>
     <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:none"></a>
+    <button type="button" class="cbtn cbtn-text cbtn-sm hdr-cmdk" id="hdr-cmdk" onclick="cavPalette.open()" title="Go to, find or do anything" aria-label="Go to, find or do anything (Command K)">⌘K</button>
     <!-- Notification bell -->
     <div style="position:relative" id="notif-wrap">
       <button id="notif-btn" onclick="toggleNotifPanel()" title="Alerts" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;position:relative;color:var(--ink3)">
@@ -1523,6 +1551,413 @@ function loadFailed(el, d){
     <button class="tab" role="tab" id="tab-account" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
     <span id="tab-indicator"></span>
 </div>
+<script id="cav-nav">
+/* ── Nav paths, the one router, the modal helper (Friction audit 9/25/26) ──
+   One address for every place and item: the same string the server sends
+   on attention items, the action queue, notifications and command results
+   (nav.py) and iOS opens (NavPath.swift) - "reviews?filter=urgent",
+   "review/412", "labor/schedule", "account/notifications", "person/dana-k".
+
+   cavNav(path) opens one. A module registers what it can focus with
+   cavNavRegister(head, fn); fn gets {head, rest, query, raw, module} and
+   returns false to fall back. Anything unknown opens its module (a section
+   is any element with data-nav="<module>/<section>"), else Home.
+
+   History has ONE owner. switchTab, the daily report and the record write
+   through cavHistory; the single popstate below routes Back through cavNav,
+   so Back returns to the previous tab instead of leaving the dashboard (#8).
+   Each panel keeps its own scroll position (#29).
+
+   Defined here, before every module script, so a module may register its
+   handler while its own script runs. ES5 only. */
+var _cavNavHandlers = {};
+var CAV_NAV_MODULE = {review:'reviews', schedule:'labor', person:'labor', invoice:'inventory', order:'inventory',
+                      issue:'home', request:'labor', action:'home', location:'home'};
+var CAV_NAV_TAB = {home:'home', reviews:'reviews', labor:'labor', inventory:'inventory', food:'inventory',
+                   marketing:'marketing', intel:'competitor', competitor:'competitor', account:'account'};
+/* The name a section's data-nav uses for a module ("inventory/invoices"). */
+var CAV_NAV_CANON = {food:'inventory', competitor:'intel'};
+var _cavHist = {mode: 'push', inNav: false, routed: null};
+var _cavScroll = {}, _cavScrollHold = 0;
+function cavNavRegister(head, fn) { _cavNavHandlers[String(head).toLowerCase()] = fn; }
+function cavNavParse(path) {
+  var raw = String(path || '').replace(/^#/, '').trim();
+  if (!raw) return null;
+  var qi = raw.indexOf('?'), base = qi >= 0 ? raw.slice(0, qi) : raw, qs = qi >= 0 ? raw.slice(qi + 1) : '';
+  var segs = base.split('/'), query = {};
+  for (var i = 0; i < segs.length; i++) { try { segs[i] = decodeURIComponent(segs[i]); } catch (e) {} }
+  if (qs) {
+    var pairs = qs.split('&');
+    for (var j = 0; j < pairs.length; j++) {
+      var kv = pairs[j].split('='), k = kv[0], v = kv.length > 1 ? kv.slice(1).join('=') : '';
+      try { query[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); } catch (e2) { query[k] = v; }
+    }
+  }
+  var head = (segs[0] || '').toLowerCase();
+  while (segs.length > 1 && segs[segs.length - 1] === '') segs.pop();
+  return {raw: raw, head: head, rest: segs.slice(1), query: query, qs: qs, module: CAV_NAV_MODULE[head] || head};
+}
+/* Every history write goes through here. Inside one cavNav call the first
+   write pushes and the rest replace, so one navigation is one Back step;
+   a route taken from Back itself writes nothing. */
+function cavHistory(hash, replace) {
+  if (!window.history || !history.replaceState) return;
+  hash = String(hash || '');
+  if (hash.charAt(0) !== '#') hash = '#' + hash;
+  if (_cavHist.mode === 'none' || hash === (window.location.hash || '')) return;
+  if (replace || _cavHist.mode === 'replace' || !history.pushState) history.replaceState(null, null, hash);
+  else { history.pushState(null, null, hash); if (_cavHist.inNav) _cavHist.mode = 'replace'; }
+  _cavHist.routed = window.location.hash || '';
+}
+function cavScrollSave(panelId) { if (panelId) _cavScroll[panelId] = window.pageYOffset || 0; }
+function cavScrollRestore(panelId) { _cavScrollHold = Date.now(); window.scrollTo(0, _cavScroll[panelId] || 0); }
+window.addEventListener('scroll', function () {
+  if (Date.now() - _cavScrollHold < 200) return;
+  var p = document.querySelector('.panel.active');
+  if (p) _cavScroll[p.id] = window.pageYOffset || 0;
+}, {passive: true});
+function cavNavOpenModule(module) {
+  var tab = CAV_NAV_TAB[module] || 'home', btn = document.getElementById('tab-' + tab);
+  if (!btn) { tab = 'home'; btn = document.getElementById('tab-home'); }
+  if (btn && typeof switchTab === 'function') switchTab(tab, btn);
+  return tab;
+}
+function cavFlash(el) {
+  if (!el || !el.classList) return;
+  el.classList.remove('cav-flash'); void el.offsetWidth; el.classList.add('cav-flash');
+  setTimeout(function () { el.classList.remove('cav-flash'); }, 1600);
+}
+/* A section inside the open module: any element with data-nav="<module>/<section>".
+   A closed disclosure around it opens first. */
+function cavNavSection(p) {
+  if (!p.rest.length) return false;
+  var mod = CAV_NAV_CANON[p.head] || p.head;
+  var sec = document.querySelector('[data-nav="' + mod + '/' + p.rest[0] + '"]');
+  if (!sec) return false;
+  if (sec.tagName === 'DETAILS') sec.open = true;
+  var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
+  if (d) d.open = true;
+  if (sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
+  return true;
+}
+function cavNavIsPlace(p) { return !!CAV_NAV_TAB[p.head]; }
+function cavNav(path, opts) {
+  opts = opts || {};
+  var p = cavNavParse(path);
+  if (!p) return false;
+  var saved = {mode: _cavHist.mode, inNav: _cavHist.inNav};
+  _cavHist.inNav = true;
+  _cavHist.mode = opts.fromPop ? 'none' : (opts.replace ? 'replace' : 'push');
+  try {
+    var fn = _cavNavHandlers[p.head], done = false;
+    if (fn) { try { done = fn(p, opts) !== false; } catch (e) { done = false; } }
+    if (!done) {
+      cavNavOpenModule(p.module);
+      if (!cavNavSection(p) && !opts.fromPop) window.scrollTo(0, 0);
+    }
+    /* A place keeps its full address (#labor/schedule, #reviews?filter=urgent)
+       so a reload or a shared link lands there; an item or a question keeps
+       its module's. */
+    if (cavNavIsPlace(p) && (p.rest.length || p.qs)) cavHistory('#' + p.raw);
+  } finally {
+    _cavHist.mode = saved.mode; _cavHist.inNav = saved.inNav;
+  }
+  return true;
+}
+/* Back, Forward, an edited address or a plain #link: one route. Both events
+   can fire for one step; the second finds the address already routed. */
+function cavRoute() {
+  var h = window.location.hash || '';
+  if (h === _cavHist.routed) return;
+  _cavHist.routed = h;
+  cavNav(h || 'home', {fromPop: true});
+}
+window.addEventListener('popstate', cavRoute);
+window.addEventListener('hashchange', cavRoute);
+/* Anything that sends the owner somewhere can say so in markup. */
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-nav-go]') : null;
+  if (!t) return;
+  e.preventDefault();
+  if (window.cModal && t.closest && t.closest('.cmodal')) cModal.close();
+  cavNav(t.getAttribute('data-nav-go'));
+});
+window.cavNav = cavNav; window.cavNavRegister = cavNavRegister; window.cavNavParse = cavNavParse;
+window.cavHistory = cavHistory; window.cavRoute = cavRoute; window.cavFlash = cavFlash;
+
+/* ── Built-in handlers ─────────────────────────────────────────────────────
+   Reviews by filter ("Reply now" lands on the urgent filter, #2). The
+   review, ask, schedule, person, request, invoice and order heads are the
+   owning modules'; the review and ask defaults here are replaced when those
+   modules register their own. */
+cavNavRegister('reviews', function (p) {
+  var f = p.query.filter;
+  if ((f !== 'urgent' && f !== 'pending') || typeof reviewsPillJump !== 'function' || !document.getElementById('tab-reviews')) return false;
+  cavNavOpenModule('reviews');
+  reviewsPillJump(f);
+  return true;
+});
+cavNavRegister('review', function (p) {
+  var id = p.rest[0];
+  if (!id || !document.getElementById('tab-reviews')) return false;
+  cavNavOpenModule('reviews');
+  if (typeof window.rvFocusReview === 'function') { window.rvFocusReview(id); return true; }
+  var card = document.getElementById('rc-' + id);
+  if (card && card.scrollIntoView) { card.scrollIntoView({behavior: 'smooth', block: 'center'}); cavFlash(card); }
+  return true;
+});
+cavNavRegister('ask', function (p) {
+  if (typeof hbAsk !== 'function') return false;
+  if (p.query.conversation && typeof window.askOpenConversation === 'function') {
+    hbAsk(''); window.askOpenConversation(+p.query.conversation); return true;
+  }
+  hbAsk(p.query.q || '');
+  return true;
+});
+/* Account's rail, one address per section: #account/notifications. */
+cavNavRegister('account', function (p, o) {
+  cavNavOpenModule('account');
+  if (p.rest[0] && typeof window.acctGo === 'function' && window.acctGo(p.rest[0]) !== false) return true;
+  if (!(o && o.fromPop)) window.scrollTo(0, 0);
+  return true;
+});
+/* A location: switching is its own explicit step (a reload, the cache
+   wiped - the stale-tab guard's design), never a side effect. */
+cavNavRegister('location', function (p) {
+  var id = +p.rest[0];
+  var cur = document.querySelector('#loc-switcher-panel button[style*="var(--ember)"]');
+  if (!id || typeof window.switchLocation !== 'function') return false;
+  if (cur && cur.getAttribute('onclick') === 'switchLocation(' + id + ')') { cavNavOpenModule('home'); return true; }
+  window.switchLocation(id);
+  return true;
+});
+/* An issue lives in Home's Needs attention card (iOS opens Home too). The
+   card fills after the brief, so wait for the row a moment. */
+cavNavRegister('issue', function (p) {
+  cavNavOpenModule('home');
+  var id = p.rest[0], tries = 0;
+  (function find() {
+    var row = id ? document.querySelector('[data-issue-id="' + id + '"]') : null;
+    var el = row || document.getElementById('hb-attn-card');
+    if ((!row && id && tries < 12) || !el) { if (tries++ < 12) setTimeout(find, 250); return; }
+    if (el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+    cavFlash(el);
+  })();
+  return true;
+});
+/* A stored Ask proposal, reopened from its row - no model call (U4-20). */
+cavNavRegister('action', function (p) {
+  var id = +p.rest[0];
+  if (!id) return false;
+  fetch('/api/ask-cavnar/proposals/' + id, {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (d && d.ok && d.proposal) {
+      if (typeof hbAsk === 'function') hbAsk('');
+      if (typeof _appendAskCavnarProposal === 'function') _appendAskCavnarProposal(d.proposal);
+    } else if (d && d.ok && d.settled) {
+      toast('Already ' + (d.settled.outcome === 'confirmed' ? 'confirmed' : 'dismissed') + ' — nothing left to do.', 'success');
+    } else {
+      toast((d && d.error) || 'Couldn’t open that proposal.', 'error');
+    }
+  }).catch(function () { toast('Couldn’t reach Cavnar AI — check your connection.', 'error'); });
+  return true;
+});
+
+/* ── The in-module section rail (#33) ───────────────────────────────────────
+   A panel with two or more addressable sections gets a sticky row of them
+   under the tabs, built from its data-nav elements (Account keeps its own
+   rail). A section names itself with data-nav-label, else its heading. */
+function cavRailBuild(panel) {
+  if (!panel || panel.id === 'panel-account') return;
+  var mod = panel.id.replace('panel-', ''), canon = CAV_NAV_CANON[mod] || mod;
+  var secs = panel.querySelectorAll('[data-nav^="' + canon + '/"]'), items = [], i;
+  for (i = 0; i < secs.length; i++) {
+    var n = secs[i].getAttribute('data-nav'), h = secs[i].querySelector ? secs[i].querySelector('h2,h3,.hb-h3,.st') : null;
+    var label = secs[i].getAttribute('data-nav-label') || (h ? h.textContent.replace(/\s+/g, ' ').trim() : '') || n.split('/')[1];
+    items.push({nav: n, label: label.length > 28 ? label.slice(0, 27) + '…' : label});
+  }
+  var rail = panel.querySelector(':scope > .cav-rail');
+  if (items.length < 2) { if (rail) rail.parentNode.removeChild(rail); return; }
+  var sig = '';
+  for (i = 0; i < items.length; i++) sig += items[i].nav + '|';
+  if (rail && rail.getAttribute('data-sig') === sig) return;
+  if (!rail) { rail = document.createElement('nav'); rail.className = 'cav-rail'; rail.setAttribute('aria-label', 'Sections'); panel.insertBefore(rail, panel.firstChild); }
+  rail.setAttribute('data-sig', sig);
+  var html = '';
+  for (i = 0; i < items.length; i++) {
+    var lb = items[i].label.replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; });
+    html += '<button type="button" class="cbtn cbtn-text cbtn-sm cav-rail-i" data-nav-go="' + items[i].nav + '">' + lb + '</button>';
+  }
+  rail.innerHTML = html;
+}
+window.cavRailBuild = cavRailBuild;
+/* The sticky chrome's height (header + tabs), for everything that sticks
+   or scrolls into view under it. */
+function cavChrome() {
+  var h = document.querySelector('.hdr'), t = document.querySelector('.tabs');
+  var px = (h ? h.offsetHeight : 56) + (t ? t.offsetHeight : 37);
+  document.documentElement.style.setProperty('--cav-chrome', px + 'px');
+}
+window.addEventListener('resize', cavChrome);
+document.addEventListener('DOMContentLoaded', cavChrome);
+
+/* ── cModal: one modal helper (#42) ────────────────────────────────────────
+   Escape closes the top one, a click on the backdrop closes it, focus goes
+   back to what opened it, and every modal sits on one stacking level
+   (--z-modal). cModal.open(id) / cModal.close(id). A modal the older code
+   opens by itself is adopted by id (CAV_MODALS) and closes the same way,
+   through its own close function when it has one. Busy overlays (posting,
+   upload) are not modals and are never closed from here. */
+var CAV_MODALS = {
+  'rr-modal': null, 'twofa-modal': null, 'mkt-preview-modal': null, 'mkt-schedule-modal': null,
+  'brand-voice-modal': null, 'rpower-connect-modal': 'closeRpowerConnect', 'toast-client-modal': 'closeToastClientModal',
+  'square-modal': 'closeSquareModal', 'clover-modal': 'closeCloverModal', 'alerts-modal': 'closeAlertsModal',
+  'guest-contacts-modal': 'closeGuestContactsModal', 'pw-modal': null, 'email-modal': null, 'cav-palette': null
+};
+/* A half-finished two-factor setup is not lost to a stray click outside. */
+var CAV_MODAL_NO_BACKDROP = {'twofa-modal': 1};
+var cModal = (function () {
+  var lastFocus = null, opener = {};
+  function el(id) { return document.getElementById(id); }
+  function shown(m) {
+    if (!m || m.hidden) return false;
+    var d = m.style.display || (window.getComputedStyle ? window.getComputedStyle(m).display : '');
+    return d !== 'none' && d !== '';
+  }
+  /* The shown modal opened last (one the older code opened by itself has
+     no stamp and ranks below one opened through here). */
+  function top() {
+    var best = null, bestAt = -1;
+    for (var id in CAV_MODALS) {
+      if (!CAV_MODALS.hasOwnProperty(id)) continue;
+      var m = el(id);
+      if (shown(m) && (opener[id] || 0) > bestAt) { best = m; bestAt = opener[id] || 0; }
+    }
+    return best;
+  }
+  function open(id, opts) {
+    var m = el(id); if (!m) return;
+    opts = opts || {};
+    if (!CAV_MODALS.hasOwnProperty(id)) CAV_MODALS[id] = opts.close || null;
+    opener[id] = Date.now();
+    m.setAttribute('data-cmodal-return', '1');
+    m._cmReturn = document.activeElement || lastFocus;
+    m.hidden = false;
+    m.style.display = opts.display || 'flex';
+    adopt(id);
+    var f = m.querySelector('[autofocus],input:not([type=hidden]),textarea,select,button');
+    if (f && f.focus) setTimeout(function () { try { f.focus(); } catch (e) {} }, 30);
+  }
+  function close(id) {
+    var m = id ? el(id) : top();
+    if (!m) return false;
+    var fnName = CAV_MODALS[m.id];
+    if (fnName && typeof window[fnName] === 'function') window[fnName]();
+    else m.style.display = 'none';
+    var back = m._cmReturn || lastFocus;
+    m._cmReturn = null;
+    if (back && back.focus && document.body.contains(back)) { try { back.focus(); } catch (e) {} }
+    return true;
+  }
+  function adopt(id) {
+    var m = el(id);
+    if (!m || m._cmAdopted) return;
+    m._cmAdopted = true;
+    m.classList.add('cmodal');
+    m.setAttribute('role', m.getAttribute('role') || 'dialog');
+    m.setAttribute('aria-modal', 'true');
+    if (!CAV_MODAL_NO_BACKDROP[id]) m.addEventListener('mousedown', function (e) { if (e.target === m) m._cmDown = true; });
+    if (!CAV_MODAL_NO_BACKDROP[id]) m.addEventListener('click', function (e) {
+      if (e.target === m && m._cmDown && !m.getAttribute('onclick')) close(id);
+      m._cmDown = false;
+    });
+  }
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (t && t.closest && !t.closest('.cmodal')) lastFocus = t;
+  });
+  document.addEventListener('DOMContentLoaded', function () {
+    for (var id in CAV_MODALS) if (CAV_MODALS.hasOwnProperty(id)) adopt(id);
+  });
+  return {open: open, close: close, top: top, adopt: adopt, isOpen: function (id) { return shown(el(id)); }};
+})();
+window.cModal = cModal;
+/* Escape: the top modal first, then the Ask panel, then an open header
+   popover - one press, one thing closed. */
+var CAV_POPOVERS = ['notif-panel', 'team-msg-panel', 'changelog-panel', 'loc-switcher-panel', 'tmpl-picker'];
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape' && e.keyCode !== 27) return;
+  /* The explanation card and the AI feed close themselves on Escape. */
+  var ex = document.getElementById('explain-modal');
+  if ((ex && ex.classList.contains('show')) || document.querySelector('.ai-feed.on')) return;
+  if (cModal.top()) { cModal.close(); e.preventDefault(); return; }
+  var ask = document.getElementById('ask-cavnar-panel');
+  if (ask && ask.style.display === 'flex' && typeof toggleAskCavnar === 'function') { toggleAskCavnar(); e.preventDefault(); return; }
+  for (var i = 0; i < CAV_POPOVERS.length; i++) {
+    var pop = document.getElementById(CAV_POPOVERS[i]);
+    if (pop && pop.style.display && pop.style.display !== 'none') { pop.style.display = 'none'; e.preventDefault(); return; }
+  }
+});
+
+/* ── cavUndoable: the reversible tier of the confirm/undo policy (#10) ─────
+   DESIGN_SYSTEM.md §10: reversible → act at once + Undo; outward (post,
+   publish, text, email, order) → a confirm card naming what goes out and
+   how many; confirm() only for security and account-destructive steps.
+   The caller has already taken the thing off the screen; 'commit' (the
+   request that makes it final) waits out the Undo window, and Undo runs
+   'restore' without any request having been sent. A page closed inside the
+   window keeps the thing - the safe side. */
+function cavUndoable(msg, commit, restore) {
+  var undone = false;
+  var t = setTimeout(function () { if (!undone) commit(); }, 7000);
+  toast(msg, 'success', {label: 'Undo', fn: function () { undone = true; clearTimeout(t); if (restore) restore(); }});
+}
+window.cavUndoable = cavUndoable;
+
+/* ── cField: an inline, pre-filled field in place of prompt() (#42) ────────
+   cField(anchor, {label, value, placeholder, inputmode, hint, save:'Save',
+   onSave:function(value, done){...}}). Opens under the anchor's row with the
+   current value in it; Enter saves, Escape cancels. onSave calls done() to
+   close, done(message) to keep it open with that line in --red. */
+function cField(anchor, o) {
+  o = o || {};
+  var old = document.querySelector('.cav-field');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  var row = o.after || ((anchor && anchor.closest) ? (anchor.closest('.cav-field-row,.ac-row,.ac-item,.hb-row,li,tr') || anchor.parentNode) : null);
+  if (!row || !row.parentNode) return;
+  var box = document.createElement('div');
+  box.className = 'cav-field';
+  var id = 'cav-field-' + Date.now();
+  box.innerHTML = '<label class="cav-field-l" for="' + id + '"></label><div class="cav-field-r"><input class="ac-input" id="' + id + '" type="text">'
+    + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-cf="save"></button><button type="button" class="cbtn cbtn-text cbtn-sm" data-cf="cancel">Cancel</button></div>'
+    + '<div class="cav-field-h"></div><div class="cav-field-e" role="alert"></div>';
+  box.querySelector('label').textContent = o.label || '';
+  box.querySelector('[data-cf="save"]').textContent = o.save || 'Save';
+  var inp = box.querySelector('input');
+  inp.value = o.value == null ? '' : String(o.value);
+  if (o.placeholder) inp.placeholder = o.placeholder;
+  if (o.inputmode) inp.setAttribute('inputmode', o.inputmode);
+  if (o.hint) box.querySelector('.cav-field-h').textContent = o.hint;
+  if (row.tagName === 'TR') { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 99; td.appendChild(box); tr.appendChild(td); row.parentNode.insertBefore(tr, row.nextSibling); box = tr; }
+  else row.parentNode.insertBefore(box, row.nextSibling);
+  function shut() { if (box.parentNode) box.parentNode.removeChild(box); if (anchor && anchor.focus) { try { anchor.focus(); } catch (e) {} } }
+  function save() {
+    var btn = box.querySelector('[data-cf="save"]');
+    btn.disabled = true;
+    o.onSave(inp.value, function (msg) {
+      btn.disabled = false;
+      if (msg) { box.querySelector('.cav-field-e').textContent = msg; inp.focus(); } else shut();
+    });
+  }
+  box.querySelector('[data-cf="save"]').onclick = save;
+  box.querySelector('[data-cf="cancel"]').onclick = shut;
+  inp.onkeydown = function (e) {
+    if (e.keyCode === 13) { e.preventDefault(); save(); }
+    else if (e.keyCode === 27) { e.preventDefault(); e.stopPropagation(); shut(); }
+  };
+  inp.focus(); inp.select();
+}
+window.cField = cField;
+</script>
 
 <!-- The full-width "Measured results" strip that sat here is gone. Home's
      "What Cavnar AI has been worth" card (renderValue) carries the same
@@ -1565,6 +2000,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-top .hb-pulse{flex:0 1 auto}
 /* pulse chips (iOS HomePulseStrip) */
 .hb-pulse{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
+/* One tap: the server's quick actions, a row of buttons under the header. */
+.hb-quick{flex:1 1 100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:-12px}
+.hb-quick[hidden]{display:none}
+/* The confirm card an outward Home action opens in place (hbPublish). */
+.hb-pub-confirm{margin:10px 0 4px}
+.hb-pub-confirm .ask-prop{max-width:none}
 /* The pill's edge no longer reads as a colored ring — its border is the
    same tone as the workspace canvas, so definition comes entirely from
    the shadow lifting it off the page (the way every other elevated
@@ -2046,6 +2487,9 @@ svg:hover .hb-xh{opacity:1}
       <div class="hb-sub" id="hb-sub">Pulling your latest numbers.</div>
     </div>
     <div class="hb-pulse" id="hb-pulse"><div class="hb-skel" style="width:260px;height:34px;border-radius:999px"></div></div>
+    <!-- One tap (Friction audit #13): the server's quick_actions, ranked per
+         restaurant (home_brief), each landing on its item via its nav. -->
+    <div class="hb-quick" id="hb-quick" role="group" aria-label="One tap" hidden></div>
   </div>
   <div id="hb-body">
     <div class="hb-load" style="height:260px;justify-content:center;margin-top:30px;flex-direction:column;gap:14px"><canvas class="hb-orb" data-orb-state="working" width="64" height="64" style="width:64px;height:64px"></canvas><span>Building today's brief from your latest numbers…</span></div>
@@ -2375,9 +2819,14 @@ svg:hover .hb-xh{opacity:1}
   function load(module){
     return fetch('/api/benchmarks/card?module='+encodeURIComponent(module),{credentials:'same-origin'}).then(apiJson);
   }
-  function fillCards(){
-    var els=document.querySelectorAll('section.bm-card[data-bm-module]');
+  // A panel's card is read on the panel's first visit (fillPanel from
+  // switchTab), not all four at page load (Friction audit #35). fillCards()
+  // with no root still fills every card, once each.
+  function fillCards(root){
+    var els=(root||document).querySelectorAll('section.bm-card[data-bm-module]');
     for(var i=0;i<els.length;i++)(function(el){
+      if(el.getAttribute('data-bm-filled'))return;
+      el.setAttribute('data-bm-filled','1');
       load(el.getAttribute('data-bm-module')).then(function(d){
         // A login that can't see the module, or a server that can't answer,
         // draws nothing rather than an empty card.
@@ -2429,9 +2878,10 @@ svg:hover .hb-xh{opacity:1}
     var t=e.target&&e.target.closest?e.target.closest('[data-bm-profile]'):null;if(!t)return;
     e.preventDefault();openProfile();
   });
-  function init(){if(document.querySelector('section.bm-card[data-bm-module]'))fillCards();}
+  function fillPanel(p){if(p&&p.querySelector&&p.querySelector('section.bm-card[data-bm-module]'))fillCards(p);}
+  function init(){fillPanel(document.querySelector('.panel.active'));}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
-  window.cavBench={card:cardHtml,panel:panel,strip:strip,locations:locations,fill:fillCards,profile:openProfile};
+  window.cavBench={card:cardHtml,panel:panel,strip:strip,locations:locations,fill:fillCards,fillPanel:fillPanel,profile:openProfile};
 })();
 </script>
 <script>
@@ -2699,7 +3149,11 @@ svg:hover .hb-xh{opacity:1}
   });
   window.CavnarCharts={glowLine:glowLine,bars:bars,stacked:stacked,smooth:smooth,esc:esc,num:num,mdy:mdy};
   // ── navigation + actions ──────────────────────────────────────────────────
-  window.hbOpen=function(module){
+  // 'nav' (nav.py, on every attention item, quick action and queue item) is
+  // where the button lands: the urgent filter, the order draft, the issue,
+  // the stored proposal - not the module's top (Friction audit #2).
+  window.hbOpen=function(module,nav){
+    if(nav&&window.cavNav){cavNav(nav);return;}
     if(module==='alerts'){if(typeof toggleNotifPanel==='function')toggleNotifPanel();return;}
     // Home is not in TAB (it is the page these links live on), so
     // hbOpen('home') fell straight through to the "isn't active on this
@@ -2778,15 +3232,39 @@ svg:hover .hb-xh{opacity:1}
   }
   // A publish from Home sends exactly the number on its label (the recent
   // drafts, newest first) - never 25 including imported history.
-  window.hbAct=function(kind,module,btn,count){if(kind==='publish_replies'){if(count>0){hbPublish(btn,count);return;}if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
+  window.hbAct=function(kind,module,btn,count,nav){if(kind==='publish_replies'){if(count>0){hbPublish(btn,count);return;}if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module,nav);};
+  // "Publish N replies" posts publicly under the owner's name, so it is the
+  // outward tier of the confirm/undo policy (DESIGN_SYSTEM.md §10, Friction
+  // audit #10): the first tap opens the SAME confirm card Ask renders
+  // (/api/command/propose → build_proposal, no model call) listing every
+  // reply that would post; only its Confirm posts. It used to post on the
+  // one tap. A server without the command route falls back to an inline
+  // confirm that names the count.
   function hbPublish(btn,count){
-    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Publishing…'):function(){};
-    fetch('/api/reviews/approve-all',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:count})})
-      .then(apiJson).then(function(d){done();
-        if(!d||!d.ok){toast((d&&d.error)||'Could not publish','error');return;}
-        var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
-        _hbLoadedAt=0;hbLoad(true);})
-      .catch(function(){done();toast('Network error','error');});
+    var host=btn&&btn.closest?btn.closest('.hb-row,.hb-focus,.also,.hb-rec,.hb-card'):null;
+    var old=document.querySelector('.hb-pub-confirm');if(old&&old.parentNode)old.parentNode.removeChild(old);
+    var box=document.createElement('div');box.className='hb-pub-confirm';
+    if(host&&host.parentNode)host.parentNode.insertBefore(box,host.nextSibling);else if(btn&&btn.parentNode)btn.parentNode.appendChild(box);
+    box.innerHTML='<div class="dr-pulse" aria-hidden="true"></div>';
+    function after(){_hbLoadedAt=0;hbLoad(true);}
+    fetch('/api/command/propose',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'approve_all_reviews',args:{}})})
+      .then(apiJson).then(function(d){
+        if(d&&d.ok&&d.proposal&&typeof cavPropCard==='function'){box.innerHTML='';cavPropCard(d.proposal,box,{onDone:after});return;}
+        hbPublishInline(box,btn,count,after);
+      }).catch(function(){hbPublishInline(box,btn,count,after);});
+  }
+  function hbPublishInline(box,btn,count,after){
+    box.innerHTML='<div class="ask-prop"><div class="t">Post '+count+' '+(count===1?'reply':'replies')+' to Google?</div><div class="pv">They go out publicly under your name, newest first.</div><div class="r"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-go="1">Post '+count+' '+(count===1?'reply':'replies')+'</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-no="1">Cancel</button></div></div>';
+    box.querySelector('[data-no]').onclick=function(){box.parentNode.removeChild(box);};
+    box.querySelector('[data-go]').onclick=function(){
+      var go=this,done=(typeof cbtnBusy==='function')?cbtnBusy(go,'Publishing…'):function(){};
+      fetch('/api/reviews/approve-all',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:count})})
+        .then(apiJson).then(function(d){done();
+          if(!d||!d.ok){toast((d&&d.error)||'Could not publish','error');return;}
+          var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
+          if(box.parentNode)box.parentNode.removeChild(box);after();})
+        .catch(function(){done();toast('Network error','error');});
+    };
   }
   // Only the id travels through the inline handlers (CLIENT-17).
   window.hbSwitchLoc=function(rid){if(typeof switchLocation==='function')switchLocation(rid);};
@@ -2859,6 +3337,18 @@ svg:hover .hb-xh{opacity:1}
     for(var j=0;j<snaps.length;j++){var s=snaps[j];if(s.status==='coming_soon')continue;var tone=s.sample?'sample':s.state;
       chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(s.value)+(s.key==='reviews'&&s.value!=='—'?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label)))+'</span></button>';}
     p.innerHTML=chips;
+    renderQuick(d.quick_actions||[]);
+  }
+  // The server has ranked these for this restaurant since the Home brief was
+  // built and no client drew them (U1-08). "Ask" and "All alerts" are the
+  // FAB and the bell already; the rest are one tap to the item.
+  function renderQuick(qs){
+    var el=document.getElementById('hb-quick');if(!el)return;
+    var h='';
+    for(var i=0;i<qs.length;i++){var q=qs[i];if(!q||q.kind==='ask'||q.kind==='alerts')continue;
+      h+='<button type="button" class="cbtn '+(q.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm hb-qa" onclick="hbAct(\''+esc(q.kind)+'\',\''+esc(q.module||'')+'\',this,'+(+q.count||0)+',\''+esc(q.nav||'')+'\')">'+esc(q.label)+(q.count&&q.kind!=='publish_replies'?' <span class="hb-num">'+(+q.count)+'</span>':'')+'</button>';}
+    el.innerHTML=h;el.hidden=!h;
+    window._hbQuick=qs;   // the command palette's "One tap" group
   }
   // ── hero chart ────────────────────────────────────────────────────────────
   // The headline is a monthly run-rate of MEASURED improvements (H-8): it
@@ -3054,7 +3544,7 @@ svg:hover .hb-xh{opacity:1}
       // the item keeps what it rests on and how sure (B4 L3) rather than
       // arriving as a bare title.
       var aEv=leadIsAtt?'':String(a.evidence||'').split(' · ')[0],aCf=leadIsAtt?'':cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home',noReason:1,noCaution:1});
-      h+='<span class="also">'+(leadIsAtt?'':'<span class="m'+(aEv||aCf?' rich':'')+'">'+num(a.title)+(aEv?'<span class="hb-also-ev">'+num(aEv)+'</span>':'')+aCf+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button></span>';}
+      h+='<span class="also">'+(leadIsAtt?'':'<span class="m'+(aEv||aCf?' rich':'')+'">'+num(a.title)+(aEv?'<span class="hb-also-ev">'+num(aEv)+'</span>':'')+aCf+'</span>')+'<button type="button" class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+',\''+esc(a.action.nav||'')+'\')">'+esc(a.action.label)+'</button></span>';}
     else if(!clear&&!ff&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
@@ -3200,7 +3690,7 @@ svg:hover .hb-xh{opacity:1}
   var _hbIssues=null;
   function hbIssueRows(iss){
     var h='';
-    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'" data-issue-id="'+(+x.id)+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
     return h;
   }
   // "All clear" only when the sources under it are current: nothing flagged
@@ -3233,7 +3723,7 @@ svg:hover .hb-xh{opacity:1}
     // never shows (CA4 J4): the evidence (or, from an older server, the
     // detail) under the title, then its confidence line.
     for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=(a.confidence_detail||a.confidence)?cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
-      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+(a.dollars_basis?'<div class="hb-att-ev">'+hbDollarsBasis(a.dollars_basis)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+')">'+esc(a.action.label)+'</button>'
+      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+(a.dollars_basis?'<div class="hb-att-ev">'+hbDollarsBasis(a.dollars_basis)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+',\''+esc(a.action.nav||'')+'\')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
@@ -3914,7 +4404,11 @@ svg:hover .hb-xh{opacity:1}
       for(var a=0;a<acts.length;a++){var y=acts[a];
         h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
           +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
-          +(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':''))
+          // A stored Ask proposal reopens from its row (nav "action/<id>")
+          // instead of re-asking the model; everything else lands on its
+          // item (Friction audit #2, U4-20). An older server's item keeps
+          // the question or the module.
+          +(y.nav&&!(y.action&&y.action.route)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(y.nav)+'">'+esc(y.action&&y.action.label||'Open')+'</button>':(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':'')))
           +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(y.key)+'\',this)">Not today</button></span></div>';}
       h+='</section>';
     }
@@ -4396,7 +4890,9 @@ svg:hover .hb-xh{opacity:1}
     st.kind=kind;st.date=date||null;st.version=opts.version||null;
     if(!opts.keepExpect){st.expect=null;st.waits=0;}
     var h=hashFor(kind,date);
-    if(window.location.hash!==h&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,h);else history.pushState(null,null,h);}
+    // Through the one router's history (cavHistory, Friction audit #8).
+    if(window.cavHistory)cavHistory(h,opts.replace);
+    else if(window.location.hash!==h&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,h);else history.pushState(null,null,h);}
     show();setViews(kind);window.scrollTo(0,0);
     if(kind==='week'||kind==='period')return loadGrid(kind,date);
     return loadNight(date,st.version);
@@ -4409,15 +4905,18 @@ svg:hover .hb-xh{opacity:1}
     window.dsrOpen(kind,date,{replace:true});return true;
   }
   window.dsrRoute=route;
-  window.addEventListener('popstate',function(){
-    if(route())return;
-    if(!active())return;
-    stopPoll();
-    var n=(window.location.hash||'').replace('#','')||'home',b=el('tab-'+n)||el('tab-home');
-    if(b&&typeof switchTab==='function')switchTab(b.id.replace('tab-',''),b);
+  // One router (cavNav, Friction audit #8): Back, a reload and a link all
+  // arrive through the 'dsr' head - "dsr", "dsr/2026-09-24",
+  // "dsr/week/2026-09-21", "dsr/night/2026-09-24" (nav.py) - and this page
+  // keeps no popstate of its own. Leaving it for a tab stops its poll (the
+  // tick finds the page inactive).
+  if(window.cavNavRegister)cavNavRegister('dsr',function(p){
+    var r=p.rest.slice(0),kind='night',date=null;
+    if(r[0]==='week'||r[0]==='period'||r[0]==='night')kind=r.shift();
+    if(r[0]&&/^\d{4}-\d{2}-\d{2}$/.test(r[0]))date=r[0];
+    if(active()&&st.kind===kind&&st.date===date)return true;
+    window.dsrOpen(kind,date);return true;
   });
-  window.addEventListener('hashchange',function(){route();});
-  document.addEventListener('DOMContentLoaded',function(){route();});
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&st.tick)st.tick();});
 
   // ── one night ────────────────────────────────────────────────────────────
@@ -4430,7 +4929,8 @@ svg:hover .hb-xh{opacity:1}
         var r=(d.reports||[])[0];
         if(!r){b.innerHTML=noneYet(d);return;}
         st.date=r.business_date;
-        if(window.history&&history.replaceState)history.replaceState(null,null,hashFor('night',r.business_date));
+        if(window.cavHistory){if(active())cavHistory(hashFor('night',r.business_date),true);}
+        else if(window.history&&history.replaceState)history.replaceState(null,null,hashFor('night',r.business_date));
         loadNight(r.business_date,null);
       }).catch(function(){if(tk===st.token)loadFailed(b,null);});
     }
@@ -5179,18 +5679,13 @@ svg:hover .hb-xh{opacity:1}
     for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-days')===String(n)?'true':'false');}
   window.rhOpen=function(opts){
     opts=opts||{};
-    if(window.location.hash!=='#recs'&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,'#recs');else history.pushState(null,null,'#recs');}
+    if(window.cavHistory)cavHistory('#recs',opts.replace);
+    else if(window.location.hash!=='#recs'&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,'#recs');else history.pushState(null,null,'#recs');}
     show();setDays(st.days);window.scrollTo(0,0);load();
   };
-  function route(){if((window.location.hash||'')!=='#recs')return false;if(!active())window.rhOpen({replace:true});return true;}
-  window.addEventListener('popstate',function(){
-    if(route())return;if(!active())return;
-    if(/^#dsr/.test(window.location.hash||''))return;
-    var n=(window.location.hash||'').replace('#','')||'home',b=el('tab-'+n)||el('tab-home');
-    if(b&&typeof switchTab==='function')switchTab(b.id.replace('tab-',''),b);
-  });
-  window.addEventListener('hashchange',function(){route();});
-  document.addEventListener('DOMContentLoaded',function(){route();});
+  // One router (cavNav, Friction audit #8): #recs arrives through the
+  // 'recs' head; this page keeps no popstate of its own.
+  if(window.cavNavRegister)cavNavRegister('recs',function(){if(!active())window.rhOpen();return true;});
 
   // ── loading ─────────────────────────────────────────────────────────────
   function load(){
@@ -5659,7 +6154,7 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
-  <div id="new-reviews-banner" style="display:none" role="button" tabindex="0" onclick="window.location.reload()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.location.reload();}"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
+  <div id="new-reviews-banner" style="display:none" role="button" tabindex="0" onclick="rvBannerRefresh(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rvBannerRefresh(this);}"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
 
   <div id="rv-inbox-header"></div>
   <div id="rv-panel-analytics">
@@ -8786,7 +9281,7 @@ svg:hover .hb-xh{opacity:1}
 
 /* ── Two-column body: sticky rail + sections ─────────────────────────────── */
 .ac-body{display:grid;grid-template-columns:196px minmax(0,1fr);gap:32px;margin-top:28px;align-items:start}
-.ac-nav{position:sticky;top:72px}
+.ac-nav{position:sticky;top:calc(var(--cav-chrome) + 16px)}
 .ac-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;font-size:15px;font-weight:500;color:var(--ink3);text-decoration:none;border-left:2px solid transparent;transition:color .15s,background .15s}
 .ac-nav a:hover{color:var(--ink);background:var(--paper2)}
 .ac-nav a:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
@@ -8794,7 +9289,7 @@ svg:hover .hb-xh{opacity:1}
 .ac-nav a svg{width:16px;height:16px;flex:none;opacity:.85}
 .ac-nav .hint{margin:14px 12px 0;font-size:13px;color:var(--ink3);line-height:1.5}
 
-.ac-section{scroll-margin-top:84px;margin-bottom:44px}
+.ac-section{scroll-margin-top:calc(var(--cav-chrome) + 16px);margin-bottom:44px}
 .ac-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--ac-line)}
 .ac-h h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005em}
 .ac-h p{margin:5px 0 0;font-size:15px;color:var(--ink3);max-width:60ch}
@@ -8945,7 +9440,7 @@ svg:hover .hb-xh{opacity:1}
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width:1000px){
   .ac-body{grid-template-columns:1fr;gap:18px}
-  .ac-nav{position:sticky;top:56px;z-index:5;display:flex;gap:4px;overflow-x:auto;padding:8px 0;margin:0 -4px;background:var(--paper);border-bottom:1px solid var(--ac-line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .ac-nav{position:sticky;top:var(--cav-chrome);z-index:5;display:flex;gap:4px;overflow-x:auto;padding:8px 0;margin:0 -4px;background:var(--paper);border-bottom:1px solid var(--ac-line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .ac-nav::-webkit-scrollbar{display:none}
   .ac-nav a{flex:none;border-left:none;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;padding:8px 12px}
   .ac-nav a[aria-current="true"]{border-left-color:transparent;border-bottom-color:var(--ember);background:transparent}
@@ -9017,7 +9512,7 @@ svg:hover .hb-xh{opacity:1}
 <div class="ac-page">
 
   <!-- ══════════════ OVERVIEW ══════════════ -->
-  <section class="ac-section" id="acct-overview" aria-labelledby="acct-overview-h" style="margin-bottom:0">
+  <section class="ac-section" id="acct-overview" data-nav="account/overview" aria-labelledby="acct-overview-h" style="margin-bottom:0">
     <div class="ac-hero">
       <div class="ac-hero-top">
         <div class="ac-logo" aria-hidden="true">
@@ -9074,24 +9569,24 @@ svg:hover .hb-xh{opacity:1}
   <div class="ac-body">
     <!-- ══════════════ SECTION RAIL ══════════════ -->
     <nav class="ac-nav" id="ac-nav" aria-label="Account sections">
-      <a href="#acct-overview" data-go="overview"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Overview</a>
-      <a href="#acct-restaurant" data-go="restaurant"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-4 6 4v6H2z"/><path d="M6 13V9h4v4"/></svg>Restaurant</a>
-      <a href="#acct-people" data-go="people"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="11.5" cy="6" r="2"/><path d="M11 9.5c2 0 3.5 1.3 3.5 3.5"/></svg>People</a>
-      <a href="#acct-billing" data-go="billing"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M1.5 7h13"/></svg>Billing</a>
-      <a href="#acct-notifications" data-go="notifications"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11V7a4 4 0 018 0v4l1 1H3z"/><path d="M6.5 13.5a1.5 1.5 0 003 0"/></svg>Notifications</a>
-      <a href="#acct-automation" data-go="automation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.6 3.4 3.7.4-2.8 2.5.8 3.7L8 9.6l-3.3 1.9.8-3.7L2.7 5.3l3.7-.4z"/></svg>Automation &amp; AI</a>
-      <a href="#acct-integrations" data-go="integrations"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 10L3.5 12.5a2 2 0 01-2.8-2.8L4 7"/><path d="M10 6l2.5-2.5a2 2 0 012.8 2.8L12 9"/><path d="M5.5 10.5l5-5"/></svg>Integrations</a>
-      <a href="#acct-security" data-go="security"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l2 2 3-3.5"/></svg>Security</a>
-      <a href="#acct-appearance" data-go="appearance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 010 12z" fill="currentColor" stroke="none"/></svg>Appearance</a>
-      <a href="#acct-data" data-go="data"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>Data &amp; privacy</a>
-      <a href="#acct-support" data-go="support"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 013.7.5c0 1.2-1.9 1.4-1.9 2.6"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg>Support</a>
+      <a href="#account/overview" data-go="overview"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Overview</a>
+      <a href="#account/restaurant" data-go="restaurant"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-4 6 4v6H2z"/><path d="M6 13V9h4v4"/></svg>Restaurant</a>
+      <a href="#account/people" data-go="people"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="11.5" cy="6" r="2"/><path d="M11 9.5c2 0 3.5 1.3 3.5 3.5"/></svg>People</a>
+      <a href="#account/billing" data-go="billing"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M1.5 7h13"/></svg>Billing</a>
+      <a href="#account/notifications" data-go="notifications"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11V7a4 4 0 018 0v4l1 1H3z"/><path d="M6.5 13.5a1.5 1.5 0 003 0"/></svg>Notifications</a>
+      <a href="#account/automation" data-go="automation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.6 3.4 3.7.4-2.8 2.5.8 3.7L8 9.6l-3.3 1.9.8-3.7L2.7 5.3l3.7-.4z"/></svg>Automation &amp; AI</a>
+      <a href="#account/integrations" data-go="integrations"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 10L3.5 12.5a2 2 0 01-2.8-2.8L4 7"/><path d="M10 6l2.5-2.5a2 2 0 012.8 2.8L12 9"/><path d="M5.5 10.5l5-5"/></svg>Integrations</a>
+      <a href="#account/security" data-go="security"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l2 2 3-3.5"/></svg>Security</a>
+      <a href="#account/appearance" data-go="appearance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 010 12z" fill="currentColor" stroke="none"/></svg>Appearance</a>
+      <a href="#account/data" data-go="data"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>Data &amp; privacy</a>
+      <a href="#account/support" data-go="support"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 013.7.5c0 1.2-1.9 1.4-1.9 2.6"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg>Support</a>
       <div class="hint">Everything here is also in the iPhone app under Account.</div>
     </nav>
 
     <div>
 
     <!-- ══════════════ RESTAURANT ══════════════ -->
-    <section class="ac-section" id="acct-restaurant" aria-labelledby="acct-restaurant-h">
+    <section class="ac-section" id="acct-restaurant" data-nav="account/restaurant" aria-labelledby="acct-restaurant-h">
       <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2><p>Who you are, how to reach you, and the facts the AI writes from.</p></div>
         <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button></div>
 
@@ -9215,7 +9710,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ PEOPLE ══════════════ -->
-    <section class="ac-section" id="acct-people" aria-labelledby="acct-people-h">
+    <section class="ac-section" id="acct-people" data-nav="account/people" aria-labelledby="acct-people-h">
       <div class="ac-h"><div><h2 id="acct-people-h">People</h2><p>Two kinds of access. Teammates sign in to this dashboard; employees sign in to the staff portal with a PIN and see only their own shifts and tasks.</p></div></div>
 
       <div class="ac-grid">
@@ -9283,7 +9778,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ BILLING ══════════════ -->
-    <section class="ac-section" id="acct-billing" aria-labelledby="acct-billing-h">
+    <section class="ac-section" id="acct-billing" data-nav="account/billing" aria-labelledby="acct-billing-h">
       <div class="ac-h"><div><h2 id="acct-billing-h">Billing &amp; subscription</h2><p>Your plan, what&rsquo;s included, and what happens next.</p></div></div>
       <div class="ac-card" id="acct-pause-card" hidden>
         <div class="ac-card-h"><div><h3>Need a break?</h3><p>Pause billing and the daily briefs for a while. Your data keeps flowing, so the day you come back the brief is current.</p></div></div>
@@ -9327,7 +9822,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ NOTIFICATIONS ══════════════ -->
-    <section class="ac-section" id="acct-notifications" aria-labelledby="acct-notifications-h">
+    <section class="ac-section" id="acct-notifications" data-nav="account/notifications" aria-labelledby="acct-notifications-h">
       <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2><p>What reaches you, how, and when. Alerts are near-real-time; the digest is a weekly summary.</p></div></div>
       <div class="ac-grid">
         <div class="ac-card">
@@ -9393,7 +9888,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ AUTOMATION & AI ══════════════ -->
-    <section class="ac-section" id="acct-automation" aria-labelledby="acct-automation-h">
+    <section class="ac-section" id="acct-automation" data-nav="account/automation" aria-labelledby="acct-automation-h">
       <div class="ac-h"><div><h2 id="acct-automation-h">Automation &amp; AI</h2><p>What the AI is allowed to do on its own, and how it sounds when it speaks for you.</p></div></div>
       <div class="ac-grid" id="account-settings-card">
         <div class="ac-card">
@@ -9427,7 +9922,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ INTEGRATIONS ══════════════ -->
-    <section class="ac-section" id="acct-integrations" aria-labelledby="acct-integrations-h">
+    <section class="ac-section" id="acct-integrations" data-nav="account/integrations" aria-labelledby="acct-integrations-h">
       <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to. A connection that stops syncing says so here.</p></div></div>
       <div class="ac-grid">
         <div class="ac-conn">
@@ -9508,7 +10003,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ SECURITY ══════════════ -->
-    <section class="ac-section" id="acct-security" aria-labelledby="acct-security-h">
+    <section class="ac-section" id="acct-security" data-nav="account/security" aria-labelledby="acct-security-h">
       <div class="ac-h"><div><h2 id="acct-security-h">Security</h2><p>How this account is protected, and what&rsquo;s been happening on it.</p></div></div>
       <div class="ac-card" id="acct-memory-card">
         <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
@@ -9582,7 +10077,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ APPEARANCE ══════════════ -->
-    <section class="ac-section" id="acct-appearance" aria-labelledby="acct-appearance-h">
+    <section class="ac-section" id="acct-appearance" data-nav="account/appearance" aria-labelledby="acct-appearance-h">
       <div class="ac-h"><div><h2 id="acct-appearance-h">Appearance</h2><p>Saved to this browser.</p></div></div>
       <div class="ac-card">
         <div class="ac-rows">
@@ -9592,7 +10087,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ DATA & PRIVACY ══════════════ -->
-    <section class="ac-section" id="acct-data" aria-labelledby="acct-data-h">
+    <section class="ac-section" id="acct-data" data-nav="account/data" aria-labelledby="acct-data-h">
       <div class="ac-h"><div><h2 id="acct-data-h">Data &amp; privacy</h2><p>Your data is yours. Take a copy, decide how long we keep it, or close the account.</p></div></div>
       <div class="ac-grid">
         <div class="ac-card">
@@ -9620,7 +10115,7 @@ svg:hover .hb-xh{opacity:1}
     </section>
 
     <!-- ══════════════ SUPPORT ══════════════ -->
-    <section class="ac-section" id="acct-support" aria-labelledby="acct-support-h" style="margin-bottom:0">
+    <section class="ac-section" id="acct-support" data-nav="account/support" aria-labelledby="acct-support-h" style="margin-bottom:0">
       <div class="ac-h"><div><h2 id="acct-support-h">Support</h2><p>A person, not a queue.</p></div></div>
       <div class="ac-grid">
         <div class="ac-card accent">
@@ -10089,8 +10584,19 @@ function _appendAskCavnarEvidence(d) {
   messages.scrollTop = messages.scrollHeight;
 }
 
+/* The confirm card, on any surface - Ask's chat, the command palette, Home's
+   Publish (Friction audit #10, #14): one renderer, so every outward send
+   reads the same way. cavPropCard(p, host, {onDone}) appends it to 'host';
+   Confirm posts only the fields it showed, through the same route the UI
+   button uses, and records the answer on THIS proposal (proposal_id). */
 function _appendAskCavnarProposal(p) {
   var messages = document.getElementById('ask-cavnar-messages');
+  cavPropCard(p, messages);
+  messages.scrollTop = messages.scrollHeight;
+}
+function cavPropCard(p, host, opts) {
+  opts = opts || {};
+  var messages = host;
   var card = document.createElement('div');
   card.className = 'ask-prop';
   var title = document.createElement('div');
@@ -10150,7 +10656,8 @@ function _appendAskCavnarProposal(p) {
   var confirm = document.createElement('button');
   confirm.className = 'cbtn cbtn-primary cbtn-sm';
   confirm.textContent = 'Confirm';
-  confirm.onclick = function() { _runAskCavnarProposal(p, card, confirm); };
+  confirm.setAttribute('data-prop-confirm', '1');
+  confirm.onclick = function() { _runAskCavnarProposal(p, card, confirm, opts.onDone); };
   var dismiss = document.createElement('button');
   dismiss.className = 'cbtn cbtn-secondary cbtn-sm';
   dismiss.textContent = 'Not now';
@@ -10159,7 +10666,7 @@ function _appendAskCavnarProposal(p) {
   row.appendChild(dismiss);
   card.appendChild(row);
   messages.appendChild(card);
-  messages.scrollTop = messages.scrollHeight;
+  return card;
 }
 
 function _askCavnarDismissWithReason(p, card, row) {
@@ -10274,7 +10781,7 @@ function _askShownBody(p) {
   return out;
 }
 
-function _runAskCavnarProposal(p, card, btn) {
+function _runAskCavnarProposal(p, card, btn, onDone) {
   btn.disabled = true;
   btn.textContent = 'Working…';
   var route = (p.route && p.route.web) || '';
@@ -10288,10 +10795,11 @@ function _runAskCavnarProposal(p, card, btn) {
     if (d.ok && d.job_id && p.route && p.route.status && p.route.status.web) {
       /* The route only STARTED a background job (a schedule build, a
          competitor refresh). Done means the job finished, as on iOS. */
-      _pollAskCavnarJob(p, card, btn, p.route.status.web + encodeURIComponent(d.job_id));
+      _pollAskCavnarJob(p, card, btn, p.route.status.web + encodeURIComponent(d.job_id), onDone);
     } else if (d.ok) {
       _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
+      if (typeof onDone === 'function') onDone(d);
     } else {
       btn.disabled = false; btn.textContent = 'Confirm';
       var err = document.createElement('div');
@@ -10311,7 +10819,7 @@ function _runAskCavnarProposal(p, card, btn) {
   });
 }
 
-function _pollAskCavnarJob(p, card, btn, statusUrl) {
+function _pollAskCavnarJob(p, card, btn, statusUrl, onDone) {
   /* Same budget as the app: 40 polls, 1.5s apart. A failed poll is not a
      failed job; only a finished answer decides it. */
   var tries = 0;
@@ -10339,6 +10847,7 @@ function _pollAskCavnarJob(p, card, btn, statusUrl) {
       if (s.ok && s.status !== 'error') {
         _recordAskCavnarAction(p, 'confirmed');
         card.innerHTML = '<div class="ok">Done ✓</div>';
+        if (typeof onDone === 'function') onDone(s);
       } else {
         fail(s.error || "That didn't finish. Open the module to see where it stopped.");
       }
@@ -10578,7 +11087,15 @@ function toggleRows(tbodyId, btnId, total) {
     btn.setAttribute('data-expanded', '0');
   }
 }
-function toast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
+// toast(msg, type, action): 'action' {label:'Undo', fn} puts one button in
+// the toast and keeps it up for 7s instead of 3.6s - the reversible tier of
+// the confirm/undo policy (DESIGN_SYSTEM.md §10, Friction audit #10): act at
+// once, offer the way back. The button runs fn once and closes the toast.
+function toast(msg,type,action){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);
+  if(action&&typeof action.fn==='function'){var b=document.createElement('button');b.type='button';b.className='cbtn cbtn-text cbtn-inline cbtn-sm toast-act';b.textContent=action.label||'Undo';
+    b.onclick=function(){if(b.disabled)return;b.disabled=true;t.classList.remove('show');if(_toastTimer){clearTimeout(_toastTimer);_toastTimer=null;}action.fn();};
+    t.appendChild(b);t.classList.add('has-act');}
+  void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},(action&&action.fn)?7000:3600);}
 
 /* ── Cavnar motion language: markup builders + the per-frame engine ──
    Same seal geometry as brand/assets/seal-color.svg and the iOS
@@ -11704,9 +12221,18 @@ function setPageBg(n){
   // no per-page state left to set. Kept (rather than removing it and every
   // call site) as the seam if a future need re-adds page-aware chrome.
 }
+// A read that is still good for a while (Friction audit #35): true, and
+// stamped, when 'key' was last loaded more than 'ms' ago (default 5 min) -
+// the Home pattern (hbRefresh) for the panels that refetched on every visit.
+var _cavLoadedAt={};
+function cavStale(key,ms){var now=Date.now();if(_cavLoadedAt[key]&&now-_cavLoadedAt[key]<(ms||300000))return false;_cavLoadedAt[key]=now;return true;}
 function switchTab(n,btn){
   setPageBg(n);
   if(window.cavnarMountOrbs)setTimeout(function(){cavnarMountOrbs(document);},0);
+  // Each panel keeps its own scroll position (#29): the one being left is
+  // remembered, the one being opened is put back where it was.
+  var _was=document.querySelector('.panel.active'),_same=!!(_was&&_was.id==='panel-'+n);
+  if(_was&&!_same&&window.cavScrollSave)cavScrollSave(_was.id);
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');t.setAttribute('aria-selected','false');});
   var _swPanel = document.getElementById('panel-'+n);
@@ -11730,62 +12256,22 @@ function switchTab(n,btn){
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
-  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();}
+  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'&&window.acctOnOpen){acctOnOpen();}
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
+  // Recent topics load from the metrics poller's first tick (refreshMetrics);
+  // a direct call here too fetched them twice on every visit (#35).
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
-  history.replaceState(null,null,'#'+n);
+  // A panel's benchmark card loads on its first visit, not all four at page load (#35).
+  if(window.cavBench&&cavBench.fillPanel)cavBench.fillPanel(_swPanel);
+  if(window.cavRailBuild)cavRailBuild(_swPanel);
+  // A step Back can return to (#8): the router pushes, replaces inside one
+  // navigation, and writes nothing while it is routing Back itself.
+  if(window.cavHistory)cavHistory('#'+n);else history.replaceState(null,null,'#'+n);
+  if(!_same&&window.cavScrollRestore)cavScrollRestore('panel-'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
 }
-// Nav paths (Friction audit, 9/25/26): one address for every place and
-// item, the same string the server sends on attention items, the action
-// queue, notifications and command results (nav.py) and iOS opens
-// (NavPath.swift). "reviews?filter=urgent", "review/412", "labor/schedule",
-// "person/dana-k". A module registers what it can focus with
-// cavNavRegister(head, fn); fn gets {head, rest, query, raw} and returns
-// false to fall back. Anything unknown opens its module, else Home. ES5.
-var _cavNavHandlers = {};
-var CAV_NAV_MODULE = {review:'reviews', schedule:'labor', person:'labor', invoice:'inventory', order:'inventory',
-                      issue:'home', request:'labor', action:'home', location:'home'};
-var CAV_NAV_TAB = {home:'home', reviews:'reviews', labor:'labor', inventory:'inventory', food:'inventory',
-                   marketing:'marketing', intel:'competitor', competitor:'competitor', account:'account'};
-function cavNavRegister(head, fn) { _cavNavHandlers[String(head).toLowerCase()] = fn; }
-function cavNavParse(path) {
-  var raw = String(path || '').replace(/^#/, '').trim();
-  if (!raw) return null;
-  var qi = raw.indexOf('?'), base = qi >= 0 ? raw.slice(0, qi) : raw, qs = qi >= 0 ? raw.slice(qi + 1) : '';
-  var segs = base.split('/'), query = {};
-  for (var i = 0; i < segs.length; i++) { try { segs[i] = decodeURIComponent(segs[i]); } catch (e) {} }
-  if (qs) {
-    var pairs = qs.split('&');
-    for (var j = 0; j < pairs.length; j++) {
-      var kv = pairs[j].split('='), k = kv[0], v = kv.length > 1 ? kv.slice(1).join('=') : '';
-      try { query[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); } catch (e2) { query[k] = v; }
-    }
-  }
-  var head = (segs[0] || '').toLowerCase();
-  return {raw: raw, head: head, rest: segs.slice(1), query: query, module: CAV_NAV_MODULE[head] || head};
-}
-function cavNavOpenModule(module) {
-  var tab = CAV_NAV_TAB[module] || 'home', btn = document.getElementById('tab-' + tab);
-  if (!btn) { tab = 'home'; btn = document.getElementById('tab-home'); }
-  if (btn && typeof switchTab === 'function') switchTab(tab, btn);
-  return tab;
-}
-function cavNav(path) {
-  var p = cavNavParse(path);
-  if (!p) return false;
-  var fn = _cavNavHandlers[p.head];
-  if (fn) { try { if (fn(p) !== false) return true; } catch (e) {} }
-  cavNavOpenModule(p.module);
-  // A section anchor inside the module: any element with data-nav="<path>".
-  var sec = p.rest.length ? document.querySelector('[data-nav="' + p.head + '/' + p.rest[0] + '"]') : null;
-  if (sec && sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
-  else window.scrollTo(0, 0);
-  return true;
-}
-window.cavNav = cavNav; window.cavNavRegister = cavNavRegister; window.cavNavParse = cavNavParse;
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
   // Tab indicator — position on active tab without animation
@@ -11800,9 +12286,19 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   })();
 
+  // The address restores through the router, so a sub-location survives a
+  // reload: #labor/schedule, #account/notifications, #reviews?filter=urgent,
+  // #dsr/2026-09-24, #recs (Friction audit #8, #33). An address the router
+  // doesn't know leaves the page on its server-rendered panel.
   var hash = window.location.hash.replace('#','');
+  var _np = hash && window.cavNavParse ? cavNavParse(hash) : null;
   var btn = hash ? document.getElementById('tab-'+hash) : null;
-  if(btn){ switchTab(hash, btn); }
+  if(_np&&(CAV_NAV_TAB[_np.head]||_cavNavHandlers[_np.head])){
+    _cavHist.routed=window.location.hash;
+    cavNav(hash,{replace:true});
+    btn=document.getElementById('tab-'+(CAV_NAV_TAB[_np.head]||'home'))||true;
+  }
+  else if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
     loadReviewInsight(); loadSentimentTrend(); loadTopicHeatmap();
     // Animate default reviews panel
@@ -12558,6 +13054,51 @@ function approveR(id){
 // partial the first page came from, so there is no second copy of the card
 // markup here to drift out of sync.
 var _rvOffset = null;
+// The inbox re-read in place (Friction audit #34): the first page from
+// /api/reviews/page swapped into the list, so approving everything,
+// retracting a reply or the new-reviews banner no longer reloads the whole
+// dashboard - scroll, open editors elsewhere and the Ask panel stay put.
+// The first page is the unfiltered one the server renders on load; the
+// current pill and search then apply as usual (filterReviews).
+function rvReloadInbox(done){
+  var list=document.querySelector('#rv-inbox-reviews .rv2-list'),wrap=document.getElementById('rv-more-wrap');
+  if(!list){window.location.reload();return;}
+  fetch('/api/reviews/page?offset=0&filter=all',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok){toast((d&&d.error)||'Couldn\u2019t refresh the inbox','error');return;}
+    var holder=document.createElement('div');holder.innerHTML=d.html||'';
+    list.innerHTML='';
+    while(holder.firstElementChild){var el=holder.firstElementChild;el.classList.add('revealed');list.appendChild(el);}
+    _rvOffset=d.offset;
+    var shownEl=document.getElementById('rv-shown-n');
+    if(shownEl)shownEl.textContent=document.querySelectorAll('#rv-inbox-reviews .rv2-row').length;
+    if(wrap)wrap.style.display=d.has_more?'':'none';
+    filterReviews();
+    if(typeof updateReviewStats==='function')updateReviewStats();
+    if(done)done();
+  }).catch(function(){toast('Couldn\u2019t refresh the inbox \u2014 check your connection.','error');});
+}
+window.rvReloadInbox=rvReloadInbox;
+function rvBannerRefresh(el){rvReloadInbox(function(){if(el)el.style.display='none';});}
+// A server-rendered section re-read in place (#34): the page is fetched
+// and only the named elements are swapped, their inline scripts re-run.
+// Anything missing from the answer (a signed-out session, a moved panel)
+// falls back to the full reload the caller used to do.
+function cavRefreshFromServer(ids,done){
+  fetch(window.location.pathname,{credentials:'same-origin'}).then(function(r){
+    if(!r.ok||r.redirected)throw new Error('reload');return r.text();
+  }).then(function(html){
+    var doc=new DOMParser().parseFromString(html,'text/html'),i;
+    for(i=0;i<ids.length;i++){if(!document.getElementById(ids[i])||!doc.getElementById(ids[i]))throw new Error('reload');}
+    for(i=0;i<ids.length;i++){
+      var cur=document.getElementById(ids[i]);cur.innerHTML=doc.getElementById(ids[i]).innerHTML;
+      var ss=cur.querySelectorAll('script');
+      for(var j=0;j<ss.length;j++){var n=document.createElement('script');n.text=ss[j].text;ss[j].parentNode.replaceChild(n,ss[j]);}
+    }
+    if(window.cavnarMountOrbs)cavnarMountOrbs(document);
+    if(done)done();
+  }).catch(function(){window.location.reload();});
+}
+window.cavRefreshFromServer=cavRefreshFromServer;
 function loadMoreReviews(btn){
   var wrap=document.getElementById('rv-more-wrap');
   var list=document.querySelector('#rv-inbox-reviews .rv2-list');
@@ -13343,9 +13884,11 @@ function loadRecentTopics(){
 var _metricsPoller=null;
 function refreshMetrics(){
   if(document.hidden)return;   // a background tab skips the tick (CLIENT-37)
+  // The first tick loads the topics even when the insights refresh fails -
+  // switchTab no longer calls loadRecentTopics itself (Friction audit #35).
   fetch('/api/post-insights').then(apiJson).then(function(d){
-    if(d.ok)loadRecentTopics();
-  }).catch(function(){});
+    if(d.ok||!window._mktTopicsOnce){window._mktTopicsOnce=true;loadRecentTopics();}
+  }).catch(function(){if(!window._mktTopicsOnce){window._mktTopicsOnce=true;loadRecentTopics();}});
 }
 function startMetricsPoller(){
   if(_metricsPoller)return;
@@ -18681,7 +19224,7 @@ function refreshCompetitorIntel(btn){
       fetch('/api/competitor-intel-status/'+jobId).then(apiJson).then(function(s){
         if(s.status === 'pending'){setTimeout(poll, 2000);return;}
         _resetBtn();
-        if(s.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
+        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
         else{toast('Error: '+(s.error||'failed'),'error');}
       }).catch(function(){setTimeout(poll, 2000);});
     };
@@ -19102,6 +19645,18 @@ document.addEventListener('click', function(e) {
 function checkTabParam(){
   var params=new URLSearchParams(window.location.search);
   var tab=params.get('tab');
+  // A link from outside - an alert email's "Reply now" (?review=<id>,
+  // notify.alert_url) or any ?nav=<path> - opens the item itself, not its
+  // module's top (Friction audit #1). The parameter is then dropped from
+  // the address so a reload doesn't reopen it over whatever came next.
+  var navp=params.get('nav'),rv=params.get('review');
+  if((navp||rv)&&window.cavNav){
+    params['delete']('nav');params['delete']('review');
+    var qs=params.toString();
+    if(window.history&&history.replaceState)history.replaceState(null,null,window.location.pathname+(qs?'?'+qs:'')+window.location.hash);
+    cavNav(navp||('review/'+encodeURIComponent(rv)),{replace:true});
+    return true;
+  }
   if(tab){
     var btn=document.getElementById('tab-'+tab);
     if(btn){switchTab(tab,btn); return true;}
@@ -19721,17 +20276,24 @@ function revokeOtherSessions(btn){
     });
   };
 
+  // Reversible (add it again), so no dialog: removed at the end of the Undo
+  // window (cavUndoable, DESIGN_SYSTEM.md §10).
   window.deleteWebhook = function() {
-    if (!confirm('Remove this webhook?')) return;
-    fetch('/api/webhook', {method: 'DELETE'}).then(apiJson).then(function(d){
-      if (d.ok) {
-        document.getElementById('webhook-config').style.display = 'none';
-        document.getElementById('webhook-url').value = '';
-        document.getElementById('wh-test-btn').style.display = 'none';
-        document.getElementById('wh-delete-btn').style.display = 'none';
-        showWhStatus('Webhook removed.', 'var(--ink3)');
-      }
-    });
+    var cfg = document.getElementById('webhook-config');
+    if (cfg) cfg.style.display = 'none';
+    cavUndoable('Webhook removed', function(){
+      fetch('/api/webhook', {method: 'DELETE'}).then(apiJson).then(function(d){
+        if (d.ok) {
+          document.getElementById('webhook-url').value = '';
+          document.getElementById('wh-test-btn').style.display = 'none';
+          document.getElementById('wh-delete-btn').style.display = 'none';
+          showWhStatus('Webhook removed.', 'var(--ink3)');
+        } else {
+          if (cfg) cfg.style.display = '';
+          toast(d.error || 'Could not remove the webhook', 'error');
+        }
+      });
+    }, function(){ if (cfg) cfg.style.display = ''; });
   };
 
   // ── Food Cost: dish scorecard, reprice suggestions, invoice scanning ──────
@@ -20377,6 +20939,10 @@ document.addEventListener('click', function(e) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({type: n.type})
     }).catch(function(){});
+    // Where the row is about (nav.py): the review, the held schedule, Ask
+    // on the brief's question, the issue on Home - the same place the push
+    // opens on iOS (Friction audit #2). An older server's row has none.
+    if (n.nav && window.cavNav) { cavNav(n.nav); return; }
     if (n.module === 'ask') {
       if (typeof switchTab === 'function') {
         var ab = document.getElementById('tab-home');
@@ -20685,18 +21251,24 @@ function insertTemplate(tid, body) {
 function saveAsTemplate(reviewId) {
   var ta = document.getElementById('editor-text-' + reviewId);
   if (!ta || !ta.value.trim()) { toast('Nothing to save — write a response first','warning'); return; }
-  var title = prompt('Template name (e.g. "Positive 5-star standard"):');
-  if (!title || !title.trim()) return;
-  fetch('/api/templates', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({title: title.trim(), body: ta.value.trim()})
-  }).then(apiJson).then(function(d){
-    if (d.ok) {
-      _tmplCache = null; // invalidate cache
-      toast('Template saved ✓','success');
-    } else {
-      toast('Error: ' + (d.error||'Failed'),'error');
+  // An inline field under the reply, not a browser prompt() (Friction audit #42).
+  cField(document.querySelector('[onclick="saveAsTemplate(' + reviewId + ')"]') || ta, {
+    after: ta, label: 'Template name', placeholder: 'e.g. Positive 5-star standard', save: 'Save template',
+    onSave: function(title, done){
+      if (!title || !title.trim()) { done('Give it a name you’ll recognise.'); return; }
+      fetch('/api/templates', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({title: title.trim(), body: ta.value.trim()})
+      }).then(apiJson).then(function(d){
+        if (d.ok) {
+          _tmplCache = null; // invalidate cache
+          done();
+          toast('Template saved ✓','success');
+        } else {
+          done(d.error || 'Couldn’t save that template.');
+        }
+      }).catch(function(){ done('Couldn’t reach Cavnar AI — check your connection.'); });
     }
   });
 }
@@ -21046,7 +21618,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
     jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never'),menu_notes:v('pe-menu')},function(d){
       done();
-      if(d.ok){toast('Profile saved','success');setTimeout(function(){location.reload();},700);}
+      if(d.ok){toast('Profile saved','success');cavRefreshFromServer(['acct-restaurant'],function(){if(window.acctHealthRefresh)acctHealthRefresh();});}
       else toast(d.error||'Could not save','error');
     });
   };
@@ -21180,8 +21752,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           // number you don't recognise next to a name you do is the signal.
           if(s.self_signup)bits.push('signed up '+ago(s.claimed_at)+' · '+esc(_phone(s.claimed_by_phone)));
           var meta=bits.length?' <span style="color:var(--ink3)">· '+bits.join(' · ')+'</span>':'';
-          var acts='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
-                 + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
+          var acts='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cur="'+esc(s.name||'')+'" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
+                 + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cur="'+esc(s.job_role||'')+'" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="resetStaffPin('+s.membership_id+',this)">New PIN</button>';
           if(s.locked)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlockStaff('+s.membership_id+',this)">Unlock</button>';
           if(s.active){
@@ -21191,7 +21763,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           } else {
             acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',true,this)">Restore</button>';
           }
-          return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--paper3);flex-wrap:wrap">'
+          return '<div class="cav-field-row" style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--paper3);flex-wrap:wrap">'
                + '<span><span style="color:var(--ink);font-weight:600">'+esc(s.name||'')+'</span>'+meta+'</span>'
                + '<span style="display:flex;gap:4px;flex-wrap:wrap">'+acts+'</span></div>';
         }).join('');
@@ -21258,33 +21830,33 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       else toast(d.error||'Could not save that','error');
     });
   }
+  // Inline fields with the current value in them, not prompt() with a blank
+  // one (Friction audit #42): fixing one letter of a name no longer means
+  // retyping all of it.
   window.renameStaff=function(id,btn){
     // The name is the join key to shifts, ratings and availability, so this
     // is the fix for a typo that silently detaches someone from their own
     // history — say so rather than presenting it as cosmetic.
-    var name=prompt('Their name, spelled the way it appears on the schedule:');
-    if(name===null||!name.trim())return;
-    _patchStaff(id,{employee_name:name.trim()},btn,'Name updated');
+    cField(btn,{label:'Their name, spelled the way it appears on the schedule',value:btn.getAttribute('data-cur')||'',save:'Save name',
+      onSave:function(name,done){if(!name.trim()){done('Enter their name.');return;}done();_patchStaff(id,{employee_name:name.trim()},btn,'Name updated');}});
   };
   window.retitleStaff=function(id,btn){
-    var job=prompt('Their job (this decides which task checklist they see):');
-    if(job===null)return;
-    _patchStaff(id,{job_role:job.trim()},btn,'Job updated');
+    cField(btn,{label:'Their job (this decides which task checklist they see)',value:btn.getAttribute('data-cur')||'',save:'Save job',
+      onSave:function(job,done){done();_patchStaff(id,{job_role:job.trim()},btn,'Job updated');}});
   };
   window.setStaffActive=function(id,active,btn){
     if(!active&&!confirm('Deactivate this employee? They’ll be signed out of the staff portal right away.'))return;
     _patchStaff(id,{active:active},btn,active?'Reactivated':'Deactivated');
   };
   window.resetStaffPin=function(id,btn){
-    var pin=prompt('New PIN (4–8 digits). Read it to them — it isn’t emailed.');
-    if(pin===null)return;
-    if(!/^[0-9]{4,8}$/.test(pin.trim())){toast('A PIN is 4–8 digits','error');return;}
-    var done=busy(btn,'…');
-    jsend('/api/account/staff/'+id+'/pin',{pin:pin.trim()},function(d){
-      done();
-      if(d.ok){toast('PIN set — they’re signed out until they use it','success');loadStaff();}
-      else toast(d.error||'Could not set that PIN','error');
-    });
+    cField(btn,{label:'New PIN (4–8 digits)',hint:'Read it to them — it isn’t emailed.',inputmode:'numeric',save:'Set PIN',
+      onSave:function(pin,close){
+        if(!/^[0-9]{4,8}$/.test(pin.trim())){close('A PIN is 4–8 digits.');return;}
+        jsend('/api/account/staff/'+id+'/pin',{pin:pin.trim()},function(d){
+          if(d.ok){close();toast('PIN set — they’re signed out until they use it','success');loadStaff();}
+          else close(d.error||'Could not set that PIN');
+        });
+      }});
   };
   window.unlinkStaff=function(id,btn){
     if(!confirm('Take this name back? Whoever claimed it is signed out, the name goes back on the list for the right person, and that phone can’t claim it again.'))return;
@@ -21343,7 +21915,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/reviews/approve-all',{limit:25},function(d){done();
       if(!d.ok){toast(d.error||'Could not publish','error');return;}
       var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
-      setTimeout(function(){location.reload();},900);});
+      // Re-read in place, not a page reload (Friction audit #34).
+      if(window.rvReloadInbox)rvReloadInbox();
+      if(typeof window.hbLoad==='function')window.hbLoad(true);});
   };
 
   // ── Ask Cavnar history ──
@@ -21380,9 +21954,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
     });
   };
+  // Reversible, so no dialog: the chat leaves the list at once and the
+  // delete waits out the Undo window (cavUndoable, DESIGN_SYSTEM.md §10).
   window.askDeleteConversation=function(id){
-    if(!confirm('Delete this chat?'))return;
-    jsend('/api/ask-cavnar/conversations/'+id,{},function(d){if(!d.ok){toast(d.error||'Could not delete','error');return;}if(window._askConversationId===id){window._askConversationId=null;_askCavnarHistory=[];}askRefreshConversations(true);},'DELETE');
+    var b=document.querySelector('[onclick="askDeleteConversation('+id+')"]'),row=b&&b.parentNode;
+    if(row)row.style.display='none';
+    cavUndoable('Chat deleted',function(){
+      jsend('/api/ask-cavnar/conversations/'+id,{},function(d){if(!d.ok){if(row)row.style.display='';toast(d.error||'Could not delete','error');return;}if(window._askConversationId===id){window._askConversationId=null;_askCavnarHistory=[];}askRefreshConversations(true);},'DELETE');
+    },function(){if(row)row.style.display='';});
   };
 
   // ── Intel ──
@@ -21407,7 +21986,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
         fetch('/api/competitor-intel-status/'+d.job_id).then(apiJson).then(function(s){
           if(s.status==='pending'){setTimeout(poll,2000);return;}
-          if(s.ok){toast('Competitors updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
+          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
           else toast(s.error||'Refresh failed','error');
         }).catch(function(){setTimeout(poll,2000);});})();
     });
@@ -21421,19 +22000,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       intelRefreshThenReload();
     });
   };
+  // Reversible (they can be tracked again), so no dialog: the row goes at
+  // once and the removal waits out the Undo window (cavUndoable).
   window.intelRemove=function(placeId,btn){
-    if(!confirm('Stop tracking this competitor?'))return;
-    var done=busy(btn,'…');
     var row=btn.closest?btn.closest('.row'):null;
-    jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){
-      done();
-      if(d.ok){
-        toast('Removed','success');
-        if(row){row.style.transition='opacity .2s ease';row.style.opacity='0';setTimeout(function(){row.remove();},200);}
-      }else{
-        toast(d.error||'Could not remove','error');
-      }
-    });
+    if(row)row.style.display='none';
+    cavUndoable('Stopped tracking them',function(){
+      jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){
+        if(d.ok){if(row)row.remove();}
+        else{if(row)row.style.display='';toast(d.error||'Could not remove','error');}
+      });
+    },function(){if(row)row.style.display='';});
   };
   window._aivRuns=[];
   window.loadAivHistory=function(){
@@ -22656,7 +23233,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // toast worth reading instead of a dead end.
     fetch('/retract/'+id,{method:'POST'}).then(function(r){
       return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
-    }).then(function(d){done();if(d.ok){toast('Reply retracted','success');setTimeout(function(){location.reload();},700);}else toast(d.error||'Could not retract','error');}).catch(function(e){done();toast((e&&e.message)||'Network error — check your connection','error');});
+    }).then(function(d){done();if(d.ok){toast('Reply retracted','success');if(window.rvReloadInbox)rvReloadInbox();else setTimeout(function(){location.reload();},700);}else toast(d.error||'Could not retract','error');}).catch(function(e){done();toast((e&&e.message)||'Network error — check your connection','error');});
   };
 
   // ── Hooks ──
@@ -22682,15 +23259,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function $(id){return document.getElementById(id);}
   function flag(name){var p=$('panel-account');return p?(p.getAttribute('data-'+name)||''):'';}
 
-  // Section rail. Smooth-scrolls without touching location.hash: the tab
-  // system owns the hash (see switchTab), and a stray '#acct-people' would
-  // break tab restore on reload.
+  // Section rail. Each section is an address of its own now (#account/
+  // notifications, Friction audit #33): the router (cavNav) owns the hash,
+  // so a reload, a link in an email or Back lands on the section. The
+  // address is replaced, not pushed - scrolling the rail is not a step Back
+  // should walk through. true when the section exists.
   window.acctGo=function(section,focusId){
     var el=$('acct-'+section);if(!el)return false;
     el.scrollIntoView({behavior:'smooth',block:'start'});
     setCurrent(section);
+    if(window.cavHistory&&$('panel-account')&&$('panel-account').classList.contains('active'))cavHistory('#account/'+section,true);
     if(focusId){setTimeout(function(){var f=$(focusId);if(f&&f.focus)f.focus({preventScroll:true});},450);}
-    return false;
+    return true;
   };
   function setCurrent(section){
     var links=document.querySelectorAll('#ac-nav a[data-go]');
@@ -22846,9 +23426,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // ── Opening the tab ──────────────────────────────────────────────────────
   // One entry point for both ways in (tab click; landing on the tab). The
   // guard collapses the corner case where both paths fire on the same load.
+  // Five minutes, like Home (Friction audit #35): flicking between Account
+  // and another tab re-drew every card from its loading state. A save
+  // re-reads what it changed itself.
   var _lazyWired=false,_openedAt=0;
   window.acctOnOpen=function(){
-    var now=Date.now();if(now-_openedAt<1500)return;_openedAt=now;
+    var now=Date.now();if(_openedAt&&now-_openedAt<5*60*1000){acctHealthRefresh();return;}_openedAt=now;
     loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();
     if(window._acctExtras)window._acctExtras();
     if(!_lazyWired){
@@ -22866,6 +23449,249 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(p&&p.classList.contains('active'))acctOnOpen();
   });
 })();
+</script>
+
+<!-- ── The command palette (⌘K / Ctrl+K / "/") ────────────────────────────
+     Friction audit #14 and #48, DESIGN_SYSTEM.md §12 "Command palette".
+     Empty, it is the day's list: what is waiting (/api/actions), one-tap
+     actions (Home's quick_actions), places and locations. Typing matches
+     places and actions (/api/command/registry, permission-filtered on the
+     server) and finds reviews, people, issues, schedules, nights and chats
+     (/api/command/search). The last row is always Ask Cavnar (Tab). An
+     action that sends opens Ask's own confirm card here; Enter never
+     confirms it - only a click or ⌘Enter does. Search and navigation make
+     no model call; free text goes to Ask's stream unchanged. -->
+<style>
+.cpal{display:none;position:fixed;inset:0;background:var(--scrim);align-items:flex-start;justify-content:center;padding:12vh 16px 16px;backdrop-filter:blur(3px)}
+.cpal-box{width:560px;max-width:100%;max-height:70vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line-hi);border-radius:16px;box-shadow:var(--elev-float);overflow:hidden}
+.cpal-in{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-hi)}
+.cpal-in input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:17px}
+.cpal-in input::placeholder{color:var(--ink3)}
+.cpal-in .k{font-size:11px;color:var(--ink3);border:1px solid var(--line-hi);border-radius:6px;padding:2px 6px;font-family:'Space Grotesk',sans-serif}
+.cpal-list{overflow-y:auto;padding:6px 0}
+.cpal-g{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:10px 16px 4px}
+.cpal .cpal-row{display:flex;width:100%;align-items:center;gap:10px;justify-content:flex-start;text-align:left;padding:9px 16px;border-radius:0;min-height:40px;color:var(--ink);font-weight:500;white-space:normal}
+.cpal .cpal-row .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cpal .cpal-row .s{display:block;font-size:12.5px;font-weight:400;color:var(--ink3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpal .cpal-row .t{font-size:11px;color:var(--ink3);white-space:nowrap}
+.cpal .cpal-row .t.out{color:var(--ember)}
+.cpal .cpal-row.on{background:var(--paper2)}
+.cpal .cpal-row.on .t{color:var(--ink2)}
+.cpal-card{padding:14px 16px}
+.cpal-card .ask-prop{max-width:none}
+.cpal-card .back{margin-bottom:10px}
+.cpal-ft{display:flex;gap:14px;flex-wrap:wrap;padding:9px 16px;border-top:1px solid var(--line-hi);font-size:11.5px;color:var(--ink3)}
+.cpal-ft b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink2)}
+.cpal-empty{padding:14px 16px;font-size:13px;color:var(--ink3)}
+.hdr-cmdk{font-family:'Space Grotesk',sans-serif!important;font-size:11.5px;color:var(--ink3);border:1px solid var(--line-hi)!important;border-radius:7px;padding:3px 8px}
+@media (max-width:520px){.cpal{padding:8px}.cpal-box{max-height:86vh}.cpal-ft{display:none}.hdr-cmdk{display:none}}
+</style>
+<div class="cpal" id="cav-palette" role="dialog" aria-modal="true" aria-label="Go to, find or do anything">
+  <div class="cpal-box">
+    <div class="cpal-in"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink3);flex-shrink:0" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="cpal-input" type="text" autocomplete="off" spellcheck="false" placeholder="Go to, find or ask anything…" aria-label="Go to, find or ask anything" aria-controls="cpal-list" aria-autocomplete="list"><span class="k">esc</span></div>
+    <div class="cpal-list" id="cpal-list" role="listbox" aria-label="Results"></div>
+    <div class="cpal-card" id="cpal-card" hidden></div>
+    <div class="cpal-ft"><span><b>↑↓</b> move</span><span><b>↵</b> open</span><span><b>Tab</b> ask Cavnar</span><span><b>⌘↵</b> confirm a card</span><span><b>esc</b> close</span></div>
+  </div>
+</div>
+<script id="cav-palette-js">
+var cavPalette = (function () {
+  var reg = null, regAt = 0, acts = null, actsAt = 0, rows = [], on = 0, q = '', timer = null, seq = 0, found = [];
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+  function score(query, fields) {
+    var best = 0;
+    for (var i = 0; i < fields.length; i++) {
+      var f = String(fields[i] || '').toLowerCase();
+      if (!f) continue;
+      if (f.indexOf(query) === 0) best = Math.max(best, 3);
+      else if (f.indexOf(' ' + query) >= 0) best = Math.max(best, 2);
+      else if (f.indexOf(query) >= 0) best = Math.max(best, 1);
+    }
+    return best;
+  }
+  /* A place whose tab this page doesn't have (a module off, a role without
+     it) is never offered, whatever the server listed. */
+  function reachable(c) {
+    if (c.kind !== 'nav' || !c.nav || !window.cavNavParse) return true;
+    var p = cavNavParse(c.nav), tab = CAV_NAV_TAB[p.head];
+    if (tab && !$('tab-' + tab)) return false;
+    if (p.head === 'account' && p.rest[0] && !$('acct-' + p.rest[0])) return false;
+    return true;
+  }
+  function loadRegistry(cb) {
+    if (reg && Date.now() - regAt < 300000) { cb(); return; }
+    fetch('/api/command/registry', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (d && d.ok) { reg = []; for (var i = 0; i < (d.commands || []).length; i++) if (reachable(d.commands[i])) reg.push(d.commands[i]); regAt = Date.now(); }
+      cb();
+    }).catch(function () { cb(); });
+  }
+  function loadActions(cb) {
+    if (acts && Date.now() - actsAt < 60000) { cb(); return; }
+    fetch('/api/actions', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (d && d.ok) { acts = d.items || []; actsAt = Date.now(); }
+      cb();
+    }).catch(function () { cb(); });
+  }
+  function row(r) { rows.push(r); return rows.length - 1; }
+  function rowHtml(i) {
+    var r = rows[i];
+    return '<button type="button" class="cbtn cbtn-text cpal-row' + (i === on ? ' on' : '') + '" role="option" aria-selected="' + (i === on) + '" data-i="' + i + '">'
+      + '<span class="l">' + esc(r.label) + (r.sub ? '<span class="s">' + esc(r.sub) + '</span>' : '') + '</span>'
+      + (r.tag ? '<span class="t' + (r.out ? ' out' : '') + '">' + esc(r.tag) + '</span>' : '') + '</button>';
+  }
+  function group(title, idxs) {
+    if (!idxs.length) return '';
+    var h = '<div class="cpal-g">' + esc(title) + '</div>';
+    for (var i = 0; i < idxs.length; i++) h += rowHtml(idxs[i]);
+    return h;
+  }
+  function tagFor(c) { return c.kind === 'action' ? (c.tier === 2 ? 'Sends · you confirm' : 'You confirm') : (c.kind === 'ask' ? 'Ask' : 'Go to'); }
+  var TYPE = {review: 'Review', person: 'Person', issue: 'Issue', schedule: 'Schedule', dsr: 'Report', chat: 'Chat', location: 'Location', place: 'Go to'};
+  function render() {
+    rows = [];
+    var list = $('cpal-list'), h = '', i, c;
+    var ql = q.toLowerCase().replace(/^\s+|\s+$/g, '');
+    if (!ql) {
+      var wait = [], one = [], go = [], locs = [];
+      for (i = 0; acts && i < acts.length && wait.length < 5; i++) {
+        var a = acts[i];
+        wait.push(row({label: a.title, sub: a.detail || '', tag: (a.action && a.action.label) || 'Open', nav: a.nav || null, module: a.module}));
+      }
+      var qa = window._hbQuick || [];
+      for (i = 0; i < qa.length; i++) {
+        c = qa[i];
+        if (c.kind === 'ask' || c.kind === 'alerts') continue;
+        if (c.kind === 'publish_replies') one.push(row({label: c.label, tag: 'Sends · you confirm', out: true, action: 'approve_all_reviews'}));
+        else if (c.nav) one.push(row({label: c.label, tag: 'Go to', nav: c.nav}));
+      }
+      for (i = 0; reg && i < reg.length; i++) {
+        c = reg[i];
+        if (c.kind === 'nav' && c.id.indexOf('location:') === 0) locs.push(row({label: c.label, tag: 'Location', nav: c.nav}));
+        else if (c.kind === 'nav' && c.label.indexOf('›') < 0 && go.length < 8) go.push(row({label: c.label, tag: 'Go to', nav: c.nav}));
+      }
+      h = group('Waiting on you', wait) + group('One tap', one) + group('Go to', go) + group('Locations', locs);
+      if (!h) h = '<div class="cpal-empty">Type a place, a person, a guest or a question.</div>';
+    } else {
+      var hits = [];
+      for (i = 0; reg && i < reg.length; i++) {
+        c = reg[i];
+        if (c.kind === 'ask') continue;
+        var sc = score(ql, [c.label].concat(c.keywords || []));
+        if (sc) hits.push({s: sc + (c.kind === 'action' ? 0.5 : 0), c: c});
+      }
+      hits.sort(function (x, y) { return y.s - x.s; });
+      var doIdx = [], goIdx = [], fIdx = [];
+      for (i = 0; i < hits.length && doIdx.length + goIdx.length < 8; i++) {
+        c = hits[i].c;
+        var r = {label: c.label, tag: tagFor(c), out: c.tier === 2, nav: c.nav, action: c.action, args: c.args};
+        if (c.kind === 'action') doIdx.push(row(r)); else goIdx.push(row(r));
+      }
+      for (i = 0; i < found.length; i++) {
+        var f = found[i];
+        if (f.type === 'place') continue;
+        fIdx.push(row({label: f.title, sub: f.subtitle || '', tag: TYPE[f.type] || 'Open', nav: f.nav}));
+      }
+      var askIdx = [row({label: 'Ask Cavnar: “' + q + '”', tag: 'Tab', ask: q})];
+      h = group('Actions', doIdx) + group('Go to', goIdx) + group('Found', fIdx) + group('Ask Cavnar', askIdx);
+    }
+    if (on >= rows.length) on = 0;
+    list.innerHTML = h;
+  }
+  function move(d) {
+    if (!rows.length) return;
+    on = (on + d + rows.length) % rows.length;
+    var bs = $('cpal-list').querySelectorAll('.cpal-row');
+    for (var i = 0; i < bs.length; i++) { var me = +bs[i].getAttribute('data-i') === on; bs[i].classList.toggle('on', me); bs[i].setAttribute('aria-selected', me ? 'true' : 'false'); if (me && bs[i].scrollIntoView) bs[i].scrollIntoView({block: 'nearest'}); }
+  }
+  function search() {
+    var mine = ++seq, ql = q.replace(/^\s+|\s+$/g, '');
+    if (ql.length < 2) { found = []; render(); return; }
+    fetch('/api/command/search?q=' + encodeURIComponent(ql), {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (mine !== seq) return;
+      found = (d && d.ok && d.results) || [];
+      render();
+    }).catch(function () {});
+  }
+  function close() { if (window.cModal) cModal.close('cav-palette'); else $('cav-palette').style.display = 'none'; }
+  function showList() { $('cpal-card').hidden = true; $('cpal-card').innerHTML = ''; $('cpal-list').hidden = false; $('cpal-input').focus(); }
+  /* An action: Ask's confirm card, built by the server with no model call,
+     shown here. Nothing is sent until its Confirm. */
+  function propose(action, args) {
+    var card = $('cpal-card');
+    $('cpal-list').hidden = true; card.hidden = false;
+    card.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
+    fetch('/api/command/propose', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: action, args: args || {}})}).then(apiJson).then(function (d) {
+      card.innerHTML = '<button type="button" class="cbtn cbtn-text cbtn-sm back">← Back</button>';
+      card.querySelector('.back').onclick = showList;
+      if (!d || !d.ok || !d.proposal) { var e = document.createElement('div'); e.className = 'load-err'; e.textContent = (d && d.error) || 'That can’t be proposed right now.'; card.appendChild(e); return; }
+      cavPropCard(d.proposal, card, {onDone: function () {
+        if (typeof window.hbLoad === 'function') window.hbLoad(true);
+        acts = null;
+      }});
+      var b = card.querySelector('[data-prop-confirm]');
+      if (b && b.focus) b.focus();
+    }).catch(function () { card.innerHTML = '<div class="load-err">Couldn’t reach Cavnar AI — check your connection.</div>'; });
+  }
+  function run(i) {
+    var r = rows[i];
+    if (!r) return;
+    if (r.action) { propose(r.action, r.args); return; }
+    close();
+    if (r.ask != null) { cavNav('ask?q=' + encodeURIComponent(r.ask)); return; }
+    if (r.nav) cavNav(r.nav);
+    else if (r.module && typeof hbOpen === 'function') hbOpen(r.module);
+  }
+  function open() {
+    if (!$('cav-palette')) return;
+    q = ''; on = 0; found = [];
+    $('cpal-input').value = '';
+    showList();
+    if (window.cModal) cModal.open('cav-palette'); else $('cav-palette').style.display = 'flex';
+    render();
+    loadRegistry(render); loadActions(render);
+    setTimeout(function () { $('cpal-input').focus(); }, 30);
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    var inp = $('cpal-input'), list = $('cpal-list');
+    if (!inp) return;
+    inp.addEventListener('input', function () {
+      q = inp.value; on = 0; render();
+      clearTimeout(timer); timer = setTimeout(search, 180);
+    });
+    inp.addEventListener('keydown', function (e) {
+      if (e.keyCode === 40) { e.preventDefault(); move(1); }
+      else if (e.keyCode === 38) { e.preventDefault(); move(-1); }
+      else if (e.keyCode === 13 && !(e.metaKey || e.ctrlKey)) { e.preventDefault(); run(on); }
+      else if (e.keyCode === 9 && q.replace(/\s/g, '')) { e.preventDefault(); close(); cavNav('ask?q=' + encodeURIComponent(q)); }
+    });
+    list.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('.cpal-row') : null;
+      if (b) run(+b.getAttribute('data-i'));
+    });
+    list.addEventListener('mousemove', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('.cpal-row') : null;
+      if (b && +b.getAttribute('data-i') !== on) { on = +b.getAttribute('data-i'); move(0); }
+    });
+    var hint = $('hdr-cmdk');
+    if (hint && !/Mac|iPhone|iPad/.test(navigator.platform || '')) hint.textContent = 'Ctrl K';
+  });
+  /* ⌘K / Ctrl+K from anywhere; "/" when not typing. ⌘Enter confirms the
+     card on screen - Enter alone never does. */
+  document.addEventListener('keydown', function (e) {
+    var k = e.key || '', inField = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable);
+    if ((e.metaKey || e.ctrlKey) && (k === 'k' || k === 'K')) { e.preventDefault(); if (window.cModal && cModal.isOpen('cav-palette')) close(); else open(); return; }
+    if (k === '/' && !inField && !e.metaKey && !e.ctrlKey && !(window.cModal && cModal.top())) { e.preventDefault(); open(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.keyCode === 13 && window.cModal && cModal.isOpen('cav-palette')) {
+      var b = document.querySelector('#cpal-card [data-prop-confirm]');
+      if (b && !b.disabled) { e.preventDefault(); b.click(); }
+    }
+  });
+  return {open: open, close: close};
+})();
+window.cavPalette = cavPalette;
 </script>
 </body>
 </html>
