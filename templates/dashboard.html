@@ -7374,8 +7374,8 @@ svg:hover .hb-xh{opacity:1}
 .rv2-analytics>summary:hover:after,.hb-results>summary:hover:after{background-color:var(--hb-tint2,rgba(200,75,47,.16))}
 /* Disclosure headings read as headings (9/25/26): the kicker and its line
    a size up, and the chevron a clear ember button, not a tiny grey glyph. */
-.rv2-analytics>summary,.hb-results>summary{font-size:15.5px;align-items:center}
-details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{font-size:15.5px!important;letter-spacing:.1em}   /* the same size as its line (owner, 9/25/26) */
+.rv2-analytics>summary,.hb-results>summary{font-size:13px;align-items:center}
+details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{font-size:12px!important;letter-spacing:.14em}   /* the other orange headings' size, and its line's (owner, 9/25/26) */
 .rv2-analytics[open]>summary:after,.hb-results[open]>summary:after{transform:rotate(90deg)}
 .rv2-analytics>summary:focus-visible,.hb-results>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
@@ -7857,7 +7857,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sb-lane[data-tone="lean"]{--tc:var(--hb-warn)}
 .sb-lane[data-tone="ot"]{--tc:var(--hb-bad)}
 .sb-lh{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.sb-ic{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;color:var(--tc);background:color-mix(in srgb,var(--tc) 14%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 28%,transparent) inset,0 0 18px -6px var(--tc)}
+.sb-ic{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;color:var(--tc);background:color-mix(in srgb,var(--tc) 14%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 28%,transparent) inset,0 0 10px -6px var(--tc)}
 .sb-ic svg{width:18px;height:18px}
 .sb-lt{flex:1;min-width:0;display:flex;flex-direction:column}
 .sb-lt b{font-size:17px;font-weight:600;color:var(--ink)}
@@ -7873,6 +7873,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sb-card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tc) 40%,transparent);box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 22px 44px -24px rgba(0,0,0,.7),0 0 0 1px color-mix(in srgb,var(--tc) 12%,transparent)}
 .sb-card.worst{border-color:color-mix(in srgb,var(--tc) 55%,transparent);background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--tc) 18%,transparent),transparent 60%),var(--surface);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 25%,transparent),0 22px 48px -26px color-mix(in srgb,var(--tc) 55%,transparent)}
 @keyframes sbRise{to{opacity:1;transform:none}}
+.sb-card[hidden],.sb-more[hidden]{display:none}   /* display:flex beat [hidden], so Show all showed nothing new (9/25/26) */
 .sb-top{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px}
 .sb-sev{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--tc);padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--tc) 12%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 22%,transparent) inset}
 .sb-sev.high{background:color-mix(in srgb,var(--tc) 20%,transparent)}
@@ -7880,7 +7881,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sb-ring svg{grid-row:1/3;width:38px;height:38px;transform:rotate(-90deg)}
 .sb-ring circle{fill:none;stroke-width:3.2}
 .sb-ring .bg{stroke:color-mix(in srgb,var(--ink3) 22%,transparent)}
-.sb-ring .fg{stroke:var(--tc);stroke-linecap:round;stroke-dasharray:var(--p) 100;animation:sbRing .9s cubic-bezier(.2,.9,.3,1) both;filter:drop-shadow(0 0 3px color-mix(in srgb,var(--tc) 60%,transparent))}
+.sb-ring .fg{stroke:var(--tc);stroke-linecap:round;stroke-dasharray:var(--p) 100;animation:sbRing .9s cubic-bezier(.2,.9,.3,1) both;filter:drop-shadow(0 0 2px color-mix(in srgb,var(--tc) 40%,transparent))}
 @keyframes sbRing{from{stroke-dasharray:0 100}}
 .sb-ring b{font-size:14px;font-weight:700;color:var(--ink)}
 .sb-ring small{font-size:11px;color:var(--ink3)}
@@ -9081,10 +9082,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <div class="sb-sum">
       <div class="sb-tile hero"><div class="k">At stake in this window</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s"><span class="hb-num">{{ _sb.summary.over_text }}</span> above target · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium</div></div>
       <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced in this window</div>{% endif %}</div>
-      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
+      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{% if _sb.summary.quick.kind == 'overtime' %}from {% endif %}{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
     </div>
     {% set _lanes = [
-      ('over', 'Overstaffed days', 'Labor above your ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
+      ('over', 'Overstaffed days', 'Labor above ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
       ('lean', 'Strong days run lean', 'Big sales on a thin crew — check service first', _sb.lean, 'No strong day ran lean in this window.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
       ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
     ] %}
@@ -9113,7 +9114,6 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div class="sb-acts">
           {% set _how %}{% if key == 'over' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.pct_text }}% labor on {{ x.sales_text }} in sales, against your {{ _tl }}.</div><div style="margin-bottom:10px"><strong>The figure:</strong> labor spent above {{ _tl }} of that day’s sales = {{ x.dollars_text }}.</div>{% if x.trim_text %}<div style="margin-bottom:10px"><strong>Hours to trim:</strong> {{ x.dollars_text }} ÷ your blended rate of ${{ '%.2f'|format(labor.blended_rate or 0) }}/h ≈ {{ x.trim_text }}h.</div>{% endif %}{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran over target.</div>{% endif %}{% elif key == 'lean' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.dollars_text }} in sales on {{ x.pct_text }}% labor — well under your {{ _tl }} on one of your strongest days.</div><div style="margin-bottom:10px"><strong>Why not add staff straight away:</strong> a lean crew on a big day can be efficient, not short. Slow tickets or complaints from that day are the evidence that it was short.</div>{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran lean.</div>{% endif %}{% else %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.hours_text }}h the week of {{ x.week }} — {{ x.extra_text }}h past 40.</div><div style="margin-bottom:10px"><strong>The premium:</strong> hours past 40 × their blended rate × 0.5 (time and a half) = {{ x.dollars_text }}.</div>{% if x.mate %}<div><strong>Who had room:</strong> {{ x.mate.name }} worked {{ x.mate.hours_text }}h that week in the same role — those hours at straight time would not have cost the premium.</div>{% else %}<div><strong>Who had room:</strong> no one in the same role had {{ x.extra_text }}h free under 40 that week.</div>{% endif %}{% endif %}{% endset %}
           <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="{{ _how|forceescape }}" data-explain-title="{{ x.title }} — how this was worked out" data-explain-kicker="Explain why">Explain why</button>
-          {% if key != 'lean' %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="labor/schedule">Plan next week →</button>{% endif %}
           <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="{{ x.ask }}">Ask Cavnar AI →</button>
         </div>
       </article>
