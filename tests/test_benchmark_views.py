@@ -26,12 +26,18 @@ def _read(*parts):
 def _rid(db_path, **kw):
     kw.setdefault("name", f"Views Cafe {kw.get('owner_email', '')}")
     kw.setdefault("owner_email", "v@x.test")
+    # Live 17 weeks on a real labor cost basis, so it may stand in a band
+    # (Benchmarking audit #14, #39 — workstream P).
+    kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
+    kw.setdefault("hourly_rate", 18.0)
     category = kw.pop("category", None)
     rid = create_restaurant(Restaurant(**kw), db_path=db_path)
     if category:
-        # create_restaurant does not write the type; the owner's profile does.
+        # create_restaurant does not write the type; the owner's CONFIRMED
+        # profile does, and it is what the peer group is built from (#7, #20).
         conn = get_conn(db_path)
-        conn.execute("UPDATE restaurants SET category=? WHERE id=?", (category, rid))
+        conn.execute("UPDATE restaurants SET category=?, concept=?, service_model='counter', profile_source='set' "
+                     "WHERE id=?", (category, category, rid))
         conn.commit()
         conn.close()
     return rid
@@ -85,7 +91,7 @@ def test_card_with_peers_names_who_how_many_and_the_strength_as_a_percentage(db_
         rid = _rid(db_path, name=f"Peer {i}", owner_email=f"p{i}@x.test", category="pizza")
         _feature(db_path, rid, _week(0), labor_pct_28d=28.0 + i * 0.2)
         ids.append(rid)
-    bm.compute(db_path=db_path, cohorts={r: "pizza" for r in ids})
+    bm.compute(db_path=db_path)          # each one's confirmed partition
     d = bv.card(_owner(ids[0]), "labor", db_path=db_path)
     assert d["who"]["kind"] == "peers" and d["who"]["text"].startswith(f"Compared to {d['who']['n']} other")
     assert d["below_minimum"] is None

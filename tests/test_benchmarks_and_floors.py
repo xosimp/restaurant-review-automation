@@ -439,7 +439,8 @@ def test_the_platform_band_is_never_called_restaurants_like_yours(db_path):
     assert "like yours" not in line and "all types" in line and "band as of " in line
     assert categories.label(None) == "All restaurants on Cavnar"
     ctx = " ".join(intelligence.context_lines(sushi))
-    assert "like yours" not in ctx.lower()
+    # The only "like yours" a prompt may carry is the instruction never to say it.
+    assert "like yours" not in ctx.lower().replace("never call it restaurants like yours", "")
 
 
 def test_an_inferred_type_never_makes_a_cohort(db_path):

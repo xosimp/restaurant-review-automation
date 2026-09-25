@@ -299,7 +299,7 @@ def partition_key(profile, family="format", volume_band=None) -> str | None:
 
 
 def partition_label(key) -> str:
-    """"Full-service, bar-led restaurants with a protein-led menu on
+    """"full-service, bar-led restaurants with a protein-led menu on
     Cavnar" — the group a partition band was read from, in words."""
     parts = str(key or "")[3:].split("|")
     sm = parts[0]
@@ -313,8 +313,9 @@ def partition_label(key) -> str:
     vb = next((p for p in parts[1:] if p.startswith("v") and p[1:].isdigit()), None)
     if vb:
         extras.append("of similar sales volume")
-    s = base[0].upper() + base[1:]
-    return " ".join([s] + extras) + " on Cavnar"
+    # Lower-case: it is always read after a count ("12 other counter-service
+    # restaurants on Cavnar"); a heading capitalises it itself.
+    return " ".join([base] + extras) + " on Cavnar"
 
 
 def is_partition(key) -> bool:

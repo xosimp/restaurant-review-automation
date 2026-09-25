@@ -465,12 +465,12 @@ def test_discovery_is_bounded_resumable_and_retires_only_what_it_tested(db_path)
     first = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
     assert first["complete"] is False and first["cohorts_tested"] == ["bar"]
     # 'platform' was never reached, so its pattern was not retired for failing.
-    assert any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path))
+    assert any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path, projection="admin"))
     second = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
     assert second["cohorts_tested"] == ["cafe"] and second["resumed_after"] == "bar"
     third = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
     assert third["cohorts_tested"] == ["platform"]
-    assert not any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path))
+    assert not any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path, projection="admin"))
 
 
 def test_a_clearly_null_permutation_stops_early_and_a_real_one_runs_to_the_end():

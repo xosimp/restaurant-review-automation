@@ -32,11 +32,14 @@ SCENARIOS = {
     "pizza_middle": {"category": "pizza", "set": True, "n": 12,
                      "base": {"labor_pct_28d": 28.0, "reply_rate_30d": 0.5},
                      "viewer": {"labor_pct_28d": 29.1, "reply_rate_30d": 0.61}},
-    # Types Cavnar guessed from the names: the strength is capped at 74%.
-    "tacos_inferred": {"category": "mexican", "set": False, "n": 12,
+    # A weak comparison: the viewer's own figure rests on under half its
+    # measures (completeness 0.45), so the strength is 72% — under 75%. (These
+    # were guessed types capped at 74%; a guessed type no longer makes a
+    # group at all — Benchmarking audit #8, workstream P.)
+    "tacos_inferred": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45,
                        "base": {"labor_pct_28d": 26.0}, "viewer": {"labor_pct_28d": 24.0}},
-    # Guessed types, the viewer at the middle: a ranking word is rewritten.
-    "tacos_middle": {"category": "mexican", "set": False, "n": 12,
+    # A weak comparison, the viewer at the middle: a ranking word is rewritten.
+    "tacos_middle": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45,
                      "base": {"labor_pct_28d": 26.0}, "viewer": {"labor_pct_28d": 27.1}},
     # A lone sushi bar among 12 pizza places: only the all-types band, and
     # only for a behaviour metric.
@@ -64,13 +67,22 @@ def _scenario(name):
     db = _db()
     week = feat.iso_week(date.today())
 
-    def add(rid_name, category, vals, set_type=True, email="x"):
-        rid = models.create_restaurant(models.Restaurant(name=rid_name, owner_email=f"{email}@x.test"), db_path=db)
+    from datetime import timedelta
+    live = (date.today() - timedelta(days=120)).isoformat() + "T00:00:00"
+
+    def add(rid_name, category, vals, set_type=True, email="x", completeness=1.0):
+        # Live 17 weeks, a real labor cost basis, and — when the type is set —
+        # an owner-confirmed profile: the peer group is the confirmed partition
+        # (counter service here; the lone sushi bar is full service).
+        rid = models.create_restaurant(models.Restaurant(name=rid_name, owner_email=f"{email}@x.test",
+                                                         created_at=live, hourly_rate=18.0), db_path=db)
         conn = models.get_conn(db)
         if set_type:
-            conn.execute("UPDATE restaurants SET category=? WHERE id=?", (category, rid))
+            conn.execute("UPDATE restaurants SET category=?, concept=?, service_model=?, profile_source='set' "
+                         "WHERE id=?", (category, category, "full_service" if category == "sushi" else "counter",
+                                        rid))
         conn.execute("INSERT OR REPLACE INTO intel_features (restaurant_id, week, features_json, completeness) "
-                     "VALUES (?,?,?,1.0)", (rid, week, json.dumps(vals)))
+                     "VALUES (?,?,?,?)", (rid, week, json.dumps(vals), completeness))
         conn.commit()
         conn.close()
         return rid
@@ -83,9 +95,10 @@ def _scenario(name):
                                                             for k, v in sc["base"].items()},
                   set_type=sc["set"] or sc.get("alone"), email=f"p{i}")
         cohorts[rid] = peer_cat
-    viewer = add(f"{names[sc['category']]} Viewer", sc["category"], sc["viewer"], set_type=sc["set"], email="v")
+    viewer = add(f"{names[sc['category']]} Viewer", sc["category"], sc["viewer"], set_type=sc["set"], email="v",
+                 completeness=sc.get("viewer_completeness", 1.0))
     cohorts[viewer] = sc["category"]
-    bm.compute(db_path=db, cohorts=cohorts)
+    bm.compute(db_path=db)          # each one's confirmed partition
     # A fixed as-of date, so a case can quote it: the band's week stays this
     # week (its age and strength are real), only its computed stamp is set.
     conn = models.get_conn(db)
