@@ -2531,9 +2531,21 @@ def build_group_brief(current_user, fresh=False):
         l["active"] = l["id"] == current_user["restaurant_id"]
     rank = {"critical": 0, "important": 1, "watch": 2}
     attention = []
+    import nav as _nav_g
     for l in locs:
         for i in l["issues"]:
-            attention.append({**i, "location": l["name"], "restaurant_id": l["id"], "severity_rank": rank[i["severity"]]})
+            # Where "Open" lands once it has switched to that location
+            # (friction #24): the item's own place, not that location's
+            # Home top. A reviews issue opens the inbox on the filter it is
+            # about.
+            if i.get("module") == "reviews":
+                _urg = int(((l.get("reviews") or {}).get("urgent")) or 0)
+                _gnav = _nav_g.path("reviews", filter="urgent" if _urg else "pending")
+                _glabel = "Reply now" if _urg else "Open replies"
+            else:
+                _gnav, _glabel = _nav_g.path(i.get("module") or "home"), "Open"
+            attention.append({**i, "location": l["name"], "restaurant_id": l["id"], "severity_rank": rank[i["severity"]],
+                              "nav": _gnav, "action_label": _glabel})
     attention.sort(key=lambda a: (a["severity_rank"], a["location"]))
     # Strongest and weakest (Benchmarking #19; BM1-19, BM3-18, BM4-11): the
     # platform's rating floor (thresholds.GROUP_RANK_MIN_REVIEWS, now

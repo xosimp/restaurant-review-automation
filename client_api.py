@@ -570,20 +570,33 @@ def reviews_page_api(current_user):
     received into the initial HTML document; this is what lets it render a
     page at a time instead. Returns rendered-ready dicts, the running
     offset and whether more remain.
+
+    `review_id` returns that one card (friction #1: an alert or a nav path
+    "review/<id>" opens the review even when it is past the first page).
+    Scoped to this restaurant like every other read, so another location's
+    id is simply not found.
     """
     from models import get_reviews_data, REVIEWS_PAGE_SIZE
     try:
         offset = max(0, int(request.args.get("offset", 0)))
     except (TypeError, ValueError):
         offset = 0
+    review_id = request.args.get("review_id")
+    try:
+        review_id = int(review_id) if review_id not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Not a review id"), 400
     rows, total = get_reviews_data(
         current_user["restaurant_id"],
-        request.args.get("filter", "all"),
-        request.args.get("search", ""),
-        category=request.args.get("category") or None,
-        platform=request.args.get("platform") or None,
-        limit=REVIEWS_PAGE_SIZE, offset=offset, include_total=True,
+        "all" if review_id else request.args.get("filter", "all"),
+        "" if review_id else request.args.get("search", ""),
+        category=None if review_id else (request.args.get("category") or None),
+        platform=None if review_id else (request.args.get("platform") or None),
+        limit=REVIEWS_PAGE_SIZE, offset=0 if review_id else offset, include_total=True,
+        review_id=review_id,
     )
+    if review_id:
+        offset = 0
     restaurant = get_restaurant(current_user["restaurant_id"])
     html = "".join(
         render_template("_review_card.html", r=r, restaurant=restaurant, delay=0)
@@ -2353,7 +2366,7 @@ def _ask_meta(meta):
 
 
 def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
-                   new_conversation=False, brief=False, user=None):
+                   new_conversation=False, brief=False, user=None, screen=None):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -2365,7 +2378,11 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
     passthrough, not a second place that needs to re-validate it.
 
     `conversation_id` picks the chat the turn belongs to (the app's chat
-    history); None means the restaurant's current chat."""
+    history); None means the restaurant's current chat.
+
+    `screen` is where the asker is ({panel, entity:{type, id}}, friction
+    #15) — ask_cavnar.screen_hint validates and resolves it; it is a hint
+    beside the question, never an instruction."""
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Ask a question first."}, 400
@@ -2405,7 +2422,8 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # `user` scopes what the answer may draw on to what this login's role
         # can read — a manager never gets food cost through Ask either.
         answer, truncated, proposals, meta = ask_with_tools(
-            restaurant, question, history=history, user=user, **({'brief': True} if brief else {}))
+            restaurant, question, history=history, user=user, screen=screen,
+            **({'brief': True} if brief else {}))
 
         message_id = None
         try:
@@ -2466,12 +2484,12 @@ def ask_cavnar_api(current_user):
                                      user_id=current_user.get("id"),
                                      conversation_id=_parse_conversation_id(data.get("conversation_id")),
                                      new_conversation=bool(data.get("new_conversation")),
-                                     user=current_user)
+                                     user=current_user, screen=data.get("screen"))
     return jsonify(**payload), status
 
 
 def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False, brief=False,
-                                user=None):
+                                user=None, screen=None):
     """Server-sent events: progress while tools run, then the answer.
 
     Shared by the web and mobile stream routes so iOS gets the same live
@@ -2515,7 +2533,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             history = [{"role": h["role"], "content": h["content"]}
                        for h in get_ask_history(rid, conversation_id=cid, viewer_id=uid)]
             answer, truncated, proposals, meta = ask_with_tools(
-                restaurant, question, history=history, user=user,
+                restaurant, question, history=history, user=user, screen=screen,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
                 **({"brief": True} if brief else {}))
@@ -2596,7 +2614,7 @@ def ask_cavnar_stream(current_user):
         current_user["restaurant_id"], current_user.get("id"), data.get("question"),
         conversation_id=_parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
-        brief=(data.get("surface") == "home"), user=current_user)
+        brief=(data.get("surface") == "home"), user=current_user, screen=data.get("screen"))
 
 
 @client_bp.route("/api/ask-cavnar/history")
@@ -7076,23 +7094,74 @@ _NOTIFICATION_MODULE_KEY = {
 }
 
 
-def _do_get_notifications(restaurant_id, viewer=None, limit=40):
+def _notification_locations(restaurant_id, viewer=None, scope=None):
+    """[(restaurant_id, location name)] the list reads. `scope="group"` is
+    every location of the login's group when it may switch between them
+    (friction #24: alerts at the other locations were invisible until the
+    owner switched); anything else, or a login that may not, is the one
+    location it is on."""
+    one = [(int(restaurant_id), None)]
+    if scope != "group" or not viewer:
+        return one
+    try:
+        from permissions import LOCATION_SWITCH, has_permission
+        if not has_permission(viewer, LOCATION_SWITCH):
+            return one
+        from models import get_location_group
+        base = get_restaurant(viewer.get("base_restaurant_id") or restaurant_id)
+        if not base or not base.location_group:
+            return one
+        locs = [(int(r["id"]), r.get("location_name") or r.get("name"))
+                for r in get_location_group(base.location_group, owner_email=base.owner_email)]
+        return locs if any(i == int(restaurant_id) for i, _ in locs) else one
+    except Exception:
+        return one
+
+
+def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
     """The notification history, newest first, scoped to what this login may
-    see and carrying the priority both clients rank by."""
+    see and carrying the priority both clients rank by.
+
+    Each row is an inbox line (friction #23): its alert_log `id`, a one-line
+    `snippet` (the review's own words, for a review alert), the `location`
+    it fired at, whether it is `resolved` (a review alert whose review has
+    been answered — the rule home_brief's alert items use) and whether this
+    login `opened` it. `unread` is "after the read mark AND not opened", so a
+    row opened on either client reads as read on both."""
     try:
         import push as _push
+        locs = _notification_locations(restaurant_id, viewer, scope)
+        names = {i: n for i, n in locs}
+        ids = [i for i, _ in locs]
+        marks = ",".join("?" * len(ids))
         conn = get_conn()
         rows = conn.execute(
-            """SELECT alert_type, review_id, fired_at, priority FROM alert_log
-               WHERE restaurant_id=?
-               ORDER BY fired_at DESC, id DESC LIMIT ?""",
-            (restaurant_id, int(limit))
+            f"""SELECT a.id, a.restaurant_id, a.alert_type, a.review_id, a.fired_at, a.priority,
+                       rv.text AS review_text, rv.rating AS review_rating,
+                       rv.response_status AS review_status, rv.deleted_at AS review_deleted,
+                       rv.draft_response AS review_draft, rv.draft_needs_review AS review_flagged
+                FROM alert_log a
+                LEFT JOIN reviews rv ON rv.id=a.review_id AND rv.restaurant_id=a.restaurant_id
+                WHERE a.restaurant_id IN ({marks})
+                ORDER BY a.fired_at DESC, a.id DESC LIMIT ?""",
+            (*ids, int(limit))
         ).fetchall()
-        seen_at = None
+        opened = set()
+        if viewer and viewer.get("id") and rows:
+            try:
+                opened = {int(o["alert_log_id"]) for o in conn.execute(
+                    f"SELECT DISTINCT alert_log_id FROM notification_opens WHERE user_id=? "
+                    f"AND alert_log_id IN ({','.join('?' * len(rows))})",
+                    (viewer["id"], *[r["id"] for r in rows])).fetchall() if o["alert_log_id"] is not None}
+            except Exception:
+                opened = set()
+        conn.close()
+        seen = {}
         if viewer and viewer.get("id"):
             from models import notifications_seen_at
-            seen_at = notifications_seen_at(viewer["id"], restaurant_id)
-        conn.close()
+            for i in ids:
+                seen[i] = notifications_seen_at(viewer["id"], i)
+        many = len(ids) > 1
         items = []
         for r in rows:
             module = _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")
@@ -7101,7 +7170,13 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
             priority = r["priority"]
             if priority is None:
                 priority = _push.priority_of(r["alert_type"])
+            seen_at = seen.get(r["restaurant_id"])
+            text = " ".join(str(r["review_text"] or "").split())
+            snippet = (text[:117] + "…") if len(text) > 120 else text
+            resolved = bool(r["review_id"] and (r["review_deleted"] or r["review_status"] in ("posted", "approved", "skipped")))
+            was_opened = int(r["id"]) in opened
             items.append({
+                "id": r["id"],
                 "type": r["alert_type"],
                 "label": _NOTIFICATION_LABELS.get(r["alert_type"],
                                                   r["alert_type"].replace("_", " ").capitalize()),
@@ -7110,9 +7185,23 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
                 "module": module,
                 "priority": priority,
                 "urgent": priority <= _push.P1_ACT_NOW,
-                "unread": bool(seen_at is None or (r["fired_at"] or "") > seen_at),
+                "snippet": snippet or None,
+                "rating": r["review_rating"],
+                # A drafted reply the row can approve in place, shown in
+                # full before it goes out. A flagged draft never qualifies:
+                # it is read on its card first (the reply guard, M-1).
+                "can_approve": bool(r["review_id"] and r["review_status"] == "drafted" and not r["review_deleted"]
+                                    and (r["review_draft"] or "").strip() and not r["review_flagged"]
+                                    and int(r["restaurant_id"]) == int(restaurant_id)),
+                "draft": ((r["review_draft"] or "")[:600] or None)
+                         if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else None,
+                "resolved": resolved,
+                "opened": was_opened,
+                "restaurant_id": r["restaurant_id"],
+                "location": names.get(r["restaurant_id"]) if many else None,
+                "unread": bool((seen_at is None or (r["fired_at"] or "") > seen_at) and not was_opened),
             })
-        return {"ok": True, "notifications": items}, 200
+        return {"ok": True, "notifications": items, "scope": "group" if many else "location"}, 200
     except Exception as e:
         print(f"[notifications] load failed for rid={restaurant_id}: {e}")
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
@@ -7157,8 +7246,14 @@ def group_locations(current_user):
 @client_bp.route("/api/notifications")
 @login_required
 def get_notifications(current_user):
-    payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user)
-    if payload.get("ok"):
+    """`scope=group` lists every location's alerts for a login that may
+    switch between them; `mark=0` reads without moving the read mark — the
+    web bell marks a row read when it is opened, not when the bell is
+    (friction #23). Without it, reading the list marks everything read, as
+    the phone expects."""
+    payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user,
+                                            scope=request.args.get("scope"))
+    if payload.get("ok") and request.args.get("mark") != "0":
         try:
             from models import mark_notifications_seen
             mark_notifications_seen(current_user["id"], current_user["restaurant_id"])
@@ -7202,9 +7297,10 @@ def get_notifications_unread_count(current_user):
     which compares timestamps in one format. The web bell kept its own
     localStorage mark, so the two clients never agreed either."""
     from models import unread_notification_count
-    return jsonify(ok=True, count=unread_notification_count(
-        current_user["id"], current_user["restaurant_id"],
-        visible=notification_visibility(current_user)))
+    # `scope=group`: the badge over every location the list shows (#24).
+    locs = _notification_locations(current_user["restaurant_id"], current_user, request.args.get("scope"))
+    return jsonify(ok=True, count=sum(unread_notification_count(
+        current_user["id"], rid, visible=notification_visibility(current_user)) for rid, _ in locs))
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

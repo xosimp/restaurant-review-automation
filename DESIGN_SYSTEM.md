@@ -505,22 +505,49 @@ Rules:
 
 ## 11b. Home order (web and iOS, identical)
 
-Fixed by role so the owner learns where things live: header strip (module
-pulse, AI activity) → measured results → **the day** (last night's Daily
-Sales Report, then the morning brief with open issues; the close-out takes
-the slot after 8pm local, the weekly receipts lead it on Monday. iOS:
-`HomeLastNightCard`, which renders nothing for a login or location with no
-report — web: the Last night card on Home) → needs attention → the one cross-module thing (iOS:
-`HomeOneThingCard`) → what
-Cavnar AI recommends → readiness (leads the page instead when nothing is
-connected yet, hides once complete) → measured (goals, what your changes
-did with its check-ins, what got better, measured alongside your changes) → what
-connects, comps and voids → worth (net of what got worse, the measured
-total since its first day only when one exists). The
-close-out sits last before 8pm. On web "Measured alongside your changes" follows the worth
-section directly; the Recommendations page (`#recs`) is reached from both.
-Every block keeps its empty state; a quiet
-day is a short page.
+Fixed by role so the owner learns where things live — and **the work leads**
+(friction audit #11, 9/25/26: the one thing to do sat under a results chart
+and the full brief, tenth on the phone):
+
+1. Header (greeting, headline, module pulse chips; on web the location chips
+   for a multi-location login).
+2. **The one thing** (web `#hb-focus`; iOS `HomeOneThingCard`) and **Needs
+   attention** directly under it — every item visible: web lists them all,
+   rows past the third behind "+N more", which expands the list **in place**
+   (never the bell); iOS keeps the lead deck card and lists items 2–n under
+   it as one-line rows with their action. When nothing is flagged, the
+   one-line all-clear row, so it costs nothing at the top.
+3. The header strip's detail: signal tiles, the freshness strip, How you
+   compare.
+4. **The day** — last night's Daily Sales Report, then the morning brief (the
+   close-out takes the slot after 8pm local, the weekly receipts lead it on
+   Monday; a milestone, when one lands, is an inline card at the top of the
+   day — never a modal). iOS: `HomeLastNightCard`.
+5. What Cavnar AI recommends → readiness (leads the page instead when nothing
+   is connected yet, hides once complete).
+6. Still open (web) and the close-out before 8pm — work, so above the fold
+   of results.
+7. **Results**, collapsed by default (web: one `details.hb-results`; the
+   owner's open/closed choice is remembered in this browser): the measured
+   value graph, measured (goals, what your changes did with its check-ins,
+   what got better, measured alongside your changes) → what connects, comps
+   and voids → worth. The Recommendations page (`#recs`) is reached from both.
+
+**One job, one place.** A job reaches Home from four sources (the focus
+card, a Needs-attention row, a brief line, a Still-open row). They share one
+de-dup key (web `hbSame`: every "reply to reviews" key → `replies`, low
+stock → `stock`, open issues → `issues`, everything else its own key); a
+brief line or Still-open row whose job is already in the focus card or
+Needs attention is left out. iOS applies the same map.
+
+**Answer in place.** Done, Not for us, Not today, Track, hand-off and publish
+take the answered card off the page at once (`.hb-gone`, a 200ms fade) and
+re-read only the brief (`hbSoft`), never the whole page; the focus card is
+redrawn only when its lead changed. A hide or snooze gets an Undo on its
+toast. A write anywhere else marks Home stale (`hbDirty`), so returning to
+it re-reads.
+
+Every block keeps its empty state; a quiet day is a short page.
 
 ## 12. Reusable components
 
@@ -536,7 +563,11 @@ day is a short page.
 | Table | `.hb-tbl`, `.fc2-mt` |
 | Form control | `.ac-field`, `.ac-input`, `.ac-select`, `.ac-switch` |
 | Chart | `glowLine`, `bars`, `stacked` |
-| Loading | `.hb-skel`, `.hb-load` + orb, `cbtnBusy()` |
+| Loading | `.hb-skel`, `.hb-load` + orb, `cbtnBusy()` (the one busy helper; Account's `busy()` is a wrapper over it). A post or send in flight is a busy button, never a full-screen overlay; a header popover opens on `.dr-pulse`, never "Loading…" |
+| Collapsed section | `details.hb-results` (Home's Results) / `details.rv2-analytics` (Reviews' trends under the inbox): one hairline summary row — `.hb-kicker` + one line saying what is inside, a `›` that turns when open, `:focus-visible` ring. For proof that sits under the work, not for anything that needs a decision. Content loads on first open when it costs a request (`rvOpenAnalytics`) |
+| Alert inbox row (bell) | `.notif-item` > `.notif-row` (`cbtn cbtn-text`): the dot (ember for an unresolved P0/P1), the label, the time, then `.nx` — the location (`.nloc`, group bell only) and the review's own words in quotes, two lines at most. `.is-unread` until the row is **opened** (not when the bell is), `.is-resolved` greys a handled row ("handled") rather than hiding it. One inline action at most, under the row (`.notif-act`): for a drafted reply, "Read the reply" shows the full text, then "Post this reply" / "Edit it first" — an outward send shows what goes out before the button that sends it. Opens on "Needs you" when anything unresolved is urgent; "Mark all read" at the foot |
+| Milestone | `.hb-card.rail.good.hb-mile` at the top of Home's day: kicker (`MILESTONE_KICKER`), the title in Clash, the body, a ✕ (`data-mile-close`). Shown once (marked seen when shown); never a modal over the morning read |
+| Direct action on a line | A brief line (web and email) carries the server's `action` {label, nav}: a `cbtn-secondary cbtn-sm` (`data-nav-go`) before the line's "Ask →", which stays as the secondary. In the brief email the action link leads in ember, "Ask about this" follows in muted ink |
 | Ask button | `.ask-fab` — the ember disc (highlight, underside shade, rim, long ember shadow, `askFabHalo` pulse) carrying the orb in cream ink: `CavnarOrb.mount(c,'working',{ink:'cream'})`, `searching` under the cursor. The brand colour's one large surface on the page; the label pill stays dark |
 | Number badge | `.hb-ledger span>.hb-num:first-child`, `.lb2-cov span>.hb-num` — a 28px ember disc for a count that leads a chip |
 | Empty | `.hb-empty`, `.hb-clear` |

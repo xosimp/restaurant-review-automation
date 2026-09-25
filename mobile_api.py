@@ -1765,7 +1765,7 @@ def mobile_ask_cavnar(current_user):
         user_id=current_user.get("id"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
-        user=current_user,
+        user=current_user, screen=data.get("screen"),
     )
     return jsonify(**payload), status
 
@@ -1785,7 +1785,8 @@ def mobile_ask_cavnar_stream(current_user):
     return _capi._ask_cavnar_stream_response(
         current_user["restaurant_id"], current_user.get("id"), data.get("question"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
-        new_conversation=bool(data.get("new_conversation")), user=current_user)
+        new_conversation=bool(data.get("new_conversation")), user=current_user,
+        screen=data.get("screen"))
 
 
 @mobile_bp.route("/ask-cavnar/history")

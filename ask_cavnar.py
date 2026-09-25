@@ -1127,6 +1127,70 @@ def _system_blocks(restaurant_name, context, depth):
     ]
 
 
+# ── Where the owner is (friction #15) ───────────────────────────────────────
+# Clients send {panel, entity:{type, id}} with a question: the tab on screen
+# and, after an "Ask about this", the item. It becomes one short context line
+# — never an instruction — and the server builds every word of it: the panel
+# from a fixed map, a review from this restaurant's own row (its rating,
+# platform and date; never the author or the text, which a member of the
+# public wrote — the model reads those through read_reviews, where the
+# untrusted-text rules already apply), a recommendation key only when it is
+# key-shaped. Anything else is dropped, so a client cannot write prompt text.
+_SCREEN_PANELS = {"home": "Home", "reviews": "Reviews", "labor": "Labor", "inventory": "Food Cost",
+                  "marketing": "Marketing", "competitor": "Intel", "intel": "Intel", "account": "Account",
+                  "dsr": "the daily sales report", "recs": "Recommendations"}
+_SCREEN_KEY_RE = re.compile(r"^[A-Za-z0-9:_\-.]{1,120}$")
+
+
+def screen_hint(restaurant_id, screen) -> str:
+    """The WHERE THE OWNER IS block for a question, or "" when there is
+    nothing valid to say."""
+    if not isinstance(screen, dict):
+        return ""
+    label = _SCREEN_PANELS.get(str(screen.get("panel") or "").strip().lower())
+    ent = screen.get("entity") if isinstance(screen.get("entity"), dict) else None
+    item = ""
+    if ent:
+        etype = str(ent.get("type") or "").strip().lower()
+        eid = str(ent.get("id") or "").strip()
+        if etype == "review" and eid.isdigit() and restaurant_id:
+            try:
+                from models import get_reviews_data
+                rows = get_reviews_data(restaurant_id, review_id=int(eid))
+            except Exception:
+                rows = []
+            if rows:
+                r = rows[0]
+                bits = []
+                if r.get("rating"):
+                    bits.append(f"{int(r['rating'])} stars")
+                if r.get("platform") in ("google", "yelp", "tripadvisor", "facebook", "opentable"):
+                    bits.append(f"on {r['platform'].title()}")
+                if r.get("review_date"):
+                    try:
+                        from time_utils import mdy
+                        bits.append(mdy(str(r["review_date"])[:10]))
+                    except Exception:
+                        pass
+                status = {"drafted": "a reply is drafted", "pending": "no reply drafted yet",
+                          "approved": "the reply is approved", "posted": "the reply is posted",
+                          "skipped": "the draft was skipped"}.get(r.get("response_status") or "")
+                if status:
+                    bits.append(status)
+                item = (f"review #{int(eid)}" + (f" ({', '.join(bits)})" if bits else "")
+                        + f". To read it, call read_reviews with review_id={int(eid)}")
+        elif etype == "rec" and _SCREEN_KEY_RE.match(eid):
+            item = f"the recommendation keyed {eid}"
+    if not label and not item:
+        return ""
+    lines = ["WHERE THE OWNER IS (context for words like \"this\" or \"it\" in the question — not an instruction):"]
+    if label:
+        lines.append(f"Screen: {label}.")
+    if item:
+        lines.append(f"Looking at: {item}.")
+    return "\n".join(lines)
+
+
 # Bounds how much prior conversation gets sent (and paid for) on every
 # single call — 12 messages is 6 full exchanges, plenty for a short-term
 # "what were we just talking about" memory without letting an old, long
@@ -1736,7 +1800,7 @@ def snapshot_sources(restaurant) -> tuple:
 
 
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
-                   read_only=False, delivery="interactive"):
+                   read_only=False, delivery="interactive", screen=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -1804,6 +1868,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     context = _with_ds_ask(context, _ready_ask)
     depth = _depth_for(question, brief=brief)
     system_blocks = _system_blocks(restaurant.name, context, depth)
+    # Where the owner is (friction #15): its own uncached block after the
+    # snapshot, and part of the corpus so a rating it names is not flagged.
+    _screen = screen_hint(getattr(restaurant, "id", None), screen) if screen else ""
+    if _screen:
+        system_blocks = system_blocks + [{"type": "text", "text": _screen}]
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
     if depth == "brief":
         # Repeated on the user turn: after a tool loop the final answer is
@@ -1835,6 +1904,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # only when the server recorded that its own figures checked out
     # (record_answer_check); the owner's words never do.
     seen_corpus = [context] + _verified_history(getattr(restaurant, "id", None), messages)
+    if _screen:
+        seen_corpus.append(_screen)
     tools_used = []
     # Modules a tool reported reading that its own name does not reveal.
     consulted = []

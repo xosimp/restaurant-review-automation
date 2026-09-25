@@ -73,17 +73,22 @@ _MAX_ROWS = 20
 # ── Read tools ──────────────────────────────────────────────────────────────
 
 def _read_reviews(restaurant_id, sentiment=None, urgency=None, search=None,
-                  needs_response=None, limit=10):
+                  needs_response=None, limit=10, review_id=None):
     """Individual reviews — the gap that made "which reviews mention the
     patio?" unanswerable, since the context snapshot only ever carried
-    aggregate counts."""
+    aggregate counts. `review_id` reads the one review the owner is looking
+    at (ask_cavnar.screen_hint names it), scoped to this restaurant."""
     from models import get_reviews_data
     filter_by = "all"
     if urgency == "high":
         filter_by = "urgent"
     elif sentiment in ("positive", "neutral", "negative"):
         filter_by = sentiment
-    rows = get_reviews_data(restaurant_id, filter_by=filter_by, search=(search or ""))
+    try:
+        review_id = int(review_id) if review_id not in (None, "") else None
+    except (TypeError, ValueError):
+        review_id = None
+    rows = get_reviews_data(restaurant_id, filter_by=filter_by, search=(search or ""), review_id=review_id)
     if needs_response is True:
         rows = [r for r in rows if not (r.get("draft_response") or "").strip()]
     out = []
@@ -99,6 +104,9 @@ def _read_reviews(restaurant_id, sentiment=None, urgency=None, search=None,
             "urgency": r.get("urgency"),
             "has_draft": bool((r.get("draft_response") or "").strip()),
             "status": r.get("response_status"),
+            # The drafted reply, when the owner is asking about one review
+            # ("make this reply warmer" needs the reply).
+            **({"draft": (r.get("draft_response") or "")[:800]} if review_id else {}),
         })
     return {"count": len(out), "reviews": out}
 
@@ -1603,6 +1611,7 @@ TOOLS = [
                     "search": {"type": "string", "description": "Keyword to match in review text, e.g. 'patio'."},
                     "needs_response": {"type": "boolean", "description": "Only reviews with no draft written yet."},
                     "limit": {"type": "integer", "description": "Max reviews to return (default 10, max 20)."},
+                    "review_id": {"type": "integer", "description": "One review by id, with its drafted reply — the one the owner is looking at."},
                 },
             },
         },
