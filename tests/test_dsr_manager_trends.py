@@ -141,8 +141,15 @@ def test_the_manager_sees_the_shift_and_operations_but_no_finance(db):
     top = {x["key"] for x in p["kpis"]}
     assert top.isdisjoint({"net", "food_pct", "prime_pct", "labor_cost", "bev_mix"})
     ops = [x["key"] for x in p["operations"]]
-    assert "complaints" in ops and "discounts" in ops
+    # Operations is capped at kpis.OPERATIONS_MAX (ID1-21, 9/25/26 — this
+    # pinned discounts here): the loss lines the view allows stay in the
+    # Sales block, never in Operations for a login without LOSS_VIEW.
+    assert "complaints" in ops and len(ops) <= kpis.OPERATIONS_MAX
+    assert "discounts" in p["facts"]["blocks"]["sales"]["metrics"]
     assert {"voids", "comps"}.isdisjoint(ops), "comps and voids are owner-granted (LOSS_VIEW)"
+    assert {"voids", "comps"}.isdisjoint(p["facts"]["blocks"]["sales"]["metrics"])
+    # The shift's one verdict line: labor against its target, then the no-show.
+    assert p["shift"]["verdict"]["text"].startswith("Labor ") and "1 no-show" in p["shift"]["verdict"]["text"]
     owner = access.render(rep, {"role": "owner"}, r)
     assert owner["shift"] is None and owner["operations"] == []
 
@@ -300,14 +307,20 @@ def test_both_emails_follow_the_new_order(db):
                                      "needs_attention": [], "actions_tomorrow": []})
     rep = store.get_report(r.id, SAT)
     _s, owner, _p = emails.dsr_email(deliver.digest(access.render(rep, {"role": "owner"}, r), r))
-    order = [owner.index(k) for k in ("Executive summary", "Today&rsquo;s score", "Top KPIs",
-                                      "Tomorrow &middot; Sunday", "How did yesterday turn out?")]
+    # SCORE FIRST (9/25/26 owner decision — this pinned the summary first):
+    # the score, the summary, tomorrow, the KPIs, yesterday as one line.
+    order = [owner.index(k) for k in ("Today&rsquo;s score", "Executive summary", "Tomorrow &middot; Sunday",
+                                      "Yesterday&rsquo;s predictions:")]
     assert order == sorted(order)
-    assert "↓ 1.4 pts vs last Saturday" in owner and "Best Saturday in 5 weeks" in owner
-    assert "Sales between $8,000 and $9,500" in owner and "Correct" in owner and "AI confidence 70%" in owner
+    # The owner's KPIs skip the score's components (labor is one): its
+    # direction lives in the full report's "All KPIs", and on the manager's.
+    assert "↓ 1.4 pts vs last Saturday" not in owner
+    assert "1 of 1 correct" in owner and "AI confidence 70%" in owner
     _s, mgr, _p = emails.dsr_email(deliver.digest(access.render(rep, {"role": "manager"}, r), r))
-    order = [mgr.index(k) for k in ("Operations summary", "Today&rsquo;s shift", ">Operations<", "Top KPIs")]
+    # The manager's Top KPIs (labor against target) above Operations (ID1-21).
+    order = [mgr.index(k) for k in ("Operations summary", "Today&rsquo;s shift", "Top KPIs", ">Operations<")]
     assert order == sorted(order)
+    assert "↓ 1.4 pts vs last Saturday" in mgr and "Best Saturday in 5 weeks" in mgr
     assert "Saturday ran 300 guests on 17 people." in mgr and "Sales beat budget" not in mgr
     # "No-shows", as the Labor block calls them (D1-17) — this pinned "Call-offs".
     assert "Employees scheduled" in mgr and "No-shows" in mgr and "Today&rsquo;s score" not in mgr
@@ -429,3 +442,48 @@ def test_a_budget_entered_after_the_report_is_read_as_it_stands(db):
     assert "budget" in str(sales).lower()
     assert "budget_net" not in access.render(store.get_report(r.id, SAT), {"role": "manager"}, r)[
         "facts"]["blocks"]["sales"]["metrics"]
+
+
+# ── the density round (9/25/26): say each thing once ───────────────────────
+
+def test_the_owner_headline_kpis_skip_what_the_score_says(db):
+    # ID1-16: net, labor %, food cost % and the rating are Today's score's
+    # components; the owner's headline KPIs are the next four, and every KPI
+    # is still in `kpis` for "All KPIs".
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, food=({"est_food_cost_pct": 31.0}, {}), reviews={"avg_rating": 4.6, "received": 5})
+    p = access.render(rep, {"role": "owner"}, r)
+    head = p["kpis_headline"]
+    assert 0 < len(head) <= kpis.HEADLINE_MAX
+    measured = {c["key"] for c in p["scorecard"]["components"] if c["measured"]}
+    assert not [k for k in head if kpis.SCORE_KEYS.get(k) in measured]
+    assert {"net", "labor_pct"} <= {k["key"] for k in p["kpis"]}
+    assert set(head) <= {k["key"] for k in p["kpis"]}
+    # The manager has no score: the headline is its own Top KPIs.
+    m = access.render(rep, {"role": "manager"}, r)
+    assert m["kpis_headline"] == [k["key"] for k in m["kpis"]][:kpis.HEADLINE_MAX]
+
+
+def test_operations_shows_four_tiles_at_most(db):
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, reviews={"negative": 1, "received": 3})
+    p = access.render(rep, {"role": "manager", "permissions": ["loss_view"]}, r)
+    assert len(p["operations"]) <= kpis.OPERATIONS_MAX
+    assert [x["key"] for x in p["operations"]] == ["avg_ticket", "guests", "complaints", "splh"]
+
+
+@pytest.mark.parametrize("metrics,detail,text,tone", [
+    ({"pct": 27.5, "target_pct": 28.0, "vs_target_pts": -0.5}, {"target_source": "set"},
+     "Labor 27.5%, on target", "good"),
+    ({"pct": 26.0, "target_pct": 28.0, "vs_target_pts": -2.0, "no_shows": 1}, {"target_source": "set"},
+     "Labor 26.0%, 2.0 pts under target · 1 no-show", "warn"),
+    ({"pct": 31.0, "target_pct": 28.0, "vs_target_pts": 3.0}, {"target_source": "set"},
+     "Labor 31.0%, 3.0 pts over target", "bad"),
+    ({"pct": 31.0, "target_pct": 28.0, "vs_target_pts": 3.0, "overtime_hours": 2}, {"target_source": "default"},
+     "Labor 31.0%, 3.0 pts over starting target · 2 overtime hours", "warn"),
+    ({"pct": 29.0}, {}, "Labor 29.0%", None),
+])
+def test_the_shift_verdict_reads_the_labor_blocks_own_figures(metrics, detail, text, tone):
+    v = kpis.shift_verdict(metrics, detail)
+    assert (v["text"], v["tone"]) == (text, tone)
+    assert kpis.shift_verdict({}, {}) is None

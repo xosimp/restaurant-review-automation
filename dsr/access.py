@@ -363,7 +363,16 @@ def render(report, user, restaurant=None, versions=None):
         from dsr import kpis as _kpis
         kp = _kpis.build(facts, restaurant, user, view)
     except Exception:
+        _kpis = None
         kp = {"top": [], "operations": [], "shift": None}
+    shown = narrative_for(report.get("narrative"), hidden)
+    # The few KPIs the report shows up front (ID1-16, 9/25/26): the owner's
+    # skip the four Today's score already states; the rest sit under "All
+    # KPIs". Keys into `kpis`, so every surface draws the same few.
+    try:
+        headline = _kpis.headline(kp.get("top") or [], card) if _kpis else []
+    except Exception:
+        headline = []
     return {
         "view": view,
         "business_date": report.get("business_date"),
@@ -375,13 +384,14 @@ def render(report, user, restaurant=None, versions=None):
         "trigger": report.get("trigger"),
         "finalized_at": report.get("finalized_at"),
         "facts": facts,
-        "narrative": narrative_for(report.get("narrative"), hidden),
+        "narrative": shown,
         "scorecard": card,
         "kpis": kp.get("top") or [],
+        "kpis_headline": headline,
         "operations": kp.get("operations") or [],
         "shift": kp.get("shift"),
         "tomorrow": tomorrow_for(stored, user, view, withheld=facts.get("withheld")),
-        "insights": insights(facts, report.get("narrative") and narrative_for(report.get("narrative"), hidden), view),
+        "insights": insights(facts, shown, view, said=_said(card, shown)),
         "yesterday": _yesterday(report, restaurant, user, view),
         "checklist": checklist(report, user, restaurant),
         "versions": [dict(v, finalized_at_local=_stamp_local(v.get("finalized_at"), restaurant),
@@ -425,33 +435,62 @@ def _cite_rule(user, view):
     return ok
 
 
-def insights(facts, narrative, view):
-    """AI insights: the narrative's verified callouts (biggest win, risk,
-    staffing concern …) and — owner only — the money the Food block counts
-    at stake. An opportunity is never money saved (value_delivered rules):
-    it is labelled at stake, a month, and its basis."""
+# The callouts the report already says elsewhere (ID1-18, 9/25/26): the
+# biggest win and risk are Today's wins and risks, the top priority is
+# Tomorrow's priority #1. What is left — staffing, guests, the biggest
+# opportunity — is kept, at most INSIGHTS_MAX, and never a sentence already
+# on the page word for word.
+RESTATED_INSIGHTS = ("biggest_win", "biggest_risk", "highest_priority_issue")
+INSIGHTS_MAX = 2
+INSIGHT_LABELS = (("biggest_staffing_concern", "Staffing"), ("largest_staffing", "Staffing"),
+                  ("largest_guest_experience", "Guests"),
+                  ("biggest_financial_opportunity", "Biggest opportunity"),
+                  ("largest_opportunity", "Biggest opportunity"))
+
+
+def _norm(text):
+    return " ".join(str(text).lower().split())
+
+
+def insights(facts, narrative, view, said=()):
+    """AI insights: the narrative's verified callouts the report does not
+    already say — staffing, guests, the biggest opportunity — at most
+    INSIGHTS_MAX. `said` is the text already on the page (wins, risks,
+    went well / needs attention, the actions); an insight repeating one word
+    for word is left out.
+
+    The Food block's money at stake is not an insight (ID1-16): the Food
+    block's own "At stake · opportunity" tile carries it, labelled an
+    opportunity, once. `facts` and `view` stay in the signature for its
+    callers; the narrative passed in is already this view's (narrative_for),
+    so nothing here can reach a line the view withholds."""
     out = []
     n = narrative if isinstance(narrative, dict) else {}
-    labels = (("biggest_win", "Biggest win"), ("biggest_risk", "Biggest risk"),
-              ("highest_priority_issue", "Top priority"),
-              ("biggest_financial_opportunity", "Biggest opportunity"), ("largest_opportunity", "Biggest opportunity"),
-              ("biggest_staffing_concern", "Staffing"), ("largest_staffing", "Staffing"),
-              ("largest_guest_experience", "Guests"))
-    seen = set()
-    for key, label in labels:
+    seen = {_norm(t) for t in said or () if t}
+    for key, label in INSIGHT_LABELS:
+        if len(out) >= INSIGHTS_MAX:
+            break
         item = n.get(key)
         text = item.get("text") if isinstance(item, dict) else None
-        if text and text not in seen:
-            seen.add(text)
+        if text and _norm(text) not in seen:
+            seen.add(_norm(text))
             out.append({"kind": key, "label": label, "text": text, "source": "narrative"})
-    if view == OWNER:
-        food = ((facts or {}).get("blocks") or {}).get("food") or {}
-        fm = food.get("metrics") or {} if food.get("status") == dsr.READY else {}
-        at = fm.get("drivers_at_stake_monthly")
-        if isinstance(at, (int, float)) and at > 0:
-            out.append({"kind": "at_stake", "label": "Money at stake",
-                        "text": f"${at:,.0f} a month across your food-cost drivers — at stake, not saved",
-                        "source": "measured"})
+    return out
+
+
+def _said(card, narrative):
+    """The sentences the report already carries around its insights: Today's
+    wins and risks, went well / needs attention, and Tomorrow's priorities."""
+    out = []
+    for x in ((card or {}).get("wins") or []) + ((card or {}).get("risks") or []):
+        if isinstance(x, dict) and x.get("text"):
+            out.append(x["text"])
+    n = narrative if isinstance(narrative, dict) else {}
+    for key in ("went_well", "needs_attention", "actions_tomorrow"):
+        for x in n.get(key) or []:
+            t = x.get("text") if isinstance(x, dict) else x
+            if isinstance(t, str) and t:
+                out.append(t)
     return out
 
 
@@ -568,4 +607,18 @@ def redact_grid(grid, user):
         if g.get(key):
             g[key] = strip(g[key])
     g["withheld"] = ["budget"] + (["labor"] if "labor" in gone else []) + (["gross"] if "gross" in gone else [])
+    return g
+
+
+def grid_for(grid, user):
+    """A week or period as the app shows it to this login: redact_grid, then
+    the one sentence over it (dsr.rollup.story, ID1-22) — written from the
+    REDACTED grid, so a view without the budget never reads a budget miss."""
+    from dsr import rollup
+    g = redact_grid(grid, user)
+    if isinstance(g, dict):
+        try:
+            g["story"] = rollup.story(g)
+        except Exception:
+            g["story"] = None
     return g

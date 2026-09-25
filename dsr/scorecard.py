@@ -44,6 +44,9 @@ MIN_SCORED = 2                      # sales plus one more
 VERDICTS = ((85, "Excellent day", "good"), (70, "Good day", "good"), (55, "Mixed day", "warn"),
             (0, "Tough day", "bad"))
 MAX_ITEMS = 5
+# Wins and risks a report shows up front (9/25/26, ID1-15): three each on the
+# web, iPhone and in the email; the web keeps the rest behind "N more".
+SHOWN_ITEMS = 3
 HISTORY_WEEKS = 4                   # "a usual Saturday": the same weekday, the last 4 weeks
 HISTORY_MIN = 2                     # …measured on at least 2 of them
 CATEGORY_WIN_PCT = 15.0

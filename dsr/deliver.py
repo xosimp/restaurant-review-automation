@@ -385,12 +385,16 @@ def digest(payload, restaurant, kind=FIRST):
         # Both views (9/25/26): the numbers with direction, the manager's
         # shift and operations, tomorrow, and yesterday's predictions graded.
         "kpis": list(payload.get("kpis") or []),
+        # The keys of the few KPIs the report leads with (kpis.headline): the
+        # email prints only these; None when the payload predates them.
+        "kpis_headline": (list(payload["kpis_headline"]) if isinstance(payload.get("kpis_headline"), list)
+                          else None),
         "shift": payload.get("shift"),
         "operations": list(payload.get("operations") or []),
         "tomorrow": payload.get("tomorrow"),
         "yesterday": payload.get("yesterday"),
-        # AI insights (access.insights, already filtered for this view): the
-        # email shows them between Top KPIs and Tomorrow's priorities (D3-7).
+        # AI insights (access.insights, already filtered for this view and
+        # capped at access.INSIGHTS_MAX): the email shows them after the KPIs.
         "insights": [i for i in payload.get("insights") or [] if isinstance(i, dict) and i.get("text")],
         "actions": actions,
         "missing": list(facts.get("missing") or []),
@@ -444,16 +448,19 @@ def _render(report, user, restaurant, db):
     return access.render(report, user, restaurant, versions=versions)
 
 
-def present_shown(restaurant_id, payload, surface, user_id=None, db_path=None):
+def present_shown(restaurant_id, payload, surface, user_id=None, db_path=None, limit=None):
     """The actions a reader was shown in one rendered report (the output of
     dsr.access.render for THEIR view), into rec_ledger on `surface`. Returns
     {key: rec_id or None}; never raises. Called where the report is really
     seen — a delivered email ("dsr_email"), the report view ("dsr") — never
-    when the narrative is written."""
+    when the narrative is written. `limit`: only the first N were shown (the
+    email prints emails.DSR_EMAIL_ACTIONS of them)."""
     try:
         from dsr import narrative as _narr
         import rec_ledger
         acts = ((payload or {}).get("narrative") or {}).get("actions_tomorrow") or []
+        if limit is not None:
+            acts = list(acts)[:limit]
         items = _narr.ledger_items(acts)
         if not items:
             return {}
@@ -474,7 +481,8 @@ def _send_email(db, row_id, restaurant, report, user, kind, content=None):
         _finish(db, row_id, SENT)
         # The "Updated" notice shows no actions; the first notice does.
         if content == FIRST:
-            present_shown(restaurant.id, payload, "dsr_email", user_id=user.get("id"), db_path=db)
+            present_shown(restaurant.id, payload, "dsr_email", user_id=user.get("id"), db_path=db,
+                          limit=emails.DSR_EMAIL_ACTIONS)
         return SENT
     # Never attempted (a suppressed address, no key): a decision, not a failure.
     status = FAILED if getattr(result, "attempts", 0) else SKIPPED

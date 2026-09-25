@@ -229,3 +229,49 @@ def test_the_week_and_period_routes(client, db, monkeypatch):
     other = create_restaurant(Restaurant(name="Elsewhere", owner_email="o@x.com"), db_path=db)
     _as(monkeypatch, other, "client")
     assert client.get("/api/dsr/week?date=2026-09-16").get_json()["week"]["totals"]["net"] is None
+
+
+# ── the sentence over the grid (ID1-22, 9/25/26) ────────────────────────────
+
+def _grid_week(db):
+    r = _ejs(db)
+    from datetime import timedelta
+    for i, (net, bud) in enumerate(((5000.0, 5200.0), (8420.0, 8000.0), (4000.0, 4610.0))):
+        day = WED + timedelta(days=i)
+        _night(db, r.id, day, net, net + 300, {"Food": net})
+        store.set_budget(r.id, day, gross=bud + 300, net=bud, db_path=db)
+    return r, rollup.week(r, WED)
+
+
+def test_the_week_says_which_night_carried_it_and_which_missed(db):
+    r, w = _grid_week(db)
+    s = access.grid_for(w, {"role": "client"})["story"]
+    # 8,420 of 17,420 measured net is 48%; Friday is the biggest budget miss.
+    assert s == "Thursday carried the week ($8,420 net, 48% of it); Friday missed budget by $610."
+
+
+def test_a_managers_sentence_never_names_the_budget(db):
+    r, w = _grid_week(db)
+    g = access.grid_for(w, {"role": "manager"})
+    assert "budget" not in (g["story"] or "").lower()
+    assert g["story"].startswith("Thursday carried the week ($8,420 net, 48% of it)")
+
+
+def test_the_sentence_needs_two_measured_nights_and_reads_a_period_by_week():
+    assert rollup.story({"kind": "week", "days": [{"date": "2026-09-16", "net": 5000.0}]}) is None
+    assert rollup.story(None) is None
+    g = {"kind": "period", "weeks": [
+        {"label": "Period 9 · Week 1", "totals": {"net": 30000.0, "vs_last_year_net": 1200.0}},
+        {"label": "Period 9 · Week 2", "totals": {"net": 36000.0, "vs_last_year_net": -900.0}},
+        {"label": "Period 9 · Week 3", "totals": {"net": None}}]}
+    assert rollup.story(g) == "Week 2 carried the period ($36,000 net, 55% of it) but trailed last year by $900."
+    g["weeks"][1]["totals"]["vs_last_year_net"] = 50.0
+    assert rollup.story(g) == "Week 2 carried the period ($36,000 net, 55% of it); no week trailed last year."
+
+
+def test_the_week_route_carries_the_sentence(client, db, monkeypatch):
+    r, _w = _grid_week(db)
+    _as(monkeypatch, r.id, "manager")
+    body = client.get("/api/dsr/week?date=2026-09-16").get_json()
+    assert body["week"]["story"].startswith("Thursday carried the week")
+    assert "budget" not in body["week"]["story"]

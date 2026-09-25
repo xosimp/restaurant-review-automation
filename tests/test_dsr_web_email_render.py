@@ -206,14 +206,34 @@ def test_the_email_labels_an_estimate_as_one():
     assert "31.2% estimated" in html
 
 
-def test_the_email_carries_the_ai_insights_before_the_priorities():
+def test_the_email_puts_the_priorities_before_at_most_two_insights():
+    # 9/25/26 (ID1-23): priorities right after wins and risks; insights after
+    # the numbers, two at most. This pinned insights before the priorities.
     import emails
-    ins = [{"kind": "biggest_win", "label": "Biggest win", "text": "Patio covers doubled."},
-           {"kind": "at_stake", "label": "Money at stake", "text": "$1,200 a month — at stake, not saved"}]
+    ins = [{"kind": "biggest_staffing_concern", "label": "Staffing", "text": "Patio needs a runner."},
+           {"kind": "largest_guest_experience", "label": "Guests", "text": "Waits ran long at 7pm."},
+           {"kind": "largest_opportunity", "label": "Biggest opportunity", "text": "Third insight."}]
     acts = [{"text": "Move a server to the patio.", "key": None, "why": None, "confidence": None}]
     _s, html, _p = emails.dsr_email(_digest(insights=ins, actions=acts))
-    assert "AI insights" in html and "Patio covers doubled." in html and "at stake, not saved" in html
-    assert html.index("AI insights") < html.index("Tomorrow&rsquo;s priorities")
+    assert "AI insights" in html and "Patio needs a runner." in html and "Third insight." not in html
+    assert html.index("Tomorrow&rsquo;s priorities") < html.index("AI insights")
+
+
+def test_insights_never_restate_a_win_a_risk_or_a_priority():
+    # ID1-18: biggest win / risk / top priority are said above; the Food
+    # block's money at stake is its own tile, not an insight (ID1-16).
+    from dsr import access
+    n = {"biggest_win": {"text": "Patio covers doubled."}, "biggest_risk": {"text": "Buns run out."},
+         "highest_priority_issue": {"text": "Order buns."},
+         "biggest_staffing_concern": {"text": "Move a server to the patio."},
+         "largest_guest_experience": {"text": "Waits ran long at 7pm."},
+         "largest_opportunity": {"text": "Beer mix is light."},
+         "actions_tomorrow": [{"text": "Move a server to the patio."}]}
+    facts = {"blocks": {"food": {"status": "ready", "metrics": {"drivers_at_stake_monthly": 1200.0}}}}
+    out = access.insights(facts, n, access.OWNER, said=access._said(None, n))
+    assert [i["kind"] for i in out] == ["largest_guest_experience", "largest_opportunity"]
+    assert len(out) <= access.INSIGHTS_MAX
+    assert not any(i["kind"] in access.RESTATED_INSIGHTS or i["kind"] == "at_stake" for i in out)
 
 
 def test_the_digest_passes_the_views_insights_and_the_location():
@@ -260,3 +280,167 @@ def test_the_managers_email_never_repeats_an_operations_kpi():
     _s, html, _p = emails.dsr_email(_digest("manager", operations=[k("guests", "Guests")],
                                             kpis=[k("guests", "Guests"), k("labor_pct", "Labor")]))
     assert html.count(">Guests<") == 1
+
+
+# ── the density round (9/25/26): SCORE FIRST, say each thing once ──────────
+
+def _card(**over):
+    c = {"verdict": {"label": "Good day", "tone": "good"}, "overall": 78, "basis": "A weighted score",
+         "components": [{"key": "sales", "label": "Sales", "measured": True, "value": "+$420 vs budget",
+                         "detail": "$8,420 net · +5.2%", "tone": "good", "score": 88},
+                        {"key": "labor", "label": "Labor", "measured": True, "value": "on target",
+                         "detail": "27.5% of sales · target 28%", "tone": "good", "score": 85},
+                        {"key": "food", "label": "Food cost", "measured": False, "value": None,
+                         "why": "Not estimated for this night"},
+                        {"key": "guests", "label": "Guest experience", "measured": False, "value": None,
+                         "why": "No new reviews"}],
+         "wins": [{"text": "Win %d." % i} for i in range(1, 6)],
+         "risks": [{"text": "Risk %d." % i} for i in range(1, 5)]}
+    c.update(over)
+    return c
+
+
+def _k(key, label):
+    return {"key": key, "label": label, "value_text": "1"}
+
+
+def _owner_night():
+    p = _payload()
+    p["facts"]["blocks"]["sales"] = {"status": "ready", "source": "rpower", "metrics": {"net": 8420.0}, "detail": {}}
+    p.update(scorecard=_card(),
+             kpis=[_k("net", "Net sales"), _k("labor_pct", "Labor %"), _k("prime_pct", "Prime cost"),
+                   _k("avg_ticket", "Average ticket"), _k("guests", "Guests"), _k("splh", "Sales per labor hour"),
+                   _k("bev_mix", "Beverage mix")],
+             kpis_headline=["prime_pct", "avg_ticket", "guests", "splh"],
+             insights=[{"kind": "largest_staffing", "label": "Staffing", "text": "Patio needs a runner."}],
+             tomorrow={"weekday": "Sunday", "date": "2026-09-20", "items": []})
+    p["narrative"] = {"executive_summary": {"text": "A steady Saturday."},
+                      "actions_tomorrow": [{"text": "Action %d." % i} for i in range(1, 5)]
+                      + [{"text": "Add a server to the Sunday schedule.", "kind": "staffing"}],
+                      "verification": {"checked": 9, "kept": 8, "dropped": 1, "measured": 7}}
+    p["checklist"] = {"stages": [{"label": "Ready", "at_local": "2026-09-19T23:40"}]}
+    return p
+
+
+def _plain(html):
+    return html.replace('<span class="hb-num">', "").replace("</span>", "")
+
+
+def test_the_owner_report_reads_score_first_then_the_actions():
+    html = _render(_owner_night())
+    order = [html.index(k) for k in ('aria-label="Today’s score"', 'aria-label="Executive summary"',
+                                     "Today’s wins", "Tomorrow’s priorities", ">Sunday", "Top KPIs",
+                                     "AI insights", "Block by block", "How the night was built")]
+    assert order == sorted(order)
+    # The score is the hero, with the night's net the biggest figure on it;
+    # the summary is no longer a hero.
+    score = html[html.index('dr-score"'):html.index('aria-label="Executive summary"')]
+    assert "hero" in html[html.index('dr-score"') - 40:html.index('dr-score"')]
+    assert '<div class="net">' in score and "8,420" in score and "+$420 vs budget" in score
+    assert 'class="hb-card dr-read"' in html
+    # Sales is the hero, not a component tile beside it.
+    assert '<div class="k">Sales</div>' not in score
+
+
+def test_the_owner_report_says_each_thing_once():
+    html = _render(_owner_night())
+    top = html[html.index("Top KPIs"):html.index('id="dr-allk"')]
+    for label in ("Prime cost", "Average ticket", "Guests", "Sales per labor hour"):
+        assert '<div class="k">%s' % label in top
+    assert "Net sales" not in top and "Labor %" not in top      # Today's score says them
+    allk = html[html.index('id="dr-allk"'):]
+    allk = allk[:allk.index("</details>")]
+    assert "Net sales" in allk and "Labor %" in allk and "Beverage mix" in allk
+    # Three wins and three risks up front, then "N more"; three priorities.
+    plain = _plain(html)
+    assert "2 more</summary>" in plain and "1 more</summary>" in plain
+    assert "2 more priorities</summary>" in plain
+    # Tomorrow points to the staffing priority instead of repeating it.
+    assert html.count("Add a server to the Sunday schedule.") == 1
+    assert "see priority #5 above" in plain and "AI recommendation" not in html
+
+
+def test_the_blocks_are_closed_and_the_footer_is_in_how_it_was_built():
+    html = _render(_owner_night())
+    assert re.search(r'id="dr-sec-\w+" open>', html) is None
+    built = html[html.index('id="dr-built"'):]
+    assert "dr-foot" in built and "8 of 9 lines kept" in _plain(built)
+    assert "dr-foot" not in html[:html.index('id="dr-built"')]
+    # No score to read: Sales opens on its own.
+    p = _owner_night()
+    p["scorecard"] = None
+    assert 'id="dr-sec-sales" open>' in _render(p)
+
+
+def test_the_manager_report_leads_with_labor_against_target():
+    p = _payload("manager", kpis=[_k("labor_pct", "Labor"), _k("rating", "Guest rating")],
+                 kpis_headline=["labor_pct", "rating"],
+                 operations=[_k("avg_ticket", "Average ticket"), _k("guests", "Guests")],
+                 shift={"rows": [{"key": "no_shows", "label": "No-shows", "value_text": "1", "tone": "warn"}],
+                        "verdict": {"text": "Labor 31.0%, 1.0 pts over starting target · 1 no-show", "tone": "warn"}})
+    html = _render(p)
+    assert html.index("Today’s shift") < html.index("Top KPIs") < html.index(">Operations<")
+    assert 'class="dr-shift-v warn"' in html and "1 no-show" in html
+
+
+def _week(**over):
+    days = [{"date": "2026-09-14", "weekday": "Mon", "net": 5000.0, "budget_net": 5200.0, "status": "final",
+             "last_year_net": 4800.0},
+            {"date": "2026-09-15", "weekday": "Tue", "net": 8420.0, "budget_net": 8000.0, "status": "final"},
+            {"date": "2026-09-16", "weekday": "Wed", "net": None, "budget_net": 6000.0}]
+    g = {"start": "2026-09-14", "end": "2026-09-20", "days": days, "categories": [], "withheld": [],
+         "totals": {"net": 13420.0, "days_measured": 2, "vs_budget_net": 220.0, "vs_budget_net_pct": 1.7,
+                    "labor_pct": 27.4},
+         "story": "Tuesday carried the week ($8,420 net, 63% of it); Monday missed budget by $200."}
+    g.update(over)
+    return g
+
+
+def test_the_week_leads_with_its_summary_tiles_bars_and_sentence():
+    out = _node("console.log(window.__t.weekHtml(%s,'owner'));" % json.dumps(_week()))
+    s = out[out.index("hb-card dr-wsum"):out.index('class="dr-gridbox')]
+    for k in ("Week to date · net", "vs budget", "vs last year", "Labor %"):
+        assert k in s
+    assert "13,420" in s and "+$220" in s
+    bars = re.findall(r'<div class="c( \w+)?" style', s)
+    assert bars == [" miss", " met", ""]            # Wednesday was not measured
+    assert s.count('<em class="bud"') == 3 and "Tuesday carried the week" in s
+    # Last year exists: the import card is a link that opens it.
+    assert 'data-dr="imp-open"' in out and 'id="dr-imp" hidden' in out
+    g = _week()
+    g["days"][0].pop("last_year_net")
+    out = _node("console.log(window.__t.weekHtml(%s,'owner'));" % json.dumps(g))
+    assert 'data-dr="imp-open"' not in out and 'id="dr-imp" aria-label' in out
+
+
+def test_the_managers_week_summary_has_no_budget():
+    g = _week(withheld=["budget"], story="Tuesday carried the week ($8,420 net, 63% of it).")
+    for d in g["days"]:
+        d.pop("budget_net")
+    g["totals"].pop("vs_budget_net")
+    g["totals"].pop("vs_budget_net_pct")
+    out = _node("console.log(window.__t.weekHtml(%s,'manager'));" % json.dumps(g))
+    s = out[out.index("hb-card dr-wsum"):out.index('class="dr-gridbox')]
+    assert "budget" not in s.lower() and 'class="bud"' not in s
+    assert "Week to date · net" in s and "Labor %" in s
+
+
+def test_the_email_reads_score_first_with_three_wins_and_four_kpis():
+    import emails
+    kp = [_k(k, k.upper()) for k in ("net", "labor_pct", "prime_pct", "avg_ticket", "guests", "splh", "bev_mix")]
+    acts = [{"text": "Action %d." % i, "key": None, "why": None, "confidence": None} for i in range(1, 6)]
+    y = {"items": [{"text": "Sales between $8,000 and $9,500", "outcome": "correct"},
+                   {"text": "Rain", "outcome": "incorrect"}], "accuracy": {"pct": None, "correct": 3, "graded": 4}}
+    _s, html, _p = emails.dsr_email(_digest(scorecard=_card(), kpis=kp, actions=acts, yesterday=y,
+                                            kpis_headline=["prime_pct", "avg_ticket", "guests", "splh"],
+                                            tomorrow={"weekday": "Sunday", "date": "2026-09-20",
+                                                      "items": [{"text": "Game day"}]}))
+    order = [html.index(k) for k in ("Today&rsquo;s score", "$9,000", "Executive summary", "Today&rsquo;s wins",
+                                     "Today&rsquo;s risks", "Tomorrow&rsquo;s priorities", "Tomorrow &middot;",
+                                     "Top KPIs", "Yesterday&rsquo;s predictions:")]
+    assert order == sorted(order)
+    assert "Win 3." in html and "Win 4." not in html and "Risk 4." not in html
+    assert ">PRIME_PCT<" in html and ">NET<" not in html and ">BEV_MIX<" not in html
+    assert "Action 3." in html and "Action 4." not in html and "2 more in the full report" in html
+    assert "1 of 2 correct" in html and "3 of 4 right so far" in html
+    assert "Sales between $8,000" not in html        # each prediction is on the full report

@@ -276,3 +276,71 @@ def period(restaurant, day, db_path=None):
     return {"kind": "period", "start": start.isoformat(), "end": end.isoformat(),
             "label": f"Period {pos['period']}", "fiscal": pos, "categories": cats,
             "weeks": weeks, "totals": _totals(rows, cats)}
+
+
+# ── the sentence over the grid ──────────────────────────────────────────────
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _dollars(v):
+    return f"${abs(v):,.0f}"
+
+
+def _short_week(label):
+    """"Week 3" from "Period 9 · Week 3"; any other label as it is."""
+    label = str(label or "")
+    return label.split(" · ")[-1] if " · " in label else label
+
+
+def story(grid):
+    """One deterministic sentence over a week or a period (ID1-22, 9/25/26):
+    which night (or week) carried it and which missed —
+    "Friday carried the week ($8,420 net, 24% of it); Tuesday missed budget
+    by $610."
+
+    Read ONLY from the grid it is given, AFTER access.redact_grid: a view
+    without the budget has no budget columns, so its sentence can never
+    name one — the miss is then against last year, which every view reads.
+    Every figure is one the grid's own rows carry (net, vs_budget_net,
+    vs_last_year_net); the share is that net over the sum of the measured
+    nets beside it. None under two measured nights (nothing carried
+    anything yet) or for a grid of nothing."""
+    if not isinstance(grid, dict):
+        return None
+    if grid.get("kind") == "period" or grid.get("weeks") is not None and grid.get("days") is None:
+        unit = "period"
+        rows = [dict((w.get("totals") or {}), _name=_short_week(w.get("label"))) for w in grid.get("weeks") or []]
+    else:
+        unit = "week"
+        rows = []
+        for r in grid.get("days") or []:
+            try:
+                name = _d(r.get("date")).strftime("%A")
+            except (TypeError, ValueError):
+                continue
+            rows.append(dict(r, _name=name))
+    measured = [r for r in rows if _num(r.get("net"))]
+    if len(measured) < 2:
+        return None
+    total = sum(r["net"] for r in measured)
+    best = max(measured, key=lambda r: r["net"])        # the first on a tie
+    if best["net"] <= 0 or total <= 0:
+        return None
+    share = best["net"] / total * 100
+    lead = f"{best['_name']} carried the {unit} ({_dollars(best['net'])} net, {share:.0f}% of it)"
+    key, verb = "vs_budget_net", "missed budget"
+    rs = [r for r in measured if _num(r.get(key))]
+    if not rs:
+        key, verb = "vs_last_year_net", "trailed last year"
+        rs = [r for r in measured if _num(r.get(key))]
+    if not rs:
+        return lead + "."
+    worst = min(rs, key=lambda r: r[key])
+    if worst[key] >= 0:
+        return lead + f"; no {'night' if unit == 'week' else 'week'} {verb}."
+    if worst is best:
+        return (f"{best['_name']} carried the {unit} ({_dollars(best['net'])} net, {share:.0f}% of it) "
+                f"but {verb} by {_dollars(worst[key])}.")
+    return lead + f"; {worst['_name']} {verb} by {_dollars(worst[key])}."

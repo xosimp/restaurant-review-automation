@@ -210,7 +210,15 @@ def test_the_owner_and_manager_emails_carry_exactly_their_own_views(db, sent):
 
     # The owner: budget, comps and food, and the lead that cites the budget.
     assert "vs budget" in owner["html"] and "4.5%" in owner["html"]
-    assert "Comps reached $180" in owner["html"] and "Food variance was $176" in owner["html"]
+    # The loss and food lines are the owner's: in the owner's risks (the
+    # email prints the first scorecard.SHOWN_ITEMS of them, 9/25/26 — this
+    # pinned all five in the email), never in the manager's.
+    from dsr import scorecard
+    card = access.render(rep, {"role": "owner"}, r)["scorecard"]
+    risks = [x["text"] for x in card["risks"]]
+    assert "Comps reached $180 tonight." in risks and "Food variance was $176." in risks
+    for t in risks[:scorecard.SHOWN_ITEMS]:
+        assert emails.esc(t) in owner["html"]
     assert "Net sales were $6,975, 4.5% under budget." in owner["html"]
     assert "Daily report" in owner["html"]
     # The manager: exactly the manager payload — no budget, no loss lines,

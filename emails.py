@@ -1093,31 +1093,54 @@ def _header_text(value) -> str:
     return " ".join(str(value or "").split())
 
 
+# What the DSR email carries up front (9/25/26, ID1-23): four KPIs (the
+# report's own headline set when the payload names it), the first three of
+# Tomorrow's priorities, at most two AI insights.
+DSR_EMAIL_KPIS = 4
+DSR_EMAIL_ACTIONS = 3
+DSR_EMAIL_INSIGHTS = 2
+
+
 def dsr_scorecard_sections(card: dict, d: dict) -> list:
-    """The Owner DSR's top, in the email (dsr.scorecard): Today's score —
-    the verdict, the overall score out of 100 and the four components —
-    then the executive summary, Today's wins and Today's risks. Every figure
-    is one the scorecard carries; an unmeasured component says why."""
+    """The Owner DSR's top, in the email (dsr.scorecard), SCORE FIRST
+    (9/25/26, ID1-20/23): Today's score — the verdict, the overall score out
+    of 100, the night's net large beside how it did against its basis (the
+    sales component: budget, else forecast, else last week), then the other
+    components — then the executive summary, then Today's wins and Today's
+    risks, three each (scorecard.SHOWN_ITEMS). Every figure is one the
+    scorecard or the payload carries; an unmeasured component says why."""
+    from dsr.scorecard import SHOWN_ITEMS
     tones = {"good": BRAND["good"], "warn": BRAND["warn"], "bad": BRAND["bad"]}
     out = []
-    # The executive summary leads (9/25/26 hierarchy), then the score.
-    if d.get("lead"):
-        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead"])))
-    elif d.get("lead_missing"):
-        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead_missing"])))
     verdict = card.get("verdict")
+    sales = next((c for c in card.get("components") or [] if c.get("key") == "sales"), None)
+    hero_sales = bool(sales and sales.get("measured") and d.get("net_label"))
+    head = report_eyebrow("Today&rsquo;s score")
     if verdict and card.get("overall") is not None:
         color = tones.get(verdict.get("tone"), BRAND["ink"])
-        out.append(report_eyebrow("Today&rsquo;s score")
-                   + f'<p style="font-family:{_SANS};font-size:22px;font-weight:700;color:{BRAND["ink"]};margin:0">'
-                     f'<span style="display:inline-block;width:12px;height:12px;border-radius:6px;background:{color};'
-                     f'margin-right:8px;vertical-align:1px"></span>{esc(verdict["label"])}'
-                     f'<span style="font-family:{_NUM};font-weight:600;color:{BRAND["muted"]};font-size:16px;'
-                     f'margin-left:10px">{int(card["overall"])}/100</span></p>')
+        head += (f'<p style="font-family:{_SANS};font-size:24px;font-weight:700;color:{BRAND["ink"]};margin:0">'
+                 f'<span style="display:inline-block;width:12px;height:12px;border-radius:6px;background:{color};'
+                 f'margin-right:8px;vertical-align:2px"></span>{esc(verdict["label"])}'
+                 f'<span style="font-family:{_NUM};font-weight:600;color:{BRAND["muted"]};font-size:16px;'
+                 f'margin-left:10px">{int(card["overall"])}/100</span></p>')
     else:
-        out.append(report_eyebrow("Today&rsquo;s score") + report_paragraph(esc(card.get("basis") or "")))
+        head += report_paragraph(esc(card.get("basis") or ""))
+    if hero_sales:
+        # The night's net, the email's largest figure, and the sales
+        # component's own comparison beside it (its tone, its basis).
+        vs = sales.get("value") if sales.get("score") is not None else sales.get("detail")
+        vs_color = tones.get(sales.get("tone"), BRAND["muted"])
+        head += (f'<p style="margin:14px 0 0;font-family:{_NUM};font-size:38px;font-weight:700;line-height:1.05;'
+                 f'color:{BRAND["strong"]}">{esc(d["net_label"])}'
+                 f'<span style="font-family:{_SANS};font-size:13px;font-weight:600;color:{BRAND["muted"]};'
+                 f'margin-left:6px">net</span></p>'
+                 + (f'<p style="margin:6px 0 0;font-family:{_SANS};font-size:15px;font-weight:600;color:{vs_color}">'
+                    f'{esc(vs)}</p>' if vs else ""))
+    out.append(head)
     comps = []
     for c in card.get("components") or []:
+        if hero_sales and c is sales:
+            continue
         if c.get("measured") and c.get("value") is not None:
             # An estimate says so, as the app does (the food cost is
             # recipe-theoretical): "Food cost (est.)" over its detail line.
@@ -1128,8 +1151,14 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
         else:
             comps.append(("&mdash;", esc(c.get("label") or ""), None))
     out.append(report_stats(comps))
-    wins = [esc(w["text"]) for w in card.get("wins") or [] if w.get("text")]
-    risks = [esc(r["text"]) for r in card.get("risks") or [] if r.get("text")]
+    # The executive summary second, under the score (DESIGN_SYSTEM.md,
+    # "The nightly report's order").
+    if d.get("lead"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead"])))
+    elif d.get("lead_missing"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead_missing"])))
+    wins = [esc(w["text"]) for w in card.get("wins") or [] if w.get("text")][:SHOWN_ITEMS]
+    risks = [esc(r["text"]) for r in card.get("risks") or [] if r.get("text")][:SHOWN_ITEMS]
     if wins:
         out.append(report_eyebrow("Today&rsquo;s wins", BRAND["good"]) + report_bullets(wins, BRAND["good"]))
     if risks:
@@ -1160,8 +1189,9 @@ def dsr_kpi_section(title: str, kpis: list) -> str:
 
 
 def dsr_tomorrow_sections(d: dict) -> list:
-    """Tomorrow's priorities (the narrative's actions), tomorrow's prep with
-    Cavnar's forecast and its confidence, and "How did yesterday turn out?"."""
+    """Tomorrow's prep with Cavnar's forecast and its confidence. How
+    yesterday's predictions did is one line of its own (dsr_yesterday_line),
+    lower in the email."""
     out = []
     t = d.get("tomorrow") or {}
     if t:
@@ -1181,25 +1211,36 @@ def dsr_tomorrow_sections(d: dict) -> list:
             when = esc(t.get("weekday") or "") + (f" {esc(_mdy(t['date']))}" if t.get("date") else "")
             out.append(report_eyebrow(f"Tomorrow &middot; {when}", BRAND["warn"])
                        + report_bullets(lines, BRAND["warn"]))
-    y = d.get("yesterday") or {}
-    if y.get("items"):
-        marks = {"correct": "&#10003;", "incorrect": "&#10007;"}
-        rows = []
-        for x in y["items"]:
-            word = {"correct": "Correct", "incorrect": "Incorrect"}.get(x.get("outcome"), "Not graded")
-            rows.append(f"{marks.get(x.get('outcome'), '&bull;')} {esc(x['text'])} &mdash; <b>{word}</b>"
-                        + (f" ({esc(x['actual_text'])})" if x.get("actual_text") else ""))
-        ac = y.get("accuracy") or {}
-        acc = (f"Prediction accuracy {ac['pct']}% &mdash; {ac['correct']} of {ac['graded']} right, "
-               f"last {ac['window_days']} days" if ac.get("pct") is not None else
-               f"{ac.get('correct', 0)} of {ac.get('graded', 0)} right so far")
-        out.append(report_eyebrow("How did yesterday turn out?") + report_bullets(rows) + report_paragraph(acc))
     return out
 
 
+def dsr_yesterday_line(d: dict) -> str:
+    """How yesterday's predictions about this night did, as ONE line (ID1-23):
+    tonight's count right, then the running accuracy — a percentage once
+    enough are graded (dsr.predictions), the count before that. Each
+    prediction, graded, is on the full report. "" with nothing graded."""
+    y = d.get("yesterday") or {}
+    items = [x for x in y.get("items") or [] if isinstance(x, dict)]
+    if not items:
+        return ""
+    right = sum(1 for x in items if x.get("outcome") == "correct")
+    graded = sum(1 for x in items if x.get("outcome") in ("correct", "incorrect"))
+    tonight = (f"{right} of {graded} correct" if graded else
+               f"{len(items)} not graded yet")
+    ac = y.get("accuracy") or {}
+    if ac.get("pct") is not None:
+        running = f"{ac['pct']}% right over the last {ac.get('window_days')} days"
+    else:
+        running = f"{ac.get('correct', 0)} of {ac.get('graded', 0)} right so far"
+    return (f'<p style="font-family:{_SANS};font-size:13px;color:{BRAND["body"]};line-height:1.55;margin:0">'
+            f'<b style="color:{BRAND["ink"]}">Yesterday&rsquo;s predictions:</b> {tonight} &middot; {running}.</p>')
+
+
 def dsr_manager_sections(d: dict) -> list:
-    """The Manager DSR's top: its operations summary, Today's shift and
-    Operations — no finance."""
+    """The Manager DSR's top: its operations summary, then Today's shift
+    under its one verdict line (kpis.shift_verdict: labor against target,
+    then no-shows and overtime) — no finance. Top KPIs and Operations
+    follow in dsr_email, in that order (ID1-21)."""
     out = []
     if d.get("lead"):
         out.append(report_eyebrow("Operations summary") + report_paragraph(esc(d["lead"])))
@@ -1207,13 +1248,15 @@ def dsr_manager_sections(d: dict) -> list:
         out.append(report_eyebrow("Operations summary") + report_paragraph(esc(d["lead_missing"])))
     sh = d.get("shift") or {}
     tones = {"good": BRAND["good"], "warn": BRAND["warn"], "bad": BRAND["bad"]}
-    if sh.get("rows"):
-        out.append(report_eyebrow("Today&rsquo;s shift")
+    verdict = sh.get("verdict") if isinstance(sh.get("verdict"), dict) else None
+    if sh.get("rows") or verdict:
+        line = ""
+        if verdict and verdict.get("text"):
+            line = (f'<p style="font-family:{_SANS};font-size:16px;font-weight:700;margin:0 0 14px;'
+                    f'color:{tones.get(verdict.get("tone"), BRAND["ink"])}">{esc(verdict["text"])}</p>')
+        out.append(report_eyebrow("Today&rsquo;s shift") + line
                    + report_stats([(esc(r["value_text"]), esc(r["label"]), tones.get(r.get("tone")))
-                                   for r in sh["rows"]]))
-    ops = dsr_kpi_section("Operations", d.get("operations") or [])
-    if ops:
-        out.append(ops)
+                                   for r in sh.get("rows") or []]))
     return out
 
 
@@ -1258,40 +1301,66 @@ def dsr_email(d: dict):
             sections.append(report_eyebrow("Provisional", BRAND["warn"]) + report_paragraph(
                 "Sales hadn&rsquo;t synced from the POS by the deadline, so this report has no sales "
                 "figures yet. You&rsquo;ll get one short update when they land."))
+        # The order (DESIGN_SYSTEM.md, "The nightly report's order", 9/25/26):
+        # SCORE FIRST — the score, the summary, wins and risks (owner), or
+        # the operations summary, the night's volume, Today's shift, Top
+        # KPIs and Operations (manager) — then Tomorrow's priorities,
+        # Tomorrow, the few KPIs, at most two insights, and yesterday's
+        # predictions as one line.
+        kpis = [k for k in d.get("kpis") or [] if isinstance(k, dict)]
+        if not owner:
+            # The manager's Top KPIs never repeat a tile Operations shows.
+            shown = {k.get("key") for k in d.get("operations") or [] if isinstance(k, dict) and k.get("key")}
+            kpis = [k for k in kpis if k.get("key") not in shown]
+        head = d.get("kpis_headline")
+        if isinstance(head, list):
+            # Only the few the report leads with (kpis.headline): the owner's
+            # never repeat Today's score; the rest are in the full report.
+            by = {k.get("key"): k for k in kpis}
+            kpis = [by[key] for key in head if key in by]
+        else:
+            kpis = kpis[:DSR_EMAIL_KPIS]
+        kp = dsr_kpi_section("Top KPIs", kpis)
         if card:
             sections.extend(dsr_scorecard_sections(card, d))
         elif not owner:
             # Operations summary, then the night's volume (net, vs last week,
-            # labor — sales volume is operations), then shift and operations.
+            # labor — sales volume is operations), then Today's shift, Top
+            # KPIs (labor against target) and Operations (ID1-21).
             mgr = dsr_manager_sections(d)
-            sections.extend(mgr[:1] + [stats] + mgr[1:])
+            vol = stats
+            if ((d.get("shift") or {}).get("verdict") or {}).get("text"):
+                # The shift's verdict line says labor against target; the
+                # volume row leaves its Labor stat out rather than say it twice.
+                vol = report_stats([(esc(s["value"]), esc(s["label"]),
+                                     BRAND.get(s["tone"]) if s.get("tone") else None)
+                                    for s in d.get("stats") or [] if not str(s.get("label")).startswith("Labor")])
+            sections.extend(mgr[:1] + [vol] + mgr[1:])
+            if kp:
+                sections.append(kp)
+                kp = ""
+            ops = dsr_kpi_section("Operations", d.get("operations") or [])
+            if ops:
+                sections.append(ops)
         else:
             if d.get("lead"):
                 sections.append(report_paragraph(esc(d["lead"])))
             elif d.get("lead_missing"):
                 sections.append(report_paragraph(esc(d["lead_missing"])))
             sections.append(stats)
-        kpis = d.get("kpis") or []
-        if not owner:
-            # The manager's Top KPIs never repeat a tile Operations shows.
-            shown = {k.get("key") for k in d.get("operations") or [] if isinstance(k, dict) and k.get("key")}
-            kpis = [k for k in kpis if not (isinstance(k, dict) and k.get("key") in shown)]
-        kp = dsr_kpi_section("Top KPIs", kpis)
-        if kp:
-            sections.append(kp)
         if not card and d.get("went_well"):
             sections.append(report_eyebrow("Went well", BRAND["good"])
                             + report_bullets([esc(t) for t in d["went_well"]], BRAND["good"]))
         if not card and d.get("needs_attention"):
             sections.append(report_eyebrow("Needs attention", BRAND["warn"])
                             + report_bullets([esc(t) for t in d["needs_attention"]], BRAND["warn"]))
-        # AI insights, where the app has them: after the numbers, before
-        # tomorrow's priorities (access.insights — this view's list only).
-        ins = [f"<b>{esc(i.get('label') or '')}:</b> {esc(i['text'])}" if i.get("label") else esc(i["text"])
-               for i in d.get("insights") or [] if isinstance(i, dict) and i.get("text")]
-        if ins:
-            sections.append(report_eyebrow("AI insights") + report_bullets(ins))
+        # Tomorrow's priorities come right after the wins and risks: the
+        # first DSR_EMAIL_ACTIONS, each with its confidence and Ask link, and
+        # a line saying how many more the full report carries. Only these are
+        # presented to rec_ledger as shown in the email (deliver._send_email).
         actions = d.get("actions") or []
+        more_actions = max(0, len(actions) - DSR_EMAIL_ACTIONS)
+        actions = actions[:DSR_EMAIL_ACTIONS]
         if actions:
             # Each action links to Ask about it, naming its rec_ledger key
             # (src=dsr_email) so the click is recorded as opened (#32) —
@@ -1309,9 +1378,22 @@ def dsr_email(d: dict):
             first += _ask(actions[0])
             rest = report_bullets([esc(a["text"]) + report_confidence(a.get("confidence")) + _ask(a)
                                    for a in actions[1:]])
+            more = (f'<div style="font-family:{_SANS};font-size:12.5px;color:{BRAND["muted"]};margin-top:4px">'
+                    f'{more_actions} more in the full report</div>' if more_actions else "")
             sections.append(report_action("Tomorrow&rsquo;s priorities", first)
-                            + (f'<div style="margin-top:14px">{rest}</div>' if rest else ""))
+                            + (f'<div style="margin-top:14px">{rest}</div>' if rest else "") + more)
         sections.extend(dsr_tomorrow_sections(d))
+        if kp:
+            sections.append(kp)
+        # AI insights (access.insights: never a win, risk or priority said
+        # again, at most two) after the numbers.
+        ins = [f"<b>{esc(i.get('label') or '')}:</b> {esc(i['text'])}" if i.get("label") else esc(i["text"])
+               for i in d.get("insights") or [] if isinstance(i, dict) and i.get("text")][:DSR_EMAIL_INSIGHTS]
+        if ins:
+            sections.append(report_eyebrow("AI insights") + report_bullets(ins))
+        yl = dsr_yesterday_line(d)
+        if yl:
+            sections.append(yl)
         missing = list(d.get("missing") or [])
         if missing:
             sections.append(report_eyebrow("Not in this report") + report_bullets([esc(m) for m in missing]))

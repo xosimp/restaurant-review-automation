@@ -5030,15 +5030,48 @@ svg:hover .hb-xh{opacity:1}
 .dr-acc{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--hb-line2)}
 /* Today's score (dsr.scorecard, 9/25/26): "did we win today?" in one glance */
 .dr-score{margin-top:22px}
-.dr-score .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.dr-score .verdict{display:inline-flex;align-items:center;gap:9px;font-family:'Clash Display','Apfel Grotezk',sans-serif;font-size:clamp(22px,2.4vw,28px);font-weight:600;color:var(--ink)}
+.dr-score .top{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.dr-score .lh{flex:1 1 320px;min-width:0}
+.dr-score .verdict{display:inline-flex;align-items:center;gap:9px;font-family:'Clash Display','Apfel Grotezk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:600;color:var(--ink)}
+/* The night's net: the page's largest figure (SCORE FIRST, 9/25/26) */
+.dr-score .net{font-family:'Space Grotesk',sans-serif;font-size:clamp(44px,5vw,62px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);margin-top:14px}
+.dr-score .net small{font-family:'Apfel Grotezk',sans-serif;font-size:15px;font-weight:500;letter-spacing:0;color:var(--ink3);margin-left:8px}
+.dr-score .vs{font-size:17px;font-weight:600;color:var(--ink2);margin-top:8px}
+.dr-score .vs.good{color:var(--hb-good)}.dr-score .vs.warn{color:var(--hb-warn)}.dr-score .vs.bad{color:var(--hb-bad)}
+.dr-more{margin-top:6px}
+.dr-more>summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink3);padding:6px 0;list-style:none}
+.dr-more>summary::-webkit-details-marker{display:none}
+.dr-more>summary:hover{color:var(--ember)}
+.dr-more>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
+.dr-more-recs{margin-top:10px}
+.dr-shift-v{font-size:17px;font-weight:600;color:var(--ink);margin-top:8px}
+.dr-shift-v.good{color:var(--hb-good)}.dr-shift-v.warn{color:var(--hb-warn)}.dr-shift-v.bad{color:var(--hb-bad)}
+/* The week and period summary layer (ID1-22): tiles, the nightly bars, one sentence */
+.dr-wsum{margin-top:20px}
+.dr-wsum .hb-stats{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.dr-story{font-size:16px;line-height:1.5;color:var(--ink);margin:16px 0 0}
+.dr-wbars{display:flex;align-items:flex-end;gap:8px;height:150px;margin-top:18px;padding-top:20px}
+.dr-wbars .c{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;position:relative;min-width:0}
+.dr-wbars .c .col{position:relative;width:100%;max-width:56px;flex:1 1 auto;min-height:0;display:flex;align-items:flex-end}
+.dr-wbars .c i{display:block;width:100%;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--ember2),var(--ember));transform-origin:bottom;animation:drGrow .6s cubic-bezier(.2,.9,.3,1) both;animation-delay:calc(var(--i,0)*45ms)}
+.dr-wbars .c.met i{background:linear-gradient(180deg,var(--hb-good),var(--hb-good2))}
+.dr-wbars .c.miss i{background:linear-gradient(180deg,var(--hb-bad),var(--ember))}
+.dr-wbars .c .bud{position:absolute;left:-3px;right:-3px;height:0;border-top:2px dashed var(--ink2)}
+.dr-wbars .c .none{display:block;width:100%;height:2px;background:var(--hb-line)}
+.dr-wbars .c b{font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:600;color:var(--ink2);margin-bottom:4px;white-space:nowrap}
+.dr-wbars .c span{font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);margin-top:6px;white-space:nowrap}
+.dr-wleg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--ink3);margin-top:10px}
+.dr-wleg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--ember)}
+.dr-wleg i.met{background:var(--hb-good)}.dr-wleg i.miss{background:var(--hb-bad)}
+.dr-wleg i.bud{height:0;border-radius:0;border-top:2px dashed var(--ink2);background:none;vertical-align:3px}
+.dr-imp-link{margin-top:16px}
 .dr-score .verdict i{width:13px;height:13px;border-radius:50%;background:var(--ink3);box-shadow:0 0 0 4px var(--hb-inner)}
 .dr-score .verdict.good i{background:var(--hb-good)}.dr-score .verdict.warn i{background:var(--hb-warn)}.dr-score .verdict.bad i{background:var(--hb-bad)}
 .dr-score .overall{margin-left:auto;text-align:right}
 .dr-score .overall .n{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.02em;color:var(--ink);line-height:1}
 .dr-score .overall .n small{font-size:15px;color:var(--ink3);font-weight:500;margin-left:2px}
 .dr-score .overall .l{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
-.dr-score .comps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}
+.dr-score .comps{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:18px}
 .dr-score .hb-stat .v{font-size:19px;white-space:normal;line-height:1.2}
 .dr-score .hb-stat.good .v{color:var(--hb-good)}.dr-score .hb-stat.warn .v{color:var(--hb-warn)}.dr-score .hb-stat.bad .v{color:var(--hb-bad)}
 .dr-score .hb-stat.off .v{color:var(--ink3);font-size:15px}
@@ -5175,7 +5208,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-home .ld.miss{color:var(--ink3)}
 .dr-home .ft{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
 @media (max-width:860px){.dr-wrap{padding:18px 16px 56px}.dr-two,.dr-cols{grid-template-columns:1fr}.dr-co-r{grid-template-columns:1fr;gap:4px}.dr-cmp{flex:1 1 100%}.dr-hours .c span{font-size:9.5px}.dr-hours .c b{font-size:11px}}
-@media (prefers-reduced-motion:reduce){.dr-hours .c i,.dr-bar .t i{animation:none;transform:none}.dr-pulse i,.dr-pill.running i,.dr-step.now .ic:after{animation:none}.dr-pulse i{left:35%}}
+@media (prefers-reduced-motion:reduce){.dr-hours .c i,.dr-bar .t i,.dr-wbars .c i{animation:none;transform:none}.dr-pulse i,.dr-pill.running i,.dr-step.now .ic:after{animation:none}.dr-pulse i{left:35%}}
 </style>
 <div class="dr-wrap" id="dr-root">
   <div class="dr-nav">
@@ -5447,46 +5480,90 @@ svg:hover .hb-xh{opacity:1}
     if(isOld)h+='<section class="hb-card rail dr-old"><span>You’re reading version '+hn(p.version)+' of '+hn(latest.version)+', as it went out'+(mine&&mine.finalized_at_local?' at '+hn(esc(stamp(mine.finalized_at_local))):'')+'.</span><span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(date)+'">Read the latest</button></section>';
     if((f.missing||[]).length){h+='<div class="dr-miss"><span>Still missing:</span>';for(var m=0;m<f.missing.length;m++)h+='<span class="m">'+esc(f.missing[m])+'</span>';h+='</div>';}
     h+=narrativeHtml(p.narrative,ck,p);
-    h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>each with its source; nothing estimated to fill a gap</small></h2></div></div>';
+    h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>open one for its detail</small></h2></div></div>';
     var withheld=f.withheld||[];
+    // Closed by default (ID1-17): each summary line carries the block's
+    // number. Sales opens on its own only when there is no score to read.
+    var scored=!!(p.scorecard&&isNum(p.scorecard.overall));
     for(var k=0;k<BLOCKS.length;k++){var n=BLOCKS[k];
-      if(B[n])h+=section(n,B[n],p);
+      if(B[n])h+=section(n,B[n],p,n==='sales'&&!scored);
       else if(withheld.indexOf(n)<0)h+=section(n,{status:'unavailable',reason:'Not collected for this night'},p);}
     h+=yesterdayHtml(p.yesterday);
-    h+=builtHtml(ck);
+    h+=builtHtml(ck,p.narrative);
     if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
     b.innerHTML=h;
   }
 
   // How the night was built: the stage and block times kept as provenance,
-  // folded away under the report.
-  function builtHtml(ck){
+  // folded away under the report, with the verification count (ID1-17: it
+  // sat mid-page, between the actions and the blocks).
+  function builtHtml(ck,n){
     var rows='',sg=ck.stages||[],bl=ck.blocks||[],i;
     for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic">\u2713</span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
     for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;var ok=x.status==='ready';
       rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'\u2713':'!')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
-    if(!rows)return '';
-    return '<details class="dr-sec"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'+rows+'</div></details>';
+    var vf=verifyHtml(n&&n.verification);
+    if(!rows&&!vf)return '';
+    return '<details class="dr-sec" id="dr-built"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'
+      +note('Each block carries its source; nothing is estimated to fill a gap.')+rows+vf+'</div></details>';
   }
-  // Today's score (dsr.scorecard): the verdict, the overall score out of
-  // 100, and the four things an owner checks first. Every figure measured;
-  // a component that wasn't says why instead of a zero.
-  function scoreHtml(c){
-    var v=c.verdict,h='<section class="hb-card dr-score" aria-label="Today\u2019s score"><div class="hb-kicker">Today\u2019s score</div><div class="top">';
+  // The verification count: how many of the written lines were kept.
+  // "Traced to a measured fact" never covers an estimate (H13): a line
+  // that cites the estimated food cost or the forecast is counted apart
+  // and said to be an estimate. The count is read from whichever shape
+  // the server sends (a number, or the list of lines).
+  // Not every dropped line failed a figure check: settle_actions also
+  // leaves out what the owner already answered, said not for us to, or a
+  // repeat of a line above (dsr/narrative.py). Each is said as what it is
+  // (B6 sub-audit: the footer called all of them failed figures).
+  function verifyHtml(vf){
+    if(!vf||!isNum(vf.checked))return '';
+    var dl=(vf.dropped instanceof Array)?vf.dropped:[],dAns=0;
+    for(var di=0;di<dl.length;di++){if(dl[di]&&/owner|already answered|same action|not for us/i.test(String(dl[di].why||'')))dAns++;}
+    var dropped=(dl.length||(isNum(vf.dropped)?vf.dropped:0))-dAns,est=vf.estimated!=null?vf.estimated:vf.estimates;
+    var nEst=isNum(est)?est:((est&&est.length)||0);
+    return '<div class="dr-foot">Every measured figure in this report traced to a fact \u00b7 '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'
+      +(isNum(vf.measured)?' \u00b7 '+hn(vf.measured)+' measured':'')
+      +(nEst?' \u00b7 '+hn(nEst)+' '+(nEst===1?'line rests':'lines rest')+' on an estimate, and says so':'')
+      +(dropped?' \u00b7 '+hn(dropped)+' dropped because '+(dropped===1?'it':'they')+' didn\u2019t pass the check against the night\u2019s facts':'')
+      +(dAns?' \u00b7 '+hn(dAns)+' left out because you already answered '+(dAns===1?'it':'them')+' or '+(dAns===1?'it repeated':'they repeated')+' a line above':'')+' \u00b7 written by Cavnar AI</div>';
+  }
+  // Today's score (dsr.scorecard), the report's hero (SCORE FIRST, 9/25/26,
+  // ID1-20): the verdict, the night's net at the page's largest size with
+  // the sales component's own comparison beside it (vs budget, else the
+  // forecast, else last week \u2014 the component's basis, never re-derived),
+  // the overall score out of 100, then the other three components. Every
+  // figure measured; a component that wasn't says why instead of a zero.
+  function scoreHtml(c,p){
+    var v=c.verdict,cs=c.components||[],sales=null,i;
+    for(i=0;i<cs.length;i++)if(cs[i]&&cs[i].key==='sales')sales=cs[i];
+    var sb=p&&p.facts&&p.facts.blocks&&p.facts.blocks.sales,net=sb&&sb.status==='ready'&&sb.metrics?sb.metrics.net:null;
+    var heroSales=!!(sales&&sales.measured&&isNum(net));
+    var h='<section class="hb-card hero dr-score" aria-label="Today\u2019s score"><div class="hb-kicker">Today\u2019s score</div><div class="top"><div class="lh">';
     h+=v?'<span class="verdict '+esc(v.tone||'')+'"><i aria-hidden="true"></i>'+esc(v.label)+'</span>':'<span class="verdict"><i aria-hidden="true"></i>Not scored yet</span>';
+    if(heroSales){var vs=isNum(sales.score)?sales.value:sales.detail;
+      h+='<div class="net">'+hn(esc(money(net)))+'<small>net</small></div>'
+        +(vs?'<div class="vs '+esc(isNum(sales.score)?(sales.tone||''):'')+'">'+prose(vs)+'</div>':'');}
+    h+='</div>';
     if(isNum(c.overall))h+='<div class="overall"><div class="n">'+hn(c.overall)+'<small>/100</small></div><div class="l">Overall performance</div></div>';
     h+='</div><div class="comps">';
-    var cs=c.components||[];
-    for(var i=0;i<cs.length;i++){var x=cs[i];
+    for(i=0;i<cs.length;i++){var x=cs[i];
+      if(heroSales&&x===sales)continue;
       if(!x.measured||x.value==null){h+=tile(x.label,esc(x.why||'Not measured'),'','off');continue;}
       var val=x.key==='guests'?'<span class="stars" aria-label="'+esc(x.detail||'')+'">'+esc(x.value)+'</span>':prose(x.value);
       h+=tile(x.label,val,x.detail?prose(x.detail):'',x.tone||'');}
     h+='</div><div class="basis">'+esc(c.basis||'')+'</div></section>';
     return h;
   }
-  function wrItems(list,cls,glyph){var h='';for(var i=0;i<list.length;i++){var t=list[i]&&list[i].text;if(!t)continue;
-    h+='<div class="hb-row '+cls+'"><span class="g" aria-hidden="true">'+glyph+'</span><span class="t wrap">'+prose(t)+'</span></div>';}return h;}
+  // Three wins and three risks up front (dsr.scorecard.SHOWN_ITEMS); the
+  // rest behind "N more" in the same card.
+  var SHOWN=3;
+  function wrItems(list,cls,glyph){var h='',more='',n=0;for(var i=0;i<list.length;i++){var t=list[i]&&list[i].text;if(!t)continue;
+    var r='<div class="hb-row '+cls+'"><span class="g" aria-hidden="true">'+glyph+'</span><span class="t wrap">'+prose(t)+'</span></div>';
+    if(n<SHOWN)h+=r;else more+=r;n++;}
+    if(more)h+='<details class="dr-more"><summary>'+hn(n-SHOWN)+' more</summary>'+more+'</details>';
+    return h;}
   function winsRisksHtml(c){
     var w=c.wins||[],r=c.risks||[];
     return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>Today\u2019s wins</span></div>'
@@ -5494,31 +5571,38 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="hb-card"><div class="hb-h3"><span>Today\u2019s risks</span></div>'
       +(r.length?wrItems(r,'risk','!'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
   }
-  // The night's report, top to bottom (9/25/26 visual hierarchy): the
-  // executive summary first, then "did we win?" (owner: Today's score, wins
-  // and risks; manager: Today's shift and Operations), the key numbers with
-  // direction, AI insights, tomorrow's priorities, tomorrow — and the blocks,
-  // the detail, below them (renderNight).
-  function narrativeHtml(n,ck,p){
-    var why=(ck.narrative&&ck.narrative.reason)||null,h='',mgr=p&&p.view==='manager',sc=p&&p.scorecard;
-    var lead=n&&n.executive_summary&&n.executive_summary.text;
+  // The night's report, top to bottom (SCORE FIRST, 9/25/26 owner decision;
+  // DESIGN_SYSTEM.md "The nightly report's order"). Owner: Today's score as
+  // the hero, the executive summary, wins and risks (3 + 3), Tomorrow's
+  // priorities (3, then "N more"), Tomorrow, the few KPIs the score doesn't
+  // already state, "All KPIs", at most two AI insights. Manager: the
+  // operations summary, Today's shift under its verdict line, Top KPIs
+  // (labor against target), Operations (4 at most), went well / needs
+  // attention, then the same actions and tomorrow. The blocks, closed,
+  // below them (renderNight).
+  function leadHtml(n,ck,mgr,hero){
+    var why=(ck.narrative&&ck.narrative.reason)||null,lead=n&&n.executive_summary&&n.executive_summary.text;
     var kick=mgr?'Operations summary':'Executive summary';
-    if(lead)h+='<section class="hb-card hero hb-focus dr-read" aria-label="'+kick+'"><div class="hb-kicker">'+kick+'</div><div class="lead">'+prose(lead)+'</div></section>';
-    else h+='<section class="hb-card quiet dr-read" aria-label="'+kick+'"><div class="hb-h3"><span>'+kick+'</span></div><div class="hb-empty">'
+    if(lead)return '<section class="hb-card '+(hero?'hero hb-focus ':'')+'dr-read" aria-label="'+kick+'"><div class="hb-kicker">'+kick+'</div><div class="lead">'+prose(lead)+'</div></section>';
+    return '<section class="hb-card quiet dr-read" aria-label="'+kick+'"><div class="hb-h3"><span>'+kick+'</span></div><div class="hb-empty">'
       +esc(why||(n&&mgr?'The summary rests on figures outside your view, so it isn\u2019t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>';
-    if(sc)h+=scoreHtml(sc)+winsRisksHtml(sc);
-    if(mgr){h+=shiftHtml(p.shift);h+=opsHtml(p.operations);}
-    h+=kpisHtml(notIn(p&&p.kpis,mgr&&p.operations));
+  }
+  function narrativeHtml(n,ck,p){
+    var h='',mgr=p&&p.view==='manager',sc=p&&p.scorecard;
+    if(sc)h+=scoreHtml(sc,p)+leadHtml(n,ck,mgr,false)+winsRisksHtml(sc);
+    else h+=leadHtml(n,ck,mgr,true);
+    if(mgr){h+=shiftHtml(p.shift);h+=kpisHtml(notIn(p.kpis,p.operations),p);h+=opsHtml(p.operations);}
     n=n||{};
     if(!sc){var ww=n.went_well||[],na=n.needs_attention||[];
       if(ww.length||na.length){h+='<div class="dr-two">';
         h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
         h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
-    h+=insightsHtml(p&&p.insights);
     var acts=n.actions_tomorrow||[];
     if(acts.length){
       h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>Tomorrow\u2019s priorities <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
+        // The first three show; the rest wait behind "N more" (ID1-15).
+        if(a===SHOWN)h+='</div><details class="dr-more dr-more-recs"><summary>'+hn(acts.length-SHOWN)+' more '+(acts.length-SHOWN===1?'priority':'priorities')+'</summary><div class="hb-recs">';
         // The calibrated figure when this restaurant's measured results
         // of the kind correct it (rec_learning.attach_dollar_calibration).
         var meta='';if(isNum(x.dollars_monthly)){var xa=isNum(x.dollars_adjusted)?x.dollars_adjusted:null;
@@ -5539,29 +5623,15 @@ svg:hover .hb-xh{opacity:1}
           +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')
           +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
           +acf+ans+'</div>';}
-      h+='</div>';}
+      h+='</div>'+(acts.length>SHOWN?'</details>':'');}
     h+=tomorrowHtml(p&&p.tomorrow,n);
-    var vf=n.verification;
-    // "Traced to a measured fact" never covers an estimate (H13): a line
-    // that cites the estimated food cost or the forecast is counted apart
-    // and said to be an estimate. The count is read from whichever shape
-    // the server sends (a number, or the list of lines).
-    // Not every dropped line failed a figure check: settle_actions also
-    // leaves out what the owner already answered, said not for us to, or a
-    // repeat of a line above (dsr/narrative.py). Each is said as what it is
-    // (B6 sub-audit: the footer called all of them failed figures).
-    if(vf&&isNum(vf.checked)){var dl=(vf.dropped instanceof Array)?vf.dropped:[],dAns=0;
-      for(var di=0;di<dl.length;di++){if(dl[di]&&/owner|already answered|same action|not for us/i.test(String(dl[di].why||'')))dAns++;}
-      var dropped=(dl.length||(isNum(vf.dropped)?vf.dropped:0))-dAns,est=vf.estimated!=null?vf.estimated:vf.estimates;
-      var nEst=isNum(est)?est:((est&&est.length)||0);
-      h+='<div class="dr-foot">Every measured figure above traced to a fact · '+hn(vf.kept)+' of '+hn(vf.checked)+' lines kept'
-        +(isNum(vf.measured)?' · '+hn(vf.measured)+' measured':'')
-        +(nEst?' · '+hn(nEst)+' '+(nEst===1?'line rests':'lines rest')+' on an estimate, and says so':'')
-        +(dropped?' · '+hn(dropped)+' dropped because '+(dropped===1?'it':'they')+' didn’t pass the check against the night’s facts':'')
-        +(dAns?' · '+hn(dAns)+' left out because you already answered '+(dAns===1?'it':'them')+' or '+(dAns===1?'it repeated':'they repeated')+' a line above':'')+' · written by Cavnar AI</div>';}
+    if(!mgr)h+=kpisHtml(p&&p.kpis,p);
+    h+=insightsHtml(p&&p.insights);
     return h;
   }
-  // AI insights: the narrative's verified callouts and (owner) money at stake.
+  // AI insights (access.insights): the narrative's verified callouts the
+  // report doesn't already say — never a win, a risk or a priority again —
+  // at most two.
   function insightsHtml(list){
     if(!list||!list.length)return '';
     var h='<div class="hb-sh"><div><div class="k">Cavnar AI</div><h2>AI insights</h2></div></div><div class="dr-calls">';
@@ -5590,16 +5660,40 @@ svg:hover .hb-xh{opacity:1}
   function notIn(list,other){if(!list||!other||!other.length)return list;var seen={},out=[],i;
     for(i=0;i<other.length;i++)if(other[i]&&other[i].key)seen[other[i].key]=1;
     for(i=0;i<list.length;i++)if(!(list[i]&&seen[list[i].key]))out.push(list[i]);return out;}
-  function kpisHtml(list){
+  // The few KPIs up front (dsr.kpis.headline, the payload's kpis_headline:
+  // at most four, and for the owner never one Today's score already
+  // states), every other one under "All KPIs" (ID1-16). Without the key
+  // (an older payload) the same rule is applied here.
+  var SCORE_KEYS={net:'sales',labor_pct:'labor',food_pct:'food',rating:'guests'},HEADLINE_MAX=4;
+  function headlineKeys(list,p){
+    if(p&&p.kpis_headline instanceof Array)return p.kpis_headline;
+    var stated={},cs=(p&&p.scorecard&&p.scorecard.components)||[],out=[],i;
+    for(i=0;i<cs.length;i++)if(cs[i]&&cs[i].measured)stated[cs[i].key]=1;
+    for(i=0;i<list.length&&out.length<HEADLINE_MAX;i++){var k=list[i]&&list[i].key;if(k&&!stated[SCORE_KEYS[k]])out.push(k);}
+    return out;
+  }
+  function kpisHtml(list,p){
     if(!list||!list.length)return '';
-    var h='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction <small>against the same weekday</small></h2></div></div><div class="dr-kpis">';
-    for(var i=0;i<list.length;i++)h+=kpiTile(list[i]);
-    return h+'</div>';
+    var keys=headlineKeys(list,p),at={},top=[],rest=[],i;
+    for(i=0;i<keys.length;i++)at[keys[i]]=i+1;
+    for(i=0;i<list.length;i++){if(list[i]&&at[list[i].key])top.push(list[i]);else if(list[i])rest.push(list[i]);}
+    top.sort(function(a,b){return at[a.key]-at[b.key];});
+    var h='';
+    if(top.length){h+='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction <small>against the same weekday</small></h2></div></div><div class="dr-kpis">';
+      for(i=0;i<top.length;i++)h+=kpiTile(top[i]);
+      h+='</div>';}
+    if(rest.length){h+='<details class="dr-sec dr-allk" id="dr-allk"><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more, with direction and trend</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
+      for(i=0;i<rest.length;i++)h+=kpiTile(rest[i]);
+      h+='</div></div></details>';}
+    return h;
   }
   // Manager: Today's shift and Operations.
   function shiftHtml(sh){
     if(!sh)return '';
-    var h='<section class="hb-card dr-shift" aria-label="Today\u2019s shift"><div class="hb-kicker">Today\u2019s shift</div><div class="dr-shift-rows">';
+    // The one verdict line (dsr.kpis.shift_verdict, ID1-21): labor against
+    // its target, then what went wrong on the floor.
+    var sv=sh.verdict&&sh.verdict.text?'<div class="dr-shift-v '+esc(sh.verdict.tone||'')+'">'+prose(sh.verdict.text)+'</div>':'';
+    var h='<section class="hb-card dr-shift" aria-label="Today\u2019s shift"><div class="hb-kicker">Today\u2019s shift</div>'+sv+'<div class="dr-shift-rows">';
     for(var i=0;i<(sh.rows||[]).length;i++){var r=sh.rows[i];h+='<div class="c '+esc(r.tone||'')+'"><div class="v">'+hn(esc(r.value_text))+'</div><div class="k">'+esc(r.label)+'</div></div>';}
     h+='</div>'+(sh.note?'<div class="dr-note">'+esc(sh.note)+'</div>':'')+'</section>';
     return h;
@@ -5619,9 +5713,11 @@ svg:hover .hb-xh{opacity:1}
     if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'!':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
     else h+='<div class="hb-empty">Nothing on the books to prep for.</div>';
     if(isNum(t.scheduled))h+='<div class="dr-note">'+hn(t.scheduled)+' on the published schedule.</div>';
-    var rec=null,acts=(n&&n.actions_tomorrow)||[];
-    for(var a=0;a<acts.length&&!rec;a++){if(/staff|schedul|labor|shift|cover/i.test(String(acts[a].kind||'')+' '+String(acts[a].text||'')))rec=acts[a];}
-    if(rec)h+='<div class="dr-rec"><div class="k">AI recommendation</div><div class="t">'+prose(rec.text)+'</div></div>';
+    // Tomorrow's staffing action is a priority above: point to it rather
+    // than say it a second time (ID1-19).
+    var rec=-1,acts=(n&&n.actions_tomorrow)||[];
+    for(var a=0;a<acts.length&&rec<0;a++){if(/staff|schedul|labor|shift|cover/i.test(String(acts[a].kind||'')+' '+String(acts[a].text||'')))rec=a;}
+    if(rec>=0)h+='<div class="dr-note">Staffing for tomorrow: see priority '+hn('#'+(rec+1))+' above.</div>';
     h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar\u2019s forecast</span></div>';
     if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div><div class="dr-note">'+esc(cap(fc.basis||''))+'</div>';
     else h+='<div class="hb-empty">Not enough history for this weekday yet.</div>';
@@ -5645,9 +5741,9 @@ svg:hover .hb-xh{opacity:1}
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
 
   // ── the blocks ───────────────────────────────────────────────────────────
-  function section(name,b,p){
+  function section(name,b,p,open){
     var ready=b.status==='ready',src=has(SOURCE,b.source)?SOURCE[b.source]:(b.source||'');
-    var h='<details class="dr-sec" id="dr-sec-'+name+'" open><summary><span class="ttl">'+esc(BLOCK[name])+'</span>'
+    var h='<details class="dr-sec" id="dr-sec-'+name+'"'+(open?' open':'')+'><summary><span class="ttl">'+esc(BLOCK[name])+'</span>'
       +(src?'<span class="src">'+esc(src)+'</span>':'')
       +(ready?'':'<span class="dr-pill '+(b.status==='awaiting'?'awaiting':'')+'">'+esc(BSTATUS[b.status]||b.status)+'</span>')
       +(ready&&name==='food'?'<span class="dr-pill est">Estimated</span>':'')+'<span class="sp"></span>'
@@ -5660,6 +5756,10 @@ svg:hover .hb-xh{opacity:1}
     if(name==='sales'&&isNum(m.net))return hn(money(m.net))+' net';
     if(name==='labor'&&isNum(m.pct))return hn(pct(m.pct))+' of sales';
     if(name==='reviews'&&isNum(m.received))return hn(cnt(m.received))+' new'+(isNum(m.avg_rating)?' · '+hn(m.avg_rating.toFixed(1)+'★'):'');
+    // A closed block still carries its number (ID1-17).
+    if(name==='food'&&isNum(m.est_food_cost_pct))return hn(pct(m.est_food_cost_pct))+' est. food cost';
+    if(name==='marketing'&&isNum(m.posts_published))return hn(cnt(m.posts_published))+' post'+(m.posts_published===1?'':'s')+(isNum(m.reach)?' · '+hn(cnt(m.reach))+' reach':'');
+    if(name==='intel'&&isNum(m.weather_high_f))return 'High '+hn(Math.round(m.weather_high_f)+'°')+(isNum(m.events_listed)?' · '+hn(cnt(m.events_listed))+' event'+(m.events_listed===1?'':'s'):'');
     if(name==='closeout'&&b.detail&&b.detail.submitted_by)return 'Filed by '+esc(b.detail.submitted_by);
     return '';}
 
@@ -5921,6 +6021,41 @@ svg:hover .hb-xh{opacity:1}
     if(c.t==='pct')return '<td class="n">'+esc(pct(v))+'</td>';
     return '<td class="n '+tone(v)+'">'+esc(smoney(v))+(isNum(r[c.pk])?'<small>'+esc(spct(r[c.pk]))+'</small>':'')+'</td>';
   }
+  // The summary layer over a week or a period (ID1-22, 9/25/26): four tiles
+  // from the grid's own totals row (net to date, vs budget, vs last year,
+  // labor %), one bar per night (a period: per week) of net against its
+  // budget, and the server's one sentence (dsr.rollup.story, written from
+  // this view's redacted grid). Nothing is summed here: every figure is a
+  // total or a row the grid already carries. The budget tile and the
+  // budget marks are the owner's only — a manager's grid has no budget.
+  function kmoney(v){if(!isNum(v))return '—';var a=Math.abs(v);return (v<0?'−':'')+'$'+(a>=1000?(a/1000).toFixed(a>=10000?0:1)+'k':Math.round(a));}
+  function shortWeek(l){l=String(l||'');var i=l.lastIndexOf(' · ');return i>=0?l.slice(i+3):l;}
+  function gridSummary(g,owner,kind){
+    var t=g.totals||{},wk=kind==='week',rows=[],i,labor=(g.withheld||[]).indexOf('labor')<0;
+    if(wk){var ds=g.days||[];for(i=0;i<ds.length;i++)rows.push({l:(ds[i].weekday||weekday(ds[i].date).slice(0,3)),full:weekday(ds[i].date)+' '+md(ds[i].date),net:ds[i].net,bud:ds[i].budget_net});}
+    else{var ws=g.weeks||[];for(i=0;i<ws.length;i++){var wt=ws[i].totals||{};rows.push({l:shortWeek(ws[i].label),full:String(ws[i].label||''),net:wt.net,bud:wt.budget_net});}}
+    var dm=t.days_measured||0,dash='<span class="dr-dim">—</span>';
+    var tl=tile((wk?'Week':'Period')+' to date · net',isNum(t.net)?esc(money(t.net)):dash,
+      hn(dm)+(wk?' of '+hn(rows.length):'')+' night'+(dm===1?'':'s')+' measured');
+    if(owner)tl+=isNum(t.vs_budget_net)?tile('vs budget',esc(smoney(t.vs_budget_net)),esc(spct(t.vs_budget_net_pct))+' on the same nights',t.vs_budget_net>=0?'good':'bad')
+      :tile('vs budget',dash,esc(t.budget_net_note||'No budget for these nights'));
+    tl+=isNum(t.vs_last_year_net)?tile('vs last year',esc(smoney(t.vs_last_year_net)),esc(spct(t.vs_last_year_net_pct))+' on the same nights',t.vs_last_year_net>=0?'good':'bad')
+      :tile('vs last year',dash,esc(t.last_year_net_note||'No last-year nights to compare yet'));
+    if(labor)tl+=tile('Labor %',isNum(t.labor_pct)?esc(pct(t.labor_pct)):dash,'of net, nights with both');
+    var mx=0,anyBud=false;
+    for(i=0;i<rows.length;i++){if(isNum(rows[i].net)&&rows[i].net>mx)mx=rows[i].net;if(owner&&isNum(rows[i].bud)){anyBud=true;if(rows[i].bud>mx)mx=rows[i].bud;}}
+    var bars='';
+    if(mx>0){bars='<div class="dr-wbars" role="img" aria-label="Net sales by '+(wk?'night':'week')+(anyBud?' against budget':'')+'">';
+      for(i=0;i<rows.length;i++){var r=rows[i],bud=owner&&isNum(r.bud)?r.bud:null,ok=isNum(r.net);
+        var cls=ok&&bud!==null?(r.net>=bud?' met':' miss'):'';
+        var tip=r.full+': '+(ok?money(r.net)+' net':'not measured')+(bud!==null?' · budget '+money(bud):'');
+        bars+='<div class="c'+cls+'" style="--i:'+i+'" title="'+esc(tip)+'"><b>'+esc(ok?kmoney(r.net):'—')+'</b><div class="col">'
+          +(ok?'<i style="height:'+Math.max(1,Math.max(0,r.net)/mx*100).toFixed(1)+'%"></i>':'<em class="none"></em>')
+          +(bud!==null?'<em class="bud" style="bottom:'+(bud/mx*100).toFixed(1)+'%"></em>':'')+'</div><span>'+esc(r.l)+'</span></div>';}
+      bars+='</div><div class="dr-wleg">'+(anyBud?'<span><i class="met"></i>Made budget</span><span><i class="miss"></i>Under budget</span><span><i class="bud"></i>Budget</span>':'<span><i></i>Net sales</span>')+'</div>';}
+    return '<section class="hb-card dr-wsum" aria-label="'+(wk?'The week':'The period')+' so far"><div class="hb-stats">'+tl+'</div>'+bars
+      +(g.story?'<p class="dr-story">'+prose(g.story)+'</p>':'')+'</section>';
+  }
   function weekHtml(g,view){
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
     var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+'</h1>'
@@ -5929,6 +6064,7 @@ svg:hover .hb-xh{opacity:1}
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
       +'<a class="cbtn cbtn-secondary cbtn-sm" href="/api/dsr/week.xlsx?date='+esc(g.start)+'" download>Export to Excel</a>'
       +(owner?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-dr="bud-open">Edit budget</button>':'')+'</div></div>';
+    h+=gridSummary(g,owner,'week');
     h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid"><thead>'+groupRow(cols,true,true)+'<tr><th class="day l">Day</th>';
     for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
     h+='<th class="l">Weather</th><th class="l">Event</th><th class="l">Influence</th></tr></thead><tbody>';
@@ -5942,7 +6078,9 @@ svg:hover .hb-xh{opacity:1}
     h+='</tfoot></table></div>';
     h+=mixedNote([t,p]);
     h+=note('Totals add only the nights that were measured; a comparison uses only the nights that have both sides. A dash was not measured — it is not $0. Last year is the same weekday 52 weeks back: that night’s report, then your imported workbook, then the POS sync.');
-    if(owner)h+=budgetEditor(days)+importCard();
+    // Once last year is in, the import is a link, not a standing card (ID1-22).
+    var hasLy=false;for(var y=0;y<days.length;y++)if(isNum(days[y].last_year_net))hasLy=true;
+    if(owner)h+=budgetEditor(days)+importCard(hasLy);
     else h+=note('Budget columns are the owner’s and aren’t part of your view.');
     return h;
   }
@@ -5975,6 +6113,7 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="hb-sub">'+hn(esc(md(g.start)))+' – '+hn(esc(md(g.end)))+' <span class="sep">·</span> '+hn(t.days_measured||0)+' nights measured</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.start,-1)+'">&larr; Period before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.end,1)+'">Period after &rarr;</button></div></div>';
+    h+=gridSummary(g,owner,'period');
     h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid"><thead>'+groupRow(cols,true,false)+'<tr><th class="day l">Week</th>';
     for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
     h+='</tr></thead><tbody>';
@@ -6005,8 +6144,9 @@ svg:hover .hb-xh{opacity:1}
         +'<input class="ac-input" type="number" min="0" step="1" inputmode="decimal" aria-label="Net budget '+esc(md(d.date))+'" data-bd="net" data-date="'+esc(d.date)+'" value="'+(isNum(d.budget_net)?d.budget_net:'')+'">';}
     return h+'</div><div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="bud-save">Save budget</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-close">Cancel</button><span class="ac-status" id="dr-bud-status"></span></div></section>';
   }
-  function importCard(){
-    return '<section class="hb-card quiet dr-imp" aria-label="Import last year"><div class="hb-h3"><span>Last year, from your old workbooks</span></div>'
+  function importCard(asLink){
+    return (asLink?'<div class="dr-imp-link"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="imp-open">Import more last-year nights</button></div>':'')
+      +'<section class="hb-card quiet dr-imp" id="dr-imp"'+(asLink?' hidden':'')+' aria-label="Import last year"><div class="hb-h3"><span>Last year, from your old workbooks</span></div>'
       +'<div class="hb-empty">Your POS keeps about a month. Upload past nights — one row per night with gross, net and your categories — and Last year fills in from them. '
       +'<a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="/api/dsr/history/template.csv" download>Download the template</a></div>'
       +'<div class="dr-imp-row"><input class="ac-input" type="file" id="dr-imp-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Workbook to import" style="max-width:360px">'
@@ -6087,6 +6227,7 @@ svg:hover .hb-xh{opacity:1}
     else if(a==='bud-save'){e.preventDefault();saveBudget(t);}
     else if(a==='bud-prefill'){e.preventDefault();prefillBudget(t);}
     else if(a==='import'){e.preventDefault();importFile(t);}
+    else if(a==='imp-open'){e.preventDefault();var ic=el('dr-imp');if(ic){ic.hidden=false;var lk=t.closest?t.closest('.dr-imp-link'):null;if(lk)lk.hidden=true;var fi=el('dr-imp-file');if(fi)fi.focus();}}
     else if(a==='settings'){e.preventDefault();goSettings();}
   });
   document.addEventListener('change',function(e){

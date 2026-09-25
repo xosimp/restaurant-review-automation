@@ -67,6 +67,16 @@ OWNER_SET = ("net", "labor_pct", "food_pct", "prime_pct", "avg_ticket", "guests"
 # Operations already placed, so the same tile is never drawn twice.
 MANAGER_SET = ("labor_pct", "rating")
 OPERATIONS_SET = ("avg_ticket", "guests", "splh", "voids", "discounts", "comps")
+# Operations shows at most this many tiles (ID1-21, 9/25/26): the first four
+# in OPERATIONS_SET order (guest complaints third). Discounts, voids and
+# comps stay in the Sales block, where the view allows them.
+OPERATIONS_MAX = 4
+# The KPIs the report leads with (ID1-16): at most HEADLINE_MAX, and for the
+# owner never one Today's score already states — its four components are the
+# net, labor %, food cost % and the rating. Everything else sits under "All
+# KPIs". SCORE_KEYS maps each to its scorecard component.
+HEADLINE_MAX = 4
+SCORE_KEYS = {"net": "sales", "labor_pct": "labor", "food_pct": "food", "rating": "guests"}
 # the Benchmark Engine's comparable metric for a nightly KPI (28/30-day)
 ENGINE_METRIC = {"labor_pct": "labor_pct_28d", "food_pct": "food_cost_pct_28d", "rating": "avg_rating_30d"}
 TARGET_KIND = {"labor_pct": "labor", "food_pct": "food"}
@@ -316,8 +326,27 @@ def build(facts, restaurant, user, view, db_path=None) -> dict:
         comp = _complaints(blocks)
         if comp is not None:
             ops.insert(2, comp)
+        ops = ops[:OPERATIONS_MAX]
         shift = shift_recap(blocks, user)
     return {"top": top, "operations": ops, "shift": shift}
+
+
+def headline(top, scorecard=None, limit=HEADLINE_MAX):
+    """The keys of the KPIs a report shows up front, in `top`'s order: the
+    first `limit` of them, skipping — when there is a scorecard — every KPI
+    whose score component was measured (Today's score already says it). The
+    others are still in `top`, for "All KPIs"."""
+    stated = set()
+    if isinstance(scorecard, dict):
+        measured = {c.get("key") for c in scorecard.get("components") or []
+                    if isinstance(c, dict) and c.get("measured")}
+        stated = {k for k, comp in SCORE_KEYS.items() if comp in measured}
+    out = []
+    for k in top or []:
+        key = k.get("key") if isinstance(k, dict) else None
+        if key and key not in stated and len(out) < limit:
+            out.append(key)
+    return out
 
 
 def _complaints(blocks):
@@ -360,4 +389,40 @@ def shift_recap(blocks, user=None) -> dict | None:
             rows.append({"key": key, "label": label, "value": v, "value_text": fmt_.format(v), "tone": tone})
     cov = ((b.get("detail") or {}).get("coverage") or {})
     note = None if cov.get("measured", True) else cov.get("reason")
-    return {"rows": rows, "note": note} if rows or note else None
+    verdict = shift_verdict(m, b.get("detail") or {})
+    return {"rows": rows, "note": note, "verdict": verdict} if rows or note or verdict else None
+
+
+def shift_verdict(m, detail) -> dict | None:
+    """The one line over the manager's Today's shift (ID1-21): labor against
+    its target, then what went wrong on the floor — "Labor 27.5%, 0.5 pts
+    under target · 1 no-show". Every figure is the Labor block's own (pct,
+    target_pct, vs_target_pts, no_shows, overtime_hours); nothing is
+    recomputed. "On target" within the scorecard's ON_TARGET_PTS, and the
+    tone follows Today's score: over a target the owner never set
+    (Cavnar's starting target) is amber, never red. None without a labor
+    percentage."""
+    from dsr.scorecard import ON_TARGET_PTS
+    pct = m.get("pct")
+    if not _num(pct):
+        return None
+    starting = (detail or {}).get("target_source") != "set"
+    word = "starting target" if starting else "target"
+    pts = m.get("vs_target_pts")
+    text, tone = f"Labor {pct:.1f}%", None
+    if _num(pts) and _num(m.get("target_pct")):
+        if abs(pts) <= ON_TARGET_PTS:
+            text += f", on {word}"
+        else:
+            text += f", {abs(pts):.1f} pts {'under' if pts < 0 else 'over'} {word}"
+        tone = "good" if pts <= ON_TARGET_PTS else ("bad" if pts > 2 and not starting else "warn")
+    bits = [text]
+    ns = m.get("no_shows")
+    if _num(ns) and ns > 0:
+        bits.append(f"{int(ns)} no-show{'' if ns == 1 else 's'}")
+    ot = m.get("overtime_hours")
+    if _num(ot) and ot > 0:
+        bits.append(f"{ot:g} overtime hour{'' if ot == 1 else 's'}")
+    if len(bits) > 1 and tone in (None, "good"):
+        tone = "warn"
+    return {"text": " · ".join(bits), "tone": tone}

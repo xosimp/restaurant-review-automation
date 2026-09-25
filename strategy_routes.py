@@ -3313,7 +3313,7 @@ def _do_dsr_week(u):
     if d is None:
         return {"ok": False, "error": "The date must be YYYY-MM-DD."}, 400
     r = get_restaurant(_rid(u))
-    return {"ok": True, "view": _dsr_view(u), "week": access.redact_grid(rollup.week(r, d), u)}, 200
+    return {"ok": True, "view": _dsr_view(u), "week": access.grid_for(rollup.week(r, d), u)}, 200
 
 
 def _do_dsr_period(u):
@@ -3327,7 +3327,7 @@ def _do_dsr_period(u):
     grid = rollup.period(get_restaurant(_rid(u)), d)
     if grid is None:
         return {"ok": False, "error": "Set your fiscal calendar to see periods."}, 409
-    return {"ok": True, "view": _dsr_view(u), "period": access.redact_grid(grid, u)}, 200
+    return {"ok": True, "view": _dsr_view(u), "period": access.grid_for(grid, u)}, 200
 
 
 def _do_dsr_history_import(u):
