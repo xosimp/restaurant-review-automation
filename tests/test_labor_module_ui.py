@@ -260,14 +260,14 @@ def test_the_headline_numbers_are_opted_into_the_count_up_mechanism():
     ]
     for pattern in expected:
         assert re.search(pattern, panel), "not opted into count-up: " + pattern
-    # the gap-to-target and the under-industry branches carry a pair each
-    # — only one branch renders per request, but both exist in the
-    # template source. Neither is ever the green "good" tone: the gap is an
-    # opportunity and the industry figure a benchmark gap (never-say C,
-    # NS1 #22), so the gap takes the warn tone and the rest stay neutral.
+    # The gap-to-target pair stays; the "$ under industry" tiles were
+    # removed (Benchmarking audit #34 — a benchmark gap in dollars with no
+    # action, against a figure that includes benefits). Neither is ever the
+    # green "good" tone: the gap takes the warn tone, the rest stay neutral.
     assert panel.count('class="x good stat-n"') == 0
     assert panel.count('class="x warn stat-n"') == 1
-    assert panel.count('class="x stat-n"') == 3
+    assert panel.count('class="x stat-n"') == 1
+    assert "Under" not in panel or "industry / mo" not in panel
     assert 'class="x stat-n {{' in panel  # overtime premium, tone varies
 
 

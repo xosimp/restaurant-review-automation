@@ -103,7 +103,9 @@ def test_reassigning_a_filed_issue_by_name_does_text_the_new_assignee(db_path, t
 def test_the_labor_issue_reads_overall_labor_pct_and_the_shared_threshold(db_path, texts, monkeypatch):
     import issues, labor
     rid = _rid(db_path)
-    update_restaurant(rid, {"labor_target_pct": 30.0}, db_path=db_path)
+    # The owner's own 30% (Benchmarking audit #13: an unconfirmed default
+    # 30% opens no over-target issue, so this test says the owner set it).
+    update_restaurant(rid, {"labor_target_pct": 30.0, "labor_target_source": "set"}, db_path=db_path)
     _routed(db_path, rid)
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {"is_live": True,
                                                                                   "overall_labor_pct": 32.0})
