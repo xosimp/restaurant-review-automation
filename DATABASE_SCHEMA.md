@@ -284,11 +284,17 @@ Benchmarking audit (9/24/26, workstream P), all DDL at boot:
   `profile_confirmed_at` — plus `exclude_from_learning` (a test or internal
   account: out of every cross-restaurant figure), `labor_target_source` /
   `food_cost_target_source` (set | seeded | default; NULL on an old row reads
-  "default" at the 30% default, else "set") and `google_types` /
+  "default" at the 30% default, else "set"; a seed that no longer qualifies
+  is reset to the default value and source at boot by
+  `models.backfill_seeded_targets`), `hourly_rate_source` (set | NULL: an
+  owner-entered rate is theirs even at exactly $26, so
+  `thresholds.labor_cost_basis` reads `owner_blended`) and `google_types` /
   `google_price_level` (the restaurant's own Google listing). Each has the
   four touch points (dataclass, `ensure_columns`, the `update_restaurant`
-  whitelist, `get_restaurant`). `update_restaurant` stamps a target it is
-  handed without a source as `set` only when the value CHANGED, and records a
+  whitelist, `get_restaurant`). `update_restaurant` stamps a target (or the
+  hourly rate) it is handed without a source as `set` only when the value
+  CHANGED — the admin settings form passes the source itself for a field
+  the admin touched, so an explicit save of the default counts — and records a
   `profile_changed` activity event with the old and new values of every
   profile field that changed.
 - `intel_benchmarks` gains `orgs`, `max_org_share` and `members_json`

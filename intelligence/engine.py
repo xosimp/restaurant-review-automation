@@ -829,9 +829,9 @@ def _industry(metric, restaurant):
            "type_source": e.get("category_source"), "line": benchmark_registry.line(e, m.get("label")),
            "comparable": not differs, "_entry": e}
     if differs:
-        out["definition_note"] = (f"The published figure is the {e.get('median_basis') or 'published figure'}; "
-                                  f"this restaurant's {m['label'].lower()} is measured differently, so it is "
-                                  "context, not a like-for-like comparison.")
+        # One wording with the registry's facts; a rule of thumb that does
+        # not say what it counts is context too (re-audit #32, R4-5).
+        out["definition_note"] = benchmark_registry.definition_note(e, m["label"], reg.definition(metric))
     return out
 
 

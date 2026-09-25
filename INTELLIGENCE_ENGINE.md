@@ -1016,7 +1016,9 @@ through `benchmark_views` (L2), which shapes and never compares:
 - **Module helpers read the engine** (#48): `thresholds.labor_industry_benchmark`
   and `cogs`'s food-cost band (`cogs._engine_industry_food_cost`, which also
   feeds the dish colours `cogs.dish_reference`) read the engine's `industry`
-  comparison; `review_intelligence.competitor_benchmark` reads Intel's market
+  comparison, and obey its `comparable` flag: a band measured differently is
+  context beside the label, never the label, a dish colour or a dollar gap
+  (re-audit #2); `review_intelligence.competitor_benchmark` reads Intel's market
   definition (`competitor_intel_format`, the engine's `market` kind). The
   waste label (`inventory.analyse_inventory`) is a read against the owner's
   target, not a comparison with other restaurants, so the engine does not
@@ -1140,11 +1142,44 @@ the rung reached each week; reaching a higher rung is logged as
 `urbanity_band` — band indices and shares, never dollars, None when not
 measured. They are peer coordinates and the drift detector's input.
 
-**Targets and the labor cost basis** (#13, #14): a target records where it
-came from (`thresholds.target_source`: set / seeded / default). Confirming
-a type seeds a target the owner has not set from the published median for
-it; otherwise Cavnar's starting target stays and is labelled so; no
-over-target alert or issue fires on an unconfirmed default. The labor cost
-basis (`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
-pos_wages reserved) withholds the industry dollars, the gap-to-target
-dollars and a place in labor-cost bands while it is the $26/hr default.
+**Targets and the labor cost basis** (#13, #14; re-audit #3, #10, #45): a
+target records where it came from (`thresholds.target_source`: set / seeded
+/ default), and every surface that judges a figure against one reads
+`thresholds.target_for(restaurant, kind)` → `{pct, source, label,
+alerts_allowed, phrase}` (kind `labor` | `food`): the Food Cost label and
+dish colours (`cogs`), the digest's labor tag (`reporter.labor_tag`), Home's
+labor attention item, the group brief's labor issue and the value
+opportunity's label. On Cavnar's starting target nothing reads "Over" in
+red: tags, dish colours and severities cap at a watch and name the starting
+target; no over-target alert or issue fires (`alerts_allowed` False).
+`tests/test_targets_published_figures.py` ratchets bare target reads.
+Confirming a type seeds a target the owner has not set only from a
+PUBLISHED median measured the way Cavnar measures it
+(`metrics_registry.definition`) for the confirmed service model — none
+exists today (the NRA labor median includes benefits, the NRA food median
+counts non-alcohol beverages), so every confirmation keeps, and resets the
+value to, Cavnar's default. `models.backfill_seeded_targets` (boot, data
+only) puts any seed that no longer qualifies back to the default. An
+explicit save of any value — the admin form names the fields it saw
+touched — is the owner's, even 30%; an owner-entered $26/hr is theirs too
+(`restaurants.hourly_rate_source`). The labor cost basis
+(`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
+pos_wages reserved) withholds the gap-to-target dollars and a place in
+labor-cost bands while it is the $26/hr default. No "$ under industry" is
+computed at all (`labor_vs_industry_*` are sent as 0): the only published
+labor figure is not like for like.
+
+**Published figures** (`benchmark_registry`, re-audit #4, #32): every
+entry declares its `definition` (None when the source does not say what it
+counts; bands derived from the NRA food median inherit its definition), the
+`service_models` it describes, and a `max_age_years` counted from its data
+year. `lookup(metric, concept, published_only, definition, service_model)`
+is the one lookup the engine's `industry` kind, the blend, target seeding,
+the peer ledger and the sales audit share: an unknown definition is not
+comparable, a counter-service restaurant never gets a full-service figure,
+and an entry past its age limit is no entry. The sales audit sizes dollars
+only against a published figure or the owner's own target; a rule of thumb
+and the unsourced blended food + beverage band are shown as context.
+`benchmark_registry.facts` carries the shared fact keys (`metric`,
+`better`, `comparable`, `definition_note`, `inferred`, `own_value`,
+`standing`, `strength_pct`).

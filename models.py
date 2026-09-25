@@ -574,6 +574,10 @@ class Restaurant:
     # median for a confirmed type) | default (Cavnar's starting target).
     labor_target_source: Optional[str] = None
     food_cost_target_source: Optional[str] = None
+    # Whether `hourly_rate` is the owner's (set) or Cavnar's $26 default
+    # (None/default): an owner who enters exactly $26 has a sourced rate
+    # (Benchmarking re-audit #45, R2-21).
+    hourly_rate_source: Optional[str] = None
     # The restaurant's own Google listing (competitor.py already fetched and
     # discarded these): a cross-check on the service model, never a peer key.
     google_types: Optional[str] = None           # JSON list
@@ -901,6 +905,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
         ("restaurants", "labor_target_source", "TEXT"),
         ("restaurants", "food_cost_target_source", "TEXT"),
+        ("restaurants", "hourly_rate_source", "TEXT"),
         ("restaurants", "google_types", "TEXT"),
         ("restaurants", "google_price_level", "INTEGER"),
         # Organisation-level privacy on a band (Benchmarking audit #9): the
@@ -2967,6 +2972,9 @@ def init_db(db_path: str = DB_PATH):
     _ops.init_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
+    # A target seeded from a figure the registry no longer seeds from goes
+    # back to Cavnar's default, alerts off (Benchmarking re-audit #3).
+    backfill_seeded_targets(db_path=db_path)
     # After init_dsr: its POS evidence is one of the tables it reads.
     backfill_missing_sales_null(db_path=db_path)
     print(f"Database initialised at {db_path}")
@@ -3211,8 +3219,12 @@ OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct
 
 # A target written without saying where it came from is the owner's own
 # (every settings route writes the bare field); the seeding path passes its
-# source explicitly (Benchmarking audit #13).
-TARGET_SOURCE_FIELDS = {"labor_target_pct": "labor_target_source", "food_cost_target": "food_cost_target_source"}
+# source explicitly (Benchmarking audit #13). The blended hourly rate rides
+# the same rule (re-audit #45): a changed rate is the owner's, even $26. A
+# form that knows the owner touched the field passes the source itself, so
+# an explicit save of the default value (30%, $26) is the owner's too.
+TARGET_SOURCE_FIELDS = {"labor_target_pct": "labor_target_source", "food_cost_target": "food_cost_target_source",
+                        "hourly_rate": "hourly_rate_source"}
 
 # The peer-relevant profile: a change to one is recorded as a
 # `profile_changed` activity_log event carrying the old and new values
@@ -3270,7 +3282,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "al_unres_email","al_unres_sms","al_unres_push",
         "changelog_seen_at","notifications_seen_at", "category",
         "service_model","concept","bar_led","ownership","opened_year","profile_source","profile_confirmed_at",
-        "exclude_from_learning","labor_target_source","food_cost_target_source","google_types","google_price_level",
+        "exclude_from_learning","labor_target_source","food_cost_target_source","hourly_rate_source","google_types","google_price_level",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3786,6 +3798,7 @@ def _restaurant_from_row(row) -> Restaurant:
         exclude_from_learning=(row["exclude_from_learning"] or 0) if "exclude_from_learning" in row.keys() else 0,
         labor_target_source=row["labor_target_source"] if "labor_target_source" in row.keys() else None,
         food_cost_target_source=row["food_cost_target_source"] if "food_cost_target_source" in row.keys() else None,
+        hourly_rate_source=row["hourly_rate_source"] if "hourly_rate_source" in row.keys() else None,
         google_types=row["google_types"] if "google_types" in row.keys() else None,
         google_price_level=row["google_price_level"] if "google_price_level" in row.keys() else None,
         notifications_seen_at=row["notifications_seen_at"] if "notifications_seen_at" in row.keys() else None,
@@ -7145,6 +7158,56 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
         # Same stance as auth.backfill_memberships: a backfill failure must
         # not stop the app booting, and every read still falls back to the
         # (group_name, owner_email) string match it has always used.
+        return 0
+
+
+def backfill_seeded_targets(db_path: str = DB_PATH) -> int:
+    """Re-check every SEEDED target against today's seeding rule
+    (thresholds.seeded_targets — like-for-like definition, confirmed
+    service model) and put the ones that no longer qualify back to Cavnar's
+    default, with the default's source, so no over-target alert fires on a
+    figure the engine refuses as a comparison (Benchmarking re-audit #3,
+    R1-03/R2-4/R4-6/R3-26).
+
+    Data only, no DDL; idempotent (a second run finds nothing to change);
+    reads only rows whose source is 'seeded' — a handful at most — and a
+    failure never stops the app booting. Returns the rows changed."""
+    try:
+        import thresholds as _thr
+        conn = get_conn(db_path)
+        try:
+            ids = [int(r["id"]) for r in conn.execute(
+                "SELECT id FROM restaurants WHERE labor_target_source='seeded' "
+                "OR food_cost_target_source='seeded'").fetchall()]
+        finally:
+            conn.close()
+        n = 0
+        for rid in ids:
+            r = get_restaurant(rid, db_path=db_path)
+            if r is None:
+                continue
+            upd = _thr.seeded_targets(r)
+            # Only the kinds seeded today; a 'set' target is never touched,
+            # and a seed that still holds writes nothing.
+            keep = {}
+            for kind, (field, src_field) in _thr._TARGET_FIELDS.items():
+                if getattr(r, src_field, None) != "seeded":
+                    continue
+                new_src = upd.get(src_field, "default")
+                new_val = upd.get(field)
+                old_val = getattr(r, field, None)
+                if new_src != "seeded" or (new_val is not None and old_val is not None
+                                           and abs(float(new_val) - float(old_val)) > 1e-9):
+                    keep[src_field] = new_src
+                    keep[field] = float(new_val if new_val is not None else _thr.TARGET_DEFAULTS[kind])
+            if keep:
+                update_restaurant(rid, keep, db_path=db_path)
+                n += 1
+        if n:
+            print(f"[backfill] seeded targets: {n} restaurant(s) reset to Cavnar's starting target")
+        return n
+    except Exception as e:
+        print(f"[backfill] seeded-target check skipped: {e}")
         return 0
 
 

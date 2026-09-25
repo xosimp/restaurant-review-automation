@@ -157,7 +157,13 @@ def test_a_coffee_shop_gets_no_industry_saving():
     trat = thresholds.labor_industry_benchmark(Restaurant(name="N", owner_email="x@x.test", category="italian"))
     assert trat["pct"] == 34.2 and "NRA 2025" in trat["basis"]
     from metrics import DAYS_PER_MONTH   # one month definition (NS3 L5)
-    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=trat["pct"]) == round(4.2 / 100 * 30000 / 30 * DAYS_PER_MONTH)
+    # The NRA median includes benefits: not comparable, so no dollars
+    # (re-audit #2). This pinned dollars computed from it; the arithmetic
+    # holds only for a like-for-like figure.
+    assert trat["comparable"] is False
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=trat["pct"]) == 0
+    assert thresholds.labor_vs_industry_monthly(30.0, 30000, 30, industry_pct=trat["pct"], comparable=True) == \
+        round(4.2 / 100 * 30000 / 30 * DAYS_PER_MONTH)
     assert not hasattr(thresholds, "LABOR_INDUSTRY_PCT")
 
 
@@ -183,7 +189,9 @@ def test_the_server_sends_a_null_industry_figure_when_the_type_has_none(monkeypa
     assert sb["labor_industry_pct"] is None and sb["labor_industry_basis"] is None
     assert sb["labor_vs_industry_monthly"] == 0
     sb = _labor_payload(monkeypatch, "italian")
-    assert sb["labor_industry_pct"] == 34.2 and sb["labor_vs_industry_monthly"] > 0
+    # The mark stays as context; no "$ under industry" from a figure that
+    # includes benefits (re-audit #2 — this pinned the dollars as > 0).
+    assert sb["labor_industry_pct"] == 34.2 and sb["labor_vs_industry_monthly"] == 0
 
 
 def test_both_clients_hide_the_industry_tiles_without_a_figure():
@@ -210,9 +218,11 @@ def test_food_cost_is_labelled_only_against_a_band_for_its_type():
     assert cogs.band_label(30.0) == (None, None)
     assert not hasattr(cogs, "INDUSTRY_BAND")
     fs = br.lookup("food_cost_pct", "italian")
-    # The label names its source kind (Benchmarking #37); this pinned the
-    # bare "industry band" for every kind of entry.
-    assert cogs.band_label(30.0, bench=fs) == ("Within the industry band (NRA 2025)", "neutral")
+    # The label names its source kind (Benchmarking #37) — and only for a
+    # band the engine calls comparable (re-audit #2: the NRA median counts
+    # non-alcohol beverages). This pinned a verdict from the raw entry.
+    assert cogs.band_label(30.0, bench=fs) == (None, None)
+    assert cogs.band_label(30.0, bench=dict(fs, comparable=True)) == ("Within the industry band (NRA 2025)", "neutral")
     assert cogs.band_label(30.0, target=31) == ("On target", "good")
 
 

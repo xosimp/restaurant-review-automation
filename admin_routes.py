@@ -823,7 +823,17 @@ def save_client_settings(restaurant_id, current_user):
             "alert_rating_floor":      float(data.get("alert_rating_floor") or 4.0),
             "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
         }
-        update_restaurant(restaurant_id, {k: v for k, v in fields.items() if k in data})
+        _upd = {k: v for k, v in fields.items() if k in data}
+        # A target or the blended rate the admin actually edited is the
+        # owner's, even when it is typed back as the default 30% or $26 —
+        # the form names the fields it saw touched (re-audit #45, R2-21).
+        # An untouched field re-sent with the rest confirms nothing.
+        from models import TARGET_SOURCE_FIELDS as _TSF
+        _touched = data.get("touched") if isinstance(data.get("touched"), list) else []
+        for _tf in _touched:
+            if _tf in _TSF and _tf in _upd:
+                _upd[_TSF[_tf]] = "set"
+        update_restaurant(restaurant_id, _upd)
         from models import log_event
         log_event(restaurant_id, "admin_settings_update", {"by": current_user.get("username", "admin")})
         return jsonify(ok=True)

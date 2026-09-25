@@ -986,12 +986,13 @@ def _build(current_user, present=True):
             labor_live = bool(labor.get("is_live"))
         except Exception:
             labor = None
-    from notify import labor_target_for as _labor_target_for
-    labor_target = _labor_target_for(r)
     # "your 30% target", or "Cavnar's starting target of 30%" when nobody set
-    # it (Benchmarking audit #13).
+    # it (Benchmarking audit #13) — thresholds.target_for, the one target
+    # read (re-audit #10): on a starting target an overage is a watch.
     import thresholds as _thr_tgt
-    _labor_tgt = _thr_tgt.target_phrase(r, "labor", labor_target)
+    _labor_tgt_for = _thr_tgt.target_for(r, "labor")
+    labor_target = _labor_tgt_for["pct"]
+    _labor_tgt = _labor_tgt_for["phrase"]
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
     client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
     last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
@@ -1487,7 +1488,9 @@ def _build(current_user, present=True):
             if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
                 # Never from a cold start: one day of shifts is not "labor
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
-                add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over {_labor_tgt}",
+                add_attn("labor_over", ("watch" if not _labor_tgt_for["alerts_allowed"]
+                                        else ("important" if over < 6 else "critical")),
+                         f"Labor at {pct:.1f}% — {over:.1f} pts over {_labor_tgt}",
                          f"Across the last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
                          # The figure is the WHOLE schedule's weekly gap, so the
                          # sentence says so: it read "recoverable by trimming the
@@ -1537,7 +1540,7 @@ def _build(current_user, present=True):
                             dollars_basis=trim["basis"],
                             ev={"n": n_days, "kind": "weekdays", "coverage": _lab_cov, "flags": _lab_flags,
                                 "basis": f"{_plural(n_days, worst_day)} with sales in your shift data"},
-                            if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over your target",
+                            if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over {_labor_tgt_for['label']}",
                             effort="medium")
             if delta is not None and delta >= 1.5:
                 add_change(f"Labor % rose {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "bad", "labor")
@@ -1561,7 +1564,7 @@ def _build(current_user, present=True):
                              "value": "—" if _lab_short else f"{pct:.1f}", "unit": "" if _lab_short else "% of sales",
                              "delta": (None if _lab_short else
                                        ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
-                             "secondary": [{"label": "Target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
+                             "secondary": [{"label": "Target" if _labor_tgt_for["source"] == "set" else "Starting target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
                              "interpretation": _lab_interp,
                              "state": _lab_state,
                              "below_floor": _lab_short, "stale": _lab_stale,
@@ -2239,7 +2242,7 @@ def _build(current_user, present=True):
     charts = {
         "rating": [{"label": _mdy(w.get("label"), (w.get("week_key") or "")[:4]), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
         "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
-        "labor_target": labor_target,
+        "labor_target": labor_target, "labor_target_label": _labor_tgt_for["label"],
         "labor_days": ([{"day": k[:3], "pct": v} for k, v in (labor.get("dow_summary") or {}).items() if v] if (labor_live and labor) else []),
         "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),
     }
@@ -2336,8 +2339,9 @@ def _location_record(conn, r, now):
             from labor import analyse_shifts_for_restaurant
             la = analyse_shifts_for_restaurant(rid)
             if la.get("is_live"):
-                from notify import labor_target_for as _labor_target_for
-                target = _labor_target_for(r)
+                import thresholds as _thr_g
+                _tgt_g = _thr_g.target_for(r, "labor")
+                target = _tgt_g["pct"]
                 # People over 40h THIS payroll week, not every overtime week
                 # in the upload (the same read as the location's own Home).
                 try:
@@ -2346,6 +2350,8 @@ def _location_record(conn, r, now):
                 except Exception:
                     _ot_loc = None
                 labor = {"pct": float(la.get("overall_labor_pct") or 0), "target": target,
+                         "target_label": _tgt_g["label"], "target_phrase": _tgt_g["phrase"],
+                         "target_alerts": _tgt_g["alerts_allowed"],
                          "over": round(float(la.get("overall_labor_pct") or 0) - target, 1),
                          "overtime": (_ot_loc or {}).get("people", 0),
                          "period_days": int(la.get("period_days") or (la.get("date_range") or {}).get("days") or 0)}
@@ -2375,7 +2381,13 @@ def _location_record(conn, r, now):
     # REVIEW_MOVE_MIN_N reviews on BOTH sides and RATING_MOVE_STARS — the
     # group view flagged what the location's Home suppressed.
     if labor and labor["over"] >= LABOR_OVER_TARGET_PTS and labor.get("period_days", 0) >= _MIN_DAYS_G:
-        issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor",
+        # Against Cavnar's starting target (nobody set it) the issue says
+        # so and is a watch, never "critical" — the location's own issue
+        # list opens nothing on it (re-audit #10, R4-26).
+        _sev_g = ("watch" if not labor.get("target_alerts", True)
+                  else ("critical" if labor["over"] >= 6 else "important"))
+        issues.append({"severity": _sev_g, "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over "
+                                                   f"{labor.get('target_phrase') or 'target'}", "module": "labor",
                        "kind": "labor_over"})
     if labor and labor["overtime"]:
         issues.append({"severity": "important", "text": f"{labor['overtime']} {'person' if labor['overtime'] == 1 else 'people'} over 40h this week", "module": "labor",

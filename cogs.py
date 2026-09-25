@@ -299,22 +299,31 @@ def band_name(bench) -> str | None:
     return "rule-of-thumb band"
 
 
-def band_label(pct, target=None, bench=None):
+def band_label(pct, target=None, bench=None, starting=False):
     """How a computed food cost % reads. `target` is the restaurant's own
-    when they've set one; `bench` (a food_cost_pct entry for the restaurant's
-    type — the Benchmark Engine's `industry` comparison or a
-    benchmark_registry entry) is the fallback, named by its source kind
-    (band_name). With neither there is no label — never a band for a
-    different kind of restaurant."""
+    when they've set one; `bench` (the Benchmark Engine's `industry`
+    comparison for the restaurant's type) is the fallback, named by its
+    source kind (band_name) — and only when the engine calls it
+    `comparable`: a figure measured differently (the NRA median counts
+    non-alcohol beverages; this is inventory COGS) or one that does not say
+    what it counts is context, never a verdict (re-audit #2, R1-05/R4-3).
+    With `starting`, `target` is Cavnar's starting target, not the owner's:
+    the label says so and tops out at a watch (re-audit #10, R2-3). With
+    none of these there is no label — never a band for a different kind of
+    restaurant."""
     if pct is None:
         return None, None
+    if target and starting:
+        if pct <= target:
+            return "Under Cavnar's starting target", "good"
+        return "Above Cavnar's starting target", "warn"
     if target:
         if pct <= target:
             return "On target", "good"
         if pct <= target + 2:
             return "Slightly over", "warn"
         return "Over target", "bad"
-    if not bench:
+    if not bench or bench.get("comparable") is not True:
         return None, None
     low, high = bench["low"], bench["high"]
     name = band_name(bench)
@@ -336,37 +345,42 @@ DISH_HIGH_PTS = 10.0
 
 
 def dish_reference(restaurant) -> dict | None:
-    """What each dish's food cost % is coloured against: the owner's own
-    food-cost target, else the top of the published (or rule-of-thumb)
-    band for the restaurant's type from the Benchmark Engine, else None —
-    and with None every dish is neutral ink.
-    {pct, kind: "target"|"published"|"rule_of_thumb"|"vendor", basis}."""
+    """What each dish's food cost % is coloured against (thresholds.
+    target_for, re-audit #10): the owner's own food-cost target; else the
+    top of a published band for the restaurant's type that the Benchmark
+    Engine calls `comparable` (re-audit #2 — none today: the NRA median
+    counts non-alcohol beverages); else Cavnar's starting target, labelled
+    so, with colours capped at a watch (`dish_tone`).
+    {pct, kind: "target"|"published"|"rule_of_thumb"|"vendor"|
+     "starting_target", basis, target_label, target_source}."""
     if restaurant is None:
         return None
-    target = getattr(restaurant, "food_cost_target", None)
-    try:
-        target = float(target) if target else None
-    except (TypeError, ValueError):
-        target = None
-    if target:
-        return {"pct": target, "kind": "target", "basis": f"your food-cost target, {target:g}%"}
+    import thresholds as _thr
+    tgt = _thr.target_for(restaurant, "food")
+    common = {"target_label": tgt["label"], "target_source": tgt["source"]}
+    if tgt["alerts_allowed"]:
+        return dict(common, pct=tgt["pct"], kind="target",
+                    basis=(f"your food-cost target, {tgt['pct']:g}%" if tgt["source"] == "set"
+                           else f"{_thr.STARTING_TARGET_LABEL}, {tgt['pct']:g}%"))
     ind = _engine_industry_food_cost(restaurant)
-    if not ind or ind.get("high") is None:
-        return None
-    return {"pct": float(ind["high"]), "kind": ind.get("source_kind") or "rule_of_thumb",
-            "basis": f"the top of the {band_name(ind)} for {ind.get('label') or 'your type'}, "
-                     f"{float(ind['high']):g}% ({ind.get('source')})"}
+    if ind and ind.get("high") is not None and ind.get("comparable") is True:
+        return dict(common, pct=float(ind["high"]), kind=ind.get("source_kind") or "rule_of_thumb",
+                    basis=f"the top of the {band_name(ind)} for {ind.get('label') or 'your type'}, "
+                          f"{float(ind['high']):g}% ({ind.get('source')})")
+    return dict(common, pct=tgt["pct"], kind="starting_target",
+                basis=f"{_thr.STARTING_TARGET_LABEL}, {tgt['pct']:g}% — not one you set")
 
 
 def dish_tone(pct, reference) -> str:
     """good / warn / bad for one dish's food cost % against dish_reference(),
-    or "neutral" with no reference or no figure."""
+    or "neutral" with no reference or no figure. Against Cavnar's starting
+    target a dish is at most "warn": red means over a target someone chose."""
     if pct is None or not reference or reference.get("pct") is None:
         return "neutral"
     ref = float(reference["pct"])
     if pct <= ref + DISH_WATCH_PTS:
         return "good"
-    if pct <= ref + DISH_HIGH_PTS:
+    if pct <= ref + DISH_HIGH_PTS or reference.get("kind") == "starting_target":
         return "warn"
     return "bad"
 
@@ -412,9 +426,13 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
     start = today - timedelta(days=days - 1)
 
     restaurant = get_restaurant(restaurant_id)
-    target = None
-    if restaurant is not None and getattr(restaurant, "food_cost_target", None):
-        target = _f(restaurant.food_cost_target) or None
+    # The one target read (thresholds.target_for, re-audit #10): the
+    # restaurants column defaults to 30, so "a target exists" was always
+    # true and Cavnar's 30% read as the owner's "Over target" in red.
+    import thresholds as _thr
+    _tgt = _thr.target_for(restaurant, "food") if restaurant is not None else None
+    target = _tgt["pct"] if _tgt else None
+    owners_target = bool(_tgt and _tgt["alerts_allowed"])
 
     missing = []
     # Only the snapshots that can be the opening or closing count are read:
@@ -484,6 +502,9 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "last_delivery": last_delivery,
         "net_sales": net_sales,
         "target": target,
+        # Whose target it is — the label both apps render (re-audit #10).
+        "food_cost_target_label": _tgt["label"] if _tgt else None,
+        "food_cost_target_source": _tgt["source"] if _tgt else None,
         "window_days": days,
         "start": start.isoformat(), "end": end.isoformat(),
         "missing": missing,
@@ -517,23 +538,34 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
                    "or missing sales days, not a measurement",
         }]
         return payload
-    # The band comes from the Benchmark Engine's `industry` comparison (the
-    # one place a published figure is chosen; Benchmarking #48), and the
-    # label names its source kind (#37).
-    bench = None if target else _engine_industry_food_cost(restaurant)
-    label, tone = band_label(pct, target, bench=bench)
+    # The owner's target decides the label. Without one, the Benchmark
+    # Engine's `industry` band (the one place a published figure is chosen;
+    # Benchmarking #48) decides it only when it is measured the same way —
+    # otherwise it rides along as context — and the label falls to Cavnar's
+    # starting target, named so and capped at a watch (re-audit #2, #10).
+    bench = None if owners_target else _engine_industry_food_cost(restaurant)
+    if owners_target:
+        label, tone = band_label(pct, target)
+    else:
+        label, tone = band_label(pct, bench=bench)
+        if label is None and target:
+            label, tone = band_label(pct, target, starting=True)
     payload.update({
         "ok": True,
         "pct": pct,
         "label": label,
         "tone": tone,
         "variance_pts": round(pct - target, 1) if target else None,
-        # Which band the label was read against, with its source, year, its
-        # kind and whether the restaurant's type was inferred (NS4 H3, M5).
+        # Which band the label was read against, or sits beside as context,
+        # with its source, year, its kind, whether the restaurant's type was
+        # inferred (NS4 H3, M5), and whether it is a like-for-like figure
+        # (`comparable`, with the engine's `definition_note` when not).
         "benchmark": ({"low": bench["low"], "high": bench["high"], "label": bench.get("label"),
                        "source": bench.get("source"), "year": bench.get("year"),
                        "source_kind": bench.get("source_kind"), "band_name": band_name(bench),
-                       "inferred": bool(bench.get("inferred")), "line": bench.get("line")}
+                       "inferred": bool(bench.get("inferred")), "line": bench.get("line"),
+                       "comparable": bench.get("comparable") is True,
+                       "definition_note": bench.get("definition_note")}
                       if bench else None),
     })
     return payload

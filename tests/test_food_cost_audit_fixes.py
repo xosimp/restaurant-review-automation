@@ -372,7 +372,11 @@ def test_food_cost_pct_withholds_the_number_and_names_what_is_missing(db_path):
 
 
 def test_food_cost_pct_is_cogs_over_sales_against_the_restaurants_target(monkeypatch, db_path):
+    # The owner SET 30% (re-audit #10): the column's default 30 is Cavnar's
+    # starting target, which this pinned as the owner's.
     rid = _restaurant(db_path, food_cost_target=30.0)
+    import models as _m
+    _m.update_restaurant(rid, {"food_cost_target_source": "set"}, db_path=db_path)
     monkeypatch.setattr(cogs_mod, "net_sales_in_window", lambda r, s, e: (10000.0, None))
     monkeypatch.setattr(cogs_mod, "purchases_in_window", lambda r, s, e, db_path=None: (3000.0, 4))
     start = date.today() - timedelta(days=27)
