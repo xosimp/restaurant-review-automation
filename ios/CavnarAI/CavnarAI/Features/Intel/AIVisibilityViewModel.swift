@@ -225,9 +225,43 @@ struct AIVisibilityResult: Decodable {
     let reviewTotal: Int?
     let respRate: Double?
     let error: String?
+    /// #35: when a served result was actually measured (the recorded run's
+    /// stamp, ISO) and whether it was served rather than run now. Lenient;
+    /// absent on a fresh run and on an older server.
+    var measuredAt: LenientText? = nil
+    var cached: LenientFlag? = nil
+
+    /// "Measured 9/21/26" — on the phone's calendar day, never ISO.
+    var measuredLine: String? {
+        measuredAt?.value.map { "Measured " + CavnarDate.mdyLocal($0) }
+    }
+
+    /// Whole days since the check was run; nil without a readable stamp.
+    func measuredAgeDays(now: Date = Date()) -> Int? {
+        guard let raw = measuredAt?.value else { return nil }
+        var when = CavnarDate.timestamp(raw)
+        if when == nil {
+            // A bare date: read it as that day on the phone's calendar.
+            let p = raw.prefix(10).split(separator: "-").compactMap { Int($0) }
+            if p.count == 3 {
+                when = Calendar.current.date(from: DateComponents(year: p[0], month: p[1], day: p[2]))
+            }
+        }
+        guard let when else { return nil }
+        return Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: when),
+                                               to: Calendar.current.startOfDay(for: now)).day
+    }
+
+    /// Seven days or more: the same rule and words as Intel's competitor
+    /// snapshot (IntelSummary.stalenessNote) — read it as background.
+    func backgroundNote(now: Date = Date()) -> String? {
+        guard let d = measuredAgeDays(now: now), d >= 7 else { return nil }
+        return "This check is \(d) days old. AI answers move; treat it as background, not as today's picture."
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, queries, checklist, partial, city, roadmap
+        case ok, error, queries, checklist, partial, city, roadmap, cached
+        case measuredAt = "measured_at"
         case restaurantName = "restaurant_name"
         case appearedCount = "appeared_count"
         case totalQueries = "total_queries"

@@ -253,6 +253,8 @@ final class IntelViewModel {
 
     var isRefreshing = false
     var refreshError: String?
+    /// When /mobile/api/intel last answered — the foreground-refresh clock.
+    private(set) var lastLoadedAt: Date?
 
     private let client: APIClient
 
@@ -266,6 +268,7 @@ final class IntelViewModel {
         defer { isLoading = false }
         do {
             summary = try await client.send("/mobile/api/intel")
+            lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {

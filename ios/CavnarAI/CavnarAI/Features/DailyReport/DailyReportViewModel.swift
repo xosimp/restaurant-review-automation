@@ -351,6 +351,8 @@ final class DailyReportListViewModel {
     private(set) var reachedEnd = false
     private(set) var errorMessage: String?
     private(set) var noAccess = false
+    /// When the list last loaded — the foreground-refresh clock.
+    private(set) var lastLoadedAt: Date?
     private let client: APIClient
     static let pageSize = 30
 
@@ -366,6 +368,7 @@ final class DailyReportListViewModel {
             reports = r.reports
             view = r.view
             reachedEnd = r.reports.count < Self.pageSize
+            lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
             noAccess = error.status == 403
             errorMessage = error.message

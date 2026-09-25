@@ -13,6 +13,9 @@ struct HomeLastNightCard: View {
     /// Home refresh (pull, foreground, a location switch), and not before
     /// the first one, the same rhythm as HomeFollowThrough.
     var homeLoadedAt: Date?
+    /// The restaurant's own clock from Home (`local_now`, ISO) — the
+    /// fallback for "tonight" when the report list doesn't carry it.
+    var localNow: String? = nil
     @State private var viewModel = HomeLastNightViewModel()
 
     var body: some View {
@@ -22,8 +25,9 @@ struct HomeLastNightCard: View {
             // placeholder that then vanishes would jump the page for them.
             case .hidden, .loading:
                 EmptyView()
-            case .ready(let night, let report):
-                ready(night, report)
+            case .ready(let night, let report, let tonight):
+                ready(night, report, gap: LastNightGap.days(from: night.businessDate,
+                                                            to: tonight ?? localNow))
                     .padding(.horizontal, 20)
                     .padding(.top, 30)
             }
@@ -34,12 +38,20 @@ struct HomeLastNightCard: View {
         }
     }
 
-    private func ready(_ night: DSRSummary, _ report: DSRReport?) -> some View {
+    private func ready(_ night: DSRSummary, _ report: DSRReport?, gap: Int?) -> some View {
         let phase = report?.phase ?? night.phase
         let summary = report?.narrative?.executiveSummary?.text
         let sales = report?.facts.blocks["sales"]
         return VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Last night", title: "Daily report", trailing: night.displayDate)
+            HomeSectionHeader(kicker: LastNightGap.kicker(gap: gap), title: "Daily report", trailing: night.displayDate)
+            // The latest report is older than last night: say the night
+            // that's missing, so an old report never reads as last night's.
+            if LastNightGap.lastNightMissing(gap: gap) {
+                Text(LastNightGap.missingLine)
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .padding(.leading, 4)
+            }
             Button {
                 Haptic.light()
                 open(.report(date: night.businessDate))
@@ -110,8 +122,9 @@ final class HomeLastNightViewModel {
     enum State {
         case loading
         case hidden
-        /// The latest night, and its report when it could be read.
-        case ready(DSRSummary, DSRReport?)
+        /// The latest night, its report when it could be read, and
+        /// tonight's business date when the server sent it.
+        case ready(DSRSummary, DSRReport?, String?)
     }
 
     private(set) var state: State = .loading
@@ -129,7 +142,7 @@ final class HomeLastNightViewModel {
             }
             let report: DSRReport? = try? await client.send("/mobile/api/dsr/\(latest.businessDate)",
                                                             hapticOnError: false)
-            state = .ready(latest, report)
+            state = .ready(latest, report, list.tonight?.value)
         } catch is CancellationError {
         } catch let error as APIClient.APIError where error.status == 403 {
             state = .hidden
@@ -138,5 +151,42 @@ final class HomeLastNightViewModel {
             // what's on screen, or show nothing if nothing loaded yet.
             if case .loading = state { state = .hidden }
         }
+    }
+}
+
+/// The web's gap rule for Home's report card (`hbDayGap` / renderLastNight):
+/// the latest report's business date against tonight's, on the
+/// restaurant's clock. The same night is "Tonight", the night before is
+/// "Last night", anything older is only the "Latest report" — and then last
+/// night's report is missing, which the card says in amber.
+enum LastNightGap {
+    static let missingLine = "No report for last night"
+
+    /// Whole days from `businessDate` to `tonight` (both ISO, only the date
+    /// part is read); nil when either can't be read.
+    static func days(from businessDate: String, to tonight: String?) -> Int? {
+        guard let tonight, let a = day(businessDate), let b = day(tonight) else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal.dateComponents([.day], from: a, to: b).day
+    }
+
+    static func kicker(gap: Int?) -> String {
+        switch gap {
+        case 0: return "Tonight"
+        case 1: return "Last night"
+        default: return "Latest report"
+        }
+    }
+
+    /// True when the latest report is older than last night.
+    static func lastNightMissing(gap: Int?) -> Bool { (gap ?? 0) > 1 }
+
+    private static func day(_ iso: String) -> Date? {
+        let p = iso.prefix(10).split(separator: "-")
+        guard p.count == 3, let y = Int(p[0]), let m = Int(p[1]), let d = Int(p[2]) else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal.date(from: DateComponents(year: y, month: m, day: d))
     }
 }

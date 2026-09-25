@@ -238,6 +238,12 @@ struct LaborView: View {
             await viewModel.load()
         }
         .task { await analyticsViewModel.load() }
+        // Reopening the app after a shift re-reads labor rather than
+        // showing the morning's figures as current (audit 4.2).
+        .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) {
+            await viewModel.load()
+            await analyticsViewModel.load()
+        }
         .task {
             await viewModel.loadAvailability()
             await viewModel.loadTimeOff()
@@ -302,6 +308,13 @@ struct LaborView: View {
             if !stats.isLive {
                 sampleDataBanner
             }
+            // Figures from this phone's cache, or a refresh that failed
+            // over them, say how old they are (#37) — the cache never
+            // expires, so without this a week-old read looked current.
+            if let notice = viewModel.cachedNotice {
+                HomeMixedText.make(notice, size: 12.5, weight: 600, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 6) {
                 Label("Labor cost", systemImage: "person.2.fill")
                     .font(.cavnarBody(14, weight: 700))
@@ -326,6 +339,10 @@ struct LaborView: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
             StatProgressBar(progress: stats.overallLaborPct / max(stats.target, 1), tone: tone)
+            // How current the sources behind labor are, from data health.
+            if stats.isLive {
+                DataHealthModuleBadge(module: "labor")
+            }
             if let caveat = stats.caveat {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -400,7 +417,7 @@ struct LaborView: View {
             )
             // A cached read served because the latest failed says how old
             // it is, on the phone as on the web (B6#12).
-            if let note = analyticsViewModel.insight?.olderReadNote {
+            if let note = analyticsViewModel.insight?.olderReadNote ?? analyticsViewModel.insightFallbackNote {
                 CavnarCaveat.olderRead(note)
                     .padding(.top, 6)
             }
@@ -456,6 +473,8 @@ struct LaborView: View {
         let daysOld: Int
         let stale: Bool
         let isLive: Bool
+        /// The server's own sentence for it (`labor_freshness.basis`).
+        var basis: String? = nil
     }
 
     private func freshnessInfo(_ stats: LaborStats) -> DataFreshness? {
@@ -471,7 +490,18 @@ struct LaborView: View {
         // isLive, so sample data — the case with the most to disclose —
         // always drew the dim, plain "nothing to check" glyph.
         return DataFreshness(rangeText: rangeText, daysOld: daysOld,
-                             stale: !stats.isLive || daysOld > 21, isLive: stats.isLive)
+                             stale: Self.shiftDataIsStale(isLive: stats.isLive, daysOld: daysOld,
+                                                          server: stats.laborFreshness),
+                             isLive: stats.isLive, basis: stats.laborFreshness?.basis)
+    }
+
+    /// Whether the shift data reads as out of date: sample data always; else
+    /// the server's own judgement (`labor_freshness`, on its cadence rule)
+    /// when it sent one; the phone's 21-day rule only for an older server.
+    static func shiftDataIsStale(isLive: Bool, daysOld: Int, server: LaborFreshness?) -> Bool {
+        if !isLive { return true }
+        if let judged = server?.isStale { return judged }
+        return daysOld > 21
     }
 
     /// Was an always-visible amber text row under the hero numbers — moved
@@ -532,6 +562,10 @@ struct LaborView: View {
             // instead of wrapping. This forces wrap-not-clip within
             // whatever width it's actually given.
             .fixedSize(horizontal: false, vertical: true)
+            if info.isLive, let basis = info.basis, !basis.isEmpty {
+                HomeMixedText.make(basis, size: 12.5, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         // A fixed width (not maxWidth) gives the popover's own auto-sizing

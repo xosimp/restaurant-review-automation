@@ -82,7 +82,7 @@ enum OwnerCopy {
             return (false, "Nothing flagged \u{2014} but \(stale) source\(stale == 1 ? " is" : "s are") out of date or undated, so this is not a clean bill.")
         }
         if let live = m.countLive, live == 0 {
-            return (false, "Nothing flagged \u{2014} but no source under this is current, so there is nothing live to watch.")
+            return (false, "Nothing flagged \u{2014} but no source under this is current yet, so there is nothing to watch.")
         }
         if m.allClear == false {
             return (false, "Nothing flagged \u{2014} but the sources under this are not all current.")

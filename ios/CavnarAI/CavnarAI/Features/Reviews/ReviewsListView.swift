@@ -76,6 +76,9 @@ struct ReviewsListView: View {
             await viewModel.load()
             openDeepLinkIfNeeded()
         }
+        // Reopening the app after a while re-reads the inbox rather than
+        // showing this morning's list as current (audit 4.2).
+        .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.reload() }
         // Analytics is five requests, one of them an LLM call. It used to
         // fire on every Reviews open whether or not the owner ever looked
         // at the tab — so the app paid for a Haiku insight per visit to the
@@ -110,6 +113,15 @@ struct ReviewsListView: View {
                     // Same chips as the web inbox, plus search — the web
                     // had both and the phone had neither.
                     Section {
+                        // How current the inbox is — the real fetch state,
+                        // not the reviews_live flag (DH4-6). Amber when a
+                        // check has been missed.
+                        if let fetch = viewModel.fetchLine {
+                            ServerStatusCaption(status: fetch)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                        }
                         // The reputation summary. ReviewStats was modelled
                         // in full and then called from nowhere, so the
                         // phone's Reviews tab opened with no rating, no

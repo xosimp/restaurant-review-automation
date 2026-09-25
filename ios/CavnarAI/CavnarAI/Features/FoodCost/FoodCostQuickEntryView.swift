@@ -83,6 +83,12 @@ struct FoodCostQuickEntryView: View {
             guard tab == .analytics else { return }
             Task { await analyticsViewModel.loadOnFirstShow() }
         }
+        // Reopening the app after a while re-reads the analytics once
+        // they have been opened, rather than showing an earlier read as
+        // current (audit 4.2). The Tracker tab is a form — nothing to reload.
+        .refreshOnForeground(lastLoaded: analyticsViewModel.lastLoadedAt) {
+            await analyticsViewModel.load()
+        }
     }
 
     @ViewBuilder

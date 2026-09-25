@@ -198,6 +198,11 @@ final class MarketingViewModel {
     var channels = MarketingChannels()
     var isLoading = false
     var errorMessage: String?
+    /// "Metrics synced 9/21/26" (DH4-8), amber when tone is warn. Nil from
+    /// an older server.
+    private(set) var metricsSync: ServerStatusLine?
+    /// When /mobile/api/marketing last answered — the foreground-refresh clock.
+    private(set) var lastLoadedAt: Date?
 
     // Generator
     var selectedType = "instagram_post"
@@ -299,11 +304,13 @@ final class MarketingViewModel {
         let contentTypes: [MarketingContentType]?
         let channels: MarketingChannels?
         let guestTextable: Int?
+        var metricsSync: LenientStatusLine? = nil
 
         enum CodingKeys: String, CodingKey {
             case ok, stats, calendar, channels
             case contentTypes = "content_types"
             case guestTextable = "guest_textable"
+            case metricsSync = "metrics_sync"
         }
     }
 
@@ -317,6 +324,8 @@ final class MarketingViewModel {
             calendar = response.calendar
             guestTextable = response.guestTextable ?? 0
             channels = response.channels ?? MarketingChannels()
+            metricsSync = response.metricsSync?.value
+            lastLoadedAt = Date()
             if let types = response.contentTypes, !types.isEmpty {
                 contentTypes = types
                 if !types.contains(where: { $0.id == selectedType }) {

@@ -751,3 +751,23 @@ extension JSONDecoder {
 extension JSONEncoder {
     static let cavnar: JSONEncoder = JSONEncoder()
 }
+
+// MARK: - Data health (data_health.py)
+
+extension APIClient {
+    /// GET /mobile/api/data-health — the Restaurant Data Health Score, every
+    /// connected source's line, what isn't connected and what each module's
+    /// recommendations would gain from current data. Silent on failure: the
+    /// sheet says so itself.
+    func dataHealth() async throws -> DataHealthSnapshot {
+        try await send("/mobile/api/data-health", hapticOnError: false)
+    }
+
+    /// POST /mobile/api/data-health/sync/<source> — one deduplicated
+    /// "Sync now". A second tap inside the server's cooldown answers
+    /// `already_syncing` with its own sentence rather than a second pull.
+    /// Never retried on a guess: it starts work.
+    func syncDataSource(_ source: String = "pos") async throws -> DataHealthSyncResult {
+        try await send("/mobile/api/data-health/sync/\(source)", method: .post, retryTransient: false)
+    }
+}

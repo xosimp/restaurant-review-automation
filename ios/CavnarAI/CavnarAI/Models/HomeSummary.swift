@@ -80,6 +80,15 @@ struct HomeSummary: Codable {
     var freshness: HomeFreshnessList? = nil
     var dataAsOf: LenientText? = nil
     var monitoring: HomeMonitoring? = nil
+    /// The Restaurant Data Health Score beside the legacy list
+    /// (`data_health: {overall, worst_line}`, may be null), and whether the
+    /// server could not work out freshness at all — `freshness` is then
+    /// empty, and the strip says so instead of drawing nothing. Both
+    /// lenient; an older server omits them.
+    var dataHealth: HomeDataHealth? = nil
+    var freshnessUnavailableFlag: LenientFlag? = nil
+
+    var freshnessUnavailable: Bool { freshnessUnavailableFlag?.value == true }
 
     var localHour: Int? {
         guard let s = localNow, let t = s.firstIndex(of: "T") else { return nil }
@@ -123,6 +132,8 @@ struct HomeSummary: Codable {
         case localNow = "local_now"
         case quieter, assignees, freshness, monitoring
         case dataAsOf = "data_as_of"
+        case dataHealth = "data_health"
+        case freshnessUnavailableFlag = "freshness_unavailable"
     }
 
     /// "9/22/26" — `data_as_of` in the owner's format whether the server
@@ -141,7 +152,9 @@ struct HomeSummary: Codable {
 /// Both read; every field lenient.
 struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
     enum State: String, Codable, Hashable {
-        case current, aging, stale, notConnected, unknown, sample
+        /// `disconnected`: a POS removed after use keeps its last data's
+        /// recency (data_freshness); it reads as a warning, never current.
+        case current, aging, stale, notConnected, unknown, sample, disconnected
     }
 
     let module: String?
@@ -213,6 +226,7 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
         case "stale": return .stale
         case "not_connected", "missing", "manual": return .notConnected
         case "sample": return .sample
+        case "disconnected": return .disconnected
         default: return .unknown
         }
     }
@@ -225,6 +239,7 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
         case .notConnected: return "not_connected"
         case .unknown: return "unknown"
         case .sample: return "sample"
+        case .disconnected: return "disconnected"
         }
     }
 
@@ -245,6 +260,7 @@ struct HomeFreshnessEntry: Codable, Hashable, Identifiable {
         case .notConnected: return "not connected"
         case .unknown: return "age unknown"
         case .sample: return "sample data"
+        case .disconnected: return "disconnected"
         case .current, .aging, .stale: return asOf.map { "as of " + $0 }
         }
     }

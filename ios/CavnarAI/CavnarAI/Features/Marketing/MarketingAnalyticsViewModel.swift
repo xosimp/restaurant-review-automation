@@ -17,6 +17,11 @@ struct MarketingPerformance: Decodable {
     let totalReach: Int
     let totalEngagement: Int
     let topPost: MarketingTopPost?
+    /// "Metrics synced 9/21/26", tone warn when the nightly Meta pull is
+    /// stale or failing (DH4-8). Lenient; absent on an older server.
+    var metricsSyncField: LenientStatusLine? = nil
+
+    var metricsSync: ServerStatusLine? { metricsSyncField?.value }
 
     enum CodingKeys: String, CodingKey {
         case ok, published
@@ -24,6 +29,7 @@ struct MarketingPerformance: Decodable {
         case totalReach = "total_reach"
         case totalEngagement = "total_engagement"
         case topPost = "top_post"
+        case metricsSyncField = "metrics_sync"
     }
 }
 

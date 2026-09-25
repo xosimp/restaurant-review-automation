@@ -279,6 +279,24 @@ struct AIVisibilitySection: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .padding(.top, 10)
             }
+            // When this check was actually run — a served result is the
+            // last recorded run, not a new one (#35) — and, once it is a
+            // week old, the same "background" rule Intel's competitors use.
+            if let measured = result.measuredLine {
+                HomeMixedText.make(measured, size: 13, color: .cavnarInk3)
+                    .padding(.top, 10)
+            }
+            if let note = result.backgroundNote() {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    HomeMixedText.make(note, size: 13, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 8)
+            }
             // Branded recall and competitor appearance, both decoded and
             // neither rendered — the exact pattern these audits keep
             // finding. A number computed and never shown is a number

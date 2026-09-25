@@ -26,10 +26,10 @@ struct AccountConnectionsDetailView: View {
                     googleRow
                     toastRow
                     instagramRow
-                    posRow("Square POS", brand: .square, status: connections.square,
+                    posRow("Square POS", brand: .square, provider: "square", status: connections.square,
                            connect: { showingSquareConnect = true },
                            disconnect: { await viewModel.disconnectSquare() })
-                    posRow("Clover POS", brand: .clover, status: connections.clover,
+                    posRow("Clover POS", brand: .clover, provider: "clover", status: connections.clover,
                            connect: { showingCloverConnect = true },
                            disconnect: { await viewModel.disconnectClover() })
                     rpowerRow
@@ -99,6 +99,12 @@ struct AccountConnectionsDetailView: View {
     private var googleRow: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Google Business", brand: .google, status: connections.googleBusiness)
+            // The real fetch state, in the restaurant's clock (DH4-6):
+            // "Checked 11:02am · next check 4pm", "Last check 9/21/26 — 6
+            // checks missed". Nothing from an older server.
+            if let fetch = connections.googleBusiness.fetchLine {
+                Self.statusLine(fetch.line, tone: ConnectionStatus.tone(fetch.tone))
+            }
             // Where the reviews actually come from (G9): a Places-only
             // restaurant's are a five-at-a-time sample, not a Business
             // Profile connection — said in the server's words.
@@ -153,7 +159,7 @@ struct AccountConnectionsDetailView: View {
     private var toastRow: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Toast POS", brand: .toast, status: connections.toast)
-            Self.syncStateLine(connections.toast)
+            Self.syncStateLine(connections.toast, provider: "toast", posLine: connections.posLine)
 
             if connections.toast.connected {
                 AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
@@ -179,13 +185,14 @@ struct AccountConnectionsDetailView: View {
     private func posRow(
         _ label: String,
         brand: ConnectionBrand,
+        provider: String,
         status: ConnectionStatus,
         connect: @escaping () -> Void,
         disconnect: @escaping () async -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             header(label, brand: brand, status: status)
-            Self.syncStateLine(status)
+            Self.syncStateLine(status, provider: provider, posLine: connections.posLine)
 
             if status.connected {
                 AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
@@ -254,25 +261,35 @@ struct AccountConnectionsDetailView: View {
 
     /// How the sync is actually going — a connection that stopped syncing
     /// reads stale here as it does on Home, admin and the status page; an
-    /// error is red. Nothing for a state the server didn't send.
+    /// error is red. The server's own sentence when it sent one (DH4-2:
+    /// "Last sync 3:02am · Sales through 9/19/26", verbatim — already in
+    /// the restaurant's clock); the older state-derived wording otherwise.
+    /// Nothing for a state the server didn't send.
     @ViewBuilder
-    static func syncStateLine(_ status: ConnectionStatus) -> some View {
-        if let line = status.syncLine {
-            let color: Color = {
-                switch line.tone {
-                case .good: return .cavnarGreen
-                case .warn: return .cavnarAmber
-                case .bad: return .cavnarRed
-                case .neutral: return .cavnarInk3
-                }
-            }()
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Circle().fill(color).frame(width: 6, height: 6)
-                HomeMixedText.make(line.text, size: 13.5, weight: 600, color: color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
+    static func syncStateLine(_ status: ConnectionStatus, provider: String,
+                              posLine: ServerStatusLine?) -> some View {
+        if let line = status.posStatusLine(provider: provider, posLine: posLine) {
+            statusLine(line.text, tone: line.tone)
         }
+    }
+
+    /// A 6pt dot and the sentence, in the tone's colour: good green, warn
+    /// amber, bad red, neutral ink3.
+    static func statusLine(_ text: String, tone: ConnectionStatus.SyncTone) -> some View {
+        let color: Color = {
+            switch tone {
+            case .good: return .cavnarGreen
+            case .warn: return .cavnarAmber
+            case .bad: return .cavnarRed
+            case .neutral: return .cavnarInk3
+            }
+        }()
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            HomeMixedText.make(text, size: 13.5, weight: 600, color: color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// RPOWER — connected by Cavnar from its vendor credentials, never from
@@ -286,7 +303,7 @@ struct AccountConnectionsDetailView: View {
                     GlowBadge(systemImage: "server.rack", size: 40)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("RPOWER POS").font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        if let synced = rp.lastSyncedText {
+                        if rp.serverSyncLine == nil, let synced = rp.lastSyncedText {
                             HomeMixedText.make(synced, size: 15.5, color: .cavnarInk3)
                         }
                     }
@@ -300,7 +317,7 @@ struct AccountConnectionsDetailView: View {
                             .foregroundStyle(rp.connected ? Color.cavnarGreen : Color.cavnarInk3)
                     }
                 }
-                Self.syncStateLine(rp)
+                Self.syncStateLine(rp, provider: "rpower", posLine: connections.posLine)
                 Text("Set up by Cavnar from your RPOWER account \u{2014} contact us to change it.")
                     .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -317,7 +334,12 @@ struct AccountConnectionsDetailView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                if status.connected, let lastSynced = status.lastSyncedText {
+                // The server's own line (under the header) already says
+                // when it last synced, in the restaurant's clock — the
+                // phone's reading of the raw stamp is only for an older
+                // server.
+                if status.connected, status.serverSyncLine == nil, status.fetchLine == nil,
+                   let lastSynced = status.lastSyncedText {
                     HomeMixedText.make(lastSynced, size: 15.5, color: .cavnarInk3)
                 } else if !status.connected {
                     Text("Not connected").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)

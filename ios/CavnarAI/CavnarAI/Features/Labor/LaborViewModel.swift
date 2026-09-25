@@ -1145,6 +1145,11 @@ struct LaborStats: Codable {
     /// the progress step names them only then. Nil from a server that does
     /// not send it, which reads as "not available".
     var lastYearAvailable: Bool? = nil
+    /// How current the shift data behind these figures is, judged by the
+    /// server on its cadence rule (`labor_freshness`: {pct, state current |
+    /// aging | stale | unknown, stale, basis, as_of, as_of_iso}). Lenient;
+    /// absent on an older server, which keeps the local 21-day rule.
+    var laborFreshness: LaborFreshness? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1181,6 +1186,53 @@ struct LaborStats: Codable {
         case demandAccuracy = "demand_accuracy"
         case weekProjectionAccuracy = "week_projection_accuracy"
         case lastYearAvailable = "last_year_available"
+        case laborFreshness = "labor_freshness"
+    }
+}
+
+/// `labor_freshness` — the server's reading of how current the shift data
+/// is. Every field lenient; an odd shape decodes as empty, never a failed
+/// Labor screen.
+struct LaborFreshness: Codable, Equatable {
+    var pct: Int? = nil
+    /// current | aging | stale | unknown.
+    var state: String? = nil
+    var stale: Bool? = nil
+    var basis: String? = nil
+    var asOf: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case pct, state, stale, basis
+        case asOf = "as_of"
+    }
+
+    init(pct: Int? = nil, state: String? = nil, stale: Bool? = nil, basis: String? = nil, asOf: String? = nil) {
+        self.pct = pct; self.state = state; self.stale = stale; self.basis = basis; self.asOf = asOf
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        if let i = (try? c.decodeIfPresent(Int.self, forKey: .pct)) ?? nil {
+            pct = i
+        } else if let d = (try? c.decodeIfPresent(Double.self, forKey: .pct)) ?? nil, d.isFinite {
+            pct = Int(d.rounded())
+        }
+        state = ((try? c.decodeIfPresent(String.self, forKey: .state)) ?? nil)?.lowercased()
+        stale = (try? c.decodeIfPresent(Bool.self, forKey: .stale)) ?? nil
+        basis = (try? c.decodeIfPresent(String.self, forKey: .basis)) ?? nil
+        asOf = (try? c.decodeIfPresent(String.self, forKey: .asOf)) ?? nil
+    }
+
+    /// Whether the data should be flagged as out of date: the server's
+    /// `stale` flag, else its state (stale, or an age it couldn't read).
+    /// Nil when the server said neither.
+    var isStale: Bool? {
+        if let stale { return stale || state == "unknown" }
+        switch state {
+        case "stale", "unknown": return true
+        case "current", "aging": return false
+        default: return nil
+        }
     }
 }
 
@@ -1532,6 +1584,34 @@ final class LaborViewModel {
     var stats: LaborStats?
     var isLoading = false
     var errorMessage: String?
+    /// When the stats on screen were written to this device's cache — set
+    /// only while what's shown came from the cache, cleared by a fresh load.
+    /// The disk cache has no expiry, so this is what tells the owner how old
+    /// cached figures are (#37).
+    private(set) var statsCachedAt: Date?
+    /// When /mobile/api/labor last answered — the foreground-refresh clock.
+    private(set) var lastLoadedAt: Date?
+
+    /// Non-nil when the figures on screen are older than they look: a
+    /// refresh that failed over figures already shown ("Couldn't refresh —
+    /// showing labor figures from 9/22/26 · 3:02pm."), or figures restored
+    /// from the device cache more than five minutes old ("Showing labor
+    /// figures saved 9/22/26 · 3:02pm.").
+    var cachedNotice: String? {
+        Self.cachedNotice(hasStats: stats != nil, loadedAt: lastLoadedAt,
+                          cachedAt: statsCachedAt, refreshFailed: errorMessage != nil)
+    }
+
+    static func cachedNotice(hasStats: Bool, loadedAt: Date?, cachedAt: Date?, refreshFailed: Bool,
+                             now: Date = Date()) -> String? {
+        guard hasStats else { return nil }
+        if refreshFailed {
+            let at = (loadedAt ?? cachedAt).map { "from " + CavnarDate.mdyTime($0) } ?? "saved earlier"
+            return "Couldn\u{2019}t refresh \u{2014} showing labor figures \(at)."
+        }
+        guard loadedAt == nil, let cachedAt, now.timeIntervalSince(cachedAt) > 300 else { return nil }
+        return "Showing labor figures saved \(CavnarDate.mdyTime(cachedAt))."
+    }
 
     var isGeneratingSchedule = false
     var scheduleError: String?
@@ -1618,9 +1698,13 @@ final class LaborViewModel {
     /// specific week" expiry, same as LaborAnalyticsViewModel's insight cache.
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
-        if let data = SecureCache.read(key: Self.statsCacheKey(restaurantId)),
+        // Only when nothing fresher is on screen: a relaunch's restore, not
+        // a foreground return over figures this session already loaded.
+        if lastLoadedAt == nil,
+           let data = SecureCache.read(key: Self.statsCacheKey(restaurantId)),
            let cached = try? Self.cacheDecoder.decode(LaborStats.self, from: data) {
             stats = cached
+            statsCachedAt = SecureCache.modifiedAt(key: Self.statsCacheKey(restaurantId))
         }
         guard let data = SecureCache.read(key: Self.scheduleCacheKey(restaurantId)),
               let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
@@ -1701,6 +1785,8 @@ final class LaborViewModel {
             let fetched: LaborStats = try await client.send("/mobile/api/labor")
             stats = fetched
             cacheStats(fetched)
+            lastLoadedAt = Date()
+            statsCachedAt = nil
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
