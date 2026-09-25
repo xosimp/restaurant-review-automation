@@ -317,7 +317,10 @@ Benchmarking audit (9/24/26, workstream D), all DDL in `init_db`:
 - `intel_benchmark_facts` (restaurant_id, metric, week, `payload_json`,
   `available`, computed_at; UNIQUE(restaurant_id, metric, week)) — the
   engine's comparisons materialised nightly; the viewer-dependent `location`
-  kind is never stored; rows older than 8 weeks are pruned by the pass.
+  kind is never stored; rows older than 8 weeks are pruned by the pass. Each
+  payload carries `version` and `inputs_key` (a hash of the settings it was
+  computed from); `engine.payload_for` serves a row only while both match
+  and it is under 36 hours old.
 - `intel_effects` (restaurant_id, rec_kind, metric, week, `available`,
   `payload_json`, computed_at; UNIQUE(restaurant_id, rec_kind, metric,
   week)) — the weekly neighbour prediction fact; unavailable below its

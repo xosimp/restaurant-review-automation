@@ -147,6 +147,24 @@ def spread_ok(metric, p25, p50, p75) -> bool:
     return iqr / med <= ceiling
 
 
+def spread_ratio(metric, p25, p50, p75) -> float | None:
+    """The band's IQR as a share of the quality gate's ceiling for `metric`
+    (0 = every member alike, 1 = at the gate) — the spread dimension of
+    comparison strength (re-audit #15, R1-07). None when unreadable."""
+    try:
+        iqr = max(0.0, float(p75) - float(p25))
+        med = abs(float(p50))
+    except (TypeError, ValueError):
+        return None
+    if metric in MAX_ABS_IQR:
+        ceiling = MAX_ABS_IQR[metric]
+    else:
+        ceiling = MAX_REL_IQR.get(metric, 1.0) * med
+    if ceiling <= 0:
+        return 0.0 if iqr <= 0 else 1.0
+    return round(min(1.5, iqr / ceiling), 3)
+
+
 def platform_allowed(metric) -> bool:
     """Whether the all-restaurants band on Cavnar is a fair comparison for
     `metric` — behaviour metrics only (BM2-3)."""

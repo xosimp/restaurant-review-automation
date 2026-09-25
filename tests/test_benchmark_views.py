@@ -135,11 +135,16 @@ def test_web_draws_the_card_on_every_module_and_home():
 
 # ── #19: location to location, and the group ranking ───────────────────────
 
-def _org(db_path, *rids):
+def _org(db_path, *rids, service_model="full_service"):
+    """One organisation of like-for-like locations: the engine compares a
+    labor or food figure only between locations in the same confirmed peer
+    partition (re-audit #27, R2-16)."""
     conn = get_conn(db_path)
     org = conn.execute("INSERT INTO organizations (name, owner_email) VALUES ('Grp', 'g@x.test')").lastrowid
     for r in rids:
-        conn.execute("UPDATE restaurants SET organization_id=? WHERE id=?", (org, r))
+        conn.execute("UPDATE restaurants SET organization_id=?, service_model=?, concept='italian', "
+                     "category='italian', profile_source='set', profile_confirmed_at=datetime('now') WHERE id=?",
+                     (org, service_model, r))
     conn.commit()
     conn.close()
 
