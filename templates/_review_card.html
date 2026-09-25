@@ -32,10 +32,19 @@
       </div>
       {% endif %}
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{ c.replace('_',' ') }}</span>{% endfor %}</div>{% endif %}
+      {# Ask about this review (friction #15): Ask gets the review as its
+         screen context (ask_cavnar.screen_hint), so "make this reply warmer"
+         knows which one. Outside draft-actions, which JS rewrites. #}
+      <div class="rv2-ask"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-review="{{ r.id }}">Ask about this →</button></div>
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{ r.id }}">
         <div class="draft-lbl">Cavnar's reply</div>
-        <div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.draft_response|e }}</div>
+        {# Click-to-edit (friction #7): a drafted or skipped reply opens its
+           editor from the text itself. Edit is not a Skip, so it records no
+           "no" against auto-approve trust (client_api._do_skip). Approved and
+           posted replies keep their own Edit (editApprovedR / Retract). #}
+        {% set _editable = r.response_status not in ('posted', 'approved') %}
+        <div class="draft-txt{{ ' draft-editable' if _editable }}" id="draft-txt-{{ r.id }}"{% if _editable %} role="button" tabindex="0" title="Click to edit" data-edit-review="{{ r.id }}"{% endif %}>{{ r.draft_response|e }}</div>
         {# The reply guard's flag (ai_guard.unsupported_commitments): the
            draft states an action, a comp or a staff conversation nobody told
            Cavnar about. iOS showed it; the web card showed a plain Approve,
@@ -81,8 +90,10 @@
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
           {% else %}
             <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
           {% endif %}
+
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>

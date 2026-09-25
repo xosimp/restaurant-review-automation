@@ -185,6 +185,18 @@ html{background:var(--bg-base);min-height:100%}
 .notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
 .notif-row.is-unread .nl{font-weight:600}
 .notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
+/* The bell as an inbox (friction #23): the row wraps to a second line with
+   the review's words and the location; a handled row is greyed, not hidden;
+   one inline action sits under the row it acts on. */
+.notif-row{flex-wrap:wrap}
+.notif-row .nx{flex-basis:100%;padding-left:15px;font-size:11.5px;color:var(--ink2);line-height:1.45;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.notif-row .nloc{color:var(--ink3);font-weight:600}
+.notif-row.is-resolved{background:transparent}
+.notif-row.is-resolved .nl,.notif-row.is-resolved .nx{color:var(--ink3);font-weight:500}
+.notif-row.is-resolved .nd{background:var(--paper3)}
+.notif-act{display:flex;gap:6px;padding:0 14px 9px 29px;border-bottom:1px solid var(--paper3)}
+.notif-row.has-act{border-bottom:none}
+.notif-foot{display:flex;justify-content:flex-end;padding:6px 10px}
 /* The engagement nudge in the alerts modal */
 .al-nudge{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--paper3);border-left:3px solid var(--ember);border-radius:8px;font-size:13px;color:var(--ink2);line-height:1.5}
 .al-nudge span{flex:1;min-width:200px}
@@ -1481,8 +1493,8 @@ function loadFailed(el, d){
       </button>
       <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'">✕</button></div>
-        <div id="notif-list" style="max-height:280px;overflow-y:auto;padding:4px 0">
-          <div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Loading…</div>
+        <div id="notif-list" style="max-height:360px;overflow-y:auto;padding:4px 0">
+          <div style="padding:14px"><div class="dr-pulse wide" role="status" aria-label="Loading alerts"><i></i></div></div>
         </div>
       </div>
     </div>
@@ -1498,7 +1510,7 @@ function loadFailed(el, d){
         <div id="tm-inbox-view">
           <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Team messages</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('team-msg-panel').style.display='none'">✕</button></div>
           <div id="tm-inbox-list" style="max-height:320px;overflow-y:auto;padding:4px 0">
-            <div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Loading…</div>
+            <div style="padding:14px"><div class="dr-pulse wide" role="status" aria-label="Loading messages"><i></i></div></div>
           </div>
         </div>
         <div id="tm-thread-view" style="display:none">
@@ -2084,6 +2096,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-x{background:none;border:none;color:var(--ink3);font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .12s}
 .hb-row:hover .hb-x{opacity:1}.hb-x:hover{color:var(--ember);background:var(--hb-tint)}
 .hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:15.5px}
+/* An answered card leaves in place (friction #12): a short fade, then gone. */
+.hb-gone{opacity:0;transform:translateY(-4px);transition:opacity .2s ease,transform .2s ease;pointer-events:none}
+/* The milestone, inline at the top of the day (friction #43). */
+.hb-mile{margin-top:18px}
+.hb-mile .lead{font-family:'Clash Display',sans-serif;font-size:22px;color:var(--ink);margin:4px 0 6px}
+.hb-mile .why{color:var(--ink2);font-size:14.5px;line-height:1.55}
+@media (prefers-reduced-motion:reduce){.hb-gone{transition:none}}
 .hb-clear .ok{width:28px;height:28px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 12px rgba(45,106,79,.35)}
 .hb-empty{font-size:14.5px;color:var(--ink3);padding:8px 0}
 
@@ -2888,7 +2907,18 @@ svg:hover .hb-xh{opacity:1}
 <script>
 (function(){
   // ── Home renderer (ES5) ───────────────────────────────────────────────────
-  var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope='location',_hbRange='1M';
+  // A multi-location login opens on all its locations (friction #24), and
+  // the last pick is remembered in this browser.
+  var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope=hbScopeStart(),_hbRange='1M';
+  function hbScopeStart(){
+    var multi={{ 'true' if group_locations and group_locations|length > 1 else 'false' }};
+    if(!multi)return 'location';
+    // Arriving from a group row: this one load shows the location it opened.
+    var once=null;try{once=sessionStorage.getItem('cavnar_hb_scope_once');sessionStorage.removeItem('cavnar_hb_scope_once');}catch(e0){once=null;}
+    if(once==='location')return 'location';
+    var s=null;try{s=localStorage.getItem('cavnar_hb_scope');}catch(e){s=null;}
+    return s==='location'?'location':'group';
+  }
   var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
   var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
   var PULSE={reviews:'rating',labor:'labor',inventory:'food cost',marketing:'posts this month',intel:'intel recs'};
@@ -3164,6 +3194,8 @@ svg:hover .hb-xh{opacity:1}
     if(module==='home'){
       var tb=document.getElementById('tab-home');
       if(tb&&typeof switchTab==='function')switchTab('home',tb);
+      // The detail lives in the collapsed Results section now (friction #11).
+      var rs=document.getElementById('hb-results');if(rs&&!rs.open)rs.open=true;
       var target=document.getElementById('hb-follow')||document.getElementById('hb-body');
       if(target&&target.scrollIntoView)target.scrollIntoView({behavior:'smooth',block:'start'});
       return;
@@ -3221,6 +3253,23 @@ svg:hover .hb-xh{opacity:1}
     }
     else hbAsk(t.getAttribute('data-ask'));
   });
+  // "+N more" opens the rest of Needs attention in place; a brief line's
+  // direct action opens its nav path; a milestone card closes (friction
+  // #11, #46, #43).
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-attn-more],[data-nav-go],[data-mile-close],[data-group-open]'):null;if(!t)return;
+    e.preventDefault();
+    if(t.hasAttribute('data-group-open')){hbGroupOpen(+t.getAttribute('data-group-open'),t.getAttribute('data-group-nav')||'');return;}
+    if(t.hasAttribute('data-attn-more')){
+      var card=t.closest('#hb-attn-card'),open=t.getAttribute('aria-expanded')!=='true';
+      var rows=card?card.querySelectorAll('.hb-attn-more'):[];
+      for(var i=0;i<rows.length;i++)rows[i].hidden=!open;
+      t.setAttribute('aria-expanded',open?'true':'false');
+      t.textContent=open?'Show fewer':'+'+t.getAttribute('data-attn-more')+' more';
+    }
+    else if(t.hasAttribute('data-nav-go')){var p=t.getAttribute('data-nav-go');if(typeof cavNav==='function')cavNav(p);}
+    else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);}
+  });
   // The reason picker (recReasonPicker) under a Home answer: below a card's
   // footer, below a Needs-attention row, below the focus card's footer.
   function hbAskWhy(btn,skipLabel,onPick){
@@ -3247,7 +3296,7 @@ svg:hover .hb-xh{opacity:1}
     var box=document.createElement('div');box.className='hb-pub-confirm';
     if(host&&host.parentNode)host.parentNode.insertBefore(box,host.nextSibling);else if(btn&&btn.parentNode)btn.parentNode.appendChild(box);
     box.innerHTML='<div class="dr-pulse" aria-hidden="true"></div>';
-    function after(){_hbLoadedAt=0;hbLoad(true);}
+    function after(){if(typeof hbSoft==='function')hbSoft(true);else{_hbLoadedAt=0;hbLoad(true);}}
     fetch('/api/command/propose',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'approve_all_reviews',args:{}})})
       .then(apiJson).then(function(d){
         if(d&&d.ok&&d.proposal&&typeof cavPropCard==='function'){box.innerHTML='';cavPropCard(d.proposal,box,{onDone:after});return;}
@@ -3269,7 +3318,15 @@ svg:hover .hb-xh{opacity:1}
   }
   // Only the id travels through the inline handlers (CLIENT-17).
   window.hbSwitchLoc=function(rid){if(typeof switchLocation==='function')switchLocation(rid);};
-  window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
+  window.hbScope=function(scope){_hbScope=scope;try{localStorage.setItem('cavnar_hb_scope',scope);}catch(e){}_hbLoadedAt=0;hbLoad(false);};
+  // A group row opens its location on the item itself, not on that
+  // location's Home top (friction #24): the nav path waits in this tab's
+  // sessionStorage across the switch's reload and the bell's loader opens it.
+  window.hbGroupOpen=function(rid,path){
+    if(path){try{sessionStorage.setItem('cavnar_pending_nav',path);}catch(e){}}
+    try{sessionStorage.setItem('cavnar_hb_scope_once','location');}catch(e2){}
+    hbSwitchLoc(rid);
+  };
   window.hbRange=function(r){_hbRange=r;if(_hbData)renderHero(_hbData);};
   window.hbDismiss=function(key,undo,kind,title,metric,reason,reasonCode,cb){
     var body={key:key,undo:!!undo};
@@ -3279,6 +3336,11 @@ svg:hover .hb-xh{opacity:1}
     fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
       if(!d.ok){if(cb)cb(false);if(typeof toast==='function')toast(d.error||'Couldn\'t update that','error');return;}
       if(cb)cb(true);
+      // The answered card leaves at once and only the brief is re-read
+      // (friction #12): this used to rebuild all of Home — the brief plus
+      // fifteen follow-up reads — on every Done, hide and Not today.
+      if(!undo)hbAnswered(key);
+      hbSoft(false);
       // Done on a card with a metric starts its tracker, or says why not
       // (API_REFERENCE.md, "Tracker-start replies").
       var tl=typeof recTrackerLine==='function'?recTrackerLine(d):'',tone='success';
@@ -3288,10 +3350,84 @@ svg:hover .hb-xh{opacity:1}
         else if(d.tracker_refused){msg='Marked done. '+tl;tone='warning';}
         else msg=d.outcome?'Marked done - measuring from today, result on '+mdy(d.outcome.evaluate_on):'Marked done';
       }
-      if(typeof toast==='function')toast(msg,tone);
-      _hbLoadedAt=0;hbLoad(false);
+      // A hide or a snooze is reversible: done at once, with Undo on the
+      // toast (DS §10 confirm/undo policy).
+      var undoFn=(!undo&&kind!=='done')?{label:'Undo',fn:function(){hbDismiss(key,true,kind,title);}}:null;
+      if(typeof toast==='function')toast(msg,tone,undoFn||undefined);
     }).catch(function(){if(cb)cb(false);if(typeof toast==='function')toast('Network error','error');});
   };
+  // ── answer in place (friction #12) ────────────────────────────────────────
+  // hbAnswered takes the answered card off the page now; hbSoft re-reads
+  // /api/home/brief only (debounced) and redraws the header, the focus card
+  // (only when its lead changed), Needs attention and the recommendations.
+  // hbLoad(true) stays the explicit refresh.
+  var _hbG=null,_hbFocusLead=null,_hbSoftT=null,_hbSoftFresh=false;
+  function hbAnswered(key){
+    if(!key)return;
+    var els=document.querySelectorAll('#hb-body [data-dismiss-key],#hb-body [data-track-key],#hb-body [data-reprice-key],#hb-body [data-assign-key]');
+    for(var i=0;i<els.length;i++){var e=els[i],k=e.getAttribute('data-dismiss-key')||e.getAttribute('data-track-key')||e.getAttribute('data-reprice-key')||e.getAttribute('data-assign-key');
+      if(k!==key||!e.closest)continue;
+      if(e.closest('#hb-focus'))continue;
+      var c=e.closest('.hb-rec,.hb-row,.hb-tl .it,.hb-chk');
+      if(c&&c.parentNode){c.classList.add('hb-gone');(function(n){setTimeout(function(){if(n.parentNode)n.parentNode.removeChild(n);},220);})(c);}}
+  }
+  function hbSwap(id,html){var el=document.getElementById(id);if(el)el.outerHTML=html;}
+  function hbSoft(fresh){
+    if(fresh)_hbSoftFresh=true;
+    clearTimeout(_hbSoftT);
+    _hbSoftT=setTimeout(function(){
+      var f=_hbSoftFresh;_hbSoftFresh=false;
+      if(_hbScope==='group'){_hbLoadedAt=0;hbLoad(f);return;}
+      fetch('/api/home/brief'+(f?'?fresh=1':''),{credentials:'same-origin'}).then(apiJson).then(function(d){
+        if(!d||!d.ok||d.scope==='group')return;
+        _hbData=d;_hbLoadedAt=Date.now();renderTop(d);
+        var used=focusUsed(d);
+        var fx=document.getElementById('hb-focus');
+        if(fx){var prev=_hbFocusLead,nf=renderFocus(d,_hbG);if(_hbFocusLead!==prev)fx.outerHTML=nf;}
+        hbSwap('hb-attn-card',renderAttention(d,used));
+        hbSwap('hb-recs',renderRecs(d,used&&used.rec?1:0));
+        hbReveal();
+      }).catch(function(){});
+    },500);
+  }
+  // Home is stale after anything done elsewhere — an approve in Reviews, a
+  // confirmed Ask proposal, a post (friction #12). hbDirty marks it so the
+  // next visit re-reads; while Home is on screen it re-reads now.
+  window.hbDirty=function(){
+    _hbLoadedAt=0;
+    var p=document.getElementById('panel-home');
+    if(p&&p.classList.contains('active'))hbSoft(true);
+  };
+  // One hook instead of a call in every handler: a successful write made
+  // while another tab is showing marks Home stale, so switching back re-reads
+  // it rather than showing "6 replies waiting" for five more minutes. Reads,
+  // Ask questions and bookkeeping posts do not count.
+  (function(){
+    var f=window.fetch;if(!f)return;
+    var QUIET=/\/api\/(log-activity|ask-cavnar(\/stream|\/feedback|\/conversations|$|\?)|notifications|recs\/event|milestones\/seen|changelog|activity)/;
+    window.fetch=function(u,o){
+      var p=f.apply(this,arguments);
+      try{
+        var m=String((o&&o.method)||(u&&u.method)||'GET').toUpperCase(),url=String((u&&u.url)||u||'');
+        var home=document.getElementById('panel-home');
+        if(m!=='GET'&&!QUIET.test(url)&&!(home&&home.classList.contains('active'))){
+          p.then(function(r){if(r&&r.ok)_hbLoadedAt=0;},function(){});
+        }
+      }catch(e){}
+      return p;
+    };
+  })();
+  function hbRefetchIssues(){
+    fetch('/api/issues?status=unresolved',{credentials:'same-origin'}).then(apiJson).then(function(d){if(d&&d.ok)hbAttnSetIssues(d.issues||[]);}).catch(function(){});
+  }
+  function hbRefetchOpen(){
+    fetch('/api/actions',{credentials:'same-origin'}).then(apiJson).then(function(d){
+      if(!d||!d.ok)return;
+      var shown=hbShownKeys(_hbData,_hbIssues);
+      var acts=(d.items||[]).filter(function(y){return !shown[hbSame(y.key)];});
+      var el=document.getElementById('hb-open-list');if(el)el.innerHTML=renderOpen(acts);
+    }).catch(function(){});
+  }
   // ── header ────────────────────────────────────────────────────────────────
   // Start measuring a recommendation. The baseline is taken server-side at
   // the moment this posts - nothing about the card's own numbers is sent,
@@ -3307,8 +3443,9 @@ svg:hover .hb-xh{opacity:1}
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
       if(btn){btn.textContent='Tracking';}
       // Tracking is taking the recommendation (the server records it as
-      // accepted), so Home reloads without it - the same as iOS.
-      _hbLoadedAt=0;hbLoad(false);
+      // accepted), so the card leaves and the brief is re-read - the same
+      // as iOS, without rebuilding all of Home (friction #12).
+      hbAnswered(key);hbSoft(false);
       // Another tracker already measures this number: the answer was taken,
       // nothing new is measured, and the reason says until when.
       if(d.tracker_refused){if(typeof toast==='function')toast(d.tracker_refused.reason||d.warning,'warning');return;}
@@ -3471,6 +3608,8 @@ svg:hover .hb-xh{opacity:1}
     hbFocusKey=(ff&&ff.what)?String(ff.rec_key||ff.key||''):'';
     var byKey={};for(var i=0;i<lines.length;i++)byKey[lines[i].key]=lines[i];
     var lead='',why='',ev=[],money='',ask='',kick='Today’s focus',clear=false,mods=[];
+    // _hbFocusLead is set below, once the lead is chosen: a re-render swaps
+    // the card only when this changes (friction #11).
     var alt='',confirm='',fconf=null,fkey='',ftag='';
     if(ff&&ff.what){kick='If you only do one thing';fconf=ff.confidence_detail||ff.confidence||null;fkey=ff.rec_key||ff.key||'';ftag=cavConf.claimTag(ff.claim_kind,ff.model_written);ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
       // When the lead IS a cross-module link, this card owns it entirely -
@@ -3513,6 +3652,7 @@ svg:hover .hb-xh{opacity:1}
     // only restates it.
     if(confirm&&hbNorm(confirm)===hbNorm(lead))confirm='';
     ev=hbFreshEvidence(ev,lead+' '+why);
+    _hbFocusLead=kick+'|'+lead;
     var h='<section class="hb-card hero hb-focus'+(clear?' clear':'')+' hb-rise" id="hb-focus" aria-label="Today">';
     // The date already sits in the hero's kicker; this corner is where the
     // product says it is awake — how many live signals it is reading, and
@@ -3649,7 +3789,7 @@ svg:hover .hb-xh{opacity:1}
       fetch('/api/home/assign',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({key:btn.getAttribute('data-assign-key'),title:btn.getAttribute('data-track-title'),detail:btn.getAttribute('data-assign-detail')||'',contact_id:box.querySelector('select').value})})
         .then(apiJson).then(function(r){done();
-          if(r&&r.ok){toast('Handed to '+((r.issue&&r.issue.assignee_name)||'them')+' — it is on the issues list','success');_hbLoadedAt=0;hbLoad(false);}
+          if(r&&r.ok){toast('Handed to '+((r.issue&&r.issue.assignee_name)||'them')+' — it is on the issues list','success');hbAnswered(btn.getAttribute('data-assign-key'));hbSoft(false);hbRefetchIssues();}
           else toast((r&&r.error)||'Could not hand that over','error');})
         .catch(function(){done();toast('Network error','error');});
     });
@@ -3661,7 +3801,7 @@ svg:hover .hb-xh{opacity:1}
     fetch('/api/food-cost/reprice/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({dish:dish,price:price})})
       .then(apiJson).then(function(r){done();
         if(r&&r.ok){hbRecEvent(key,'completed');var tl=typeof recTrackerLine==='function'?recTrackerLine(r):'';
-          toast(dish+' repriced'+(tl?' — '+tl.charAt(0).toLowerCase()+tl.slice(1):''),r.tracker_refused?'warning':'success');_hbLoadedAt=0;hbLoad(false);}
+          toast(dish+' repriced'+(tl?' — '+tl.charAt(0).toLowerCase()+tl.slice(1):''),r.tracker_refused?'warning':'success');hbAnswered(key);hbSoft(false);}
         else toast((r&&r.error)||'Could not reprice that','error');})
       .catch(function(){done();toast('Network error','error');});
   }
@@ -3672,7 +3812,7 @@ svg:hover .hb-xh{opacity:1}
   }
   window.hbRestoreKind=function(kind){
     fetch('/api/home/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({restore_kind:kind})})
-      .then(apiJson).then(function(r){if(r&&r.ok){toast('It will show again','success');_hbLoadedAt=0;hbLoad(false);}}).catch(function(){});
+      .then(apiJson).then(function(r){if(r&&r.ok){toast('It will show again','success');hbSoft(false);}}).catch(function(){});
   };
   // Needs attention: one card for everything waiting on the owner — the
   // attention items (the focus card above has already taken the most
@@ -3718,13 +3858,15 @@ svg:hover .hb-xh{opacity:1}
     return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
   function renderAttention(d,used){
     var items=(d.attention||[]).slice(used&&used.att?1:0),iss=_hbIssues||[],total=items.length+iss.length;
-    var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="alerts">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
+    // "+N more" opens the rest of THIS list in place (friction #11). It used
+    // to open the bell, which is the alert history, not these items.
+    var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(items.length-3)+'" aria-expanded="false">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
     if(!total)h+=hbAttnClearHtml(used,d);
     // What an item rests on is on the row, not in a hover tooltip a phone
     // never shows (CA4 J4): the evidence (or, from an older server, the
     // detail) under the title, then its confidence line.
-    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i],aev=a.evidence||a.detail||'',acf=(a.confidence_detail||a.confidence)?cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
-      h+='<div class="hb-row hb-att '+esc(a.severity)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+(a.dollars_basis?'<div class="hb-att-ev">'+hbDollarsBasis(a.dollars_basis)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+',\''+esc(a.action.nav||'')+'\')">'+esc(a.action.label)+'</button>'
+    for(var i=0;i<items.length;i++){var a=items[i],aev=a.evidence||a.detail||'',acf=(a.confidence_detail||a.confidence)?cavConfLine(a.confidence_detail||a.confidence,{key:a.rec_key||a.key,surface:'home',module:'home'}):'';
+      h+='<div class="hb-row hb-att '+esc(a.severity)+(i>=3?' hb-attn-more':'')+'"'+(i>=3?' hidden':'')+' data-same="'+esc(hbSame(a.key))+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(aev?'<div class="hb-att-ev">'+num(aev)+'</div>':'')+(a.dollars_basis?'<div class="hb-att-ev">'+hbDollarsBasis(a.dollars_basis)+'</div>':'')+acf+'</div><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this,'+(+a.action.count||0)+',\''+esc(a.action.nav||'')+'\')">'+esc(a.action.label)+'</button>'
       // Every item answers like a recommendation - not today, or hide for
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
@@ -3732,6 +3874,23 @@ svg:hover .hb-xh{opacity:1}
     h+='</div>';
     return h;
   }
+  // ── one item, once (friction #11) ─────────────────────────────────────────
+  // The same job reached Home four ways — the focus card, a Needs-attention
+  // row, a brief line and a Still-open row, each with its own key. hbSame
+  // maps each surface's key onto one job; a brief line or a Still-open row
+  // whose job is already in the focus card or Needs attention is left out.
+  var HB_SAME={urgent_reviews:'replies',stale_low_reviews:'replies',awaiting_approval:'replies',low_response_rate:'replies',
+    no_response:'replies',reviews:'replies',critical_low:'stock',stock:'stock',issues:'issues'};
+  function hbSame(k){k=String(k||'');if(HB_SAME.hasOwnProperty(k))return HB_SAME[k];if(k.indexOf('stock_low:')===0)return 'stock';return k;}
+  function hbShownKeys(d,iss){
+    var s={},att=(d&&d.attention)||[],i;
+    for(i=0;i<att.length;i++){s[hbSame(att[i].key)]=1;if(att[i].rec_key)s[hbSame(att[i].rec_key)]=1;}
+    if(hbFocusKey)s[hbSame(hbFocusKey)]=1;
+    iss=iss||[];if(iss.length)s.issues=1;
+    for(i=0;i<Math.min(iss.length,4);i++)s['issue:'+iss[i].id]=1;
+    return s;
+  }
+  function hbResultsOpen(){try{return localStorage.getItem('cavnar_hb_results')==='1';}catch(e){return false;}}
   // The open issues land after the first render: into the same card, with
   // the count and the all-clear line kept honest.
   function hbAttnSetIssues(iss){
@@ -3790,32 +3949,38 @@ svg:hover .hb-xh{opacity:1}
     // never called, so a brand-new account's first screen skipped the one
     // block written for it.
     h+=renderWelcome(d);
-    // The order is fixed by role so the owner learns where things live —
-    // the same order as the phone: the header strip, the value graph, THE
-    // DAY (brief and open issues; the close-out takes its place after 8pm,
-    // the weekly receipts lead it on Monday), then what needs a hand, the
-    // one cross-module thing, what to do next, and only then the proof.
-    // Readiness jumps above the day for an account with nothing connected
-    // yet, because nothing else has data; otherwise it sits after the
-    // recommendations and hides once complete.
+    // Home leads with the work (friction #11, DS §11b — web and iOS the
+    // same): the one thing and Needs attention right under the header, then
+    // the header strip's detail, THE DAY (brief; the close-out takes its
+    // place after 8pm, the weekly receipts lead it on Monday), what Cavnar
+    // AI recommends and what is still open. The proof — the value graph,
+    // goals, what your changes did, worth — is one collapsed Results
+    // section at the bottom. Readiness leads the page for an account with
+    // nothing connected yet; otherwise it follows the recommendations.
+    var used=focusUsed(d);
+    var fresh=hbIsFresh(d);
+    if(fresh)h+=renderReadiness(d);
+    h+=renderFocus(d,null);
+    h+=renderAttention(d,used);
     h+=renderSignals(d);
     h+=renderFreshness(d);
     // How you compare (Benchmarking #23): the compact strip under the
     // freshness line, filled by its own read so the brief never waits on it.
     h+='<div class="hb-bench hb-rise" id="hb-bench" style="--i:2" hidden></div>';
-    var fresh=hbIsFresh(d);
-    if(fresh)h+=renderReadiness(d);
-    h+='<section class="hb-hero" id="hb-hero" aria-label="Measured results"></section>';
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
-    var used=focusUsed(d);
-    h+=renderAttention(d,used);
-    h+=renderFocus(d,null);
     h+=renderRecs(d,used&&used.rec?1:0);
     if(!fresh)h+=renderReadiness(d);
+    // Still open and the close-out: work, so outside the collapsed results.
+    h+='<section id="hb-open" aria-label="Still open"></section>';
+    h+='<details class="hb-results" id="hb-results" data-nav="home/results"'+(hbResultsOpen()?' open':'')+'><summary><span class="hb-kicker">Results</span><span>What Cavnar measured: the value graph, goals, what your changes did</span></summary>';
+    h+='<section class="hb-hero" id="hb-hero" aria-label="Measured results"></section>';
     h+='<section id="hb-follow" aria-label="Follow-through"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:34%;height:11px;margin-bottom:14px"></div><div class="hb-skel" style="width:84%"></div><div class="hb-skel" style="width:62%;margin-top:9px"></div><div class="hb-skel" style="width:71%;margin-top:9px"></div></div></section>';
+    h+='</details>';
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
+    var rs=document.getElementById('hb-results');
+    if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}});
     if(document.getElementById('hb-hero'))renderHero(d);
     if(window.cavBench)window.cavBench.strip(document.getElementById('hb-bench'));
     hbReveal();hbLiveStart();
@@ -3976,21 +4141,17 @@ svg:hover .hb-xh{opacity:1}
   // restaurant_id + key), so marking it seen here holds on every other
   // device too. The modal markup is the one the 100%-response-rate
   // celebration already used; only what fills it changed.
+  // An inline card now (friction #43): the same kicker, title and body the
+  // modal carried, at the top of the day, with a ✕. Shown means seen, as
+  // before, so it still happens once on every device.
   function hbMilestone(m){
-    if(!m)return;
-    var modal=document.getElementById('congrats-modal');if(!modal)return;
-    var sub=document.getElementById('congrats-kicker'),ttl=document.getElementById('congrats-title'),
-        body=document.getElementById('congrats-body'),stats=document.getElementById('congrats-stats');
-    if(sub)sub.textContent=MILESTONE_KICKER[m.kind]||'A milestone';
-    if(ttl)ttl.textContent=m.title||'';
-    if(body)body.innerHTML=num(m.body||'');
-    // The three research stats belong to the response-rate milestone only -
-    // quoting return-rate research under an anniversary or a food-cost
-    // record would be a figure with nothing to do with what was achieved.
-    if(stats)stats.style.display=(m.kind==='response_rate')?'':'none';
-    modal.classList.add('show');
+    if(!m)return '';
     fetch('/api/milestones/seen',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({key:m.key})}).catch(function(){});
+    return '<section class="hb-card rail good hb-rise hb-mile" id="hb-mile" aria-label="A milestone"><div class="hb-h3"><span class="hb-kicker">'+esc(MILESTONE_KICKER[m.kind]||'A milestone')+'</span><button type="button" class="hb-x" aria-label="Dismiss" data-mile-close="1">✕</button></div>'
+      +'<div class="lead">'+esc(m.title||'')+'</div>'+(m.body?'<div class="why">'+num(m.body)+'</div>':'')
+      // The research line belongs to the response-rate milestone only.
+      +(m.kind==='response_rate'?'<div class="hb-empty" style="font-size:12px">5–9% revenue lift per star gained — Michael Luca, Harvard Business School (2011), on independent restaurants\' Yelp ratings.</div>':'')+'</section>';
   }
   var MILESTONE_KICKER={savings:'Measured results',anniversary:'A milestone',
     response_rate:'Every review answered',goal:'Goal met',record:'A record',streak:'On a run'};
@@ -4333,8 +4494,12 @@ svg:hover .hb-xh{opacity:1}
     // Upgrade the focus card in place now the cross-module read has landed.
     // If it took over from a recommendation as the lead, put that
     // recommendation back in the grid it was held out of.
+    // Swapped only when the lead itself changed (the cross-module read
+    // found a bigger one thing): the card the owner is reading does not
+    // re-render under the cursor for nothing (friction #11).
+    _hbG=g;
     var fx=document.getElementById('hb-focus');
-    if(fx){fx.outerHTML=renderFocus(d,g);}
+    if(fx){var _prevLead=_hbFocusLead,_nf=renderFocus(d,g);if(_hbFocusLead!==_prevLead)fx.outerHTML=_nf;}
     var ff=g.cross&&g.cross.fix_first;
     if(ff&&ff.what&&!(d.attention||[]).length){var rg=document.getElementById('hb-recs');if(rg)rg.outerHTML=renderRecs(d,0);}
     // A grid drawn before the cross-module read landed may hold the card the
@@ -4343,17 +4508,22 @@ svg:hover .hb-xh{opacity:1}
       for(var di=0;di<dup.length;di++){if(dup[di].getAttribute('data-dismiss-key')===hbFocusKey){var cd=dup[di].closest?dup[di].closest('.hb-rec'):null;if(cd&&cd.parentNode)cd.parentNode.removeChild(cd);}}}
     // The focus card already shows the fix-first and the money lines.
     lines=lines.filter(function(l){return l.key!=='fix_first'&&l.key!=='money'&&!(l.key==='all_clear'&&lines.length===1);});
+    // A line whose job is already in the focus card or Needs attention is
+    // said there, once (friction #11).
+    var shown=hbShownKeys(d,iss);
+    lines=lines.filter(function(l){return !shown[hbSame(l.rec)]&&!shown[hbSame(l.key)];});
+    acts=acts.filter(function(y){return !shown[hbSame(y.key)];});
     var conn=renderConnections(g.cross);
-    // One milestone at a time, and only after the page has settled - a modal
-    // that lands mid-render steals a click the owner aimed somewhere else.
+    // One milestone at a time, as a card at the top of the day (friction
+    // #43): the modal it used to be opened over the morning read and had to
+    // be dismissed before anything else could be clicked.
     var unseen=((g.miles&&g.miles.unseen)||[])[0];
-    if(unseen)setTimeout(function(){hbMilestone(unseen);},900);
     // THE DAY — its own slot, right under the value graph. After 8pm local
     // the close-out leads it (that is what the evening owner opens the app
     // for); on Monday the weekly receipts lead it.
     var evening=hbLocalHour(d)>=20,monday=hbLocalDow(d)===1;
     var receipts=renderReceipts(d);
-    var day='';
+    var day=hbMilestone(unseen);
     if(monday)day+=receipts;
     if(evening)day+=renderCloseout();
     var h='<div class="hb-sh first"><div><div class="k">The day</div><h2>This morning’s brief <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
@@ -4371,7 +4541,10 @@ svg:hover .hb-xh{opacity:1}
     // morning_brief._LINE_MODULE), never the screen's.
     else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];
       var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1,also:l.rec_keys||[]}):'';
-      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+      // The line's direct action first — send, open the order, answer the
+      // replies — and "Ask →" as the secondary (friction #46).
+      var act=(l.action&&l.action.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(l.action.nav)+'">'+esc(l.action.label)+'</button>':'';
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span>'+act+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
@@ -4398,28 +4571,33 @@ svg:hover .hb-xh{opacity:1}
     h+=renderValue(g.value);
     h+=renderWorked(g.worked,g.value);
     h+=renderMonth(g.month);
-    // Everything still open, as a checklist - the answer to "what's left?",
-    // which used to mean opening six screens (workflow audit #8).
-    if(acts.length){
-      h+='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
-      for(var a=0;a<acts.length;a++){var y=acts[a];
-        h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
-          +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
-          // A stored Ask proposal reopens from its row (nav "action/<id>")
-          // instead of re-asking the model; everything else lands on its
-          // item (Friction audit #2, U4-20). An older server's item keeps
-          // the question or the module.
-          +(y.nav&&!(y.action&&y.action.route)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(y.nav)+'">'+esc(y.action&&y.action.label||'Open')+'</button>':(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':'')))
-          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(y.key)+'\',this)">Not today</button></span></div>';}
-      h+='</section>';
-    }
-    if(!evening)h+=renderCloseout();
+    // Still open and the close-out are work, so they sit above the
+    // collapsed results (friction #11); everything above here is proof.
+    var openEl=document.getElementById('hb-open');
+    if(openEl)openEl.innerHTML='<div id="hb-open-list">'+renderOpen(acts)+'</div>'+(evening?'':renderCloseout());
     el.innerHTML=h;
     hbReveal();hbLiveTick();
     // Goal bars grow in after paint, so the width transition has a frame
     // to start from; stat tiles count up the same way the hero does.
     setTimeout(function(){var bs=el.querySelectorAll('.hb-goal .bar i');for(var q=0;q<bs.length;q++)bs[q].style.width=bs[q].getAttribute('data-w')+'%';
       var cu=el.querySelectorAll('.hb-stat .cu');for(var c=0;c<cu.length;c++)countUp(cu[c],+cu[c].getAttribute('data-n')||0,cu[c].getAttribute('data-p')||'');},60);
+  }
+  // Everything still open, as a checklist - the answer to "what's left?",
+  // which used to mean opening six screens (workflow audit #8).
+  function renderOpen(acts){
+    if(!acts||!acts.length)return '';
+    var h='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
+    for(var a=0;a<acts.length;a++){var y=acts[a];
+      h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
+        +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
+        // A stored Ask proposal reopens from its row (nav "action/<id>")
+        // instead of re-asking the model; everything else lands on its item
+        // (Friction audit #2, U4-20). An older server's item keeps the
+        // question or the module.
+        +(y.nav&&!(y.action&&y.action.route)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(y.nav)+'">'+esc(y.action&&y.action.label||'Open')+'</button>'
+          :(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':'')))
+        +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(y.key)+'\',this)">Not today</button></span></div>';}
+    return h+'</section>';
   }
   // The day grid's right-hand stack carried goals and results; the measured
   // section owns them now, so they are cut from the day's copy here.
@@ -4530,14 +4708,14 @@ svg:hover .hb-xh{opacity:1}
   window.hbSnooze=function(key,btn){
     if(btn)btn.disabled=true;
     fetch('/api/actions/snooze',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key})})
-      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else if(btn)btn.disabled=false;})
+      .then(apiJson).then(function(d){if(d&&d.ok){var row=btn&&btn.closest?btn.closest('.hb-chk'):null;if(row&&row.parentNode)row.parentNode.removeChild(row);hbRefetchOpen();}else if(btn)btn.disabled=false;})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   window.hbActionDo=function(route,btn){
     if(btn)btn.disabled=true;
     var body=(btn&&btn.getAttribute('data-body'))||'{}';
     fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:body})
-      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
+      .then(apiJson).then(function(d){if(d&&d.ok){hbRefetchOpen();hbSoft(false);}else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   // A coverage issue carries its suggested covers (meta.covers) and who was
@@ -4557,14 +4735,14 @@ svg:hover .hb-xh{opacity:1}
     var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Asking…'):function(){};
     fetch('/api/issues/'+id+'/ask-cover',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
       .then(apiJson).then(function(d){done();
-        if(d&&d.ok){toast(name+' has been asked','success');hbFollow();}
+        if(d&&d.ok){toast(name+' has been asked','success');hbRefetchIssues();}
         else toast((d&&d.error)||'Could not ask them','error');})
       .catch(function(){done();toast('Network error','error');});
   }
   window.hbResolveIssue=function(id,btn){
     if(btn)btn.disabled=true;
     fetch('/api/issues/'+id+'/resolve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
-      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t resolve that','error');}})
+      .then(apiJson).then(function(d){if(d&&d.ok)hbRefetchIssues();else{if(btn)btn.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t resolve that','error');}})
       .catch(function(){if(btn)btn.disabled=false;});
   };
   // ── consolidated (all locations) ──────────────────────────────────────────
@@ -4597,7 +4775,7 @@ svg:hover .hb-xh{opacity:1}
     var at=g.attention||[];
     h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Needs attention · all locations</span></h3>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
-    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn '+(x.severity==='critical'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbSwitchLoc('+(+x.restaurant_id)+')">Open</button></div>';}
+    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn '+(x.severity==='critical'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" data-group-open="'+(+x.restaurant_id)+'" data-group-nav="'+esc(x.nav||'')+'">'+esc(x.action_label||'Open')+'</button></div>';}
     h+='</div></div>';
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
@@ -4668,6 +4846,10 @@ svg:hover .hb-xh{opacity:1}
 /* The sliding ember pulse — quick loading, never a spinner. */
 .dr-pulse{position:relative;height:3px;width:180px;border-radius:2px;background:var(--hb-tint2);overflow:hidden}
 .dr-pulse.wide{width:100%;margin:-4px 0 16px}
+/* Outside a panel (the header popovers, the location switch) the per-panel
+   --hb-tint2 is not defined, so the track takes the paper hairline. */
+#notif-list .dr-pulse,#tm-inbox-list .dr-pulse,.dr-pulse.loc-switching{background:var(--paper3);margin:0}
+.dr-pulse.loc-switching{position:fixed;top:0;left:0;right:0;width:auto;z-index:10001;border-radius:0}
 .dr-pulse i{position:absolute;top:0;left:-30%;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
 .dr-loading{display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:48px 0;font-size:14px;color:var(--ink3)}
 .dr-old{margin-top:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:14.5px;color:var(--ink2)}
@@ -6154,6 +6336,21 @@ svg:hover .hb-xh{opacity:1}
 #panel-reviews .rv2-row.skipped .draft-box{background:rgba(227,201,154,.12)!important}
 #panel-reviews .draft-lbl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)!important;margin-bottom:6px}
 #panel-reviews .draft-txt{font-size:13.5px;color:var(--ink)!important;line-height:1.6;font-style:normal}
+/* Click-to-edit reply text (friction #7): the text cursor says it is
+   editable; no hover fill (DS §10 — cards and rows get no hover tone). */
+#panel-reviews .draft-txt.draft-editable{cursor:text}
+#panel-reviews .draft-txt.draft-editable:focus-visible{outline:2px solid var(--ember);outline-offset:3px;border-radius:4px}
+#panel-reviews .rv2-ask{margin-top:6px}
+/* Scheduling sits under the post it schedules (friction #41). */
+.mkt-sched-inline{margin-top:12px;max-width:440px;padding:16px 18px;border:1px solid var(--paper3);border-radius:12px;background:var(--surface)}
+/* Collapsed section under the work (friction #11, #20; DS §12 "Collapsed
+   results"): one hairline summary row, a chevron that turns when open. */
+.rv2-analytics,.hb-results{margin-top:30px;border-top:1px solid var(--paper3)}
+.rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
+.rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
+.rv2-analytics>summary:after,.hb-results>summary:after{content:'›';margin-left:auto;color:var(--ink3);transition:transform .2s ease}
+.rv2-analytics[open]>summary:after,.hb-results[open]>summary:after{transform:rotate(90deg)}
+.rv2-analytics>summary:focus-visible,.hb-results>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
 #panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
 #panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
@@ -6205,10 +6402,50 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
-  <div id="new-reviews-banner" style="display:none" role="button" tabindex="0" onclick="rvBannerRefresh(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rvBannerRefresh(this);}"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
+  {# New reviews land in the inbox without a reload (friction #20):
+     rvPullNew() inserts the cards and this line says how many; a click
+     scrolls to the first of them. #}
+  <div id="new-reviews-banner" style="display:none" role="button" tabindex="0" aria-live="polite" onclick="rvShowNew()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rvShowNew();}"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Show →</span></div>
 
   <div id="rv-inbox-header"></div>
-  <div id="rv-panel-analytics">
+  <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
+    <div class="hb-sh"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="toolbar">
+      <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
+      <div class="filter-pills">
+        <button class="fpill {{ 'active' if rfilter=='all' }}" onclick="setRF('all',this)">All</button>
+        <button class="fpill {{ 'active-red' if rfilter=='urgent' }}" id="fpill-urgent" onclick="setRF('urgent',this)">Urgent</button>
+        <button class="fpill {{ 'active' if rfilter=='pending' }}" id="fpill-pending" onclick="setRF('pending',this)">To approve</button>
+        <button class="fpill {{ 'active' if rfilter=='negative' }}" onclick="setRF('negative',this)">Negative</button>
+        <button class="fpill {{ 'active' if rfilter=='positive' }}" onclick="setRF('positive',this)">Positive</button>
+      </div>
+    </div>
+    {# Always rendered, even empty: a server search (rvServerSync) or a
+       new review (rvPullNew) fills it without a reload. #}
+    <div class="rv2-list" data-list-key="{{ rfilter }}|{{ rsearch }}|" data-total="{{ reviews_total or reviews|length }}">
+    {% for r in reviews %}
+    {% set delay = [loop.index0 * 0.05, 0.3]|min %}
+    {% include '_review_card.html' %}
+    {% endfor %}
+    </div>
+    {# The list is one page now. It used to render every review the
+       restaurant had ever received into this document — each with a draft
+       box, a textarea and a template picker — which is fine at 58 reviews
+       and a multi-megabyte page at 3,000. #}
+    <div id="rv-more-wrap" style="display:{{ 'flex' if reviews_total and reviews_total > reviews|length else 'none' }};flex-direction:column;align-items:center;gap:8px;padding:18px 0 4px">
+      <button class="cbtn cbtn-secondary" id="rv-more-btn" onclick="loadMoreReviews(this)">Load more reviews</button>
+      <span style="font-size:12px;color:var(--ink3)">Showing <span class="hb-num" id="rv-shown-n">{{ reviews|length }}</span> of <span class="hb-num" id="rv-total-n">{{ reviews_total or reviews|length }}</span></span>
+    </div>
+    <div class="rv2-empty" id="rv-empty"{% if reviews %} hidden{% endif %}><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
+  </div>
+
+  {# The inbox leads (friction #20): opening Reviews is almost always to
+     answer something. The analytics sit under it, collapsed, and load
+     on first open (rvOpenAnalytics); the header pills that point at a
+     chart open it first. #}
+  <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics">
+    <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating trend, Cavnar AI's read, approval method and topics</span></summary>
+
     <section class="rv2-hero" aria-label="Rating trend">
       <div class="hd"><div><div class="hb-kicker">{{ 'Google rating (all time)' if restaurant.gbp_rating else 'Average rating · all reviews' }}</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
       <div id="rv-hero-chart"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="searching" width="44" height="44"></canvas><span>Charting your rating…</span></div></div>
@@ -6238,41 +6475,7 @@ svg:hover .hb-xh{opacity:1}
       <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
       <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
     </div>
-  </div>
-
-  <div id="rv-inbox-reviews" class="rv2-inbox">
-    <div class="hb-sh"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
-    <div class="toolbar">
-      <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
-      <div class="filter-pills">
-        <button class="fpill {{ 'active' if rfilter=='all' }}" onclick="setRF('all',this)">All</button>
-        <button class="fpill {{ 'active-red' if rfilter=='urgent' }}" id="fpill-urgent" onclick="setRF('urgent',this)">Urgent</button>
-        <button class="fpill {{ 'active' if rfilter=='pending' }}" id="fpill-pending" onclick="setRF('pending',this)">To approve</button>
-        <button class="fpill {{ 'active' if rfilter=='negative' }}" onclick="setRF('negative',this)">Negative</button>
-        <button class="fpill {{ 'active' if rfilter=='positive' }}" onclick="setRF('positive',this)">Positive</button>
-      </div>
-    </div>
-    {% if reviews %}
-    <div class="rv2-list">
-    {% for r in reviews %}
-    {% set delay = [loop.index0 * 0.05, 0.3]|min %}
-    {% include '_review_card.html' %}
-    {% endfor %}
-    </div>
-    {# The list is one page now. It used to render every review the
-       restaurant had ever received into this document — each with a draft
-       box, a textarea and a template picker — which is fine at 58 reviews
-       and a multi-megabyte page at 3,000. #}
-    {% if reviews_total and reviews_total > reviews|length %}
-    <div id="rv-more-wrap" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0 4px">
-      <button class="cbtn cbtn-secondary" id="rv-more-btn" onclick="loadMoreReviews(this)">Load more reviews</button>
-      <span style="font-size:12px;color:var(--ink3)">Showing <span class="hb-num" id="rv-shown-n">{{ reviews|length }}</span> of <span class="hb-num">{{ reviews_total }}</span></span>
-    </div>
-    {% endif %}
-    {% else %}
-    <div class="rv2-empty"><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
-    {% endif %}
-  </div>
+  </details>
 </div>
 </div><!-- /panel-reviews -->
 
@@ -8555,8 +8758,10 @@ svg:hover .hb-xh{opacity:1}
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing" style="margin:0 auto">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
-  <!-- Posting overlay -->
-  <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
+  <!-- Posting overlay. No caller since friction #43 (posting shows a busy
+       button instead). Candidate for future cleanup after additional
+       verification. -->
+  <div id="posting-overlay"style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
     <div style="text-align:center;width:220px">
       <!-- "Banked Ember" — the same breathing seal iOS shows on a first load,
            in place of a static wordmark over a progress bar -->
@@ -8641,11 +8846,36 @@ svg:hover .hb-xh{opacity:1}
     <button class="cbtn cbtn-secondary" onclick="openMktPreview()">Preview</button>
     <button class="cbtn cbtn-secondary" onclick="saveMktDraft()" id="mkt-save-draft-btn">Save draft</button>
     <button class="cbtn cbtn-secondary" onclick="openMktSchedule()">Schedule</button>
+    {# A generated Weekly email goes straight into the newsletter box
+       (friction #41): it used to be Copy, scroll two sections, paste. #}
+    <button class="cbtn cbtn-secondary" id="mkt-as-newsletter-btn" onclick="mktSendAsNewsletter()" style="display:none">Send as newsletter</button>
     <button class="cbtn cbtn-primary cbtn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
     <button class="cbtn cbtn-google" id="gg-post-btn" onclick="postToGoogle()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="cbtn cbtn-primary cbtn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
     <span id="output-tags" class="hb-chip" style="display:none;margin-left:6px" title="What this post is about — its result will be read against the dish and occasion"></span>
+  </div>
+  <!-- Schedule: an owner does admin at 11pm for a post that belongs on
+       Tuesday at lunch. Inline under the post now (friction #41), not a
+       modal over it: the text being scheduled stays in view. The id is
+       kept so openMktSchedule/closeMktSchedule are unchanged. -->
+  <div id="mkt-schedule-modal" class="mkt-sched-inline" style="display:none">
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:14px;font-weight:700;color:var(--ink)">Schedule this post</div>
+        <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeMktSchedule()">&times;</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Cavnar AI publishes it for you. Times are your restaurant's own clock.</p>
+      <div class="slabel" style="margin-bottom:4px">Where</div>
+      <select id="mkt-schedule-platform" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:14px"></select>
+      <div class="slabel" style="margin-bottom:4px">When</div>
+      <input type="datetime-local" id="mkt-schedule-when" class="topic-input" style="width:100%;box-sizing:border-box">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
+        <button class="cbtn cbtn-primary" onclick="confirmMktSchedule()">Schedule it</button>
+        <button class="cbtn cbtn-secondary" onclick="closeMktSchedule()">Cancel</button>
+        <span id="mkt-schedule-status" style="font-size:12px;color:var(--red);display:none"></span>
+      </div>
+    </div>
   </div>
 
   <div class="data-panel" style="margin-top:20px;padding:16px 20px;white-space:normal">
@@ -8665,8 +8895,9 @@ svg:hover .hb-xh{opacity:1}
     <div class="cal-grid" id="cal-grid" style="padding-left:4px;padding-right:4px"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
   </div>
 
-  <!-- Guest SMS lifecycle marketing -->
-  <div class="acct-card no-accent" style="padding:18px 22px;margin-top:20px">
+  <!-- Guest SMS lifecycle marketing. data-nav="marketing/guests" is the nav
+       path's section (nav.py): a win-back link lands here. -->
+  <div class="acct-card no-accent" id="mkt-guests" data-nav="marketing/guests" style="padding:18px 22px;margin-top:20px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H6a2 2 0 01-2-2V5z"/></svg>
       <div style="font-size:13px;font-weight:700;color:var(--ink)">Guest text club</div>
@@ -8707,7 +8938,7 @@ svg:hover .hb-xh{opacity:1}
     </details>
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
-      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)"><div class="dr-pulse" role="status" aria-label="Loading guests"><i></i></div></div>
       <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openGuestContactsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
 
@@ -8751,12 +8982,12 @@ svg:hover .hb-xh{opacity:1}
 
   <!-- The newsletter channel. `weekly_email` has generated newsletters since
        this product existed with no list and no way to send one. -->
-  <div class="acct-card no-accent" style="padding:18px 22px;margin-top:20px">
+  <div class="acct-card no-accent" id="mkt-newsletter" data-nav="marketing/newsletter" style="padding:18px 22px;margin-top:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div style="font-size:13px;font-weight:700;color:var(--ink)">Email newsletter</div>
       <span id="guest-newsletter-count" style="font-size:11px;color:var(--ink3)"></span>
     </div>
-    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 12px">Paste in a Weekly email you generated above. The subject-line block gets stripped out — guests never see the scaffolding. The join page asks for an address separately from the text club, so a guest can say yes to one and not the other.</p>
+    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 12px">Press "Send as newsletter" on a Weekly email above, or paste one in. The subject-line block gets stripped out — guests never see the scaffolding. The join page asks for an address separately from the text club, so a guest can say yes to one and not the other.</p>
     <input type="text" id="guest-newsletter-subject" class="topic-input" placeholder="Subject (optional — taken from the generated copy if blank)" style="width:100%;box-sizing:border-box;margin-bottom:10px">
     <textarea id="guest-newsletter-body" rows="5" placeholder="Newsletter text" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -8876,26 +9107,6 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
-  <!-- Schedule: an owner does admin at 11pm for a post that belongs on
-       Tuesday at lunch. -->
-  <div id="mkt-schedule-modal" style="display:none;position:fixed;inset:0;z-index:900;background:rgba(14,12,10,.6);align-items:center;justify-content:center;padding:20px">
-    <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:420px;width:100%;padding:22px 24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="font-size:14px;font-weight:700;color:var(--ink)">Schedule this post</div>
-        <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeMktSchedule()">&times;</button>
-      </div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Cavnar AI publishes it for you. Times are your restaurant's own clock.</p>
-      <div class="slabel" style="margin-bottom:4px">Where</div>
-      <select id="mkt-schedule-platform" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:14px"></select>
-      <div class="slabel" style="margin-bottom:4px">When</div>
-      <input type="datetime-local" id="mkt-schedule-when" class="topic-input" style="width:100%;box-sizing:border-box">
-      <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
-        <button class="cbtn cbtn-primary" onclick="confirmMktSchedule()">Schedule it</button>
-        <button class="cbtn cbtn-secondary" onclick="closeMktSchedule()">Cancel</button>
-        <span id="mkt-schedule-status" style="font-size:12px;color:var(--red);display:none"></span>
-      </div>
-    </div>
-  </div>
 
   <!-- Brand voice — the three fields that steer every generated piece. This
        was a mailto to Will for something the same client could already edit
@@ -9255,7 +9466,11 @@ svg:hover .hb-xh{opacity:1}
             c+='<div class="c"><b>'+recEsc(q.competitor||'')+'</b> \u00b7 '+recEsc(q.rating)+'\u2605'+(q.time?' \u00b7 '+recEsc(q.time):'')+' \u2014 \u201c'+recEsc(q.text)+'\u201d</div>';}
           h+='<div class="rec"><b>'+(i+1)+'</b><span>'+recEsc(r.text)
             +(c?'<details style="margin-top:4px" data-evidence-key="'+recEsc(r.key)+'" data-evidence-surface="intel" data-evidence-module="intel"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink3)">Reviews this rests on ('+r.cites.length+')</summary><div class="rec-cites">'+c+'</div></details>':'')
-            +'<br>'+recControlsHtml(r.key,'intel','intel')+'</span></div>';}
+            +'<br>'+recControlsHtml(r.key,'intel','intel')
+            // Ask about this one, with the recommendation as Ask's screen
+            // context (friction #15).
+            +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-rec="'+recEsc(r.key)+'" data-ask-q="'+recEsc('About this Intel recommendation: '+r.text)+'">Ask about this →</button>'
+            +'</span></div>';}
         h+='</div>';
       }else if(d.withheld_recommendations){
         h='<div class="sec"><div class="st ember">How to improve</div><div style="font-size:13.5px;color:var(--ink2)">'
@@ -10309,13 +10524,78 @@ window.askInputChanged = function() {
   if (input && btn) btn.classList.toggle('on', input.value.trim().length > 0);
 };
 function _askClearEmpty() { var e = document.querySelector('#ask-cavnar-messages .ask-empty'); if (e) e.remove(); }
+// ── Ask knows the screen (friction #15) ───────────────────────────────────
+// Every question carries where the owner is: the open panel and, after an
+// "Ask about this" on a review card or an Intel recommendation, that item.
+// ask_cavnar.screen_hint turns it into one line of context the server
+// resolves itself (a review id is looked up in this restaurant, never
+// trusted); the owner's question stays the only instruction. The focus lasts
+// until the panel closes or a new chat starts, so "make it warmer" as a
+// follow-up still means that review.
+var _askFocus = null;
+window.askSetFocus = function(f) { _askFocus = (f && f.type) ? {type: String(f.type), id: String(f.id || '')} : null; };
+window.askScreen = function() {
+  var act = document.querySelector('.panel.active');
+  var panel = act && act.id ? act.id.replace(/^panel-/, '') : '';
+  var out = {panel: panel};
+  if (_askFocus) out.entity = _askFocus;
+  return out;
+};
+// The chat survives a reload or a location switch (friction #15): the id is
+// kept per restaurant in sessionStorage, and the panel reopens on it. Per
+// viewer convenience only — the transcript itself is on the server.
+var ASK_CONV_KEY = 'cavnar_ask_conv_{{ restaurant.id|int }}';
+window.askRememberConversation = function(id) {
+  window._askConversationId = id;
+  try { sessionStorage.setItem(ASK_CONV_KEY, String(id)); } catch (e) {}
+};
+/* Paints the stored chat only if nothing has been asked since the panel
+   opened ("Ask about this" sends at once), so a late answer never wipes a
+   question in flight. */
+function _askRestore(id) {
+  fetch('/api/ask-cavnar/conversations/' + id, {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (!d || !d.ok) { try { sessionStorage.removeItem(ASK_CONV_KEY); } catch (e) {} return; }
+    if (!window._askConversationId) window._askConversationId = id;
+    var box = document.getElementById('ask-cavnar-messages');
+    var msgs = d.messages || [];
+    if (!box || !msgs.length || _askCavnarHistory.length) return;
+    var only = box.children.length === 0 || (box.children.length === 1 && box.querySelector('.ask-empty'));
+    if (!only || !window.askMsgHtml) return;
+    _askCavnarHistory = msgs.filter(function(m) { return m.role === 'user' || m.role === 'assistant'; }).map(function(m) { return {role: m.role, content: m.content}; });
+    box.innerHTML = msgs.map(askMsgHtml).join('');
+    box.scrollTop = box.scrollHeight;
+  }).catch(function() {});
+}
+// The "ask" nav head (nav.py): "ask?q=<question>" opens Ask and asks it;
+// "ask/<conversation id>" reopens that chat; plain "ask" opens the panel.
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof cavNavRegister !== 'function') return;
+  cavNavRegister('ask', function(p) {
+    var cid = parseInt(p.rest[0] || '', 10);
+    if (cid > 0 && window.askOpenConversation) {
+      var panel = document.getElementById('ask-cavnar-panel');
+      if (panel && panel.style.display !== 'flex') toggleAskCavnar();
+      askOpenConversation(cid);
+      return true;
+    }
+    if (window.hbAsk) { hbAsk((p.query && p.query.q) || ''); return true; }
+    return false;
+  });
+});
+function _askStoredConversation() {
+  try { var v = parseInt(sessionStorage.getItem(ASK_CONV_KEY) || '', 10); return isFinite(v) && v > 0 ? v : null; } catch (e) { return null; }
+}
 window.toggleAskCavnar = function() {
   var panel = document.getElementById('ask-cavnar-panel');
   var fab = document.getElementById('ask-cavnar-fab');
   var isOpen = panel.style.display === 'flex';
   panel.style.display = isOpen ? 'none' : 'flex';
   if (fab) fab.classList.toggle('open', !isOpen);
+  if (isOpen) _askFocus = null;
   if (!isOpen) {
+    var _stored = _askStoredConversation();
+    var _msgs = document.getElementById('ask-cavnar-messages');
+    if (_stored && !window._askConversationId && _msgs && !_msgs.children.length) _askRestore(_stored);
     // Idle orb in the header — a slow breathing ring while nothing is in flight.
     if (!_askCavnarHeaderOrb && window.CavnarOrb) {
       _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'searching', {size: 40, dark: _askIsDark()});
@@ -10851,6 +11131,8 @@ function _runAskCavnarProposal(p, card, btn, onDone) {
       _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
       if (typeof onDone === 'function') onDone(d);
+      /* Something changed: Home re-reads (friction #12). */
+      if (window.hbDirty) hbDirty();
     } else {
       btn.disabled = false; btn.textContent = 'Confirm';
       var err = document.createElement('div');
@@ -10899,6 +11181,7 @@ function _pollAskCavnarJob(p, card, btn, statusUrl, onDone) {
         _recordAskCavnarAction(p, 'confirmed');
         card.innerHTML = '<div class="ok">Done ✓</div>';
         if (typeof onDone === 'function') onDone(s);
+        if (window.hbDirty) hbDirty();
       } else {
         fail(s.error || "That didn't finish. Open the module to see where it stopped.");
       }
@@ -10938,6 +11221,7 @@ window.sendAskCavnar = function() {
     loadingBubble.remove();
     var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
     _appendAskCavnarMessage(answer, false);
+    if (d.ok && d.conversation_id) askRememberConversation(d.conversation_id);
     if (d.ok) {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
@@ -10963,7 +11247,7 @@ window.sendAskCavnar = function() {
   fetch('/api/ask-cavnar/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question, conversation_id: window._askConversationId || null})
+    body: JSON.stringify({question: question, conversation_id: window._askConversationId || null, screen: askScreen()})
   }).then(function(resp) {
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
     _askStarted = true;
@@ -11017,7 +11301,7 @@ window.sendAskCavnar = function() {
     fetch('/api/ask-cavnar', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question: question, history: historyToSend})
+      body: JSON.stringify({question: question, history: historyToSend, screen: askScreen()})
     }).then(apiJson).then(_finish).catch(function() {
       _finish({ok: false, error: 'Network error — try again.'});
     });
@@ -11027,9 +11311,49 @@ window.sendAskCavnar = function() {
 
 <script>
 function openEditor(id) {
-  document.getElementById('editor-'+id).style.display='block';
-  document.getElementById('draft-actions-'+id).style.display='none';
+  var ed = document.getElementById('editor-'+id);
+  if (!ed) return;
+  ed.style.display='block';
+  var acts = document.getElementById('draft-actions-'+id);
+  if (acts) acts.style.display='none';
+  /* Opening the editor is not a decision about the draft: no skip is
+     recorded, so auto-approve trust never counts an edit as a "no"
+     (friction #7). The text area takes the current draft and the cursor. */
+  var ta = document.getElementById('editor-text-'+id), tx = document.getElementById('draft-txt-'+id);
+  if (ta) {
+    if (!ta.value && tx) ta.value = tx.textContent;
+    try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
+  }
 }
+/* The drafted reply's text opens its editor on click or Enter (friction #7);
+   "Ask about this" on a card asks with that review as the screen context
+   (friction #15). Delegated, so cards added by Load more and rvFocusReview
+   behave the same. */
+document.addEventListener('click', function(e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-edit-review],[data-ask-review],[data-ask-rec]') : null;
+  if (!t) return;
+  if (t.hasAttribute('data-ask-rec')) {
+    e.preventDefault();
+    if (window.askSetFocus) askSetFocus({type: 'rec', id: t.getAttribute('data-ask-rec')});
+    if (window.hbAsk) hbAsk(t.getAttribute('data-ask-q') || 'Tell me more about this recommendation.');
+    return;
+  }
+  if (t.hasAttribute('data-edit-review')) {
+    var rid = t.getAttribute('data-edit-review'), card = document.getElementById('rc-' + rid);
+    var st = card ? card.getAttribute('data-status') : '';
+    if (st === 'posted' || st === 'approved') return;
+    openEditor(rid);
+    return;
+  }
+  e.preventDefault();
+  if (window.askSetFocus) askSetFocus({type: 'review', id: t.getAttribute('data-ask-review')});
+  if (window.hbAsk) hbAsk('About this review: what is the guest really saying, and is my reply right?');
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' || !e.target || !e.target.getAttribute) return;
+  var rid = e.target.getAttribute('data-edit-review');
+  if (rid) { e.preventDefault(); openEditor(rid); }
+});
 function closeEditor(id) {
   document.getElementById('editor-'+id).style.display='none';
   document.getElementById('draft-actions-'+id).style.display='flex';
@@ -11048,6 +11372,7 @@ function regenDraft(id) {
         if (editorEl) editorEl.value = data.draft;
         actionsEl.innerHTML =
           '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
         actionsEl.style.display='flex';
         document.getElementById('editor-'+id).style.display='none';
@@ -11056,9 +11381,10 @@ function regenDraft(id) {
         boxEl.style.background='';
         boxEl.innerHTML =
           '<div class="draft-lbl">Suggested response</div>' +
-          '<div class="draft-txt" id="draft-txt-'+id+'">'+data.draft+'</div>' +
+          '<div class="draft-txt draft-editable" id="draft-txt-'+id+'" role="button" tabindex="0" title="Click to edit" data-edit-review="'+id+'">'+data.draft+'</div>' +
           '<div class="draft-actions" id="draft-actions-'+id+'">' +
             '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+            '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit</button>' +
             '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>' +
           '</div>' +
           '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
@@ -11539,7 +11865,7 @@ window.switchFcTab = function(tab) {
 
 window.switchReviewsTab = function(tab) {
   var isInbox = tab === 'inbox';
-  if(!document.getElementById('rv-tab-inbox')){ if(!isInbox){ loadTopicHeatmap(); loadSentimentTrend(); if(!_perfLoaded) loadResponsePerf(); } return; }
+  if(!document.getElementById('rv-tab-inbox')){ if(!isInbox){ rvOpenAnalytics(true); } return; }
   document.getElementById('rv-inbox-header').style.display  = isInbox ? '' : 'none';
   document.getElementById('rv-inbox-reviews').style.display = isInbox ? '' : 'none';
   document.getElementById('rv-panel-analytics').style.display = isInbox ? 'none' : '';
@@ -12196,27 +12522,181 @@ function renderReviewDiagnosis(d){
    reviews behind them. Reuses _rvFlashJump, the same highlight the filter
    pills use, so a jump always looks like a jump. */
 function jumpToReview(id){
-  switchReviewsTab('inbox');
-  var tries=0;
-  var seek=function(){
-    var card=document.getElementById('rc-'+id);
-    if(card){
-      card.scrollIntoView({behavior:'smooth',block:'center'});
-      _rvFlashJump(card);
-      return;
-    }
-    /* The inbox pages at 50; an older cited review may not be rendered yet.
-       Pull the next page and look again rather than claiming it is missing. */
-    if(tries++<3){
-      var more=document.getElementById('rv-more-btn');
-      if(more&&!more.hidden){ more.click(); }
-      setTimeout(seek,450);
-    } else {
-      toast('Review #'+id+' is further back — search for it in the inbox','warning');
-    }
-  };
-  setTimeout(seek,120);
+  /* One road to a review (friction #1): the diagnosis chips, the bell, alert
+     emails and every "review/<id>" nav path land the same way. It used to
+     click Load more three times and then give up on an older review. */
+  rvFocusReview(id);
 }
+
+// ── One review, focused (friction #1) ─────────────────────────────────────
+// rvFocusReview(id, {edit}) opens Reviews, finds the card (fetching it by id
+// from /api/reviews/page?review_id= when it is past the loaded page, and
+// putting it at the top), scrolls it to the middle, flashes it and puts the
+// keyboard on its main button — or opens its editor with {edit:true}. The
+// bell used to call this behind a typeof guard while nothing defined it, so
+// every alert landed on the inbox top.
+function _rvList(){
+  var list=document.querySelector('#rv-inbox-reviews .rv2-list');
+  if(!list){
+    var box=document.getElementById('rv-inbox-reviews');if(!box)return null;
+    list=document.createElement('div');list.className='rv2-list';
+    var more=document.getElementById('rv-more-wrap');
+    box.insertBefore(list,more||null);
+  }
+  return list;
+}
+function _rvCardsFrom(html){
+  var holder=document.createElement('div');holder.innerHTML=html||'';
+  var out=[];
+  while(holder.firstElementChild){var el=holder.firstElementChild;holder.removeChild(el);el.classList.add('revealed');out.push(el);}
+  return out;
+}
+window.rvFocusReview=function(id,opts){
+  id=parseInt(id,10);opts=opts||{};
+  if(!id)return false;
+  var tb=document.getElementById('tab-reviews'),panel=document.getElementById('panel-reviews');
+  if(tb&&panel&&!panel.classList.contains('active')&&typeof switchTab==='function')switchTab('reviews',tb);
+  function land(card){
+    /* The owner asked for THIS review: a filter that would hide it yields. */
+    if(card.style.display==='none')card.style.display='';
+    card.scrollIntoView({behavior:'smooth',block:'center'});
+    _rvFlashJump(card);
+    if(opts.edit){openEditor(id);return;}
+    var b=card.querySelector('.draft-actions .cbtn-primary,.draft-actions .cbtn-success');
+    if(b&&b.focus){try{b.focus({preventScroll:true});}catch(e){b.focus();}}
+  }
+  var have=document.getElementById('rc-'+id);
+  if(have){setTimeout(function(){land(have);},80);return true;}
+  fetch('/api/reviews/page?review_id='+encodeURIComponent(id),{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok||!d.count){toast((d&&d.error)||'That review isn’t in your inbox any more','warning');return;}
+    var list=_rvList();if(!list)return;
+    var cards=_rvCardsFrom(d.html);
+    for(var i=cards.length-1;i>=0;i--)list.insertBefore(cards[i],list.firstChild);
+    var em=document.getElementById('rv-empty');if(em)em.hidden=true;
+    var card=document.getElementById('rc-'+id);if(card)land(card);
+  }).catch(function(){toast('Couldn’t open that review — check your connection','error');});
+  return true;
+};
+
+// ── Search and filters ask the server when the page is partial (#20) ──────
+// The inbox renders one page (REVIEWS_PAGE_SIZE). A filter or a search over
+// only what is loaded said "No reviews match" while the match sat on page 2.
+// The list carries the query it was built for (data-list-key) and its total
+// (data-total). A list that is the whole unfiltered set can be filtered in
+// place; anything else asks /api/reviews/page for the new query and replaces
+// the list, and the DOM filter then only highlights.
+function _rvKey(){
+  var q=(document.getElementById('rsearch')||{}).value||'';
+  return (rfilter||'all')+'|'+q.replace(/^\s+|\s+$/g,'')+'|'+(window._topicFilter||'');
+}
+var _rvSyncing=null;
+function rvServerSync(){
+  var list=document.querySelector('#rv-inbox-reviews .rv2-list');
+  if(!list)return false;
+  var want=_rvKey(),have=list.getAttribute('data-list-key')||'all||';
+  if(want===have)return false;
+  var loaded=list.querySelectorAll('.rv2-row').length,total=+list.getAttribute('data-total')||0;
+  /* Everything is here and unfiltered: the page itself is the answer. */
+  if(have==='all||'&&total<=loaded)return false;
+  if(_rvSyncing===want)return true;
+  _rvSyncing=want;
+  var parts=want.split('|'),q='offset=0&filter='+encodeURIComponent(parts[0]);
+  if(parts[1])q+='&search='+encodeURIComponent(parts[1]);
+  if(parts[2])q+='&category='+encodeURIComponent(parts[2]);
+  list.setAttribute('aria-busy','true');
+  fetch('/api/reviews/page?'+q,{credentials:'same-origin'}).then(apiJson).then(function(d){
+    list.removeAttribute('aria-busy');
+    if(_rvSyncing!==want)return;
+    _rvSyncing=null;
+    if(!d||!d.ok){toast((d&&d.error)||'Couldn’t search your reviews','error');return;}
+    list.innerHTML='';
+    var cards=_rvCardsFrom(d.html);
+    for(var i=0;i<cards.length;i++)list.appendChild(cards[i]);
+    list.setAttribute('data-list-key',want);
+    list.setAttribute('data-total',d.total||0);
+    _rvOffset=d.offset;
+    _rvMoreState(d.has_more,cards.length,d.total||0);
+    filterReviews();
+  }).catch(function(){list.removeAttribute('aria-busy');_rvSyncing=null;toast('Couldn’t search your reviews — check your connection','error');});
+  return true;
+}
+function _rvMoreState(hasMore,shown,total){
+  var wrap=document.getElementById('rv-more-wrap');
+  if(wrap)wrap.style.display=hasMore?'flex':'none';
+  var s=document.getElementById('rv-shown-n');if(s)s.textContent=shown;
+  var t=document.getElementById('rv-total-n');if(t)t.textContent=total;
+}
+
+// ── New reviews without a reload (#20) ────────────────────────────────────
+// updateReviewStats (every 15s on this tab) reports the total; when it grows,
+// the newest page is read and any card not on the page goes in at the top.
+// The banner used to be a full reload that threw away a half-typed reply.
+var _rvKnownTotal=null,_rvNewIds=[];
+function rvNoteTotal(total){
+  total=+total;if(!isFinite(total))return;
+  if(_rvKnownTotal===null){_rvKnownTotal=total;return;}
+  if(total>_rvKnownTotal){_rvKnownTotal=total;rvPullNew();}
+  else _rvKnownTotal=total;
+}
+function rvPullNew(){
+  fetch('/api/reviews/page?offset=0&filter=all',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok)return;
+    var list=_rvList();if(!list)return;
+    var cards=_rvCardsFrom(d.html),fresh=[];
+    for(var i=0;i<cards.length;i++){if(!document.getElementById(cards[i].id))fresh.push(cards[i]);}
+    if(!fresh.length)return;
+    for(var j=fresh.length-1;j>=0;j--)list.insertBefore(fresh[j],list.firstChild);
+    var tot=+list.getAttribute('data-total')||0;list.setAttribute('data-total',tot+fresh.length);
+    if(_rvOffset!==null)_rvOffset+=fresh.length;
+    _rvNewIds=[];for(var k=0;k<fresh.length;k++)_rvNewIds.push(fresh[k].id);
+    var em=document.getElementById('rv-empty');if(em)em.hidden=true;
+    filterReviews();
+    var b=document.getElementById('new-reviews-banner'),t=document.getElementById('new-reviews-text');
+    if(t)t.textContent=fresh.length+' new review'+(fresh.length===1?'':'s')+' at the top of your inbox';
+    if(b)b.style.display='flex';
+  }).catch(function(){});
+}
+window.rvShowNew=function(){
+  var b=document.getElementById('new-reviews-banner');if(b)b.style.display='none';
+  var first=_rvNewIds.length?document.getElementById(_rvNewIds[0]):null;
+  if(first){if(first.style.display==='none')first.style.display='';first.scrollIntoView({behavior:'smooth',block:'center'});_rvFlashJump(first);}
+};
+
+// ── The analytics, collapsed under the inbox (#20) ────────────────────────
+// Loaded on first open, not on every visit to the tab.
+window.rvOpenAnalytics=function(scroll){
+  var d=document.getElementById('rv-panel-analytics');if(!d)return;
+  if(!d.open)d.open=true;
+  _rvLoadAnalytics();
+  if(scroll)d.scrollIntoView({behavior:'smooth',block:'start'});
+};
+function _rvLoadAnalytics(){
+  if(!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
+  if(!_perfLoaded)loadResponsePerf();
+  if(window.cavnarMountOrbs){var d=document.getElementById('rv-panel-analytics');setTimeout(function(){cavnarMountOrbs(d);},0);}
+}
+document.addEventListener('DOMContentLoaded',function(){
+  var d=document.getElementById('rv-panel-analytics');
+  if(d)d.addEventListener('toggle',function(){if(d.open)_rvLoadAnalytics();});
+  // Nav heads this module owns (nav.py): "review/<id>" focuses one review;
+  // "reviews?filter=urgent|pending|…&search=…" and "reviews/analytics" set
+  // the inbox up; anything else falls back to the router's default.
+  if(typeof cavNavRegister!=='function')return;
+  cavNavRegister('review',function(p){return rvFocusReview(p.rest[0],{edit:(p.query||{}).edit==='1'});});
+  cavNavRegister('reviews',function(p){
+    var q=p.query||{},sec=p.rest[0]||'';
+    if(!q.filter&&!q.search&&sec!=='analytics')return false;
+    var tb=document.getElementById('tab-reviews');if(!tb)return false;
+    switchTab('reviews',tb);
+    if(sec==='analytics'){rvOpenAnalytics(true);return true;}
+    var se=document.getElementById('rsearch');if(se&&q.search!=null)se.value=q.search;
+    if(q.filter==='urgent'||q.filter==='pending'){reviewsPillJump(q.filter);return true;}
+    if(q.filter){rfilter=q.filter;var pills=document.querySelectorAll('.fpill');for(var i=0;i<pills.length;i++)pills[i].classList.remove('active','active-red');}
+    filterReviews();
+    var inbox=document.getElementById('rv-inbox-reviews');if(inbox)inbox.scrollIntoView({behavior:'smooth',block:'start'});
+    return true;
+  });
+});
 function filterByTopic(category){
   window._topicFilter = category;
   switchReviewsTab('inbox');
@@ -12304,7 +12784,7 @@ function switchTab(n,btn){
     for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
   }
   if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
-  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
+  if(n==='reviews'){var _rvA=document.getElementById('rv-panel-analytics');if(!_rvA||_rvA.open)_rvLoadAnalytics();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
   if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();}
@@ -12454,6 +12934,7 @@ function _rvFlashJump(el){
 }
 function reviewsPillJump(kind){
   if(kind==='rating'||kind==='rr'){
+    rvOpenAnalytics(false);
     var el=document.querySelector(kind==='rating'?'.rv2-hero':'#perf-card');
     if(el){ el.scrollIntoView({behavior:'smooth',block:'start'}); _rvFlashJump(el); }
     return;
@@ -12576,6 +13057,9 @@ function _highlightText(el, q){
 }
 
 function filterReviews(){
+  /* A partial page asks the server first; it calls back here once the list
+     holds the answer (friction #20). */
+  if(rvServerSync())return;
   var q=(document.getElementById('rsearch').value||'').toLowerCase().trim();
   var topicF=window._topicFilter||'';
   var cards=document.querySelectorAll('[id^="rc-"]');
@@ -12643,6 +13127,7 @@ function setUrgentClass(el, count){
 function updateReviewStats(){
   fetch('/api/review-stats').then(apiJson).then(function(d){
     if(typeof d.response_rate==='undefined') return;
+    if(typeof d.total==='number') rvNoteTotal(d.total);
 
     // ── Response rate bar ──────────────────────────────────
     var rrate = d.response_rate || 0;
@@ -13176,6 +13661,7 @@ function loadMoreReviews(btn){
     var shownEl=document.getElementById('rv-shown-n');
     if(shownEl) shownEl.textContent=document.querySelectorAll('#rv-inbox-reviews .rv2-row').length;
     if(!d.has_more&&wrap) wrap.style.display='none';
+    var _tn=document.getElementById('rv-total-n');if(_tn&&d.total!=null)_tn.textContent=d.total;
     filterReviews();
   }).catch(function(e){ done(); toast((e&&e.message)||'Network error — check your connection','error'); });
 }
@@ -13252,6 +13738,7 @@ function editApprovedR(id){
     var actions=document.getElementById('draft-actions-'+id);
     if(actions){
       actions.innerHTML='<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">\u2713 Approve</button>'
+        +'<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit</button>'
         +'<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
     }
     openEditor(id);
@@ -13367,27 +13854,22 @@ function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
-  var overlay=document.getElementById('posting-overlay');
-  var msg=document.getElementById('posting-overlay-msg');
   var btn=document.getElementById('ig-post-btn');
-  if(msg)msg.textContent='Posting to Instagram…';
-  if(overlay)overlay.style.display='flex';
-  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
+  // A busy button, not a full-screen overlay (friction #43): the rest of
+  // the page stays usable while the platform answers.
+  var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Posting…'):function(){};
   var _igTopic=window._lastPostedTopic||'';
   var igImgUrl=window._mktPhotoUrl||'';
   if(!igImgUrl){toast('Instagram needs a photo — add one first','warning');
-    if(overlay)overlay.style.display='none';
-    if(btn){btn.style.opacity='1';btn.disabled=false;}
+    _done();
     return;}
   fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic,image_url:igImgUrl})})
     .then(apiJson).then(function(d){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');_cmMktPosted('Posted to Instagram');loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       toast('Post failed — check connection','error');
     });
 }
@@ -13395,22 +13877,18 @@ function postToFacebook(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
-  var overlay=document.getElementById('posting-overlay');
-  var msg=document.getElementById('posting-overlay-msg');
   var btn=document.getElementById('fb-post-btn');
-  if(msg)msg.textContent='Posting to Facebook…';
-  if(overlay)overlay.style.display='flex';
-  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
+  // A busy button, not a full-screen overlay (friction #43): the rest of
+  // the page stays usable while the platform answers.
+  var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Posting…'):function(){};
   var _fbTopic=window._lastPostedTopic||'';
   fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_fbTopic})})
     .then(apiJson).then(function(d){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');_cmMktPosted('Posted to Facebook');loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       toast('Post failed — check connection','error');
     });
 }
@@ -13604,7 +14082,8 @@ function openMktSchedule(){
   var body = _mktBody();
   if(!body) return toast('Generate content first','warning');
   var modal = document.getElementById('mkt-schedule-modal');
-  modal.style.display = 'flex';
+  modal.style.display = 'block';
+  if (modal.scrollIntoView) modal.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   var when = document.getElementById('mkt-schedule-when');
   var d = new Date(Date.now() + 3600000);
   // datetime-local wants the LOCAL wall clock, which is exactly what the
@@ -13806,21 +14285,17 @@ function postToGoogle(){
   var ctaUrl=((document.getElementById('gg-cta-url')||{}).value||'').trim();
   if(ctaType&&ctaType!=='CALL'&&!ctaUrl)return toast('That button needs a link','warning');
   if(ctaType==='CALL'&&ctaUrl)return toast("A Call button uses your listing's number — clear the link",'warning');
-  var overlay=document.getElementById('posting-overlay');
-  var msg=document.getElementById('posting-overlay-msg');
   var btn=document.getElementById('gg-post-btn');
-  if(msg)msg.textContent='Posting to Google…';
-  if(overlay)overlay.style.display='flex';
-  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
+  // A busy button, not a full-screen overlay (friction #43): the rest of
+  // the page stays usable while the platform answers.
+  var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Posting…'):function(){};
   fetch('/api/post-to-google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:content,cta_type:ctaType,cta_url:ctaUrl,topic:window._lastPostedTopic||''})})
     .then(apiJson).then(function(d){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       if(d.ok){toast('Posted to Google ✓','success');markTopicPosted('Google');_cmMktPosted('Posted to Google');loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
-      if(overlay)overlay.style.display='none';
-      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      _done();
       toast('Post failed — check connection','error');
     });
 }
@@ -17934,9 +18409,10 @@ function genContent(fromCalendar){
   var box=document.getElementById('mkoutput');
   _genInFlight=true;
   if(btn){btn.disabled=true;btn.style.opacity='0.6';}
-  box.style.fontStyle='italic';
+  box.style.fontStyle='normal';
   box.style.color='var(--ink3)';
-  box.textContent='Generating…';
+  // The orb loader, not a line of text (DS §10, friction #43).
+  box.innerHTML=window.cavnarLoading?cavnarLoading('Writing it in your voice…',22,'composing'):'<div class="dr-pulse wide"><i></i></div>';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
     .then(apiJson)
     .then(function(d){
@@ -17948,6 +18424,8 @@ function genContent(fromCalendar){
       var _genContent = d.content||'Generation failed — try again.';
       typewriterEffect(box, _genContent);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
+      var nlBtn=document.getElementById('mkt-as-newsletter-btn');
+      if(nlBtn)nlBtn.style.display=(selCt==='weekly_email'&&d.content)?'inline-block':'none';
       var tagEl=document.getElementById('output-tags');
       if(tagEl){var tl=d.tags&&d.tags.label;tagEl.textContent=tl?('About: '+tl):'';tagEl.style.display=tl?'inline-flex':'none';}
       var igBtn=document.getElementById('ig-post-btn');
@@ -18015,6 +18493,19 @@ function genContent(fromCalendar){
       if(btn){btn.disabled=false;btn.style.opacity='';}
     });
 }
+// "Send as newsletter": the generated Weekly email into the newsletter box,
+// and the page to it (friction #41). Sending still takes the newsletter's
+// own button and confirm — nothing goes out from here.
+function mktSendAsNewsletter(){
+  var out=document.getElementById('mkoutput'),body=document.getElementById('guest-newsletter-body');
+  if(!out||!body)return;
+  var text=(out.innerText||out.textContent||'').trim();
+  if(!text)return toast('Generate a Weekly email first','warning');
+  body.value=text;
+  var sec=document.getElementById('mkt-newsletter');
+  if(sec&&sec.scrollIntoView)sec.scrollIntoView({behavior:'smooth',block:'start'});
+  try{body.focus({preventScroll:true});}catch(e){body.focus();}
+}
 function downloadCal(){
   var ideas = window._calIdeas;
   if(!ideas || !ideas.length){ toast('Generate the calendar first','warning'); return; }
@@ -18039,14 +18530,21 @@ function downloadCal(){
 
 // Split so the tab can show THIS WEEK'S already-generated calendar on open
 // (a plain read, no AI call) while "Generate week" still forces a new draw.
+// The week plan loads itself (friction #41): the first visit of the week
+// reads this week's calendar, which the server builds once and keeps
+// (marketing.get_content_calendar_ideas) — so the grid shows the orb while
+// it does, then the week, or the reason there is none.
 function loadCalCached(){
+  var g=document.getElementById('cal-grid');
+  if(g&&!window._calIdeas)g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar').then(apiJson).then(function(d){
-    if(d.ideas&&d.ideas.length)renderCal(d.ideas);
-  }).catch(function(){});
+    if(d.ideas&&d.ideas.length){renderCal(d.ideas);return;}
+    if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">'+_escHtml(d.error||'No plan for this week yet — Generate week builds one.')+'</div>';
+  }).catch(function(){if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Couldn’t load this week’s plan — Generate week tries again.</div>';});
 }
 function loadCal(){
   var g=document.getElementById('cal-grid');
-  g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';
+  g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar?force=1').then(apiJson).then(function(d){
     if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+(d.error||'Could not generate.')+'</div>';return;}
     renderCal(d.ideas);
@@ -20544,7 +21042,9 @@ function loadWinback(){
       +'<div style="font-size:14px;color:var(--ink);margin-bottom:6px"><b class="hb-num">'+w.segment_size+'</b> opted-in guest'+(w.segment_size===1?'':'s')+' '+recEsc((w.segment_label||'').toLowerCase())+' can be texted.</div>'
       +(ret?'<div style="font-size:12.5px;color:var(--ink3);margin-bottom:8px">'+recEsc(ret)+'</div>':'')
       +'<textarea id="guest-winback-msg" rows="3" maxlength="'+(w.max_chars||300)+'" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:8px">'+recEsc(w.message)+'</textarea>'
-      +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="guest-winback-send" data-winback-id="'+w.id+'">Send to these guests</button>'
+      // One tap that names who it reaches (friction #41): the card is the
+      // confirm surface — the text and the head count are both on it.
+      +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="guest-winback-send" data-winback-id="'+w.id+'">Text these '+(+w.segment_size||0)+' guest'+(w.segment_size===1?'':'s')+'</button>'
       +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="'+w.id+'">Not for us</button>'
       +'<span style="font-size:12px;color:var(--ink3)">Texts go out '+recEsc(w.sms_window||'during the day')+'; nobody gets two inside three days.</span></div>';
     box.hidden=false;
@@ -20696,7 +21196,7 @@ function _fmtVisitDate(iso) {
 
 function _loadGuestContactsList() {
   var list = document.getElementById('guest-contacts-list');
-  list.textContent = 'Loading…';
+  list.innerHTML = '<div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div>';
   fetch('/api/guest-contacts').then(apiJson).then(function(d){
     if (!d.ok || !d.contacts.length) {
       list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--ink3)">No contacts yet.</div>';
@@ -20801,7 +21301,12 @@ window.sendGuestCampaign = function() {
   var segEl = document.getElementById('guest-campaign-segment');
   var segment = segEl ? segEl.value : 'all';
   var segLabel = (segEl && segEl.selectedOptions.length) ? segEl.selectedOptions[0].textContent : 'this audience';
-  if (!confirm('Send this text to ' + segLabel + '? This can\'t be undone.')) { return; }
+  // The last guard names the head count, not just the segment (friction
+  // #41, U1-15): "Text 142 guests?" is the decision being made.
+  var segCount = null, segs = window._guestSegments || [];
+  for (var si = 0; si < segs.length; si++) { if (segs[si].key === segment) { segCount = segs[si].count; segLabel = segs[si].label; break; } }
+  var who = segCount != null ? (segCount + ' guest' + (segCount === 1 ? '' : 's') + ' (' + segLabel + ')') : segLabel;
+  if (!confirm('Text ' + who + '? This can\'t be undone.')) { return; }
   var btn = document.getElementById('guest-send-btn');
   btn.disabled = true;
   btn.textContent = 'Sending…';
@@ -20851,7 +21356,23 @@ window.toggleLocSwitcher = function() {
 
 // Takes the location's id only: a name inside an inline onclick breaks on
 // an apostrophe ("Simple EJ's") however it is escaped (CLIENT-17).
+// A busy state between the click and the reload (friction #24): the ember
+// pulse along the top and the header saying it is switching. Returns the
+// undo for a switch that failed.
+function _locBusy() {
+  var bar = document.createElement('div');
+  bar.className = 'dr-pulse wide loc-switching'; bar.setAttribute('role', 'status'); bar.setAttribute('aria-label', 'Switching location');
+  bar.innerHTML = '<i></i>';
+  document.body.appendChild(bar);
+  var nm = document.getElementById('loc-current-name'), was = nm ? nm.textContent : '';
+  if (nm) nm.textContent = 'Switching…';
+  var panel = document.getElementById('loc-switcher-panel'); if (panel) panel.style.display = 'none';
+  return function() { window._locSwitching = false; if (bar.parentNode) bar.parentNode.removeChild(bar); if (nm) nm.textContent = was; };
+}
 window.switchLocation = function(rid) {
+  if (window._locSwitching) return;
+  window._locSwitching = true;
+  var undo = _locBusy();
   fetch('/api/switch-location', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -20859,8 +21380,8 @@ window.switchLocation = function(rid) {
   }).then(apiJson).then(function(d) {
     /* Every cached AI read belongs to the location it was read for. */
     if (d.ok) { cavWipe(); window.location.reload(); }
-    else { toast(d.error || 'Could not switch location', 'error'); }
-  }).catch(function() { toast('Could not switch location \u2014 check your connection.', 'error'); });
+    else { undo(); toast(d.error || 'Could not switch location', 'error'); }
+  }).catch(function() { undo(); toast('Could not switch location — check your connection.', 'error'); });
 };
 
 // Labor, Food Cost, Account and the other server-rendered tabs are drawn
@@ -20898,7 +21419,12 @@ document.addEventListener('click', function(e) {
 (function(){
   var _items      = [];
   var _busy       = false;
-  var _urgentOnly = false;
+  // Opens on "Needs you" whenever something unresolved is urgent (friction
+  // #23); the owner's own pick holds for the rest of the page's life.
+  var _urgentOnly = false, _filterPicked = false;
+  // A multi-location login's bell covers every location (friction #24).
+  var _scope      = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
+  var _here       = {{ restaurant.id|int }};
 
   function timeAgo(iso) {
     if (!iso) return '';
@@ -20941,7 +21467,7 @@ document.addEventListener('click', function(e) {
     }
     var shown = [], i;
     for (i = 0; i < _items.length; i++) {
-      if (!_urgentOnly || _items[i].urgent) shown.push(_items[i]);
+      if (!_urgentOnly || (_items[i].urgent && !_items[i].resolved)) shown.push(_items[i]);
     }
     var filterBar = '';
     var anyUrgent = false;
@@ -20954,8 +21480,9 @@ document.addEventListener('click', function(e) {
         + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? ' is-on' : '') + '" data-filter="urgent">Needs you</button>'
         + '</div>';
     }
+    var foot = _unreadCount() ? '<div class="notif-foot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-notif-readall="1">Mark all read</button></div>' : '';
     if (!shown.length) {
-      list.innerHTML = filterBar + '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Nothing needs you right now.</div>';
+      list.innerHTML = filterBar + '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Nothing needs you right now.</div>' + foot;
       return;
     }
     var html = filterBar, lastDay = null;
@@ -20967,15 +21494,63 @@ document.addEventListener('click', function(e) {
         lastDay = day;
       }
       // An ember dot marks P0/P1 — the things that are only worth anything
-      // while they can still be acted on.
-      var mods = (n.unread ? ' is-unread' : '') + (n.urgent ? ' is-urgent' : '');
-      html += '<button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(n.type + '|' + n.fired_at) + '">'
+      // while they can still be acted on. A row already handled (its review
+      // answered) is greyed rather than dropped; the review's own words and
+      // the location sit under the label (friction #23, #24).
+      var act = (n.can_approve && !n.resolved && n.draft);
+      var mods = (n.unread ? ' is-unread' : '') + (n.urgent && !n.resolved ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act ? ' has-act' : '');
+      var sub = (n.location ? '<span class="nloc">' + esc(n.location) + '</span>' + (n.snippet ? ' · ' : '') : '')
+              + (n.snippet ? '“' + esc(n.snippet) + '”' : '') + (n.resolved ? (n.snippet || n.location ? ' · ' : '') + 'handled' : '');
+      html += '<div class="notif-item"><button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(_rowKey(n)) + '">'
             + '<i class="nd"></i>'
             + '<span class="nl">' + esc(n.label) + '</span>'
             + '<span class="nt">' + esc(timeAgo(n.fired_at)) + '</span>'
-            + '</button>';
+            + (sub ? '<span class="nx">' + sub + '</span>' : '')
+            + '</button>'
+            // One inline action: a drafted reply is read here in full and
+            // posted from the row — an outward send, so the text it sends is
+            // on screen before the button that sends it (DS §10).
+            + (act ? '<div class="notif-act" data-act-for="' + esc(_rowKey(n)) + '"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-preview="' + esc(_rowKey(n)) + '">Read the reply</button></div>' : '')
+            + '</div>';
     }
-    list.innerHTML = html;
+    list.innerHTML = html + foot;
+  }
+  function _rowKey(n) { return n.id != null ? 'a' + n.id : (n.type + '|' + n.fired_at); }
+  function _find(key) { for (var i = 0; i < _items.length; i++) { if (_rowKey(_items[i]) === key) return _items[i]; } return null; }
+  function _unreadCount() { var c = 0; for (var i = 0; i < _items.length; i++) if (_items[i].unread) c++; return c; }
+  // The reply, in full, with the one button that posts it.
+  function showPreview(key) {
+    var n = _find(key), box = document.querySelector('[data-act-for="' + key + '"]');
+    if (!n || !box) return;
+    box.style.flexDirection = 'column';
+    box.innerHTML = '<div style="font-size:12px;color:var(--ink);line-height:1.5;white-space:pre-wrap">' + esc(n.draft) + '</div>'
+      + '<div style="display:flex;gap:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-notif-approve="' + esc(key) + '">Post this reply</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-notif-edit="' + esc(key) + '">Edit it first</button></div>';
+  }
+  function approveRow(key, btn) {
+    var n = _find(key);
+    if (!n || !n.review_id) return;
+    var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, 'Posting…') : function() {};
+    fetch('/approve/' + n.review_id, {method: 'POST'}).then(apiJson).then(function(d) {
+      done();
+      if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t approve that reply', 'error'); return; }
+      n.resolved = true; n.can_approve = false;
+      markOpened(n);
+      renderList();
+      if (typeof toast === 'function') toast(d.auto_posted ? 'Posted to Google' : 'Reply approved', 'success');
+      if (window.hbDirty) hbDirty();
+    }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn’t confirm that went through — check the review before trying again.', 'error'); });
+  }
+  // A row is read when it is opened (friction #23), on the server too, so
+  // the phone agrees: the open is recorded against its alert_log id.
+  function markOpened(n) {
+    if (!n || n.opened) return;
+    n.opened = true; n.unread = false;
+    fetch('/api/notifications/opened', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: n.type, alert_id: n.id || null})
+    }).catch(function(){});
+    setBadge(_unreadCount());
   }
 
   // Every row carries the module (and review, when there is one) the alert is
@@ -20986,14 +21561,17 @@ document.addEventListener('click', function(e) {
     if (!n) return;
     // What the product knew was how many it SENT. Whether any of them were
     // worth sending had no answer anywhere.
-    fetch('/api/notifications/opened', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({type: n.type})
-    }).catch(function(){});
-    // Where the row is about (nav.py): the review, the held schedule, Ask
-    // on the brief's question, the issue on Home - the same place the push
-    // opens on iOS (Friction audit #2). An older server's row has none.
-    if (n.nav && window.cavNav) { cavNav(n.nav); return; }
+    markOpened(n);
+    // Where the row goes: the server's nav path when it sends one, else the
+    // review itself, else its module (nav.py). A row from another location
+    // switches there first and lands on the item after the reload (#24).
+    var path = n.nav || (n.review_id ? 'review/' + n.review_id : (n.module === 'ask' ? 'ask' : n.module));
+    if (n.restaurant_id && +n.restaurant_id !== _here && typeof switchLocation === 'function') {
+      try { sessionStorage.setItem('cavnar_pending_nav', path); } catch (e) {}
+      switchLocation(+n.restaurant_id);
+      return;
+    }
+    if (typeof window.cavNav === 'function' && path) { window.cavNav(path); return; }
     if (n.module === 'ask') {
       if (typeof switchTab === 'function') {
         var ab = document.getElementById('tab-home');
@@ -21022,7 +21600,7 @@ document.addEventListener('click', function(e) {
   }
 
   function refreshBadge() {
-    fetch('/api/notifications/unread-count').then(apiJson).then(function(d){
+    fetch('/api/notifications/unread-count' + (_scope ? '?scope=' + _scope : '')).then(apiJson).then(function(d){
       setBadge((d && d.count) || 0);
     }).catch(function(){});
   }
@@ -21034,11 +21612,16 @@ document.addEventListener('click', function(e) {
   function loadNotifications() {
     if (_busy) return;
     _busy = true;
-    fetch('/api/notifications').then(apiJson).then(function(d){
+    // mark=0: opening the bell no longer reads every row (friction #23).
+    fetch('/api/notifications?mark=0' + (_scope ? '&scope=' + _scope : '')).then(apiJson).then(function(d){
       _busy = false;
       _items = (d && d.notifications) || [];
+      if (!_filterPicked) {
+        _urgentOnly = false;
+        for (var i = 0; i < _items.length; i++) { if (_items[i].urgent && !_items[i].resolved) { _urgentOnly = true; break; } }
+      }
       renderList();
-      setBadge(0);          // GET /api/notifications marks them read
+      setBadge(_unreadCount());
     }).catch(function(){
       _busy = false;
       var list = document.getElementById('notif-list');
@@ -21051,15 +21634,31 @@ document.addEventListener('click', function(e) {
     var filter = e.target.closest('.notif-filter-btn');
     if (filter) {
       _urgentOnly = filter.getAttribute('data-filter') === 'urgent';
+      _filterPicked = true;
       renderList();
+      return;
+    }
+    var pv = e.target.closest('[data-notif-preview],[data-notif-approve],[data-notif-edit],[data-notif-readall]');
+    if (pv) {
+      if (pv.hasAttribute('data-notif-preview')) showPreview(pv.getAttribute('data-notif-preview'));
+      else if (pv.hasAttribute('data-notif-approve')) approveRow(pv.getAttribute('data-notif-approve'), pv);
+      else if (pv.hasAttribute('data-notif-edit')) {
+        var en = _find(pv.getAttribute('data-notif-edit'));
+        document.getElementById('notif-panel').style.display = 'none';
+        if (en) { markOpened(en); if (window.rvFocusReview) rvFocusReview(en.review_id, {edit: true}); }
+      } else {
+        // Reading the list the old way moves the read mark over everything.
+        fetch('/api/notifications' + (_scope ? '?scope=' + _scope : '')).then(apiJson).then(function(){
+          for (var r = 0; r < _items.length; r++) _items[r].unread = false;
+          renderList(); setBadge(0);
+        }).catch(function(){});
+      }
       return;
     }
     var row = e.target.closest('.notif-row');
     if (row) {
-      var key = row.getAttribute('data-id');
-      for (var i = 0; i < _items.length; i++) {
-        if (_items[i].type + '|' + _items[i].fired_at === key) { openNotification(_items[i]); return; }
-      }
+      var n = _find(row.getAttribute('data-id'));
+      if (n) openNotification(n);
       return;
     }
     var wrap = document.getElementById('notif-wrap');
@@ -21085,6 +21684,12 @@ document.addEventListener('click', function(e) {
   };
 
   setTimeout(refreshBadge, 1500);
+  // A row from another location switched there; land on its item now (#24).
+  document.addEventListener('DOMContentLoaded', function() {
+    var p = null;
+    try { p = sessionStorage.getItem('cavnar_pending_nav'); sessionStorage.removeItem('cavnar_pending_nav'); } catch (e) { p = null; }
+    if (p && typeof window.cavNav === 'function') setTimeout(function() { window.cavNav(p); }, 300);
+  });
 })();
 
 // ── Team messages (manager DMs) ─────────────────────────────────────────────
@@ -21248,7 +21853,7 @@ function toggleTmplPicker(reviewId, anchorEl) {
   picker.style.left = Math.max(8, rect.left + window.scrollX) + 'px';
   picker.style.display = 'block';
   if (_tmplCache) { _renderTmplPicker(); return; }
-  document.getElementById('tmpl-list').innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px">Loading…</div>';
+  document.getElementById('tmpl-list').innerHTML = '<div style="padding:8px"><div class="dr-pulse wide" role="status" aria-label="Loading templates" style="margin:0"><i></i></div></div>';
   fetch('/api/templates').then(apiJson).then(function(d){
     if (!d || !d.ok) { loadFailed(document.getElementById('tmpl-list'), d); return; }
     _tmplCache = d.templates || [];
@@ -21614,7 +22219,7 @@ document.addEventListener('click', function(e) {
       <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <button onclick="addGuestContact()" class="cbtn cbtn-primary">Add</button>
     </div>
-    <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px">Loading&hellip;</div>
+    <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px"><div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div></div>
   </div>
 </div>
 
@@ -21974,6 +22579,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // ── Ask Cavnar history ──
   window._askConversationId=window._askConversationId||null;
   function askMsgHtml(m){var me=m.role==='user';return '<div class="ask-b '+(me?'user':'ai')+'">'+(me?'':ASK_ORB_SM)+'<div class="bb">'+(me?_askEsc(m.content):_askMd(m.content))+'</div></div>';}
+  window.askMsgHtml=askMsgHtml;
   window.askRefreshConversations=function(quiet){
     var box=document.getElementById('ask-cavnar-history');if(!box)return;
     if(!quiet&&box.style.display==='none')return;
@@ -21988,7 +22594,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.askOpenConversation=function(id){
     jget('/api/ask-cavnar/conversations/'+id,function(d){
       if(!d.ok){toast(d.error||'Could not open that chat','error');return;}
-      window._askConversationId=id;
+      if(window.askRememberConversation)askRememberConversation(id);else window._askConversationId=id;
       var msgs=d.messages||[];
       _askCavnarHistory=msgs.filter(function(m){return m.role==='user'||m.role==='assistant';}).map(function(m){return {role:m.role,content:m.content};});
       var box=document.getElementById('ask-cavnar-messages');
@@ -21999,7 +22605,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.askNewChat=function(){
     jsend('/api/ask-cavnar/conversations',{},function(d){
       if(!d.ok){toast(d.error||'Could not start a chat','error');return;}
-      window._askConversationId=d.conversation_id;_askCavnarHistory=[];
+      if(window.askRememberConversation)askRememberConversation(d.conversation_id);else window._askConversationId=d.conversation_id;_askCavnarHistory=[];
+      if(window.askSetFocus)askSetFocus(null);
       var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
       var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
       var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();

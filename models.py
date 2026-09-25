@@ -8181,9 +8181,13 @@ def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = D
             where, arg = "fired_at > ?", since
         else:
             where, arg = "fired_at >= ?", born
+        # A row this login opened is read, on either client (friction #23:
+        # the web bell marks a row read when it is opened, not when the list
+        # is), so it leaves the badge too.
         rows = conn.execute(
             f"SELECT alert_type, COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND {where} "
-            "GROUP BY alert_type", (restaurant_id, arg)).fetchall()
+            "AND NOT EXISTS (SELECT 1 FROM notification_opens o WHERE o.alert_log_id=alert_log.id "
+            "AND o.user_id=?) GROUP BY alert_type", (restaurant_id, arg, int(user_id or 0))).fetchall()
     finally:
         conn.close()
     return sum(r["c"] for r in rows if visible is None or visible(r["alert_type"]))

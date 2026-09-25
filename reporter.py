@@ -1586,13 +1586,41 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     """One restaurant's digest in the standard shell."""
     from emails import report_shell
     p = _digest_parts(report, restaurant_name, owner_name, restaurant_id, owner_view)
+    cta_label, cta_url = digest_cta(restaurant_id or getattr(report, "restaurant_id", None))
     return report_shell(
         kicker="Weekly Digest",
         title=_html.escape(restaurant_name),
         subtitle=f"{p['week_label']}{p['location_label']}",
         sections=p["sections"],
-        cta_label="Open your dashboard →",
+        cta_label=cta_label,
+        cta_url=cta_url,
     )
+
+
+_DIGEST_CTA_DEFAULT = ("Open your dashboard →", "https://dashboard.cavnar.ai")
+
+
+def digest_cta(restaurant_id):
+    """The digest's one button (friction #46, U2-28): when replies are still
+    owed it names them and opens the inbox on "To approve" (a nav path, which
+    dashboard.html reads from ?nav=); otherwise the dashboard, as before. The
+    count is the morning brief's own (the same 30-day window), never a second
+    definition of "waiting"."""
+    if not restaurant_id:
+        return _DIGEST_CTA_DEFAULT
+    try:
+        import models
+        import morning_brief
+        n = int((morning_brief._reviews_waiting(restaurant_id, models.DB_PATH) or {}).get("waiting") or 0)
+    except Exception:
+        return _DIGEST_CTA_DEFAULT
+    if n <= 0:
+        return _DIGEST_CTA_DEFAULT
+    import config
+    import nav
+    from urllib.parse import quote
+    return (f"Reply to {n} waiting review{'' if n == 1 else 's'} →",
+            f"{config.base_url()}/?nav={quote(nav.path('reviews', filter='pending'), safe='')}")
 
 
 def render_group_html(items: list, owner_name: str = None, group_name: str = None) -> str:

@@ -406,6 +406,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         age = (f" — oldest waiting {s['oldest_open_hours']:.0f}h unacknowledged"
                if s.get("oldest_open_hours") else "")
         lines.append({"key": "issues", "tone": "bad" if s["open"] else "neutral",
+                      "action": line_action("issues"),
                       "text": f"Open issues: {s['open']} unacknowledged, {s['acknowledged']} in hand{age}.",
                       "ask": "What issues are still open and who has them?"})
 
@@ -476,6 +477,9 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             older_bit = (f" ({older} older one{'' if older == 1 else 's'} not counted)" if older else "")
             lines.append({"key": "reviews", "tone": "bad" if urgent else "action", "rec": "no_response",
                           "critical": bool(urgent),
+                          # The direct action (friction #46): the inbox on
+                          # the right filter, not a question to a model.
+                          "action": line_action("reviews", urgent=bool(urgent)),
                           # With low-star reviews waiting this line covers
                           # the one thing "Reply to the N reviews at 2 stars
                           # or worse" (business_intelligence's urgent_reviews)
@@ -506,6 +510,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             # items as shown on a line that read three (re-audit C4).
             keys = [rec_ledger.rec_key("stock_low", i) for i in low[:STOCK_NAMED]]
             lines.append({"key": "stock", "tone": "bad", "rec": keys[0], "recs": keys,
+                          "action": line_action("stock"),
                           "text": f"Running low: {named}.",
                           "ask": "What do I need to order today?"})
 
@@ -513,6 +518,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() >= 3:
         if not _safe(_schedule_drafted_recently, restaurant_id, db_path):
             lines.append({"key": "schedule", "tone": "action", "rec": "schedule:next-week",
+                          "action": line_action("schedule"),
                           "text": "Next week's schedule hasn't been built yet.",
                           "ask": "Build next week's schedule."})
 
@@ -948,6 +954,39 @@ def _conf_suffix(line) -> str:
     return f" ({label})" if label else ""
 
 
+# The direct action a brief line carries (friction #46, U1-19 / U2-28): what
+# the owner does about the line, as a nav path (nav.py) both clients open and
+# the email links to (/?nav=…). "Ask about this" stays, as the secondary. A
+# line with no action of its own carries none — never a made-up one.
+_LINE_ACTIONS = {
+    "reviews": ("Answer them", ("reviews",), {"filter": "pending"}),
+    "stock": ("See the order", ("inventory", "order"), {}),
+    "schedule": ("Build the schedule", ("labor", "schedule"), {}),
+    "issues": ("See the issues", ("home",), {}),
+}
+
+
+def line_action(key, urgent=False):
+    """{label, nav} for a brief line's direct action, or None."""
+    spec = _LINE_ACTIONS.get(key)
+    if not spec:
+        return None
+    import nav
+    label, parts, query = spec
+    if key == "reviews" and urgent:
+        label, query = "Reply now", {"filter": "urgent"}
+    return {"label": label, "nav": nav.path(*parts, **query)}
+
+
+def _nav_url(nav_path, rec=None, rid=None):
+    """A link that opens the dashboard on that nav path (dashboard.html reads
+    ?nav=), naming the line's recommendation like the Ask link does."""
+    import rec_delivery
+    from urllib.parse import quote
+    url = f"{config.base_url()}/?nav={quote(nav_path or '', safe='')}"
+    return rec_delivery.link(url, rec if rec_delivery.presentable(rec) else None, "brief_email", rid)
+
+
 def _ask_url(prompt, rec=None, rid=None):
     """A link that opens the dashboard and asks that question — the email's
     version of the push's one-tap into Ask (dashboard.html reads ?ask=).
@@ -1018,10 +1057,18 @@ def _email_html(brief, restaurant_name):
         f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
         + (f'<br><span style="font-size:12px;color:{_BRAND["muted"]}">{html.escape(_conf_label(l))}</span>'
            if _conf_label(l) else "")
+        # The line's direct action leads (friction #46): the inbox, the
+        # order, the schedule — one tap to the work, not to a question.
+        + (f'<br><a href="{html.escape(_nav_url(l["action"]["nav"], l.get("rec"), brief.get("restaurant_id")), quote=True)}" '
+           f'style="font-size:13px;font-weight:600;color:{_BRAND["ember"]};text-decoration:none">'
+           f'{html.escape(l["action"]["label"])} &rarr;</a>'
+           if (l.get("action") or {}).get("nav") else "")
         # Every line is a question you can ask about it — the email's
-        # equivalent of tapping the push, which opens Ask on that line.
-        + (f'<br><a href="{html.escape(_ask_url(l.get("ask"), l.get("rec"), brief.get("restaurant_id")), quote=True)}" '
-           f'style="font-size:13px;color:#c84b2f;text-decoration:none">Ask about this &rarr;</a>'
+        # equivalent of tapping the push, which opens Ask on that line. The
+        # secondary link when the line has a direct action.
+        + (f'{" &nbsp;·&nbsp; " if (l.get("action") or {}).get("nav") else "<br>"}'
+           f'<a href="{html.escape(_ask_url(l.get("ask"), l.get("rec"), brief.get("restaurant_id")), quote=True)}" '
+           f'style="font-size:13px;color:{_BRAND["muted"] if (l.get("action") or {}).get("nav") else _BRAND["ember"]};text-decoration:none">Ask about this &rarr;</a>'
            if l.get("ask") else "")
         + '</td></tr>'
         for l in brief["lines"])
