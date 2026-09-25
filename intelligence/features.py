@@ -71,6 +71,141 @@ BENCHMARK_KEYS = ("avg_rating_30d", "response_24h_rate_30d", "reply_rate_30d", "
                   "post_lift_median_28d", "post_engagement_rate_28d", "outcomes_improved_rate_90d")
 
 
+# ── the structural block (Benchmarking audit #43, BM2-8) ─────────────────
+# What a restaurant IS, measured: the coordinates peers are matched on (and
+# Restaurant DNA's structural layer), never what it is compared ON. Ratios,
+# shares, hours and BAND INDICES only — never a dollar (privacy.
+# FORBIDDEN_KEY_STEMS holds `revenue` and `sales_total`, so sales volume and
+# ticket are stored as the index of a fixed band, 0 = smallest). Not in
+# FEATURE_KEYS: a structural fact is not a measure, and completeness does
+# not count it. None when not measured, never 0.
+STRUCTURAL_KEYS = ("ticket_band", "volume_band", "alcohol_share", "delivery_share", "weekly_open_hours",
+                   "daypart_mix", "urbanity_band")
+# Average sales per trading day, by band: <1.5k, 1.5–3k, 3–6k, 6–12k, 12k+.
+VOLUME_BAND_EDGES = (1500.0, 3000.0, 6000.0, 12000.0)
+# Average ticket (sales ÷ covers): <$12, 12–20, 20–35, 35–60, $60+.
+TICKET_BAND_EDGES = (12.0, 20.0, 35.0, 60.0)
+# Median distance to the matched competitors: under 0.8km urban (2), under
+# 3km suburban (1), else rural (0) — a proxy, from Intel's own search.
+URBANITY_EDGES_M = (800.0, 3000.0)
+_ALCOHOL_CATS = ("Liquor", "Beer", "Wine")
+DAY_PART_SPLIT_HOUR = 16          # daypart_mix = share of sales before 4pm
+
+
+def _band(value, edges):
+    if value is None:
+        return None
+    return sum(1 for e in edges if value >= e)
+
+
+def _clock_hours(raw):
+    """"11:00am" / "9:30 pm" / "21:00" → hours after midnight, or None."""
+    import re as _re
+    t = str(raw or "").strip().lower().replace(" ", "")
+    m = _re.match(r"^(\d{1,2})(?::(\d{2}))?(am|pm)?$", t)
+    if not m:
+        return None
+    h, mins, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if ap == "pm" and h != 12:
+        h += 12
+    if ap == "am" and h == 12:
+        h = 0
+    if h > 24 or mins > 59:
+        return None
+    return h + mins / 60.0
+
+
+def weekly_open_hours(open_json, close_json):
+    """Hours open across the week from the owner's per-day open and close
+    times (a close at or before the open runs past midnight), or None."""
+    try:
+        opens = json.loads(open_json) if isinstance(open_json, str) else (open_json or {})
+        closes = json.loads(close_json) if isinstance(close_json, str) else (close_json or {})
+    except Exception:
+        return None
+    total, days = 0.0, 0
+    for day, o in (opens or {}).items():
+        a, b = _clock_hours(o), _clock_hours((closes or {}).get(day))
+        if a is None or b is None:
+            continue
+        span = b - a if b > a else b + 24 - a
+        if 0 < span <= 24:
+            total += span
+            days += 1
+    return round(total, 1) if days else None
+
+
+def structural(conn, restaurant_id: int, today: date) -> dict:
+    """The structural block for one restaurant. Pure read."""
+    out = {k: None for k in STRUCTURAL_KEYS}
+    d28 = (today - timedelta(days=28)).isoformat()
+    try:
+        row = conn.execute("SELECT open_times_json, close_times_json, delivery_pct, competitor_intel "
+                           "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    except Exception:
+        row = None
+    if row:
+        out["weekly_open_hours"] = weekly_open_hours(row["open_times_json"], row["close_times_json"])
+        try:
+            dp = float(row["delivery_pct"]) if row["delivery_pct"] not in (None, "") else None
+            out["delivery_share"] = round(dp / 100.0, 3) if dp is not None and 0 <= dp <= 100 else None
+        except (TypeError, ValueError):
+            pass
+        try:
+            blob = json.loads(row["competitor_intel"] or "{}") if row["competitor_intel"] else {}
+            dists = sorted(float(c["distance_m"]) for c in (blob.get("competitors") or [])
+                           if isinstance(c, dict) and c.get("distance_m")
+                           and "widened" not in str(c.get("match_basis") or c.get("basis") or ""))
+            if len(dists) >= 3:
+                med = dists[len(dists) // 2]
+                out["urbanity_band"] = 2 - _band(med, URBANITY_EDGES_M)
+        except Exception:
+            pass
+    try:
+        sales = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
+            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0",
+            (restaurant_id, d28)).fetchall()}
+    except Exception:
+        sales = {}
+    if len(sales) >= MIN_MEASURED_DAYS:
+        out["volume_band"] = _band(sum(sales.values()) / len(sales), VOLUME_BAND_EDGES)
+        try:
+            cov = {str(r["date"])[:10]: int(r["covers"]) for r in conn.execute(
+                "SELECT date, covers FROM covers_daily WHERE restaurant_id=? AND date >= ? AND covers > 0",
+                (restaurant_id, d28)).fetchall()}
+            both = [d for d in cov if d in sales]
+            if len(both) >= MIN_MEASURED_DAYS:
+                out["ticket_band"] = _band(sum(sales[d] for d in both) / sum(cov[d] for d in both), TICKET_BAND_EDGES)
+        except Exception:
+            pass
+    try:
+        cats = conn.execute("SELECT metric, SUM(value) AS v, COUNT(DISTINCT business_date) AS n FROM dsr_metrics "
+                            "WHERE restaurant_id=? AND business_date >= ? AND metric LIKE 'sales.cat:%' "
+                            "AND value IS NOT NULL GROUP BY metric", (restaurant_id, d28)).fetchall()
+        by = {r["metric"][len("sales.cat:"):]: float(r["v"] or 0) for r in cats}
+        days = max((int(r["n"] or 0) for r in cats), default=0)
+        total = sum(v for v in by.values() if v > 0)
+        unmapped = sum(v for k, v in by.items() if k not in ("Food", "NA Beverage", "Retail") + _ALCOHOL_CATS)
+        # Only where the categories are mapped: an unmapped share over 10%
+        # leaves the alcohol share unknown, not low.
+        if days >= MIN_MEASURED_DAYS and total > 0 and unmapped / total <= 0.10:
+            out["alcohol_share"] = round(sum(by.get(c, 0.0) for c in _ALCOHOL_CATS) / total, 3)
+    except Exception:
+        pass
+    try:
+        hrs = conn.execute("SELECT captured_hour, SUM(net_sales) AS v, COUNT(DISTINCT business_date) AS n "
+                           "FROM pos_intraday WHERE restaurant_id=? AND business_date >= ? GROUP BY captured_hour",
+                           (restaurant_id, d28)).fetchall()
+        total = sum(float(r["v"] or 0) for r in hrs)
+        days = max((int(r["n"] or 0) for r in hrs), default=0)
+        if days >= MIN_MEASURED_DAYS and total > 0:
+            out["daypart_mix"] = round(sum(float(r["v"] or 0) for r in hrs
+                                           if int(r["captured_hour"]) < DAY_PART_SPLIT_HOUR) / total, 3)
+    except Exception:
+        pass
+    return out
+
+
 def iso_week(day: date) -> str:
     y, w, _ = day.isocalendar()
     return f"{y}-W{w:02d}"
@@ -259,6 +394,15 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         f.update(_rec_loop(conn, restaurant_id, d28, d90))
     finally:
         conn.close()
+    # The structural block (#43): what the restaurant IS, never a dollar.
+    try:
+        conn = get_conn(db_path)
+        try:
+            f.update(structural(conn, restaurant_id, today))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[intelligence] structural block unavailable for {restaurant_id}: {e}")
     # People on the floor per role family and daypart, per $1k of sales
     # (staffing.compute_ratios) — the ratio a new restaurant's starting
     # headcount is borrowed from. Not in FEATURE_KEYS: a family this

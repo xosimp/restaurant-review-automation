@@ -33,7 +33,7 @@ FORBIDDEN_KEY_STEMS = (
 
 # Keys that look forbidden but are aggregates by construction.
 ALLOWED_KEYS = {
-    "n", "n_with", "n_without", "restaurants", "cohort", "cohorts",
+    "n", "n_with", "n_without", "restaurants", "cohort", "cohorts", "ownership",
     "dollars_monthly_median",   # a cohort median of measured outcomes
 }
 
@@ -158,6 +158,62 @@ def assert_anonymous(payload, path="payload", deny_names=None, _rx=False):
         if why:
             raise PrivacyError(f"{path} carries {why} and must not leave the engine")
     return payload
+
+
+# ── organisations, not locations (Benchmarking audit #9, BM1-5, BM2-4, BM4-2) ──
+# A group owner with six of the eight "other" pizza locations reads a band
+# that is 75% their own, and can solve the two real peers' figures out of
+# it. Every floor counts ORGANISATIONS, the band a viewer sees leaves their
+# whole organisation out, and no one organisation may be over a third of it.
+MIN_ORGS = 5                  # distinct organisations behind a published band
+MAX_ORG_SHARE = 1.0 / 3.0     # the largest organisation's share of a band
+
+
+def org_key(row) -> str:
+    """The organisation a restaurant belongs to: its organization_id, else
+    its (location group, owner email) pair, else the restaurant alone.
+    `row` is a dict, sqlite Row or object with those attributes."""
+    def g(k):
+        if isinstance(row, dict):
+            return row.get(k)
+        try:
+            return row[k]
+        except Exception:
+            return getattr(row, k, None)
+    org = g("organization_id")
+    if org:
+        return f"o{int(org)}"
+    group = (g("location_group") or "").strip().lower()
+    if group:
+        return f"g{group}|{(g('owner_email') or '').strip().lower()}"
+    return f"r{g('id')}"
+
+
+def org_hash(key) -> str:
+    """A one-way stand-in for an organisation key, stored beside each member
+    value server-side (never selected into a payload): enough to take a
+    viewer's organisation out of a band and to count organisations."""
+    import hashlib
+    return hashlib.sha256(("cavnar-org:" + str(key)).encode()).hexdigest()[:16]
+
+
+def org_counts(orgs) -> tuple[int, float]:
+    """(distinct organisations, the largest one's share) over a member list
+    of org hashes."""
+    orgs = list(orgs or ())
+    if not orgs:
+        return 0, 0.0
+    counts = {}
+    for o in orgs:
+        counts[o] = counts.get(o, 0) + 1
+    return len(counts), max(counts.values()) / float(len(orgs))
+
+
+def orgs_ok(n_orgs, max_share) -> bool:
+    try:
+        return int(n_orgs or 0) >= MIN_ORGS and float(max_share or 0) <= MAX_ORG_SHARE + 1e-9
+    except (TypeError, ValueError):
+        return False
 
 
 def strip_identity(row: dict) -> dict:

@@ -8956,6 +8956,33 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="12/25/2026, 1/1/2027"></div>
       </div>
 
+      <!-- Restaurant profile (Benchmarking audit #7): who Cavnar compares this
+           restaurant with. A comparison with other restaurants is only ever
+           built from the profile confirmed here, never from a guess. -->
+      <div class="ac-card" id="as-rp-card" style="margin-top:14px">
+        <div class="ac-card-h"><div><h3>Restaurant profile</h3><p>Who Cavnar compares you with. Other restaurants are only ever compared with you through the profile you confirm here &mdash; never a guess from your name.</p></div>
+          <div class="r"><span class="ac-status" id="as-rp-status"></span></div></div>
+        <div class="ac-card accent" id="as-rp-suggest" hidden style="margin-bottom:12px">
+          <div class="ac-row" style="border-top:0"><div class="l"><b id="as-rp-suggest-text"></b><span id="as-rp-suggest-why"></span></div>
+            <div class="c ac-inline">{% if _is_owner %}<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="rpAcceptSuggestion()">Yes, that&rsquo;s right</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="rpFocus()">No, let me pick</button>{% endif %}</div></div>
+        </div>
+        <div class="ac-rows">
+          <div class="ac-row"><div class="l"><b>How you serve</b><span>The split every comparison respects: a counter spot is never compared with a full-service dining room.</span></div>
+            <div class="c"><select class="ac-select" id="as-rp-sm" aria-label="How you serve"{% if not _is_owner %} disabled{% endif %}><option value="">Not confirmed</option></select></div></div>
+          <div class="ac-row"><div class="l"><b>Concept</b><span>What the menu is built on &mdash; it decides which food-cost comparisons are fair.</span></div>
+            <div class="c"><select class="ac-select" id="as-rp-concept" aria-label="Concept"{% if not _is_owner %} disabled{% endif %}><option value="">Not set</option></select></div></div>
+          <div class="ac-row"><div class="l"><b>Bar-led</b><span>Alcohol is about 40% or more of sales. Drinks carry little labor, so it changes what a fair labor % is.</span></div>
+            <div class="c"><label class="ac-switch"><input type="checkbox" id="as-rp-bar" aria-label="Bar-led"{% if not _is_owner %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          <div class="ac-row"><div class="l"><b>Ownership</b><span>Independent, franchise or corporate &mdash; some published studies cover independents only.</span></div>
+            <div class="c"><select class="ac-select" id="as-rp-own" aria-label="Ownership"{% if not _is_owner %} disabled{% endif %}><option value="">Not set</option></select></div></div>
+          <div class="ac-row"><div class="l"><b>Year you opened</b><span>A first-year restaurant is still ramping; its numbers aren&rsquo;t read like a mature one&rsquo;s.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="text" id="as-rp-opened" inputmode="numeric" maxlength="4" placeholder="2019" aria-label="Year you opened" style="width:110px"{% if not _is_owner %} disabled{% endif %}></div></div>
+          <div class="ac-row"><div class="l"><b>Your targets</b><span id="as-rp-targets">Loading&hellip;</span></div><div class="c"></div></div>
+        </div>
+        <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
+        {% if not _is_owner %}<div class="ac-note">Only the account owner can change the restaurant profile.</div>{% endif %}
+      </div>
+
       <div class="ac-card" id="as-dsr-card" style="margin-top:14px" hidden>
         <div class="ac-card-h"><div><h3>Daily report</h3><p>The nightly sales report and the weekly grid: your week, your periods, and which of your categories each POS department counts toward. Owner only.</p></div>
           <div class="r"><span class="ac-status" id="as-dsr-status"></span></div></div>
@@ -17828,7 +17855,7 @@ function loadTrust() {
   }).catch(function() { el.textContent = 'Could not load.'; });
 }
 function loadPause() {
-  loadMemory(); loadDecisions(); loadTrust();
+  loadMemory(); loadDecisions(); loadTrust(); loadRestaurantProfile();
   fetch('/api/account/pause', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok || !d.can_pause) return;
     var card = document.getElementById('acct-pause-card'); if (card) card.hidden = false;
@@ -17874,6 +17901,62 @@ function saveAccountHours() {
   }
   asPost('/api/account-settings/hours', { open: open, close: close, closures: closures },
          'as-hours-status', 'Saved').then(function() { loadAccountSettings(); });
+}
+
+// Restaurant profile (Benchmarking audit #7). ES5 only.
+var RP_DATA = null;
+function rpFill(sel, choices, value) {
+  var el = document.getElementById(sel); if (!el) return;
+  var keep = el.options.length ? el.options[0].outerHTML : '';
+  var h = keep;
+  for (var i = 0; i < choices.length; i++) {
+    h += '<option value="' + esc(choices[i].value) + '"' + (choices[i].value === value ? ' selected' : '') + '>' + esc(choices[i].label) + '</option>';
+  }
+  el.innerHTML = h;
+}
+function loadRestaurantProfile() {
+  if (!document.getElementById('as-rp-card')) return;
+  fetch('/api/account-settings/restaurant-profile', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (!d || !d.ok) return;
+    RP_DATA = d;
+    var p = d.profile || {}, ch = p.choices || {};
+    rpFill('as-rp-sm', ch.service_model || [], p.service_model || '');
+    rpFill('as-rp-concept', ch.concept || [], p.concept || '');
+    rpFill('as-rp-own', ch.ownership || [], p.ownership || '');
+    document.getElementById('as-rp-bar').checked = !!p.bar_led;
+    document.getElementById('as-rp-opened').value = p.opened_year ? String(p.opened_year) : '';
+    var sug = p.suggestion, box = document.getElementById('as-rp-suggest');
+    if (sug && !p.confirmed) {
+      box.hidden = false;
+      document.getElementById('as-rp-suggest-text').textContent = sug.text;
+      document.getElementById('as-rp-suggest-why').textContent = 'A guess from ' + (sug.cues && sug.cues.length ? sug.cues.join(', ') : 'your name') + ' \u2014 ' + (sug.confidence_pct || 0) + '% confident. Until you confirm, no other restaurant is compared with you.';
+    } else { box.hidden = true; }
+    document.getElementById('as-rp-confirmed').textContent = p.confirmed ? ('Confirmed' + (p.confirmed_at && window.mdy ? ' ' + window.mdy(String(p.confirmed_at).slice(0, 10)) : '') + '.') : 'Not confirmed yet.';
+    var t = d.targets || {}, parts = [];
+    if (t.labor) parts.push('Labor ' + (t.labor.pct != null ? t.labor.pct + '%' : '\u2014') + ' (' + t.labor.label + ')');
+    if (t.food) parts.push('food cost ' + (t.food.pct != null ? t.food.pct + '%' : '\u2014') + ' (' + t.food.label + ')');
+    var basis = d.labor_cost_basis || {};
+    document.getElementById('as-rp-targets').textContent = parts.join(', ') + '. Labor cost from ' + (basis.label || 'your pay rates') + '.';
+  }).catch(function() {});
+}
+function rpFocus() { var el = document.getElementById('as-rp-sm'); if (el) el.focus(); }
+function rpAcceptSuggestion() {
+  var sug = RP_DATA && RP_DATA.profile && RP_DATA.profile.suggestion; if (!sug) return;
+  if (sug.service_model) document.getElementById('as-rp-sm').value = sug.service_model;
+  if (sug.concept) document.getElementById('as-rp-concept').value = sug.concept;
+  if (!document.getElementById('as-rp-sm').value) { rpFocus(); asFlash('as-rp-status', 'Pick how you serve, then confirm.'); return; }
+  saveRestaurantProfile();
+}
+function saveRestaurantProfile() {
+  var sm = document.getElementById('as-rp-sm').value;
+  if (!sm) { asFlash('as-rp-status', 'Pick how you serve first.'); rpFocus(); return; }
+  asPost('/api/account-settings/restaurant-profile', {
+    service_model: sm,
+    concept: document.getElementById('as-rp-concept').value,
+    bar_led: document.getElementById('as-rp-bar').checked,
+    ownership: document.getElementById('as-rp-own').value,
+    opened_year: document.getElementById('as-rp-opened').value
+  }, 'as-rp-status', 'Confirmed').then(function(d) { if (d && d.ok) loadRestaurantProfile(); });
 }
 
 function saveDataRetention() {

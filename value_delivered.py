@@ -354,7 +354,14 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
             # Sample shifts are not the restaurant's own numbers.
             if labor.get("is_live"):
                 v = float(labor.get("potential_savings_monthly", 0) or 0)
-                if v > 0:
+                import thresholds as _thr
+                if v > 0 and _thr.labor_cost_basis(restaurant) == "default":
+                    # Hours × Cavnar's assumed $26/hr is not a dollar gap the
+                    # restaurant has (Benchmarking audit #14).
+                    withheld.append({"key": "labor", "label": "Scheduling against your target", "module": "labor",
+                                     "source": "labor", "state": "default_rate",
+                                     "reason": "labor cost rests on the assumed $26/hr, not your pay rates"})
+                elif v > 0:
                     _dated(items, withheld, restaurant, {"key": "labor", "label": "Scheduling against your target",
                                                           "monthly": round(v, 2), "module": "labor"},
                            ("labor",), {"labor": labor}, db_path)

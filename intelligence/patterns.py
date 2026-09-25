@@ -15,6 +15,16 @@ A pattern that stops meeting the bar is retired, not deleted — the
 dashboard shows what used to hold. Sentences carry counts and effects;
 they never carry a name, and `privacy.assert_anonymous` runs on every row
 before it is stored.
+
+What an OWNER (or a model answering one) is served is a narrower projection
+(Benchmarking audit #11, BM1-8): `active()` strips the group means
+(`mean_with` / `mean_without` — with a side of five and your own figure,
+the other four's sum falls out) and serves only a pattern with at least
+MIN_ORGS_PER_SIDE organisations on each side of the split. The admin
+projection (`all_patterns`, `active(projection="admin")`) keeps them. The
+figures are frozen for the ISO week: a nightly re-run that confirms a
+pattern re-dates it but does not move its numbers until the next week, so a
+member joining or leaving cannot be differenced out of two nights.
 """
 import json
 from datetime import date
@@ -37,6 +47,10 @@ MIN_EFFECT_D = 0.3
 MAX_P = 0.05
 MAX_Q = 0.10
 SHUFFLES = 2000
+# Organisations on each side of a split before an owner is shown the pattern.
+MIN_ORGS_PER_SIDE = 8
+# Evidence keys an owner-facing projection never carries.
+ADMIN_ONLY_EVIDENCE = ("mean_with", "mean_without")
 
 # behaviour: (feature, op, threshold). outcome: feature. better: "higher"|"lower".
 HYPOTHESES = (
@@ -105,16 +119,21 @@ def _split(rows, behaviour):
 
 def test_hypothesis(rows, h, shuffles=SHUFFLES) -> dict | None:
     """One hypothesis over one cohort's latest rows. None when a side is
-    too small; otherwise a candidate with its statistics (not yet judged)."""
+    too small; otherwise a candidate with its statistics (not yet judged).
+    A row carrying `_org` (discover() adds it) is counted by organisation."""
     with_, without = _split(rows, h["behaviour"])
-    a = [r["features"].get(h["outcome"]) for r in with_ if r["features"].get(h["outcome"]) is not None]
-    b = [r["features"].get(h["outcome"]) for r in without if r["features"].get(h["outcome"]) is not None]
+    a_rows = [r for r in with_ if r["features"].get(h["outcome"]) is not None]
+    b_rows = [r for r in without if r["features"].get(h["outcome"]) is not None]
+    a = [r["features"][h["outcome"]] for r in a_rows]
+    b = [r["features"][h["outcome"]] for r in b_rows]
     if len(a) < privacy.MIN_GROUP or len(b) < privacy.MIN_GROUP:
         return None
     diff, p = permutation_test(a, b, shuffles=shuffles)
     d = cohen_d(a, b)
     return {"key": h["key"], "n_with": len(a), "n_without": len(b), "effect": diff, "p_value": p, "cohen_d": d,
-            "mean_with": mean(a), "mean_without": mean(b)}
+            "mean_with": mean(a), "mean_without": mean(b),
+            "orgs_with": len({r.get("_org") or id(r) for r in a_rows}),
+            "orgs_without": len({r.get("_org") or id(r) for r in b_rows})}
 
 
 def _sentence(h, cand, cohort_label, n_total):
@@ -160,16 +179,25 @@ def strength_fields(d) -> dict:
     return d
 
 
-def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES) -> dict:
+def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
+             members: dict = None) -> dict:
     """Run every hypothesis over every cohort that clears the floor, plus
-    platform-wide. `cohorts` is {restaurant_id: category or None}."""
+    platform-wide. `cohorts` is {restaurant_id: category or None};
+    `members` (jobs.member_info) lets each side be counted by organisation."""
     latest = _features.latest_by_restaurant(db_path=db_path)
     cohorts = cohorts or {}
-    groups = {"platform": list(latest.values())}
+    members = members or {}
+    rows_by = {}
     for rid, row in latest.items():
+        r = dict(row)
+        r["_org"] = (members.get(rid) or {}).get("org_hash") or privacy.org_hash(f"r{rid}")
+        rows_by[rid] = r
+    groups = {"platform": list(rows_by.values())}
+    for rid, row in rows_by.items():
         c = cohorts.get(rid)
         if c:
             groups.setdefault(c, []).append(row)
+    week = _features.iso_week(today or date.today())
     candidates = []
     for cohort, rows in groups.items():
         if not privacy.cohort_ok(len(rows)):
@@ -188,6 +216,12 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
     written = retired = 0
     conn = get_conn(db_path)
     try:
+        frozen = {}
+        for r in conn.execute("SELECT key, evidence_json FROM intel_patterns WHERE status='active'").fetchall():
+            try:
+                frozen[r["key"]] = (json.loads(r["evidence_json"] or "{}") or {}).get("week")
+            except Exception:
+                frozen[r["key"]] = None
         for c in candidates:
             h = c["hypothesis"]
             direction_ok = (c["effect"] > 0) == (h["better"] == "higher")
@@ -207,8 +241,16 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                    "sentence": _sentence(h, c, label, c["n_total"]),
                    "evidence": {"n": c["n_total"], "mean_with": privacy.round_effect(c["mean_with"], 3),
                                 "mean_without": privacy.round_effect(c["mean_without"], 3), "behaviour": list(h["behaviour"]),
-                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"])}}
+                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"]),
+                                "orgs_with": c.get("orgs_with"), "orgs_without": c.get("orgs_without"),
+                                "week": week}}
             privacy.assert_anonymous(row)
+            if frozen.get(key) == week:
+                # Frozen for the week (#11): confirmed, re-dated, not re-figured.
+                conn.execute("UPDATE intel_patterns SET last_confirmed=datetime('now') WHERE key=?", (key,))
+                active_keys.add(key)
+                written += 1
+                continue
             conn.execute(
                 "INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, p_value, "
                 "q_value, confidence, sentence, evidence_json, status, last_confirmed, computed_at) "
@@ -252,11 +294,31 @@ def _as_of(raw):
         return None
 
 
-def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20) -> list:
+def owner_projection(d) -> dict | None:
+    """A pattern as an owner (or a model answering one) may see it: no
+    group means, and only with MIN_ORGS_PER_SIDE organisations on each side
+    of the split — None otherwise (Benchmarking audit #11)."""
+    ev = dict(d.get("evidence") or {})
+    try:
+        ow, oo = int(ev.get("orgs_with") or 0), int(ev.get("orgs_without") or 0)
+    except (TypeError, ValueError):
+        ow = oo = 0
+    if ow < MIN_ORGS_PER_SIDE or oo < MIN_ORGS_PER_SIDE:
+        return None
+    for k in ADMIN_ONLY_EVIDENCE:
+        ev.pop(k, None)
+    out = dict(d)
+    out["evidence"] = ev
+    return out
+
+
+def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20, projection="owner") -> list:
     """Active patterns for a cohort, with platform-wide ones after them,
     each re-confirmed within MAX_PATTERN_AGE_DAYS and carrying `as_of`
     (M/D/YY). Rows are anonymous by construction; asserted again on the
-    way out."""
+    way out. `projection="owner"` (the default — Ask, the prompts, the
+    confidence model) applies owner_projection; the admin page passes
+    "admin"."""
     fresh = f"AND last_confirmed >= datetime('now', '-{int(MAX_PATTERN_AGE_DAYS)} days')"
     conn = get_conn(db_path)
     try:
@@ -278,6 +340,10 @@ def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
         d["as_of"] = _as_of(d.get("last_confirmed"))
+        if projection != "admin":
+            d = owner_projection(d)
+            if d is None:
+                continue
         out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 

@@ -36,7 +36,18 @@ def _redirect(monkeypatch, db_path):
 
 def _rid(db_path, name="Moat Co", **kw):
     kw.setdefault("module_reviews", 1)
+    # Live long enough, on a real labor cost basis, to stand in a band
+    # (Benchmarking audit #14, #39).
+    kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
+    kw.setdefault("hourly_rate", 18.0)
     return create_restaurant(Restaurant(name=name, owner_email=f"{name.replace(' ', '').lower()}@x.com", **kw), db_path=db_path)
+
+
+def _confirm(db_path, rid, service_model, concept):
+    """An owner-confirmed profile: the only thing a peer partition is built
+    from (Benchmarking audit #7, #20)."""
+    update_restaurant(rid, {"service_model": service_model, "concept": concept, "category": concept,
+                            "profile_source": "set", "profile_confirmed_at": "2026-09-01T00:00:00"}, db_path=db_path)
 
 
 def _seed_features(db_path, rid, week, f, completeness=0.8):
@@ -64,6 +75,8 @@ def test_the_anonymity_check_catches_identity_and_dollars_anywhere_in_a_payload(
 
 def test_every_cross_restaurant_surface_refuses_below_the_floor(db_path):
     rids = [_rid(db_path, f"R{i}") for i in range(4)]        # one short of the floor
+    for r in rids:
+        update_restaurant(r, {"category": "pizza"}, db_path=db_path)   # a type the owner set
     for r in rids:
         _seed_features(db_path, r, THIS_WEEK, {"avg_rating_30d": 4.2, "response_24h_rate_30d": 0.9, "avg_rating_delta": 0.3,
                                                "labor_pct_28d": 30})
@@ -240,7 +253,9 @@ def _cohort(db_path, n, cat, seed):
 
 
 def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path):
-    rids = _cohort(db_path, 14, "pizza", 1)
+    # Eight a side: an owner is shown a pattern only with at least
+    # MIN_ORGS_PER_SIDE organisations on each side (Benchmarking audit #11).
+    rids = _cohort(db_path, 16, "pizza", 1)
     cohorts = {r: "pizza" for r in rids}
     out = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=500)
     assert "pizza" in out["cohorts_tested"] and out["active"] >= 1
@@ -248,8 +263,8 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
     keys = {p["hypothesis"] for p in act}
     assert "reply_fast_rating" in keys                              # the planted effect
     p = next(x for x in act if x["hypothesis"] == "reply_fast_rating")
-    assert p["n_with"] == 7 and p["n_without"] == 7 and p["p_value"] <= 0.05 and p["q_value"] <= 0.10
-    assert "Across 14 pizza" in p["sentence"] and "higher" in p["sentence"]
+    assert p["n_with"] == 8 and p["n_without"] == 8 and p["p_value"] <= 0.05 and p["q_value"] <= 0.10
+    assert "Across 16 pizza" in p["sentence"] and "higher" in p["sentence"]
     for x in act:
         privacy.assert_anonymous(x)
         assert not any(name in x["sentence"] for name in ("pizza 1 0", "Moat"))
@@ -272,18 +287,24 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
 def test_benchmarks_place_a_restaurant_in_its_cohort_and_fall_back_to_platform(db_path):
     # Nine bars: the band a member sees leaves its own row out, and needs 8 others (NS4 M6).
     rids = _cohort(db_path, 9, "bar", 2)
+    for r in rids:
+        update_restaurant(r, {"category": "bar"}, db_path=db_path)     # a type the owner set (#8)
     cohorts = {r: "bar" for r in rids}
     lone = _rid(db_path, "Solo Steak")
-    _seed_features(db_path, lone, THIS_WEEK, {"avg_rating_30d": 4.9, "labor_pct_28d": 22.0})
+    _seed_features(db_path, lone, THIS_WEEK, {"avg_rating_30d": 4.9, "labor_pct_28d": 22.0, "reply_rate_30d": 0.99})
     out = benchmarks.compute(db_path=db_path, cohorts={**cohorts, lone: "steakhouse"})
     assert out["written"] > 0
     b = benchmarks.benchmark(rids[0], "labor_pct_28d", cohort="bar", db_path=db_path)
     assert b["available"] and b["cohort"] == "bar" and b["n"] == 8 and b["p25"] <= b["p50"] <= b["p75"]
     assert b["cohort_label"] == "Bars on Cavnar" and b["as_of"]
     assert b["standing"] in ("top quarter", "above the middle", "below the middle", "bottom quarter")
-    # a steakhouse alone compares platform-wide, and is told so
-    s = benchmarks.benchmark(lone, "avg_rating_30d", cohort="steakhouse", db_path=db_path)
+    # a steakhouse alone compares platform-wide, and is told so — on a
+    # behaviour metric only (Benchmarking audit #6): its rating, a format
+    # metric, has no like-for-like peers and no all-types stand-in.
+    s = benchmarks.benchmark(lone, "reply_rate_30d", cohort="steakhouse", db_path=db_path)
     assert s["available"] and s["cohort"] == "platform" and s["standing"] == "top quarter"
+    r = benchmarks.benchmark(lone, "avg_rating_30d", cohort="steakhouse", db_path=db_path)
+    assert r["available"] is False and "no like-for-like peers" in r["reason"]
     for row in benchmarks.cohort_table(db_path=db_path):
         privacy.assert_anonymous(row)
         assert row["n"] >= privacy.MIN_COHORT
@@ -379,7 +400,7 @@ def test_the_learning_pass_runs_end_to_end_and_the_dashboard_is_anonymous(db_pat
     rids = _cohort(db_path, 10, "bar", 5)
     for r in rids:
         home_brief.dismiss(r, "trim_day:Monday", kind="done")
-        update_restaurant(r, {"category": "bar"}, db_path=db_path)
+        _confirm(db_path, r, "bar_led", "bar")
     out = jobs.run_learning(db_path=db_path)
     assert out["restaurants"] == 10 and out["feedback"]["events"] == 10
     assert out["benchmarks"]["written"] > 0 and out["confidence_log"]["written"] >= 1
@@ -388,8 +409,10 @@ def test_the_learning_pass_runs_end_to_end_and_the_dashboard_is_anonymous(db_pat
     assert d["learning"]["restaurants"] == 10 and d["learning"]["cohorts"] == {"bar": 10}
     assert "bar" in d["learning"]["cohorts_at_floor"] and d["recommendations"]["totals"]["accepted"] == 10
     assert d["savings"]["note"].startswith("Four separate")
-    facade = intelligence.industry_intelligence("bar", db_path=db_path)
-    assert facade["label"] == "Bars" and any(b for b in facade["benchmarks"] if b)
+    # The bands are stored under the confirmed peer partition (#20).
+    facade = intelligence.industry_intelligence("sm:bar_led", db_path=db_path)
+    assert any(b for b in facade["benchmarks"] if b)
+    assert out["peer_ledger"]["written"] == 10 * 3
     assert intelligence.recommendation_success("trim_day", cohort="bar", db_path=db_path)["available"] is True
 
 

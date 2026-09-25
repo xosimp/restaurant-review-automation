@@ -499,9 +499,9 @@ def _check_review_sync():
         update_service_status("review_sync", "operational", None)
     elif stale < active_with_gmb:
         update_service_status("review_sync", "degraded",
-                              f"{stale} of {active_with_gmb} location(s) missed 2+ scheduled review fetches")
+                              f"Review sync missed 2+ scheduled fetches at {_locations(stale)}")
     else:
-        update_service_status("review_sync", "outage", f"Review sync stale on all {stale} location(s)")
+        update_service_status("review_sync", "outage", "Review sync is stale at every location")
 
 
 def _check_email():
@@ -563,7 +563,11 @@ def _check_labor_analytics():
 
 
 def _locations(n):
-    return f"{n} location" + ("" if n == 1 else "s")
+    """Qualitative on purpose (Benchmarking audit #47, BM1-21): the status
+    page is PUBLIC, and "1 of N locations" or "an error at 1 location on
+    POS X" told a competitor the platform's size and could point at one
+    known customer. Counts stay on the admin console."""
+    return "one or more locations" if n else "no locations"
 
 
 def overall_status(statuses):

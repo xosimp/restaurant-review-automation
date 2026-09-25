@@ -59,6 +59,10 @@ def _redirect(db_path, monkeypatch):
 
 def _rid(db_path, name="Probe Bistro", **kw):
     cat = kw.pop("category", None)
+    # Live long enough, and on a real labor cost basis, to stand in a band
+    # (Benchmarking audit #14, #39).
+    kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
+    kw.setdefault("hourly_rate", 18.0)
     rid = create_restaurant(Restaurant(name=name, owner_email=kw.pop("owner_email", "o@x.test"), **kw),
                             db_path=db_path)
     if cat is not None:
@@ -168,7 +172,7 @@ def _labor_payload(monkeypatch, category):
     monkeypatch.setattr(mobile_api, "analyse_shifts_for_restaurant", lambda rid: a, raising=False)
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda rid: a)
     monkeypatch.setattr(mobile_api, "get_restaurant", lambda rid: types.SimpleNamespace(
-        name="Some Place", category=category, labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago"))
+        name="Some Place", category=category, labor_target_pct=30.0, hourly_rate=18.5, timezone="America/Chicago"))
     monkeypatch.setattr(mobile_api, "_staff_constraints_index", lambda rid: {})
     payload, _ = mobile_api._do_mobile_labor(1)
     return payload["savings_breakdown"]
@@ -411,12 +415,21 @@ def test_a_published_band_leaves_the_viewer_out_and_equals_no_member(db_path):
 
 
 def test_the_platform_band_is_never_called_restaurants_like_yours(db_path):
-    """Probe p_bench: 'top quarter of 5 restaurants like yours' from a platform band."""
-    ids = _cohort(db_path, [20 + i for i in range(10)], cat="bbq")
+    """Probe p_bench: 'top quarter of 5 restaurants like yours' from a platform band.
+    The all-types band now exists only for a behaviour metric (Benchmarking
+    audit #6): this test pinned a labor % platform fallback, which is exactly
+    the "coffee shop vs steakhouse" band #6 removes — it reads reply rate."""
+    ids = []
+    for i in range(10):
+        rid = _rid(db_path, name=f"Peer{i} Smokehouse", category="bbq")
+        _feat(db_path, rid, THIS_WEEK, {"labor_pct_28d": 20.0 + i, "reply_rate_30d": 0.5 + i * 0.02})
+        ids.append(rid)
     sushi = _rid(db_path, name="Omakase Room", category="sushi")
-    _feat(db_path, sushi, THIS_WEEK, {"labor_pct_28d": 18.0})
+    _feat(db_path, sushi, THIS_WEEK, {"labor_pct_28d": 18.0, "reply_rate_30d": 0.9})
     benchmarks.compute(db_path=db_path, cohorts={**{r: "bbq" for r in ids}, sushi: "sushi"})
-    b = intelligence.benchmark(sushi, "labor_pct_28d")
+    labor_b = intelligence.benchmark(sushi, "labor_pct_28d")
+    assert labor_b["available"] is False and "no like-for-like peers" in labor_b["reason"]
+    b = intelligence.benchmark(sushi, "reply_rate_30d")
     assert b["cohort"] == "platform" and b["cohort_label"] == "All restaurants on Cavnar"
     line = benchmarks.context_line(b)
     assert "like yours" not in line and "all types" in line and "band as of " in line
@@ -425,7 +438,11 @@ def test_the_platform_band_is_never_called_restaurants_like_yours(db_path):
     assert "like yours" not in ctx.lower()
 
 
-def test_an_inferred_cohort_says_it_was_inferred(db_path):
+def test_an_inferred_type_never_makes_a_cohort(db_path):
+    """Was test_an_inferred_cohort_says_it_was_inferred, which pinned ten
+    name-guessed "mexican" restaurants forming a published band. A guessed
+    type never joins a group or counts toward a floor (Benchmarking audit
+    #8, BM1-3): no band, no context line, and the reason says to confirm."""
     ids = []
     for i in range(10):
         rid = _rid(db_path, name=f"Tacos {i}")               # no category: inferred mexican
@@ -433,8 +450,12 @@ def test_an_inferred_cohort_says_it_was_inferred(db_path):
         ids.append(rid)
     assert categories.category_for(models.get_restaurant(ids[0], db_path)) == ("mexican", "inferred")
     benchmarks.compute(db_path=db_path, cohorts={r: "mexican" for r in ids})
-    lines = intelligence.context_lines(ids[0])
-    assert lines and "inferred from the restaurant's name" in lines[0]
+    assert benchmarks._row("mexican", "labor_pct_28d", db_path=db_path) is None
+    assert intelligence.context_lines(ids[0]) == []
+    b = intelligence.benchmark(ids[0], "labor_pct_28d")
+    assert b["available"] is False and "confirm" in b["reason"]
+    from intelligence import jobs
+    assert set(jobs.cohorts_for([models.get_restaurant(r, db_path) for r in ids]).values()) == {None}
 
 
 def test_a_pattern_is_retired_when_its_cohort_drops_below_the_floor(db_path):
@@ -442,7 +463,7 @@ def test_a_pattern_is_retired_when_its_cohort_drops_below_the_floor(db_path):
     c.execute("INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, "
               "p_value, q_value, confidence, sentence, evidence_json, status) "
               "VALUES ('sushi:reply_fast_rating','sushi','reply_fast_rating',5,5,0.2,'★',0.5,0.01,0.05,0.6,"
-              "'Across 10 sushi on Cavnar, x.','{}','active')")
+              "'Across 10 sushi on Cavnar, x.','{\"orgs_with\": 8, \"orgs_without\": 8}','active')")
     c.commit(); c.close()
     assert patterns.active("sushi", db_path=db_path)
     out = patterns.discover(db_path=db_path, cohorts={}, shuffles=50)
@@ -454,7 +475,8 @@ def test_an_unconfirmed_pattern_is_not_served_and_a_current_one_is_dated(db_path
     for key, age in (("platform:old", "-90 days"), ("platform:new", "-1 days")):
         c.execute("INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, "
                   "cohen_d, p_value, q_value, confidence, sentence, evidence_json, status, last_confirmed) "
-                  "VALUES (?,'platform','h',5,5,0.2,'%',0.5,0.01,0.05,0.6,'Across 10 restaurants, x.','{}','active',"
+                  "VALUES (?,'platform','h',5,5,0.2,'%',0.5,0.01,0.05,0.6,'Across 10 restaurants, x.',"
+                  "'{\"orgs_with\": 8, \"orgs_without\": 8}','active',"
                   "datetime('now', ?))", (key, age))
     c.commit(); c.close()
     got = patterns.active(db_path=db_path)

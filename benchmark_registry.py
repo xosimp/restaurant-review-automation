@@ -46,7 +46,10 @@ ENTRIES = (
     # ── labor % of sales ────────────────────────────────────────────────
     {"metric": "labor_pct", "category": "full_service", "label": "full-service restaurants",
      "low": 30.0, "high": 34.0, "median": 34.2, "unit": "%",
-     "median_basis": "median labor % (incl. benefits) of profitable full-service operators",
+     "median_basis": "profitable full-service operators' median labor %, including benefits",
+     # NRA counts benefits; Cavnar's labor % is wages from shifts. A
+     # comparison asked for with Cavnar's definition is refused (#14).
+     "definition": "labor_incl_benefits",
      "source": _NRA_2025 + ": full-service median labor (incl. benefits) 36.5% of sales in 2024; "
                "profitable full-service operators median 34.2%.",
      "short": _NRA_SHORT, "source_kind": "published", "year": 2025, "data_year": 2024,
@@ -77,6 +80,7 @@ ENTRIES = (
     {"metric": "food_cost_pct", "category": "full_service", "label": "full-service restaurants",
      "low": 28.0, "high": 32.0, "median": 32.0, "unit": "%",
      "median_basis": "median food and non-alcohol beverage cost of full-service operators",
+     "definition": "food_nonalc_bev_cost_pct_sales",
      "source": _NRA_2025 + ": full-service food and non-alcohol beverage cost median 32.0% of sales in 2024.",
      "short": _NRA_SHORT, "source_kind": "published", "year": 2025, "data_year": 2024,
      # Not steakhouses: steak-heavy menus run higher (the source's own note).
@@ -156,16 +160,27 @@ def entries(metric=None) -> list:
     return [_copy(e) for e in ENTRIES if metric is None or e["metric"] == metric]
 
 
-def lookup(metric, category, published_only=False):
+def definitions_differ(e, definition) -> bool:
+    """True when an entry states what it measures and it is not
+    `definition` (Benchmarking audit #14, BM3-15): the NRA labor median
+    includes benefits; Cavnar's labor % is wages from shifts. An entry with
+    no stated definition is not known to differ."""
+    return bool(definition and e and e.get("definition") and e.get("definition") != definition)
+
+
+def lookup(metric, category, published_only=False, definition=None):
     """The entry for `metric` that applies to restaurant type `category`,
     or None. A type-specific entry wins over an all-restaurant one. With
-    `published_only`, a rule of thumb or vendor figure is no entry."""
+    `published_only`, a rule of thumb or vendor figure is no entry. With
+    `definition`, an entry that measures something else is no entry."""
     cat = (category or "").strip().lower() or None
     best = None
     for e in ENTRIES:
         if e["metric"] != metric:
             continue
         if published_only and e.get("source_kind") != "published":
+            continue
+        if definitions_differ(e, definition):
             continue
         applies = e.get("applies_to") or ()
         if cat and cat in applies:
@@ -175,10 +190,10 @@ def lookup(metric, category, published_only=False):
     return _copy(best, cat) if best else None
 
 
-def for_category(metric, category, source=None, published_only=False):
+def for_category(metric, category, source=None, published_only=False, definition=None):
     """lookup() plus the type's provenance: `category_source` is 'set' or
     'inferred', and `inferred` is True when Cavnar guessed the type."""
-    e = lookup(metric, category, published_only=published_only)
+    e = lookup(metric, category, published_only=published_only, definition=definition)
     if e is None:
         return None
     e["category_source"] = source
@@ -186,15 +201,15 @@ def for_category(metric, category, source=None, published_only=False):
     return e
 
 
-def for_restaurant(metric, restaurant, published_only=False):
-    """The entry for this restaurant's type (its own `category`, else the
-    name-inferred one), or None. Never raises."""
+def for_restaurant(metric, restaurant, published_only=False, definition=None):
+    """The entry for this restaurant's type (its confirmed concept, its own
+    `category`, else the name-inferred one), or None. Never raises."""
     try:
         from intelligence import categories
         cat, src = categories.category_for(restaurant) if restaurant is not None else (None, None)
     except Exception:
         cat, src = None, None
-    return for_category(metric, cat, src, published_only=published_only)
+    return for_category(metric, cat, src, published_only=published_only, definition=definition)
 
 
 def why_absent(metric) -> str | None:

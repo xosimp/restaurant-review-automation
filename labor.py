@@ -1191,7 +1191,14 @@ def savings_breakdown(analysis: dict, analysis_failed: bool = False, restaurant=
     a = analysis or {}
     sample = not analysis_failed and a.get("is_live") is False
     period_days = int(a.get("period_days") or 0)
-    monthly = 0 if sample else int(round(float(a.get("potential_savings_monthly") or 0)))
+    # Where the labor COST comes from (Benchmarking audit #14): on the
+    # unsourced $26/hr default the gap-to-target dollars and the industry
+    # dollars are an assumed wage times hours, so both are withheld and the
+    # reason travels (`dollars_withheld: "default_rate"`). The overtime
+    # premium is labor.py's own figure and is not a comparison, so it stays.
+    basis = _thr.labor_cost_basis(restaurant) if restaurant is not None else None
+    default_rate = basis == "default"
+    monthly = 0 if (sample or default_rate) else int(round(float(a.get("potential_savings_monthly") or 0)))
     ot = 0 if sample else int(round(float(a.get("overtime_premium") or 0)))
     vs_ind = _thr.labor_vs_industry_monthly(
         a.get("overall_labor_pct"), a.get("total_sales"), period_days,
@@ -1199,7 +1206,7 @@ def savings_breakdown(analysis: dict, analysis_failed: bool = False, restaurant=
         sales_data_missing=bool(a.get("sales_data_missing")),
         analysis_failed=bool(analysis_failed or a.get("analysis_failed") or sample
                              or a.get("period_too_short_to_project")),
-        industry_pct=(_ind or {}).get("pct"))
+        industry_pct=(_ind or {}).get("pct"), cost_basis=basis)
     return {
         "labor_monthly": monthly,
         "labor_annual": monthly * 12,
@@ -1211,7 +1218,11 @@ def savings_breakdown(analysis: dict, analysis_failed: bool = False, restaurant=
         "kinds": dict(LABOR_BREAKDOWN_KINDS),
         "overtime_period_days": period_days,
         "data_days": a.get("data_days"),
-        "dollars_withheld": "sample" if sample else None,
+        "dollars_withheld": "sample" if sample else ("default_rate" if default_rate else None),
+        "cost_basis": basis,
+        "cost_basis_label": _thr.LABOR_COST_BASIS_LABELS.get(basis) if basis else None,
+        "labor_target_source": _thr.target_source(restaurant, "labor") if restaurant is not None else None,
+        "labor_target_label": _thr.target_label(restaurant, "labor") if restaurant is not None else None,
     }
 
 

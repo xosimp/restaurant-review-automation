@@ -7,16 +7,22 @@ stopped tomorrow rather than starving the same tail every night
 (run_daily_fetch's rule).
 
 `run_learning` reads only the materialized tables: feedback sync, pattern
-discovery, benchmarks, trends, the confidence log.
+discovery, benchmarks over each restaurant's peer PARTITION (the owner-
+confirmed profile, counted by organisation), the peer assignment ledger,
+the balanced-panel cohort series, the confidence log.
 """
+import hashlib
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime
+from types import SimpleNamespace
 
 import models as _models_mod
 from models import DB_PATH, get_all_restaurants
-from . import categories, feedback, patterns, benchmarks, scoring
+from . import categories, feedback, patterns, benchmarks, scoring, privacy
 from . import features as _features
+from . import metrics_registry as _reg
 
 
 def get_conn(db_path=None):
@@ -65,11 +71,15 @@ SEEDED_HISTORY_DAYS = 90
 
 # The one predicate (one parameter: f"-{SEEDED_HISTORY_DAYS} days"), so SQL
 # readers such as scoring.kind_stats filter exactly as real_restaurant_ids.
+# A test or internal account flagged `exclude_from_learning` (Benchmarking
+# audit #9) is out of every cross-restaurant figure exactly as a demo is.
 REAL_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0 AND "
+                       "COALESCE(exclude_from_learning,0)=0 AND "
                        "(demo_cleared_at IS NULL OR demo_cleared_at < datetime('now', ?))")
 # Its complement over the restaurants table — what readers of other tables
 # exclude (a row whose restaurant is not in the table is left alone).
 SEEDED_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1 OR "
+                         "COALESCE(exclude_from_learning,0)=1 OR "
                          "(demo_cleared_at IS NOT NULL AND demo_cleared_at >= datetime('now', ?))")
 
 
@@ -122,9 +132,226 @@ def active_restaurants(db_path=DB_PATH, include_demo=False) -> list:
 
 
 def cohorts_for(restaurants) -> dict:
-    """{restaurant_id: category or None} — the cohort map every cross-
-    restaurant pass takes, so a category is resolved once per night."""
-    return {r.id: categories.category_for(r)[0] for r in restaurants}
+    """{restaurant_id: category or None} — the type cohort map patterns,
+    feedback and the confidence log take, resolved once per night. Only a
+    type the owner (or admin) SET: a type Cavnar guessed from the name never
+    makes a restaurant a member of a group, and never counts toward a floor
+    (Benchmarking audit #8, BM1-3)."""
+    out = {}
+    for r in restaurants:
+        cat, src = categories.category_for(r)
+        out[r.id] = cat if src == "set" else None
+    return out
+
+
+# ── who may stand in a peer band (Benchmarking audit #9, #39) ─────────────
+# A band is only as good as its members: a trial running on sample or
+# default inputs, a half-connected account and a test account all set
+# other restaurants' ranges (BM1-24). Eligibility, per member:
+MIN_LIVE_WEEKS = 8               # weeks since signup
+MIN_MEMBER_COMPLETENESS = 0.5    # share of the measures on file (features.completeness)
+
+
+def _weeks_since(raw, today):
+    try:
+        d = datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, (today - d).days / 7.0)
+
+
+def member_info(db_path=DB_PATH, today: date = None) -> dict:
+    """{restaurant_id: {org, org_hash, place_id, excluded, live_weeks,
+    cost_basis, profile, category, type_source}} for every restaurant row —
+    what the band builders need to count organisations, merge duplicate
+    listings and decide eligibility. Server-side only; never a payload."""
+    import thresholds as _thr
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM restaurants").fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for row in rows:
+        d = dict(row)
+        ns = SimpleNamespace(**d)
+        cat, src = categories.category_for(ns)
+        org = privacy.org_key(d)
+        out[int(d["id"])] = {
+            "org": org, "org_hash": privacy.org_hash(org),
+            "place_id": (str(d.get("google_place_id") or "").strip() or None),
+            "excluded": bool(d.get("exclude_from_learning")),
+            "live_weeks": _weeks_since(d.get("created_at"), today),
+            "cost_basis": _thr.labor_cost_basis(d),
+            "profile": categories.profile_for(ns),
+            "category": cat if src == "set" else None, "type_source": src,
+        }
+    return out
+
+
+def ineligible(member, row) -> str | None:
+    """Why a restaurant may not stand in any band, or None."""
+    if not member:
+        return None
+    if member.get("excluded"):
+        return "excluded from learning (test or internal account)"
+    if (member.get("live_weeks") or 0) < MIN_LIVE_WEEKS:
+        return f"fewer than {MIN_LIVE_WEEKS} weeks live on Cavnar"
+    try:
+        comp = float((row or {}).get("completeness"))
+    except (TypeError, ValueError):
+        comp = None
+    if comp is not None and comp < MIN_MEMBER_COMPLETENESS:
+        return "less than half of its measures on file"
+    return None
+
+
+# ── the peer partition, with hysteresis (Benchmarking audit #20, #30) ─────
+# The partition is the owner-CONFIRMED profile. A measured signal that
+# disagrees with it (alcohol share against bar-led) moves it only after
+# DRIFT_WEEKS consecutive weeks of disagreement — never on one week's
+# figures, and never on a text edit.
+DRIFT_WEEKS = 4
+BAR_LED_SHARE = 0.40      # alcohol share at which a restaurant runs as bar-led
+_DRIFT_MARGIN = 0.05      # hysteresis band around it
+
+
+def _measured_drift(profile, feats) -> str | None:
+    """'bar_led' / 'not_bar_led' when this week's measured alcohol share
+    contradicts the confirmed profile, else None."""
+    share = (feats or {}).get("alcohol_share")
+    if share is None or not profile or not profile.get("confirmed"):
+        return None
+    bar = bool(profile.get("bar_led"))
+    if not bar and share >= BAR_LED_SHARE + _DRIFT_MARGIN:
+        return "bar_led"
+    if bar and profile.get("service_model") != "bar_led" and share <= BAR_LED_SHARE - _DRIFT_MARGIN:
+        return "not_bar_led"
+    return None
+
+
+def _previous_drift(db_path, today) -> dict:
+    """{restaurant_id: [drift of each earlier week, newest first]}."""
+    week = _features.iso_week(today)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT restaurant_id, week, drift FROM intel_peer_assignments WHERE family='labor' "
+                            "AND week < ? ORDER BY week DESC", (week,)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(int(r["restaurant_id"]), []).append(r["drift"])
+    return out
+
+
+def peer_partitions(members, latest=None, db_path=DB_PATH, today: date = None) -> dict:
+    """{restaurant_id: {family: partition key or None, "_drift": str|None}}
+    for every member: the hard split each metric family is read from
+    (categories.partition_key), built from the confirmed profile only."""
+    today = today or date.today()
+    latest = latest if latest is not None else _features.latest_by_restaurant(db_path=db_path)
+    prev = _previous_drift(db_path, today)
+    out = {}
+    for rid, m in (members or {}).items():
+        prof = dict(m.get("profile") or {})
+        feats = ((latest or {}).get(rid) or {}).get("features") or {}
+        drift = _measured_drift(prof, feats)
+        history = prev.get(rid, [])[:DRIFT_WEEKS - 1]
+        if drift and len(history) == DRIFT_WEEKS - 1 and all(h == drift for h in history):
+            prof["bar_led"] = drift == "bar_led"      # four measured weeks moved it
+        vb = feats.get("volume_band")
+        out[rid] = {fam: categories.partition_key(prof, fam) for fam in categories.FAMILIES}
+        out[rid]["staff"] = categories.partition_key(prof, "staff", volume_band=vb)
+        out[rid]["_drift"] = drift
+    return out
+
+
+_RUNG_ORDER = {"self": 0, "published": 1, "platform": 2, "peers": 3}
+_FAMILY_METRICS = {"format": [m for m in _features.BENCHMARK_KEYS if _reg.partition_family(m) == "format"],
+                   "labor": [m for m in _features.BENCHMARK_KEYS if _reg.partition_family(m) == "labor"],
+                   "food": [m for m in _features.BENCHMARK_KEYS if _reg.partition_family(m) == "food"]}
+_FAMILY_INDUSTRY = {"labor": "labor_pct", "food": "food_cost_pct"}
+
+
+def record_assignments(restaurants, members, partitions, groups, db_path=DB_PATH, today: date = None) -> dict:
+    """The peer assignment ledger (Benchmarking audit #29): per restaurant,
+    week and metric family, the rung of the ladder it reached, the partition,
+    a hash of the peer set (never the ids), n and organisations — the
+    viewer's own organisation left out, as the band it is shown. A changed
+    partition is logged as `comparison_group_changed` (read by
+    confidence._recent_changes, #30), and a rung reached for the first time
+    as `benchmark_rung_up` (#20). In memory from compute()'s groups: one
+    write per restaurant and family, no query per restaurant."""
+    import benchmark_registry as _br
+    today = today or date.today()
+    week = _features.iso_week(today)
+    conn = get_conn(db_path)
+    written = changed = up = 0
+    try:
+        prev = {}
+        try:
+            for r in conn.execute("SELECT restaurant_id, family, rung, partition_key FROM intel_peer_assignments "
+                                  "WHERE week = (SELECT MAX(week) FROM intel_peer_assignments p2 WHERE "
+                                  "p2.restaurant_id = intel_peer_assignments.restaurant_id AND p2.week < ?)",
+                                  (week,)).fetchall():
+                prev[(int(r["restaurant_id"]), r["family"])] = (r["rung"], r["partition_key"])
+        except Exception:
+            prev = {}
+        for rest in restaurants:
+            rid = rest.id
+            m = (members or {}).get(rid) or {}
+            parts = (partitions or {}).get(rid) or {}
+            own_org = m.get("org_hash")
+            for fam in categories.FAMILIES:
+                key = parts.get(fam)
+                rung, n, orgs, hsh = "self", None, None, None
+                if key:
+                    stored = (groups or {}).get(fam, {}).get(key) or {}
+                    others = [(r_, o) for r_, o in stored.get("members", []) if o != own_org]
+                    n = len(others)
+                    orgs = len({o for _r, o in others})
+                    hsh = hashlib.sha256(json.dumps(sorted(r_ for r_, _o in others)).encode()).hexdigest()[:16]                         if others else None
+                    if n >= benchmarks.MIN_QUARTILE_N and orgs >= privacy.MIN_ORGS and stored.get("metrics"):
+                        rung = "peers"
+                if rung == "self" and fam == "format":
+                    plat = (groups or {}).get("format", {}).get("platform") or {}
+                    others = [o for _r, o in plat.get("members", []) if o != own_org]
+                    if len(others) >= benchmarks.MIN_QUARTILE_N and len(set(others)) >= privacy.MIN_ORGS                             and plat.get("metrics"):
+                        rung = "platform"
+                if rung == "self" and fam in _FAMILY_INDUSTRY and (m.get("profile") or {}).get("confirmed"):
+                    if _br.lookup(_FAMILY_INDUSTRY[fam], (m.get("profile") or {}).get("concept")):
+                        rung = "published"
+                prof = m.get("profile") or {}
+                conn.execute(
+                    "INSERT INTO intel_peer_assignments (restaurant_id, week, family, rung, partition_key, "
+                    "peer_set_hash, n, orgs, profile_source, profile_confirmed_at, drift) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(restaurant_id, week, family) DO UPDATE SET rung=excluded.rung, "
+                    "partition_key=excluded.partition_key, peer_set_hash=excluded.peer_set_hash, n=excluded.n, "
+                    "orgs=excluded.orgs, profile_source=excluded.profile_source, "
+                    "profile_confirmed_at=excluded.profile_confirmed_at, drift=excluded.drift, "
+                    "computed_at=datetime('now')",
+                    (rid, week, fam, rung, key, hsh, n, orgs, prof.get("source"), prof.get("confirmed_at"),
+                     parts.get("_drift") if fam == "labor" else None))
+                written += 1
+                before = prev.get((rid, fam))
+                if before and before[1] != key:
+                    conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?,?,?)",
+                                 (rid, "comparison_group_changed",
+                                  json.dumps({"family": fam, "from": before[1], "to": key, "week": week})))
+                    changed += 1
+                if before and _RUNG_ORDER.get(rung, 0) > _RUNG_ORDER.get(before[0], 0):
+                    conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?,?,?)",
+                                 (rid, "benchmark_rung_up",
+                                  json.dumps({"family": fam, "from": before[0], "to": rung, "week": week})))
+                    up += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"written": written, "groups_changed": changed, "rungs_up": up, "week": week}
 
 
 def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_SECONDS, workers=FEATURE_WORKERS) -> dict:
@@ -175,10 +402,18 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     today = today or date.today()
     rs = active_restaurants(db_path)
     cohorts = cohorts_for(rs)
+    members = member_info(db_path=db_path, today=today)
+    latest = _features.latest_by_restaurant(db_path=db_path)
+    partitions = peer_partitions(members, latest=latest, db_path=db_path, today=today)
     out = {"restaurants": len(rs), "cohorts": len({c for c in cohorts.values() if c})}
     out["feedback"] = feedback.sync(db_path=db_path, cohorts=cohorts)
-    out["patterns"] = patterns.discover(db_path=db_path, cohorts=cohorts, today=today)
-    out["benchmarks"] = benchmarks.compute(db_path=db_path, cohorts=cohorts, today=today)
+    out["patterns"] = patterns.discover(db_path=db_path, cohorts=cohorts, today=today, members=members)
+    bm = benchmarks.compute(db_path=db_path, cohorts=partitions, today=today, members=members)
+    groups = bm.pop("groups", {})
+    out["benchmarks"] = bm
+    out["peer_ledger"] = record_assignments(rs, members, partitions, groups, db_path=db_path, today=today)
+    from . import trends
+    out["cohort_series"] = trends.persist(cohorts=partitions, members=members, db_path=db_path, today=today)
     out["confidence_log"] = log_confidence(db_path=db_path, cohorts=cohorts, today=today)
     return out
 

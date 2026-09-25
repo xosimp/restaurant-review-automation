@@ -370,7 +370,7 @@ def public_view(audit):
 
 FIRST_AUDIT = {
     "restaurant_name": "Simple EJ's", "owner_name": "Erik", "locations": 1,
-    "restaurant_type": "Upscale sports bar", "service_model": "Full-service",
+    "restaurant_type": "Upscale sports bar", "service_model": "Full-service", "ownership": "Independent",
 }
 
 

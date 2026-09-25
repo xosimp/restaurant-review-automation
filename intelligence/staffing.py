@@ -8,14 +8,21 @@ lends it one from comparable restaurants — within the privacy floor:
   floor per role family and daypart, per $1k of that day's sales — a
   ratio, stored in its `intel_features` row as `staff_per_1k.<family>.<daypart>`.
   No names, no dollars.
-* Level 3, nightly (benchmarks.compute): the cohort's p25/p50/p75 of each
-  ratio, published only over at least MIN_COHORT restaurants.
+* Level 3, nightly (benchmarks.compute): the peer partition's band of each
+  ratio (service model × bar-led, and — once the restaurant's own sales
+  band is measured — the same sales band).
 * On request (`starting_headcount`): for a restaurant with no history of its
-  own, the cohort median ratio × this restaurant's OWN sales per weekday →
-  people per role and daypart, in the restaurant's own role names, labelled
-  borrowed. Below the floor, or with no category, or with no sales of its own
-  to scale by: nothing, and the reason.
+  own, the PUBLISHED median ratio (benchmarks.published: at least
+  MIN_QUARTILE_N others from privacy.MIN_ORGS organisations, the viewer's
+  organisation out, coarse 0.05 step — Benchmarking audit #10, BM1-7,
+  BM4-3) × this restaurant's OWN sales per weekday → people per role and
+  daypart, in the restaurant's own role names, labelled borrowed. Below the
+  floor, with no confirmed profile, or with no sales of its own to scale by:
+  nothing, and the reason.
 
+The ratio itself never leaves the server: `payload()` ships the rounded
+headcount, the group's label and n — never `people_per_1k` — because even a
+coarse ratio times the owner's own sales is a peer's staffing intensity.
 Every cross-restaurant figure passes privacy.assert_anonymous before it
 leaves this module.
 """
@@ -190,12 +197,25 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
     if has_own_history(restaurant_id, shifts=shifts, db_path=db_path):
         return {"available": False, "own_history": True,
                 "reason": "This restaurant staffs from its own history — nothing is borrowed."}
-    cohort, src = categories.category_for(restaurant) if restaurant is not None else (None, None)
-    if not cohort:
+    prof = categories.profile_for(restaurant) if restaurant is not None else None
+    if not prof or not prof.get("confirmed"):
         return {"available": False, "own_history": False,
-                "reason": "No restaurant type is set, so there is no group of similar restaurants to borrow a starting "
-                          "headcount from. Set one under Account and the first draft can start from theirs."}
-    label = categories.label(cohort)
+                "reason": "No restaurant profile is confirmed yet, so there is no group of similar restaurants to "
+                          "borrow a starting headcount from. Confirm it under Account → Restaurant profile and the "
+                          "first draft can start from theirs."}
+    # Once this restaurant's own sales band is measured, borrow only from the
+    # same band (#10): a $2k/day café scaled from $15k/day rooms rounds every
+    # crew to 0 or 1.
+    vb = None
+    try:
+        from . import features as _features
+        own = _features.latest(restaurant_id, db_path=db_path)
+        vb = ((own or {}).get("features") or {}).get("volume_band")
+    except Exception:
+        vb = None
+    cohort = categories.partition_key(prof, "staff", volume_band=vb)
+    from .benchmarks import published, cohort_label, viewer_org, MIN_QUARTILE_N
+    label = cohort_label(cohort)
     roles = {}
     for _n, role in (roster_roles or {}).items():
         fam = family_of(role)
@@ -205,26 +225,24 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
     if not roles:
         return {"available": False, "own_history": False,
                 "reason": "The roster has no roles yet, so there is nothing to borrow a headcount for."}
-    from .benchmarks import band
+    org = viewer_org(restaurant_id, db_path=db_path)
     ratios = []
     for fam in sorted(roles):
         for part in DAYPARTS:
-            b = band(cohort, metric(fam, part), db_path=db_path)
-            if b and privacy.cohort_ok(b.get("n")) and b.get("p50") is not None:
-                ratios.append({"role_family": fam, "daypart": part, "people_per_1k": privacy.round_effect(b["p50"], 3),
+            b = published(cohort, metric(fam, part), exclude_org=org, db_path=db_path)
+            if b and not b.get("withheld") and b.get("p50") is not None:
+                ratios.append({"role_family": fam, "daypart": part, "people_per_1k": float(b["p50"]),
                                "n": int(b["n"]), "week": b.get("week")})
     if not ratios:
         return {"available": False, "own_history": False, "cohort_label": label,
-                "reason": (f"Fewer than {privacy.MIN_COHORT} similar restaurants ({label.lower()}) have their staffing "
-                           f"measured yet, so no starting headcount is borrowed — the first draft works from your "
-                           f"floors alone.")}
-    # A type Cavnar inferred from the name travels with the borrowed figure
-    # and is said (NS4 M5).
-    cohort_part = privacy.assert_anonymous({"cohort": cohort, "cohort_label": label, "inferred": src == "inferred",
+                "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar', '')}) "
+                           f"from at least {privacy.MIN_ORGS} separate owners have their staffing measured yet, so no "
+                           f"starting headcount is borrowed — the first draft works from your floors alone.")}
+    cohort_part = privacy.assert_anonymous({"cohort": cohort, "cohort_label": label, "inferred": False,
                                             "n": min(r["n"] for r in ratios), "ratios": ratios})
     sales, basis = _own_sales_by_weekday(restaurant_id, restaurant, db_path)
     if not sales:
-        return {"available": False, "own_history": False, "cohort_label": label, "ratios": ratios,
+        return {"available": False, "own_history": False, "cohort_label": label,
                 "reason": ("Similar restaurants' staffing is on file, but it is measured per $1k of sales and this "
                            "restaurant has no sales of its own on file yet to scale it by — connect the POS or set a "
                            "monthly revenue target.")}
@@ -246,10 +264,8 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                 "reason": "Similar restaurants' ratios, scaled to your sales, come to under one person per shift — nothing borrowed."}
     return {"available": True, "borrowed": True, **cohort_part, "headcount": headcount, "by_slot": by_slot,
             "basis": basis,
-            "note": (f"Borrowed: the median of {cohort_part['n']}+ {label.lower()} on Cavnar — people on the floor per "
-                     f"$1k of sales, scaled to {basis}"
-                     + (" (the type was inferred from your restaurant's name — set it under Account)"
-                        if src == "inferred" else "")
+            "note": (f"Borrowed: the median of {cohort_part['n']}+ {label[0].lower() + label[1:]} — people on the "
+                     f"floor per $1k of sales, scaled to {basis}"
                      + ". A starting point until your own weeks replace it.")}
 
 
@@ -280,11 +296,17 @@ def prompt_block(start: dict) -> str:
             + ". Treat them as a sensible first guess, below the owner's floors and anything the owner has said.")
 
 
+# What never reaches a screen: the ratios themselves (#10). The rounded
+# headcount, the group's label and n are what a client is shown.
+_SERVER_ONLY = ("headcount", "ratios", "cohort")
+
+
 def payload(start: dict) -> dict:
-    """The JSON shape for the screens: headcount keyed 'Weekday|daypart'."""
+    """The JSON shape for the screens: headcount keyed 'Weekday|daypart',
+    the group's label and n — never `people_per_1k`."""
     if not start:
         return {"available": False}
-    out = {k: v for k, v in start.items() if k != "headcount"}
+    out = {k: v for k, v in start.items() if k not in _SERVER_ONLY}
     if start.get("headcount"):
         out["headcount"] = {f"{d}|{p}": roles for (d, p), roles in start["headcount"].items()}
     return out

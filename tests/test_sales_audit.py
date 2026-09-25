@@ -28,6 +28,7 @@ def _redirect_db(monkeypatch, db_path):
 
 FULL = {
     "restaurant_name": "Test Tavern", "owner_name": "Erik", "restaurant_type": "Upscale sports bar", "service_model": "Full-service",
+    "ownership": "Independent",
     "fin_annual_revenue": "2400000", "fin_avg_check": "38",
     "lab_labor_pct": "34", "lab_overtime": "yes", "lab_ot_dollars_week": "900",
     "food_cost_pct": "36", "food_waste_week": "600",
@@ -96,7 +97,7 @@ def test_combined_food_cost_does_not_double_count_bar():
 
 def test_performing_well_is_reported_honestly():
     a = {"fin_annual_revenue": "2000000", "lab_labor_pct": "29", "lab_target_pct": "30", "lab_know_daily": "yes", "lab_schedule_how": "Based on forecasted sales",
-         "rev_google_rating": "4.8", "rev_response_rate": "95", "rev_response_time": "Same day"}
+         "rev_google_rating": "4.8", "rev_response_rate": "95", "rev_response_time": "Same day", "ownership": "Independent"}
     r = engine.compute(a)
     assert r["categories"]["labor"]["status"] == "none" and r["categories"]["labor"]["likely"] == 0
     assert r["categories"]["reviews"]["status"] == "none"
@@ -128,9 +129,9 @@ def test_unusually_high_values_do_not_break():
 
 
 def test_missing_data_never_lowers_score():
-    partial = engine.compute({"fin_annual_revenue": "2000000", "lab_labor_pct": "33"})
+    partial = engine.compute({"restaurant_type": "Casual full-service", "fin_annual_revenue": "2000000", "lab_labor_pct": "33"})
     assert partial["scores"]["labor"]["score"] is None  # one signal isn't an assessment
-    two = engine.compute({"fin_annual_revenue": "2000000", "lab_labor_pct": "33", "lab_know_daily": "yes"})
+    two = engine.compute({"restaurant_type": "Casual full-service", "fin_annual_revenue": "2000000", "lab_labor_pct": "33", "lab_know_daily": "yes"})
     assert two["scores"]["labor"]["score"] == 100
     assert two["scores"]["food"]["score"] is None
 
@@ -382,12 +383,12 @@ def test_latest_redirects_for_admin_console_buttons(app, db_path, monkeypatch):
 
 
 def test_gap_recovery_is_capped_in_points():
-    r = engine.compute({"fin_annual_revenue": "2400000", "lab_labor_pct": "45"})
+    r = engine.compute({"restaurant_type": "Casual full-service", "fin_annual_revenue": "2400000", "lab_labor_pct": "45"})
     lab = r["categories"]["labor"]
     # 13 points over a 34 target: uncapped high would be 9.1 pts; capped at 3 pts = $72,000
     assert lab["high"] == 72000 and lab["likely"] == 48000 and lab["low"] == 24000
     assert "capped" in lab["calc"]["formula"]
-    small = engine.compute({"fin_annual_revenue": "2400000", "lab_labor_pct": "35"})["categories"]["labor"]
+    small = engine.compute({"restaurant_type": "Casual full-service", "fin_annual_revenue": "2400000", "lab_labor_pct": "35"})["categories"]["labor"]
     assert small["high"] == 16800  # 1 pt gap × 70% — under the cap, unchanged
 
 
@@ -410,7 +411,7 @@ def test_marketing_agency_replacement_does_not_crash_and_counts_fee():
 
 
 def test_new_restaurant_annualizes_as_estimate_and_lowers_confidence():
-    r = engine.compute({"restaurant_name": "Fresh", "years_in_business": "0.25", "fin_monthly_revenue": "180000", "lab_labor_pct": "36"})
+    r = engine.compute({"restaurant_name": "Fresh", "restaurant_type": "Casual full-service", "years_in_business": "0.25", "fin_monthly_revenue": "180000", "lab_labor_pct": "36"})
     assert r["financials"]["annual_revenue"]["source"] == "estimated" and "opening period" in r["financials"]["annual_revenue"]["note"]
     assert r["context"]["new_restaurant"] and r["context"]["months_open"] == 3
     lab = r["categories"]["labor"]
@@ -500,3 +501,44 @@ console.log(JSON.stringify(results));
     assert r["button"] is False
     assert r["body"] is False
     assert r["null_el"] is False
+
+
+
+# ── Benchmarking audit #15: the published figures, by an explicit type ──────
+
+def test_an_unknown_concept_is_not_assessed_never_scored_as_full_service():
+    """BM1-11: a pizzeria at 26% food cost was scored against 28–32%, and
+    anything unrecognised got the full-service NRA band."""
+    for kind in ("Pizzeria", "Café / bakery", "Other", None):
+        a = {"fin_annual_revenue": "1500000", "lab_labor_pct": "36", "food_cost_pct": "34", "food_sales": "1200000"}
+        if kind:
+            a["restaurant_type"] = kind
+        r = engine.compute(a)
+        assert engine.concept_class(a) is None
+        assert r["categories"]["labor"]["likely"] == 0 and r["categories"]["food"]["likely"] == 0, kind
+        assert "not assessed" in r["categories"]["food"]["current_state"].lower()
+        assert any("published labor figure" in m for m in r["categories"]["labor"]["missing"])
+    picked = dict(a, benchmark_type="Full-service restaurant")
+    assert engine.concept_class(picked) == "family"
+    assert engine.compute(picked)["categories"]["labor"]["likely"] > 0
+
+
+def test_the_audit_reads_the_registry_through_the_type_picker():
+    import benchmark_registry as br
+    for pick, cat in (("Sports bar", "sports_bar"), ("Fast casual / counter", "fast_casual"), ("Fine dining", "fine_dining")):
+        b = engine._bench("labor", engine.concept_class({"benchmark_type": pick}))
+        e = br.lookup("labor_pct", cat)
+        assert b["band"] == (e["low"], e["high"]) and b["source"] == e["source"]
+    assert engine.concept_class({"benchmark_type": "None of these — don't compare"}) is None
+    assert engine._bench("labor", None) is None
+
+
+def test_revenue_per_star_is_sized_only_for_an_independent():
+    base = {"restaurant_type": "Casual full-service", "fin_annual_revenue": "2000000", "rev_google_rating": "4.1",
+            "rev_response_rate": "30"}
+    assert engine.compute(dict(base, ownership="Independent"))["categories"]["reviews"]["likely"] > 0
+    for own in ("Franchise", "Corporate / chain-owned"):
+        rv = engine.compute(dict(base, ownership=own))["categories"]["reviews"]
+        assert rv["likely"] == 0 and "independent" in rv["current_state"]
+    unknown = engine.compute(base)["categories"]["reviews"]
+    assert unknown["likely"] == 0 and any("independent" in m for m in unknown["missing"])

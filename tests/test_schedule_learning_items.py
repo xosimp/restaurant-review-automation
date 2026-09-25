@@ -366,70 +366,106 @@ def test_own_staffing_ratios_are_people_per_1k_of_sales(db):
     assert staffing.compute_ratios(rid, today=dt.date(2026, 9, 20), db_path=db, shifts=shifts[:6]) == {}, "under 7 days"
 
 
-def _cohort_rows(db, n, cohort="pizza", ratio=0.5):
-    """n restaurants' feature rows carrying a server-at-dinner ratio."""
+_CONFIRMED = {"service_model": "counter", "concept": "pizza", "category": "pizza", "profile_source": "set",
+              "profile_confirmed_at": "2026-09-01T00:00:00"}
+_LIVE = (dt.date.today() - dt.timedelta(days=120)).isoformat() + "T00:00:00"
+
+
+def _cohort_rows(db, n, ratio=0.5, start=0):
+    """n restaurants — confirmed counter-service pizzerias, live 17 weeks, on
+    a real labor cost basis — each with a server-at-dinner ratio. Their peer
+    partition is "sm:counter" (Benchmarking audit #7, #20, #39)."""
     week = features.iso_week(dt.date.today())
     ids = []
-    for k in range(n):
-        r = _restaurant(db, name=f"Peer {k}")
+    for k in range(start, start + n):
+        r = _restaurant(db, name=f"Peer {k}", created_at=_LIVE, hourly_rate=17.0, **_CONFIRMED)
         ids.append(r)
-        features.store(r, {"staff_per_1k.server.night": ratio + 0.01 * k}, week=week, db_path=db)
-    return {r: cohort for r in ids}
+        c = models.get_conn(db)
+        c.execute("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) VALUES (?,?,?,0.8)",
+                  (r, week, json.dumps({"staff_per_1k.server.night": ratio + 0.01 * k})))
+        c.commit()
+        c.close()
+    return ids
 
 
 def test_staffing_ratios_are_benchmarked_only_over_the_cohort_floor(db):
-    cohorts = _cohort_rows(db, privacy.MIN_COHORT - 1)
-    benchmarks.compute(db_path=db, cohorts=cohorts)
-    assert benchmarks.band("pizza", "staff_per_1k.server.night", db_path=db) is None
-    more = _cohort_rows(db, 1)
-    benchmarks.compute(db_path=db, cohorts={**cohorts, **more})
-    b = benchmarks.band("pizza", "staff_per_1k.server.night", db_path=db)
+    _cohort_rows(db, privacy.MIN_COHORT - 1)
+    benchmarks.compute(db_path=db)
+    assert benchmarks.band("sm:counter", "staff_per_1k.server.night", db_path=db) is None
+    _cohort_rows(db, 1, start=privacy.MIN_COHORT - 1)
+    benchmarks.compute(db_path=db)
+    b = benchmarks.band("sm:counter", "staff_per_1k.server.night", db_path=db)
     assert b["n"] == privacy.MIN_COHORT and 0.5 <= b["p50"] <= 0.55
 
 
-def _band(db, n, p50=0.5, metric="staff_per_1k.server.night"):
-    c = models.get_conn(db)
-    c.execute("INSERT INTO intel_benchmarks (cohort, metric, week, n, p25, p50, p75, mean) VALUES ('pizza',?,?,?,?,?,?,?)",
-              (metric, features.iso_week(dt.date.today()), n, p50 - 0.1, p50, p50 + 0.1, p50))
-    c.commit()
-    c.close()
-
-
 def test_a_new_restaurant_borrows_a_starting_headcount_from_its_cohort(db):
-    rid = _restaurant(db, name="Tony's Pizzeria", category="pizza")
+    _cohort_rows(db, 9)
+    benchmarks.compute(db_path=db)
+    rid = _restaurant(db, name="Tony's Pizzeria", **_CONFIRMED)
     _sales(db, rid, 14, amount=8000.0)
-    _band(db, privacy.MIN_COHORT)
     out = staffing.starting_headcount(rid, roster_roles={"Ana": "Server", "Ben": "Server", "Cy": "Line Cook"},
                                       shifts=[], db_path=db)
-    assert out["available"] and out["borrowed"] and out["n"] == privacy.MIN_COHORT
-    assert out["headcount"][("Saturday", "night")] == {"Server": 4}, "0.5 per $1k × $8,000 of its OWN sales"
-    assert out["ratios"] == [{"role_family": "server", "daypart": "night", "people_per_1k": 0.5, "n": 5,
-                              "week": features.iso_week(dt.date.today())}]
-    # The cohort named as the one used, never "similar restaurants" (NS4 H4).
-    assert "Borrowed" in out["note"] and "5+ pizza on Cavnar" in out["note"]
+    assert out["available"] and out["borrowed"] and out["n"] == 9
+    # The published median (Harrell-Davis over 0.50..0.58, coarse 0.05 step)
+    # × $8,000 of its OWN Saturday sales.
+    assert out["ratios"][0]["people_per_1k"] == 0.55
+    assert out["headcount"][("Saturday", "night")] == {"Server": 4}
+    # The group named as the one used, never "similar restaurants" (NS4 H4).
+    assert "Borrowed" in out["note"] and "9+ counter-service restaurants on Cavnar" in out["note"]
     shaped = staffing.payload(out)
     assert privacy.assert_anonymous(shaped) is shaped
     assert shaped["headcount"]["Saturday|night"] == {"Server": 4}
     json.dumps(shaped)
 
 
-def test_below_the_floor_nothing_is_borrowed_and_the_reason_is_said(db):
-    rid = _restaurant(db, name="Tony's Pizzeria", category="pizza")
+def test_the_borrowed_ratio_goes_through_the_published_path_and_never_to_a_screen(db):
+    """Benchmarking audit #10 (BM1-7, BM4-3): the borrowed ratio was the
+    internal band() median at n = 5 — one member's exact people per $1k to 3
+    decimals — and the payload shipped it to the screens."""
+    _cohort_rows(db, privacy.MIN_COHORT)            # five: stored, never published
+    benchmarks.compute(db_path=db)
+    assert benchmarks.band("sm:counter", "staff_per_1k.server.night", db_path=db)["n"] == privacy.MIN_COHORT
+    rid = _restaurant(db, name="Tony's Pizzeria", **_CONFIRMED)
     _sales(db, rid, 14, amount=8000.0)
-    _band(db, privacy.MIN_COHORT - 1)
+    out = staffing.starting_headcount(rid, roster_roles={"Ana": "Server"}, shifts=[], db_path=db)
+    assert out["available"] is False and "headcount" not in out and "ratios" not in out
+    assert out["reason"].startswith("Fewer than 8 similar restaurants")
+    c = models.get_conn(db)
+    c.execute("DELETE FROM intel_benchmarks")
+    c.commit()
+    c.close()
+    _cohort_rows(db, 4, start=privacy.MIN_COHORT)   # nine now
+    benchmarks.compute(db_path=db)
+    ok = staffing.starting_headcount(rid, roster_roles={"Ana": "Server"}, shifts=[], db_path=db)
+    shaped = staffing.payload(ok)
+    assert ok["available"] and "ratios" not in shaped and "people_per_1k" not in json.dumps(shaped)
+    assert "cohort" not in shaped and shaped["cohort_label"] and shaped["n"] == 9
+
+
+def test_below_the_floor_nothing_is_borrowed_and_the_reason_is_said(db):
+    _cohort_rows(db, 7)
+    benchmarks.compute(db_path=db)
+    rid = _restaurant(db, name="Tony's Pizzeria", **_CONFIRMED)
+    _sales(db, rid, 14, amount=8000.0)
     out = staffing.starting_headcount(rid, roster_roles={"Ana": "Server"}, shifts=[], db_path=db)
     assert out["available"] is False and "headcount" not in out
-    assert out["reason"].startswith("Fewer than 5 similar restaurants (pizza)")
+    assert out["reason"].startswith("Fewer than 8 similar restaurants (counter-service restaurants)")
 
 
 def test_no_category_no_sales_or_own_history_borrows_nothing(db):
+    _cohort_rows(db, 9)
+    benchmarks.compute(db_path=db)
     rid = _restaurant(db, name="Plain Name")
-    _band(db, 6)
-    assert "No restaurant type is set" in staffing.starting_headcount(rid, roster_roles={"A": "Server"}, shifts=[], db_path=db)["reason"]
-    rid2 = _restaurant(db, name="Pie Shop", category="pizza")
+    assert "No restaurant profile is confirmed" in staffing.starting_headcount(
+        rid, roster_roles={"A": "Server"}, shifts=[], db_path=db)["reason"]
+    # A type set without a confirmed profile borrows nothing either (#8).
+    guessed = _restaurant(db, name="Pie Shop", category="pizza")
+    assert "No restaurant profile is confirmed" in staffing.starting_headcount(
+        guessed, roster_roles={"A": "Server"}, shifts=[], db_path=db)["reason"]
+    rid2 = _restaurant(db, name="Pie Shop 2", **_CONFIRMED)
     out = staffing.starting_headcount(rid2, roster_roles={"A": "Server"}, shifts=[], db_path=db)
     assert out["available"] is False and "no sales of its own" in out["reason"]
-    rid3 = _restaurant(db, name="Old Pizza", category="pizza")
+    rid3 = _restaurant(db, name="Old Pizza", **_CONFIRMED)
     _sales(db, rid3, 14, amount=8000.0)
     _history(db, rid3, "2026-09-07", published=True)
     out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db)

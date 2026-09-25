@@ -8,9 +8,16 @@ Six kinds of comparison, each either available or carrying `why_not`:
             weeks (and the same week last year where one exists), judged
             against its own week-to-week swing. Meaningful at any platform
             size, so it is the headline until peers clear their floors.
-  peers     compared to restaurants like it: the published band of its own
-            type on Cavnar (benchmarks.published — viewer excluded, at least
-            MIN_QUARTILE_N others, coarse, at most 8 weeks old).
+  peers     compared to restaurants like it: the published band of its
+            owner-CONFIRMED peer partition (service model; × bar-led for
+            labor and food cost; × menu family for food cost and waste —
+            categories.partition_key), the viewer's whole organisation left
+            out, at least MIN_QUARTILE_N others from privacy.MIN_ORGS
+            organisations, coarse, frozen weekly, at most 8 weeks old. A
+            small group is blended toward the published median by
+            n/(n+BLEND_KAPPA), and says so. A guessed type compares with no
+            one; the restaurant's own figure below its floor reads "about N
+            more measured days to a comparison".
   platform  compared to every restaurant on Cavnar — ONLY for behaviour
             metrics (metrics_registry.platform_allowed); an all-types band
             for labor %, food cost % or hours per $1k is never shown.
@@ -62,6 +69,10 @@ SELF_GAP_WEEKS = 4              # the latest weeks' rows overlap the current win
 SELF_MIN_POINTS = 6
 # "Compared to your other locations" needs this many measured.
 LOCATION_MIN = 2
+# A small peer group is blended toward the published median with weight
+# n / (n + BLEND_KAPPA) on the group (Benchmarking audit #20, BM2 §6): a
+# 9-restaurant group is not treated as gospel, and the blend fades as n grows.
+BLEND_KAPPA = 8
 
 
 def get_conn(db_path=None):
@@ -220,22 +231,76 @@ def _self(restaurant_id, metric, rows, today=None) -> dict:
     return out
 
 
-def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today, rows):
-    """A published band (peers: the restaurant's type; platform: every
-    restaurant), the viewer's own figure taken out, with its standing and
-    strength."""
+def _own_progress(restaurant_id, metric, db_path, today=None) -> str:
+    """How far this restaurant's OWN figure is from its measured floor, in
+    words an owner can act on: "about 9 more measured days to a comparison"
+    (Benchmarking audit #20, BM2-10)."""
+    today = today or date.today()
+    src = reg.meta(metric).get("source")
+    try:
+        conn = get_conn(db_path)
+        try:
+            if src in ("labor", "inventory", "waste"):
+                since = (today - timedelta(days=28)).isoformat()
+                if metric in ("labor_pct_28d", "labor_pct_sd_28d"):
+                    sql = ("SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+                           "AND labor_pct IS NOT NULL AND sales > 0")
+                else:
+                    sql = "SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0"
+                have = int(conn.execute(sql, (restaurant_id, since)).fetchone()[0] or 0)
+                need = max(1, _features.MIN_MEASURED_DAYS - have)
+                return f"about {need} more measured day{'s' if need != 1 else ''} to a comparison"
+            if src == "reviews":
+                since = (today - timedelta(days=30)).isoformat()
+                have = int(conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND "
+                                        "COALESCE(review_date, fetched_at) >= ?", (restaurant_id, since)).fetchone()[0] or 0)
+                need = max(1, _features.MIN_REVIEWS_FOR_RATIO - have)
+                return f"about {need} more review{'s' if need != 1 else ''} this month to a comparison"
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return "not measured yet for this restaurant"
+
+
+def _blend(metric, band, n, entry):
+    """A small group's band shifted toward the published median by
+    (1 - n/(n+BLEND_KAPPA)), stated. `entry` is a registry entry with a
+    median measured the SAME way (definitions match), else no blend."""
+    if not entry or entry.get("median") is None or band.get("p50") is None:
+        return band, None
+    w = n / float(n + BLEND_KAPPA)
+    shift = (1.0 - w) * (float(entry["median"]) - float(band["p50"]))
+    out = dict(band)
+    for q in ("p25", "p50", "p75"):
+        out[q] = _bm.coarse(metric, float(band[q]) + shift)
+    import benchmark_registry
+    return out, {"group_weight_pct": int(round(w * 100)), "toward": benchmark_registry.cite(entry),
+                 "median": entry["median"],
+                 "text": (f"blended {100 - int(round(w * 100))}% toward the published median "
+                          f"({benchmark_registry.cite(entry)}) because the group is small")}
+
+
+def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today, rows, entry=None):
+    """A published band (peers: the restaurant's confirmed partition;
+    platform: every restaurant), the viewer's whole organisation taken out,
+    with its standing and strength."""
     row = _bm._row(cohort, metric, db_path=db_path, today=today)
     if not row:
         return {"kind": kind, "available": False,
                 "why_not": (f"no current band of at least {_bm.MIN_QUARTILE_N} other "
-                            f"{'restaurants on Cavnar' if kind == 'platform' else _bm.cohort_label(cohort)} "
+                            f"{'restaurants on Cavnar' if kind == 'platform' else _bm.cohort_label(cohort).replace(' on Cavnar', '').lower()} "
                             "with this measured yet")}
     v_now, v_at, own_week, own_stale = _bm._own(restaurant_id, metric, db_path=db_path, today=today,
                                                band_week=row.get("week"))
-    p = _bm.published(cohort, metric, exclude_value=v_at, db_path=db_path, today=today)
+    p = _bm.published(cohort, metric, exclude_org=_bm.viewer_org(restaurant_id, db_path=db_path),
+                      db_path=db_path, today=today)
     if not p or p.get("withheld"):
         return {"kind": kind, "available": False, "value": v_now,
                 "why_not": (p or {}).get("reason") or "the band is withheld"}
+    blend = None
+    if kind == "peers":
+        p, blend = _blend(metric, p, p["n"], entry)
     st, margin = standing(v_now, p, metric, p["n"])
     completeness = (rows[-1].get("completeness") if rows else None)
     out = {"kind": kind, "available": True, "value": v_now, "cohort": cohort,
@@ -243,12 +308,38 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
                             else p["cohort_label"]),
            "type_source": ("platform" if kind == "platform" else type_source),
            "inferred": kind == "peers" and type_source == "inferred",
-           "n": p["n"], "min_n": _bm.MIN_QUARTILE_N, "p25": p["p25"], "p50": p["p50"], "p75": p["p75"],
-           "week": p["week"], "as_of": p["as_of"], "own_week": own_week, "own_stale": own_stale,
-           "standing": st, "margin": margin, "comparable": True,
+           "n": p["n"], "orgs": p.get("orgs"), "min_n": _bm.MIN_QUARTILE_N, "p25": p["p25"], "p50": p["p50"],
+           "p75": p["p75"], "week": p["week"], "as_of": p["as_of"], "own_week": own_week, "own_stale": own_stale,
+           "standing": st, "margin": margin, "comparable": True, "blend": blend,
            "strength": strength(p["n"], p["week"], type_source, platform=(kind == "platform"),
                                 own_stale=own_stale, completeness=completeness, today=today)}
     return out
+
+
+def _peers(restaurant_id, metric, restaurant, db_path, today, rows, industry_entry=None):
+    """The peers kind: the owner-confirmed partition or why there is none."""
+    prof = categories.profile_for(restaurant) if restaurant is not None else None
+    if not prof or not prof.get("confirmed"):
+        sug = categories.suggestion(restaurant) if restaurant is not None else None
+        why = ("this restaurant's profile isn't confirmed, so there is no like-for-like group — confirm it in "
+               "Account → Restaurant profile")
+        out = {"kind": "peers", "available": False, "why_not": why}
+        if sug:
+            out["suggestion"] = sug
+        return out
+    fam = reg.partition_family(metric)
+    key = categories.partition_key(prof, "labor" if fam == "staff" else fam)
+    if not key:
+        return {"kind": "peers", "available": False,
+                "why_not": "set the restaurant's concept in Account → Restaurant profile to compare food cost"}
+    own_now = None
+    if rows and rows[-1]["week"] >= _bm._week_floor(today, _bm.MAX_OWN_AGE_WEEKS):
+        own_now = _num((rows[-1].get("features") or {}).get(metric))
+    if own_now is None:
+        return {"kind": "peers", "available": False, "cohort": key,
+                "cohort_label": _bm.cohort_label(key),
+                "why_not": _own_progress(restaurant_id, metric, db_path, today)}
+    return _band_kind("peers", restaurant_id, metric, key, "set", db_path, today, rows, entry=industry_entry)
 
 
 def _industry(metric, restaurant):
@@ -257,8 +348,23 @@ def _industry(metric, restaurant):
     if not key:
         return {"kind": "industry", "available": False, "why_not": "no published figure for this metric"}
     import benchmark_registry
-    e = benchmark_registry.for_restaurant(key, restaurant)
+    try:
+        _cat, _src = categories.category_for(restaurant) if restaurant is not None else (None, None)
+    except Exception:
+        _cat, _src = None, None
+    if _src == "inferred":
+        # A published figure is quoted for a type the owner confirmed, never
+        # one Cavnar guessed (Benchmarking audit #8, BM2 §6 R1).
+        return {"kind": "industry", "available": False,
+                "why_not": "the restaurant's type was guessed from its name — confirm it to see the published figure"}
+    e = benchmark_registry.for_restaurant(key, restaurant, definition=reg.definition(metric))
     if not e:
+        other = benchmark_registry.for_restaurant(key, restaurant)
+        if other and benchmark_registry.definitions_differ(other, reg.definition(metric)):
+            return {"kind": "industry", "available": False,
+                    "why_not": (f"the published figure ({benchmark_registry.cite(other)}) measures "
+                                f"{other.get('median_basis') or 'something else'}, not the same thing as "
+                                f"this restaurant's {m['label'].lower()}, so it isn't compared")}
         return {"kind": "industry", "available": False,
                 "why_not": "no published figure for this restaurant's type"}
     return {"kind": "industry", "available": True, "source": benchmark_registry.cite(e),
@@ -328,22 +434,14 @@ def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, 
             restaurant = None
     if rows is None:
         rows = _series(restaurant_id, db_path)
-    cat, src = (None, None)
-    try:
-        cat, src = categories.category_for(restaurant) if restaurant is not None else (None, None)
-    except Exception:
-        pass
     comps = []
     for kind in want:
         try:
             if kind == "self":
                 comps.append(_self(restaurant_id, metric, rows, today))
             elif kind == "peers":
-                if not cat or cat == "other":
-                    comps.append({"kind": "peers", "available": False,
-                                  "why_not": "this restaurant's type isn't set, so there is no like-for-like group"})
-                else:
-                    comps.append(_band_kind("peers", restaurant_id, metric, cat, src, db_path, today, rows))
+                comps.append(_peers(restaurant_id, metric, restaurant, db_path, today, rows,
+                                    industry_entry=_blend_entry(metric, restaurant)))
             elif kind == "platform":
                 if not reg.platform_allowed(metric):
                     comps.append({"kind": "platform", "available": False,
@@ -377,6 +475,22 @@ def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, 
     return out
 
 
+def _blend_entry(metric, restaurant):
+    """The published entry a small peer group is blended toward: the
+    confirmed type's, measured the same way as Cavnar's figure."""
+    key = reg.meta(metric).get("industry")
+    if not key or restaurant is None:
+        return None
+    try:
+        import benchmark_registry
+        if categories.category_for(restaurant)[1] != "set":
+            return None
+        return benchmark_registry.for_restaurant(key, restaurant, published_only=True,
+                                                 definition=reg.definition(metric))
+    except Exception:
+        return None
+
+
 def compare_all(restaurant_id, module=None, *, kinds=None, viewer=None, restaurant=None, db_path=DB_PATH,
                 today=None) -> list:
     """compare() for every metric of a module (or every registered metric),
@@ -399,6 +513,8 @@ def headline_text(m, c) -> str:
     if c["kind"] == "peers":
         s = (f"Compared to {c['n']} other {c['cohort_label']} (as of {c['as_of']}), your {label.lower()} is "
              f"{c['standing']}")
+        if c.get("blend"):
+            s += f" — {c['blend']['text']}"
         if c.get("inferred"):
             s += " — your type was guessed from your name; confirm it to sharpen this"
         return s + "."
@@ -434,6 +550,8 @@ def prompt_lines(comparisons) -> list:
                 s = (f"compared to {who}: {c['standing']} (middle {_fmt(c['p50'], unit)}, band "
                      f"{_fmt(c['p25'], unit)}–{_fmt(c['p75'], unit)}; as of {c['as_of']}; "
                      f"{c['strength']['pct']}% comparison strength)")
+                if c.get("blend"):
+                    s += f" — {c['blend']['text']}"
                 if c.get("inferred"):
                     s += " — type guessed from the name, not set by the owner"
                 parts.append(s)
@@ -503,7 +621,10 @@ def payload_for(user, metric=None, module=None, db_path=DB_PATH) -> dict:
         return {"ok": False, "error": "No restaurant on this login."}
     if metric and not reg.meta(metric):
         return {"ok": False, "error": "Unknown metric."}
-    mods = [reg.meta(metric).get("module")] if metric else ([module] if module else None)
+    # A module alias (food, food_cost) is checked as the permission key it
+    # names (inventory): the raw alias is no MODULE_VIEW_PERMISSIONS key, so
+    # every non-admin login was refused its own food cost comparisons.
+    mods = [reg.meta(metric).get("module")] if metric else ([reg.module_key(module)] if module else None)
     allowed = _visible_modules(user)
     if mods and any(mo and allowed is not None and mo not in allowed for mo in mods if mo):
         return {"ok": False, "error": "This login can't see that module."}
