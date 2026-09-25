@@ -66,10 +66,15 @@ def store(restaurant_id, comparisons, week, db_path=DB_PATH):
         conn.close()
 
 
-def read(restaurant_id, metric, kinds=None, db_path=DB_PATH, max_age_hours=MAX_AGE_HOURS, now=None):
+def read(restaurant_id, metric, kinds=None, db_path=DB_PATH, max_age_hours=MAX_AGE_HOURS, now=None,
+         inputs_key=None):
     """The stored engine.compare payload for (restaurant, metric) when it is
-    fresh and the kinds asked for are exactly CACHED_KINDS (the headline and
-    facts were chosen over those), else None. Never raises."""
+    fresh, the kinds asked for are exactly CACHED_KINDS (the headline and
+    facts were chosen over those) and — given `inputs_key` (engine.
+    inputs_key) — it was computed from the restaurant's current profile, pay
+    rates, targets and organisation, else None. A saved profile, pay rate or
+    target therefore misses the cache at once instead of serving the old
+    comparison for up to MAX_AGE_HOURS (re-audit #28, R2-20). Never raises."""
     want = tuple(kinds or ())
     if set(want) != set(CACHED_KINDS):
         return None
@@ -95,6 +100,8 @@ def read(restaurant_id, metric, kinds=None, db_path=DB_PATH, max_age_hours=MAX_A
     except (TypeError, ValueError):
         return None
     if {c.get("kind") for c in payload.get("comparisons") or []} != set(want):
+        return None
+    if inputs_key is not None and payload.get("inputs_key") != inputs_key:
         return None
     payload["cached_at"] = str(row["computed_at"])
     return payload

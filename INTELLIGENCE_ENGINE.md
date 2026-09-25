@@ -107,14 +107,14 @@ Ask, the queue, decisions and the ledger share (legacy
 | `patterns.py` | 2/3 | declarative `HYPOTHESES`; `discover()` per cohort and platform-wide; `active(cohort)` |
 | `benchmarks.py` | 3 | `compute()` weekly over each member's confirmed partition (eligible members only: ≥ 8 live weeks, completeness ≥ 0.5, not excluded, a non-default labor cost basis for labor-cost metrics; one per Google listing); `published(cohort, metric, exclude_org=)` — what may be shown; `benchmark(rid, metric)` — the wrapper older callers keep: the confirmed partition, never an all-types band for a non-behaviour metric ("no like-for-like peers yet"); `context_line(b)`; `cohort_table()` rounded as published (admin) |
 | `metrics_registry.py` | 3 | one row per metric: comparability (behaviour / format / economics), `partition_family`, `DEFINITIONS` (what Cavnar's figure measures), the spread ceilings of the quality gate, `module_key` for aliases |
-| `engine.py` | 3 | the Benchmark Engine: `compare()` / `compare_all()` / `facts()` / `prompt_lines()`; the peers kind walks the ladder (below) |
+| `engine.py` | 3 | the Benchmark Engine: `compare()` / `compare_all()` / `facts()` / `prompt_lines()` / `payload_for()`; `own_eligible()` (the viewer's figure passes a member's eligibility), `standing()`, `strength()`, `outcome_words()`; the peers kind walks the ladder (below) |
 | `trends.py` | 2/3 | weekly medians per cohort × metric over a balanced panel (present ≥ 6 of 8 weeks), joined / left, slope, `emerging()`; `persist()` writes `intel_cohort_series` in the learning pass |
 | `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
 | `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); partition bands (with the sales band once the restaurant's own is measured) come from `benchmarks.compute`; `starting_headcount` lends a restaurant with a CONFIRMED profile and no history of its own the PUBLISHED median (≥ 8 others from ≥ 5 organisations, 0.05 step) scaled by ITS OWN sales, labelled borrowed; `payload()` ships the rounded headcount, the group label and n — never `people_per_1k` (#10) |
 | `dna.py` | 1 → 3 | Restaurant DNA (BM4 §5, Top-50 #24): `measure`/`compute`/`store` the ~30 dimensions (22+ buildable today; S5 beverage share dormant; B10 retention dormant until `last_seen` fills), `normalise` (stated anchors below `MIN_ROBUST_N` = 30 measuring a dimension, robust z = (x − median) ÷ 1.4826·MAD from 30, clipped ±3; the centre and scale ride with each value), `distance(a, b, weights, norms)` (Gower-style, missing-aware, both rows re-normalised from `raw` under one norm set; None below 60% shared weight or 4 shared structural dimensions — 40% and 3 when size, ticket and service model are all shared), `prediction_weights`, `profile(rid)` — the owner's own read — and `payload_for(user)` |
 | `predict.py` | 3 | `predict_effect(rid, kind, metric, tags)` → a fact of kind `prediction` for the P2 rule; `neighbours()` (server-side only); `run_weekly()` into `intel_effects` (DNA, organisations and norms loaded once per pass; bounded and resumable per (kind, metric) pair). Dormant below its floors (every restaurant today) |
-| `comparison_cache.py` | 3 | `materialise()` the engine's comparisons nightly into `intel_benchmark_facts` (bounded, cursor-resumable); `read()` — `engine.compare(..., use_cache=True)` serves a fresh row |
+| `comparison_cache.py` | 3 | `materialise()` the engine's comparisons nightly into `intel_benchmark_facts` (bounded, cursor-resumable); `read()` — `engine.compare(..., use_cache=True)` serves a fresh row computed from the restaurant's current settings (`inputs_key`); `engine.payload_for` (the card, the Home strip, `/api/benchmarks`) reads it |
 | `jobs.py` | — | `run_features()` (bounded, cursor-resumable; writes the DNA row beside the features), `run_learning()` |
 
 ## Background jobs
@@ -191,12 +191,23 @@ Ask, the queue, decisions and the ledger share (legacy
   same type (Pizza), the type set by the owner" / "… inferred from the
   restaurant's name, not set by the owner"), how many measured the figure
   ("measured at k of m in the group": k members measured this metric that
-  week, m the most that measured any benchmarked metric), the as-of date
-  (M/D/YY) and the comparison strength %. The schedule prompt's cohort
-  block (`schedule_engine._cohort_block`) uses the same lines.
+  week, m the most that measured any benchmarked metric, both after the
+  viewer's organisation is taken out, so k is the n the line names), the
+  as-of date (M/D/YY) and the comparison strength %. Each line opens with
+  the restaurant's own figure and which way is better ("this restaurant
+  34% (lower is better)") and gives the standing as an outcome ("worse
+  than 3 in 4 of the group (higher labor % than 3 in 4)"), never a bare
+  "bottom quarter", which on a lower-is-better metric is the highest
+  figure (re-audit #17). A published figure the engine marks not
+  comparable reads "context only, measured differently". The schedule
+  prompt's cohort block (`schedule_engine._cohort_block`) uses the same
+  lines.
 - **Every benchmark a model is handed is a fact** (`engine.facts`, kind
   "benchmark", with `source_kind` / `engine_kind`, `n`, `min_n`, `as_of`,
-  `restaurant_category`, `strength_pct`, `standing`, `comparable`): Ask's
+  `restaurant_category`, `strength_pct`, `standing`, `comparable`,
+  `definition_note`, `inferred`, `metric`, `better` and `own_value` — the
+  restaurant's figure only when it may be ranked; the own figure is also a
+  "computed" fact `bench.<metric>.own`): Ask's
   snapshot records them beside its text (`ask_cavnar.snapshot_benchmark_facts`)
   and types the `read_platform_intelligence` payload's `comparisons` through
   `engine.facts`; the schedule note's context registers the cohort block's
@@ -987,7 +998,12 @@ through `benchmark_views` (L2), which shapes and never compares:
   last 13 weeks" and carries the engine's `why_not` — the self benchmark is the
   headline until peers clear their floors (#18).
 - **Location to location** (`benchmark_views.location_compare`, in the group
-  Home and the phone's locations sheet): the engine's `location` kind, each
+  Home and the phone's locations sheet): the engine's `location` kind (the
+  siblings are the restaurant's `privacy.org_key` organisation, named by
+  `location_name`; a format or economics metric compares only locations in
+  the same confirmed partition, and a location on the $26/hr default or
+  with an irregular waste log is left out — "your locations serve
+  differently" when that leaves fewer than two; closed without a viewer), each
   location first read against its own normal (the engine's `self`), then
   against the median of the owner's other locations, a gap called only when
   it is wider than the location's own noise band and the others' median one
@@ -1011,6 +1027,76 @@ through `benchmark_views` (L2), which shapes and never compares:
   fallback out of the average, one venue capped at 500 reviews of weight, n
   and radius said, and a symmetric neutral tie inside one standard error.
 
+
+## The engine's own normal, eligibility, strength and serving (re-audit, workstream A, 9/24/26)
+
+- **Your normal** (`engine._self`, Top-50 #1, #39). A feature row is a
+  28-day window stored weekly, so neighbouring rows share three of their
+  four weeks; the old ±1·(1.4826·MAD) band over them called 45–54% of an
+  unchanged restaurant's weeks "better" or "worse than your normal". The
+  swing σ is now the pooled variance of rows a whole window apart
+  (`window_sigma`: rows grouped by weeks-back mod 4, so no two share a
+  day), from at least `SELF_MIN_POINTS` (7) baseline weeks and 3 degrees of
+  freedom; a verdict needs |gap| > t₀.₉₇₅(df)·σ + 1.25·σ/√n_eff (n_eff = the
+  independent windows the baseline spans), never under the metric's step —
+  a steady restaurant is called better/worse in ≤10% of weeks, pinned by a
+  simulation test. With a year of history (the same week 51–53 weeks back
+  and its own 13-week baseline) the normal is seasonal: the recent median
+  moved by how the same weeks moved last year, the threshold ×√2, labelled
+  "your own previous 13 weeks, adjusted for this time last year". The
+  payload carries `noise_band` (the threshold — `location_compare` reuses
+  it), `sigma`, `df` and `basis` (recent | seasonal).
+- **Own-figure eligibility** (`engine.own_eligible(restaurant, metric,
+  features_row) -> (ok, why_not)`, #11, #12): the restaurant's own figure
+  must pass what a band member passes. Labor-cost metrics
+  (`LABOR_COST_METRICS`) need a sourced labor cost
+  (`engine.labor_cost_sourced`): the owner's blended rate, a role-rate
+  `_default` or flat rate of the owner's, or role rates pricing at least
+  80% of the last 28 days' hours (`labor_rate_coverage`) — one priced role
+  is not enough. Waste % needs `features.waste_logging_regular`. An
+  ineligible figure is not ranked by peers, platform or location ("set your
+  pay rates to compare labor cost", "waste isn't logged regularly enough to
+  compare (2 of 8 weeks)"); the published figure stays as context with
+  `own_eligible` False; the labor self comparison stays (its own history is
+  on the same assumed wage) and says "on Cavnar's assumed $26/hr, not your
+  payroll"; an irregular waste % gets no self verdict, and irregular weeks
+  never enter a waste baseline. `compare()` returns `own.eligible` and
+  `own.why_not`. Band MEMBERS are still judged by
+  `thresholds.labor_cost_basis` (one priced role counts) in
+  `jobs.member_info` — a stricter viewer than member until that reads
+  `labor_cost_sourced` too.
+- **Standing** (#16): the "about the middle" margin is √(se_median² +
+  σ_own²) — the band median's uncertainty and the restaurant's own swing
+  (`_own_sigma`) — never under the step; a quartile word needs the figure
+  past the quartile by the whole margin, and with too little own history to
+  know σ_own the word stops at above/below the middle. Every band
+  comparison carries `outcome` (`engine.outcome_words`).
+- **Comparison strength** (#15): the group's size is a cap — 40% at 8
+  others, +3 a restaurant, so the 75% ranking level needs about 20, and
+  never above `STRENGTH_MAX` (95). Under the cap, the geometric mean of
+  freshness, `own` (THIS metric's own figure: reviews behind a review
+  measure against four times its floor, else how many of the previous four
+  weeks measured it, times its age), `similarity` (`engine.granularity`:
+  all types 0.6, service model 0.75, × bar-led 0.85, × menu family or
+  sales band 0.95, −5% a coarser ladder rung), `spread` (the IQR as a share
+  of the quality gate's ceiling, `metrics_registry.spread_ratio`) and
+  `orgs` (separate owners ÷ 10). A guessed type holds it at 0
+  (`INFERRED_TYPE_CAP`; `_peers` refuses a guessed type first, so this is
+  the rule restated, not a path taken).
+- **Counts** (#44): `measured` and `members` are counted after the viewer's
+  organisation is taken out (members from each band's server-side
+  `members_json`), so "measured at k of m" agrees with n.
+- **Serving** (#28): `payload_for` drops the metrics of modules the login
+  may not view before computing anything, reads every kind but `location`
+  through `compare(..., use_cache=True)` — a hit only when the row is under
+  36 hours old, `ENGINE_VERSION` matches and its `inputs_key` (a hash of
+  the profile, pay rates, targets and organisation) matches the
+  restaurant's current settings, so a saved profile or pay rate misses at
+  once — and computes `location` live once per request from one
+  sibling-scoped read (no platform-wide scan per metric). A cache miss
+  reads the feature history once for the remaining metrics; the band kinds
+  reuse the rows already read and the viewer's organisation hash once per
+  request.
 
 ## Peer groups: the confirmed profile, the partition and the ladder (Benchmarking audit, workstream P, 9/24/26)
 

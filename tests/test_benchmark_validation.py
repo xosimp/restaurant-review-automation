@@ -174,9 +174,12 @@ def test_the_schedule_prompts_cohort_block_is_the_engines_and_registers_its_fact
     block = schedule_engine._cohort_block(viewer, r)
     assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other counter-service restaurants on Cavnar" in block
     assert "peer group: counter-service restaurants — split by how they serve" in block
-    assert "measured at 13 of 13" in block and "% comparison strength" in block
+    assert "measured at 12 of 12" in block and "% comparison strength" in block
     ctx = labor.schedule_note_context("Build next week." + block, restaurant_id=viewer)
-    assert ctx.facts and all(f.kind == "benchmark" for f in ctx.facts)
+    # The band's figures, plus the restaurant's own figure as a computed
+    # fact so a sentence quoting it binds (re-audit #17, R3-7).
+    assert ctx.facts and any(f.kind == "benchmark" for f in ctx.facts)
+    assert all(f.kind == "benchmark" or f.key.endswith(".own") for f in ctx.facts)
     assert not labor.schedule_note_context("Build next week.", restaurant_id=viewer).facts
 
 
@@ -294,5 +297,5 @@ def test_prompt_lines_say_how_the_group_was_chosen_how_many_measured_and_how_str
     line = engine.prompt_lines([cm])[0]
     assert "peer group: counter-service restaurants — split by how they serve" in line
     assert "from the profile the owner confirmed" in line
-    assert "measured at 13 of 13 in the group" in line and "% comparison strength" in line
+    assert "measured at 12 of 12 in the group" in line and "% comparison strength" in line
     assert "as of " in line and "12 other counter-service restaurants on Cavnar" in line
