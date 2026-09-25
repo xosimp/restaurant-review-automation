@@ -93,8 +93,12 @@ struct LaborSavingsBreakdown: Codable {
     let laborMonthly: Double
     let laborAnnual: Double
     let laborOvertime: Double
-    let laborVsIndustryMonthly: Double
-    let laborVsIndustryAnnual: Double
+    /// Dollars "under industry" — no longer drawn anywhere, and the server
+    /// may send 0 or stop sending them (Benchmarking #2: the published
+    /// labor figure includes benefits and is not the same measure), so both
+    /// are optional and an absent key never fails the Labor screen.
+    var laborVsIndustryMonthly: Double? = nil
+    var laborVsIndustryAnnual: Double? = nil
     /// I10 / NS4 H3: the benchmark the comparison is against (thresholds.
     /// labor_industry_benchmark — a published figure for this restaurant's
     /// type from benchmark_registry) and where it comes from. Null when the
@@ -102,6 +106,12 @@ struct LaborSavingsBreakdown: Codable {
     /// "vs industry" tiles are hidden.
     var laborIndustryPct: Double? = nil
     var laborIndustryBasis: String? = nil
+    /// Where the labor target came from, in the server's words
+    /// (thresholds.target_label, Benchmarking #10): "your target" only for
+    /// one the owner set, else "Cavnar's starting target". Absent on an
+    /// older server.
+    var laborTargetLabel: String? = nil
+    var laborTargetSource: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case laborMonthly = "labor_monthly"
@@ -111,6 +121,8 @@ struct LaborSavingsBreakdown: Codable {
         case laborVsIndustryAnnual = "labor_vs_industry_annual"
         case laborIndustryPct = "labor_industry_pct"
         case laborIndustryBasis = "labor_industry_basis"
+        case laborTargetLabel = "labor_target_label"
+        case laborTargetSource = "labor_target_source"
     }
 
     /// "34.2%" — the benchmark as the tiles name it; nil when there is none.

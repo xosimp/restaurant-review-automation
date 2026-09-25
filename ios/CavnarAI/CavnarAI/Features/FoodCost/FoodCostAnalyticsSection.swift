@@ -226,9 +226,10 @@ struct FoodCostAnalyticsSection: View {
                                     .font(.cavnarNumber(34, weight: 600))
                                     .foregroundStyle(Self.toneColor(c.tone))
                                 if let v = c.variancePts, let t = c.target {
-                                    Text("\(v > 0 ? "+" : "")\(v, specifier: "%.1f") pts vs \(t, specifier: "%.0f")% target")
-                                        .font(.cavnarBody(13.5))
-                                        .foregroundStyle(v > 0 ? Color.cavnarRed : Color.cavnarGreen)
+                                    HomeMixedText.make(c.varianceLine(v, t), size: 13.5, weight: 400,
+                                                       color: c.targetIsOwnersOrSeeded
+                                                           ? (v > 0 ? Color.cavnarRed : Color.cavnarGreen)
+                                                           : Color.cavnarInk3)
                                 } else if let label = c.label {
                                     Text(label).font(.cavnarBody(13.5))
                                         .foregroundStyle(Color.cavnarInk3)

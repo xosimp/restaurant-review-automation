@@ -63,6 +63,17 @@ final class BenchmarkCardStore {
         }
     }
 
+    /// Re-read every card already on screen — after the owner confirms the
+    /// restaurant profile, the card must not keep saying "isn't confirmed"
+    /// for five minutes (Benchmarking #33, R3-25).
+    func reloadAll() async {
+        adoptCurrentSession()
+        let loaded = Array(cards.keys)
+        for module in loaded {
+            await load(module, force: true)
+        }
+    }
+
     func loadLocations(force: Bool = false) async {
         adoptCurrentSession()
         if !force, let at = locationsLoadedAt, Date().timeIntervalSince(at) < Self.reuseFor { return }
@@ -111,6 +122,8 @@ struct HowYouCompareCard: View {
     let module: String
     @State private var store = BenchmarkCardStore.shared
     @State private var showingWhy = false
+    @State private var showingProfile = false
+    @State private var profileCanEdit = true
 
     var body: some View {
         Group {
@@ -119,6 +132,9 @@ struct HowYouCompareCard: View {
             }
         }
         .task { await store.load(module) }
+        .sheet(isPresented: $showingProfile) {
+            AccountRestaurantProfileSheet(canEdit: profileCanEdit)
+        }
     }
 
     private func content(_ card: BenchmarkCard) -> some View {
@@ -146,6 +162,12 @@ struct HowYouCompareCard: View {
                             .font(.cavnarBody(12.5))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let a = b.profileAction {
+                        BenchmarkProfileAction(action: a) {
+                            profileCanEdit = a.canEdit ?? true
+                            showingProfile = true
+                        }
                     }
                 }
             }
@@ -206,12 +228,53 @@ struct HowYouCompareCard: View {
     }
 }
 
+/// Why there is no like-for-like group, fixed where it can be (#29): the
+/// engine's "We think you're X — is that right?" and a Confirm your profile
+/// link that opens the Account profile sheet — or, for a login that may
+/// not change it, who can.
+struct BenchmarkProfileAction: View {
+    let action: BenchmarkBelowMinimum.Action
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let s = action.suggestion {
+                Text(s)
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if action.canEdit == false {
+                Text("The account owner can confirm it in Account.")
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk3)
+            } else {
+                Button {
+                    Haptic.light()
+                    onOpen()
+                } label: {
+                    Text((action.label ?? "Confirm your profile") + " \u{2192}")
+                        .font(.cavnarBody(12.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens your restaurant profile in Account")
+            }
+        }
+    }
+}
+
 /// One metric's row: its tone dot, "Labor % 35% — worse than your normal",
 /// what it is read against, and for a metric the restaurant is behind on,
-/// the one action.
+/// the one action. Compact (Home): the row's own group and strength tag,
+/// and Open for a row with nothing to ask.
 struct HowYouCompareRow: View {
     let row: BenchmarkRow
     var compact: Bool = false
+    var showsTag: Bool = false
+    var onOpenModule: ((String) -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -228,6 +291,10 @@ struct HowYouCompareRow: View {
                     HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if compact, showsTag, let tag = row.tag {
+                    HomeMixedText.make(tag, size: 12, weight: 500, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !compact, let note = row.note {
                     Text(note)
                         .font(.cavnarBody(12.5))
@@ -236,6 +303,19 @@ struct HowYouCompareRow: View {
                 }
                 if let ask = row.action?.ask {
                     HomeAskLink(question: ask, label: row.action?.label ?? "Ask what to change")
+                } else if compact, let module = row.openModule, let onOpenModule {
+                    Button {
+                        Haptic.light()
+                        onOpenModule(module)
+                    } label: {
+                        Text("Open \u{2192}")
+                            .font(.cavnarBody(12.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(row.label)")
                 }
             }
             Spacer(minLength: 0)
@@ -314,7 +394,12 @@ struct ComparisonStrengthSheet: View {
 /// first, each with its tone dot and — when behind — the Ask link. Nothing
 /// when there is nothing to compare.
 struct HomeBenchmarkStrip: View {
+    /// Open a row's module (labor | inventory | reviews | marketing) — the
+    /// web strip's Open (#33).
+    var onOpenModule: ((String) -> Void)? = nil
     @State private var store = BenchmarkCardStore.shared
+    @State private var showingProfile = false
+    @State private var profileCanEdit = true
 
     var body: some View {
         Group {
@@ -326,28 +411,41 @@ struct HomeBenchmarkStrip: View {
                             .tracking(1.1)
                     }
                     VStack(alignment: .leading, spacing: 0) {
+                        // Rows from different groups each name their own
+                        // group and strength (#26); one group is in the kicker.
                         ForEach(card.rows) { row in
-                            HowYouCompareRow(row: row, compact: true)
+                            HowYouCompareRow(row: row, compact: true, showsTag: card.strength == nil,
+                                             onOpenModule: onOpenModule)
                         }
                     }
-                    if let text = card.belowMinimum?.text {
+                    if let b = card.belowMinimum, let text = b.text {
                         Text(text)
                             .font(.cavnarBody(12.5))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let a = b.profileAction {
+                            BenchmarkProfileAction(action: a) {
+                                profileCanEdit = a.canEdit ?? true
+                                showingProfile = true
+                            }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .task { await store.load("home") }
+        .sheet(isPresented: $showingProfile) {
+            AccountRestaurantProfileSheet(canEdit: profileCanEdit)
+        }
     }
 
-    /// "HOW YOU COMPARE · VS YOUR OWN PREVIOUS 13 WEEKS · 72% STRENGTH"
+    /// "HOW YOU COMPARE · VS YOUR OWN PREVIOUS 13 WEEKS · 72% COMPARISON
+    /// STRENGTH" — the web's wording, one wording on both clients (#33).
     static func kicker(_ card: BenchmarkCard) -> String {
         var parts = ["HOW YOU COMPARE"]
         if let who = card.who?.text { parts.append(who.uppercased()) }
-        if let pct = card.strength?.pct { parts.append("\(pct)% STRENGTH") }
+        if let pct = card.strength?.pct { parts.append("\(pct)% COMPARISON STRENGTH") }
         return parts.joined(separator: " \u{00B7} ")
     }
 }

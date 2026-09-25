@@ -110,7 +110,7 @@ struct AccountRestaurantProfileSheet: View {
 
                     if let p = payload?.profile {
                         HStack(spacing: 6) {
-                            AccountChip(text: p.confirmed ? "Confirmed" : "Not confirmed", muted: !p.confirmed)
+                            AccountChip(text: Self.confirmedText(p), muted: !p.confirmed)
                         }
                         if let s = p.suggestion, !p.confirmed {
                             suggestionCard(s)
@@ -148,6 +148,14 @@ struct AccountRestaurantProfileSheet: View {
             .cavnarPostedOverlay(postedLabel) { dismiss() }
             .task { await load() }
         }
+    }
+
+    /// "Confirmed 9/24/26" — the stamp is UTC, shown on the phone's own
+    /// calendar day, as the web shows it (Benchmarking #33).
+    static func confirmedText(_ p: RestaurantProfilePayload.Profile) -> String {
+        guard p.confirmed else { return "Not confirmed" }
+        guard let at = p.confirmedAt, !at.isEmpty else { return "Confirmed" }
+        return "Confirmed " + CavnarDate.mdyLocal(at)
     }
 
     // MARK: - Sections
@@ -267,6 +275,10 @@ struct AccountRestaurantProfileSheet: View {
                 apply(d)
                 Haptic.success()
                 postedLabel = "Profile confirmed"
+                // The How you compare cards were read under the old profile:
+                // re-read them now rather than saying "isn't confirmed" for
+                // another five minutes (Benchmarking #33).
+                Task { await BenchmarkCardStore.shared.reloadAll() }
             } else {
                 errorText = d.error ?? "Couldn't save the profile."
             }

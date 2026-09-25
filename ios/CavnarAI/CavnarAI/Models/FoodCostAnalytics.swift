@@ -146,6 +146,10 @@ struct FoodCostTrendTarget: Decodable {
     let weekly: Double?
     /// "live" or "history" — which source the figure came from.
     let basis: String?
+    /// Whose target the line is (Benchmarking #10): "your target", or
+    /// "Cavnar's starting target" when the owner never set one. Absent on
+    /// an older server.
+    var label: String? = nil
 }
 
 struct FoodCostAnalytics: Decodable {
@@ -232,6 +236,13 @@ struct FoodCostAnalytics: Decodable {
         let variancePts: Double?
         let basis: String?
         let missing: [MissingComponent]?
+        /// Where the target came from, in the server's words (Benchmarking
+        /// #10): "your target" only for one the owner set, else Cavnar's
+        /// starting target — and `source` "default" is no verdict, so the
+        /// variance is drawn in ink, not red or green. Absent on an older
+        /// server.
+        var foodCostTargetLabel: String? = nil
+        var foodCostTargetSource: String? = nil
 
         struct MissingComponent: Decodable, Hashable {
             let component: String
@@ -240,7 +251,18 @@ struct FoodCostAnalytics: Decodable {
         enum CodingKeys: String, CodingKey {
             case ok, pct, target, label, tone, basis, missing
             case variancePts = "variance_pts"
+            case foodCostTargetLabel = "food_cost_target_label"
+            case foodCostTargetSource = "food_cost_target_source"
         }
+
+        /// "+2.1 pts vs Cavnar's starting target of 30%"
+        func varianceLine(_ v: Double, _ t: Double) -> String {
+            let pts = String(format: "%.1f", v)
+            return "\(v > 0 ? "+" : "")\(pts) pts vs \(foodCostTargetLabel ?? "target") of \(String(format: "%.0f", t))%"
+        }
+
+        /// Red/green only against a target someone chose.
+        var targetIsOwnersOrSeeded: Bool { foodCostTargetSource != "default" }
     }
 
     struct RecipeCoverage: Decodable {

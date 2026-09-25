@@ -117,8 +117,32 @@ final class ConfidenceIntegrationTests: XCTestCase {
             "Demand forecasts here: inside the range on 64% of the 14 nights that had one · 21 nights measured · 12% mean error · nights came in 3% below the forecast on average",
             "Past weekly sales projections here have been close (8% mean error over 5 weeks); they have run 6% high on average",
         ])
-        XCTAssertEqual(LaborAnalyticsSection.industryLine(diff: -3.3, industryText: "34.5%"),
-                       "Your labor is 3.3 points below the 34.5% industry benchmark")
+        // The published mark is context (Benchmarking #2): no "points below
+        // the industry benchmark" sentence is built any more.
+        XCTAssertTrue(LaborAnalyticsSection.industryDefinitionNote.contains("context, not a like-for-like"))
+    }
+
+    /// Benchmarking #2 / #10: the server may drop the "vs industry" dollars
+    /// (or send 0) and names the target — the decoder takes both.
+    func testLaborIndustryDollarsAbsentAndTheServersTargetLabel() throws {
+        let s = try decode(LaborStats.self, """
+            {\(Self.laborBase),
+             "savings_breakdown": {"labor_monthly": 0, "labor_annual": 0, "labor_overtime": 0,
+               "labor_target_label": "Cavnar's starting target", "labor_target_source": "default"},
+             "labor_upcoming": [], "demand_accuracy": null, "week_projection_accuracy": null}
+            """)
+        XCTAssertNil(s.savingsBreakdown.laborVsIndustryMonthly)
+        XCTAssertNil(s.savingsBreakdown.laborVsIndustryAnnual)
+        XCTAssertEqual(LaborAnalyticsSection.targetName(s), "Cavnar's starting target")
+        XCTAssertEqual(LaborAnalyticsSection.targetLegend(s, target: 30), "Cavnar's starting target (30%)")
+        let older = try decode(LaborStats.self, """
+            {\(Self.laborBase),
+             "savings_breakdown": {"labor_monthly": 0, "labor_annual": 0, "labor_overtime": 0,
+               "labor_vs_industry_monthly": 0, "labor_vs_industry_annual": 0}, "labor_upcoming": [],
+             "demand_accuracy": null, "week_projection_accuracy": null}
+            """)
+        XCTAssertEqual(older.savingsBreakdown.laborVsIndustryMonthly, 0)
+        XCTAssertEqual(LaborAnalyticsSection.targetLegend(older, target: 30), "Your target (30%)")
     }
 
     func testLaborFieldsAbsentAndNull() throws {

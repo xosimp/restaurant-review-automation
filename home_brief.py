@@ -909,6 +909,40 @@ def assign(rid, key, title, contact_id, detail=None, user_id=None, role=None, su
 CRITICAL_LOW_NAMED = 4
 
 
+# The peer ledger's metric families, as Home names them: the module the
+# "How you compare" card for them lives on, and what an owner calls them.
+_RUNG_FAMILY = {"format": (("reviews", "marketing"), "reviews and marketing"),
+                "labor": (("labor",), "labor"),
+                "food": (("inventory",), "food cost")}
+# Only a real comparison is announced: a published figure is context, and
+# "your own normal" was always there.
+_RUNG_WHOM = {"peers": "restaurants like yours", "platform": "every restaurant on Cavnar"}
+
+
+def comparison_changes(events, active_keys) -> list:
+    """Home's "new comparison available" lines (Benchmarking #44): one per
+    metric family that reached a peer or platform comparison since the last
+    visit, for a module this login can see — {text, tone, module, at}."""
+    import json as _json
+    out, seen = [], set()
+    for ev in events or ():
+        try:
+            d = _json.loads(ev.get("event_data") or "{}")
+        except (TypeError, ValueError):
+            continue
+        fam, to = d.get("family"), d.get("to")
+        if fam in seen or fam not in _RUNG_FAMILY or to not in _RUNG_WHOM:
+            continue
+        mods, what = _RUNG_FAMILY[fam]
+        mod = next((m for m in mods if m in (active_keys or ())), None)
+        if not mod:
+            continue
+        seen.add(fam)
+        out.append({"text": f"New comparison available: your {what} figures are now compared with {_RUNG_WHOM[to]}",
+                    "tone": "good", "module": mod, "at": ev.get("created_at")})
+    return out
+
+
 def _build(current_user, present=True):
     from models import get_review_stats, get_active_modules, get_sentiment_trend, get_top_issues, get_labor_history, is_in_quiet_hours
     from time_utils import restaurant_now
@@ -1062,6 +1096,12 @@ def _build(current_user, present=True):
     # conn.close(), so it always returned {} and the "you've hidden this
     # before — tell us why" prompt could never fire (#7).
     hidden_counts = times_hidden(conn, rid)
+    # A comparison that became available since the last visit — the peer
+    # ledger's `benchmark_rung_up` (intelligence.jobs.record_assignments),
+    # which nothing read (Benchmarking #44, R2-19).
+    rung_ups = _rows_dict(conn, "SELECT event_data, created_at FROM activity_log WHERE restaurant_id=? AND "
+                                "event_type='benchmark_rung_up' AND created_at >= ? ORDER BY id DESC LIMIT 6",
+                          (rid, since_sql))
     # Replies owed: reviews from the last REPLY_OWED_MAX_AGE_DAYS only.
     # get_review_stats counts every drafted review ever imported, so a
     # freshly connected Google account read "212 drafted, waiting for you"
@@ -1919,6 +1959,9 @@ def _build(current_user, present=True):
                             "severity": "critical" if a["alert_type"] in ("1star", "health", "neg_spike") else ("important" if a["alert_type"] in ("2star", "negative_trend", "rating_threshold", "labor_over", "no_response") else "watch")})
     if alerts_since:
         add_change(f"{_plural(alerts_since, 'alert')} fired", "warn", "alerts")
+
+    for ch in comparison_changes(rung_ups, active_keys):
+        add_change(ch["text"], ch["tone"], ch["module"], ch["at"])
 
     # ── upcoming: next review pull, digest, quiet hours ────────────────────
     from zoneinfo import ZoneInfo

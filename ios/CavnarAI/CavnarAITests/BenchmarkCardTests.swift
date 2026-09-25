@@ -61,7 +61,59 @@ final class BenchmarkCardTests: XCTestCase {
         XCTAssertTrue(card.rows.isEmpty)
         let strip = BenchmarkCard(who: BenchmarkWho(kind: "self", text: "vs your own previous 13 weeks"),
                                   strength: BenchmarkStrength(pct: 72))
-        XCTAssertEqual(HomeBenchmarkStrip.kicker(strip), "HOW YOU COMPARE \u{00B7} VS YOUR OWN PREVIOUS 13 WEEKS \u{00B7} 72% STRENGTH")
+        // One strength wording on both clients (#33): the web's.
+        XCTAssertEqual(HomeBenchmarkStrip.kicker(strip),
+                       "HOW YOU COMPARE \u{00B7} VS YOUR OWN PREVIOUS 13 WEEKS \u{00B7} 72% COMPARISON STRENGTH")
+    }
+
+    /// Benchmarking fix round (#2, #25, #26, #29): a context row has no
+    /// standing, the own figure carries its date, a row names its own group,
+    /// and a profile reason carries its action.
+    func testContextStaleTagsAndTheProfileAction() throws {
+        let card = try decode(BenchmarkCard.self, """
+            {"ok": true, "who": {"kind": "mixed", "text": "2 comparisons — vs restaurants like yours and your own normal; each row says which"},
+             "below_minimum": {"text": "Your restaurant profile isn't confirmed yet — here's how you compare to your own last 13 weeks.",
+                               "why_not": "this restaurant's profile isn't confirmed", "reason": "unconfirmed",
+                               "action": {"kind": "profile", "label": "Confirm your profile",
+                                          "suggestion": "We think you're a pizza place — is that right?", "can_edit": false}},
+             "rows": [{"metric": "food_cost_pct_28d", "label": "Food cost %", "kind": "industry", "value_text": "31%",
+                       "standing": null, "context": true, "tone": "neutral", "against": "full-service Italian",
+                       "middle_text": "28%–34%", "own_as_of": "9/20/26", "note": "Measured differently, so context."},
+                      {"metric": "labor_pct_28d", "label": "Labor %", "kind": "peers", "value_text": "34%",
+                       "standing": "in the group's worst quarter — higher than 3 in 4", "tone": "warn", "behind": true,
+                       "against": "9 other full-service restaurants", "middle_text": "30%", "strength_pct": 80,
+                       "own_as_of": "9/20/26", "as_of": "9/20/26", "tag": "vs 9 like yours \u{00B7} 80% comparison strength",
+                       "open_module": "labor"}]}
+            """)
+        let ctx = try XCTUnwrap(card.rows.first)
+        XCTAssertTrue(ctx.context)
+        XCTAssertEqual(ctx.headline, "Food cost % 31%")
+        XCTAssertEqual(ctx.detail, "published: full-service Italian (28%–34%) \u{00B7} your figure 9/20/26")
+        let peers = try XCTUnwrap(card.rows.last)
+        XCTAssertEqual(peers.detail, "vs 9 other full-service restaurants (30%) \u{00B7} 80% comparison strength \u{00B7} your figure 9/20/26 \u{00B7} group as of 9/20/26")
+        XCTAssertEqual(peers.tag, "vs 9 like yours \u{00B7} 80% comparison strength")
+        XCTAssertEqual(peers.openModule, "labor")
+        let a = try XCTUnwrap(card.belowMinimum?.profileAction)
+        XCTAssertEqual(a.canEdit, false)
+        XCTAssertEqual(a.suggestion, "We think you're a pizza place — is that right?")
+        XCTAssertEqual(card.belowMinimum?.reason, "unconfirmed")
+    }
+
+    /// #10: Food Cost names its targets as the server does, and a starting
+    /// target is no red/green verdict.
+    func testTheServersTargetLabelsOnFoodCost() throws {
+        let c = try decode(FoodCostAnalytics.FoodCostCOGS.self, """
+            {"ok": true, "pct": 32.1, "target": 30, "variance_pts": 2.1,
+             "food_cost_target_label": "Cavnar's starting target", "food_cost_target_source": "default"}
+            """)
+        XCTAssertEqual(c.varianceLine(2.1, 30), "+2.1 pts vs Cavnar's starting target of 30%")
+        XCTAssertFalse(c.targetIsOwnersOrSeeded)
+        let old = try decode(FoodCostAnalytics.FoodCostCOGS.self, #"{"ok": true, "pct": 32.1, "target": 30}"#)
+        XCTAssertTrue(old.targetIsOwnersOrSeeded)
+        let t = try decode(FoodCostTrendTarget.self, #"{"pct": 4.5, "weekly": 120, "basis": "history", "label": "Cavnar's starting target"}"#)
+        XCTAssertEqual(FoodCostTrendChart.captionName(t), "Cavnar's starting target")
+        let untagged = try decode(FoodCostTrendTarget.self, #"{"pct": 4.5, "weekly": 120, "basis": "history"}"#)
+        XCTAssertEqual(FoodCostTrendChart.captionName(untagged), "Your target")
     }
 
     func testLocationsDecodeWithTheirOwnNormalAndTheirGap() throws {

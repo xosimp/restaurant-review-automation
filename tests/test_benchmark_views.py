@@ -101,7 +101,11 @@ def test_card_with_peers_names_who_how_many_and_the_strength_as_a_percentage(db_
     assert all(r["pct"] is None or 0 <= r["pct"] <= 100 for r in s["rows"]) and s["meaning"]
     row = next(r for r in d["rows"] if r["metric"] == "labor_pct_28d")
     assert row["kind"] == "peers" and isinstance(row["strength_pct"], int)
-    assert row["standing"] in ("top quarter", "above the middle", "about the middle")
+    # The engine's quartile word is kept as standing_key; the screen reads
+    # outcome words (#17) — "bottom quarter" never reaches an owner.
+    assert row["standing_key"] in ("top quarter", "above the middle", "about the middle")
+    assert row["standing"] in ("in the group's best quarter — lower than 3 in 4", "better than the group's middle",
+                               "about the group's middle")
 
 
 def test_home_strip_puts_what_the_restaurant_is_behind_on_first(db_path):
