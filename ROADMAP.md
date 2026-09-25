@@ -14,7 +14,7 @@ A living list of what's open, what's next, and what's deliberately on hold. Upda
 - **Task sheets, phase 1** (`docs/plans/TASK_SHEETS_PLAN.md`): starts once Erik answers the open questions at the end of that plan.
 - **Back Office CSV import** (`docs/plans/BACK_OFFICE_INTEGRATION.md`): starts once his team sends one export each of items, a count, a recipe and a week of invoices.
 - **Repository cleanup, tiers 4–6** (from the Sep 21 architecture audit): the four assets that need an external check before removal, then the architecture items — DDL off request paths, the 34 hand-duplicated web/mobile route pairs, one config module, one model registry, the bound-import migration, the demo-seed and engine extractions.
-- **Apollo.io upgrade**: on hold pending the Gia Mia follow-up outcome — upgrade only if that deal falls through, not proactively.
+- **Apollo.io upgrade**: the hold is lifted — it waited on the Gia Mia follow-up, and Gia Mia is not going to be a client (9/25/26). Decide on its own merits.
 
 ## Recently shipped (most recent first — trim entries older than ~2 months)
 

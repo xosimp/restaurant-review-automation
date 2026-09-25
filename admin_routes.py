@@ -1163,32 +1163,6 @@ def seed_reviews(restaurant_id, current_user):
 
     return jsonify(ok=True, seeded=new_count)
 
-@admin_bp.route("/admin/reseed-demo-data/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def reseed_demo_data(restaurant_id, current_user):
-    """Manually re-run the demo-data seed for a restaurant flagged is_demo.
-
-    This used to run unconditionally on every server boot for Gia Mia,
-    wiping and replacing its reviews on every deploy. That's the right
-    behavior for a restaurant that's still just a pitched demo, but there
-    was no guard stopping it from continuing to wipe real client data if
-    that restaurant ever converted to a paying client. Now it only runs
-    when explicitly triggered here, and only if is_demo is still true —
-    flip is_demo off in admin and this route (and the boot-time refresh)
-    both refuse.
-    """
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found"), 404
-    if not restaurant.is_demo:
-        return jsonify(ok=False, error="This restaurant is not flagged is_demo — refusing to reseed real client data"), 400
-    try:
-        from demo_seed import _refresh_gia_mia_reviews
-        _refresh_gia_mia_reviews(restaurant_id)
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
-
 @admin_bp.route("/admin/ai-usage/<int:restaurant_id>")
 @admin_required
 def ai_usage(restaurant_id, current_user):
@@ -2137,309 +2111,6 @@ def send_referral(current_user):
         return jsonify(ok=False, error=_safe_err(e))
 
 
-@admin_bp.route("/api/admin/seed-labor-history", methods=["POST"])
-@admin_required
-def seed_labor_history(current_user):
-    """One-time: seed June 2025 labor_daily_history for Gia Mia (id=2)."""
-    from datetime import date, timedelta
-    from models import init_db
-    init_db()  # ensure table exists
-
-    restaurant_id = int(request.json.get("restaurant_id", 2))
-    DAY_TEMPLATES = {
-        0: {"sales": 8200,  "hours": 71},
-        1: {"sales": 8800,  "hours": 76},
-        2: {"sales": 10500, "hours": 91},
-        3: {"sales": 12200, "hours": 105},
-        4: {"sales": 16400, "hours": 142},
-        5: {"sales": 18800, "hours": 163},
-        6: {"sales": 13200, "hours": 114},
-    }
-    HOLIDAY_OVERRIDES = {
-        "2025-06-15": {"sales": 22400, "hours": 194},  # Father's Day 2025
-    }
-    DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    conn = get_conn()
-    inserted = 0
-    d = date(2025, 6, 2)
-    while d <= date(2025, 6, 29):
-        ds = d.strftime("%Y-%m-%d")
-        tmpl = HOLIDAY_OVERRIDES.get(ds, DAY_TEMPLATES[d.weekday()])
-        sales = float(tmpl["sales"])
-        hours = float(tmpl["hours"])
-        labor_cost = round(hours * 26, 2)
-        labor_pct  = round(labor_cost / sales * 100, 2)
-        conn.execute("""
-            INSERT OR REPLACE INTO labor_daily_history
-              (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours, saved_at)
-            VALUES (?,?,?,?,?,?,?,datetime('now'))
-        """, (restaurant_id, ds, DAYS_OF_WEEK[d.weekday()], labor_pct, labor_cost, sales, hours))
-        inserted += 1
-        d += timedelta(days=1)
-    conn.commit()
-    # Also set revenue target, labor target, and hours/operations notes
-    gia_mia_hours = (
-        "RESTAURANT HOURS: Open 11:00am daily. "
-        "Close: 9:00pm Sun–Wed; 10:00pm Thu–Sat. "
-        "\n\nSTAFF ARRIVAL TIMES (hard rules — do not deviate):\n"
-        "- Bussers: arrive 8:00am every day.\n"
-        "- Cooks: arrive 8:30am Mon–Thu; arrive 8:00am Fri, Sat, Sun.\n"
-        "- Servers: arrive 10:00am every day (1 hour before 11am open for side work).\n"
-        "- Bartenders: NO morning shifts — evening only. "
-        "Bartenders start no earlier than 3:00pm. "
-        "Bartenders stay 1 hour after close: until 10:00pm Sun–Wed; until 11:00pm Thu–Sat.\n"
-        "\nSHIFT END / CLOSER RULES:\n"
-        "- Always keep 2 servers as closers (until restaurant close time).\n"
-        "- Cut all other servers 1–1.5h before close when volume allows "
-        "(earlier cut on slow Mon/Tue projections, later cut on high-volume Thu–Sat).\n"
-        "- Fri/Sat: 3 server closers + 2 bartender closers.\n"
-        "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
-        "- Bussers cut 30min before close."
-    )
-    # Keep role_rates_json NULL — base wages alone (~$12.68/hr blended) don't match
-    # Gia Mia's reported 22.46% which is fully-loaded (wages + 8% payroll taxes + tip-out + workers comp).
-    # The flat $26/hr fallback correctly represents their all-in cost per labor hour.
-    conn.execute("""
-        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?, role_rates_json=NULL
-        WHERE id=?
-    """, (365000.0, 23.0, gia_mia_hours, restaurant_id))
-    conn.commit()
-
-    # Seed realistic Gia Mia shift CSV — 2 weeks reflecting actual metrics
-    # ~$91,250/wk revenue, 22.46% labor at $26/hr blended ≈ 788h/wk total
-    # Staff: 20 employees across server/cook/bartender/host roles
-    gia_mia_csv = """date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes
-2026-06-01,Monday,Sofia R.,Server,4:30pm,9:30pm,5.0,5.0,8000,
-2026-06-01,Monday,Marcus T.,Server,4:30pm,10:00pm,5.5,5.5,8000,
-2026-06-01,Monday,Jamie L.,Server,11:00am,4:00pm,5.0,5.0,8000,
-2026-06-01,Monday,Priya K.,Server,11:00am,4:30pm,5.5,5.5,8000,
-2026-06-01,Monday,Elena V.,Server,4:00pm,9:00pm,5.0,5.0,8000,
-2026-06-01,Monday,Derek M.,Bartender,4:00pm,11:00pm,7.0,7.0,8000,
-2026-06-01,Monday,Tomas H.,Bartender,4:30pm,10:00pm,5.5,5.5,8000,
-2026-06-01,Monday,Carlos B.,Cook,10:30am,7:00pm,8.5,8.5,8000,
-2026-06-01,Monday,Amy C.,Cook,3:00pm,10:00pm,7.0,7.0,8000,
-2026-06-01,Monday,Raj P.,Cook,11:00am,7:00pm,8.0,8.0,8000,
-2026-06-01,Monday,James H.,Host,11:00am,5:30pm,6.5,6.5,8000,
-2026-06-01,Monday,Lena S.,Host,4:00pm,10:00pm,6.0,6.0,8000,
-2026-06-02,Tuesday,Sofia R.,Server,4:30pm,10:00pm,5.5,5.5,9000,
-2026-06-02,Tuesday,Marcus T.,Server,4:30pm,10:30pm,6.0,6.0,9000,
-2026-06-02,Tuesday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,9000,
-2026-06-02,Tuesday,Priya K.,Server,11:00am,4:30pm,5.5,5.5,9000,
-2026-06-02,Tuesday,Elena V.,Server,4:00pm,9:30pm,5.5,5.5,9000,
-2026-06-02,Tuesday,Nina W.,Server,4:30pm,10:00pm,5.5,5.5,9000,
-2026-06-02,Tuesday,Derek M.,Bartender,4:00pm,11:30pm,7.5,7.5,9000,
-2026-06-02,Tuesday,Tomas H.,Bartender,4:30pm,10:30pm,6.0,6.0,9000,
-2026-06-02,Tuesday,Carlos B.,Cook,10:30am,7:00pm,8.5,8.5,9000,
-2026-06-02,Tuesday,Amy C.,Cook,2:30pm,10:30pm,8.0,8.0,9000,
-2026-06-02,Tuesday,Raj P.,Cook,11:00am,7:30pm,8.5,8.5,9000,
-2026-06-02,Tuesday,James H.,Host,11:00am,5:30pm,6.5,6.5,9000,
-2026-06-02,Tuesday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,9000,
-2026-06-03,Wednesday,Sofia R.,Server,4:30pm,10:30pm,6.0,6.0,11000,
-2026-06-03,Wednesday,Marcus T.,Server,4:30pm,11:00pm,6.5,6.5,11000,
-2026-06-03,Wednesday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,11000,
-2026-06-03,Wednesday,Priya K.,Server,11:00am,5:00pm,6.0,6.0,11000,
-2026-06-03,Wednesday,Elena V.,Server,4:00pm,10:30pm,6.5,6.5,11000,
-2026-06-03,Wednesday,Nina W.,Server,4:30pm,10:30pm,6.0,6.0,11000,
-2026-06-03,Wednesday,Marco D.,Server,5:00pm,10:30pm,5.5,5.5,11000,
-2026-06-03,Wednesday,Derek M.,Bartender,4:00pm,11:30pm,7.5,7.5,11000,
-2026-06-03,Wednesday,Tomas H.,Bartender,4:30pm,11:30pm,7.0,7.0,11000,
-2026-06-03,Wednesday,Carlos B.,Cook,10:00am,7:00pm,9.0,9.0,11000,
-2026-06-03,Wednesday,Amy C.,Cook,2:00pm,11:00pm,9.0,9.0,11000,
-2026-06-03,Wednesday,Raj P.,Cook,11:00am,7:30pm,8.5,8.5,11000,
-2026-06-03,Wednesday,Leo K.,Cook,3:00pm,10:00pm,7.0,7.0,11000,
-2026-06-03,Wednesday,James H.,Host,11:00am,5:30pm,6.5,6.5,11000,
-2026-06-03,Wednesday,Lena S.,Host,4:00pm,11:00pm,7.0,7.0,11000,
-2026-06-04,Thursday,Sofia R.,Server,4:30pm,11:00pm,6.5,6.5,13000,
-2026-06-04,Thursday,Marcus T.,Server,4:30pm,11:30pm,7.0,7.0,13000,
-2026-06-04,Thursday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,13000,
-2026-06-04,Thursday,Priya K.,Server,11:00am,5:00pm,6.0,6.0,13000,
-2026-06-04,Thursday,Elena V.,Server,4:00pm,11:00pm,7.0,7.0,13000,
-2026-06-04,Thursday,Nina W.,Server,4:30pm,11:00pm,6.5,6.5,13000,
-2026-06-04,Thursday,Marco D.,Server,5:00pm,11:00pm,6.0,6.0,13000,
-2026-06-04,Thursday,Gina F.,Server,4:30pm,10:30pm,6.0,6.0,13000,
-2026-06-04,Thursday,Derek M.,Bartender,4:00pm,12:00am,8.0,8.0,13000,
-2026-06-04,Thursday,Tomas H.,Bartender,4:30pm,11:30pm,7.0,7.0,13000,
-2026-06-04,Thursday,Kim T.,Bartender,6:00pm,12:00am,6.0,6.0,13000,
-2026-06-04,Thursday,Carlos B.,Cook,10:00am,7:30pm,9.5,9.5,13000,
-2026-06-04,Thursday,Amy C.,Cook,2:00pm,11:00pm,9.0,9.0,13000,
-2026-06-04,Thursday,Raj P.,Cook,11:00am,8:00pm,9.0,9.0,13000,
-2026-06-04,Thursday,Leo K.,Cook,3:00pm,11:00pm,8.0,8.0,13000,
-2026-06-04,Thursday,James H.,Host,11:00am,6:00pm,7.0,7.0,13000,
-2026-06-04,Thursday,Lena S.,Host,4:00pm,11:30pm,7.5,7.5,13000,
-2026-06-05,Friday,Sofia R.,Server,11:00am,4:30pm,5.5,5.5,18000,
-2026-06-05,Friday,Marcus T.,Server,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-05,Friday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,18000,
-2026-06-05,Friday,Priya K.,Server,4:30pm,11:30pm,7.0,7.0,18000,
-2026-06-05,Friday,Elena V.,Server,11:00am,4:30pm,5.5,5.5,18000,
-2026-06-05,Friday,Nina W.,Server,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-05,Friday,Marco D.,Server,5:00pm,12:00am,7.0,7.0,18000,
-2026-06-05,Friday,Gina F.,Server,11:00am,5:00pm,6.0,6.0,18000,
-2026-06-05,Friday,Tony A.,Busser,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-05,Friday,Sam V.,Busser,11:00am,5:30pm,6.5,6.5,18000,
-2026-06-05,Friday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,18000,
-2026-06-05,Friday,Tomas H.,Bartender,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-05,Friday,Kim T.,Bartender,5:30pm,12:00am,6.5,6.5,18000,
-2026-06-05,Friday,Carlos B.,Cook,10:00am,8:00pm,10.0,10.0,18000,
-2026-06-05,Friday,Amy C.,Cook,12:00pm,10:00pm,10.0,10.0,18000,
-2026-06-05,Friday,Raj P.,Cook,10:30am,8:30pm,10.0,10.0,18000,
-2026-06-05,Friday,Leo K.,Cook,3:00pm,12:00am,9.0,9.0,18000,
-2026-06-05,Friday,James H.,Host,11:00am,6:00pm,7.0,7.0,18000,
-2026-06-05,Friday,Lena S.,Host,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-06,Saturday,Sofia R.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-06,Saturday,Marcus T.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-06,Saturday,Priya K.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Elena V.,Server,11:00am,5:30pm,6.5,6.5,20000,
-2026-06-06,Saturday,Nina W.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Marco D.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-06,Saturday,Gina F.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Tony A.,Busser,11:00am,6:00pm,7.0,7.0,20000,
-2026-06-06,Saturday,Sam V.,Busser,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,20000,
-2026-06-06,Saturday,Tomas H.,Bartender,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-06,Saturday,Kim T.,Bartender,5:00pm,12:00am,7.0,7.0,20000,
-2026-06-06,Saturday,Carlos B.,Cook,9:00am,7:00pm,10.0,10.0,20000,
-2026-06-06,Saturday,Amy C.,Cook,11:00am,9:00pm,10.0,10.0,20000,
-2026-06-06,Saturday,Raj P.,Cook,9:30am,7:30pm,10.0,10.0,20000,
-2026-06-06,Saturday,Leo K.,Cook,2:00pm,12:00am,10.0,10.0,20000,
-2026-06-06,Saturday,James H.,Host,11:00am,7:00pm,8.0,8.0,20000,
-2026-06-06,Saturday,Lena S.,Host,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-07,Sunday,Sofia R.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-07,Sunday,Marcus T.,Server,4:30pm,10:30pm,6.0,6.0,12250,
-2026-06-07,Sunday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,12250,
-2026-06-07,Sunday,Priya K.,Server,4:00pm,10:00pm,6.0,6.0,12250,
-2026-06-07,Sunday,Elena V.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-07,Sunday,Nina W.,Server,4:30pm,10:30pm,6.0,6.0,12250,
-2026-06-07,Sunday,Marco D.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-07,Sunday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,12250,
-2026-06-07,Sunday,Tomas H.,Bartender,4:00pm,11:00pm,7.0,7.0,12250,
-2026-06-07,Sunday,Kim T.,Bartender,5:00pm,11:00pm,6.0,6.0,12250,
-2026-06-07,Sunday,Carlos B.,Cook,9:00am,6:30pm,9.5,9.5,12250,
-2026-06-07,Sunday,Amy C.,Cook,11:00am,8:00pm,9.0,9.0,12250,
-2026-06-07,Sunday,Raj P.,Cook,10:00am,7:00pm,9.0,9.0,12250,
-2026-06-07,Sunday,Leo K.,Cook,2:00pm,10:00pm,8.0,8.0,12250,
-2026-06-07,Sunday,James H.,Host,11:00am,5:30pm,6.5,6.5,12250,
-2026-06-07,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,
-2026-06-08,Monday,Sofia R.,Server,4:30pm,9:30pm,5.0,5.0,8000,
-2026-06-08,Monday,Marcus T.,Server,4:30pm,10:00pm,5.5,5.5,8000,
-2026-06-08,Monday,Jamie L.,Server,11:00am,4:00pm,5.0,5.0,8000,
-2026-06-08,Monday,Priya K.,Server,11:00am,4:30pm,5.5,5.5,8000,
-2026-06-08,Monday,Elena V.,Server,4:00pm,9:00pm,5.0,5.0,8000,
-2026-06-08,Monday,Derek M.,Bartender,4:00pm,11:00pm,7.0,7.0,8000,
-2026-06-08,Monday,Tomas H.,Bartender,4:30pm,10:00pm,5.5,5.5,8000,
-2026-06-08,Monday,Carlos B.,Cook,10:30am,7:00pm,8.5,8.5,8000,
-2026-06-08,Monday,Amy C.,Cook,3:00pm,10:00pm,7.0,7.0,8000,
-2026-06-08,Monday,Raj P.,Cook,11:00am,7:00pm,8.0,8.0,8000,
-2026-06-08,Monday,James H.,Host,11:00am,5:30pm,6.5,6.5,8000,
-2026-06-08,Monday,Lena S.,Host,4:00pm,10:00pm,6.0,6.0,8000,
-2026-06-09,Tuesday,Sofia R.,Server,4:30pm,10:00pm,5.5,5.5,9000,
-2026-06-09,Tuesday,Marcus T.,Server,4:30pm,10:30pm,6.0,6.0,9000,
-2026-06-09,Tuesday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,9000,
-2026-06-09,Tuesday,Priya K.,Server,11:00am,4:30pm,5.5,5.5,9000,
-2026-06-09,Tuesday,Elena V.,Server,4:00pm,9:30pm,5.5,5.5,9000,
-2026-06-09,Tuesday,Nina W.,Server,4:30pm,10:00pm,5.5,5.5,9000,
-2026-06-09,Tuesday,Derek M.,Bartender,4:00pm,11:30pm,7.5,7.5,9000,
-2026-06-09,Tuesday,Tomas H.,Bartender,4:30pm,10:30pm,6.0,6.0,9000,
-2026-06-09,Tuesday,Carlos B.,Cook,10:30am,7:00pm,8.5,8.5,9000,
-2026-06-09,Tuesday,Amy C.,Cook,2:30pm,10:30pm,8.0,8.0,9000,
-2026-06-09,Tuesday,Raj P.,Cook,11:00am,7:30pm,8.5,8.5,9000,
-2026-06-09,Tuesday,James H.,Host,11:00am,5:30pm,6.5,6.5,9000,
-2026-06-09,Tuesday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,9000,
-2026-06-10,Wednesday,Sofia R.,Server,4:30pm,10:30pm,6.0,6.0,11000,
-2026-06-10,Wednesday,Marcus T.,Server,4:30pm,11:00pm,6.5,6.5,11000,
-2026-06-10,Wednesday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,11000,
-2026-06-10,Wednesday,Priya K.,Server,11:00am,5:00pm,6.0,6.0,11000,
-2026-06-10,Wednesday,Elena V.,Server,4:00pm,10:30pm,6.5,6.5,11000,
-2026-06-10,Wednesday,Nina W.,Server,4:30pm,10:30pm,6.0,6.0,11000,
-2026-06-10,Wednesday,Marco D.,Server,5:00pm,10:30pm,5.5,5.5,11000,
-2026-06-10,Wednesday,Derek M.,Bartender,4:00pm,11:30pm,7.5,7.5,11000,
-2026-06-10,Wednesday,Tomas H.,Bartender,4:30pm,11:30pm,7.0,7.0,11000,
-2026-06-10,Wednesday,Carlos B.,Cook,10:00am,7:00pm,9.0,9.0,11000,
-2026-06-10,Wednesday,Amy C.,Cook,2:00pm,11:00pm,9.0,9.0,11000,
-2026-06-10,Wednesday,Raj P.,Cook,11:00am,7:30pm,8.5,8.5,11000,
-2026-06-10,Wednesday,Leo K.,Cook,3:00pm,10:00pm,7.0,7.0,11000,
-2026-06-10,Wednesday,James H.,Host,11:00am,5:30pm,6.5,6.5,11000,
-2026-06-10,Wednesday,Lena S.,Host,4:00pm,11:00pm,7.0,7.0,11000,
-2026-06-11,Thursday,Sofia R.,Server,4:30pm,11:00pm,6.5,6.5,13000,
-2026-06-11,Thursday,Marcus T.,Server,4:30pm,11:30pm,7.0,7.0,13000,
-2026-06-11,Thursday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,13000,
-2026-06-11,Thursday,Priya K.,Server,11:00am,5:00pm,6.0,6.0,13000,
-2026-06-11,Thursday,Elena V.,Server,4:00pm,11:00pm,7.0,7.0,13000,
-2026-06-11,Thursday,Nina W.,Server,4:30pm,11:00pm,6.5,6.5,13000,
-2026-06-11,Thursday,Marco D.,Server,5:00pm,11:00pm,6.0,6.0,13000,
-2026-06-11,Thursday,Gina F.,Server,4:30pm,10:30pm,6.0,6.0,13000,
-2026-06-11,Thursday,Derek M.,Bartender,4:00pm,12:00am,8.0,8.0,13000,
-2026-06-11,Thursday,Tomas H.,Bartender,4:30pm,11:30pm,7.0,7.0,13000,
-2026-06-11,Thursday,Kim T.,Bartender,6:00pm,12:00am,6.0,6.0,13000,
-2026-06-11,Thursday,Carlos B.,Cook,10:00am,7:30pm,9.5,9.5,13000,
-2026-06-11,Thursday,Amy C.,Cook,2:00pm,11:00pm,9.0,9.0,13000,
-2026-06-11,Thursday,Raj P.,Cook,11:00am,8:00pm,9.0,9.0,13000,
-2026-06-11,Thursday,Leo K.,Cook,3:00pm,11:00pm,8.0,8.0,13000,
-2026-06-11,Thursday,James H.,Host,11:00am,6:00pm,7.0,7.0,13000,
-2026-06-11,Thursday,Lena S.,Host,4:00pm,11:30pm,7.5,7.5,13000,
-2026-06-12,Friday,Sofia R.,Server,11:00am,4:30pm,5.5,5.5,18000,
-2026-06-12,Friday,Marcus T.,Server,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-12,Friday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,18000,
-2026-06-12,Friday,Priya K.,Server,4:30pm,11:30pm,7.0,7.0,18000,
-2026-06-12,Friday,Elena V.,Server,11:00am,4:30pm,5.5,5.5,18000,
-2026-06-12,Friday,Nina W.,Server,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-12,Friday,Marco D.,Server,5:00pm,12:00am,7.0,7.0,18000,
-2026-06-12,Friday,Gina F.,Server,11:00am,5:00pm,6.0,6.0,18000,
-2026-06-12,Friday,Tony A.,Busser,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-12,Friday,Sam V.,Busser,11:00am,5:30pm,6.5,6.5,18000,
-2026-06-12,Friday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,18000,
-2026-06-12,Friday,Tomas H.,Bartender,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-12,Friday,Kim T.,Bartender,5:30pm,12:00am,6.5,6.5,18000,
-2026-06-12,Friday,Carlos B.,Cook,10:00am,8:00pm,10.0,10.0,18000,
-2026-06-12,Friday,Amy C.,Cook,12:00pm,10:00pm,10.0,10.0,18000,
-2026-06-12,Friday,Raj P.,Cook,10:30am,8:30pm,10.0,10.0,18000,
-2026-06-12,Friday,Leo K.,Cook,3:00pm,12:00am,9.0,9.0,18000,
-2026-06-12,Friday,James H.,Host,11:00am,6:00pm,7.0,7.0,18000,
-2026-06-12,Friday,Lena S.,Host,4:30pm,12:00am,7.5,7.5,18000,
-2026-06-13,Saturday,Sofia R.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-13,Saturday,Marcus T.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Jamie L.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-13,Saturday,Priya K.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Elena V.,Server,11:00am,5:30pm,6.5,6.5,20000,
-2026-06-13,Saturday,Nina W.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Marco D.,Server,11:00am,5:00pm,6.0,6.0,20000,
-2026-06-13,Saturday,Gina F.,Server,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Tony A.,Busser,11:00am,6:00pm,7.0,7.0,20000,
-2026-06-13,Saturday,Sam V.,Busser,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,20000,
-2026-06-13,Saturday,Tomas H.,Bartender,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-13,Saturday,Kim T.,Bartender,5:00pm,12:00am,7.0,7.0,20000,
-2026-06-13,Saturday,Carlos B.,Cook,9:00am,7:00pm,10.0,10.0,20000,
-2026-06-13,Saturday,Amy C.,Cook,11:00am,9:00pm,10.0,10.0,20000,
-2026-06-13,Saturday,Raj P.,Cook,9:30am,7:30pm,10.0,10.0,20000,
-2026-06-13,Saturday,Leo K.,Cook,2:00pm,12:00am,10.0,10.0,20000,
-2026-06-13,Saturday,James H.,Host,11:00am,7:00pm,8.0,8.0,20000,
-2026-06-13,Saturday,Lena S.,Host,4:30pm,12:00am,7.5,7.5,20000,
-2026-06-14,Sunday,Sofia R.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-14,Sunday,Marcus T.,Server,4:30pm,10:30pm,6.0,6.0,12250,
-2026-06-14,Sunday,Jamie L.,Server,11:00am,4:30pm,5.5,5.5,12250,
-2026-06-14,Sunday,Priya K.,Server,4:00pm,10:00pm,6.0,6.0,12250,
-2026-06-14,Sunday,Elena V.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-14,Sunday,Nina W.,Server,4:30pm,10:30pm,6.0,6.0,12250,
-2026-06-14,Sunday,Marco D.,Server,11:00am,5:00pm,6.0,6.0,12250,
-2026-06-14,Sunday,Derek M.,Bartender,11:00am,7:00pm,8.0,8.0,12250,
-2026-06-14,Sunday,Tomas H.,Bartender,4:00pm,11:00pm,7.0,7.0,12250,
-2026-06-14,Sunday,Kim T.,Bartender,5:00pm,11:00pm,6.0,6.0,12250,
-2026-06-14,Sunday,Carlos B.,Cook,9:00am,6:30pm,9.5,9.5,12250,
-2026-06-14,Sunday,Amy C.,Cook,11:00am,8:00pm,9.0,9.0,12250,
-2026-06-14,Sunday,Raj P.,Cook,10:00am,7:00pm,9.0,9.0,12250,
-2026-06-14,Sunday,Leo K.,Cook,2:00pm,10:00pm,8.0,8.0,12250,
-2026-06-14,Sunday,James H.,Host,11:00am,5:30pm,6.5,6.5,12250,
-2026-06-14,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,"""
-
-    # Save as client shifts_csv
-    from models import save_client_data
-    save_client_data(restaurant_id, "shifts", gia_mia_csv, source="seed")
-
-    conn.close()
-    return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id, labor_target_set=23.0, monthly_revenue_target_set=365000, shifts_seeded=True)
-
-
 # ── Changelog admin ──────────────────────────────────────────────────────────
 
 @admin_bp.route("/admin/api/changelog", methods=["GET"])
@@ -2754,6 +2425,38 @@ def admin_api_set_demo(restaurant_id, current_user):
     except Exception:
         pass
     return jsonify(ok=True, restaurant_id=restaurant_id, is_demo=on)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/delete-demo", methods=["POST"])
+@admin_required
+def admin_api_delete_demo(restaurant_id, current_user):
+    """Permanently delete a DEMO account and every row that belongs to it
+    (models.delete_restaurant). Two gates, both server-side: the restaurant
+    must be flagged is_demo — a real client has to be marked as a demo first,
+    which is its own confirmed step — and the request must carry the
+    restaurant's exact name. Added to retire the Gia Mia demo (9/25/26)."""
+    from models import get_restaurant, delete_restaurant
+    data = request.get_json(silent=True) or {}
+    current = get_restaurant(restaurant_id)
+    if not current:
+        return jsonify(ok=False, error="Not found"), 404
+    if int(getattr(current, "is_demo", 0) or 0) != 1:
+        return jsonify(ok=False, error="Only a restaurant flagged as a demo can be deleted here."), 400
+    if (data.get("confirm_name") or "").strip() != (current.name or "").strip():
+        return jsonify(ok=False, error="The name did not match. Nothing was deleted."), 400
+    try:
+        deleted = delete_restaurant(restaurant_id)
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    try:
+        import admin_events
+        admin_events.record("admin", "demo.deleted", restaurant_id=restaurant_id,
+                            amount=sum(deleted.values()),
+                            summary=f"Demo account {current.name} (#{restaurant_id}) deleted by "
+                                    f"{current_user.get('username')}")
+    except Exception:
+        pass
+    return jsonify(ok=True, restaurant_id=restaurant_id, rows=sum(deleted.values()), tables=deleted)
 
 
 @admin_bp.route("/admin/api/events")

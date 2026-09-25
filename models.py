@@ -2998,11 +2998,6 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
     return demo_seed._seed_simple_ejs(db_path)
 
 
-def _seed_gia_mia(db_path: str = DB_PATH):
-    import demo_seed
-    return demo_seed._seed_gia_mia(db_path)
-
-
 # ── Restaurant CRUD ───────────────────────────────────────────────────────────
 
 # Alert-configuration fields on the Restaurant dataclass (models.py:~409-441)
@@ -3100,7 +3095,7 @@ def _notify_restaurant_change(restaurant_id):
 
 
 # Other tenants' names, for the Response Validation Layer's T1 rule (NS6 §B):
-# "Unlike Gia Mia down the street…" and "Restaurants like Simple EJ's…"
+# "Unlike Luigi's down the street…" and "Restaurants like Simple EJ's…"
 # passed every check. One read of every restaurant's name per process,
 # dropped on any restaurant change and after _TENANT_NAMES_TTL (a new
 # restaurant is created outside update_restaurant).

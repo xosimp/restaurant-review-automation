@@ -54,7 +54,7 @@ def _is_demo(restaurant_id: int) -> bool:
 def _demo_shifts_csv() -> str:
     """
     Generate a realistic 8-week CSV of shift + sales data for a busy
-    Italian casual-dining restaurant (Gia Mia style). Used in demo mode
+    Italian casual-dining restaurant. Used in demo mode
     so the full labor.py analysis pipeline can be exercised without real creds.
     """
     import random

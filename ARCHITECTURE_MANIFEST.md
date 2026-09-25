@@ -62,7 +62,7 @@ Each service is a set of modules with one owner-module that other code is meant 
 | **Auth & security** | `auth.py` (sessions, decorators, staff portal identity) | `security.py` (durable throttling, breached-password check, freeze), `permissions.py` (roles, module view gates), `csrf.py`, `security_headers.py`, `guest_links.py`, `credentials.py`, `provisioning.py` (account from a signed contract) | decorators `login_required` / `mobile_login_required` / `admin_required` / `staff_login_required` |
 | **HTTP surfaces** | `hosted_dashboard.py` (assembly only: blueprints, boot, error pages, `/`, `/health`) | `client_api.py` (web), `mobile_api.py` (iOS), `strategy_routes.py` (both), `admin_routes.py` + `admin_ops.py` + `admin_events.py`, `auth_routes.py`, `staff_routes.py`, `status_routes.py` + `status_manager.py`, `sales_audit_routes.py` (+ `sales_audit_*.py`, `sales_audits.py`), `http_layer.py` (gzip, cache headers, metrics) | see `API_REFERENCE.md` |
 | **Billing & contracts** | `pricing.py` (the one price list) | `docusign_helper.py`, `emails.create_stripe_checkout`, `webhook_routes` (inbound), `provisioning.py` | — |
-| **Demo accounts** | `demo_seed.py` | wrappers in `models` for the boot block and tests | `demo_seed.start_background_seed()` once at boot; admin reseed route |
+| **Demo accounts** | `demo_seed.py` | wrappers in `models` for the boot block and tests | `demo_seed.start_background_seed()` once at boot |
 | **Configuration** | `config.py` (env values read in more than one module) | `time_utils.py` (zones and stamps), `pricing.py` | `config.base_url()` etc.; a value read in one module stays in that module |
 
 ---
@@ -132,7 +132,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `decisions` | 2 | the owner's decision record |
 | `delayed` | 2 | actions with an undo window |
 | `demand` | 2 | demand forecast from same-weekday medians |
-| `demo_seed` | 4 | the Gia Mia / Simple EJ's demo accounts |
+| `demo_seed` | 4 | the Simple EJ's demo account (the Gia Mia demo was removed 9/25/26) |
 | `docusign_helper` | 2 | DocuSign over REST |
 | `drafter` | 2 | review reply drafting |
 | `emails` | 2 | every email: `BRAND`, `sender`, `deliver`, templates |

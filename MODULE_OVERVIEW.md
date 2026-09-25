@@ -334,7 +334,7 @@ The iOS staff portal (`Features/Staff/`) has the same requests as the web one (F
 
 ## Configuration and the demo accounts
 
-`config.py` holds the environment values more than one module reads — `base_url()`, `from_email()`, `will_email()`, `on_railway()`, `google_places_key()` — each read at call time with one default; a value read in a single module stays in that module. `ai_utils.MODELS` / `model_for()` / `get_client()` are the same idea for the model calls. `demo_seed.py` is the Gia Mia and Simple EJ's seeding and refresh (gated on the account name and `is_demo`), started once at boot by `demo_seed.start_background_seed()`; `models` keeps `_seed_simple_ejs` and `_seed_gia_mia` as wrappers for the tests and boot block that reach them there.
+`config.py` holds the environment values more than one module reads — `base_url()`, `from_email()`, `will_email()`, `on_railway()`, `google_places_key()` — each read at call time with one default; a value read in a single module stays in that module. `ai_utils.MODELS` / `model_for()` / `get_client()` are the same idea for the model calls. `demo_seed.py` is the Simple EJ's demo seeding (gated on the account name and `is_demo`; the Gia Mia demo was removed 9/25/26), started once at boot by `demo_seed.start_background_seed()`; `models` keeps `_seed_simple_ejs` and `_seed_gia_mia` as wrappers for the tests and boot block that reach them there.
 
 ## Automation and moments
 
