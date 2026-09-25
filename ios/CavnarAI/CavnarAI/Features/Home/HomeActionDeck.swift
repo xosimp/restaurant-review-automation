@@ -1,23 +1,15 @@
 import SwiftUI
 
-/// Needs Attention as a stacked deck led by the one thing to tap. The top
-/// card carries a real call to action ("Publish 3 replies") and an optional
-/// second link ("Read them first"); the next two items sit behind it as
-/// smaller, dimmer ghosts. Swipe the top card away to the left (or tap a
-/// dot) to bring the next one forward. Replaces the old equal-cards
-/// carousel — same needs_attention data, but the screen now says what to
-/// do, not just what's wrong.
+/// Needs Attention: the one thing to tap, then everything else, all of it
+/// visible (friction audit #11 / U3-17, 9/25/26).
 ///
-/// The deck only deals ONE way, like a real one. `stack` peeks forward
-/// (index, index+1, index+2), so the next card is always already on
-/// screen as a ghost with a real position to grow from — which is what
-/// makes that direction smooth. Backwards has no such card: index-1 is
-/// not in the tree at all, so it can only ever appear from nowhere, and
-/// three separate attempts to disguise that (a fly-off mirror, a manual
-/// enter-offset, an insertion transition) all read as a double render on
-/// device. Nothing is lost by dropping it: the deck wraps, so swiping
-/// forward reaches every card, and the dots below jump straight to any
-/// one of them. A rightward drag rubber-bands instead (see `swipe`).
+/// The lead card carries a real call to action ("Publish 3 replies") and an
+/// optional second link ("Read them first"). Every other item is a one-line
+/// row under it with its own action, so nothing waits behind a swipe — the
+/// old deck showed one card and hid "time off waiting" behind it, and an
+/// owner could leave thinking they had cleared everything. The first four
+/// show (the web's focus card plus three rows, and exactly what the server
+/// logs as shown); "+N more" opens the rest in place.
 struct HomeActionDeck: View {
     let items: [NeedsAttentionItem]
     var busy: Bool = false
@@ -27,172 +19,138 @@ struct HomeActionDeck: View {
     /// the server marked dismissable.
     var onDismiss: ((NeedsAttentionItem, String) -> Void)? = nil
 
-    @State private var index = 0
-    @State private var dragX: CGFloat = 0
-    @State private var flying = false
-    /// The id of the card actually being dragged/flown off — not
-    /// "whichever card is currently depth 0," which is a moving target the
-    /// instant `advance()` updates `index` mid-transition. See advance()'s
-    /// comment for the flash this used to cause when the two were conflated.
-    @State private var draggingID: String?
+    /// Shown before "+N more": the lead plus three rows, as on the web.
+    static let shownByDefault = 4
 
-    static let cardHeight: CGFloat = 150
-    private static let ghostStep: CGFloat = 14
+    @State private var showingAll = false
 
-    /// One height for every card in the deck (the ghosts must line up with
-    /// the card in front): the base, plus room for the evidence line and
-    /// the confidence line when any item carries them (K4).
+    // 156, not 150: the buttons along the bottom are 44pt targets now.
+    static let cardHeight: CGFloat = 156
+
+    /// One height for the lead card: the base, plus room for the evidence
+    /// line and the confidence line when the item carries them (K4).
     static func cardHeight(for items: [NeedsAttentionItem]) -> CGFloat {
         cardHeight
             + (items.contains { $0.evidenceLine != nil } ? 36 : 0)
             + (items.contains { $0.confidence != nil } ? 26 : 0)
     }
 
-    private var deckCardHeight: CGFloat { Self.cardHeight(for: items) }
-
-    private struct Entry: Identifiable {
-        let depth: Int
-        let item: NeedsAttentionItem
-        var id: String { item.id }
-    }
-
-    private var count: Int { items.count }
-
-    private var stack: [Entry] {
-        guard count > 0 else { return [] }
-        return (0..<min(3, count)).map { Entry(depth: $0, item: items[(index + $0) % count]) }
+    /// The rows under the lead, and how many more wait behind "+N more".
+    static func rows(_ items: [NeedsAttentionItem], showingAll: Bool) -> (rows: [NeedsAttentionItem], hidden: Int) {
+        let rest = Array(items.dropFirst())
+        guard !showingAll else { return (rest, 0) }
+        let shown = Array(rest.prefix(shownByDefault - 1))
+        return (shown, rest.count - shown.count)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(kicker: "Needs attention", title: "Start here",
-                              trailing: count > 1 ? "\(index + 1) of \(count)" : nil)
+                              trailing: items.count > 1 ? "\(items.count) open" : nil)
 
-            ZStack(alignment: .top) {
-                // Reversed so the top card (depth 0) is drawn last, on top.
-                ForEach(stack.reversed()) { entry in
-                    ActionDeckCard(
-                        item: entry.item,
-                        height: deckCardHeight,
-                        busy: busy && entry.depth == 0,
-                        onPrimary: { onPrimary(entry.item) },
-                        onSecondary: { onSecondary(entry.item) },
-                        onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(entry.item, kind) } }
-                    )
-                    .scaleEffect(1 - CGFloat(entry.depth) * 0.045, anchor: .bottom)
-                    .offset(x: entry.id == draggingID ? dragX : 0,
-                            y: CGFloat(entry.depth) * Self.ghostStep)
-                    .rotationEffect(.degrees(entry.id == draggingID ? Double(dragX) / 28 : 0), anchor: .bottom)
-                    .opacity(entry.depth == 0 ? 1 : (entry.depth == 1 ? 0.72 : 0.42))
-                    .saturation(entry.depth == 0 ? 1 : 0.75)
-                    .allowsHitTesting(entry.depth == 0 && !flying)
-                    .transition(.opacity)
-                }
+            if let lead = items.first {
+                ActionDeckCard(
+                    item: lead,
+                    height: Self.cardHeight(for: [lead]),
+                    busy: busy,
+                    onPrimary: { onPrimary(lead) },
+                    onSecondary: { onSecondary(lead) },
+                    onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(lead, kind) } }
+                )
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: deckCardHeight + Self.ghostStep * 2)
-            .contentShape(Rectangle())
-            .gesture(swipe, including: count > 1 ? .all : .subviews)
 
-            if count > 1 {
-                dots
-            }
-        }
-        // If the list shrinks under us (a publish just cleared a card),
-        // land on a card that still exists.
-        .onChange(of: items.map(\.id)) { _, ids in
-            if index >= ids.count { index = 0 }
-        }
-    }
-
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 16, coordinateSpace: .local)
-            .onChanged { value in
-                guard !flying else { return }
-                // Kept in sync with the actual current front card on every
-                // tick, not just once — so a fresh drag starting right
-                // after a previous advance() always targets whichever card
-                // is really on top now, with no explicit reset needed
-                // in between (see advance()'s comment).
-                draggingID = stack.first?.id
-                // Only follow a mostly-horizontal drag — a vertical one is
-                // the page scrolling, and belongs to the ScrollView.
-                if abs(value.translation.width) > abs(value.translation.height) {
-                    let w = value.translation.width
-                    // Leftward tracks the finger exactly. Rightward is
-                    // heavily damped and always springs back — the deck
-                    // only deals one way (see the type comment), and this
-                    // is the same rubber-band a scroll view gives at its
-                    // edge: it answers the gesture instead of ignoring it,
-                    // while making clear there's nothing that way.
-                    dragX = w < 0 ? w : w * 0.28
-                }
-            }
-            .onEnded { value in
-                guard !flying else { return }
-                let w = value.translation.width
-                if w < -60, abs(w) > abs(value.translation.height) * 1.2 {
-                    advance()
-                } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { dragX = 0 }
-                }
-            }
-    }
-
-    /// The top card flies off to the left, then the deck re-stacks around
-    /// the next item.
-    ///
-    /// The card flying off used to be identified by depth (`entry.depth ==
-    /// 0`), which is a POSITION, not the card itself — the instant `index`
-    /// advances below, the card that had been at depth 1 becomes depth 0
-    /// too and reads dragX for that one frame before it's separately
-    /// reset. Getting that reset and the index change into the same commit
-    /// relied on two back-to-back transactions landing as a single render,
-    /// which isn't guaranteed, and the miss was a visible flash. Tracking
-    /// `draggingID` — the ACTUAL card being dragged — means the incoming
-    /// card never reads dragX at all, in any frame, so there's nothing
-    /// left to race.
-    private func advance() {
-        guard count > 1, !flying else { return }
-        flying = true
-        if draggingID == nil { draggingID = stack.first?.id }
-        Haptic.selection()
-        // The front card genuinely LEAVES the deck (for 4+ items its id is
-        // no longer in `stack`), so it fades out where it is while the
-        // ghost behind it grows forward into place.
-        withAnimation(.easeIn(duration: 0.22)) { dragX = -520 }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(220))
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-                index = (index + 1) % count
-            }
-            flying = false
-        }
-    }
-
-    private var dots: some View {
-        HStack(spacing: 5) {
-            ForEach(Array(0..<count), id: \.self) { i in
-                Capsule()
-                    .fill(i == index ? Color.cavnarEmber2 : Color.cavnarEmber2.opacity(0.35))
-                    .frame(width: i == index ? 14 : 5, height: 5)
-                    .animation(.easeInOut(duration: 0.25), value: index)
-                    .contentShape(Rectangle().size(width: 18, height: 24))
-                    .onTapGesture {
-                        guard i != index, !flying else { return }
-                        Haptic.selection()
-                        // A dot jump never carries a drag offset — clear
-                        // both so a stale draggingID from an earlier swipe
-                        // can't reapply if it happens to land back on the
-                        // same card the dots just jumped to.
-                        draggingID = nil
-                        dragX = 0
-                        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { index = i }
+            let split = Self.rows(items, showingAll: showingAll)
+            if !split.rows.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(split.rows.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+                        }
+                        ActionDeckRow(
+                            item: item,
+                            busy: busy && item.isPublishAction,
+                            onPrimary: { onPrimary(item) },
+                            onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(item, kind) } }
+                        )
                     }
+                }
+                .padding(.horizontal, 14)
+                .background(Color.cavnarPaper2.opacity(0.85))
+                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
+            }
+
+            if split.hidden > 0 {
+                Button {
+                    Haptic.selection()
+                    withAnimation(.easeOut(duration: 0.25)) { showingAll = true }
+                } label: {
+                    Text("+\(split.hidden) more")
+                        .font(.cavnarNumber(13.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show \(split.hidden) more")
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 2)
+        // A publish that cleared the list shouldn't leave "+N more" open
+        // over a list that no longer has more.
+        .onChange(of: items.count) { _, count in
+            if count <= Self.shownByDefault { showingAll = false }
+        }
+    }
+}
+
+/// One item after the lead: its title on one line, the detail under it,
+/// and its action as a text button at the right — a 44pt target. The same
+/// "Not today / hide" answers the lead card has, from a long press.
+private struct ActionDeckRow: View {
+    let item: NeedsAttentionItem
+    let busy: Bool
+    let onPrimary: () -> Void
+    var onDismiss: ((String) -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                HomeMixedText.make(item.title, size: 14.5, weight: 700, color: .cavnarInk)
+                    .lineLimit(1)
+                HomeMixedText.make(item.detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let cta = item.cta {
+                Button(action: onPrimary) {
+                    Group {
+                        if busy {
+                            CavnarShimmerText(text: "Working…")
+                        } else {
+                            HStack(spacing: 3) {
+                                HomeMixedText.make(cta, size: 13, weight: 800, color: .cavnarEmber2,
+                                                   numberWeight: 700, numberColor: .cavnarEmber2)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                        }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+            }
+        }
+        .padding(.vertical, 6)
+        .contextMenu {
+            if item.dismissable == true, let onDismiss {
+                Button("Not today") { onDismiss("snooze") }
+                Button("Hide for two weeks") { onDismiss("recommendation") }
+            }
+        }
     }
 }
 
@@ -243,7 +201,7 @@ private struct ActionDeckCard: View {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 28, height: 28)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Not today, or hide")
@@ -258,7 +216,8 @@ private struct ActionDeckCard: View {
                             Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
                         }
                         .foregroundStyle(Color.cavnarEmber2)
-                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -319,6 +278,8 @@ private struct DeckPrimaryButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
+            // 44pt tall at card scale (friction audit #50).
+            .frame(minHeight: 44)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(LinearGradient(colors: [.cavnarEmber2, .cavnarEmber], startPoint: .top, endPoint: .bottom))

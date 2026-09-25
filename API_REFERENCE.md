@@ -492,6 +492,8 @@ Where it is on the wire:
 
 **`POST notifications/opened`** also takes `surface` — `alert_push` or `brief_push`; any other value, or none, falls back to the push type (`morning_brief` → `brief_push`, else `alert_push`). One open per notification (`alert_id`) and login, or per type, login and UTC day when the push has no history row.
 
+**Push payloads and Home attention carry a nav path — additive (friction audit #3 / #22, 9/25/26).** Every APNs payload's `cavnar` object adds `nav` (`push.nav_for`, nav.py grammar: `review/<id>`, `action/<delayed_action_id>`, `request/shift-<id>`, `schedule/<id>`, `dsr/night/<date>`, `labor/requests`, `inventory/order`, `ask`, else the module) and, when it names a review, `draft_ready` (bool — the reply meets `models.BULK_PUBLISHABLE_SQL`). `aps.category` is one of `CAVNAR_REVIEW_DRAFTED`, `CAVNAR_UNDOABLE`, `CAVNAR_REQUEST`, `CAVNAR_BRIEF`, `CAVNAR_ISSUE`, `CAVNAR_REVIEW`. A `shift_request` push for a drop or swap asked adds `request_id` and `request_kind: "shift"`. The lock-screen buttons call existing routes with the owner's session: `POST /mobile/api/reviews/<id>/approve`, `POST /mobile/api/actions/<id>/cancel`, `POST /mobile/api/labor/shift-requests/<id>/decide` (or `labor/time-off/<id>/decide`) `{decision: approve|deny}`. `/mobile/api/home` `needs_attention[]` adds `nav` (the brief item's own, or the local fallback's: `reviews?filter=urgent`, `reviews?filter=pending`, `labor/overtime`). No new routes.
+
 ## Forecasts, owner wording and cross-module agreement — additive fields (confidence audit, group I, 9/24/26)
 
 Every field below is ADDITIVE: older clients ignore it, and a client must tolerate it missing (older servers, cached payloads). Dates in owner-facing strings are M/D/YY; machine fields stay ISO.

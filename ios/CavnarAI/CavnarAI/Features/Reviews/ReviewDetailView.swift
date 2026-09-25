@@ -9,11 +9,29 @@ struct ReviewDetailView: View {
     @State private var postedOverlayLabel: String?
     @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
+    /// Queue mode (friction audit #21): the next reply waiting after this
+    /// one, from the list that opened it, and how that list is told this one
+    /// was answered when the screen moves on instead of popping.
+    var nextInQueue: ((Int) -> Review?)? = nil
+    var onAdvanced: ((String, Int) -> Void)? = nil
+    /// The short check between one reply and the next.
+    @State private var quickCheckLabel: String?
 
-    init(viewModel: ReviewDetailViewModel, onCompleted: @escaping (String) -> Void) {
+    init(viewModel: ReviewDetailViewModel, onCompleted: @escaping (String) -> Void,
+         nextInQueue: ((Int) -> Review?)? = nil, onAdvanced: ((String, Int) -> Void)? = nil) {
         _viewModel = State(initialValue: viewModel)
         self.onCompleted = onCompleted
+        self.nextInQueue = nextInQueue
+        self.onAdvanced = onAdvanced
     }
+
+    /// Still waiting on the owner — the pinned bar's Skip / Approve apply.
+    private var isActive: Bool {
+        !["posted", "approved", "skipped"].contains(viewModel.currentStatus)
+    }
+
+    /// The reply "Approve & next" would move on to, if any.
+    private var nextReview: Review? { nextInQueue?(viewModel.review.id) }
 
     var body: some View {
         ScrollView {
@@ -32,6 +50,40 @@ struct ReviewDetailView: View {
             }
             .padding(20)
         }
+        // A fresh scroll for each reply queue mode moves on to.
+        .id(viewModel.review.id)
+        // Skip / Approve pinned where the thumb is (friction audit #21) —
+        // they sat at the end of the scroll, under the review and the draft.
+        .safeAreaInset(edge: .bottom) {
+            if isActive {
+                VStack(spacing: 0) {
+                    Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+                    activeButtons
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        .padding(.bottom, 10)
+                }
+                .background(Color.cavnarPaper.opacity(0.94))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let label = quickCheckLabel {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.cavnarGreen)
+                    Text(label)
+                        .font(.cavnarBody(14.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background(Color.cavnarPaper2, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .padding(.bottom, 96)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: quickCheckLabel)
         .cavnarModuleBackground()
         .navigationTitle(reviewTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -74,6 +126,22 @@ struct ReviewDetailView: View {
         .keyboardDoneToolbar { isDraftFocused = false }
         .onChange(of: viewModel.didComplete) { _, completed in
             guard completed, let status = viewModel.finalStatus else { return }
+            // Queue mode: a short check, then the next reply waiting — the
+            // full 1.6s posted moment plays only on the last one (#21).
+            if status == "posted" || status == "approved", let next = nextReview {
+                let answered = viewModel.review.id
+                let label = status == "posted"
+                    ? "Posted to \(viewModel.review.platformDisplayName)" : "Approved"
+                quickCheckLabel = label
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    onAdvanced?(status, answered)
+                    quickCheckLabel = nil
+                    viewModel = ReviewDetailViewModel(review: next)
+                    await viewModel.loadTemplates()
+                }
+                return
+            }
             if status == "posted" || status == "approved" {
                 // "Posted" — the ember leaves the draft, travels the wire,
                 // and lands as a checkmark before this screen goes away.
@@ -459,7 +527,8 @@ struct ReviewDetailView: View {
                     }
                 }
             default:
-                activeButtons
+                // Skip / Approve are pinned to the bottom (safeAreaInset).
+                EmptyView()
             }
         }
     }
@@ -512,6 +581,9 @@ struct ReviewDetailView: View {
                 // set isSubmitting, and none of those are "posting."
                 if viewModel.isApproving {
                     CavnarShimmerText(text: "Posting…", color: Color.cavnarInk)
+                } else if nextReview != nil {
+                    // Posts this one, then opens the next reply waiting.
+                    Text("Approve & next")
                 } else {
                     Text("Approve & Post")
                 }

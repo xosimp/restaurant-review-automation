@@ -7,8 +7,10 @@ import SwiftUI
 /// rendered the same numbers with nowhere to take them. The server now
 /// sends the question with the card (`ask` on a monthly metric, a
 /// cross-module link, a good-news item), so both surfaces ask Cavnar the
-/// same sentence. Prefilled, never auto-sent: the owner decides whether to
-/// ask it — the same rule the brief push follows (DeepLinkRouter).
+/// same sentence. The tap on "Ask about this" was the decision, so it sends,
+/// as the web's hbAsk does (friction audit #15, 9/25/26) — it used to land
+/// on Ask with the text in the box and wait for a second tap. Only a plain
+/// tap on a brief notification's body still just fills it in.
 struct HomeAskLink: View {
     let question: String
     var label: String = "Ask about this"
@@ -17,7 +19,8 @@ struct HomeAskLink: View {
     var body: some View {
         Button {
             Haptic.light()
-            // RootView observes the prompt itself and switches to Ask.
+            // RootView observes the prompt itself, switches to Ask and sends.
+            router.pendingAskAutoSend = true
             router.pendingAskPrompt = question
         } label: {
             Text(label + " →")
@@ -25,6 +28,6 @@ struct HomeAskLink: View {
                 .foregroundStyle(Color.cavnarEmber2)
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Opens Ask Cavnar AI with this question")
+        .accessibilityHint("Asks Cavnar AI this question")
     }
 }

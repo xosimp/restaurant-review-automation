@@ -7,6 +7,9 @@ struct RootView: View {
     @Environment(StaffSessionStore.self) private var staffSessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
+    // The inbox and the location switcher, reachable from every screen
+    // (friction audit #32) — presented here, over every tab.
+    @State private var chrome = AppChrome()
     // The one monitor. RootView used to build a second monitor of its own
     // while APIClient asked NetworkMonitor.shared, which starts "online" and
     // was never the one on screen — so the banner and the error wording
@@ -137,6 +140,7 @@ struct RootView: View {
         // fade would just feel like lag.
         .animation(.easeOut(duration: 0.35), value: loginCoverUp)
         .environment(deepLinkRouter)
+        .environment(chrome)
         .environment(network)
         // Mobile's in-app interface is dark-only by design — what's
         // switchable is the home-screen APP ICON (Account > More), not
@@ -390,7 +394,23 @@ struct RootView: View {
             guard let prompt else { return }
             selectedTab = .ask
             askCavnarViewModel.question = prompt
+            let send = deepLinkRouter.pendingAskAutoSend
             deepLinkRouter.pendingAskPrompt = nil
+            deepLinkRouter.pendingAskAutoSend = false
+            // An explicit "Ask about this" sends, as the web's hbAsk does
+            // (friction audit #15) — never over an answer still streaming.
+            if send, !askCavnarViewModel.isLoading {
+                Task { await askCavnarViewModel.submit() }
+            }
+        }
+        // One way in for every "go there": cards, notification rows and the
+        // command sheet post a NavPath; the router decides where it lands.
+        .onReceive(NotificationCenter.default.publisher(for: .cavnarOpenNav)) { note in
+            if let nav = note.object as? NavPath {
+                deepLinkRouter.open(nav)
+            } else if let raw = note.object as? String, let nav = NavPath(raw) {
+                deepLinkRouter.open(nav)
+            }
         }
     }
 
@@ -423,6 +443,9 @@ struct RootView: View {
             HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
                      onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
+                // The unread count where the thumb already is — the bell's
+                // dot only showed on Home's own top-right corner (#32).
+                .badge(chrome.notificationsBadge.unreadCount)
                 .tag(AppTab.home)
 
             // Seeded with the modules Home already fetched, so the tab's
@@ -472,6 +495,42 @@ struct RootView: View {
             DebugFrameWatchdog.mark("mainTabs task (push auth)")
             PushManager.shared.requestAuthorizationAndRegister()
         }
+        .task {
+            await chrome.notificationsBadge.refresh()
+            await chrome.loadLocations(isOwner: sessionStore.currentUser?.isOwner == true)
+        }
+        // The one inbox, over whichever tab asked for it. Opening it marks
+        // alert_log seen server-side, so refreshing as it closes is what
+        // clears the badge.
+        .sheet(isPresented: Binding(get: { chrome.showingNotifications },
+                                    set: { chrome.showingNotifications = $0 })) {
+            NotificationsListView(viewModel: chrome.notificationsList)
+        }
+        .onChange(of: chrome.showingNotifications) { wasShowing, isShowing in
+            if wasShowing && !isShowing {
+                Task { await chrome.notificationsBadge.refresh() }
+            }
+        }
+        .sheet(isPresented: Binding(get: { chrome.showingLocationSwitcher },
+                                    set: { chrome.showingLocationSwitcher = $0 })) {
+            LocationSwitcherView { didSwitchLocation() }
+        }
+        // "Goes out at 11am — Undo from Home": the push, its notification
+        // row and a card all open the queued send itself (friction #3).
+        .sheet(item: Binding(get: { deepLinkRouter.pendingActionId },
+                             set: { deepLinkRouter.pendingActionId = $0 })) { ref in
+            PendingActionSheet(actionId: ref.id)
+                .presentationDetents([.medium])
+        }
+        .onChange(of: deepLinkRouter.locationSwitches) { _, _ in
+            // A push or command about another location switched there. The
+            // Modules stack is reset by the deep link that follows it
+            // (ModulesGridView), not here — this can land after that push.
+            Task {
+                await chrome.notificationsBadge.refresh()
+                await chrome.loadLocations(isOwner: sessionStore.currentUser?.isOwner == true)
+            }
+        }
         // Fallback only — the real trigger is HomeView's onHeroAppear
         // (fires the moment Home's data has actually loaded and the hero is
         // on screen). Without this, a failed/very slow Home load would
@@ -516,6 +575,17 @@ struct RootView: View {
         }
         sessionStore.hasShownHomeIntro = true
         Task { await playIntroSequence() }
+    }
+
+    /// A switch made from the location switcher (any screen's title, or
+    /// Home). Everything on screen belonged to the old location: the Modules
+    /// stack starts over at the grid, Home reloads, the badge and the title
+    /// line re-read (friction audit #32 / #50).
+    private func didSwitchLocation() {
+        modulesPath = NavigationPath()
+        homePath = NavigationPath()
+        // HomeView reloads on this, as it does for a push's switch.
+        deepLinkRouter.locationSwitches += 1
     }
 
     /// A tab's content is built when it is selected or once it has been
@@ -609,12 +679,11 @@ private struct LaunchSplashView: View {
 /// with an active session — see SessionStore's doc comment for why iOS
 /// sessions rely on this instead of the web's 8-hour inactivity timeout.
 ///
-/// Biometrics are NOT fired automatically on appear anymore — the owner
-/// taps Unlock. That's what lets this screen actually play its entrance
-/// (the same seal-draws-in / letters-stamp-in the login screen uses, over
-/// the Home hero's own moving ember aurora) instead of Face ID resolving
-/// in under a second and tearing the view down mid-animation, which is
-/// why the previous auto-firing version never visibly animated at all.
+/// On a cold launch the owner taps Unlock, which lets this screen play its
+/// entrance (the same seal-draws-in / letters-stamp-in the login screen
+/// uses). On a warm re-lock — the dozens of returns a day — there is no
+/// entrance: everything shows at once and Face ID is asked for on its own,
+/// once per return, as a banking app does (friction audit #9, 9/25/26).
 /// The copy, the button glyph, and the caption all name the device's real
 /// biometry (Face ID vs Touch ID) rather than assuming.
 struct LockedView: View {
@@ -635,6 +704,10 @@ struct LockedView: View {
     @State private var passcodeError = false
     @State private var passcodeMessage: String?
     @State private var lockoutRemaining = 0
+    @Environment(\.scenePhase) private var scenePhase
+    // One automatic Face ID ask per return to the app (friction audit #9):
+    // re-armed when the app leaves, so a cancel isn't re-asked in a loop.
+    @State private var autoPrompted = false
 
     private var biometry: (name: String, symbol: String) {
         let context = LAContext()
@@ -744,6 +817,15 @@ struct LockedView: View {
         }
         .task(id: introReady) {
             guard introReady, stage == 0 else { return }
+            // A warm re-lock (the owner stepped away for a minute) shows
+            // everything at once and asks Face ID straight away — the staged
+            // reveal cost ~1.3s and a tap on every return (friction #9). The
+            // cold launch keeps its entrance.
+            guard coldLaunch else {
+                stage = 4
+                autoUnlockIfWarm()
+                return
+            }
             // Let the wordmark finish arriving first — traced and filled
             // (cold launch) or stamped in — then bring the rest up in order.
             try? await Task.sleep(for: .seconds(coldLaunch ? CavnarWordmarkTraceIn.duration : CavnarWordmarkStampIn.duration))
@@ -752,6 +834,25 @@ struct LockedView: View {
                 try? await Task.sleep(for: .seconds(0.14))
             }
         }
+        // The lock can go up while the app is still in the background (a
+        // zero delay locks on .background), so the automatic ask waits for
+        // the app to be in front — Face ID can't be shown before that.
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active: autoUnlockIfWarm()
+            case .background: autoPrompted = false
+            default: break
+            }
+        }
+    }
+
+    /// Face ID on its own, once, on a warm lock with biometrics on. The
+    /// button stays for a retry; a cancelled ask isn't an error on screen.
+    private func autoUnlockIfWarm() {
+        guard !coldLaunch, introReady, !autoPrompted, scenePhase == .active,
+              biometricAvailable, !isUnlocking, lockoutRemaining == 0 else { return }
+        autoPrompted = true
+        Task { await unlock(quietFailure: true) }
     }
 
     // MARK: - Passcode on file: the pad (Face ID lives in its corner key)
@@ -858,12 +959,12 @@ struct LockedView: View {
 
     // MARK: - Actions
 
-    private func unlock() async {
+    private func unlock(quietFailure: Bool = false) async {
         isUnlocking = true
         unlockFailed = false
         let unlocked = await sessionStore.unlockWithBiometrics()
         isUnlocking = false
-        if !unlocked { unlockFailed = true }
+        if !unlocked && !quietFailure { unlockFailed = true }
     }
 
     private func unlockThenSetUpPasscode() async {

@@ -145,7 +145,9 @@ def test_every_push_carries_its_module_and_location(db_path, monkeypatch):
     monkeypatch.setattr(push, "_push_executor", lambda: _Now())
     monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 1, "restaurant_id": 99}])
     push.fire_push(rid, "critical_low", "t", "b", data={"x": 1}, db_path=db_path)
-    assert got == [("critical_low", {"x": 1, "restaurant_id": rid, "module": "inventory"})]
+    # `nav` joined the payload with the friction audit (#3): where it opens.
+    assert got == [("critical_low", {"x": 1, "restaurant_id": rid, "module": "inventory",
+                                     "nav": "inventory/order"})]
 
 
 def test_the_sound_follows_the_location_the_alert_is_about(db_path, monkeypatch):

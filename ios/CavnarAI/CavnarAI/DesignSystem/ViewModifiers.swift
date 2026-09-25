@@ -321,6 +321,10 @@ extension View {
         self
             .frame(width: size, height: size)
             .background(Color.cavnarEmber.opacity(0.14), in: Circle())
+            // The disc stays 34pt; the tap area is the 44pt the HIG asks
+            // for — wet or gloved hands on the line (friction audit #50).
+            .frame(width: max(44, size), height: max(44, size))
+            .contentShape(Rectangle())
     }
 }
 
@@ -413,10 +417,9 @@ func cavnarToolbarItemGroup<Content: View>(
 @ToolbarContentBuilder
 func cavnarTitleToolbar(_ title: String) -> some ToolbarContent {
     cavnarToolbarItem(placement: .principal) {
-        Text(title)
-            .font(.cavnarHeadline(18))
-            .foregroundStyle(Color.cavnarInk)
-            .lineLimit(1)
+        // The location's name rides under it on module screens for a
+        // multi-location owner (AppChrome, friction audit #32).
+        CavnarScreenTitle(title: title)
     }
 }
 

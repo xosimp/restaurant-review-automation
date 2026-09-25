@@ -439,7 +439,9 @@ final class SessionStore {
         // offline queue was just trimmed to the new one, and purging its file
         // too meant those kept writes were lost on the next relaunch (CLIENT-5).
         SecureCache.purgeAll(keeping: [PendingWriteQueue.storeKey])
-        hasShownHomeIntro = false
+        // hasShownHomeIntro is left alone: the landing intro is once per
+        // sign-in, and replaying it on every store switch was an animation
+        // standing between a multi-unit owner and the numbers (friction #50).
     }
 
     private struct LogoutBody: Encodable {
