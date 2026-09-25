@@ -110,7 +110,9 @@ def test_overtime_rows_read_red_through_the_standard_row_dot():
     i = s.index(">Overtime alerts<")
     j = s.index("{% endfor %}", i)
     block = s[i:j]
-    assert "'critical' if emp.status == 'overtime'" in block
+    # 9/25/26: overtime rows are tinted red (lb2-tint ot), approaching 40h
+    # amber (ot near), the most hours a shade darker.
+    assert "'lb2-tint ot'" in block and "'lb2-tint ot near'" in block and "emp is sameas _ot_top" in block
     assert "#ff5a5a" not in block and "#ff8a65" not in block and "dark-hero-card" not in block
 
 

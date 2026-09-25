@@ -38,9 +38,8 @@ def test_the_ai_strip_orbit_follows_the_outline_not_a_spinning_cone():
     assert '<svg class="orbit"' in SRC and "function aiOrbitSize()" in SRC
 
 
-def test_reviews_has_no_section_rail_and_names_analytics_in_its_kicker():
-    rail = SRC[SRC.index("function cavRailBuild(panel) {"):]
-    assert "panel.id === 'panel-reviews'" in rail[:600]
+def test_no_module_draws_the_section_rail_and_reviews_names_analytics_in_its_kicker():
+    assert "cavRailBuild" not in SRC and "cav-rail" not in SRC
     assert 'data-nav-go="reviews/analytics">Analytics</button>' in SRC
 
 
@@ -48,3 +47,38 @@ def test_a_hidden_empty_state_stays_hidden_and_the_filter_drives_it():
     assert ".pe[hidden]{display:none!important}" in SRC
     f = SRC[SRC.index("function filterReviews(){"):SRC.index("function rvAnsweredDivider(){")]
     assert "emp.hidden=shown>0" in f
+
+
+def test_where_the_money_went_ranks_every_kind_by_dollars():
+    """It listed up to three overstaffed days, then up to three overtime
+    people, unranked; now one list across every priced kind, most first."""
+    import labor
+    a = {"overstaffed_days": [{"day": "Tuesday", "date": "2026-09-15", "labor_pct": 31, "sales": 4000,
+                               "over_target_dollars": 60}],
+         "overtime_risk": [{"employee": "Marcus R.", "status": "overtime", "hours": 59.5, "week": "9/7/26",
+                            "premium": 88},
+                           {"employee": "Devon K.", "status": "near", "hours": 38, "week": "9/7/26", "premium": 500}],
+         "employee_hours": {"Angela M.": {"scheduled": 30, "actual": 36.5}},
+         "hours_are_estimated": False}
+    got = labor.money_went(a, rate=15.0)
+    assert [(g["kind"], g["dollars"]) for g in got] == [("past_schedule", 98.0), ("overtime", 88.0),
+                                                        ("overstaffed", 60.0)]
+    # Estimated hours carry no clocked-vs-scheduled comparison.
+    a["hours_are_estimated"] = True
+    assert [g["kind"] for g in labor.money_went(a, rate=15.0)] == ["overtime", "overstaffed"]
+
+
+def test_the_labor_top_says_its_dates_once():
+    assert 'data-dh-module="labor" data-dh-compact="1"' in SRC
+    assert '<div class="dh-badge" data-dh-module="labor"' not in SRC
+    assert 'id="lb2-today"' not in SRC
+
+
+def test_the_one_thing_waits_for_its_lead_instead_of_promoting_an_attention_item():
+    assert "function renderFocusPending()" in SRC and "h+=renderFocus(d,null);" not in SRC
+
+
+def test_the_modal_big_number_glow_is_turned_down():
+    import re
+    m = re.search(r"\.cf-p-big\{[^}]*text-shadow:([^;}]*)", SRC)
+    assert m and "22px" not in m.group(1)

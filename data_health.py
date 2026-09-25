@@ -309,7 +309,12 @@ def source_line(s, now=None, tz=None, pos_connected=None) -> dict:
         line, tone = f"{label}: Live ({synced})", "ok"
     else:
         basis = str(s.get("basis") or "").strip()
-        line = f"{label}: {basis}" if basis else f"{label}: {state}"
+        # "Shifts through 9/25/26", not "Shifts: Shifts through 9/25/26" -
+        # a basis that already opens with the source's name keeps it once.
+        if basis and basis.lower().startswith(str(label).lower()):
+            line = basis
+        else:
+            line = f"{label}: {basis}" if basis else f"{label}: {state}"
         if synced and "synced" not in basis:
             line += f" (synced {synced})"
         if s.get("error") or state in ("stale", "unknown"):

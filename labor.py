@@ -621,7 +621,50 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
     result['is_live'] = is_live
     result['blended_rate'] = blended
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
+    result['money_went'] = money_went(result, blended)
     return result
+
+
+# Hours past schedule count only from this many over the period, per person:
+# a few minutes past a scheduled end is closing, not a cost worth a line.
+PAST_SCHEDULE_MIN_HOURS = 1.0
+
+
+def money_went(analysis: dict, rate: float = None) -> list:
+    """Where the money went: every labor item this analysis prices in
+    dollars, ranked by dollars, most first (9/25/26 — it used to list up to
+    three overstaffed days, then up to three overtime people, unranked):
+
+      overstaffed   a day's labor above the target — over_target_dollars
+      overtime      a person's overtime premium for a week — premium
+      past_schedule clocked hours past the schedule x the blended rate —
+                    only on clocked (not estimated) hours with a schedule
+
+    Every figure is an opportunity or an estimate, never money saved or
+    payroll (Money labels). Items with no dollar figure are left out rather
+    than ranked as $0."""
+    a = analysis or {}
+    out = []
+    for d in a.get("overstaffed_days") or []:
+        dollars = d.get("over_target_dollars")
+        if dollars:
+            out.append({"kind": "overstaffed", "dollars": float(dollars), "day": d.get("day"),
+                        "date": d.get("date"), "labor_pct": d.get("labor_pct"), "sales": d.get("sales"),
+                        "label": "above target"})
+    for e in a.get("overtime_risk") or []:
+        if e.get("status") == "overtime" and e.get("premium"):
+            out.append({"kind": "overtime", "dollars": float(e["premium"]), "employee": e.get("employee"),
+                        "hours": e.get("hours"), "week": e.get("week"), "label": "overtime premium"})
+    if rate and not a.get("hours_are_estimated"):
+        for emp, h in (a.get("employee_hours") or {}).items():
+            sched, actual = float(h.get("scheduled") or 0), float(h.get("actual") or 0)
+            over = round(actual - sched, 1)
+            if sched > 0 and over >= PAST_SCHEDULE_MIN_HOURS:
+                out.append({"kind": "past_schedule", "dollars": round(over * float(rate), 0), "employee": emp,
+                            "hours_over": over, "scheduled": round(sched, 1), "actual": round(actual, 1),
+                            "label": "past schedule, estimated"})
+    out.sort(key=lambda x: -x["dollars"])
+    return out
 
 
 def _covers_for_shifts(restaurant_id, shifts):

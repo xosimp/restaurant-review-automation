@@ -274,7 +274,10 @@ def _seed_ejs_shifts(rid: int, db_path: str):
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,"
              "actual_hours,sales,notes"]
-    d = date(2026, 8, 31)                      # a Monday
+    # The fourteen days ending yesterday, re-dated on every boot, so the
+    # demo's Labor tab reads as current rather than ageing into "Out of
+    # date" the way a fixed 8/31-9/13 window did (9/25/26).
+    d = date.today() - timedelta(days=14)
     for _ in range(14):
         sales, share = BY_WEEKDAY[d.weekday()]
         # A quieter day drops the back half of each role rather than

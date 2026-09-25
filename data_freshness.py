@@ -584,6 +584,22 @@ def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, 
 # basis as a note and no longer multiplies the percentage (it did, so the
 # same ten missing days read evidence 41 AND freshness 64).
 
+def _shifts_file_end(rid, today):
+    """The latest shift date in the restaurant's shifts file (the one the
+    Labor page analyses), future-dated typo rows dropped; None when there is
+    no file or no dated row."""
+    try:
+        import labor
+        shifts = labor.load_shifts_for_restaurant(rid)
+        if not shifts:
+            return None
+        shifts = labor.drop_future_shifts(shifts, today=today)
+        dates = [str(x.get("date") or "")[:10] for x in shifts if x.get("date")]
+        return _as_date(max(dates)) if dates else None
+    except Exception:
+        return None
+
+
 def _labor(r, conn, today, now, ctx, db_path=None):
     """Shifts: dated by the analysis's last shift day (date_range.end) when
     the caller has the analysis, else the last day in the daily archive
@@ -599,10 +615,19 @@ def _labor(r, conn, today, now, ctx, db_path=None):
         if days and missing:
             extra = f"{max(0, days - missing)} of {days} days carry sales"
     else:
-        row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
-                           "AND labor_cost > 0 AND COALESCE(final, 1) = 1 AND date <= ?",
-                           (_rid(r), _latest_ok(today))).fetchone()
-        end = _as_date(row["d"] if row else None)
+        # Without the analysis, date the source by the SAME shifts the Labor
+        # page analyses (client_data.shifts_csv, its latest non-future
+        # shift) - the daily archive can run past them (a seeded or
+        # separately synced history), and then Data health said "Shifts
+        # through 9/25/26, 100%" over a Labor tab reading 8/31-9/13 as "Out
+        # of date" (9/25/26). The archive dates it only when no shifts file
+        # exists.
+        end = _shifts_file_end(_rid(r), today)
+        if end is None:
+            row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
+                               "AND labor_cost > 0 AND COALESCE(final, 1) = 1 AND date <= ?",
+                               (_rid(r), _latest_ok(today))).fetchone()
+            end = _as_date(row["d"] if row else None)
         if end is not None:
             start = (end - timedelta(days=LABOR_WINDOW_DAYS - 1)).isoformat()
             c = conn.execute("SELECT COUNT(*) AS n, SUM(CASE WHEN sales IS NOT NULL AND sales > 0 THEN 1 ELSE 0 END) "

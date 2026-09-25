@@ -156,7 +156,7 @@ def test_snapshot_payload_shape_and_route_twins(db_path, monkeypatch):
     assert all(s["state"] != "not_connected" for s in snap["sources"])
     assert any(n["key"] == "reviews" for n in snap["not_connected"])
     sales = [s for s in snap["sources"] if s["key"] == "sales"][0]
-    assert sales["line"].startswith("Sales: Sales through") and sales["tone"] == "ok"
+    assert sales["line"].startswith("Sales through") and not sales["line"].startswith("Sales: Sales") and sales["tone"] == "ok"
     json.dumps(snap)
 
 

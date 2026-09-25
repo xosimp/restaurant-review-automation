@@ -198,8 +198,8 @@ def _home_render():
 
 def test_home_leads_with_the_one_thing_and_needs_attention_and_collapses_results():
     r = _home_render()
-    assert r.index("renderFocus(d,null)") < r.index("renderAttention(d,used)") < r.index("renderSignals(d)")
-    assert r.index("renderAttention(d,used)") < r.index('id="hb-day"')
+    assert r.index("renderFocusPending())") < r.index("renderAttention(d,_hbG?used:") < r.index("renderSignals(d)")
+    assert r.index("renderAttention(d,_hbG?used:") < r.index('id="hb-day"')
     assert r.index('<details class="hb-results"') < r.index('id="hb-hero"') < r.index('id="hb-follow"')
     assert r.index('id="hb-open"') < r.index('<details class="hb-results"')
 

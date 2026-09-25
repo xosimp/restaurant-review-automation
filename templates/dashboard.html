@@ -410,11 +410,6 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 :root{--cav-chrome:93px;--z-modal:10000;--scrim:rgba(14,12,10,.6)}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:sticky;top:56px;z-index:99}
 [data-nav]{scroll-margin-top:calc(var(--cav-chrome) + 16px)}
-/* The in-module section rail (cavRailBuild): addressable sections of the
-   open module, sticky under the tabs. */
-.cav-rail{position:sticky;top:var(--cav-chrome);z-index:40;display:flex;gap:4px;overflow-x:auto;margin:-8px 0 16px;padding:8px 0;background:var(--bg-base);border-bottom:1px solid var(--line-hi);scrollbar-width:none;-webkit-overflow-scrolling:touch}
-.cav-rail::-webkit-scrollbar{display:none}
-.cav-rail .cav-rail-i{white-space:nowrap;flex-shrink:0}
 /* A focused item arriving from a link: one ember ring that fades. */
 @keyframes cavFlash{0%{box-shadow:0 0 0 0 var(--ember)}30%{box-shadow:0 0 0 3px var(--ember)}100%{box-shadow:0 0 0 0 transparent}}
 .cav-flash{animation:cavFlash 1.5s ease-out;border-radius:10px}
@@ -682,7 +677,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cf-p{--p-ink:#f0ebe0;--p-ink2:#c8bfb0;--p-ink3:rgba(240,235,224,.55);--p-good:#4ead7a;--p-mid:#c4bdb4;--p-warn:#d4a030;--p-track:rgba(255,255,255,.09);--p-line:rgba(240,235,224,.1);--p-c:var(--p-mid)}
 .cf-p .good{--p-c:var(--p-good)}.cf-p .mid{--p-c:var(--p-mid)}.cf-p .warn{--p-c:var(--p-warn)}
 .cf-p-hero{display:flex;align-items:flex-end;flex-wrap:wrap;gap:6px 16px;padding:2px 0 16px;border-bottom:1px solid var(--p-line)}
-.cf-p-big{font-size:46px;font-weight:600;line-height:.95;letter-spacing:-.03em;color:var(--p-c);text-shadow:0 0 22px currentColor}
+.cf-p-big{font-size:46px;font-weight:600;line-height:.95;letter-spacing:-.03em;color:var(--p-c);text-shadow:0 0 6px color-mix(in srgb,currentColor 28%,transparent)} /* glow turned well down, 9/25/26 */
 .cf-p-big small{font-size:20px;margin-left:2px;opacity:.8}
 .cf-p-hero .cf-p-bar{flex:1 1 150px;height:9px;margin-bottom:9px}
 .cf-p-why{flex-basis:100%;font-size:13px;color:var(--p-ink2);line-height:1.5}
@@ -733,7 +728,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .bm-card .bm-why{margin-top:10px;font-size:13.5px;color:var(--ink3)}
 .bm-card .bm-why>summary{cursor:pointer;list-style:none;font-weight:600;color:var(--ink3);display:inline-flex;align-items:center;gap:6px}
 .bm-card .bm-why>summary::-webkit-details-marker{display:none}
-.bm-card .bm-why>summary:after{content:'\203A';transition:transform .15s ease}
+.bm-card .bm-why>summary:after{content:'\203A';transition:transform .15s ease;font-size:17px;line-height:1;color:var(--ember);font-weight:700;display:inline-block}
 .bm-card .bm-why[open]>summary:after{transform:rotate(90deg)}
 .bm-card .bm-why>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 .bm-card .bm-why .bm-dt{margin-top:6px;line-height:1.5}
@@ -750,7 +745,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .how-this{font-size:13.5px;color:var(--ink3);margin-top:4px}
 .how-this>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;font-weight:600}
 .how-this>summary::-webkit-details-marker{display:none}
-.how-this>summary:after{content:'\203A';transition:transform .15s ease}
+.how-this>summary:after{content:'\203A';transition:transform .15s ease;font-size:17px;line-height:1;color:var(--ember);font-weight:700;display:inline-block}
 .how-this[open]>summary:after{transform:rotate(90deg)}
 .how-this>div{margin-top:6px;line-height:1.55;max-width:760px}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
@@ -1924,40 +1919,6 @@ cavNavRegister('action', function (p) {
   return true;
 });
 
-/* ── The in-module section rail (#33) ───────────────────────────────────────
-   A panel with two or more addressable sections gets a sticky row of them
-   under the tabs, built from its data-nav elements (Account keeps its own
-   rail). A section names itself with data-nav-label, else its heading. */
-function cavRailBuild(panel) {
-  // Reviews has two sections and names them in its own Inbox | Analytics
-  // kicker (9/25/26), so it takes no rail either.
-  if (!panel || panel.id === 'panel-account' || panel.id === 'panel-reviews') {
-    var old = panel && panel.querySelector(':scope > .cav-rail');
-    if (old) old.parentNode.removeChild(old);
-    return;
-  }
-  var mod = panel.id.replace('panel-', ''), canon = CAV_NAV_CANON[mod] || mod;
-  var secs = panel.querySelectorAll('[data-nav^="' + canon + '/"]'), items = [], i;
-  for (i = 0; i < secs.length; i++) {
-    var n = secs[i].getAttribute('data-nav'), h = secs[i].querySelector ? secs[i].querySelector('h2,h3,.hb-h3,.st') : null;
-    var label = secs[i].getAttribute('data-nav-label') || (h ? h.textContent.replace(/\s+/g, ' ').trim() : '') || n.split('/')[1];
-    items.push({nav: n, label: label.length > 28 ? label.slice(0, 27) + '…' : label});
-  }
-  var rail = panel.querySelector(':scope > .cav-rail');
-  if (items.length < 2) { if (rail) rail.parentNode.removeChild(rail); return; }
-  var sig = '';
-  for (i = 0; i < items.length; i++) sig += items[i].nav + '|';
-  if (rail && rail.getAttribute('data-sig') === sig) return;
-  if (!rail) { rail = document.createElement('nav'); rail.className = 'cav-rail'; rail.setAttribute('aria-label', 'Sections'); panel.insertBefore(rail, panel.firstChild); }
-  rail.setAttribute('data-sig', sig);
-  var html = '';
-  for (i = 0; i < items.length; i++) {
-    var lb = items[i].label.replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; });
-    html += '<button type="button" class="cbtn cbtn-text cbtn-sm cav-rail-i" data-nav-go="' + items[i].nav + '">' + lb + '</button>';
-  }
-  rail.innerHTML = html;
-}
-window.cavRailBuild = cavRailBuild;
 /* The sticky chrome's height (header + tabs), for everything that sticks
    or scrolls into view under it. */
 function cavChrome() {
@@ -2298,7 +2259,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec-more{margin-top:2px}
 .hb-rec-more>summary{list-style:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink3);display:inline-flex;gap:6px;align-items:center}
 .hb-rec-more>summary::-webkit-details-marker{display:none}
-.hb-rec-more>summary:after{content:'›';transition:transform .2s ease}
+.hb-rec-more>summary:after{content:'›';transition:transform .2s ease;font-size:17px;line-height:1;color:var(--ember);font-weight:700;display:inline-block}
 .hb-rec-more[open]>summary:after{transform:rotate(90deg)}
 .hb-rec-more>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 .hb-rec-more[open]>summary{margin-bottom:8px}
@@ -2680,6 +2641,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-fresh .dh-open{font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:11px;padding:0 6px;margin-left:-6px}
 .hb-fresh .dh-open .hb-num{letter-spacing:0;color:var(--ink2)}
 .dh-badge{margin-top:10px}
+.dh-badge.dh-inline{margin-top:0;display:inline-flex;align-items:center;gap:6px;margin-left:10px}
+.dh-badge.dh-inline[hidden]{display:none}
 .dh-badge .hb-fresh{margin-top:0}
 .dh-badge .dh-imp{font-size:12.5px;color:var(--ink3)}
 .dh-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--p-c);box-shadow:0 0 7px var(--p-c);margin-right:8px;vertical-align:middle}
@@ -3654,7 +3617,7 @@ svg:hover .hb-xh{opacity:1}
         _hbData=d;_hbLoadedAt=Date.now();renderTop(d);
         var used=focusUsed(d);
         var fx=document.getElementById('hb-focus');
-        if(fx){var prev=_hbFocusLead,nf=renderFocus(d,_hbG);if(_hbFocusLead!==prev)fx.outerHTML=nf;}
+        if(fx&&_hbG){var prev=_hbFocusLead,nf=renderFocus(d,_hbG);if(_hbFocusLead!==prev)fx.outerHTML=nf;}
         hbSwap('hb-attn-card',renderAttention(d,{att:_hbFocusAtt?1:0}));
         hbSwap('hb-recs',renderRecs(d,used&&used.rec?1:0));
         hbReveal();
@@ -3902,6 +3865,12 @@ svg:hover .hb-xh{opacity:1}
   // The one-thing card's key: the recommendation grid never repeats it, so
   // one piece of advice is on the page once, with one figure (group P, B4 M1).
   var hbFocusKey='',_hbFocusAtt=false;
+  function renderFocusPending(){
+    _hbFocusLead='';_hbFocusAtt=false;
+    return '<section class="hb-card hero hb-focus hb-rise" id="hb-focus" aria-label="Today" aria-busy="true">'
+      +'<div class="hb-skel" style="width:26%;margin-bottom:20px"></div><div class="hb-skel" style="width:78%;height:30px;margin-bottom:10px"></div>'
+      +'<div class="hb-skel" style="width:60%;height:30px;margin-bottom:20px"></div><div class="hb-skel" style="width:44%"></div></section>';
+  }
   function renderFocus(d,g){
     var att=d.attention||[],recs=d.recommendations||[];
     var lines=(g&&g.brief&&g.brief.brief&&g.brief.brief.lines)||[];
@@ -4377,8 +4346,14 @@ svg:hover .hb-xh{opacity:1}
     var used=focusUsed(d);
     var fresh=hbIsFresh(d);
     if(fresh)h+=renderReadiness(d);
-    h+=renderFocus(d,null);
-    h+=renderAttention(d,used);
+    // Until the day's reads land (renderFollow), the lead isn't known: a
+    // Needs-attention item promoted here for a second, then replaced by the
+    // real one thing, read as a banner that vanished (9/25/26). Hold the
+    // card's place instead; renderFollow always swaps it (even on failure).
+    h+=(_hbG?renderFocus(d,_hbG):renderFocusPending());
+    // Nothing is promoted into the placeholder, so every attention item stays
+    // in its card until the real lead is known.
+    h+=renderAttention(d,_hbG?used:{att:0,rec:used&&used.rec});
     if(hbFreshBehind(d))h+=renderFreshness(d);
     // How you compare (Benchmarking #23): the compact strip under the
     // freshness line, filled by its own read so the brief never waits on it.
@@ -4851,6 +4826,12 @@ svg:hover .hb-xh{opacity:1}
         if(!worst||(rank[s.tone]!=null?rank[s.tone]:9)<(rank[worst.tone]!=null?rank[worst.tone]:9))worst=s;}
       if(!worst){el.hidden=true;continue;}
       var st=DH_CHIP[worst.tone]||'unknown',ci=m.confidence_impact;
+      // Compact (Labor, 9/25/26): the page's own line already dates the
+      // data, so the badge is just its state and the drawer - one line,
+      // never a second, differently-worded date.
+      if(el.getAttribute('data-dh-compact')){var hp=worst.health_pct!=null?worst.health_pct:worst.pct;
+        el.innerHTML='<span class="hb-fresh-it '+st+'" title="'+esc(worst.line||worst.basis||'')+'"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button>';
+        el.hidden=false;continue;}
       el.innerHTML='<div class="hb-fresh"><span class="hb-fresh-it '+st+'" title="'+esc(worst.basis||'')+'"><i></i><b>Data</b> '+num(worst.line||'')+'</span>'
         +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button></div>';
@@ -7282,7 +7263,12 @@ svg:hover .hb-xh{opacity:1}
 .rv2-analytics,.hb-results{margin-top:30px;border-top:1px solid var(--paper3)}
 .rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
 .rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
-.rv2-analytics>summary:after,.hb-results>summary:after{content:'›';margin-left:auto;color:var(--ink3);transition:transform .2s ease}
+.rv2-analytics>summary:after,.hb-results>summary:after{content:'›';margin-left:auto;flex:0 0 auto;align-self:center;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,rgba(200,75,47,.08));color:var(--ember);font-size:22px;font-weight:600;line-height:1;transition:transform .2s ease,background-color .15s ease}
+.rv2-analytics>summary:hover:after,.hb-results>summary:hover:after{background:var(--hb-tint2,rgba(200,75,47,.16))}
+/* Disclosure headings read as headings (9/25/26): the kicker and its line
+   a size up, and the chevron a clear ember button, not a tiny grey glyph. */
+.rv2-analytics>summary,.hb-results>summary{font-size:15.5px;align-items:center}
+.rv2-analytics>summary .hb-kicker,.hb-results>summary .hb-kicker{font-size:13.5px}
 .rv2-analytics[open]>summary:after,.hb-results[open]>summary:after{transform:rotate(90deg)}
 .rv2-analytics>summary:focus-visible,.hb-results>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
@@ -7732,11 +7718,20 @@ svg:hover .hb-xh{opacity:1}
 .lb2-avail-in{margin-top:6px}
 /* Where the money went (density round #9) */
 .lb2-went .hb-row .m{white-space:normal;text-align:right}
-.lb2-went .lb2-went-n{font-size:16px;font-weight:700;color:var(--hb-warn)}
-.lb2-went .hb-row.critical .lb2-went-n{color:var(--hb-bad)}
+.lb2-went .lb2-went-n{font-size:16px;font-weight:700;color:var(--tc,var(--hb-warn))}
 .lb2-went-rows{margin-top:8px}
 .lb2-money-all .hb-row .m{white-space:normal;text-align:right}
 .lb2-money-all .lb2-ma-h{font-size:15px;font-weight:700;color:var(--ink);margin:16px 0 2px}
+/* Tinted rows (9/25/26): each list in its own colour, a dot and a wash per
+   row, the worst row a shade darker. Overstaffed = ember, under target on a
+   strong day = amber, overtime = red. */
+.lb2-tint{--tc:var(--ember);border-top:none!important;border-radius:10px;padding-left:14px!important;padding-right:14px!important;margin:6px 0;background:color-mix(in srgb,var(--tc) 9%,transparent)}
+.lb2-tint.worst{background:color-mix(in srgb,var(--tc) 20%,transparent);box-shadow:inset 3px 0 0 var(--tc)}
+.lb2-tint .d{background:var(--tc)!important;box-shadow:0 0 8px var(--tc)!important}
+.lb2-tint.under{--tc:var(--hb-warn)}
+.lb2-tint.ot{--tc:var(--hb-bad)}
+.lb2-tint.ot.near{background:color-mix(in srgb,var(--hb-warn) 9%,transparent);--tc:var(--hb-warn)}
+.lb2-tint .m{color:var(--tc);font-weight:600}
 .lb2-money-all .lb2-ma-h small{font-weight:500;color:var(--ink3);margin-left:6px;font-size:13.5px}
 .lb2-hero-when{font-size:13.5px;color:var(--ink3);margin-top:8px}
 .lb2-dow-wrap{margin-top:16px}
@@ -8132,6 +8127,9 @@ svg:hover .hb-xh{opacity:1}
 .lb2-bn .pct.good{color:var(--hb-good)}.lb2-bn .pct.bad{color:var(--hb-bad)}
 .lb2-bn .lb2-gap{font-size:15px;font-weight:600;color:var(--hb-warn)}.lb2-bn .lb2-gap .hb-num{font-size:18px;color:var(--hb-warn)}.lb2-bn .lb2-gap.good{color:var(--hb-good)}
 #panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+/* Inside the Every day and person disclosure the summary's own rule is the
+   line; the grid's second one under it doubled it (9/25/26). */
+#panel-labor .lb2-money-all .two-col{margin-top:8px;padding-top:0;border-top:none}
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
 @media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
 </style>
@@ -8169,20 +8167,10 @@ svg:hover .hb-xh{opacity:1}
   {% elif _over > 0 %}{% set _head = 'Slightly over target' %}{% set _tone = 'warn' %}
   {% elif _partial %}{% set _head = 'Incomplete data' %}{% set _tone = 'warn' %}
   {% else %}{% set _head = 'On target' %}{% set _tone = 'good' %}{% endif %}
-  {# The costliest overstaffed days by dollars above target, and who is in
-     overtime: read by the Today line and by Where the money went. #}
-  {% set _od_ranked = (labor.overstaffed_days|selectattr('over_target_dollars')|sort(attribute='over_target_dollars', reverse=True)|list) if labor.overstaffed_days else [] %}
-  {% set _ot_people = (labor.overtime_risk|selectattr('status','equalto','overtime')|list) if labor.overtime_risk else [] %}
   <div class="hb-top">
     <div style="min-width:300px;flex:1 1 460px">
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      {# Today (density round #48): one deterministic sentence from what
-         this page already holds - what waits on the owner (filled when
-         Waiting on you loads), the costliest day to trim, who is in
-         overtime. No model call. Live data only. #}
-      {% if labor.is_live %}<div class="mod-today" id="lb2-today"><span class="k">Today</span><span id="lb2-today-wait"></span><span id="lb2-today-rest">{% if _od_ranked %}trim <b>{{ _od_ranked[0].day }}</b> (<span class="hb-num">${{ _od_ranked[0].over_target_dollars|int|format_num }}</span> above target){% endif %}{% if _od_ranked and _ot_people %} · {% endif %}{% if _ot_people %}<b class="hb-num">{{ _ot_people|length }}</b> in overtime{% endif %}{% if not _od_ranked and not _ot_people %}no costly day or overtime in this window{% endif %}</span></div>{% endif %}
-      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}{% if _lab_stale %}<span class="sep">·</span><span style="color:var(--amber)">{{ _lf.basis }}</span>{% endif %}</div>
-      <div class="dh-badge" data-dh-module="labor" hidden></div>
+      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}<span class="dh-badge dh-inline" data-dh-module="labor" data-dh-compact="1" hidden></span></div>
       <div class="lb2-bignums">
         <div class="lb2-bn"><span class="l">Sales</span><span class="row"><span class="hb-num stat-n">${{ labor.total_sales|int|format_num }}</span></span></div>
         {# Labor % said once, beside its gap in dollars (density round #26):
@@ -8233,18 +8221,24 @@ svg:hover .hb-xh{opacity:1}
      or an overtime premium: an opportunity, never "saved" (Money labels).
      The full lists stay below, behind "Show all". #}
   {% set _money_more = (labor.overstaffed_days|length if labor.overstaffed_days else 0) + (labor.understaffed_days|length if labor.understaffed_days else 0) + (labor.overtime_risk|length if labor.overtime_risk else 0) %}
-  {% if labor.is_live and (_od_ranked or _ot_people) %}
+  {% set _went = labor.money_went or [] %}
+  {% if labor.is_live and _went %}
   <section class="hb-card lb2-went" id="lb2-went" aria-label="Where the money went" style="margin-top:22px">
     <div class="hb-kicker">Where the money went · <span class="hb-num">{{ _days }}</span>-day window</div>
+    {# The three costliest items of ANY kind, most first (labor.money_went):
+       overstaffed days, overtime premiums, hours past schedule - each in
+       its own colour, the costliest a shade darker (9/25/26). #}
     <div class="lb2-went-rows">
-    {% for d in _od_ranked[:3] %}
-    <div class="hb-row important"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span> · <span class="hb-num">{{ d.labor_pct }}%</span> labor on <span class="hb-num">${{ d.sales|int|format_num }}</span> sales</span><span class="m"><span class="hb-num lb2-went-n">${{ d.over_target_dollars|int|format_num }}</span> above target</span></div>
-    {% endfor %}
-    {% for e in _ot_people[:3] %}
-    <div class="hb-row critical"><span class="d"></span><span class="t wrap"><b>{{ e.employee }}</b> · <span class="hb-num">{{ e.hours }}h</span> week of <span class="hb-num">{{ e.week }}</span></span><span class="m">{% if e.premium %}<span class="hb-num lb2-went-n">${{ e.premium|round|int|format_num }}</span> overtime premium{% else %}overtime — review pay{% endif %}</span></div>
+    {% for w in _went[:3] %}
+    {% set _tk = {'overstaffed': 'over', 'overtime': 'ot', 'past_schedule': 'under'}[w.kind] %}
+    <div class="hb-row lb2-tint {{ _tk }}{{ ' worst' if loop.first and _went|length > 1 }}"><span class="d"></span><span class="t wrap">
+      {% if w.kind == 'overstaffed' %}<b>{{ w.day }}</b> <span class="vm hb-num">{{ w.date|format_date }}</span> · overstaffed · <span class="hb-num">{{ w.labor_pct }}%</span> labor on <span class="hb-num">${{ w.sales|int|format_num }}</span> sales
+      {% elif w.kind == 'overtime' %}<b>{{ w.employee }}</b> · overtime · <span class="hb-num">{{ w.hours }}h</span> week of <span class="hb-num">{{ w.week }}</span>
+      {% else %}<b>{{ w.employee }}</b> · past schedule · <span class="hb-num">{{ w.hours_over }}h</span> over (<span class="hb-num">{{ w.actual }}h</span> worked, <span class="hb-num">{{ w.scheduled }}h</span> scheduled){% endif %}
+    </span><span class="m"><span class="hb-num lb2-went-n">${{ w.dollars|int|format_num }}</span> {{ w.label }}</span></div>
     {% endfor %}
     </div>
-    {% if _money_more > (_od_ranked[:3]|length) + (_ot_people[:3]|length) %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2ShowMoney()">Show all <span class="hb-num">{{ _money_more }}</span> →</button>{% endif %}
+    {% if _money_more > (_went[:3]|length) %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2ShowMoney()">Show all <span class="hb-num">{{ _money_more }}</span> →</button>{% endif %}
   </section>
   {% endif %}
 
@@ -8903,17 +8897,22 @@ svg:hover .hb-xh{opacity:1}
     <div class="hb-card">
       <div class="lb2-ma-h">Overstaffed days<small>above {{ _tl }}</small></div>
       <div id="overstaffed-tbody">
+      {# Each list is tinted in its own colour, and its worst row a shade
+         darker (9/25/26): overstaffed ember (highest labor %), under
+         target amber (leanest), overtime red (most hours). #}
+      {% set _od_top = (labor.overstaffed_days|max(attribute='labor_pct')) if labor.overstaffed_days else None %}
       {% for d in labor.overstaffed_days %}
       {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
-      <div data-row class="hb-row {{ 'important' if diff > 0 else 'good' }}"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span>{% if loop.first %} · most expensive{% endif %}<span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales · <span class="hb-num">${{ d.labor_cost|format_num }}</span> labor{% if d.over_target_dollars %} · <span class="hb-num">${{ d.over_target_dollars|int|format_num }}</span> above target{% endif %}</span></span><span class="m hb-num">{% if diff > 0 %}+{{ diff }} pts{% else %}{{ diff }} pts{% endif %}</span></div>
+      <div data-row class="hb-row lb2-tint over{{ ' worst' if d is sameas _od_top and labor.overstaffed_days|length > 1 }}"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span>{% if loop.first %} · most expensive{% endif %}<span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales · <span class="hb-num">${{ d.labor_cost|format_num }}</span> labor{% if d.over_target_dollars %} · <span class="hb-num">${{ d.over_target_dollars|int|format_num }}</span> above target{% endif %}</span></span><span class="m hb-num">{% if diff > 0 %}+{{ diff }} pts{% else %}{{ diff }} pts{% endif %}</span></div>
       {% else %}
       <div class="hb-empty">{% if _status_ok %}No overstaffed days in this window.{% else %}No overstaffed days flagged, but the data under this is sample or partial.{% endif %}</div>
       {% endfor %}
       </div>
       <div class="lb2-ma-h">Under target on a strong day<small>worth a look</small></div>
       <div id="understaffed-tbody">
+      {% set _ud_top = (labor.understaffed_days|min(attribute='labor_pct')) if labor.understaffed_days else None %}
       {% for d in labor.understaffed_days %}
-      <div data-row class="hb-row watch"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span><span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales on a lean crew — ask whether service was slow before adding staff.</span></span><span class="m hb-num">{{ d.labor_pct }}%</span></div>
+      <div data-row class="hb-row lb2-tint under{{ ' worst' if d is sameas _ud_top and labor.understaffed_days|length > 1 }}"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span><span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales on a lean crew — ask whether service was slow before adding staff.</span></span><span class="m hb-num">{{ d.labor_pct }}%</span></div>
       {% else %}
       <div class="hb-empty">No strong days run lean this period.</div>
       {% endfor %}
@@ -8921,13 +8920,14 @@ svg:hover .hb-xh{opacity:1}
     </div>
     <div class="hb-card">
       <div class="lb2-ma-h">Overtime alerts<small>the week they were worked</small></div>
+      {% set _ot_top = (labor.overtime_risk|max(attribute='hours')) if labor.overtime_risk else None %}
       {% for emp in labor.overtime_risk %}
       {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
       {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
       {% set emp_constraint = labor.staff_constraints.get(_emp_key, labor.staff_constraints.get(_emp_key.split(' ')[0], '')) %}
       {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
       {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
-      <div class="hb-row {{ 'good' if has_ot_allowance else ('critical' if emp.status == 'overtime' else 'important') }}"><span class="d"></span><span class="t wrap"><b>{{ emp.employee }}</b>{% if has_ot_allowance %} · overtime allowed{% endif %}<span class="vm">Week of <span class="hb-num">{{ emp.week }}</span> · <span class="hb-num">{{ two_wk }}h</span> 2-week total</span></span><span class="m">{% if has_ot_allowance %}<span class="hb-num">{{ emp.hours }}h</span>{% elif emp.status == "overtime" %}<span class="hb-num">{{ emp.hours }}h</span>{% if emp.premium %} · about <span class="hb-num">${{ emp.premium|round|int|format_num }}</span> over straight time{% else %} · review pay{% endif %}{% else %}<span class="hb-num">{{ emp.hours }}h</span> · approaching 40h{% endif %}</span></div>
+      <div class="hb-row {{ 'good' if has_ot_allowance else ('lb2-tint ot' ~ (' worst' if emp is sameas _ot_top and labor.overtime_risk|length > 1 else '') if emp.status == 'overtime' else 'lb2-tint ot near') }}"><span class="d"></span><span class="t wrap"><b>{{ emp.employee }}</b>{% if has_ot_allowance %} · overtime allowed{% endif %}<span class="vm">Week of <span class="hb-num">{{ emp.week }}</span> · <span class="hb-num">{{ two_wk }}h</span> 2-week total</span></span><span class="m">{% if has_ot_allowance %}<span class="hb-num">{{ emp.hours }}h</span>{% elif emp.status == "overtime" %}<span class="hb-num">{{ emp.hours }}h</span>{% if emp.premium %} · about <span class="hb-num">${{ emp.premium|round|int|format_num }}</span> over straight time{% else %} · review pay{% endif %}{% else %}<span class="hb-num">{{ emp.hours }}h</span> · approaching 40h{% endif %}</span></div>
       {% else %}
       <div class="hb-empty">No one near overtime in this window.</div>
       {% endfor %}
@@ -9281,7 +9281,7 @@ svg:hover .hb-xh{opacity:1}
 .fc2-cfo-more{border-top:1px solid var(--hb-line2);padding-top:10px}
 .fc2-cfo-more>summary{cursor:pointer;list-style:none;font-size:13.5px;font-weight:600;color:var(--ink3);display:flex;align-items:center;gap:6px}
 .fc2-cfo-more>summary::-webkit-details-marker{display:none}
-.fc2-cfo-more>summary:after{content:'\203A';transition:transform .15s ease}
+.fc2-cfo-more>summary:after{content:'\203A';transition:transform .15s ease;font-size:17px;line-height:1;color:var(--ember);font-weight:700;display:inline-block}
 .fc2-cfo-more[open]>summary:after{transform:rotate(90deg)}
 .fc2-cfo-more>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 .fc2-cfo-more[open]{display:flex;flex-direction:column;gap:12px}
@@ -10667,7 +10667,7 @@ svg:hover .hb-xh{opacity:1}
 .ac-card.accent{border-color:var(--hb-tint2);box-shadow:0 0 0 1px var(--hb-tint),0 8px 28px var(--ac-glow)}
 .ac-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .ac-card-h .r{display:flex;align-items:center;gap:10px;flex:none}
-.ac-fold-btn .chev{display:inline-block;font-size:10px;transition:transform .2s ease}
+.ac-fold-btn .chev{display:inline-block;font-size:13px;color:var(--ember);transition:transform .2s ease}
 .ac-fold-btn[aria-expanded="true"] .chev{transform:rotate(180deg)}
 .ac-card-h:has(+ .ac-fold[hidden]){margin-bottom:0}
 /* Stacked blocks in a section breathe the same as blocks in a grid: a card
@@ -14128,7 +14128,6 @@ function switchTab(n,btn){
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   // A panel's benchmark card loads on its first visit, not all four at page load (#35).
   if(window.cavBench&&cavBench.fillPanel)cavBench.fillPanel(_swPanel);
-  if(window.cavRailBuild)cavRailBuild(_swPanel);
   // A step Back can return to (#8): the router pushes, replaces inside one
   // navigation, and writes nothing while it is routing Back itself.
   if(window.cavHistory)cavHistory('#'+n);else history.replaceState(null,null,'#'+n);
@@ -15200,7 +15199,7 @@ var _laborTarget={{labor_target|default(30.0)}};
     var p=d.split('-');
     return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
   }
-  elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
+  elPeriod.textContent=fmt(laborDateRange.start)+' – '+fmt(laborDateRange.end)+' · '+laborDateRange.days+' days';
 })();
 var _perfTab='daily';
 var _perfTrendData=null;
