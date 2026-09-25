@@ -102,17 +102,13 @@ def test_week_radar_number_matches_its_sibling_stat_sizes():
 # ── overtime alerts read as red, not the overstaffed orange ─────────────────
 
 def test_overtime_rows_read_red_through_the_standard_row_dot():
-    """Density round #44 (it pinned the dark-slab border colours before):
-    the staffing lists are hb-card + hb-row with a status dot, like every
-    other list. Overtime is the red (critical) dot; an allowed overtime is
-    green; approaching 40h is amber - tones from the tokens, no hex."""
+    """The staffing board (9/25/26) tones each lane from the tokens - the
+    overtime lane red, lean amber, overstaffed ember - never hex."""
     s = _src()
-    i = s.index(">Overtime alerts<")
-    j = s.index("{% endfor %}", i)
-    block = s[i:j]
-    # 9/25/26: overtime rows are tinted red (lb2-tint ot), approaching 40h
-    # amber (ot near), the most hours a shade darker.
-    assert "'lb2-tint ot'" in block and "'lb2-tint ot near'" in block and "emp is sameas _ot_top" in block
+    assert '.sb-lane[data-tone="ot"]{--tc:var(--hb-bad)}' in s
+    assert '.sb-lane[data-tone="lean"]{--tc:var(--hb-warn)}' in s
+    i = s.index('<div class="sb">')
+    block = s[i:s.index("</details>", i)]
     assert "#ff5a5a" not in block and "#ff8a65" not in block and "dark-hero-card" not in block
 
 

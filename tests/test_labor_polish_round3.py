@@ -67,9 +67,11 @@ def test_overtime_card_has_its_own_dark_background_not_the_orange_shared_one():
 def test_overtime_heading_matches_overstaffed_structure_for_alignment():
     """Density round #44: both lists are hb-cards whose heading is the same
     .lb2-ma-h line, so neither card's top edge can drift from the other."""
+    # 9/25/26 redesign: the three lists are lanes of one staffing board,
+    # every lane headed by the same .sb-lh row, so no lane can drift.
     s = _src()
-    assert '<div class="lb2-ma-h">Overstaffed days<small>' in s
-    assert '<div class="lb2-ma-h">Overtime alerts<small>' in s
+    assert "('over', 'Overstaffed days'" in s and "('ot', 'Overtime'" in s
+    assert '<div class="sb-lh">' in s and s.count('<div class="sb-lh">') == 1   # one template, three lanes
 
 
 # ── Employee Availability / Operational Score panel looks branded ──────────

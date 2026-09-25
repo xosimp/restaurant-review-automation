@@ -82,3 +82,29 @@ def test_the_modal_big_number_glow_is_turned_down():
     import re
     m = re.search(r"\.cf-p-big\{[^}]*text-shadow:([^;}]*)", SRC)
     assert m and "22px" not in m.group(1)
+
+
+def test_the_staffing_board_ranks_counts_and_never_double_books_a_teammate():
+    """labor.staffing_board (9/25/26): overtime worst-first by premium; a
+    same-role teammate is offered only with room under 40 that week,
+    counting hours already handed to them; .0 is dropped from figures."""
+    import labor
+    shifts = []
+    def add(emp, role, date, hours):
+        shifts.append({"employee": emp, "role": role, "date": date, "shift_start": "9:00am",
+                       "shift_end": "5:00pm", "scheduled_hours": hours, "actual_hours": hours})
+    for d in ("2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19"):
+        add("Vince L.", "Line Cook", d, 10.5)      # 63h
+        add("Omar H.", "Line Cook", d, 9)          # 54h
+    add("Nico F.", "Line Cook", "2026-09-14", 12)  # 12h: room for one of them
+    a = {"overtime_risk": [
+            {"employee": "Omar H.", "status": "overtime", "hours": 54.0, "week": "9/14/26", "week_start": "2026-09-14", "premium": 140},
+            {"employee": "Vince L.", "status": "overtime", "hours": 63.0, "week": "9/14/26", "week_start": "2026-09-14", "premium": 242}],
+         "labor_target": 26.0, "week_start_day": 0}
+    b = labor.staffing_board(a, shifts, rate=21.0)
+    ot = b["overtime"]
+    assert [x["title"] for x in ot] == ["Vince L.", "Omar H."]
+    assert ot[0]["mate"] == {"name": "Nico F.", "hours_text": "12"} and ot[1]["mate"] is None
+    assert ot[0]["hours_text"] == "63" and ot[0]["extra_text"] == "23"
+    assert b["summary"]["at_stake_text"] == "$382" and b["summary"]["quick"]["why"] == "move 23h to Nico F."
+    assert labor._n1(12.0) == "12" and labor._n1(12.5) == "12.5"

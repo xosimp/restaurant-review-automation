@@ -622,7 +622,196 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
     result['blended_rate'] = blended
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
     result['money_went'] = money_went(result, blended)
+    try:
+        result['staffing_board'] = staffing_board(result, shifts, blended)
+    except Exception:
+        result['staffing_board'] = None
     return result
+
+
+def _n1(x):
+    """A figure to one decimal with a trailing .0 dropped (owner, 9/25/26):
+    12.0 -> "12", 12.5 -> "12.5"."""
+    try:
+        v = round(float(x), 1)
+    except (TypeError, ValueError):
+        return ""
+    return str(int(v)) if v == int(v) else f"{v:.1f}"
+
+
+def _money(x):
+    try:
+        return f"${int(round(float(x))):,}"
+    except (TypeError, ValueError):
+        return "$0"
+
+
+def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
+    """The overstaffed, lean-strong and overtime lists as decision cards
+    (9/25/26 redesign). Every figure is one the analysis measured or a
+    direct product of it; nothing is estimated beyond hours x the blended
+    rate, and each card says so:
+
+      overstaffed   dollars above target that day; hours to trim at the
+                    blended rate; the role with the biggest crew that day;
+                    consistency = share of that weekday's days in the window
+                    that also ran over target (None under two such days)
+      lean          a strong day run under target - never "add staff" on
+                    this evidence alone (labor.py's stance): check service
+      overtime      hours past 40, the premium over straight time, and a
+                    same-role teammate who had room that week (hours + the
+                    overtime still <= 40) - only when one exists
+
+    Cards are ranked by dollars (lean days by how far under target); the
+    first card in each lane is its worst."""
+    a = analysis or {}
+    target = float(a.get("labor_target") or 0) or None
+    rate = float(rate) if rate else None
+
+    # Per date and per weekday, from the shift rows the analysis read.
+    by_date, roles_by_date, role_of, week_hours = {}, {}, {}, {}
+    for r in shifts or []:
+        d = str(r.get("date") or "")[:10]
+        if not d:
+            continue
+        emp, role = (r.get("employee") or "").strip(), (r.get("role") or "").strip() or "Staff"
+        h = _shift_hours(r)
+        by_date.setdefault(d, 0.0)
+        by_date[d] += h
+        roles_by_date.setdefault(d, {}).setdefault(role, set()).add(emp)
+        if emp:
+            role_of.setdefault(emp, role)
+    daily = {}
+    for d in by_date:
+        try:
+            daily[d] = datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            pass
+    over_dates = set()
+    for o in a.get("overstaffed_days") or []:
+        try:
+            over_dates.add(datetime.strptime(o["date"], "%m/%d/%y").strftime("%Y-%m-%d"))
+        except Exception:
+            pass
+
+    def weekday_consistency(day_name, hit_dates):
+        same = [d for d, dt in daily.items() if dt.strftime("%A") == day_name]
+        hits = sum(1 for d in same if d in hit_dates)
+        return {"hits": hits, "of": len(same),
+                "pct": round(hits / len(same) * 100) if len(same) >= 2 else None}
+
+    over = []
+    for o in a.get("overstaffed_days") or []:
+        excess = float(o.get("over_target_dollars") or 0)
+        try:
+            iso = datetime.strptime(o["date"], "%m/%d/%y").strftime("%Y-%m-%d")
+        except Exception:
+            iso = None
+        crews = roles_by_date.get(iso or "", {})
+        big = max(crews.items(), key=lambda kv: len(kv[1])) if crews else None
+        trim = round(excess / rate, 1) if rate and excess else None
+        pts = round(float(o.get("labor_pct") or 0) - (target or 0), 1) if target else None
+        cons = weekday_consistency(o.get("day"), over_dates)
+        say = (f"{o.get('day')} ran {_n1(o.get('labor_pct'))}% labor on {_money(o.get('sales'))} in sales"
+               + (f" — {_n1(pts)} points over your {_n1(target)}% target." if pts is not None else "."))
+        if trim:
+            say += (f" About {_n1(trim)} fewer hours would have put it on target"
+                    + (f" — the {big[0].lower()} crew was the biggest, with {len(big[1])} on." if big and len(big[1]) > 1 else "."))
+        over.append({"kind": "overstaffed", "title": o.get("day"), "date": o.get("date"), "dollars": excess,
+                     "dollars_text": _money(excess), "label": "above target",
+                     "pct_text": _n1(o.get("labor_pct")), "sales_text": _money(o.get("sales")),
+                     "trim_text": _n1(trim) if trim else "", "pts_text": _n1(pts) if pts is not None else "",
+                     "severity": "high" if pts is not None and pts >= 5 else "medium",
+                     "consistency": cons, "say": say,
+                     "ask": f"Why did {o.get('day')} {o.get('date')} run over my labor target, and where should I trim?"})
+    over.sort(key=lambda x: -x["dollars"])
+
+    lean_dates = set()
+    for u in a.get("understaffed_days") or []:
+        try:
+            lean_dates.add(datetime.strptime(u["date"], "%m/%d/%y").strftime("%Y-%m-%d"))
+        except Exception:
+            pass
+    lean = []
+    for u in a.get("understaffed_days") or []:
+        pts = round((target or 0) - float(u.get("labor_pct") or 0), 1) if target else None
+        cons = weekday_consistency(u.get("day"), lean_dates)
+        say = (f"{u.get('day')} did {_money(u.get('sales'))} on {_n1(u.get('labor_pct'))}% labor"
+               + (f" — {_n1(pts)} points under target on one of your strongest days." if pts is not None else ".")
+               + " Before adding anyone, check that day's reviews and ticket times for slow service.")
+        lean.append({"kind": "lean", "title": u.get("day"), "date": u.get("date"),
+                     "dollars": float(u.get("sales") or 0), "dollars_text": _money(u.get("sales")),
+                     "label": "in sales", "pct_text": _n1(u.get("labor_pct")),
+                     "pts_text": _n1(pts) if pts is not None else "",
+                     "covers": u.get("covers"), "spc_text": _money(u.get("sales_per_cover")) if u.get("sales_per_cover") else "",
+                     "severity": "high" if pts is not None and pts >= 8 else "medium",
+                     "consistency": cons, "say": say,
+                     "ask": f"Was service slow on {u.get('day')} {u.get('date')}? Check the reviews and labor from that day."})
+    lean.sort(key=lambda x: -(float(x["pts_text"] or 0)))
+
+    # Hours by person by week, for a same-role teammate with room.
+    wk_start = int(a.get("week_start_day") or 0)
+    for r in shifts or []:
+        emp = (r.get("employee") or "").strip()
+        d = str(r.get("date") or "")[:10]
+        if not emp or d not in daily:
+            continue
+        dt = daily[d]
+        wk = (dt - timedelta(days=(dt.weekday() - wk_start) % 7)).strftime("%Y-%m-%d")
+        week_hours.setdefault(wk, {}).setdefault(emp, 0.0)
+        week_hours[wk][emp] += _shift_hours(r)
+    ot = []
+    for e in a.get("overtime_risk") or []:
+        if e.get("status") != "overtime":
+            continue
+        emp, hours = e.get("employee"), float(e.get("hours") or 0)
+        ot.append({"kind": "overtime", "title": emp, "role": role_of.get((emp or "").strip(), ""),
+                   "week": e.get("week"), "week_start": e.get("week_start"),
+                   "hours": hours, "extra": round(max(0.0, hours - OVERTIME_THRESHOLD_HOURS), 1),
+                   "dollars": float(e.get("premium") or 0)})
+    ot.sort(key=lambda x: -x["dollars"])
+    # A same-role teammate with room that week, costliest overtime first;
+    # hours already handed to a teammate count against their room, so one
+    # person is never offered to two others past 40.
+    given = {}
+    for x in ot:
+        emp, role, wk, extra = x["title"], x["role"], x["week_start"], x["extra"]
+        mate = None
+        if role and wk in week_hours and extra > 0:
+            room = []
+            for n, h in week_hours[wk].items():
+                load = h + given.get((wk, n), 0.0)
+                if n != emp and role_of.get(n) == role and load + extra <= OVERTIME_THRESHOLD_HOURS:
+                    room.append((n, h, load))
+            if room:
+                n, h, load = min(room, key=lambda t: t[2])
+                given[(wk, n)] = given.get((wk, n), 0.0) + extra
+                mate = {"name": n, "hours_text": _n1(h)}
+        prem = x["dollars"]
+        say = (f"{emp} worked {_n1(x['hours'])}h the week of {x['week']} — {_n1(extra)}h past 40"
+               + (f", about {_money(prem)} over straight time." if prem else "."))
+        if mate:
+            say += (f" {mate['name']} ({role.lower()}) worked {mate['hours_text']}h that week — giving them "
+                    f"those hours at straight time saves that premium.")
+        x.update({"dollars_text": _money(prem) if prem else "—", "label": "overtime premium",
+                  "hours_text": _n1(x["hours"]), "extra_text": _n1(extra),
+                  "severity": "high" if extra >= 10 else "medium", "mate": mate, "say": say,
+                  "ask": f"How do I keep {emp} under 40 hours without leaving the {role.lower() or 'shift'} short?"})
+
+    at_stake = sum(x["dollars"] for x in over) + sum(x["dollars"] for x in ot)
+    priced = over + ot
+    biggest = max(priced, key=lambda x: x["dollars"]) if priced else None
+    quick = next((x for x in ot if x["mate"]), None) or (over[0] if over else None)
+    return {"overstaffed": over, "lean": lean, "overtime": ot,
+            "summary": {"at_stake_text": _money(at_stake), "at_stake": at_stake,
+                        "over_text": _money(sum(x["dollars"] for x in over)),
+                        "ot_text": _money(sum(x["dollars"] for x in ot)),
+                        "biggest": ({"title": biggest["title"], "dollars_text": biggest["dollars_text"],
+                                     "label": biggest["label"]} if biggest else None),
+                        "quick": ({"title": quick["title"], "kind": quick["kind"],
+                                   "why": (f"move {quick['extra_text']}h to {quick['mate']['name']}" if quick["kind"] == "overtime"
+                                           else f"trim about {quick['trim_text']}h on {quick['title']}s" if quick.get("trim_text")
+                                           else "trim the biggest crew")} if quick else None)}}
 
 
 # Hours past schedule count only from this many over the period, per person:
@@ -650,11 +839,12 @@ def money_went(analysis: dict, rate: float = None) -> list:
         if dollars:
             out.append({"kind": "overstaffed", "dollars": float(dollars), "day": d.get("day"),
                         "date": d.get("date"), "labor_pct": d.get("labor_pct"), "sales": d.get("sales"),
-                        "label": "above target"})
+                        "label": "above target", "pct_text": _n1(d.get("labor_pct"))})
     for e in a.get("overtime_risk") or []:
         if e.get("status") == "overtime" and e.get("premium"):
             out.append({"kind": "overtime", "dollars": float(e["premium"]), "employee": e.get("employee"),
-                        "hours": e.get("hours"), "week": e.get("week"), "label": "overtime premium"})
+                        "hours": e.get("hours"), "week": e.get("week"), "label": "overtime premium",
+                        "hours_text": _n1(e.get("hours"))})
     if rate and not a.get("hours_are_estimated"):
         for emp, h in (a.get("employee_hours") or {}).items():
             sched, actual = float(h.get("scheduled") or 0), float(h.get("actual") or 0)
@@ -662,6 +852,7 @@ def money_went(analysis: dict, rate: float = None) -> list:
             if sched > 0 and over >= PAST_SCHEDULE_MIN_HOURS:
                 out.append({"kind": "past_schedule", "dollars": round(over * float(rate), 0), "employee": emp,
                             "hours_over": over, "scheduled": round(sched, 1), "actual": round(actual, 1),
+                            "hours_over_text": _n1(over), "scheduled_text": _n1(sched), "actual_text": _n1(actual),
                             "label": "past schedule, estimated"})
     out.sort(key=lambda x: -x["dollars"])
     return out

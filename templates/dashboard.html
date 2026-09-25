@@ -618,7 +618,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 #congrats-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #congrats-modal.show{display:flex}
 #congrats-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:32px 36px;max-width:480px;width:90%;animation:modalIn .3s ease;position:relative;text-align:center}
-#congrats-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
+#congrats-inner .c-ember{display:none}   /* no side stripe on modals (owner, 9/25/26) */
 #congrats-inner h2{color:#f0ebe0;font-size:22px;font-weight:800;margin:0 0 8px}
 #congrats-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px}
 #congrats-inner p{color:#c8bfb0;font-size:13px;line-height:1.7;margin:0 0 10px}
@@ -629,7 +629,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 #explain-modal,#person-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #explain-modal.show,#person-modal.show{display:flex}
 #explain-inner,#person-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:30px 34px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;animation:modalIn .3s ease;position:relative;text-align:left}
-#explain-inner .c-ember,#person-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
+#explain-inner .c-ember,#person-inner .c-ember{display:none}   /* no side stripe on modals (owner, 9/25/26) */
 #explain-inner h2,#person-inner h2{color:#f0ebe0;font-size:20px;font-weight:800;margin:0 0 14px}
 #explain-inner .c-sub,#person-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
 #explain-body,#person-body{color:#c8bfb0;font-size:13px;line-height:1.65}
@@ -7816,6 +7816,72 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-tint.ot{--tc:var(--hb-bad)}
 .lb2-tint.ot.near{background:color-mix(in srgb,var(--hb-warn) 9%,transparent);--tc:var(--hb-warn)}
 .lb2-tint .m{color:var(--tc);font-weight:600}
+/* ── Staffing intelligence (9/25/26 redesign) ─────────────────────────────
+   Decision cards, not a table. One lane per kind, each in its own tone
+   (--tc: overstaffed ember, lean amber, overtime red). Depth from layered
+   surfaces and a tinted edge, not from boxes inside boxes; the worst card in
+   a lane is lifted and ringed in its tone. Motion: a staggered rise, a hover
+   lift, the consistency ring drawing in - all off under reduced motion. */
+.sb{display:flex;flex-direction:column;gap:26px;margin-top:10px}
+.sb-sum{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px}
+.sb-tile{position:relative;padding:16px 18px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0)),var(--surface);border:1px solid var(--hb-line2);box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 14px 34px -22px rgba(0,0,0,.55)}
+.sb-tile .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.sb-tile .v{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin-top:6px;line-height:1.2}
+.sb-tile .v.hb-num{font-family:'Space Grotesk',sans-serif;font-size:34px;letter-spacing:-.02em}
+.sb-tile .s{font-size:13.5px;color:var(--ink3);margin-top:4px}
+.sb-tile.hero{border-color:color-mix(in srgb,var(--ember) 30%,transparent);background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--ember) 16%,transparent),transparent 60%),var(--surface)}
+.sb-tile.hero .v{color:var(--ember)}
+.sb-lane{--tc:var(--ember)}
+.sb-lane[data-tone="lean"]{--tc:var(--hb-warn)}
+.sb-lane[data-tone="ot"]{--tc:var(--hb-bad)}
+.sb-lh{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.sb-ic{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;color:var(--tc);background:color-mix(in srgb,var(--tc) 14%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 28%,transparent) inset,0 0 18px -6px var(--tc)}
+.sb-ic svg{width:18px;height:18px}
+.sb-lt{flex:1;min-width:0;display:flex;flex-direction:column}
+.sb-lt b{font-size:17px;font-weight:600;color:var(--ink)}
+.sb-lt small{font-size:13px;color:var(--ink3)}
+.sb-ln{font-size:13px;font-weight:700;color:var(--tc);padding:3px 10px;border-radius:999px;background:color-mix(in srgb,var(--tc) 12%,transparent)}
+.sb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.sb-card{position:relative;display:flex;flex-direction:column;gap:10px;padding:16px 18px 14px;border-radius:16px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--tc) 7%,transparent),transparent 55%),var(--surface);
+  border:1px solid color-mix(in srgb,var(--tc) 20%,var(--hb-line2));
+  box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 16px 36px -26px rgba(0,0,0,.6);
+  opacity:0;transform:translateY(8px);animation:sbRise .45s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*55ms);
+  transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease}
+.sb-card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--tc) 40%,transparent);box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 22px 44px -24px rgba(0,0,0,.7),0 0 0 1px color-mix(in srgb,var(--tc) 12%,transparent)}
+.sb-card.worst{border-color:color-mix(in srgb,var(--tc) 55%,transparent);background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--tc) 18%,transparent),transparent 60%),var(--surface);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 25%,transparent),0 22px 48px -26px color-mix(in srgb,var(--tc) 55%,transparent)}
+@keyframes sbRise{to{opacity:1;transform:none}}
+.sb-top{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px}
+.sb-sev{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--tc);padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--tc) 12%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--tc) 22%,transparent) inset}
+.sb-sev.high{background:color-mix(in srgb,var(--tc) 20%,transparent)}
+.sb-ring{display:inline-grid;grid-template-columns:38px auto;grid-template-rows:auto auto;align-items:center;column-gap:8px;line-height:1.1}
+.sb-ring svg{grid-row:1/3;width:38px;height:38px;transform:rotate(-90deg)}
+.sb-ring circle{fill:none;stroke-width:3.2}
+.sb-ring .bg{stroke:color-mix(in srgb,var(--ink3) 22%,transparent)}
+.sb-ring .fg{stroke:var(--tc);stroke-linecap:round;stroke-dasharray:var(--p) 100;animation:sbRing .9s cubic-bezier(.2,.9,.3,1) both;filter:drop-shadow(0 0 3px color-mix(in srgb,var(--tc) 60%,transparent))}
+@keyframes sbRing{from{stroke-dasharray:0 100}}
+.sb-ring b{font-size:14px;font-weight:700;color:var(--ink)}
+.sb-ring small{font-size:11px;color:var(--ink3)}
+.sb-ring.none b{color:var(--ink3)}
+.sb-title{font-size:17px;font-weight:600;color:var(--ink);display:flex;flex-direction:column;gap:2px}
+.sb-title small{font-size:13px;font-weight:500;color:var(--ink3)}
+.sb-fig{display:flex;align-items:baseline;gap:8px}
+.sb-fig b{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--tc)}
+.sb-fig span{font-size:13.5px;color:var(--ink3)}
+.sb-say{margin:0;font-size:14.5px;line-height:1.55;color:var(--ink2)}
+.sb-chips{display:flex;flex-wrap:wrap;gap:6px}
+.sb-chips span{font-size:12.5px;color:var(--ink3);padding:4px 10px;border-radius:999px;background:var(--hb-inner,rgba(255,255,255,.04));border:1px solid var(--hb-line2)}
+.sb-chips b{color:var(--ink);font-weight:700}
+.sb-chips .ok{color:var(--hb-good);border-color:color-mix(in srgb,var(--hb-good) 35%,transparent);background:color-mix(in srgb,var(--hb-good) 10%,transparent)}
+.sb-chips .ok b{color:var(--hb-good)}
+.sb-acts{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:auto;padding-top:10px;border-top:1px solid var(--hb-line2)}
+.sb-more{margin-top:10px}
+.sb-empty{display:flex;align-items:center;gap:10px;padding:16px 18px;border-radius:14px;border:1px dashed var(--hb-line);color:var(--ink3);font-size:14.5px}
+.sb-ok{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--hb-good);background:color-mix(in srgb,var(--hb-good) 14%,transparent)}
+.sb-ok svg{width:14px;height:14px}
+@media (max-width:900px){.sb-sum{grid-template-columns:1fr 1fr}.sb-tile.hero{grid-column:1/-1}}
+@media (max-width:560px){.sb-sum{grid-template-columns:1fr}.sb-grid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.sb-card{animation:none;opacity:1;transform:none}.sb-ring .fg{animation:none}.sb-card:hover{transform:none}}
 .lb2-money-all .lb2-ma-h small{font-weight:500;color:var(--ink3);margin-left:6px;font-size:13.5px}
 .lb2-hero-when{font-size:13.5px;color:var(--ink3);margin-top:8px}
 .lb2-dow-wrap{margin-top:16px}
@@ -8213,7 +8279,6 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 #panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
 /* Inside the Every day and person disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
-#panel-labor .lb2-money-all .two-col{margin-top:8px;padding-top:0;border-top:none}
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
 @media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
 </style>
@@ -8316,9 +8381,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     {% for w in _went[:3] %}
     {% set _tk = {'overstaffed': 'over', 'overtime': 'ot', 'past_schedule': 'under'}[w.kind] %}
     <div class="hb-row lb2-tint {{ _tk }}{{ ' worst' if loop.first and _went|length > 1 }}"><span class="d"></span><span class="t wrap">
-      {% if w.kind == 'overstaffed' %}<b>{{ w.day }}</b> <span class="vm hb-num">{{ w.date|format_date }}</span> · overstaffed · <span class="hb-num">{{ w.labor_pct }}%</span> labor on <span class="hb-num">${{ w.sales|int|format_num }}</span> sales
-      {% elif w.kind == 'overtime' %}<b>{{ w.employee }}</b> · overtime · <span class="hb-num">{{ w.hours }}h</span> week of <span class="hb-num">{{ w.week }}</span>
-      {% else %}<b>{{ w.employee }}</b> · past schedule · <span class="hb-num">{{ w.hours_over }}h</span> over (<span class="hb-num">{{ w.actual }}h</span> worked, <span class="hb-num">{{ w.scheduled }}h</span> scheduled){% endif %}
+      {% if w.kind == 'overstaffed' %}<b>{{ w.day }}</b> <span class="vm hb-num">{{ w.date|format_date }}</span> · overstaffed · <span class="hb-num">{{ w.pct_text or w.labor_pct }}%</span> labor on <span class="hb-num">${{ w.sales|int|format_num }}</span> sales
+      {% elif w.kind == 'overtime' %}<b>{{ w.employee }}</b> · overtime · <span class="hb-num">{{ w.hours_text or w.hours }}h</span> week of <span class="hb-num">{{ w.week }}</span>
+      {% else %}<b>{{ w.employee }}</b> · past schedule · <span class="hb-num">{{ w.hours_over_text or w.hours_over }}h</span> over (<span class="hb-num">{{ w.actual_text or w.actual }}h</span> worked, <span class="hb-num">{{ w.scheduled_text or w.scheduled }}h</span> scheduled){% endif %}
     </span><span class="m"><span class="hb-num lb2-went-n">${{ w.dollars|int|format_num }}</span> {{ w.label }}</span></div>
     {% endfor %}
     </div>
@@ -8975,48 +9040,73 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      dark slabs (density round #9, #44). Collapsed: the top of it already
      sits under Waiting on you. Dollars above target and overtime premiums
      are opportunities, never "saved" (Money labels). #}
+  {# Staffing intelligence (9/25/26 redesign; labor.staffing_board): the
+     overstaffed days, strong days run lean and overtime as decision cards -
+     an executive strip first (at stake, costliest, fastest win), then one
+     lane per kind, each card worst-first: severity, a measured consistency
+     ring, the dollars, one sentence of what to do, and its actions. Every
+     figure is measured or hours x the blended rate, and Explain why shows
+     the arithmetic. Dollars are opportunities, never "saved" (Money labels). #}
+  {% set _sb = labor.staffing_board if labor.is_live else None %}
+  {% macro sb_ring(c) -%}
+  {%- if c and c.pct is not none -%}<span class="sb-ring" style="--p:{{ c.pct }}" title="The same pattern on {{ c.hits }} of {{ c.of }} of these weekdays in the window" aria-label="Consistency {{ c.pct }}%"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/><circle class="fg" cx="18" cy="18" r="15.5" pathLength="100"/></svg><b class="hb-num">{{ c.pct }}%</b><small>consistent</small></span>
+  {%- else -%}<span class="sb-ring none" title="First time in this window - not enough of these weekdays to call it a pattern"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/></svg><b>—</b><small>first seen</small></span>{%- endif -%}
+  {%- endmacro %}
   <details class="hb-results lb2-money-all" id="lb2-money-all">
-    <summary><span class="hb-kicker">Every day and person</span><span>Overstaffed days, strong days run lean, overtime</span></summary>
-  <div class="two-col">
-    <div class="hb-card">
-      <div class="lb2-ma-h">Overstaffed days<small>above {{ _tl }}</small></div>
-      <div id="overstaffed-tbody">
-      {# Each list is tinted in its own colour, and its worst row a shade
-         darker (9/25/26): overstaffed ember (highest labor %), under
-         target amber (leanest), overtime red (most hours). #}
-      {% set _od_top = (labor.overstaffed_days|max(attribute='labor_pct')) if labor.overstaffed_days else None %}
-      {% for d in labor.overstaffed_days %}
-      {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
-      <div data-row class="hb-row lb2-tint over{{ ' worst' if d is sameas _od_top and labor.overstaffed_days|length > 1 }}"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span>{% if loop.first %} · most expensive{% endif %}<span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales · <span class="hb-num">${{ d.labor_cost|format_num }}</span> labor{% if d.over_target_dollars %} · <span class="hb-num">${{ d.over_target_dollars|int|format_num }}</span> above target{% endif %}</span></span><span class="m hb-num">{% if diff > 0 %}+{{ diff }} pts{% else %}{{ diff }} pts{% endif %}</span></div>
-      {% else %}
-      <div class="hb-empty">{% if _status_ok %}No overstaffed days in this window.{% else %}No overstaffed days flagged, but the data under this is sample or partial.{% endif %}</div>
+    <summary><span class="hb-kicker">Every day and person</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
+  {% if _sb %}
+  <div class="sb">
+    <div class="sb-sum">
+      <div class="sb-tile hero"><div class="k">At stake in this window</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s"><span class="hb-num">{{ _sb.summary.over_text }}</span> above target · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium</div></div>
+      <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced in this window</div>{% endif %}</div>
+      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
+    </div>
+    {% set _lanes = [
+      ('over', 'Overstaffed days', 'Labor above your ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
+      ('lean', 'Strong days run lean', 'Big sales on a thin crew — check service first', _sb.lean, 'No strong day ran lean in this window.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
+      ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
+    ] %}
+    {% for key, title, sub, items, empty, icon in _lanes %}
+    <section class="sb-lane" data-tone="{{ key }}" aria-label="{{ title }}">
+      <div class="sb-lh"><span class="sb-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{{ icon|safe }}</svg></span>
+        <div class="sb-lt"><b>{{ title }}</b><small>{{ sub }}</small></div>
+        <span class="sb-ln hb-num">{{ items|length }}</span></div>
+      {% if items %}
+      <div class="sb-grid">
+      {% for x in items %}
+      {% set _worst = loop.first and items|length > 1 %}
+      <article class="sb-card{{ ' worst' if _worst }}" style="--i:{{ loop.index0 }}"{% if loop.index > 6 %} hidden data-sb-more{% endif %}>
+        <div class="sb-top">
+          <span class="sb-sev {{ x.severity }}">{% if _worst %}Biggest · {% endif %}{% if key == 'ot' %}{{ x.extra_text }}h past 40{% elif key == 'over' %}{{ x.pts_text }} pts over{% else %}{{ x.pts_text }} pts under{% endif %}</span>
+          {% if key != 'ot' %}{{ sb_ring(x.consistency) }}{% endif %}
+        </div>
+        <div class="sb-title">{{ x.title }}<small>{% if key == 'ot' %}{{ x.role }}{% if x.role %} · {% endif %}week of {{ x.week }}{% else %}{{ x.date }}{% endif %}</small></div>
+        <div class="sb-fig"><b class="hb-num">{{ x.dollars_text }}</b><span>{{ x.label }}</span></div>
+        <p class="sb-say">{{ x.say }}</p>
+        <div class="sb-chips">
+          {% if key == 'over' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span><span><b class="hb-num">{{ x.sales_text }}</b> sales</span>{% if x.trim_text %}<span>trim <b class="hb-num">~{{ x.trim_text }}h</b></span>{% endif %}
+          {% elif key == 'lean' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span>{% if x.covers %}<span><b class="hb-num">{{ x.covers }}</b> covers</span>{% endif %}{% if x.spc_text %}<span><b class="hb-num">{{ x.spc_text }}</b> a cover</span>{% endif %}
+          {% else %}<span><b class="hb-num">{{ x.hours_text }}h</b> that week</span>{% if x.mate %}<span class="ok">give <b class="hb-num">{{ x.extra_text }}h</b> to {{ x.mate.name }}</span>{% endif %}{% endif %}
+        </div>
+        <div class="sb-acts">
+          {% set _how %}{% if key == 'over' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.pct_text }}% labor on {{ x.sales_text }} in sales, against your {{ _tl }}.</div><div style="margin-bottom:10px"><strong>The figure:</strong> labor spent above {{ _tl }} of that day’s sales = {{ x.dollars_text }}.</div>{% if x.trim_text %}<div style="margin-bottom:10px"><strong>Hours to trim:</strong> {{ x.dollars_text }} ÷ your blended rate of ${{ '%.2f'|format(labor.blended_rate or 0) }}/h ≈ {{ x.trim_text }}h.</div>{% endif %}{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran over target.</div>{% endif %}{% elif key == 'lean' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.dollars_text }} in sales on {{ x.pct_text }}% labor — well under your {{ _tl }} on one of your strongest days.</div><div style="margin-bottom:10px"><strong>Why not add staff straight away:</strong> a lean crew on a big day can be efficient, not short. Slow tickets or complaints from that day are the evidence that it was short.</div>{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran lean.</div>{% endif %}{% else %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.hours_text }}h the week of {{ x.week }} — {{ x.extra_text }}h past 40.</div><div style="margin-bottom:10px"><strong>The premium:</strong> hours past 40 × their blended rate × 0.5 (time and a half) = {{ x.dollars_text }}.</div>{% if x.mate %}<div><strong>Who had room:</strong> {{ x.mate.name }} worked {{ x.mate.hours_text }}h that week in the same role — those hours at straight time would not have cost the premium.</div>{% else %}<div><strong>Who had room:</strong> no one in the same role had {{ x.extra_text }}h free under 40 that week.</div>{% endif %}{% endif %}{% endset %}
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="{{ _how|forceescape }}" data-explain-title="{{ x.title }} — how this was worked out" data-explain-kicker="Explain why">Explain why</button>
+          {% if key != 'lean' %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="labor/schedule">Plan next week →</button>{% endif %}
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="{{ x.ask }}">Ask Cavnar AI →</button>
+        </div>
+      </article>
       {% endfor %}
       </div>
-      <div class="lb2-ma-h">Under target on a strong day<small>worth a look</small></div>
-      <div id="understaffed-tbody">
-      {% set _ud_top = (labor.understaffed_days|min(attribute='labor_pct')) if labor.understaffed_days else None %}
-      {% for d in labor.understaffed_days %}
-      <div data-row class="hb-row lb2-tint under{{ ' worst' if d is sameas _ud_top and labor.understaffed_days|length > 1 }}"><span class="d"></span><span class="t wrap"><b>{{ d.day }}</b> <span class="vm hb-num">{{ d.date|format_date }}</span><span class="vm"><span class="hb-num">${{ d.sales|int|format_num }}</span> sales on a lean crew — ask whether service was slow before adding staff.</span></span><span class="m hb-num">{{ d.labor_pct }}%</span></div>
+      {% if items|length > 6 %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm sb-more" onclick="var l=this.closest('.sb-lane');[].forEach.call(l.querySelectorAll('[data-sb-more]'),function(c){c.hidden=false;});this.hidden=true;">Show all <span class="hb-num">{{ items|length }}</span> →</button>{% endif %}
       {% else %}
-      <div class="hb-empty">No strong days run lean this period.</div>
-      {% endfor %}
-      </div>
-    </div>
-    <div class="hb-card">
-      <div class="lb2-ma-h">Overtime alerts<small>the week they were worked</small></div>
-      {% set _ot_top = (labor.overtime_risk|max(attribute='hours')) if labor.overtime_risk else None %}
-      {% for emp in labor.overtime_risk %}
-      {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
-      {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
-      {% set emp_constraint = labor.staff_constraints.get(_emp_key, labor.staff_constraints.get(_emp_key.split(' ')[0], '')) %}
-      {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
-      {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
-      <div class="hb-row {{ 'good' if has_ot_allowance else ('lb2-tint ot' ~ (' worst' if emp is sameas _ot_top and labor.overtime_risk|length > 1 else '') if emp.status == 'overtime' else 'lb2-tint ot near') }}"><span class="d"></span><span class="t wrap"><b>{{ emp.employee }}</b>{% if has_ot_allowance %} · overtime allowed{% endif %}<span class="vm">Week of <span class="hb-num">{{ emp.week }}</span> · <span class="hb-num">{{ two_wk }}h</span> 2-week total</span></span><span class="m">{% if has_ot_allowance %}<span class="hb-num">{{ emp.hours }}h</span>{% elif emp.status == "overtime" %}<span class="hb-num">{{ emp.hours }}h</span>{% if emp.premium %} · about <span class="hb-num">${{ emp.premium|round|int|format_num }}</span> over straight time{% else %} · review pay{% endif %}{% else %}<span class="hb-num">{{ emp.hours }}h</span> · approaching 40h{% endif %}</span></div>
-      {% else %}
-      <div class="hb-empty">No one near overtime in this window.</div>
-      {% endfor %}
-    </div>
+      <div class="sb-empty"><span class="sb-ok" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>{{ empty }}</div>
+      {% endif %}
+    </section>
+    {% endfor %}
   </div>
+  {% else %}
+  <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
+  {% endif %}
   </details>
   <script>
   /* Today (#48): the waiting count joins the server's sentence once
@@ -10808,7 +10898,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* Fields */
 .ac-field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .ac-field label,.ac-lbl{font-size:13.5px;font-weight:600;color:var(--ink2)}
-.ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line);border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
+.ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line,var(--cb-line,rgba(128,120,110,.28)));border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
 .ac-input:focus,.ac-select:focus,.ac-textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2)}
 .ac-input[readonly]{color:var(--ink3);background:var(--paper2)}
 /* One field colour in dark mode, typed or not. The dark rule for inputs
