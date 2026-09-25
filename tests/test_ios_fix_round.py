@@ -8,9 +8,12 @@ these read the sources because the suite cannot run the app.
 import os
 import re
 
+import subprocess
+import sys
+import tempfile
+
 import pytest
 from flask import Flask
-import hosted_dashboard  # at collection, as test_home_page_renders does: a mid-run import re-registers blueprints
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOS = os.path.join(ROOT, "ios", "CavnarAI")
@@ -92,19 +95,42 @@ def test_the_widget_and_home_card_read_with_peek():
 
 # ── F3-16: universal links ───────────────────────────────────────────────────
 
+_AASA_SCRIPT = r'''
+import json, os, sqlite3, sys
+vol = sys.argv[1]
+sqlite3.connect(os.path.join(vol, "reviews.db")).close()   # pre-create: no legacy adoption
+os.environ.update(RAILWAY_VOLUME_MOUNT_PATH=vol, RUN_SCHEDULER_IN_WEB="0", ANTHROPIC_API_KEY="",
+                  RESEND_API_KEY="", TWILIO_AUTH_TOKEN="", SECRET_KEY="test-secret",
+                  CAVNAR_PIN_PEPPER="test-pepper", HIBP_DISABLED="1", ADMIN_REQUIRE_2FA="0")
+import hosted_dashboard as h
+aasa = h.apple_app_site_association()
+r = h.app.test_client().get("/.well-known/apple-app-site-association")
+print("AASA " + json.dumps({"aasa": aasa, "status": r.status_code, "mimetype": r.mimetype,
+                            "served": r.get_json(), "app_id": h.APPLE_APP_ID}))
+'''
+
+
 def test_the_apple_app_site_association_names_the_app_and_only_the_dashboard():
-    aasa = hosted_dashboard.apple_app_site_association()
+    """Runs the real app in a subprocess, as test_home_page_renders does.
+    Importing hosted_dashboard into the test process wires CSRF onto
+    client_bp for every later test in that worker (csrf_protect runs at
+    import), which turned 162 bare-app POSTs into 403s."""
+    import json
+    vol = tempfile.mkdtemp(prefix="cavnar-aasa-")
+    out = subprocess.run([sys.executable, "-c", _AASA_SCRIPT, vol], cwd=ROOT, capture_output=True,
+                         text=True, timeout=180)
+    assert out.returncode == 0, out.stdout[-1500:] + "\n" + out.stderr[-2500:]
+    got = json.loads(out.stdout.split("AASA ", 1)[1].splitlines()[0])
+    aasa = got["aasa"]
     detail = aasa["applinks"]["details"][0]
     assert detail["appIDs"] == ["8DW8XL63K6.ai.cavnar.CavnarAI"]
     assert [c["/"] for c in detail["components"]] == ["/dashboard"]
-    client = hosted_dashboard.app.test_client()
-    r = client.get("/.well-known/apple-app-site-association")
-    assert r.status_code == 200 and r.mimetype == "application/json"
-    assert r.get_json() == aasa
+    assert got["status"] == 200 and got["mimetype"] == "application/json"
+    assert got["served"] == aasa
     yml = _read(IOS, "project.yml")
     team = re.search(r"DEVELOPMENT_TEAM: (\w+)", yml).group(1)
     bundle = re.search(r"PRODUCT_BUNDLE_IDENTIFIER: (ai\.cavnar\.CavnarAI)\n", yml).group(1)
-    assert hosted_dashboard.APPLE_APP_ID == f"{team}.{bundle}"
+    assert got["app_id"] == f"{team}.{bundle}"
     assert re.search(r"com\.apple\.developer\.associated-domains:\n\s+- applinks:dashboard\.cavnar\.ai", yml)
 
 
