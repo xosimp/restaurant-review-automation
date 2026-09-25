@@ -985,6 +985,8 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-prop{align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:14px;padding:12px 14px}
 .ask-prop .t{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:9px}
 .ask-prop .r{display:flex;gap:8px}
+/* The Ask history list's open-a-chat row: a .cbtn laid out as a text line. */
+.cbtn.ask-hist-open{flex:1;min-width:0;display:block;height:auto;text-align:left;padding:0;font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ask-prop .ok{font-size:12.5px;color:var(--green);font-weight:700}.ask-prop .dim{font-size:12.5px;color:var(--ink3)}.ask-prop .err{font-size:12px;color:var(--red);margin-top:7px}
 .ask-prop .dl{margin:0 0 9px;display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12.5px}
 .ask-prop .dl dt{color:var(--ink3)}.ask-prop .dl dd{margin:0;color:var(--ink2)}
@@ -1646,8 +1648,17 @@ window.addEventListener('scroll', function () {
 function cavNavOpenModule(module) {
   var tab = CAV_NAV_TAB[module] || 'home', btn = document.getElementById('tab-' + tab);
   if (!btn) { tab = 'home'; btn = document.getElementById('tab-home'); }
+  /* Already open: a section rail click or a brief action inside the module
+     re-ran switchTab (its log write, its charts, a Back step) for nothing
+     (re-audit F1-6). */
+  var panel = document.getElementById('panel-' + tab);
+  if (panel && panel.classList && panel.classList.contains('active')) return tab;
   if (btn && typeof switchTab === 'function') switchTab(tab, btn);
   return tab;
+}
+function cavNavModuleOpen(module) {
+  var panel = document.getElementById('panel-' + (CAV_NAV_TAB[module] || 'home'));
+  return !!(panel && panel.classList && panel.classList.contains('active'));
 }
 function cavFlash(el) {
   if (!el || !el.classList) return;
@@ -1664,7 +1675,14 @@ function cavNavSection(p) {
   if (sec.tagName === 'DETAILS') sec.open = true;
   var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
   if (d) d.open = true;
-  if (sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
+  /* A section its module fills and un-hides after a fetch (the count
+     sheet) is waited for, about 3s, instead of scrolled to while hidden
+     (re-audit F1-14). */
+  var tries = 0;
+  (function land() {
+    if ((sec.hidden || sec.offsetParent === null) && tries++ < 15) { setTimeout(land, 200); return; }
+    if (sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
+  })();
   return true;
 }
 function cavNavIsPlace(p) { return !!CAV_NAV_TAB[p.head]; }
@@ -1673,8 +1691,11 @@ function cavNav(path, opts) {
   var p = cavNavParse(path);
   if (!p) return false;
   var saved = {mode: _cavHist.mode, inNav: _cavHist.inNav};
+  /* A section or filter of the module already on screen is the same place,
+     scrolled: it replaces the address instead of adding a Back step. */
+  var sameModule = cavNavIsPlace(p) && cavNavModuleOpen(p.module);
   _cavHist.inNav = true;
-  _cavHist.mode = opts.fromPop ? 'none' : (opts.replace ? 'replace' : 'push');
+  _cavHist.mode = opts.fromPop ? 'none' : ((opts.replace || sameModule) ? 'replace' : 'push');
   try {
     var fn = _cavNavHandlers[p.head], done = false;
     if (fn) { try { done = fn(p, opts) !== false; } catch (e) { done = false; } }
@@ -1754,7 +1775,11 @@ cavNavRegister('location', function (p) {
   var id = +p.rest[0];
   var cur = document.querySelector('#loc-switcher-panel button[style*="var(--ember)"]');
   if (!id || typeof window.switchLocation !== 'function') return false;
-  if (cur && cur.getAttribute('onclick') === 'switchLocation(' + id + ')') { cavNavOpenModule('home'); return true; }
+  if (cur && cur.getAttribute('onclick') === 'switchLocation(' + id + ')') {
+    cavNavOpenModule('home');
+    if (typeof window.hbScopeNow === 'function' && window.hbScopeNow() === 'group' && typeof window.hbScope === 'function') window.hbScope('location');
+    return true;
+  }
   window.switchLocation(id);
   return true;
 });
@@ -1762,11 +1787,14 @@ cavNavRegister('location', function (p) {
    card fills after the brief, so wait for the row a moment. */
 cavNavRegister('issue', function (p) {
   cavNavOpenModule('home');
+  /* The issue rows are a location's; the group view draws none (F1-1). */
+  if (typeof window.hbScopeNow === 'function' && window.hbScopeNow() === 'group' && typeof window.hbScope === 'function') window.hbScope('location');
   var id = p.rest[0], tries = 0;
   (function find() {
     var row = id ? document.querySelector('[data-issue-id="' + id + '"]') : null;
     var el = row || document.getElementById('hb-attn-card');
     if ((!row && id && tries < 12) || !el) { if (tries++ < 12) setTimeout(find, 250); return; }
+    if (row && row.hidden) row.hidden = false;
     if (el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'center'});
     cavFlash(el);
   })();
@@ -3271,12 +3299,20 @@ svg:hover .hb-xh{opacity:1}
     }
     else hbAsk(t.getAttribute('data-ask'));
   });
-  // "+N more" opens the rest of Needs attention in place; a brief line's
-  // direct action opens its nav path; a milestone card closes (friction
-  // #11, #46, #43).
+  // "+N more" opens the rest of Needs attention in place; a milestone card
+  // closes (friction #11, #43). A brief line's direct action
+  // ([data-nav-go], #46) is the router's own listener's: routing it here
+  // too navigated every click twice (re-audit F1-6).
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-attn-more],[data-nav-go],[data-mile-close],[data-group-open]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-attn-more],[data-iss-more],[data-mile-close],[data-group-open]'):null;if(!t)return;
     e.preventDefault();
+    if(t.hasAttribute('data-iss-more')){
+      var box=t.parentNode,iopen=t.getAttribute('aria-expanded')!=='true',irows=box?box.querySelectorAll('.hb-iss-more'):[];
+      for(var ii=0;ii<irows.length;ii++)irows[ii].hidden=!iopen;
+      t.setAttribute('aria-expanded',iopen?'true':'false');
+      t.textContent=iopen?'Show fewer':'+'+t.getAttribute('data-iss-more')+' more';
+      return;
+    }
     if(t.hasAttribute('data-group-open')){hbGroupOpen(+t.getAttribute('data-group-open'),t.getAttribute('data-group-nav')||'');return;}
     if(t.hasAttribute('data-attn-more')){
       var card=t.closest('#hb-attn-card'),open=t.getAttribute('aria-expanded')!=='true';
@@ -3285,7 +3321,6 @@ svg:hover .hb-xh{opacity:1}
       t.setAttribute('aria-expanded',open?'true':'false');
       t.textContent=open?'Show fewer':'+'+t.getAttribute('data-attn-more')+' more';
     }
-    else if(t.hasAttribute('data-nav-go')){var p=t.getAttribute('data-nav-go');if(typeof cavNav==='function')cavNav(p);}
     else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);}
   });
   // The reason picker (recReasonPicker) under a Home answer: below a card's
@@ -3335,8 +3370,16 @@ svg:hover .hb-xh{opacity:1}
     };
   }
   // Only the id travels through the inline handlers (CLIENT-17).
-  window.hbSwitchLoc=function(rid){if(typeof switchLocation==='function')switchLocation(rid);};
+  // Picking a location is a pick of that location's Home (re-audit F1-1):
+  // the location you are already on opens here without a reload, any other
+  // switches (switchLocation remembers the pick) - "All locations" is the
+  // way back to the group view.
+  window.hbSwitchLoc=function(rid){
+    if(+rid==={{ restaurant.id|int }}){hbScope('location');return;}
+    if(typeof switchLocation==='function')switchLocation(rid);
+  };
   window.hbScope=function(scope){_hbScope=scope;try{localStorage.setItem('cavnar_hb_scope',scope);}catch(e){}_hbLoadedAt=0;hbLoad(false);};
+  window.hbScopeNow=function(){return _hbScope;};
   // A group row opens its location on the item itself, not on that
   // location's Home top (friction #24): the nav path waits in this tab's
   // sessionStorage across the switch's reload and the bell's loader opens it.
@@ -3847,9 +3890,13 @@ svg:hover .hb-xh{opacity:1}
   function hbLocalDow(d){var m=/^(\d{4})-(\d\d)-(\d\d)/.exec(String(d.local_now||''));if(!m)return 1;return new Date(+m[1],+m[2]-1,+m[3]).getDay();}
   function renderActions(d,used){return renderAttention(d,used)+renderRecs(d,used&&used.rec?1:0);}
   var _hbIssues=null;
+  // Every open issue is drawn; past the first four they wait behind "+N
+  // more" - the card counted all of them and showed four, so an issue/<id>
+  // link to the fifth landed on no row (re-audit F1-15).
   function hbIssueRows(iss){
     var h='';
-    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'" data-issue-id="'+(+x.id)+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    for(var j=0;j<iss.length;j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+(j>=4?' hb-iss-more':'')+'" data-issue-id="'+(+x.id)+'"'+(j>=4?' hidden':'')+'><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    if(iss.length>4)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-iss-more="'+(iss.length-4)+'" aria-expanded="false">+'+(iss.length-4)+' more</button>';
     return h;
   }
   // "All clear" only when the sources under it are current: nothing flagged
@@ -4610,9 +4657,9 @@ svg:hover .hb-xh{opacity:1}
     var h='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
     for(var a=0;a<acts.length;a++){var y=acts[a];
       h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
-        +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
-        // The row's buttons (hbQueueActs: its action, an Approve/Deny pair,
-        // the publish gate). A stored Ask proposal reopens from its nav
+        // The row's buttons, drawn once (hbQueueActs: its action, an
+        // Approve/Deny pair, Send now beside Open it - re-audit F1-4 drew
+        // the action twice). A stored Ask proposal reopens from its nav
         // ("action/<id>") instead of re-asking the model; everything else
         // lands on its item (Friction audit #2, U4-20).
         +hbQueueActs(hbWithNav(y))
@@ -4741,16 +4788,47 @@ svg:hover .hb-xh{opacity:1}
   // "alt" beside it — Deny next to Approve, Open it next to Send now.
   function hbWithNav(y){var a=y.action||{},o={},k;for(k in a)if(Object.prototype.hasOwnProperty.call(a,k))o[k]=a[k];
     if(!o.route&&!o.nav&&y.nav)o.nav=y.nav;if(!o.label)o.label='Open';return o;}
+  // An action that reaches someone outside the restaurant - the week to
+  // staff, an answer to an employee - carries 'confirm' (the command
+  // action and its arguments): its button opens the SAME confirm card the
+  // palette and Ask use (DESIGN_SYSTEM.md §10), never a one-tap POST
+  // (re-audit F1-3). Internal, reversible actions (Resolve, Reprice with
+  // Undo) still post in place.
+  function hbConfirmBtn(a,cls){
+    return '<button type="button" class="cbtn '+cls+' cbtn-sm" data-hb-confirm="'+esc(JSON.stringify(a.confirm))+'">'+esc(a.label)+'</button>';
+  }
   function hbQueueActs(a){
     var h='',alt=a.alt||null;
-    if(a.route)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(a.body?JSON.stringify(a.body):'')+'" onclick="hbActionDo(\''+esc(a.route.web)+'\',this)">'+esc(a.label)+'</button>';
+    if(a.confirm&&a.confirm.action)h+=hbConfirmBtn(a,'cbtn-secondary');
+    else if(a.route)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(a.body?JSON.stringify(a.body):'')+'" onclick="hbActionDo(\''+esc(a.route.web)+'\',this)">'+esc(a.label)+'</button>';
     else if(a.nav&&window.cavNav)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\''+esc(a.nav)+'\')">'+esc(a.label)+'</button>';
     else if(a.ask)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(a.ask)+'">'+esc(a.label)+'</button>';
     else if(a.module)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(a.module)+'\')">'+esc(a.label)+'</button>';
-    if(alt&&alt.route)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-body="'+esc(alt.body?JSON.stringify(alt.body):'')+'" onclick="hbActionDo(\''+esc(alt.route.web)+'\',this)">'+esc(alt.label)+'</button>';
+    if(alt&&alt.confirm&&alt.confirm.action)h+=hbConfirmBtn(alt,'cbtn-text cbtn-inline');
+    else if(alt&&alt.route)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-body="'+esc(alt.body?JSON.stringify(alt.body):'')+'" onclick="hbActionDo(\''+esc(alt.route.web)+'\',this)">'+esc(alt.label)+'</button>';
     else if(alt&&alt.nav&&window.cavNav)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="cavNav(\''+esc(alt.nav)+'\')">'+esc(alt.label)+'</button>';
     return h;
   }
+  document.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest?e.target.closest('[data-hb-confirm]'):null;if(!b)return;
+    e.preventDefault();hbConfirmAct(b);
+  });
+  function hbConfirmAct(btn){
+    var c=null;try{c=JSON.parse(btn.getAttribute('data-hb-confirm')||'null');}catch(e){c=null;}
+    if(!c||!c.action)return;
+    var row=btn.closest?btn.closest('.hb-chk'):null;
+    var old=document.querySelector('.hb-queue-confirm');if(old&&old.parentNode)old.parentNode.removeChild(old);
+    var box=document.createElement('div');box.className='hb-queue-confirm';box.style.padding='4px 0 10px 22px';
+    if(row&&row.parentNode)row.parentNode.insertBefore(box,row.nextSibling);else if(btn.parentNode)btn.parentNode.appendChild(box);
+    box.innerHTML='<div class="dr-pulse" aria-hidden="true"></div>';
+    fetch('/api/command/propose',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:c.action,args:c.args||{}})})
+      .then(apiJson).then(function(d){
+        if(d&&d.ok&&d.proposal&&typeof cavPropCard==='function'){box.innerHTML='';cavPropCard(d.proposal,box,{onDone:function(){hbRefetchOpen();}});return;}
+        if(box.parentNode)box.parentNode.removeChild(box);
+        toast((d&&d.error)||'Couldn\u2019t open that \u2014 open the item instead.','error');
+      }).catch(function(){if(box.parentNode)box.parentNode.removeChild(box);toast('Couldn\u2019t reach Cavnar AI \u2014 check your connection.','error');});
+  }
+  window.hbConfirmAct=hbConfirmAct;
   window.hbActionDo=function(route,btn){
     if(btn)btn.disabled=true;
     var body=(btn&&btn.getAttribute('data-body'))||'{}';
@@ -4760,14 +4838,16 @@ svg:hover .hb-xh{opacity:1}
         if(btn)btn.disabled=false;
         // The publish gate on "Send now": the warnings go on screen under
         // the item, and the one button that names them sends it knowingly.
-        if(d&&d.needs_ack&&btn){hbAckInPlace(route,btn,body,d.blockers||[]);return;}
+        if(d&&d.needs_ack&&btn){hbAckInPlace(route,btn,body,d.blockers||[],d.blocker_keys);return;}
         toast((d&&d.error)||'Could not do that','error');})
       .catch(function(){if(btn)btn.disabled=false;});
   };
-  function hbAckInPlace(route,btn,body,list){
+  function hbAckInPlace(route,btn,body,list,keys){
     var row=btn.closest?btn.closest('.hb-chk'):null;if(!row)return;
     var old=row.nextSibling;if(old&&old.className==='hb-chk-ack')old.parentNode.removeChild(old);
-    var b={};try{b=JSON.parse(body)||{};}catch(e){b={};}b.acknowledge=true;
+    // The warnings shown, by key (re-audit F2-9); true from a server with none.
+    var cb=typeof cavBlockers==='function'?cavBlockers(list,keys):{texts:list,keys:null};list=cb.texts;
+    var b={};try{b=JSON.parse(body)||{};}catch(e){b={};}b.acknowledge=cb.keys||true;
     var box=document.createElement('div');box.className='hb-chk-ack';box.style.padding='4px 0 10px 22px';
     var h='<div class="sr-k">Read before this goes out</div>',i;
     for(i=0;i<list.length;i++)h+='<div class="sr-line bad"><span class="d"></span><span>'+esc(list[i])+'</span></div>';
@@ -4842,14 +4922,19 @@ svg:hover .hb-xh{opacity:1}
   // "Loading…" forever - the empty branches never touched a helper, so
   // the bug only showed once a restaurant had data.
   window.esc=esc;window.num=num;window.mdy=mdy;
+  // A load asked for while one is in flight runs once it lands, instead of
+  // being dropped: a confirm's re-read arriving mid-load left Home showing
+  // "5 replies waiting" after the publish (re-audit F1-15).
+  var _hbAgain=null;
   window.hbLoad=function(fresh){
-    if(_hbLoading)return;_hbLoading=true;
+    if(_hbLoading){_hbAgain=!!(fresh||_hbAgain);return;}_hbLoading=true;
+    var again=function(){if(_hbAgain===null)return;var f=_hbAgain;_hbAgain=null;setTimeout(function(){hbLoad(f);},0);};
     var url=(_hbScope==='group'?'/api/home/brief/group':'/api/home/brief')+(fresh?'?fresh=1':'');
     fetch(url,{credentials:'same-origin'}).then(apiJson).then(function(d){
-      _hbLoading=false;
+      _hbLoading=false;again();
       if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
       _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
-    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar AI — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
+    }).catch(function(){_hbLoading=false;again();var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar AI — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
   };
   window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
   // A "Ask about this →" link in the morning-brief email lands here with the
@@ -6789,7 +6874,7 @@ svg:hover .hb-xh{opacity:1}
 <div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub" id="congrats-kicker">A milestone</div><h2 id="congrats-title"></h2><p id="congrats-body"></p><div id="congrats-stats"><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Michael Luca, Harvard Business School (2011), on independent restaurants' Yelp ratings</div></div><p id="congrats-note" style="margin-top:12px;font-size:12px;color:var(--ink3)">This won't appear again.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it</button></div></div>
 
 <!-- LABOR -->
-<div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor" style="max-width:100%;padding:0;min-height:100%;position:relative">
+<div class="panel" id="panel-labor" style="max-width:100%;padding:0;min-height:100%;position:relative">
 <style>
 /* ── Labor (lb2-*) — Home/Reviews language: hero ribbon, three chart tiles,
    schedule tools as rows. The three staffing tables keep their own look. */
@@ -8177,7 +8262,7 @@ svg:hover .hb-xh{opacity:1}
 
 <!-- FOOD COST -->
 {% if mod_inventory %}
-<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh;position:relative">
+<div class="panel" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh;position:relative">
 <style>
 /* ── Food Cost (fc2-*) — Home/Reviews/Labor language: one hero chart, three
    iOS chart tiles (gauge, ledgers), order list and price watch as rows, the
@@ -9069,7 +9154,7 @@ svg:hover .hb-xh{opacity:1}
 </div>{% endif %}<!-- /panel-inventory -->
 
 <!-- MARKETING -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing" style="margin:0 auto">
+<div class="panel" id="panel-marketing" style="margin:0 auto">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
   <!-- Posting overlay. No caller since friction #43 (posting shows a busy
@@ -10084,7 +10169,7 @@ svg:hover .hb-xh{opacity:1}
 {% set _alerts_on = restaurant.alert_1star or restaurant.alert_2star or restaurant.alert_health or restaurant.alert_neg_spike or restaurant.alert_negative_trend or restaurant.alert_no_response or restaurant.alert_5star or restaurant.alert_rating_threshold or restaurant.alert_labor_over or restaurant.alert_any_review %}
 {% set _is_owner = current_user.role in ('owner', 'client') %}
 
-<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account"
+<div class="panel" id="panel-account"
      data-profile-done="{{ _profile_done }}" data-conn="{{ _conn_count }}" data-conn-err="{{ 1 if _pos_err else 0 }}"
      data-twofa="{{ 1 if restaurant.two_fa_enabled else 0 }}" data-alerts="{{ 1 if _alerts_on else 0 }}"
      data-digest="{{ 1 if restaurant.digest_enabled else 0 }}" data-login-notify="{{ 1 if restaurant.login_notify else 0 }}"
@@ -10926,7 +11011,11 @@ function _askRestore(id) {
 document.addEventListener('DOMContentLoaded', function() {
   if (typeof cavNavRegister !== 'function') return;
   cavNavRegister('ask', function(p) {
-    var cid = parseInt(p.rest[0] || '', 10);
+    /* "ask/<id>" and the palette's "ask?conversation=<id>"
+       (command_center._search_chats) - this handler replaced the built-in
+       one that read the query, so a chat result opened the wrong chat
+       (re-audit F1-5). */
+    var cid = parseInt(p.rest[0] || (p.query && p.query.conversation) || '', 10);
     if (cid > 0 && window.askOpenConversation) {
       var panel = document.getElementById('ask-cavnar-panel');
       if (panel && panel.style.display !== 'flex') toggleAskCavnar();
@@ -11474,6 +11563,12 @@ function _runAskCavnarProposal(p, card, btn, onDone) {
   var method = (p.route && p.route.method) || 'POST';
   if (!route) { card.innerHTML = '<div class="err">No route for that action.</div>'; return; }
   var opts = {method: method, headers: {'Content-Type': 'application/json'}};
+  /* The action request names its proposal, so the server records the
+     confirm in the SAME request when the route says ok (re-audit F1-9:
+     a lost second request left it "never confirmed", open to a second
+     Confirm). proposal_settled in the answer means nothing is left to send. */
+  if (p.proposal_id) opts.headers['X-Cavnar-Proposal'] = String(p.proposal_id);
+  if (window._askConversationId) opts.headers['X-Cavnar-Conversation'] = String(window._askConversationId);
   if (method !== 'GET') opts.body = JSON.stringify(_askShownBody(p));
   // The proposal fires the very same authenticated endpoint the button in
   // the UI uses, so it can never reach anything the user couldn't do.
@@ -11483,7 +11578,7 @@ function _runAskCavnarProposal(p, card, btn, onDone) {
          competitor refresh). Done means the job finished, as on iOS. */
       _pollAskCavnarJob(p, card, btn, p.route.status.web + encodeURIComponent(d.job_id), onDone);
     } else if (d.ok) {
-      _recordAskCavnarAction(p, 'confirmed');
+      if (!d.proposal_settled) _recordAskCavnarAction(p, 'confirmed');
       card.innerHTML = '<div class="ok">Done \u2713</div>';
       if (typeof onDone === 'function') onDone(d);
       /* Something changed: Home re-reads (friction #12). */
@@ -11493,6 +11588,13 @@ function _runAskCavnarProposal(p, card, btn, onDone) {
       var err = document.createElement('div');
       err.className = 'err';
       err.textContent = d.error || "That didn't go through.";
+      /* The publish gate: what stopped it, by name - acknowledging is the
+         schedule's own step, never this card's (PROPOSAL_DENYLIST). */
+      if (d.needs_ack && d.blockers && d.blockers.length) {
+        var bl = [];
+        for (var bi = 0; bi < d.blockers.length; bi++) bl.push((d.blockers[bi] && d.blockers[bi].text) || d.blockers[bi]);
+        err.textContent = (d.error || 'This week has things to look at first.') + ' ' + bl.join(' \u00b7 ') + ' \u2014 open the week to send it knowingly.';
+      }
       card.appendChild(err);
     }
   }).catch(function() {
@@ -12925,7 +13027,10 @@ window.rvFocusReview=function(id,opts){
   var have=document.getElementById('rc-'+id);
   if(have){setTimeout(function(){land(have);},80);return true;}
   fetch('/api/reviews/page?review_id='+encodeURIComponent(id),{credentials:'same-origin'}).then(apiJson).then(function(d){
-    if(!d||!d.ok||!d.count){toast((d&&d.error)||'That review isn’t in your inbox any more','warning');return;}
+    // A link that named another location (an alert email's &loc=) this
+    // login can't switch to: say where the review is, not that it's gone
+    // (re-audit F1-13).
+    if(!d||!d.ok||!d.count){toast((d&&d.error)||(window._cavLinkOtherLoc?'That review is at another location \u2014 switch to it to open the review':'That review isn’t in your inbox any more'),'warning');return;}
     var list=_rvList();if(!list)return;
     var cards=_rvCardsFrom(d.html);
     for(var i=cards.length-1;i>=0;i--)list.insertBefore(cards[i],list.firstChild);
@@ -12988,28 +13093,47 @@ function _rvMoreState(hasMore,shown,total){
 // updateReviewStats (every 15s on this tab) reports the total; when it grows,
 // the newest page is read and any card not on the page goes in at the top.
 // The banner used to be a full reload that threw away a half-typed reply.
-var _rvKnownTotal=null,_rvNewIds=[];
+// The baseline is the total the page was rendered with (rstats), not the
+// first poll on the Reviews tab: reviews that arrived between loading the
+// dashboard and opening Reviews never appeared (re-audit F1-12).
+var _rvKnownTotal={{ (rstats.total|int) if rstats and rstats.total is not none else 'null' }},_rvNewIds=[];
 function rvNoteTotal(total){
   total=+total;if(!isFinite(total))return;
   if(_rvKnownTotal===null){_rvKnownTotal=total;return;}
   if(total>_rvKnownTotal){_rvKnownTotal=total;rvPullNew();}
   else _rvKnownTotal=total;
 }
+function _rvCardNum(id){var m=/(\d+)$/.exec(String(id||''));return m?+m[1]:0;}
+// The newest page of THIS list's own query (its filter, search and topic -
+// data-list-key), and only cards newer than the newest one already here:
+// reading filter=all into a searched list inserted a page of old
+// non-matching reviews, counted them as new and pushed Load more past
+// real matches (re-audit F1-12).
 function rvPullNew(){
-  fetch('/api/reviews/page?offset=0&filter=all',{credentials:'same-origin'}).then(apiJson).then(function(d){
+  var list=_rvList();if(!list)return;
+  var key=(list.getAttribute('data-list-key')||'all||').split('|');
+  var q='offset=0&filter='+encodeURIComponent(key[0]||'all');
+  if(key[1])q+='&search='+encodeURIComponent(key[1]);
+  if(key[2])q+='&category='+encodeURIComponent(key[2]);
+  var have=list.querySelectorAll('.rv2-row[id]'),newest=0,h;
+  for(h=0;h<have.length;h++)newest=Math.max(newest,_rvCardNum(have[h].id));
+  fetch('/api/reviews/page?'+q,{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok)return;
-    var list=_rvList();if(!list)return;
+    if(list.getAttribute('data-list-key')!==key.join('|'))return;
     var cards=_rvCardsFrom(d.html),fresh=[];
-    for(var i=0;i<cards.length;i++){if(!document.getElementById(cards[i].id))fresh.push(cards[i]);}
+    for(var i=0;i<cards.length;i++){if(!document.getElementById(cards[i].id)&&_rvCardNum(cards[i].id)>newest)fresh.push(cards[i]);}
     if(!fresh.length)return;
     for(var j=fresh.length-1;j>=0;j--)list.insertBefore(fresh[j],list.firstChild);
     var tot=+list.getAttribute('data-total')||0;list.setAttribute('data-total',tot+fresh.length);
+    // The server's pages start from the top, so N new matches at the top
+    // move every later match down N: Load more's offset moves with them.
     if(_rvOffset!==null)_rvOffset+=fresh.length;
-    _rvNewIds=[];for(var k=0;k<fresh.length;k++)_rvNewIds.push(fresh[k].id);
     var em=document.getElementById('rv-empty');if(em)em.hidden=true;
     filterReviews();
+    _rvNewIds=[];for(var k=0;k<fresh.length;k++){if(fresh[k].style.display!=='none')_rvNewIds.push(fresh[k].id);}
+    if(!_rvNewIds.length)return;
     var b=document.getElementById('new-reviews-banner'),t=document.getElementById('new-reviews-text');
-    if(t)t.textContent=fresh.length+' new review'+(fresh.length===1?'':'s')+' at the top of your inbox';
+    if(t)t.textContent=_rvNewIds.length+' new review'+(_rvNewIds.length===1?'':'s')+' at the top of your inbox';
     if(b)b.style.display='flex';
   }).catch(function(){});
 }
@@ -13048,7 +13172,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if(sec==='analytics'){rvOpenAnalytics(true);return true;}
     var se=document.getElementById('rsearch');if(se&&q.search!=null)se.value=q.search;
     if(q.filter==='urgent'||q.filter==='pending'){reviewsPillJump(q.filter);return true;}
-    if(q.filter){rfilter=q.filter;var pills=document.querySelectorAll('.fpill');for(var i=0;i<pills.length;i++)pills[i].classList.remove('active','active-red');}
+    if(q.filter){rfilter=q.filter;var pills=document.querySelectorAll('.fpill');for(var i=0;i<pills.length;i++){pills[i].classList.remove('active','active-red');if((pills[i].getAttribute('onclick')||'').indexOf("setRF('"+q.filter+"'")===0)pills[i].classList.add('active');}}
     filterReviews();
     var inbox=document.getElementById('rv-inbox-reviews');if(inbox)inbox.scrollIntoView({behavior:'smooth',block:'start'});
     return true;
@@ -13264,6 +13388,18 @@ function setRF(f,btn){
   document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
   btn.classList.add(f==='urgent'?'active-red':'active');
   filterReviews();
+  rvKeepAddress();
+}
+// The inbox's filter and search live in the address (#reviews?filter=…
+// &search=…), replaced, not pushed: a reload kept neither (re-audit F1-15).
+// The router's reviews handler reads both back.
+function rvKeepAddress(){
+  if(typeof cavHistory!=='function')return;
+  var p=document.getElementById('panel-reviews');if(!p||!p.classList.contains('active'))return;
+  var s=((document.getElementById('rsearch')||{}).value||'').replace(/^\s+|\s+$/g,''),q=[];
+  if(rfilter&&rfilter!=='all')q.push('filter='+encodeURIComponent(rfilter));
+  if(s)q.push('search='+encodeURIComponent(s));
+  cavHistory('#reviews'+(q.length?'?'+q.join('&'):''),true);
 }
 function clearFilters(){
   rfilter='all';
@@ -13400,7 +13536,7 @@ function deleteReview(id, btn) {
 var _filterTimer = null;
 function debouncedFilter(){
   clearTimeout(_filterTimer);
-  _filterTimer = setTimeout(filterReviews, 250);
+  _filterTimer = setTimeout(function(){filterReviews();rvKeepAddress();}, 250);
 }
 
 function _highlightText(el, q){
@@ -16766,7 +16902,11 @@ function publishScheduleNow(ack){
   var result = document.getElementById('ps-result');
   var bl = document.getElementById('ps-blockers');
   var done = btn ? cbtnBusy(btn, 'Sending…') : function(){};
-  var body = {acknowledge: !!ack};
+  /* The acknowledgement names the warnings that were on screen, by key
+     (re-audit F2-9): a warning that appeared after the list was read is
+     not covered by this press. A server that sends no keys gets true. */
+  var keys = window._psAckKeys && window._psAckKeys.hid === _schedHistoryId ? window._psAckKeys.keys : null;
+  var body = {acknowledge: ack ? (keys && keys.length ? keys.slice() : true) : false};
   if (_schedHistoryId) body.schedule_id = _schedHistoryId;
   var status = 0;
   fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
@@ -16805,7 +16945,7 @@ function publishScheduleNow(ack){
       // read what the rules check found. The list goes on screen and the
       // button becomes the acknowledgement.
       if (d.needs_ack) {
-        _psRenderBlockers(d.blockers || [], true);
+        _psRenderBlockers(d.blockers || [], true, d.blocker_keys);
         result.textContent = '';
         return;
       }
@@ -16816,9 +16956,25 @@ function publishScheduleNow(ack){
     }).catch(function(){ done(); result.style.color='var(--hb-bad)'; result.textContent='Network error'; });
 }
 
-function _psRenderBlockers(list, arm) {
+/* A blocker list as the server sends it: texts, or {key, text} objects,
+   with the keys also accepted as a parallel blocker_keys. Returns the
+   texts to show and the keys to acknowledge (null when there are none). */
+function cavBlockers(list, keys) {
+  var texts = [], ks = [], i;
+  for (i = 0; i < (list || []).length; i++) {
+    var b = list[i];
+    if (b && typeof b === 'object') { texts.push(b.text || ''); if (b.key != null) ks.push(String(b.key)); }
+    else texts.push(String(b));
+  }
+  if (!ks.length && keys && keys.length === texts.length) for (i = 0; i < keys.length; i++) ks.push(String(keys[i]));
+  return {texts: texts, keys: ks.length === texts.length && ks.length ? ks : null};
+}
+function _psRenderBlockers(list, arm, keys) {
   var bl = document.getElementById('ps-blockers');
   if (!bl) return;
+  var cb = cavBlockers(list, keys);
+  window._psAckKeys = cb.keys ? {hid: _schedHistoryId, keys: cb.keys} : null;
+  list = cb.texts;
   if (!list || !list.length) { bl.style.display = 'none'; bl.innerHTML = ''; return; }
   var h = '<div class="sr-k">Read before this goes out</div>', i;
   for (i = 0; i < list.length; i++) {
@@ -20729,18 +20885,32 @@ document.addEventListener('click', function(e) {
 function checkTabParam(){
   var params=new URLSearchParams(window.location.search);
   var tab=params.get('tab');
-  // A link from outside - an alert email's "Reply now" (?review=<id>,
-  // notify.alert_url) or any ?nav=<path> - opens the item itself, not its
-  // module's top (Friction audit #1). The parameter is then dropped from
-  // the address so a reload doesn't reopen it over whatever came next.
-  var navp=params.get('nav'),rv=params.get('review');
-  if((navp||rv)&&window.cavNav){
-    params['delete']('nav');params['delete']('review');
+  // A link from outside - an alert email's button (?nav=<path>&loc=<id>,
+  // notify.alert_url), an older one's ?review=<id> or ?tab=<module> -
+  // opens the item itself, not its module's top (Friction audit #1). Every
+  // one of these parameters is then dropped from the address, ?tab= too, so
+  // a reload doesn't reopen it over whatever came next (re-audit F1-13).
+  var navp=params.get('nav'),rv=params.get('review'),loc=parseInt(params.get('loc')||'',10);
+  if(navp||rv||tab||params.has('loc')){
+    params['delete']('nav');params['delete']('review');params['delete']('tab');params['delete']('loc');
     var qs=params.toString();
     if(window.history&&history.replaceState)history.replaceState(null,null,window.location.pathname+(qs?'?'+qs:'')+window.location.hash);
-    cavNav(navp||('review/'+encodeURIComponent(rv)),{replace:true});
-    return true;
   }
+  var path=navp||(rv?'review/'+encodeURIComponent(rv):'');
+  // The link is about another location: switch there first when this login
+  // can (its header switcher lists it), and land on the item after the
+  // reload, as the bell does.
+  window._cavLinkOtherLoc=false;
+  if(loc>0&&loc!=={{ restaurant.id|int }}){
+    var can=document.querySelector('#loc-switcher-panel button[onclick="switchLocation('+loc+')"]');
+    if(can&&typeof window.switchLocation==='function'){
+      if(path){try{sessionStorage.setItem('cavnar_pending_nav',path);}catch(e){}}
+      window.switchLocation(loc);
+      return true;
+    }
+    window._cavLinkOtherLoc=true;
+  }
+  if(path&&window.cavNav){cavNav(path,{replace:true});return true;}
   if(tab){
     var btn=document.getElementById('tab-'+tab);
     if(btn){switchTab(tab,btn); return true;}
@@ -21971,8 +22141,9 @@ window.switchLocation = function(rid) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({restaurant_id: rid})
   }).then(apiJson).then(function(d) {
-    /* Every cached AI read belongs to the location it was read for. */
-    if (d.ok) { cavWipe(); window.location.reload(); }
+    /* Every cached AI read belongs to the location it was read for; the
+       pick is remembered, so Home opens on it (re-audit F1-1). */
+    if (d.ok) { cavWipe(); try { localStorage.setItem('cavnar_hb_scope', 'location'); } catch (e0) {} window.location.reload(); }
     else { undo(); toast(d.error || 'Could not switch location', 'error'); }
   }).catch(function() { undo(); toast('Could not switch location — check your connection.', 'error'); });
 };
@@ -22048,7 +22219,8 @@ document.addEventListener('click', function(e) {
     if (days <= 0) return 'Today';
     if (days === 1) return 'Yesterday';
     if (days < 7) return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
-    return d.getDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    // M/D/YY, the product's one date format (re-audit F1-15; "12 Sep" before).
+    return (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(-2);
   }
 
   function renderList() {
@@ -22152,18 +22324,25 @@ document.addEventListener('click', function(e) {
   function openNotification(n) {
     document.getElementById('notif-panel').style.display = 'none';
     if (!n) return;
-    // What the product knew was how many it SENT. Whether any of them were
-    // worth sending had no answer anywhere.
-    markOpened(n);
     // Where the row goes: the server's nav path when it sends one, else the
     // review itself, else its module (nav.py). A row from another location
     // switches there first and lands on the item after the reload (#24).
     var path = n.nav || (n.review_id ? 'review/' + n.review_id : (n.module === 'ask' ? 'ask' : n.module));
     if (n.restaurant_id && +n.restaurant_id !== _here && typeof switchLocation === 'function') {
-      try { sessionStorage.setItem('cavnar_pending_nav', path); } catch (e) {}
+      // The open is recorded AFTER the switch, at the alert's own location:
+      // posted from here it started a tracker on the location being left
+      // and never linked the alert, so it came back unread (re-audit F1-10).
+      try {
+        sessionStorage.setItem('cavnar_pending_nav', path);
+        sessionStorage.setItem('cavnar_pending_open', JSON.stringify({type: n.type, alert_id: n.id || null, rid: +n.restaurant_id}));
+      } catch (e) {}
+      n.opened = true; n.unread = false; setBadge(_unreadCount());
       switchLocation(+n.restaurant_id);
       return;
     }
+    // What the product knew was how many it SENT. Whether any of them were
+    // worth sending had no answer anywhere.
+    markOpened(n);
     if (typeof window.cavNav === 'function' && path) { window.cavNav(path); return; }
     if (n.module === 'ask') {
       if (typeof switchTab === 'function') {
@@ -22277,10 +22456,21 @@ document.addEventListener('click', function(e) {
   };
 
   setTimeout(refreshBadge, 1500);
-  // A row from another location switched there; land on its item now (#24).
+  // The badge was read once per page load: a new urgent alert did not show
+  // until a reload (re-audit F1-15). Every two minutes while the page is
+  // looked at, and on coming back to it.
+  setInterval(function() { if (!document.hidden) refreshBadge(); }, 120000);
+  document.addEventListener('visibilitychange', function() { if (!document.hidden) refreshBadge(); });
+  // A row from another location switched there; land on its item now (#24),
+  // and record its open here, where the alert belongs (F1-10).
   document.addEventListener('DOMContentLoaded', function() {
-    var p = null;
+    var p = null, o = null;
     try { p = sessionStorage.getItem('cavnar_pending_nav'); sessionStorage.removeItem('cavnar_pending_nav'); } catch (e) { p = null; }
+    try { o = JSON.parse(sessionStorage.getItem('cavnar_pending_open') || 'null'); sessionStorage.removeItem('cavnar_pending_open'); } catch (e2) { o = null; }
+    if (o && o.type && (!o.rid || +o.rid === _here)) {
+      fetch('/api/notifications/opened', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({type: o.type, alert_id: o.alert_id || null})}).catch(function(){});
+    }
     if (p && typeof window.cavNav === 'function') setTimeout(function() { window.cavNav(p); }, 300);
   });
 })();
@@ -23181,7 +23371,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok)return;
       var list=d.conversations||[];
       if(!list.length){box.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--ink3)">No chats yet.</div>';return;}
-      box.innerHTML=list.map(function(c){var on=c.id===window._askConversationId;return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--paper3);background:'+(on?'rgba(200,75,47,.08)':'transparent')+'"><button onclick="askOpenConversation('+c.id+')" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;font-family:inherit;font-size:12px;color:var(--ink);padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.title||'Untitled chat')+'<span style="display:block;font-size:10px;color:var(--ink3)">'+ago(c.updated_at||c.created_at)+(c.message_count?' · '+c.message_count+' messages':'')+'</span></button><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="askDeleteConversation('+c.id+')" title="Delete">✕</button></div>';}).join('');
+      box.innerHTML=list.map(function(c){var on=c.id===window._askConversationId;return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--paper3);background:'+(on?'rgba(200,75,47,.08)':'transparent')+'"><button type="button" class="cbtn cbtn-text ask-hist-open" onclick="askOpenConversation('+c.id+')">'+esc(c.title||'Untitled chat')+'<span style="display:block;font-size:10px;color:var(--ink3)">'+ago(c.updated_at||c.created_at)+(c.message_count?' · '+c.message_count+' messages':'')+'</span></button><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="askDeleteConversation('+c.id+')" title="Delete">✕</button></div>';}).join('');
     });
   };
   window.askToggleHistory=function(){var box=document.getElementById('ask-cavnar-history');if(!box)return;var open=box.style.display==='none';box.style.display=open?'block':'none';if(open)askRefreshConversations(true);};
@@ -24815,7 +25005,9 @@ var cavPalette = (function () {
       var wait = [], one = [], go = [], locs = [];
       for (i = 0; acts && i < acts.length && wait.length < 5; i++) {
         var a = acts[i];
-        wait.push(row({label: a.title, sub: a.detail || '', tag: (a.action && a.action.label) || 'Open', nav: a.nav || null, module: a.module}));
+        /* The row only opens its item, so it says Open - "Approve" or
+           "Reprice to $14.00" promised an action it never ran (F1-15). */
+        wait.push(row({label: a.title, sub: a.detail || '', tag: 'Open', nav: a.nav || null, module: a.module}));
       }
       var qa = window._hbQuick || [];
       for (i = 0; i < qa.length; i++) {
@@ -24835,7 +25027,9 @@ var cavPalette = (function () {
       var hits = [];
       for (i = 0; reg && i < reg.length; i++) {
         c = reg[i];
-        if (c.kind === 'ask') continue;
+        /* A location to switch to comes back from the search itself (as
+           "Found"); listing the registry's too showed it twice (F1-15). */
+        if (c.kind === 'ask' || (c.id && c.id.indexOf('location:') === 0)) continue;
         var sc = score(ql, [c.label].concat(c.keywords || []));
         if (sc) hits.push({s: sc + (c.kind === 'action' ? 0.5 : 0), c: c});
       }
@@ -24885,10 +25079,9 @@ var cavPalette = (function () {
       card.innerHTML = '<button type="button" class="cbtn cbtn-text cbtn-sm back">← Back</button>';
       card.querySelector('.back').onclick = showList;
       if (!d || !d.ok || !d.proposal) { var e = document.createElement('div'); e.className = 'load-err'; e.textContent = (d && d.error) || 'That can’t be proposed right now.'; card.appendChild(e); return; }
-      cavPropCard(d.proposal, card, {onDone: function () {
-        if (typeof window.hbLoad === 'function') window.hbLoad(true);
-        acts = null;
-      }});
+      /* Home re-reads through hbDirty (the card's own success path); a
+         second hbLoad here raced it and could be the one dropped (F1-15). */
+      cavPropCard(d.proposal, card, {onDone: function () { acts = null; }});
       var b = card.querySelector('[data-prop-confirm]');
       if (b && b.focus) b.focus();
     }).catch(function () { card.innerHTML = '<div class="load-err">Couldn’t reach Cavnar AI — check your connection.</div>'; });
@@ -24987,7 +25180,7 @@ window.cavPalette = cavPalette;
   window.psArm = function (n) { window._psArmed = {hid: _schedHistoryId, n: n}; psLabel(); };
   window.psLabel = function () {
     var b = $id('ps-send-btn'); if (!b || b.getAttribute('aria-busy') === 'true') return;
-    var c = window._psCheck, n = c && c.reach ? c.reach.total : 0;
+    var c = window._psCheck, n = c && c.reach ? (c.reach.reachable || 0) : 0;
     var armed = window._psArmed && window._psArmed.hid === _schedHistoryId;
     if (armed) b.textContent = 'Send with ' + window._psArmed.n + ' rule warning' + (window._psArmed.n === 1 ? '' : 's') + '…';
     else b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff');
@@ -25019,7 +25212,7 @@ window.cavPalette = cavPalette;
       psReach();
       /* Warnings already on file for the saved week go on screen now, and
          the button names them: that press is the acknowledgement. */
-      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true);
+      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true, d.blocker_keys);
       else if (!(d.blockers || []).length) { _psRenderBlockers([], false); window._psArmed = null; }
       psLabel();
     });
@@ -25142,7 +25335,9 @@ window.cavPalette = cavPalette;
          + (reach.total ? ' · reaches <span class="hb-num">' + reach.reachable + '</span> of <span class="hb-num">' + reach.total + '</span>' : '')
          + ((dr.blockers || []).length ? ' · <span class="hb-num">' + dr.blockers.length + '</span> rule warning' + (dr.blockers.length === 1 ? '' : 's') + ' to read first' : '') + '</span></div>'
          + '<div class="c"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="openScheduleDraft(' + (+dr.schedule_id) + ')">Open it</button>'
-         + (dr.can_publish && !(dr.blockers || []).length && reach.total ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2WaitSend(' + (+dr.schedule_id) + ',this)">Send to ' + reach.total + ' staff</button>' : '')
+         /* Named by who it REACHES (re-audit F2-17): the total counted
+            people with no contact, who only see the portal. */
+         + (dr.can_publish && !(dr.blockers || []).length && reach.total ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2WaitSend(' + (+dr.schedule_id) + ',this)">' + (reach.reachable ? 'Send to ' + reach.reachable + ' staff' : 'Publish to the staff portal') + '</button>' : '')
          + '</div></div>';
       n++;
     }
@@ -25181,7 +25376,15 @@ window.cavPalette = cavPalette;
     var done = cbtnBusy(btn, 'Sending…');
     postJ('/api/labor/publish-schedule', {schedule_id: hid}, function (d) {
       done();
-      if (d.ok) { toast(d.queued ? ('Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip') : 'Schedule sent', 'success'); lb2LoadWaiting(); if (window.psRefresh) psRefresh(); return; }
+      /* What actually happened, as publishScheduleNow says it: nobody is
+         told on a portal-only publish, and nothing goes twice (F2-17). */
+      if (d.ok) {
+        toast(d.queued ? ('Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip')
+              : d.already_published ? 'Already sent — nothing went out twice'
+              : d.portal_only ? (d.note || 'Published to the staff portal — nobody was notified')
+              : 'Schedule sent', 'success');
+        lb2LoadWaiting(); if (window.psRefresh) psRefresh(); return;
+      }
       if (d.needs_ack) { openScheduleDraft(hid); return; }
       toast(d.error || 'Nothing sent', 'error');
     });

@@ -867,7 +867,8 @@ def record_proposals(restaurant_id, proposals, user_id=None):
     for p in proposals or []:
         try:
             pid = log_ask_action(restaurant_id, p["action"], summary=p.get("summary"),
-                                 body=p.get("body"), outcome="proposed", user_id=user_id)
+                                 body=p.get("body"), outcome="proposed", user_id=user_id,
+                                 surface="ask", target=p.get("target") or None)
             p["proposal_id"] = pid
             shown.append({"key": proposal_key(pid), "module": _ACTION_MODULE.get(p["action"], "reviews"
                           if "review" in p["action"] else "ops"),

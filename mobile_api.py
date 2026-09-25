@@ -1456,7 +1456,8 @@ def mobile_approve_all_reviews(current_user):
     Delegates to client_api._do_approve_all so the web route, this one and
     Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
-    payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25))
+    payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
+                                            review_ids=data.get("review_ids"))
     return jsonify(**payload), status
 
 

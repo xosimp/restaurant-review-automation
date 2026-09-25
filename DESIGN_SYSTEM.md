@@ -467,6 +467,9 @@ notification actions).
    that go out, the dollars. **Enter never confirms** — a click, or ⌘Enter
    while the card is on screen. Bulk sends name their count and are capped.
    Home's "Publish N replies" opens this card; it used to post on one tap.
+   So do Still open's "Send now" and a request's Approve / Deny (the queue
+   item's `action.confirm`, re-audit F1-3). The card's own action request
+   carries `X-Cavnar-Proposal`, so its confirm is recorded in that request.
    Where an automation queues the send (`delayed.py`), the Undo lives in the
    activity strip until it runs.
 3. **`confirm()` only for security and account-destructive steps** — two-factor

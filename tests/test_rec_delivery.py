@@ -459,9 +459,11 @@ def test_the_alert_email_button_and_sms_name_the_recommendation(monkeypatch):
     import notify
     monkeypatch.setenv("SMS_TRACKED_LINKS", "1")
     url = notify.alert_url("labor_over", rec="labor_over:2026-09-14", src="alert_email")
-    assert "tab=labor" in url and "rec=labor_over%3A2026-09-14&src=alert_email" in url
+    # The button opens the item through its nav path (re-audit F1-13; it
+    # was ?tab=<module>), still carrying the recommendation it names.
+    assert "?nav=labor" in url and "rec=labor_over%3A2026-09-14&src=alert_email" in url
     html = notify._resolve_cta(f'<a href="{notify.CTA_PLACEHOLDER}">x</a>', "1star", 12, rec="review:12")
-    assert "?tab=reviews&review=12&rec=review%3A12&src=alert_email" in html
+    assert "?nav=review/12&rec=review%3A12&src=alert_email" in html
     sms = "🔴 1★ Review — Gia Mia\n\"Cold food\"\nRespond now · dashboard.cavnar.ai"
     keyed = notify.keyed_sms_text(sms, "review:12")
     assert keyed.endswith("Respond now · dashboard.cavnar.ai/?rec=review%3A12&src=alert_sms")
@@ -489,7 +491,7 @@ def test_a_delivered_alert_sends_the_keyed_sms_and_email(db_path, monkeypatch):
                          notify._alert_email_html("Gia Mia", "Labor", ["x"]), db_path=db_path,
                          recs=[notify.alert_rec("labor_over", subject="2026-09-14")])
     assert texts and "dashboard.cavnar.ai/?rec=labor_over%3A2026-09-14&src=alert_sms" in texts[0]
-    assert mails and "?tab=labor&rec=labor_over%3A2026-09-14&src=alert_email" in mails[0]
+    assert mails and "?nav=labor" in mails[0] and "rec=labor_over%3A2026-09-14&src=alert_email" in mails[0]
 
 
 def test_a_dashboard_load_from_a_keyed_link_records_one_open(db_path):
