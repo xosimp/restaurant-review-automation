@@ -341,7 +341,7 @@ def test_a_tie_is_neutral_and_symmetric_inside_the_standard_error():
     assert up["standing"] == down["standing"] == "level"
     assert up["standing_tone"] == down["standing_tone"] == "neutral"
     assert up["standing_label"] == "About level with the block"
-    assert "3 restaurants matched on cuisine and price within 1 km" in up["standing_basis"]
+    assert "3 restaurants matched on cuisine and price within 0.6 miles" in up["standing_basis"]
     assert cif.market_standing(dict(own, own_rating=4.9), mk)["standing"] == "ahead"
 
 

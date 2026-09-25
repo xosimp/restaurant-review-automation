@@ -39,7 +39,7 @@ HEX_RE = re.compile(r"#([0-9a-fA-F]{6})\b")
 # How many BRAND colours are still written as literals. Ratchet only: this
 # number comes down as email HTML is migrated onto the tokens, and the lint
 # fails the moment it would go up.
-BASELINE = 216
+BASELINE = 200
 
 # Lines that legitimately hold a raw hex: the token table itself, and the
 # tint map keyed BY those tokens.

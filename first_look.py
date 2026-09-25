@@ -186,10 +186,11 @@ def lines(look):
                               "market_effective_reviews": hood.get("effective_reviews", hood.get("reviews")),
                               "market_radius_km": hood.get("radius_km")})["standing"]
         radius = hood.get("radius_km")
-        where = f"within {radius:g} km of you" if radius else "nearest you"
+        # Owners here are American: miles, not the kilometres Places measures in.
+        where = f"within {round(radius * 0.621371, 1):g} miles of you" if radius else "nearest you"
         if st == "ahead":
             out.append(f"The {n} comparable restaurants {where} average {avg} — "
-                       f"you are ahead of your own neighbourhood.")
+                       f"you are ahead of your own neighborhood.")
         elif st == "behind":
             out.append(f"The {n} comparable restaurants {where} average {avg}. "
                        f"That gap is the first thing I will go after.")

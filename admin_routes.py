@@ -1845,6 +1845,7 @@ def resend_welcome_email(restaurant_id, current_user):
             module_inventory=restaurant.module_inventory,
             module_marketing=restaurant.module_marketing,
             google_place_id=restaurant.google_place_id,
+            owner_name=restaurant.owner_name,
         )
 
         return jsonify(ok=True, email=restaurant.owner_email)

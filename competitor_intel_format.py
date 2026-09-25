@@ -417,7 +417,7 @@ def market_standing(own: dict, market: dict) -> dict:
         standing, label, tone = "level", "About level with the block", "neutral"
     radius = market.get("market_radius_km")
     basis = (f"{matched} restaurant{'' if matched == 1 else 's'} matched on cuisine and price"
-             + (f" within {radius:g} km" if radius else "")
+             + (f" within {round(radius * 0.621371, 1):g} miles" if radius else "")
              + f" · a gap inside ±{margin:.1f}★ reads as level")
     return {"own_vs_market": gap, "standing": standing, "standing_label": label, "standing_tone": tone,
             "standing_basis": basis, "standing_margin": margin, "standing_why_not": None}

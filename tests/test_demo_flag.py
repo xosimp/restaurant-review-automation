@@ -118,3 +118,29 @@ def test_the_simple_ejs_seed_picks_the_demo_when_both_exist(db_path):
     conn.close()
     assert not (get_restaurant(live, db_path=db_path).hours_notes or "")
     assert get_restaurant(demo, db_path=db_path).hours_notes
+
+
+def test_the_demo_login_is_erikdemo_and_an_old_erik_login_is_renamed(db_path, monkeypatch):
+    """Erik may want "erik" for his live account (9/25/26): the demo's login
+    is "erikdemo", and a demo still carrying the old "erik" is renamed in
+    place — same user id, so its sessions and devices keep working."""
+    import auth
+    import demo_seed
+    import models
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(auth, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    auth.init_auth(db_path=db_path)
+    monkeypatch.setenv("DEMO_PASSWORD", "DemoPass2026!")
+    demo = create_restaurant(Restaurant(name=demo_seed.SIMPLE_EJS_NAME, owner_email="d@x.test", is_demo=1),
+                             db_path=db_path)
+    uid = auth.create_user(demo, "erik", "erik+demo@cavnar.ai", "OldPass2026!", db_path=db_path)
+    demo_seed._ensure_ejs_login(demo, db_path)
+    conn = models.get_conn(db_path)
+    names = [r[0] for r in conn.execute("SELECT username FROM users WHERE restaurant_id=?", (demo,))]
+    same = conn.execute("SELECT id FROM users WHERE username='erikdemo'").fetchone()[0]
+    conn.close()
+    assert names == ["erikdemo"] and same == uid
+    assert auth.verify_password("erikdemo", "DemoPass2026!", db_path=db_path)

@@ -947,7 +947,7 @@ def docusign_webhook():
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(
-                """SELECT r.id, r.name, r.owner_email, u.id AS user_id,
+                """SELECT r.id, r.name, r.owner_email, r.owner_name, r.google_place_id, u.id AS user_id,
                           r.module_reviews, r.module_labor, r.module_inventory, r.module_marketing,
                           u.username, u.last_login
                    FROM restaurants r
@@ -1047,6 +1047,7 @@ def docusign_webhook():
                         module_inventory=int(r.get("module_inventory") or 0),
                         module_marketing=int(r.get("module_marketing") or 0),
                         google_place_id=r.get("google_place_id"),
+                        owner_name=r.get("owner_name"),
                     )
                     print(f"Welcome email sent to {r['owner_email']} after signing")
                     try:

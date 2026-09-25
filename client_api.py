@@ -3528,7 +3528,7 @@ def ai_visibility_roadmap(d) -> list:
         {"key": "aiv_roadmap:social", "title": "Post consistently on social", "impact": "Long-term",
          "action": "Go to marketing", "module": "marketing", "done": posts >= 8,
          "why": (f"You've logged {posts} marketing piece{'' if posts == 1 else 's'} this month. Posts that name "
-                 "your restaurant, neighbourhood and cuisine give search engines more text about you to index."),
+                 "your restaurant, neighborhood and cuisine give search engines more text about you to index."),
          "detail": (f"{posts} posts this month — great pace" if posts >= 8
                     else ("No marketing pieces logged this month yet" if posts == 0
                           else f"{posts} post{'' if posts == 1 else 's'} this month — aim for 8+"))},

@@ -1702,7 +1702,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
 def send_welcome_email(to_email, restaurant_name, username, password,
                        module_reviews=0, module_labor=0,
                        module_inventory=0, module_marketing=0,
-                       google_place_id=None):
+                       google_place_id=None, owner_name=None):
     """Send branded welcome email to new client with their login credentials.
 
     `google_place_id` turns this from a credentials handoff into the first
@@ -1752,43 +1752,47 @@ def send_welcome_email(to_email, restaurant_name, username, password,
         modules_text = f"one module — {active_modules[0]}"
     else:
         modules_text = f"{modules_count} modules — " + ", ".join(active_modules[:-1]) + f", and {active_modules[-1]}"
+    first = ((owner_name or "").strip().split() or [""])[0]
+    greeting = f"Hi {esc(first)} —" if first else "Hi —"
+    B = BRAND
     html = f"""
-<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
-  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
-    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
+<div style="background:{B['paper']};width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:{_SANS};max-width:560px;margin:0 auto;color:{B['ink']};background:{B['paper']};border-radius:12px;padding:32px 24px;box-sizing:border-box">
+  <div style="border-top:3px solid {B['ember']};padding-top:24px;margin-bottom:24px">
+    <img src="{_WORDMARK}" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
+    <p style="font-size:11px;color:{B['muted']};margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
     </p>
   </div>
-  <p style="font-size:15px;line-height:1.6;margin-bottom:16px">
-    Hi — your Cavnar AI dashboard for <strong>{restaurant_name}</strong> is live and ready to use.
+  <p style="font-size:15px;line-height:1.6;margin:0 0 16px">
+    {greeting} your Cavnar AI dashboard for <strong>{esc(restaurant_name)}</strong> is live and ready to use.
   </p>
   {first_look_html}
-  <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
-    <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
-    <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
-    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {esc(username)}</p>
-    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {esc(password)}</p>
+  <div style="background:{B['card']};border:1px solid {B['border']};border-radius:10px;padding:18px 20px;margin:0 0 20px">
+    <p style="font-size:11px;color:{B['muted']};margin:0 0 12px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
+    <p style="font-size:14px;color:{B['body']};margin:0 0 6px"><strong style="color:{B['strong']}">Username:</strong> {esc(username)}</p>
+    <p style="font-size:14px;color:{B['body']};margin:0 0 16px"><strong style="color:{B['strong']}">Temporary password:</strong> <span style="font-family:{_NUM};color:{B['strong']}">{esc(password)}</span></p>
+    <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:{B['ember']};color:{B['card']};font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:8px">Sign in to your dashboard</a>
+    <p style="font-size:12px;color:{B['muted']};margin:10px 0 0">or go to <a href="https://dashboard.cavnar.ai" style="color:{B['ember']}">dashboard.cavnar.ai</a></p>
   </div>
-  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:12px">
+  <p style="font-size:14px;color:{B['body']};line-height:1.7;margin:0 0 12px">
     Once you log in, go to the <strong>Account</strong> tab to set your own password.
-    Your dashboard includes {modules_text}, all set up specifically for {restaurant_name}.
+    Your dashboard includes {modules_text}, all set up specifically for {esc(restaurant_name)}.
   </p>
-  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
+  <p style="font-size:14px;color:{B['body']};line-height:1.7;margin:0 0 24px">
     Any questions, just reply to this email. I check it daily.
   </p>
-  <p style="font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:24px;padding:10px 14px;background:#f7f4ef;border-radius:6px;border-left:3px solid #c84b2f">
-    <strong style="color:#3a3530">Note:</strong> This email may land in your Promotions tab. If it did, drag it to your Primary inbox — that way you won't miss any updates from me going forward.
+  <p style="font-size:13px;color:{B['muted']};line-height:1.6;margin:0 0 24px;padding:10px 14px;background:{B['card']};border-radius:6px;border-left:3px solid {B['ember']}">
+    <strong style="color:{B['body']}">Note:</strong> This email may land in your Promotions tab. If it did, drag it to your Primary inbox — that way you won't miss any updates from me going forward.
   </p>
-  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
-  <p style="font-size:12px;color:#7a736a;margin:0">
-    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
-    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+  <div style="border-top:1px solid {B['border']};margin:24px 0"></div>
+  <p style="font-size:12px;color:{B['muted']};margin:0">
+    <img src="{_SEAL}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
+    <a href="mailto:will@cavnar.ai" style="color:{B['ember']};text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
-    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    <a href="https://cavnar.ai" style="color:{B['ember']};text-decoration:none">cavnar.ai</a>
     &nbsp;·&nbsp;
-    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
+    <a href="https://calendly.com/will-cavnar/30min" style="color:{B['ember']};text-decoration:none">Book a call</a>
   </p>
 </div>
 </div>"""

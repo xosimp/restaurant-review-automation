@@ -454,7 +454,10 @@ def _seed_ejs_food_cost(rid: int, db_path: str):
     print(f"[auto-seed] {SIMPLE_EJS_NAME} food cost seeded: {len(_EJS_PANTRY)} ingredients, {len(_EJS_MENU)} dishes")
 
 
-SIMPLE_EJS_USERNAME = "erik"
+# "erikdemo", not "erik" (9/25/26): Erik may want "erik" for his LIVE
+# account. The old demo login is renamed in place by _ensure_ejs_login.
+SIMPLE_EJS_USERNAME = "erikdemo"
+_LEGACY_EJS_USERNAMES = ("erik",)
 
 
 def _ensure_ejs_login(rid: int, db_path: str):
@@ -476,10 +479,24 @@ def _ensure_ejs_login(rid: int, db_path: str):
     from werkzeug.security import generate_password_hash
 
     wanted = (_os.getenv("DEMO_PASSWORD") or "").strip()
+    restaurant = get_restaurant(rid, db_path)
     conn = get_conn(db_path)
     try:
+        # Rename the demo's old login ("erik" -> "erikdemo") so the live
+        # account can take "erik". Only on a demo restaurant, only the login
+        # this seed made, and only while the new name is free.
+        if restaurant and restaurant.is_demo:
+            for old in _LEGACY_EJS_USERNAMES:
+                cur = conn.execute(
+                    "UPDATE users SET username=? WHERE restaurant_id=? AND username=? "
+                    "AND NOT EXISTS (SELECT 1 FROM users WHERE username=?)",
+                    (SIMPLE_EJS_USERNAME, rid, old, SIMPLE_EJS_USERNAME))
+                if cur.rowcount:
+                    conn.commit()
+                    print(f"[auto-seed] {SIMPLE_EJS_NAME} demo login renamed {old!r} -> {SIMPLE_EJS_USERNAME!r}")
         row = conn.execute(
-            "SELECT id, username FROM users WHERE restaurant_id=? LIMIT 1", (rid,)).fetchone()
+            "SELECT id, username FROM users WHERE restaurant_id=? AND username=? LIMIT 1",
+            (rid, SIMPLE_EJS_USERNAME)).fetchone()
     except Exception:
         row = None
     finally:
@@ -492,7 +509,6 @@ def _ensure_ejs_login(rid: int, db_path: str):
         # variable has to be set, the restaurant has to still be flagged as
         # a demo, and it has to be the login this seed made. A real client's
         # password is never touched.
-        restaurant = get_restaurant(rid, db_path)
         if not (wanted and restaurant and restaurant.is_demo
                 and row["username"] == SIMPLE_EJS_USERNAME):
             return
