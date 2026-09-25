@@ -151,12 +151,15 @@ def metric_row(cm) -> dict | None:
            "kind": head, "value": own, "value_text": fmt(own, unit), "standing": None, "tone": "neutral",
            "behind": False, "text": (cm.get("headline") or {}).get("text"), "as_of": None,
            "strength_pct": None, "note": None, "action": None}
-    if head == "peers":
-        c = by["peers"]
+    if head in ("peers", "platform"):
+        # platform leads only for a behaviour metric (engine.compare), where
+        # the all-types band is a fair peer set; its label says "all types".
+        c = by[head]
         st = c.get("standing")
         row.update(standing=st, as_of=c.get("as_of"), strength_pct=(c.get("strength") or {}).get("pct"),
                    value=c.get("value"), value_text=fmt(c.get("value"), unit),
-                   against=f"{c.get('n')} other {c.get('cohort_label')}",
+                   against=(c.get("cohort_label") if head == "platform"
+                            else f"{c.get('n')} other {c.get('cohort_label')}"),
                    middle_text=fmt(c.get("p50"), unit))
         row["tone"] = "good" if st in _AHEAD else ("warn" if st in _BEHIND else "neutral")
         row["behind"] = st in _BEHIND

@@ -83,11 +83,15 @@ LABOR_COST_METRICS = ("labor_pct_28d", "labor_pct_sd_28d")
 # than this share of its median says "these restaurants are not alike" —
 # withheld, not published. Shares and ratings get an absolute ceiling on the
 # IQR instead (a median of 0.1 would make any spread look huge).
-MAX_REL_IQR = {"labor_pct_28d": 0.35, "labor_pct_sd_28d": 1.0, "food_cost_pct_28d": 0.35,
+# Fix round (Top-50 #23, R1-07): the first ceilings hardly ever withheld —
+# a rating IQR of 0.8★, answered-review shares 60 points apart and labor at
+# p25 25% / p75 33% all passed. Now: rating ≤ 0.4★, the review and outcome
+# shares ≤ 0.3, labor % ≤ 0.2 of its median.
+MAX_REL_IQR = {"labor_pct_28d": 0.2, "labor_pct_sd_28d": 1.0, "food_cost_pct_28d": 0.35,
                "waste_sales_pct_28d": 1.0, "labor_hours_per_1k_28d": 0.6, "labor_hours_per_1k_day_28d": 0.6,
                "labor_hours_per_1k_night_28d": 0.6, "post_lift_median_28d": 2.0}
-MAX_ABS_IQR = {"avg_rating_30d": 0.8, "response_24h_rate_30d": 0.6, "reply_rate_30d": 0.6,
-               "campaign_tap_rate_28d": 0.3, "post_engagement_rate_28d": 0.3, "outcomes_improved_rate_90d": 0.6}
+MAX_ABS_IQR = {"avg_rating_30d": 0.4, "response_24h_rate_30d": 0.3, "reply_rate_30d": 0.3,
+               "campaign_tap_rate_28d": 0.3, "post_engagement_rate_28d": 0.3, "outcomes_improved_rate_90d": 0.3}
 
 # staff_per_1k.<role family> (intelligence.staffing) — economics by nature.
 _STAFF_PREFIX = "staff_per_1k."
@@ -140,11 +144,11 @@ def spread_ok(metric, p25, p50, p75) -> bool:
     except (TypeError, ValueError):
         return False
     if metric in MAX_ABS_IQR:
-        return iqr <= MAX_ABS_IQR[metric]
+        return iqr <= MAX_ABS_IQR[metric] + 1e-9      # a ceiling is inclusive, float noise aside
     ceiling = MAX_REL_IQR.get(metric, 1.0)
     if med <= 0:
         return iqr <= 0
-    return iqr / med <= ceiling
+    return iqr / med <= ceiling + 1e-9
 
 
 def platform_allowed(metric) -> bool:

@@ -293,15 +293,26 @@ Benchmarking audit (9/24/26, workstream P), all DDL at boot:
   profile field that changed.
 - `intel_benchmarks` gains `orgs`, `max_org_share` and `members_json`
   (`[[value, org hash], …]`, server-side only); the cohort is a peer
-  partition key (`sm:…`) or `platform` (behaviour metrics only); a week's
+  partition key (`sm:…`, see the ladder below) or `platform` (behaviour metrics only); a week's
   row is written once and frozen (a row from before `members_json` is
   replaced, and is never shown). Invariant: no stored band rests on fewer
   than `privacy.MIN_ORGS` organisations.
 - `intel_peer_assignments` (restaurant × week × family: rung, partition key,
   peer-set hash — never ids — n, orgs, profile source and confirmation date,
-  drift; UNIQUE per restaurant, week and family).
+  drift; UNIQUE per restaurant, week and family). Fix round #44: `rung` is
+  what the restaurant would be SHOWN (`peers` only when a band on its
+  ladder passes `benchmarks.publish_row` for a metric it measures), and
+  n / orgs / hash are that band's; `partition_key` stays the confirmed
+  partition. `drift` is read for CONSECUTIVE ISO weeks and only ever becomes
+  a question to the owner — it never moves the partition (#38).
+- `intel_benchmarks.cohort` may also be a ladder rung (fix round #34/#36):
+  the partition narrowed by `|t<ticket band>`, `|v<volume band>`,
+  `|u<urbanity band>`, or the service model alone; `…|mixed` and `…|other`
+  keys are never written or shown (#22).
 - `intel_cohort_series` (cohort × metric × week: n, the balanced-panel
-  median, n_joined, n_left; UNIQUE per cohort, metric and week).
+  median, n_joined, n_left; UNIQUE per cohort, metric and week). Fix round
+  #41: a point is a Harrell–Davis median over ≥ 8 eligible restaurants from
+  ≥ 5 organisations.
 
 Benchmarking audit (9/24/26, workstream D), all DDL in `init_db`:
 - `intel_rec_events` gains `metric`, `effect_pct`, `effect_z` (signed so

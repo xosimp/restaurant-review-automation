@@ -278,11 +278,21 @@ def profile_for(restaurant) -> dict:
 FAMILIES = ("format", "labor", "food")
 
 
+def food_family(concept) -> str | None:
+    """The menu family a food-cost group may be built from: protein- or
+    starch-led, or None. A concept outside MENU_FAMILY — asian, family,
+    fast casual, the bars, `other` — has no food group: "mixed" was a
+    catch-all that put a noodle bar's food cost among sports bars and
+    "other" (fix round R1-06 / R2-6), which is the group publishable_group
+    exists to forbid."""
+    return MENU_FAMILY.get(concept or "")
+
+
 def partition_key(profile, family="format", volume_band=None) -> str | None:
     """The peer partition a CONFIRMED profile belongs to for one metric
-    family, or None (unconfirmed, or food with no concept to read a menu
-    family from). `volume_band` narrows a staffing ratio to restaurants of
-    the same sales band once one is measured."""
+    family, or None (unconfirmed; food with no concept, or a concept with
+    no menu family — food_family). `volume_band` narrows a staffing ratio
+    to restaurants of the same sales band once one is measured."""
     if not profile or not profile.get("confirmed") or not profile.get("service_model"):
         return None
     key = f"sm:{profile['service_model']}"
@@ -290,12 +300,79 @@ def partition_key(profile, family="format", volume_band=None) -> str | None:
         if profile.get("bar_led") and profile["service_model"] != "bar_led":
             key += "|bar"
     if family == "food":
-        if not profile.get("concept"):
+        fam = food_family(profile.get("concept"))
+        if not fam:
             return None
-        key += f"|{profile.get('menu_family') or menu_family(profile['concept'])}"
+        key += f"|{fam}"
     if family == "staff" and volume_band is not None:
         key += f"|v{int(volume_band)}"
     return key
+
+
+def food_why_not(profile) -> str:
+    """Why a confirmed profile has no food-cost group, in words."""
+    concept = (profile or {}).get("concept")
+    if not concept:
+        return "set the restaurant's concept in Account → Restaurant profile to compare food cost"
+    return (f"food cost is compared within a protein- or starch-led menu, and {LABELS.get(concept, concept).lower()} "
+            "menus aren't grouped yet — so there is no like-for-like food-cost group")
+
+
+# ── the ladder (fix round, Top-50 #34/#36: R2-9, R2-6, R1-06, R4-12) ─────
+# Finer coordinates Cavnar measures (features.STRUCTURAL_KEYS), in the order
+# they matter per family: the ticket band shapes every format; volume and
+# the market (urbanity band — the first proxy for a wage market; there is
+# no state or wage index yet) shape labor; volume shapes staffing ratios.
+# Each is a SOFT split: the ladder reads the finest group that clears every
+# floor, then the next coarser one, down to the profile's own partition and
+# then the service model alone (labor, food and staffing drop the bar-led
+# split last). Economics metrics stop there; only a behaviour metric goes on
+# to all restaurants on Cavnar (engine / benchmarks).
+LADDER_COORDS = {"format": ("ticket_band",), "labor": ("ticket_band", "volume_band", "urbanity_band"),
+                 "food": ("ticket_band",), "staff": ("volume_band",)}
+_COORD_TAG = {"ticket_band": "t", "volume_band": "v", "urbanity_band": "u"}
+# features.TICKET_BAND_EDGES in words (index = band).
+_TICKET_RANGES = ("under $12", "$12–20", "$20–35", "$35–60", "over $60")
+_TICKET_WORDS = tuple("an average ticket " + (r if r[0] in "uo" else "of " + r) for r in _TICKET_RANGES)
+_URBANITY_WORDS = ("in rural areas", "in suburban areas", "in urban areas")
+
+
+def _coord(structural, k):
+    v = (structural or {}).get(k)
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def partition_ladder(profile, family="format", structural=None) -> list:
+    """[key, …] finest → coarsest for one metric family: the profile's
+    partition with every measured coordinate of LADDER_COORDS, then with
+    fewer, then the partition itself, then — for a bar-led split — the
+    service model alone. [] when the profile builds no partition."""
+    base = partition_key(profile, family)
+    if not base:
+        return []
+    known = [(k, _coord(structural, k)) for k in LADDER_COORDS.get(family, ())]
+    known = [(k, v) for k, v in known if v is not None]
+    rungs = []
+    for i in range(len(known), 0, -1):
+        rungs.append(base + "".join(f"|{_COORD_TAG[k]}{v}" for k, v in known[:i]))
+    rungs.append(base)
+    if "|bar" in base:
+        coarse = base.replace("|bar", "")
+        if coarse not in rungs:
+            rungs.append(coarse)
+    return rungs
+
+
+def ladder_base_index(ladder, base) -> int:
+    """Where the profile's own partition sits in a ladder (finer rungs
+    before it, a wider group after it)."""
+    try:
+        return ladder.index(base)
+    except ValueError:
+        return 0
 
 
 def partition_label(key) -> str:
@@ -308,14 +385,32 @@ def partition_label(key) -> str:
     if "bar" in parts[1:]:
         base = base.replace(" restaurants", ", bar-led restaurants") if sm != "bar_led" else base
     fam = next((p for p in parts[1:] if p in MENU_FAMILY_LABELS), None)
+    withs = []
     if fam:
-        extras.append(f"with {MENU_FAMILY_LABELS[fam]}")
-    vb = next((p for p in parts[1:] if p.startswith("v") and p[1:].isdigit()), None)
-    if vb:
+        withs.append(MENU_FAMILY_LABELS[fam])
+    for p in parts[1:]:
+        if p[:1] == "t" and p[1:].isdigit() and int(p[1:]) < len(_TICKET_WORDS):
+            withs.append(_TICKET_WORDS[int(p[1:])])
+    if withs:
+        extras.append("with " + " and ".join(withs))
+    if any(p[:1] == "v" and p[1:].isdigit() for p in parts[1:]):
         extras.append("of similar sales volume")
+    ub = next((p for p in parts[1:] if p[:1] == "u" and p[1:].isdigit()), None)
+    if ub and int(ub[1:]) < len(_URBANITY_WORDS):
+        extras.append(_URBANITY_WORDS[int(ub[1:])])
     # Lower-case: it is always read after a count ("12 other counter-service
     # restaurants on Cavnar"); a heading capitalises it itself.
     return " ".join([base] + extras) + " on Cavnar"
+
+
+def rung_note(key, base) -> str | None:
+    """What a label adds when the band read is WIDER than the profile's own
+    partition (said, never silent): "a wider group — too few bar-led ones
+    have this measured yet"."""
+    if not key or not base or key == base or not set(str(key).split("|")) < set(str(base).split("|")):
+        return None
+    return "a wider group — too few " + ("bar-led ones" if "|bar" in base else "closer matches") + \
+        " have this measured yet"
 
 
 def is_partition(key) -> bool:
@@ -336,6 +431,57 @@ def suggestion(restaurant) -> dict | None:
     what = SINGULAR.get(concept) if concept else _SERVICE_MODEL_SINGULAR.get(sm)
     return {"text": f"We think you're {what} — is that right?", "service_model": sm, "concept": concept,
             "confidence_pct": int(round((g.get("confidence") or 0) * 100)), "cues": g.get("cues") or []}
+
+
+# ── keeping a confirmed profile true (fix round, Top-50 #38, R2-13) ───────
+# Measured drift never moves a partition on its own: it becomes a question
+# the owner answers. So does a profile whose measured format contradicts it,
+# and one confirmed over a year ago.
+RECONFIRM_DAYS = 365
+# Average-ticket bands (features.TICKET_BAND_EDGES) that contradict a service
+# model: a counter at $35+ a cover, a full-service room under $12.
+_FORMAT_MISMATCH = {"counter": lambda tb: tb >= 3, "full_service": lambda tb: tb == 0}
+
+
+def profile_review(profile, drift=None, structural=None, today=None) -> dict | None:
+    """The "is your profile still right?" prompt for a CONFIRMED profile, or
+    None: {kind: drift | format | yearly, text, service_model, concept,
+    bar_led} — the fields a "Yes, update it" save would send. `drift` is
+    {direction: 'bar_led' | 'not_bar_led', weeks, share} from the ledger
+    (jobs.profile_review); `structural` the latest measured coordinates."""
+    if not profile or not profile.get("confirmed"):
+        return None
+    sm, concept, bar = profile.get("service_model"), profile.get("concept"), profile.get("bar_led")
+    base = {"service_model": sm, "concept": concept, "bar_led": bar}
+    d = drift or {}
+    if d.get("direction") in ("bar_led", "not_bar_led") and sm != "bar_led":
+        share = d.get("share")
+        pct = f"about {int(round(float(share) * 100))}% of sales" if share is not None else None
+        weeks = int(d.get("weeks") or 0)
+        if d["direction"] == "bar_led":
+            text = (f"Drinks have been {pct or 'a large share of sales'} for {weeks} weeks in a row — "
+                    "compare you with bar-led restaurants?")
+        else:
+            text = (f"Drinks have been {pct or 'a small share of sales'} for {weeks} weeks in a row — "
+                    "stop comparing you with bar-led restaurants?")
+        return dict(base, kind="drift", text=text, bar_led=d["direction"] == "bar_led")
+    tb = _coord(structural, "ticket_band")
+    if tb is not None and sm in _FORMAT_MISMATCH and _FORMAT_MISMATCH[sm](tb):
+        return dict(base, kind="format",
+                    text=(f"Your average ticket reads {_TICKET_RANGES[min(tb, len(_TICKET_RANGES) - 1)]}, "
+                          f"which is unusual for {_SERVICE_MODEL_SINGULAR.get(sm, 'your format')} — is "
+                          "your profile still right?"))
+    raw = profile.get("confirmed_at")
+    if raw:
+        from datetime import date, datetime
+        try:
+            at = datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            at = None
+        if at is not None and ((today or date.today()) - at).days >= RECONFIRM_DAYS:
+            return dict(base, kind="yearly",
+                        text="It's been a year since you confirmed your restaurant profile — is it still right?")
+    return None
 
 
 def clean_profile(data) -> tuple[dict, str | None]:
@@ -382,15 +528,17 @@ def clean_profile(data) -> tuple[dict, str | None]:
     return out, None
 
 
-def profile_payload(restaurant) -> dict:
-    """The Account block's read: the profile, its choices and — while it is
-    unconfirmed — the suggestion. Owner-facing, so it carries no other
-    restaurant's anything."""
+def profile_payload(restaurant, review=None) -> dict:
+    """The Account block's read: the profile, its choices, the suggestion
+    while it is unconfirmed and — once confirmed — `review`, the "is it
+    still right?" prompt (profile_review; jobs.profile_review reads the
+    ledger for it). Owner-facing, so it carries no other restaurant's
+    anything."""
     p = profile_for(restaurant)
     return {"service_model": p["service_model"], "concept": p["concept"], "bar_led": p["bar_led"],
             "ownership": p["ownership"], "opened_year": p["opened_year"], "confirmed": p["confirmed"],
             "confirmed_at": p["confirmed_at"], "source": p["source"],
-            "suggestion": suggestion(restaurant),
+            "suggestion": suggestion(restaurant), "review": review if p["confirmed"] else None,
             "choices": {"service_model": [{"value": k, "label": SERVICE_MODEL_LABELS[k]} for k in SERVICE_MODELS],
                         "concept": [{"value": k, "label": LABELS[k]} for k in TAXONOMY],
                         "ownership": [{"value": k, "label": OWNERSHIP_LABELS[k]} for k in OWNERSHIP]}}

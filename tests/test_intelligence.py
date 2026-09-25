@@ -246,7 +246,9 @@ def _cohort(db_path, n, cat, seed):
         f = {"response_24h_rate_30d": 0.8 if fast else 0.1,
              "avg_rating_delta": round((0.35 if fast else -0.05) + rng.uniform(-0.05, 0.05), 3),
              "avg_rating_30d": round(4.4 + rng.uniform(-0.2, 0.2), 2), "labor_pct_28d": round(30 + rng.uniform(-3, 3), 1),
-             "reply_rate_30d": 0.9 if fast else 0.3, "schedule_adjust_rate": rng.choice([0.2, 0.7]),
+             # Within the tightened 0.3 spread gate for shares (fix round #23);
+             # 0.9 / 0.3 split the band 60 points wide.
+             "reply_rate_30d": 0.75 if fast else 0.6, "schedule_adjust_rate": rng.choice([0.2, 0.7]),
              "labor_pct_sd_28d": round(rng.uniform(1, 4), 2)}
         _seed_features(db_path, r, THIS_WEEK, f)
     return rids
@@ -311,7 +313,9 @@ def test_benchmarks_place_a_restaurant_in_its_cohort_and_fall_back_to_platform(d
 
 
 def test_trends_need_six_weekly_points_over_a_cohort_at_the_floor(db_path):
-    rids = [_rid(db_path, f"T{i}") for i in range(6)]
+    # Nine: a trend point needs the bands' floor — 8 restaurants from 5
+    # owners (fix round #41; this pinned the old five).
+    rids = [_rid(db_path, f"T{i}") for i in range(9)]
     cohorts = {r: "cafe" for r in rids}
     for w in range(7):
         week = features.iso_week(date.today() - timedelta(weeks=6 - w))
@@ -319,7 +323,7 @@ def test_trends_need_six_weekly_points_over_a_cohort_at_the_floor(db_path):
             _seed_features(db_path, r, week, {"avg_rating_30d": 4.0 + 0.05 * w, "labor_pct_28d": 30})
     ts = trends.platform_trends(cohorts=cohorts, db_path=db_path)
     cafe = next(t for t in ts if t["cohort"] == "cafe" and t["metric"] == "avg_rating_30d")
-    assert cafe["weeks"] == 7 and cafe["slope_per_week"] > 0 and cafe["n_latest"] == 6
+    assert cafe["weeks"] == 7 and cafe["slope_per_week"] > 0 and cafe["n_latest"] == 9
     flat = next(t for t in ts if t["cohort"] == "cafe" and t["metric"] == "labor_pct_28d")
     assert flat["slope_per_week"] == 0
     assert trends.emerging(cohorts=cohorts, db_path=db_path)[0]["metric"] == "avg_rating_30d"
@@ -410,8 +414,13 @@ def test_the_learning_pass_runs_end_to_end_and_the_dashboard_is_anonymous(db_pat
     assert "bar" in d["learning"]["cohorts_at_floor"] and d["recommendations"]["totals"]["accepted"] == 10
     assert d["savings"]["note"].startswith("Four separate")
     # The bands are stored under the confirmed peer partition (#20).
+    outsider = privacy.org_hash("r0")
+    assert any((benchmarks.published("sm:bar_led", m, exclude_org=outsider, db_path=db_path) or {}).get("p50")
+               is not None for m in features.BENCHMARK_KEYS)
+    # The facade has no viewer to leave out, so it publishes no band (fix
+    # round #41, R1-11 — this used to assert it did, with the viewer inside).
     facade = intelligence.industry_intelligence("sm:bar_led", db_path=db_path)
-    assert any(b for b in facade["benchmarks"] if b)
+    assert not any(b for b in facade["benchmarks"] if b)
     assert out["peer_ledger"]["written"] == 10 * 3
     assert intelligence.recommendation_success("trim_day", cohort="bar", db_path=db_path)["available"] is True
 

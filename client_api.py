@@ -7436,7 +7436,12 @@ def _restaurant_profile_payload(rid):
     r = get_restaurant(rid)
     if r is None:
         return {"ok": False, "error": "No restaurant."}
-    out = {"ok": True, "profile": _cats.profile_payload(r)}
+    try:
+        from intelligence import jobs as _ijobs
+        review = _ijobs.profile_review(rid, restaurant=r)      # drift / format / yearly re-confirm (#38)
+    except Exception:
+        review = None
+    out = {"ok": True, "profile": _cats.profile_payload(r, review=review)}
     out["targets"] = {
         "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor"),
                   "label": _thr.target_label(r, "labor")},

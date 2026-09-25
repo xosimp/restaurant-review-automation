@@ -213,8 +213,15 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
         vb = ((own or {}).get("features") or {}).get("volume_band")
     except Exception:
         vb = None
-    cohort = categories.partition_key(prof, "staff", volume_band=vb)
+    # The ladder (fix round #37, R2-14): the same-volume band once this
+    # restaurant's own volume is measured, else — and whenever that band is
+    # too small — the pooled band of its partition, which every member now
+    # stands in too (a new restaurant has no volume band, and the pooled
+    # band used to hold only members whose volume was unmeasured).
+    ladder = categories.partition_ladder(prof, "staff", {"volume_band": vb}) or \
+        [categories.partition_key(prof, "staff", volume_band=vb)]
     from .benchmarks import published, cohort_label, viewer_org, MIN_QUARTILE_N
+    cohort = ladder[0]
     label = cohort_label(cohort)
     roles = {}
     for _n, role in (roster_roles or {}).items():
@@ -227,12 +234,16 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                 "reason": "The roster has no roles yet, so there is nothing to borrow a headcount for."}
     org = viewer_org(restaurant_id, db_path=db_path)
     ratios = []
-    for fam in sorted(roles):
-        for part in DAYPARTS:
-            b = published(cohort, metric(fam, part), exclude_org=org, db_path=db_path)
-            if b and not b.get("withheld") and b.get("p50") is not None:
-                ratios.append({"role_family": fam, "daypart": part, "people_per_1k": float(b["p50"]),
-                               "n": int(b["n"]), "week": b.get("week")})
+    for rung in ladder:
+        for fam in sorted(roles):
+            for part in DAYPARTS:
+                b = published(rung, metric(fam, part), exclude_org=org, db_path=db_path)
+                if b and not b.get("withheld") and b.get("p50") is not None:
+                    ratios.append({"role_family": fam, "daypart": part, "people_per_1k": float(b["p50"]),
+                                   "n": int(b["n"]), "week": b.get("week")})
+        if ratios:
+            cohort, label = rung, cohort_label(rung)
+            break
     if not ratios:
         return {"available": False, "own_history": False, "cohort_label": label,
                 "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar', '')}) "

@@ -295,8 +295,12 @@ def test_the_viewers_whole_organisation_is_out_of_the_band_it_sees(db_path):
     bm.compute(db_path=db_path)
     b = bm.benchmark(sibs[0], "labor_pct_28d", db_path=db_path)
     assert b["available"] and b["n"] == 8 and b["orgs"] == 8          # both siblings left out too
-    single = bm.published("sm:counter", "labor_pct_28d", exclude_value=None, db_path=db_path)
-    assert single["n"] == 11 and single["orgs"] == 9
+    # An outsider sees all 11 from 9 organisations; with no viewer at all
+    # nothing is shown (fix round #41 — this pinned a viewerless read).
+    outsider = bm.published("sm:counter", "labor_pct_28d", exclude_org=privacy.org_hash("r0"), db_path=db_path)
+    assert outsider["n"] == 11 and outsider["orgs"] == 9
+    nobody = bm.published("sm:counter", "labor_pct_28d", exclude_value=None, db_path=db_path)
+    assert nobody["withheld"] and "only to a restaurant" in nobody["reason"]
 
 
 def test_floors_count_organisations_and_no_one_organisation_is_over_a_third(db_path):
@@ -306,8 +310,8 @@ def test_floors_count_organisations_and_no_one_organisation_is_over_a_third(db_p
         _set(db_path, r, organization_id=chain)
     _group(db_path, 5, start=10)                                        # 6 organisations, one of them 5/10
     bm.compute(db_path=db_path)
-    p = bm.published("sm:counter", "labor_pct_28d", db_path=db_path)
-    assert p["withheld"] and "over a third" in p["reason"]
+    p = bm.published("sm:counter", "labor_pct_28d", exclude_org=privacy.org_hash("r0"), db_path=db_path)
+    assert p["withheld"] and "over a third" in p["reason"]      # held to a third, 7 others are left
     _wipe_bands(db_path)
     pairs = _org(db_path, "Pairs")
     few = _group(db_path, 9, profile=("daytime", "cafe"), start=0)       # 9 restaurants, 4 organisations
@@ -522,22 +526,47 @@ def test_a_changed_group_is_logged_and_lowers_confidence(db_path):
     assert change > 0 and "comparison group changed" in note
 
 
-def test_measured_drift_moves_a_partition_only_after_four_weeks(db_path):
+def test_measured_drift_is_a_question_for_the_owner_after_four_consecutive_weeks(db_path):
+    # Fix round #38 (R2-13). This test used to pin the old behaviour — the
+    # partition MOVED after three earlier drift rows, consecutive or not.
     ids = _group(db_path, 3, base={"labor_pct_28d": 28.0, "alcohol_share": 0.6})
     members = jobs.member_info(db_path=db_path)
     latest = feat.latest_by_restaurant(db_path=db_path)
     now = jobs.peer_partitions(members, latest=latest, db_path=db_path)
     assert now[ids[0]]["labor"] == "sm:counter" and now[ids[0]]["_drift"] == "bar_led"
-    conn = get_conn(db_path)
-    for back in (1, 2, 3):
-        wk = feat.iso_week(date.today() - timedelta(weeks=back))
-        conn.execute("INSERT INTO intel_peer_assignments (restaurant_id, week, family, rung, partition_key, drift) "
-                     "VALUES (?,?,'labor','self','sm:counter','bar_led')", (ids[0], wk))
-    conn.commit()
-    conn.close()
-    moved = jobs.peer_partitions(members, latest=latest, db_path=db_path)
-    assert moved[ids[0]]["labor"] == "sm:counter|bar" and moved[ids[0]]["format"] == "sm:counter"
-    assert moved[ids[1]]["labor"] == "sm:counter"                          # no history, no move
+    assert now[ids[0]]["_drift_weeks"] == 1 and jobs.profile_review(ids[0], db_path=db_path) is None
+
+    def ledger(rid, backs):
+        conn = get_conn(db_path)
+        for back in backs:
+            wk = feat.iso_week(date.today() - timedelta(weeks=back))
+            conn.execute("INSERT INTO intel_peer_assignments (restaurant_id, week, family, rung, partition_key, "
+                         "drift) VALUES (?,?,'labor','self','sm:counter','bar_led')", (rid, wk))
+        conn.commit()
+        conn.close()
+
+    ledger(ids[0], (1, 2, 3))                      # three weeks right before this one
+    ledger(ids[1], (1, 2, 5))                      # a gap: weeks 3 and 4 measured nothing
+    after = jobs.peer_partitions(members, latest=latest, db_path=db_path)
+    # Only the owner moves a partition: four measured weeks never do.
+    assert after[ids[0]]["labor"] == "sm:counter" and after[ids[0]]["_drift_weeks"] == 4
+    assert after[ids[1]]["_drift_weeks"] == 3                              # consecutive weeks only
+    review = jobs.profile_review(ids[0], db_path=db_path)
+    assert review["kind"] == "drift" and review["bar_led"] is True and review["service_model"] == "counter"
+    assert "about 60% of sales for 4 weeks in a row" in review["text"] and "bar-led" in review["text"]
+    assert jobs.profile_review(ids[1], db_path=db_path) is None
+    assert categories.profile_payload(get_restaurant(ids[0], db_path=db_path), review=review)["review"] == review
+
+
+def test_a_profile_that_contradicts_its_measured_format_or_is_a_year_old_asks_again():
+    prof = {"confirmed": True, "service_model": "counter", "concept": "pizza", "bar_led": False,
+            "confirmed_at": "2026-09-01T00:00:00"}
+    assert categories.profile_review(prof, structural={"ticket_band": 1}, today=date(2026, 9, 24)) is None
+    fmt = categories.profile_review(prof, structural={"ticket_band": 3}, today=date(2026, 9, 24))
+    assert fmt["kind"] == "format" and "$35–60" in fmt["text"]
+    old = dict(prof, confirmed_at="2025-09-01T00:00:00")
+    assert categories.profile_review(old, today=date(2026, 9, 24))["kind"] == "yearly"
+    assert categories.profile_review(dict(prof, confirmed=False), structural={"ticket_band": 4}) is None
 
 
 # ══ #31: the confidence type-match factor uses the published rule ═══════════
@@ -571,7 +600,7 @@ def test_other_and_untyped_groups_are_never_published(db_path):
 def test_a_band_too_spread_to_mean_alike_is_withheld(db_path):
     _group(db_path, 10, base={"labor_pct_28d": 18.0}, step={"labor_pct_28d": 2.5})    # 18% … 40.5%
     bm.compute(db_path=db_path)
-    p = bm.published("sm:counter", "labor_pct_28d", db_path=db_path)
+    p = bm.published("sm:counter", "labor_pct_28d", exclude_org=privacy.org_hash("r0"), db_path=db_path)
     assert p["withheld"] and "too spread out" in p["reason"]
     assert reg.spread_ok("labor_pct_28d", 28, 29, 30) and not reg.spread_ok("labor_pct_28d", 20, 29, 38)
 
@@ -590,7 +619,8 @@ def test_members_need_eight_live_weeks_and_half_their_measures(db_path):
 # ══ #42: disclosure control on what is published ════════════════════════════
 
 def test_published_quartiles_are_smoothed_coarse_and_frozen_for_the_week(db_path):
-    vals = [4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9]
+    # Within the tightened 0.4★ spread gate (fix round #23).
+    vals = [4.3, 4.35, 4.4, 4.45, 4.5, 4.55, 4.6, 4.65, 4.7]
     ids = [_mk(db_path, f"Stars {i}", profile=("counter", "pizza"), feats={"avg_rating_30d": v})
            for i, v in enumerate(vals)]
     viewer = _mk(db_path, "Stars viewer", profile=("counter", "pizza"), feats={"avg_rating_30d": 4.0})
@@ -643,7 +673,8 @@ def test_the_structural_block_is_bands_and_shares_never_dollars(db_path):
 # ══ #44: trends over a steady panel ══════════════════════════════════════════
 
 def test_trends_hold_membership_steady_and_are_persisted(db_path):
-    steady = [_mk(db_path, f"Steady {i}", profile=("counter", "pizza")) for i in range(6)]
+    # Nine: a point needs the bands' floor now (8 others, 5 owners — #41).
+    steady = [_mk(db_path, f"Steady {i}", profile=("counter", "pizza")) for i in range(9)]
     joiners = [_mk(db_path, f"Joiner {i}", profile=("counter", "pizza")) for i in range(4)]
     conn = get_conn(db_path)
     for w in range(8):
@@ -661,7 +692,7 @@ def test_trends_hold_membership_steady_and_are_persisted(db_path):
     parts = jobs.peer_partitions(members, db_path=db_path)
     s = trends.panel_series(cohorts=parts, db_path=db_path)["sm:counter"]["labor_pct_28d"]
     assert [p["p50"] for p in s["points"]] == [30.0] * len(s["points"])  # joining is not a trend
-    assert s["n_panel"] == 6 and s["n_joined"] == 4 and s["n_left"] == 0
+    assert s["n_panel"] == 9 and s["n_joined"] == 4 and s["n_left"] == 0
     out = trends.persist(cohorts=parts, db_path=db_path)
     assert out["written"] >= 6
     row = get_conn(db_path).execute("SELECT n_joined FROM intel_cohort_series WHERE cohort='sm:counter' "

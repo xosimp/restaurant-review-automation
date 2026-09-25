@@ -35,12 +35,20 @@ Benchmarking audit 9/24/26 (#6, #8, #9, #20, #39, #42):
   waste and rating never do: the answer is "no like-for-like peers yet".
 * Floors count ORGANISATIONS: at least MIN_QUARTILE_N others from at least
   privacy.MIN_ORGS organisations, the viewer's WHOLE organisation taken out
-  (each member value is stored beside an org hash, server-side), no one
-  organisation over a third, duplicate Google listings merged.
+  (each member value is stored beside an org hash, server-side), duplicate
+  Google listings merged. Fix round: an organisation is its org_map
+  component (organisation, owner email, shared owner logins, Stripe
+  customer — #13); one over a third is held to a third rather than
+  withholding the band (#35); a band is only ever shown to a viewer, and
+  never an all-types band for a type-dependent measure (#41).
 * Members are eligible only when live MIN_LIVE_WEEKS, at least half their
-  measures on file, not excluded from learning, and — for labor-cost
-  metrics — not on the $26/hr default rate.
-* The quality gate withholds a band too spread to mean "alike".
+  measures on file, not excluded from learning, a live customer (#40), and
+  — for labor-cost metrics — with most of their hours on owner-set rates
+  (labor_sourced).
+* The quality gate withholds a band too spread to mean "alike", and any
+  group with `other` or `mixed` in it (#22).
+* Each member stands in every rung of its ladder (categories.
+  partition_ladder, #34/#36); a viewer reads the finest rung that clears.
 * What is published is frozen for the ISO week (the first computation of a
   week stands), quartiles come from the Harrell–Davis estimator (never one
   member's exact figure), and the rating step is 0.25★.
@@ -111,9 +119,18 @@ def cohort_label(cohort) -> str:
 
 
 def publishable_group(cohort) -> bool:
-    """Never publish "other" or an untyped group (#39, BM1-14)."""
+    """Never publish "other" or an untyped group (#39, BM1-14) — nor a
+    partition carrying either as a coordinate: `sm:full_service|mixed` was
+    the catch-all food group every unmapped concept and `other` fell into
+    (fix round #22, R1-06/R2-6)."""
     c = str(cohort or "").strip().lower()
-    return bool(c) and c not in ("other", "none", "uncategorised", "sm:other")
+    if not c or c in ("other", "none", "uncategorised", "sm:other"):
+        return False
+    if categories.is_partition(c):
+        segs = c[3:].split("|")
+        if any(s in ("other", "mixed", "none", "") for s in segs):
+            return False
+    return True
 
 
 def coarse(metric, x):
@@ -168,6 +185,29 @@ def _key_for(entry, family):
     return entry
 
 
+def labor_sourced(member) -> bool:
+    """Whether a member's labor cost may stand in a labor-cost band: its
+    owner-set rates cover LABOR_SOURCED_SHARE of its hours
+    (jobs.member_info `labor_cost_sourced`); a member described only by its
+    cost basis (older callers) is out on the $26 default."""
+    m = member or {}
+    if "labor_cost_sourced" in m:
+        return bool(m["labor_cost_sourced"])
+    return m.get("cost_basis") != "default"
+
+
+def _keys_for(entry, family) -> list:
+    """Every group a member stands in for one family: its ladder
+    (jobs.peer_partitions `_ladder`, finest → coarsest — each rung is its
+    own band) or the single key."""
+    if isinstance(entry, dict) and isinstance(entry.get("_ladder"), dict):
+        rungs = entry["_ladder"].get(family)
+        if rungs:
+            return list(rungs)
+    key = _key_for(entry, family)
+    return [key] if key else []
+
+
 def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: dict = None) -> dict:
     """Store this ISO week's band for every (cohort, metric) that clears the
     floors. `cohorts` is {restaurant_id: key or {family: key}}; `members` is
@@ -215,12 +255,13 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
     for rid in elig:
         entry = cohorts.get(rid)
         for fam in families:
-            key = _key_for(entry, fam)
-            if not key or key == "platform" or not publishable_group(key):
-                continue
-            if not isinstance(entry, dict) and not typed(rid):
-                continue
-            groups[fam].setdefault(key, []).append(rid)
+            for key in _keys_for(entry, fam):
+                if not key or key == "platform" or not publishable_group(key):
+                    continue
+                if not isinstance(entry, dict) and not typed(rid):
+                    continue
+                if rid not in groups[fam].setdefault(key, []):
+                    groups[fam][key].append(rid)
 
     written = withheld = 0
     info = {fam: {} for fam in families}
@@ -242,8 +283,8 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
                     v = (latest[r]["features"] or {}).get(metric)
                     if v is None:
                         continue
-                    if metric in _reg.LABOR_COST_METRICS and elig[r].get("cost_basis") == "default":
-                        continue          # an assumed wage is not a labor cost (#14)
+                    if metric in _reg.LABOR_COST_METRICS and not labor_sourced(elig[r]):
+                        continue          # an assumed wage is not a labor cost (#14, fix round #11)
                     pairs.append((round(float(v), 3), elig[r]["org_hash"]))
                 orgs, share = privacy.org_counts([o for _v, o in pairs])
                 if not privacy.cohort_ok(len(pairs)) or orgs < privacy.MIN_ORGS:
@@ -268,7 +309,9 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
                      privacy.round_effect(mean(vals), 3), json.dumps(sorted(vals)), orgs, round(share, 3),
                      json.dumps([[v, o] for v, o in pairs])))
                 written += 1
-        conn.commit()
+            # One commit per metric (R2-18): a pass that fails part-way keeps
+            # what it wrote, and a re-run skips it (frozen) and carries on.
+            conn.commit()
     finally:
         conn.close()
     return {"written": written, "week": week, "skipped": skipped, "groups": info}
@@ -297,23 +340,61 @@ def band(cohort: str, metric: str, db_path=DB_PATH, today: date = None) -> dict 
     return privacy.assert_anonymous(row)
 
 
-def published(cohort: str, metric: str, exclude_value=None, db_path=DB_PATH, today: date = None,
-              exclude_org=None) -> dict | None:
-    """The band as it may be shown: None when nothing current exists,
-    {withheld: True, n, reason} when it may not be, else {cohort,
-    cohort_label, metric, week, as_of, n, orgs, p25, p50, p75}.
+def _excluded(exclude_org) -> frozenset:
+    """exclude_org as a set of org hashes (one hash, or viewer_org()'s set)."""
+    if exclude_org is None:
+        return frozenset()
+    if isinstance(exclude_org, str):
+        return frozenset((exclude_org,))
+    return frozenset(exclude_org)
 
-    `exclude_org` (an org hash, privacy.org_hash) takes the viewer's WHOLE
-    organisation out; `exclude_value` (older callers) one instance of the
-    viewer's own figure. Then: at least MIN_QUARTILE_N others from at least
-    privacy.MIN_ORGS organisations, none over a third (#9); never an
-    `other` or untyped group, never a band too spread to mean "alike"
-    (#39); quartiles by Harrell–Davis at the metric's coarse step (#42)."""
+
+def cap_organisations(pairs, week=None):
+    """(kept pairs, dropped) — no organisation over MAX_ORG_SHARE of a band,
+    by leaving out its surplus locations rather than withholding the band
+    from everyone (fix round #35, R2-10: the first 6-location customer in a
+    format blocked peers for every independent in it). Which of an
+    organisation's locations sit out is fixed per ISO week (a hash of the
+    week and the member), so every viewer of one week's band sees the same
+    subset."""
+    import hashlib
+    per = {}
+    for i, (v, o) in enumerate(pairs):
+        rank = hashlib.sha256(f"{week}|{o}|{v}|{i}".encode()).hexdigest()
+        per.setdefault(o, []).append((rank, v))
+    for o in per:
+        per[o].sort()
+    dropped = 0
+    n = len(pairs)
+    while n:
+        o, members = max(per.items(), key=lambda kv: (len(kv[1]), kv[0]))
+        if len(members) / float(n) <= privacy.MAX_ORG_SHARE + 1e-9:
+            break
+        members.pop()
+        n -= 1
+        dropped += 1
+    kept = [(v, o) for o, members in per.items() for _r, v in members]
+    return kept, dropped
+
+
+def publish_row(row, metric, exclude_org=None, exclude_value=None) -> dict:
+    """published() on a stored band row already read (with members_json):
+    the pure half, so the nightly ledger (jobs.record_assignments) derives
+    its rungs from exactly what a viewer would be shown."""
+    cohort = row.get("cohort")
     if not publishable_group(cohort):
         return {"withheld": True, "n": 0, "reason": "an untyped or 'other' group is never published"}
-    row = _row(cohort, metric, db_path=db_path, today=today, with_vals=True)
-    if not row:
-        return None
+    # The all-types guard in the reader too, not only the writer (R4-28).
+    if cohort == "platform" and not _reg.platform_allowed(metric):
+        return {"withheld": True, "n": 0,
+                "reason": "this measure depends on the type of restaurant, so an all-types band is never shown"}
+    # A band is shown to a viewer with their organisation taken out — never
+    # to no one in particular (fix round #41, R1-11: the facade published a
+    # band with the viewer still in it).
+    ex = _excluded(exclude_org)
+    if not ex:
+        return {"withheld": True, "n": 0,
+                "reason": "a band is shown only to a restaurant, with its own organisation left out"}
     members = None
     try:
         members = json.loads(row.get("members_json") or "null")
@@ -322,47 +403,105 @@ def published(cohort: str, metric: str, exclude_value=None, db_path=DB_PATH, tod
     if members is None:
         # A band stored before organisations were kept: the viewer's
         # organisation cannot be taken out of it, so it is never shown.
-        return {"withheld": True, "n": int(row["n"] or 0),
+        return {"withheld": True, "n": int(row.get("n") or 0),
                 "reason": "this band predates the privacy rules and is recomputed with next week's figures"}
-    pairs = [(float(v), o) for v, o in members]
-    if exclude_org is not None:
-        pairs = [(v, o) for v, o in pairs if o != exclude_org]
-    elif exclude_value is not None:
+    pairs = [(float(v), o) for v, o in members if o not in ex]
+    if exclude_value is not None:
         ev = round(float(exclude_value), 3)
         for i, (v, _o) in enumerate(pairs):
             if abs(v - ev) <= 0.0005:
                 del pairs[i]
                 break
+    measured = len(pairs)
+    pairs, dropped = cap_organisations(pairs, row.get("week"))
     n = len(pairs)
-    orgs, share = privacy.org_counts([o for _v, o in pairs])
+    orgs, _share = privacy.org_counts([o for _v, o in pairs])
     if n < MIN_QUARTILE_N:
-        return {"withheld": True, "n": n,
-                "reason": f"fewer than {MIN_QUARTILE_N} other restaurants have this measured"}
+        why = f"fewer than {MIN_QUARTILE_N} other restaurants have this measured"
+        if dropped and measured >= MIN_QUARTILE_N:
+            why = (f"one owner's locations would be over a third of the group, and holding them to a third "
+                   f"leaves fewer than {MIN_QUARTILE_N} other restaurants")
+        return {"withheld": True, "n": n, "measured": measured, "reason": why}
     if orgs < privacy.MIN_ORGS:
-        return {"withheld": True, "n": n,
+        return {"withheld": True, "n": n, "measured": measured,
                 "reason": f"the other restaurants come from fewer than {privacy.MIN_ORGS} separate owners"}
-    if share > privacy.MAX_ORG_SHARE + 1e-9:
-        return {"withheld": True, "n": n, "reason": "one owner's locations would be over a third of the group"}
     vals = sorted(v for v, _o in pairs)
     p25, p50, p75 = (harrell_davis(vals, 25), harrell_davis(vals, 50), harrell_davis(vals, 75))
     if not _reg.spread_ok(metric, p25, p50, p75):
-        return {"withheld": True, "n": n,
+        return {"withheld": True, "n": n, "measured": measured,
                 "reason": "these restaurants' figures are too spread out for a middle to mean anything"}
-    out = {"cohort": row["cohort"], "cohort_label": cohort_label(row["cohort"]), "metric": metric,
-           "week": row["week"], "as_of": _as_of(row), "n": n, "orgs": orgs,
+    out = {"cohort": cohort, "cohort_label": cohort_label(cohort), "metric": metric,
+           "week": row.get("week"), "as_of": _as_of(row), "n": n, "orgs": orgs, "measured": measured,
+           "capped": dropped,
            "p25": coarse(metric, p25), "p50": coarse(metric, p50), "p75": coarse(metric, p75)}
     return privacy.assert_anonymous(out)
 
 
-def viewer_org(restaurant_id, db_path=DB_PATH):
-    """The viewer's organisation hash — what published() leaves out."""
+def published(cohort: str, metric: str, exclude_value=None, db_path=DB_PATH, today: date = None,
+              exclude_org=None) -> dict | None:
+    """The band as it may be shown: None when nothing current exists,
+    {withheld: True, n, reason} when it may not be, else {cohort,
+    cohort_label, metric, week, as_of, n, orgs, measured, capped, p25, p50,
+    p75}.
+
+    `exclude_org` — the viewer (viewer_org(): its organisation's hashes, or
+    one privacy.org_hash) — is REQUIRED: the viewer's whole organisation
+    comes out, and with no viewer nothing is shown (#41). `exclude_value`
+    (older callers) also takes one instance of the viewer's own figure out.
+    Then an organisation over a third is held to a third (#35); at least
+    MIN_QUARTILE_N others from at least privacy.MIN_ORGS organisations
+    (#9); never an `other`, untyped or catch-all group, never an all-types
+    band for a type-dependent measure, never a band too spread to mean
+    "alike" (#39); quartiles by Harrell–Davis at the metric's coarse step
+    (#42). `measured` is how many others had it before the cap, `capped`
+    how many locations the cap left out — counts only."""
+    if not publishable_group(cohort):
+        return {"withheld": True, "n": 0, "reason": "an untyped or 'other' group is never published"}
+    row = _row(cohort, metric, db_path=db_path, today=today, with_vals=True)
+    if not row:
+        return None
+    return publish_row(row, metric, exclude_org=exclude_org, exclude_value=exclude_value)
+
+
+def viewer_org(restaurant_id, db_path=DB_PATH) -> frozenset:
+    """The viewer's organisation — what published() leaves out — as a set of
+    org hashes: the organisation's key (privacy.org_members: organisation,
+    owner email, shared owner logins, Stripe customer), and each of its
+    restaurants' own and pre-fix-round keys, so a band frozen earlier in the
+    week under an older key still leaves the viewer's organisation out."""
+    try:
+        canon, rows = privacy.org_members(restaurant_id, db_path=db_path)
+    except Exception:
+        canon, rows = f"r{restaurant_id}", []
+    keys = {canon, f"r{restaurant_id}"}
+    for r in rows:
+        keys.add(privacy.org_key(r))
+        keys.add(privacy.legacy_org_key(r))
+    return frozenset(privacy.org_hash(k) for k in keys)
+
+
+def group_size(cohort, week, exclude_org=None, db_path=DB_PATH) -> int:
+    """The most restaurants in `cohort` that measured any benchmarked metric
+    in `week`, the viewer's organisation left out — the group's size as the
+    band the viewer is shown counts it (R1-15: `members` counted the viewer
+    while `n` did not)."""
+    ex = _excluded(exclude_org)
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id, organization_id, location_group, owner_email FROM restaurants WHERE id=?",
-                           (restaurant_id,)).fetchone()
+        rows = conn.execute("SELECT n, members_json FROM intel_benchmarks WHERE cohort=? AND week=?",
+                            (cohort, week)).fetchall()
     finally:
         conn.close()
-    return privacy.org_hash(privacy.org_key(dict(row))) if row else privacy.org_hash(f"r{restaurant_id}")
+    best = 0
+    for r in rows:
+        try:
+            members = json.loads(r["members_json"] or "null")
+        except Exception:
+            members = None
+        if members is None:
+            continue
+        best = max(best, sum(1 for _v, o in members if o not in ex))
+    return best
 
 
 def _own(restaurant_id, metric, db_path=DB_PATH, today: date = None, band_week: str = None):
@@ -398,10 +537,25 @@ def peer_cohort(restaurant, metric):
     if not prof or not prof.get("confirmed"):
         return None, "this restaurant's profile isn't confirmed yet, so there is no like-for-like group"
     fam = _reg.partition_family(metric)
-    key = categories.partition_key(prof, "labor" if fam == "staff" else fam)
+    key = categories.partition_key(prof, fam)
     if not key:
-        return None, "set the restaurant's concept in Account → Restaurant profile to compare food cost"
+        return None, categories.food_why_not(prof)
     return key, None
+
+
+def peer_ladder(restaurant, metric, structural=None):
+    """(ladder, base, why_not) — every group the metric may be compared
+    within, finest → coarsest (categories.partition_ladder over the
+    restaurant's measured coordinates), the profile's own partition, or
+    ([], None, reason). A staffing ratio reads its own family's keys (the
+    volume-band rung first, then the pooled partition — R1-14/R2-14/R4-29),
+    never the labor key."""
+    key, why = peer_cohort(restaurant, metric)
+    if not key:
+        return [], None, why
+    prof = categories.profile_for(restaurant)
+    ladder = categories.partition_ladder(prof, _reg.partition_family(metric), structural)
+    return (ladder or [key]), key, None
 
 
 def benchmark(restaurant_id: int, metric: str, cohort: str = None, db_path=DB_PATH,
@@ -440,7 +594,16 @@ def benchmark(restaurant_id: int, metric: str, cohort: str = None, db_path=DB_PA
     out = None
     used = None
     last_reason = why_none
-    chain = ([cohort] if cohort else []) + (["platform"] if _reg.platform_allowed(metric) else [])
+    rungs = [cohort] if cohort else []
+    if cohort and restaurant is not None and categories.is_partition(cohort):
+        try:
+            own_row = _features.latest(restaurant_id, db_path=db_path)
+        except Exception:
+            own_row = None
+        ladder, base, _w = peer_ladder(restaurant, metric, (own_row or {}).get("features"))
+        if base == cohort and ladder:
+            rungs = ladder
+    chain = rungs + (["platform"] if _reg.platform_allowed(metric) else [])
     for c in chain:
         row = _row(c, metric, db_path=db_path, today=today)
         v_now, v_at, own_week, own_stale = _own(restaurant_id, metric, db_path=db_path, today=today,

@@ -55,8 +55,8 @@ def db(db_path, monkeypatch):
     return db_path
 
 
-def _restaurant(db_path, name="Learning Co", **cols):
-    rid = create_restaurant(Restaurant(name=name, owner_email="l@x.com"), db_path=db_path)
+def _restaurant(db_path, name="Learning Co", owner_email="l@x.com", **cols):
+    rid = create_restaurant(Restaurant(name=name, owner_email=owner_email), db_path=db_path)
     if cols:
         c = models.get_conn(db_path)
         c.execute("UPDATE restaurants SET " + ", ".join(f"{k}=?" for k in cols) + " WHERE id=?", (*cols.values(), rid))
@@ -378,7 +378,9 @@ def _cohort_rows(db, n, ratio=0.5, start=0):
     week = features.iso_week(dt.date.today())
     ids = []
     for k in range(start, start + n):
-        r = _restaurant(db, name=f"Peer {k}", created_at=_LIVE, hourly_rate=17.0, **_CONFIRMED)
+        # Each peer its own owner: one email is one organisation (fix round R1-01).
+        r = _restaurant(db, name=f"Peer {k}", owner_email=f"peer{k}@x.com", created_at=_LIVE, hourly_rate=17.0,
+                        **_CONFIRMED)
         ids.append(r)
         c = models.get_conn(db)
         c.execute("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) VALUES (?,?,?,0.8)",
