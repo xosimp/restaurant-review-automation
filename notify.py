@@ -591,15 +591,31 @@ def alert_url(alert_type=None, review_id=None, rec=None, src=None, rid=None) -> 
     recommendation it carries and the channel it was read on, so opening it
     is recorded as `opened` on that key (rec_delivery.link; #32); `rid` the
     location it is about, so a group owner's tap lands on that location's
-    trail, not on whichever one their session is on (re-audit C10)."""
+    trail, not on whichever one their session is on (re-audit C10).
+
+    The link opens the ITEM, through the same nav path the bell uses
+    (nav.for_notification: a held order lands on the order, a coverage gap
+    on the schedule) as `?nav=`, and names its location as `&loc=` so the
+    page switches there first - `?tab=` opened the module's top, stuck in
+    the address across reloads, and a group owner's review link opened the
+    wrong location (re-audit F1-13). A path that would ASK something (a
+    brief) stays its module: a click in an email never starts a model call."""
     import rec_delivery
+    from urllib.parse import quote
+    import nav as _nav
     base = config.base_url()
     tab = ALERT_TAB.get(alert_type or "")
     if not tab:
         return rec_delivery.link(base + "/", rec, src, rid) if rec else base
-    url = f"{base}/?tab={tab}"
-    if review_id and tab == "reviews":
-        url += f"&review={int(review_id)}"
+    path = _nav.for_notification(alert_type, review_id if tab == "reviews" else None)
+    if not path or path.split("?", 1)[0].split("/", 1)[0] == "ask":
+        path = tab
+    url = f"{base}/?nav={quote(path, safe='/')}"
+    if rid:
+        try:
+            url += f"&loc={int(rid)}"
+        except (TypeError, ValueError):
+            pass
     return rec_delivery.link(url, rec, src, rid)
 
 

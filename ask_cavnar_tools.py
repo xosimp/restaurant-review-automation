@@ -2904,11 +2904,17 @@ def build_proposal(name, tool_input, restaurant_id=None):
     # the body. Substituted here (and stripped from the body) so the client
     # posts to a real URL rather than one containing a literal placeholder.
     route = dict(tool["route"])
+    # The path ids taken out of the body below, kept on the proposal's row
+    # (models.log_ask_action target) so "Open it" rebuilds THIS card - a
+    # request decision could not be rebuilt at all, and an invoice or order
+    # card quietly re-picked the newest one (re-audit F1-8).
+    target = {}
     if "{review_id}" in route.get("web", "") or "{review_id}" in route.get("mobile", ""):
         try:
             review_id = int(args.get("review_id"))
         except (TypeError, ValueError):
             return None
+        target["review_id"] = review_id
         route["web"] = route["web"].replace("{review_id}", str(review_id))
         route["mobile"] = route["mobile"].replace("{review_id}", str(review_id))
         summary = summary.replace("{review_id}", str(review_id))
@@ -2927,6 +2933,7 @@ def build_proposal(name, tool_input, restaurant_id=None):
         who = _request_person(name, request_id, restaurant_id) if restaurant_id is not None else None
         if restaurant_id is not None and not who:
             return None
+        target["request_id"] = request_id
         route["web"] = route["web"].replace("{request_id}", str(request_id))
         route["mobile"] = route["mobile"].replace("{request_id}", str(request_id))
         summary = summary.replace("{decision}", "Approve" if args["decision"] == "approve" else "Deny")
@@ -2938,25 +2945,36 @@ def build_proposal(name, tool_input, restaurant_id=None):
     # is taken, and one that is not this restaurant's, or not waiting, is no
     # proposal at all (friction audit, Command Center phase 3).
     if name in ("apply_invoice_lines", "receive_purchase_order"):
-        target = _invoice_or_po(name, args, restaurant_id)
-        if not target:
+        target_row = _invoice_or_po(name, args, restaurant_id)
+        if not target_row:
             return None
         key = "import_id" if name == "apply_invoice_lines" else "po_id"
+        target[key] = int(target_row["id"])
         for surface in ("web", "mobile"):
-            route[surface] = route[surface].replace("{" + key + "}", str(target["id"]))
-        summary = summary.replace("{invoice}", target.get("label") or "scanned").replace(
-            "{po}", target.get("label") or "the order")
+            route[surface] = route[surface].replace("{" + key + "}", str(target_row["id"]))
+        summary = summary.replace("{invoice}", target_row.get("label") or "scanned").replace(
+            "{po}", target_row.get("label") or "the order")
         args = {k: v for k, v in args.items() if k != key}
         if name == "apply_invoice_lines":
             # The route applies the lines the stored invoice marks checked;
             # the model never names lines or costs.
             args["use_checked"] = True
 
+    # A bulk publish posts exactly the replies its card lists (re-audit
+    # F1-9): their ids travel in the body, so a draft that lands between
+    # the card and Confirm waits for the next one.
+    if name == "approve_all_reviews" and restaurant_id is not None:
+        try:
+            go, _held = bulk_publish_preview(restaurant_id)
+            args["review_ids"] = [int(r["id"]) for r in go]
+        except Exception as e:
+            log.warning("ask_cavnar approve-all set for rid=%s failed: %s", restaurant_id, e)
     out = {
         "action": name,
         "summary": summary,
         "route": route,
         "body": args,
+        "target": target,
         # Every field the confirmed route will receive, labelled — the card
         # renders all of them, so what the owner approves is what runs
         # (NS5 C1). The clients post only these keys.
@@ -2992,6 +3010,7 @@ _FIELD_LABELS = {
     "image_url": "Image", "topic": "Topic", "name": "Name", "email": "Email",
     "decision": "Answer",
     "use_checked": "Lines",
+    "review_ids": "Replies",
 }
 
 
@@ -3118,6 +3137,8 @@ def fields_shown(body) -> list:
             val = "the order as it stands now (" + val[:8] + ")"
         if k == "use_checked":
             val = "only the lines Cavnar checked"
+        if k == "review_ids" and isinstance(v, (list, tuple)):
+            val = f"only the {len(v)} listed above"
         out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
     return out
 
@@ -3159,6 +3180,42 @@ def _request_row(name, request_id, restaurant_id):
 def _request_person(name, request_id, restaurant_id):
     row = _request_row(name, request_id, restaurant_id)
     return (row or {}).get("employee_name")
+
+
+def bulk_publish_preview(restaurant_id, limit=25):
+    """(rows that would post, how many would be held) for a bulk publish
+    right now - the set and the checks client_api._do_approve_all runs:
+    models.BULK_PUBLISHABLE_SQL, newest guest first, and the public-reply
+    check (drafter.check_reply: the Response Validation Layer on
+    reply_public - voice and menu notes as what the owner said, the
+    never-say list, the guest's name, every other tenant's name). A reply
+    it refuses, or one it would reword (what publishes is the stored draft,
+    so the bulk path holds it), is held, not listed - the card's "held"
+    count matched the route only for refusals before (re-audit F1-9)."""
+    from models import get_conn as _gc, BULK_PUBLISHABLE_SQL, bulk_publish_window, get_restaurant as _gr
+    from drafter import check_reply
+    conn = _gc()
+    try:
+        rows = conn.execute(
+            f"SELECT id, rating, author, text, draft_response FROM reviews WHERE restaurant_id=? AND "
+            f"{BULK_PUBLISHABLE_SQL} ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
+            (restaurant_id, bulk_publish_window(), int(limit))).fetchall()
+    finally:
+        conn.close()
+    r_obj = _gr(restaurant_id)
+    go, held = [], 0
+    for r in rows:
+        draft = r["draft_response"] or ""
+        refusal, checked = check_reply(draft, r_obj, restaurant_id=restaurant_id,
+                                       review_text=r["text"] or "", author=r["author"] or "",
+                                       action="approve_all_preview")
+        if not refusal and " ".join(str(checked).split()) != " ".join(draft.split()):
+            refusal = "reworded"
+        if refusal:
+            held += 1
+        else:
+            go.append(r)
+    return go, held
 
 
 def proposal_details(name, args, restaurant_id) -> dict:
@@ -3219,30 +3276,7 @@ def proposal_details(name, args, restaurant_id) -> dict:
         # The words, not a count (NS5 M10): the same set and the same check
         # client_api._do_approve_all runs, so the card lists what would post
         # and says how many the check would hold back.
-        from models import get_conn as _gc, BULK_PUBLISHABLE_SQL, bulk_publish_window, get_restaurant as _gr
-        # The public-reply check (drafter.check_reply: the Response
-        # Validation Layer on reply_public) — voice and menu notes as what
-        # the owner said, the never-say list, the guest's name, every other
-        # tenant's name. A reply it refuses is held, not listed.
-        from drafter import check_reply
-        conn = _gc()
-        try:
-            rows = conn.execute(
-                f"SELECT id, rating, author, text, draft_response FROM reviews WHERE restaurant_id=? AND "
-                f"{BULK_PUBLISHABLE_SQL} ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT 25",
-                (restaurant_id, bulk_publish_window())).fetchall()
-        finally:
-            conn.close()
-        r_obj = _gr(restaurant_id)
-        go, held = [], 0
-        for r in rows:
-            refusal, _checked = check_reply(r["draft_response"], r_obj, restaurant_id=restaurant_id,
-                                            review_text=r["text"] or "", author=r["author"] or "",
-                                            action="approve_all_preview")
-            if refusal:
-                held += 1
-            else:
-                go.append(r)
+        go, held = bulk_publish_preview(restaurant_id)
         details.append({"label": "Replies that would post", "value": str(len(go))})
         if held:
             details.append({"label": "Held for you to read", "value": f"{held} — their wording needs a look first"})

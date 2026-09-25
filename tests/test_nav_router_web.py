@@ -227,7 +227,9 @@ def test_links_from_outside_open_the_item():
     src = _src()
     body = re.search(r"function checkTabParam\(\)\{.*?\n\}", src, re.S).group(0)
     assert "params.get('review')" in body and "params.get('nav')" in body
-    assert "cavNav(navp||('review/'" in body
+    # re-audit F1-13 rewrote the body (loc switch, ?tab= dropped); the
+    # rule it pins is unchanged: nav, else the review, through cavNav.
+    assert "var path=navp||(rv?'review/'" in body and "cavNav(path,{replace:true})" in body
 
 
 def test_every_take_me_there_uses_the_nav():

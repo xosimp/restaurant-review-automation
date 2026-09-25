@@ -104,7 +104,10 @@ _ACTIONS = (
 # Tier of every write tool, for propose() of one a search result offers.
 TIER = {"approve_review": 2, "retract_review_reply": 2, "send_guest_campaign": 2, "publish_instagram_post": 2,
         "publish_facebook_post": 2, "send_review_request": 2, "create_issue": 2, "draft_review_reply": 1,
-        "set_auto_approve": 1, "set_data_retention": 1}
+        "set_auto_approve": 1, "set_data_retention": 1,
+        # A shift-request answer emails the employee; a time-off answer
+        # changes who can be scheduled here.
+        "decide_shift_request": 2, "decide_time_off": 1}
 TIER.update({a[0]: a[3] for a in _ACTIONS})
 
 SEARCH_LIMIT = 20
@@ -117,7 +120,10 @@ def _extra_permission(action):
     registry hides what the route would refuse (client_api's publish checks
     SCHEDULE_PUBLISH, generate SCHEDULE_DRAFT, social posts MARKETING_APPROVE)."""
     from permissions import SCHEDULE_PUBLISH, SCHEDULE_DRAFT, MARKETING_APPROVE
+    # Deciding a request is the Labor decide routes' SCHEDULE_DRAFT
+    # (strategy_routes._may_draft) - Home's Approve / Deny open this card.
     return {"publish_schedule": SCHEDULE_PUBLISH, "generate_schedule": SCHEDULE_DRAFT,
+            "decide_time_off": SCHEDULE_DRAFT, "decide_shift_request": SCHEDULE_DRAFT,
             "publish_instagram_post": MARKETING_APPROVE, "publish_facebook_post": MARKETING_APPROVE,
             "send_guest_campaign": MARKETING_APPROVE}.get(action)
 
@@ -189,8 +195,10 @@ def _cmd(cid, label, keywords, kind, tier, nav=None, action=None, args=None):
             "nav": nav, "action": action, "args": args}
 
 
-def registry(user):
-    """{ok, commands:[{id, label, keywords, kind, tier, nav, action, args}]}."""
+def registry(user, _locs=None):
+    """{ok, commands:[{id, label, keywords, kind, tier, nav, action, args}]}.
+    `_locs`: the switchable locations when the caller has them already
+    (search reads them once per keystroke, not twice)."""
     from permissions import is_principal
     restaurant = _restaurant(user)
     if restaurant is None:
@@ -208,7 +216,7 @@ def registry(user):
     if _sees_dsr(user, restaurant):
         for cid, label, kw, nav in _DSR_PLACES:
             out.append(_cmd(cid, label, kw, "nav", 0, nav=nav))
-    for loc in _locations(user):
+    for loc in (_locations(user) if _locs is None else _locs):
         if loc.get("active"):
             continue
         out.append(_cmd(f"location:{loc['id']}", f"Switch to {loc['name']}", ("switch", "location", loc["name"]),
@@ -244,14 +252,20 @@ def _snippet(text, n=90):
     return t if len(t) <= n else t[: n - 1].rstrip() + "…"
 
 
+def _like(q):
+    """A LIKE pattern that matches `q` literally: a typed % or _ was a
+    wildcard, so "%" listed every review (re-audit F1-15)."""
+    return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
 def _search_reviews(rid, q):
     import models
     conn = models.get_conn()
     try:
-        like = f"%{q}%"
+        like = _like(q)
         rows = conn.execute(
             "SELECT id, author, rating, text, response_status FROM reviews WHERE restaurant_id=? "
-            "AND deleted_at IS NULL AND (LOWER(author) LIKE ? OR LOWER(text) LIKE ?) "
+            "AND deleted_at IS NULL AND (LOWER(author) LIKE ? ESCAPE '\\' OR LOWER(text) LIKE ? ESCAPE '\\') "
             "ORDER BY COALESCE(NULLIF(review_date,''), fetched_at) DESC, id DESC LIMIT ?",
             (rid, like, like, _PER_SOURCE)).fetchall()
     finally:
@@ -375,7 +389,8 @@ def search(user, q):
     view = _view(user, restaurant)
     here = {"id": rid, "name": getattr(restaurant, "location_name", None) or restaurant.name}
     scored = []
-    cmds, _ = registry(user)
+    locs = _locations(user)
+    cmds, _ = registry(user, _locs=locs)
     for c in cmds.get("commands") or []:
         if c["kind"] != "nav" or c["id"].startswith("location:"):
             continue
@@ -383,7 +398,7 @@ def search(user, q):
         if s:
             scored.append((s + 1, {"type": "place", "id": c["id"], "title": c["label"], "subtitle": "Go to",
                                    "nav": c["nav"]}))
-    for loc in _locations(user):
+    for loc in locs:
         s = _score(q, loc.get("name"))
         if s and not loc.get("active"):
             scored.append((s + 1, {"type": "location", "id": loc["id"], "title": f"Switch to {loc['name']}",
@@ -434,8 +449,13 @@ def propose(user, action, args):
         return {"ok": False, "error": "That needs more detail before it can be proposed."}, 400
     p["tier"] = TIER.get(action, 2)
     p["surface"] = "command"
+    # surface='command': a palette or Home card the owner may simply close
+    # is not something Cavnar proposed and nobody answered, so it never
+    # becomes a Still-open item (action_queue, re-audit F1-7), and its
+    # answer is not written into an unrelated Ask chat.
     p["proposal_id"] = log_ask_action(rid, action, summary=p.get("summary"), body=p.get("body"),
-                                      outcome="proposed", user_id=user.get("id"))
+                                      outcome="proposed", user_id=user.get("id"),
+                                      surface="command", target=p.get("target") or None)
     return {"ok": True, "proposal": p}, 200
 
 
@@ -450,8 +470,23 @@ def _stored_args(action, row):
         args = {}
     if not isinstance(args, dict):
         args = {}
+    # The path ids the card was built for (build_proposal's `target`,
+    # stored on the row): a request decision, the invoice or the order it
+    # named - never the newest one at reopen time (re-audit F1-8).
+    try:
+        target = json.loads(row.get("target") or "{}") or {}
+    except (TypeError, ValueError):
+        target = {}
+    if isinstance(target, dict):
+        for k in ("review_id", "request_id", "import_id", "po_id"):
+            if target.get(k) is not None:
+                try:
+                    args[k] = int(target[k])
+                except (TypeError, ValueError):
+                    pass
     tool = ask_cavnar_tools._BY_NAME.get(action) or {}
-    if "{review_id}" in str((tool.get("route") or {}).get("web", "")):
+    if "review_id" not in args and "{review_id}" in str((tool.get("route") or {}).get("web", "")):
+        # An older row (no target): the id lives in the summary.
         m = re.search(r"#(\d+)", row.get("summary") or "")
         if m:
             args["review_id"] = int(m.group(1))
@@ -492,3 +527,69 @@ def reopen(user, proposal_id):
     p["tier"] = TIER.get(action, 2)
     p["surface"] = "reopened"
     return {"ok": True, "proposal": p}, 200
+
+
+# ── one request: the confirmed action settles its own proposal ───────────────
+# A confirm card used to be two unlinked requests: the action's route, then a
+# fire-and-forget POST to /api/ask-cavnar/action. A lost second request left
+# replies posted and the proposal "never confirmed" in Still open, where
+# "Open it" could confirm it again (re-audit F1-9). The web card now names
+# its proposal on the action request itself (this header), and the answer
+# is recorded in the same request, only when the route said ok.
+PROPOSAL_HEADER = "X-Cavnar-Proposal"
+CONVERSATION_HEADER = "X-Cavnar-Conversation"
+
+
+def _route_matches(action, path):
+    """Whether `path` is the route the proposal's tool posts to (web or
+    mobile), placeholders standing for one path segment - a header on any
+    other request settles nothing."""
+    import ask_cavnar_tools
+    tool = ask_cavnar_tools._BY_NAME.get(action) or {}
+    for surface in ("web", "mobile"):
+        tmpl = str((tool.get("route") or {}).get(surface) or "")
+        if not tmpl:
+            continue
+        rx = "^" + re.sub(r"\\\{[a-z_]+\\\}", "[^/]+", re.escape(tmpl)) + "$"
+        if re.match(rx, path or ""):
+            return True
+    return False
+
+
+def settle_confirmed(response):
+    """after_app_request: when a POST carrying PROPOSAL_HEADER succeeded
+    (200, ok, not a started job, not a publish gate), record the proposal
+    confirmed - scoped exactly like /api/ask-cavnar/action - and say so in
+    the response (`proposal_settled`), so the client sends no second
+    request. Anything unexpected leaves the response untouched and the
+    client records the answer as before."""
+    try:
+        from flask import request
+        raw = request.headers.get(PROPOSAL_HEADER)
+        if not raw or request.method != "POST" or response.status_code != 200:
+            return response
+        if response.direct_passthrough or not response.is_json:
+            return response
+        pid = int(raw)
+        data = response.get_json(silent=True)
+        if not isinstance(data, dict) or data.get("ok") is not True or data.get("job_id") or data.get("needs_ack"):
+            return response
+        from auth import get_current_user
+        user = get_current_user()
+        if not user or not user.get("restaurant_id"):
+            return response
+        from models import get_ask_proposal
+        prop = get_ask_proposal(user["restaurant_id"], pid)
+        if not prop or prop.get("settled") or not _route_matches(prop["action"], request.path):
+            return response
+        import client_api
+        payload, status = client_api._do_record_ask_action(
+            user["restaurant_id"], user.get("id"),
+            {"action": prop["action"], "outcome": "confirmed", "proposal_id": pid,
+             "conversation_id": request.headers.get(CONVERSATION_HEADER)}, user=user)
+        if status == 200 and payload.get("ok"):
+            data["proposal_settled"] = True
+            response.set_data(json.dumps(data))
+    except Exception as e:
+        print(f"[command] proposal not settled on its own request: {e}")
+    return response

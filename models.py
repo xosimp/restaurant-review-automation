@@ -1053,6 +1053,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # the same action name (#23); and why a "Not now" was said.
         ("ask_cavnar_actions", "proposal_id", "INTEGER"),
         ("ask_cavnar_actions", "reason", "TEXT"),
+        # Where a proposal was made ('command' = the palette or a Home
+        # button, not a chat) and the path ids build_proposal took out of
+        # its body (review/request/invoice/PO), so "Open it" rebuilds the
+        # SAME card (re-audit F1-7, F1-8).
+        ("ask_cavnar_actions", "surface", "TEXT"),
+        ("ask_cavnar_actions", "target", "TEXT"),
         # Weekly competitor-movement alert, on by default (#48).
         ("restaurants", "alert_competitor_move", "INTEGER DEFAULT 1"),
         # The nightly DSR: fiscal calendar and switches (dsr/).
@@ -10295,7 +10301,8 @@ def clear_ask_history(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
 
 
 def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="proposed",
-                   user_id=None, proposal_id=None, reason=None, db_path: str = DB_PATH):
+                   user_id=None, proposal_id=None, reason=None, surface=None, target=None,
+                   db_path: str = DB_PATH):
     """Audit trail for anything the assistant proposed.
 
     Written at proposal time and again at confirm/dismiss, so "did the
@@ -10305,17 +10312,23 @@ def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="prop
     the id of that proposal's own row — so two proposals with the same
     action name are no longer settled together. Proposal rows leave it
     empty (their id IS the proposal id); the table stays append-only.
-    `reason` is the owner's optional why on a dismissal.
+    `reason` is the owner's optional why on a dismissal. `surface` is
+    where a proposal was made ('command' for the palette and Home's
+    buttons, which never become a Still-open item); `target` the path ids
+    the proposal's route carries ({"request_id": 12}), stored so a reopen
+    rebuilds the same card.
     """
     import json as _json
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO ask_cavnar_actions (restaurant_id, user_id, action, summary, body, outcome, "
-            "proposal_id, reason) VALUES (?,?,?,?,?,?,?,?)",
+            "proposal_id, reason, surface, target) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, action, summary,
              _json.dumps(body) if body else None, outcome, proposal_id,
-             (str(reason).strip()[:300] or None) if reason else None)
+             (str(reason).strip()[:300] or None) if reason else None,
+             (str(surface)[:20] if surface else None),
+             _json.dumps(target) if target else None)
         )
         conn.commit()
         return cur.lastrowid
@@ -10329,7 +10342,8 @@ def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
     `user_id` is the login it was proposed to (None for an older row)."""
     conn = get_conn(db_path)
     try:
-        p = conn.execute("SELECT id, action, summary, body, outcome, created_at, user_id FROM ask_cavnar_actions "
+        p = conn.execute("SELECT id, action, summary, body, outcome, created_at, user_id, surface, target "
+                         "FROM ask_cavnar_actions "
                          "WHERE id=? AND restaurant_id=? AND outcome='proposed'",
                          (proposal_id, restaurant_id)).fetchone()
         if not p:

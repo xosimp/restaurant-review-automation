@@ -385,8 +385,14 @@ def _do_retry_post(rid, restaurant_id):
     return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
 
 
-def _do_approve_all(restaurant_id, limit=25):
+def _do_approve_all(restaurant_id, limit=25, review_ids=None):
     """Publish every drafted reply in one go.
+
+    `review_ids`: the replies a confirm card listed (ask_cavnar_tools
+    bulk_publish_preview, re-audit F1-9) - only those post, and only while
+    they are still publishable; a draft that landed after the card waits
+    for the next one. An empty list posts nothing. None (Home's inline
+    fallback, an older client) is every publishable draft up to `limit`.
 
     Each review goes through the same _do_approve path a single approve
     uses — response_action, activity log, webhook, background Google post —
@@ -407,11 +413,28 @@ def _do_approve_all(restaurant_id, limit=25):
     # urgent first with no age bound, so "Publish 1 reply" posted a 90-day-
     # old safety reply the label had excluded, or a flagged one (M-2).
     from models import BULK_PUBLISHABLE_SQL, bulk_publish_window, reply_queue_counts
+    pinned = None
+    if review_ids is not None:
+        try:
+            pinned = sorted({int(i) for i in review_ids})[:25] if isinstance(review_ids, (list, tuple)) else None
+        except (TypeError, ValueError):
+            pinned = None
+        if pinned is None:
+            return {"ok": False, "error": "review_ids must be a list of review ids."}, 400
     conn = get_conn()
-    rows = conn.execute(
-        f"SELECT id, author, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
-        "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
-        (restaurant_id, bulk_publish_window(), limit)).fetchall()
+    if pinned is None:
+        rows = conn.execute(
+            f"SELECT id, author, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
+            "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC LIMIT ?",
+            (restaurant_id, bulk_publish_window(), limit)).fetchall()
+    elif not pinned:
+        rows = []
+    else:
+        rows = conn.execute(
+            f"SELECT id, author, text, draft_response FROM reviews WHERE restaurant_id=? AND {BULK_PUBLISHABLE_SQL} "
+            f"AND id IN ({','.join('?' * len(pinned))}) "
+            "ORDER BY COALESCE(NULLIF(review_date, ''), fetched_at) DESC, id DESC",
+            (restaurant_id, bulk_publish_window(), *pinned)).fetchall()
     conn.close()
 
     # Nobody reads these one by one, so each gets the check auto-approve
@@ -500,7 +523,8 @@ def approve_all_reviews_api(current_user):
     except Exception:
         pass
     data = request.get_json(silent=True) or {}
-    payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25))
+    payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
+                                      review_ids=data.get("review_ids"))
     return jsonify(**payload), status
 
 
@@ -2778,6 +2802,10 @@ def _do_record_ask_action(restaurant_id, user_id, data, user=None):
             if not is_principal(user):
                 return {"ok": False, "error": "That proposal wasn't found."}, 404
     summary = (prop or {}).get("summary") or str(data.get("summary") or "").strip()[:ASK_ACTION_SUMMARY_MAX] or None
+    # A card from the palette or a Home button was never part of a chat:
+    # its answer is not written into whichever Ask chat is current
+    # (re-audit F1-15).
+    from_command = (prop or {}).get("surface") == "command"
     body = data.get("body")
     try:
         import json as _json_b
@@ -2825,14 +2853,23 @@ def _do_record_ask_action(restaurant_id, user_id, data, user=None):
     # keeps the user/assistant alternation the Messages API expects. Lands in
     # the chat the proposal came from when the client says which.
     try:
-        label = summary or action.replace("_", " ")
-        verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
-        why = f" — {reason}" if reason else ""
-        save_ask_message(restaurant_id, "user", f"[{verb}: {label}{why}]", user_id=user_id,
-                         conversation_id=_parse_conversation_id(data.get("conversation_id")))
+        if not from_command:
+            label = summary or action.replace("_", " ")
+            verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
+            why = f" — {reason}" if reason else ""
+            save_ask_message(restaurant_id, "user", f"[{verb}: {label}{why}]", user_id=user_id,
+                             conversation_id=_parse_conversation_id(data.get("conversation_id")))
     except Exception:
         pass
     return {"ok": True}, 200
+
+
+@client_bp.after_app_request
+def _settle_confirmed_proposal(response):
+    """A confirm card's action request settles its proposal (re-audit F1-9):
+    command_center.settle_confirmed, a no-op without its header."""
+    import command_center
+    return command_center.settle_confirmed(response)
 
 
 @client_bp.route("/api/ask-cavnar/action", methods=["POST"])
@@ -7296,11 +7333,16 @@ def get_notifications(current_user):
     payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user,
                                             scope=request.args.get("scope"))
     if payload.get("ok") and request.args.get("mark") != "0":
-        try:
-            from models import mark_notifications_seen
-            mark_notifications_seen(current_user["id"], current_user["restaurant_id"])
-        except Exception:
-            pass
+        # Every location the list read (scope=group): "Mark all read" on the
+        # group bell marked only the one the session is on, and the other
+        # locations' count came back on the next load (re-audit F1-11).
+        from models import mark_notifications_seen
+        for loc_id, _name in _notification_locations(current_user["restaurant_id"], current_user,
+                                                     request.args.get("scope")):
+            try:
+                mark_notifications_seen(current_user["id"], loc_id)
+            except Exception:
+                pass
     return jsonify(**payload), status
 
 
