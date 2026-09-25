@@ -89,7 +89,7 @@ def _nav(js_body):
 
 def test_f1_1_picking_a_location_is_remembered_and_item_navs_leave_the_group_view():
     src = _src()
-    sw = re.search(r"window\.switchLocation = function\(rid\) \{.*?\n\};", src, re.S).group(0)
+    sw = re.search(r"window\.switchLocation = function\(rid(?:, onFail)?\) \{.*?\n\};", src, re.S).group(0)
     assert "localStorage.setItem('cavnar_hb_scope', 'location')" in sw, "a switch remembers the pick"
     assert "if(+rid==={{ restaurant.id|int }}){hbScope('location');return;}" in src, \
         "the location already on opens its own Home without a reload"

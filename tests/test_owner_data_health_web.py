@@ -95,7 +95,7 @@ def test_every_ai_read_cache_goes_through_the_scoped_helpers():
     s = _src()
     for k in ("review_insight", "labor_insight", "inv_insight", "mkt_brief", "aiv_cache"):
         assert not re.search(r"sessionStorage\.(get|set|remove)Item\('" + k, s), k
-    sw = s[s.index("window.switchLocation = function(rid)"):][:600]
+    sw = s[s.index("window.switchLocation = function(rid"):][:600]
     assert "cavWipe()" in sw
     # Sync now drops them too, and the food entry holds the whole payload.
     assert "cavWipe" in s[s.index("function dhSync(btn)"):][:1500]

@@ -10,6 +10,7 @@ import re
 
 import pytest
 from flask import Flask
+import hosted_dashboard  # at collection, as test_home_page_renders does: a mid-run import re-registers blueprints
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOS = os.path.join(ROOT, "ios", "CavnarAI")
@@ -92,7 +93,6 @@ def test_the_widget_and_home_card_read_with_peek():
 # ── F3-16: universal links ───────────────────────────────────────────────────
 
 def test_the_apple_app_site_association_names_the_app_and_only_the_dashboard():
-    import hosted_dashboard
     aasa = hosted_dashboard.apple_app_site_association()
     detail = aasa["applinks"]["details"][0]
     assert detail["appIDs"] == ["8DW8XL63K6.ai.cavnar.CavnarAI"]
