@@ -783,13 +783,26 @@ def _present(restaurant_id, brief, surface, user_id=None, db_path=DB_PATH):
 HOME_SKIPS = ("fix_first", "money")
 
 
+def shown_on_home(line) -> bool:
+    """Whether Home's "Before service" card draws this line. Not the one
+    thing or the money line (the focus card's), and not the "yesterday"
+    line built from last night's DSR (_dsr_yesterday_line, source "dsr"):
+    Home's status line and Last night card carry that report already
+    (density fix #20: each thing said once). The web applies the same rule
+    when the report card is on the page."""
+    key = (line or {}).get("key")
+    if key in HOME_SKIPS:
+        return False
+    return not (key == "yesterday" and (line or {}).get("source") == "dsr")
+
+
 def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict:
     """K6: the brief served to a Home view (GET /morning-brief?view=home) —
     the "Before service" lines, recorded on "home" at most once a day per
     key (rec_ledger's shown dedupe). Returns {key: rec_id or None}. Never
     raises."""
     try:
-        lines = [l for l in (brief.get("lines") or []) if l.get("key") not in HOME_SKIPS]
+        lines = [l for l in (brief.get("lines") or []) if shown_on_home(l)]
         import rec_delivery
         return rec_delivery.present_now(restaurant_id, "home", line_items(lines), user_id=user_id,
                                         db_path=db_path)

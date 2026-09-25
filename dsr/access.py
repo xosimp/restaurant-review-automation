@@ -544,15 +544,41 @@ def _live_budget(facts, report, restaurant):
     return out
 
 
-def summary(report, user):
+def summary(report, user, restaurant=None):
     """One row of the report list — with what Home's "Last night" card
     shows: the night's net sales when the Sales block is ready (None
     otherwise, never 0), the narrative's lead as this login may read it, and
-    when there is no lead, the reason the summary wasn't written."""
+    when there is no lead, the reason the summary wasn't written.
+
+    The 3-second status (density fix #1, the shared contract Home reads on
+    web and iPhone) — every key None-safe:
+      verdict     the scorecard's label ("Good day"), owner view only
+      tone        "good" | "warn" | "bad" | None, the verdict's
+      overall     the score 0–100, or None
+      vs_budget   net minus budget in dollars — only where this view may
+                  read the budget (redact() drops it for a manager)
+      first_risk  the first risk as this view may read it: the owner's
+                  scorecard risk (not the budget line the status already
+                  carries, as the push does), a manager's first
+                  needs-attention line that survived the cite filter
+
+    The scorecard is the one render() builds — the same stored facts with
+    the live budget, the same restaurant — so it needs `restaurant`; without
+    one the four score keys are None rather than a second reading of the
+    night."""
     from time_utils import mdy
-    facts, hidden = redact(report.get("facts") or {}, user)
+    view = view_for(user)
+    stored = report.get("facts") or {}
+    if view == OWNER and restaurant is not None:
+        stored = _live_budget(stored, report, restaurant)
+    facts, hidden = redact(stored, user)
     sales = (facts.get("blocks") or {}).get("sales") or {}
-    net = (sales.get("metrics") or {}).get("net") if sales.get("status") == dsr.READY else None
+    ready = sales.get("status") == dsr.READY
+    metrics = sales.get("metrics") or {}
+    net = metrics.get("net") if ready else None
+    vs_budget = metrics.get("vs_budget_net") if ready else None
+    if not isinstance(vs_budget, (int, float)) or isinstance(vs_budget, bool):
+        vs_budget = None
     # The same lead the report view opens with (D2-4): narrative_for, so a
     # manager's list row and Home card lead with the operations summary
     # exactly as their report does.
@@ -560,11 +586,33 @@ def summary(report, user):
     lead = narrative.get("executive_summary") if isinstance(narrative, dict) else None
     lead_text = lead.get("text") if isinstance(lead, dict) else None
     note = (report.get("stages") or {}).get("narrative") or {}
+    verdict = tone = overall = first_risk = None
+    if view == OWNER and restaurant is not None:
+        try:
+            from dsr import scorecard
+            card = scorecard.build(stored, restaurant, narrative=report.get("narrative"))
+        except Exception:
+            card = None
+        if card and card.get("verdict") and card.get("overall") is not None:
+            verdict, tone = card["verdict"].get("label"), card["verdict"].get("tone")
+            overall = int(card["overall"])
+        if card:
+            risk = next((x for x in card.get("risks") or [] if x.get("key") != "sales_budget" and x.get("text")), None)
+            first_risk = risk["text"] if risk else None
+    elif view == MANAGER and isinstance(narrative, dict):
+        for item in narrative.get("needs_attention") or []:
+            text = item if isinstance(item, str) else (item.get("text") if isinstance(item, dict) else None)
+            if text:
+                first_risk = str(text).strip()
+                break
     return {"business_date": report.get("business_date"), "label": mdy(report.get("business_date")),
             "version": report.get("version"), "status": report.get("status"),
             "provisional": bool(report.get("provisional")), "missing": facts.get("missing") or [],
             "finalized_at": report.get("finalized_at"), "net": net, "lead": lead_text,
-            "lead_missing": None if lead_text else lead_missing(report.get("narrative"), note)}
+            "lead_missing": None if lead_text else lead_missing(report.get("narrative"), note),
+            "verdict": verdict, "tone": tone if tone in ("good", "warn", "bad") else None,
+            "overall": overall, "vs_budget": round(float(vs_budget), 2) if vs_budget is not None else None,
+            "first_risk": first_risk}
 
 
 NO_LEAD_FOR_VIEW = "The summary rests on figures outside your view"

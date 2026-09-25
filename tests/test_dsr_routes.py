@@ -188,7 +188,11 @@ def test_the_list_and_the_status_checklist(client, db, monkeypatch):
     # there is none (D2-4: it used to say nothing).
     assert rows["reports"] == [{"business_date": "2026-09-22", "label": "9/22/26", "version": 1, "status": "final",
                                 "provisional": False, "missing": [], "finalized_at": rows["reports"][0]["finalized_at"],
-                                "net": 2000.0, "lead": None, "lead_missing": access.NO_LEAD_FOR_VIEW}]
+                                "net": 2000.0, "lead": None, "lead_missing": access.NO_LEAD_FOR_VIEW,
+                                # The Home status contract (density fix #1): a
+                                # manager's row has no score and no budget.
+                                "verdict": None, "tone": None, "overall": None, "vs_budget": None,
+                                "first_risk": None}]
     assert rows["enabled"] is True and len(rows["tonight"]) == 10
     st = client.get("/api/dsr/2026-09-22/status").get_json()
     assert st["exists"] is True and st["status"] == "final"

@@ -167,7 +167,8 @@ def test_web_home_uses_monitoring_all_clear_and_payload_units():
     assert "<small>recoverable / mo</small>" not in s
     assert "esc(hbFoodUnit(inv))" in s
     assert "var SEC_LABEL={Recoverable:'Gap to target'};" in s
-    assert '<div class="hb-kicker">Measured results</div>' in s
+    # The value graph's head is an .hb-h3 since density fix #41.
+    assert '<div class="hb-h3"><span>Measured results</span></div>' in s
     assert "(v.caveat?'<div class=\"delta\"><span>'+esc(v.caveat)" in s
 
 

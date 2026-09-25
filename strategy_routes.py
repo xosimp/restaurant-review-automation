@@ -3163,7 +3163,10 @@ def _do_dsr_list(u):
     tonight = closeout.business_date_for(r) if r else None
     return {"ok": True, "view": _dsr_view(u), "enabled": bool(getattr(r, "dsr_enabled", 1)) if r else False,
             "tonight": tonight.isoformat() if tonight else None,
-            "reports": [access.summary(row, u) for row in rows]}, 200
+            # The restaurant rides along so each row carries the scorecard's
+            # verdict and score exactly as the report builds them (the
+            # Home status line, density fix #1).
+            "reports": [access.summary(row, u, r) for row in rows]}, 200
 
 
 def _do_dsr_get(u, day):

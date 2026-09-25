@@ -226,12 +226,20 @@ def test_dollar_figures_say_what_they_cover():
 
 def test_one_thing_lead_keeps_the_attention_items_evidence_and_confidence():
     """B4 L3: when the one thing leads, the named attention item arrived as a
-    bare title and button."""
+    bare title and button. Density fix #23 (9/25/26): the focus card holds
+    one thing, so that item is no longer a second lead on the card - it
+    stays a Needs-attention row, with its evidence and its confidence."""
     src = _src()
-    i = src.index("if(att.length&&att[0].action){var a=att[0];var leadIsAtt=(lead===a.title);")
-    seg = src[i:i + 1400]
-    assert "aEv=leadIsAtt?'':String(a.evidence||'')" in seg
-    assert "cavConfLine(a.confidence_detail||a.confidence" in seg
+    focus = _fn(src, "renderFocus")
+    assert "_hbFocusAtt=!!(att.length&&lead===att[0].title);" in focus
+    assert "aEv=" not in focus and "hb-also-ev" not in focus
+    # When a finding took the card, Needs attention is redrawn with the
+    # displaced item as its first row.
+    redraw = _fn(src, "hbAttnRedraw")
+    assert "renderAttention(d,{att:_hbFocusAtt?1:0})" in redraw
+    attn = _fn(src, "renderAttention")
+    assert "var aev=a.evidence||a.detail||''" in attn
+    assert "cavConfLine(a.confidence_detail||a.confidence" in attn
 
 
 def test_all_clear_respects_stale_sources():

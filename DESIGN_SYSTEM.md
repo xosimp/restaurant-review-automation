@@ -126,7 +126,14 @@ An ISO date in owner-facing text is a bug, not a style choice.
 | **Kicker** | 10–13.5px, weight 700, `letter-spacing:.12–.16em`, UPPERCASE | `.hb-kicker` (ember), `.hb-tbl th` (ink3), `AccountKicker` |
 
 Keep sizes uniform across modules. The Account scale (15 / 16 / 22) is the
-reference; never inflate one module's text on its own. Headings get
+reference; never inflate one module's text on its own.
+
+**Home's section heads are two levels, no more** (density fix #41, 9/25/26):
+`.hb-sh` (a kicker and a Clash h2) between sections, `.hb-h3` (the small
+uppercase ink3 label) inside a card — the focus card, Needs attention, the
+Last night card, the milestone, the welcome, the value graph, the group
+Home's Needs attention, the Results row. `.hb-kicker` is the page kicker
+above the H1 only. No `h3` of its own, no ember kicker inside a card. Headings get
 `text-wrap: balance` where supported; body copy uses `line-height:1.5–1.65`.
 
 ---
@@ -188,7 +195,7 @@ each chosen so no two adjacent sections share a silhouette:
 | Shape | Class | Used for |
 |---|---|---|
 | Card | `.hb-card` (+ `.lift` hover, `.rail` / `.rail.good` / `.rail.ember` accent edge) | Needs attention, Ask, Open issues, Goals, results, worth, still open, close-out |
-| Hero card | `.hb-card.hero.hb-focus` — ember radial in the corner, Clash `.lead`, `.why`, `.ev` chips, `.hb-focus-cf` (claim tag + the confidence line), `.ft` footer with `.money` — a range stays a range ("$1,200–$2,400/month · opportunity: rating movement", `hbMoneyRange(money)`), never collapsed to its first figure | **Today's focus** and **What connects** only. Two per page, never more. |
+| Hero card | `.hb-card.hero.hb-focus` — ember radial in the corner, Clash `.lead`, `.why`, `.ev` chips, `.hb-focus-cf` (claim tag + the confidence line), `.ft` footer with `.money` — a range stays a range ("$1,200–$2,400/month · opportunity: rating movement", `hbMoneyRange(money)`), never collapsed to its first figure | **Today's focus** only on Home — one per page (What connects is Needs-attention rows plus an explanation card in Results since density fix #5). |
 | Module join | `.hb-join` — pills joined by a lit ember line | The cross-module mark on a hero card |
 | Numbered card | `.hb-card.hb-rec` in `.hb-recs` (3-up) — `.t` the action (verb first), `.why` why now, `.meta` pills (`.usd` "$N/mo at stake" only when measured, with `.hb-dbasis` "covers one Tuesday's overstaffing, per month" under it from `dollars_basis` — one Home can carry three labor figures of different scope, and each says its own; the focus card's `.money` and a Needs attention row carry the same line — then timeframe · impact — **no evidence-strength pill**: it was a second verdict that could contradict the confidence on the same card, and the confidence's Evidence strength row says it, measured), an "AI-written" `.ck-tag` after the title when `model_written`, `.ev` evidence, ONE confidence line (`.cf.hb-conf`, see §12 **Confidence**: "72% confidence — what it rests on · Why?"), `.ig` "If ignored:", then the footer: one-tap action (reprice) / Track this / open module / Could also be… (`data-explain`, only when the source has an alternative) / Assign (inline `.hb-assign` select, only with assignees) / Done · Not for us, and the ✕ hide. iOS: `HomeRecommendations` rows, same order | Recommendations — every card answers what, why now, $, how sure, if ignored |
 | Quieter line | `.hb-quiet` under the cards — "Quieter: Trim day — the last four went by unanswered." + a text button per kind ("Show trim day again" → `restore_kind`). iOS: the same line under the card | A kind the owner has let expire unanswered four times running |
@@ -563,31 +570,71 @@ Rules:
 
 Fixed by role so the owner learns where things live — and **the work leads**
 (friction audit #11, 9/25/26: the one thing to do sat under a results chart
-and the full brief, tenth on the phone):
+and the full brief, tenth on the phone). The density round (9/25/26) holds
+it to the 3-30-300 rule: the header answers health in 3 seconds, the one
+thing and Needs attention answer what to do in 30, and everything else is
+the 300-second drill-down.
 
-1. Header (greeting, headline, module pulse chips; on web the location chips
-   for a multi-location login).
-2. **The one thing** (web `#hb-focus`; iOS `HomeOneThingCard`) and **Needs
-   attention** directly under it — every item visible: web lists them all,
-   rows past the third behind "+N more", which expands the list **in place**
-   (never the bell); iOS keeps the lead deck card and lists items 2–n under
-   it as one-line rows with their action. When nothing is flagged, the
-   one-line all-clear row, so it costs nothing at the top.
-3. The header strip's detail: signal tiles, the freshness strip, How you
-   compare.
-4. **The day** — last night's Daily Sales Report, then the morning brief (the
-   close-out takes the slot after 8pm local, the weekly receipts lead it on
-   Monday; a milestone, when one lands, is an inline card at the top of the
-   day — never a modal). iOS: `HomeLastNightCard`.
-5. What Cavnar AI recommends → readiness (leads the page instead when nothing
-   is connected yet, hides once complete).
-6. Still open (web) and the close-out before 8pm — work, so above the fold
-   of results.
+1. Header: the greeting and headline, then **the status line** — "Last night
+   · ● Good day 78/100 · $8,420 net · +$420 vs budget" in the verdict's tone
+   (web `#hb-status`, from `dsr.access.summary`'s `verdict` / `tone` /
+   `overall` / `net` / `vs_budget`; a manager's line has no verdict or budget,
+   their report has neither), then the sub line (what changed, **one**
+   freshness chip "Data 92% · as of 9/24/26" that opens the Data Health
+   drawer), the module pulse chips (the at-a-glance row) and the quick
+   actions that no Needs-attention row already carries. On web the location
+   chips for a multi-location login.
+2. **The one thing** (web `#hb-focus`; iOS `HomeOneThingCard`) — one lead, one
+   why, one $ figure, one action (the page's one `cbtn-primary`) — and **Needs
+   attention** directly under it: one deterministic sentence ("7 flagged → 2
+   need you now: …"), then every item — each row is its title, one evidence
+   clause, its confidence as a "72%" pill (`cavConfLine(c,{pill:1})`, the
+   same Why? panel) and its action, secondary. Rows past the third wait
+   behind "+N more", which expands the list **in place** (never the bell).
+   The comps / voids / refunds flags and every cross-module link past the
+   one the focus card leads with are rows here, with Done / Not for us —
+   never inside the collapsed Results. When a finding takes the focus card,
+   the attention item it displaced is the first row. iOS keeps the lead deck
+   card and lists items 2–n under it as one-line rows with their action.
+   When nothing is flagged, the one-line all-clear row.
+3. The per-source freshness strip — **only when a source is aging, stale,
+   undated or disconnected** — and How you compare.
+4. **The day** — last night's Daily Sales Report card (its summary, "Watch:"
+   the first risk, Open report; the verdict and net are the status line's),
+   then the morning brief ("Before service"; the brief's DSR "Last night"
+   line is left out, `morning_brief.shown_on_home`). After 8pm local the
+   close-out leads the day; the weekly receipts lead it on Monday only; a
+   milestone, when one lands, is an inline card at the top of the day —
+   never a modal. iOS: `HomeLastNightCard`.
+5. What Cavnar AI recommends — three cards of title, why, $, confidence pill
+   and one action with Done / Not for us; what it rests on, "Risk if left
+   alone", "Could also be…", Assign and Track under the card's Details —
+   then readiness (leads the page instead when nothing is connected yet,
+   hides once complete; a module with no data is a readiness item, never a
+   placeholder tile).
+6. Still open (web) and the close-out: before 6pm local one row, "Close-out
+   for 9/25/26 · not filed · Write it →", that opens the form in place; 6pm
+   to 8pm the full form.
 7. **Results**, collapsed by default (web: one `details.hb-results`; the
-   owner's open/closed choice is remembered in this browser): the measured
-   value graph, measured (goals, what your changes did with its check-ins,
-   what got better, measured alongside your changes) → what connects, comps
-   and voids → worth. The Recommendations page (`#recs`) is reached from both.
+   owner's open/closed choice is remembered in this browser). Its closed row
+   says what happened — "3 improved · 1 worse · $1,310/mo net measured · 2 of
+   3 goals on track" — measured figures only, never an opportunity. Inside:
+   the measured value graph, the signal tiles (the trend behind each chip),
+   measured (goals, what your changes did with its check-ins), the weekly
+   receipts Tuesday to Sunday, the explanation of what connects and of the
+   comps / voids flags, what got better, worth, measured alongside your
+   changes, last month. The Recommendations page (`#recs`) is reached from
+   both.
+
+**Group Home (web, all locations).** Header with the group headline; the
+total strip ("9/24/26 · $24,310 net across 3 of 4 locations · +$820 vs
+budget · 2 need a look" — one night only, never averaged, vs budget only when
+every counted location has one); **Needs attention · all locations** with the
+sentence naming the location that needs a look and every item ("+N more" in
+place); then the table — Location, Last night (verdict dot, net, vs budget),
+Labor, Reviews in one cell, and Food cost / Last active only where there is
+room; then How your locations compare. The header's location switcher shows
+each location's status dot, what needs you there and last night's net.
 
 **One job, one place.** A job reaches Home from four sources (the focus
 card, a Needs-attention row, a brief line, a Still-open row). They share one
@@ -637,8 +684,8 @@ Every block keeps its empty state; a quiet day is a short page.
 | Confirm card (any surface) | `cavPropCard(p, host, {onDone})` — the `.ask-prop` card on Home (`.hb-pub-confirm`), in the palette (`.cpal-card`) and in Ask, one renderer; Confirm (`[data-prop-confirm]`) posts only `fields_shown` and records the answer on `proposal_id` |
 | Section rail | `.cav-rail` (`cavRailBuild(panel)`) — a panel with two or more `data-nav` sections gets a sticky row of `cbtn cbtn-text cbtn-sm` links under the tabs, labelled by `data-nav-label` or the section's heading. Account keeps its own `.ac-nav` rail (each link an address, `#account/<section>`) |
 | Sticky chrome | `.tabs` sticks under `.hdr` (`top:56px`); `--cav-chrome` (header + tabs, measured) is what anything sticking or scrolling into view clears (`[data-nav]{scroll-margin-top}`, `.ac-nav`, `.cav-rail`) |
-| One tap | `#hb-quick` (`.hb-quick`) under Home's header — the server's `quick_actions` as `cbtn-sm` buttons (the publish one primary), each landing on its `nav`; Ask and All alerts are left to the FAB and the bell |
-| Data health (how current the data is) | A composition, no new pattern: Home's `.hb-fresh` kicker reads "DATA HEALTH 71% · DATA AS OF 9/22/26" as a `cbtn-text cbtn-muted` button (`data-dh-open`) that opens the explanation modal with the Why? panel's `.cf-p` rows (one per source, a `.dh-dot` in the row's tone, reliability and "next sync" as its detail line), "Not connected" rows with the one fix, the module confidence-impact rows, and a `cbtn-primary` Sync now with the `.dr-pulse` bar while it waits. Under each module header one `.dh-badge` holding a single `.hb-fresh-it` chip (the weakest source's line) + a `cbtn-text` "Data health". Amber (`--amber`) for a stale or failing line (`.dh-line.warn`), never red. iOS: `HomeFreshnessStrip`'s kicker opens `DataHealthSheet` (built on `AccountSheetKit`: hero % + sections), `DataHealthModuleBadge` under a module's own freshness line, `ServerStatusCaption` for a server status line (Reviews' fetch line, Marketing's "Metrics synced", AI visibility's "Measured") |
+| One tap | `#hb-quick` (`.hb-quick`) under Home's header — the server's `quick_actions` as `cbtn-secondary cbtn-sm` buttons (Home's one primary is the focus card's), each landing on its `nav`, less any whose action a Needs-attention row already carries (`hbQuickUnsaid`; the palette's One tap keeps them all); Ask and All alerts are left to the FAB and the bell |
+| Data health (how current the data is) | A composition, no new pattern: Home's header chip "Data 71% · as of 9/22/26" (`hbDataChip`, in the sub line) and, when a source is behind, the `.hb-fresh` strip's kicker "DATA HEALTH 71% · DATA AS OF 9/22/26" are `cbtn-text cbtn-muted` buttons (`data-dh-open`) that opens the explanation modal with the Why? panel's `.cf-p` rows (one per source, a `.dh-dot` in the row's tone, reliability and "next sync" as its detail line), "Not connected" rows with the one fix, the module confidence-impact rows, and a `cbtn-primary` Sync now with the `.dr-pulse` bar while it waits. Under each module header one `.dh-badge` holding a single `.hb-fresh-it` chip (the weakest source's line) + a `cbtn-text` "Data health". Amber (`--amber`) for a stale or failing line (`.dh-line.warn`), never red. iOS: `HomeFreshnessStrip`'s kicker opens `DataHealthSheet` (built on `AccountSheetKit`: hero % + sections), `DataHealthModuleBadge` under a module's own freshness line, `ServerStatusCaption` for a server status line (Reviews' fetch line, Marketing's "Metrics synced", AI visibility's "Measured") |
 | Recommendation answer row | `.rec-ans` via `recControlsHtml(key, surface, module)` (JS) or `client_api.rec_controls_html` (server-rendered insight HTML) — Done / Not for us / Track as `cbtn-text cbtn-inline cbtn-sm` with `data-rec-key`; one delegated listener posts `/api/recs/event` and swaps the row for a muted `.rec-ans-done` sentence. Home's `.hb-rec-ans` answer row, inline under a module's recommendation line (`.rec-line` under a read, `.rec-cites` for the reviews an Intel recommendation cites). An answered line is not rendered again anywhere. What the answer did is the server's: a tracker that started reads "Measuring labor % until 10/21/26" (`recTrackerLine`), a refused one its `tracker_refused.reason`; Home's toasts say the same. `recNotForUsHtml(key, surface, module)` is the lone "Not for us" for a line whose own button is its yes (an overtime move, a content idea, a roadmap card) |
 | Why not? (reason picker) | `.rsn` via `recReasonPicker(after, {onPick(code, note, picker), onCancel, skipLabel})` — ONE component behind every "Not for us": module lines (the `[data-rec-key]` listener), Home's cards (`hbAskWhy`), the second ✕ on Needs attention ("Just hide it" as its skip), content ideas, roadmap cards, overtime moves, Ask's "Not now", the brief's lines, the win-back text's "Not for us" and the schedule review's ✕ (both send `reason_code` + `reason` with their own routes). A recessed strip under the line it answers: `.rsn-k` "Why not?" kicker (ember2) + one-line hint, `.rsn-opts` the six `rec_ledger.REASON_CODES` as `cbtn-secondary cbtn-sm` in the owner's words (Already doing this · Doesn't fit us · Too costly · Bad timing · Don't trust the numbers · Other), `.rsn-ft` an optional note `.ac-input` (Enter with a note = Other) + Skip + Cancel. One tap on a reason answers; the caller posts `reason_code` (+ `reason`) |
 | Check-in card | `.rck` via `recCheckinHtml(c, surface)` over `recCheckinCandidates(outcomes, timelineItems)` — a result that landed (`status` evaluated, a clear verdict) with no `owner_checkin`, joined to its recommendation by the timeline's `tracker_id`. Ember left rail on `--hb-tint`, "Check in · result landed 8/12/26", the title, the `result_line` in the number face, "Did you make this change?" Yes / Partly / No (one tap posts `POST /api/recs/checkin`), then — after Yes or Partly — "Did anything else change these weeks?" No / Yes, something else changed (Yes re-posts with `conditions_changed`), then the result's new `attribution_label`. "Not now" hides it in this browser. Home shows one, inside "What your changes did"; the Recommendations page shows up to five |
@@ -648,7 +695,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Older read | `aiCaveat('Older read', stale_note)` above an AI read the server served from cache because a new one failed (Labor, Marketing) — kept through the five-minute session cache. iOS: `CavnarCaveat.olderRead` under the strip / above the read |
 | Trend strength | A rating or waste trend says its measured strength, "trend strength 62%" (`trend_strength_pct`) with its weeks — never "medium confidence" / "early read". An older server with no figure shows the weeks alone. iOS: `ReviewsAnalyticsSection.trendStrengthLabel` |
 | Reliability bar (admin) | `.calbar` in `admin.html`'s Confidence calibration card (`confidenceCalibration(GET /admin/api/calibration)`) — a 0–100% track, the observed rate's 90% range as a gradient band (green when the shown figure's ember2 tick sits inside it, amber when not), the observed rate as a glowing dot; rows under `floor_n` dimmed and not read. Beside it the Brier score and the same table by kind and per dimension |
-| Freshness strip | `.hb-fresh` under Home's signal tiles — "DATA AS OF 9/22/26" (`data_as_of`) then one `.hb-fresh-it` pill per `freshness[]` source: a state dot (`.current` green glow, `.aging` / `.stale` amber, `.off` "not connected", `.unknown` "age unknown", `.sample` hatched), the name, its basis ("POS synced 9/23/26") and its % in the number face. `hbLive` reads `monitoring` ("Monitoring 4 live sources · oldest data 9/20/26") and never says "just now" about data that isn't |
+| Freshness strip | `.hb-fresh` under Needs attention, drawn only when a source is aging, stale, undated or disconnected (the header's one "Data 92% · as of 9/24/26" chip says it otherwise, density fix #21) — "DATA AS OF 9/22/26" (`data_as_of`) then one `.hb-fresh-it` pill per `freshness[]` source: a state dot (`.current` green glow, `.aging` / `.stale` amber, `.off` "not connected", `.unknown` "age unknown", `.sample` hatched), the name, its basis ("POS synced 9/23/26") and its % in the number face. `hbLive` reads `monitoring` ("Monitoring 4 live sources · oldest data 9/20/26") and never says "just now" about data that isn't |
 | How you compare | A composition, no new pattern (Benchmarking #23 / #18 / #19; `benchmark_views` over the Benchmark Engine): `section.hb-card.bm-card[data-bm-module]` on Labor, Food Cost, Reviews and Marketing, filled by `<script id="cav-bench">` from `/api/benchmarks/card` — `.hb-kicker` "How you compare", who in ink2 ("Compared to 11 other Pizza restaurants on Cavnar" / "vs your own previous 13 weeks"), as-of under it, the **comparison strength as the confidence line** (`.cf` meter + "68% comparison strength" + a Why? whose panel is the `.cf-p` drawer with four rows — Peer count, Band freshness, Your own figure, Type match — and the meaning first: how well supported the comparison is, not how well you are doing), below the minimum the fixed sentence "Not enough restaurants like yours yet — here's how you compare to your own last 13 weeks." with the engine's reason under it, then one `.hb-row` per metric (dot: `.good` green ahead, `.important` amber behind, `.watch` grey level — never red, never ember), the value in the number face, the standing in words, "vs … (middle) · N% comparison strength · as of M/D/YY", and for a metric it is behind on one `cbtn-text` Ask action (`data-ask`). Home: `#hb-bench` under the freshness strip, the same rows as `.hb-fresh-it` pills, behind first. Group Home: "How your locations compare" (`cavBench.locations`), one `.hb-row` per location per metric, "in line with your other locations" unless the gap beats both locations' own swing. Strength is always a %; a band comparison is the only kind that has one |
 | Diagnosis block | `.diag` via `renderDiagnosis(id, dg)` — cause, the confidence line (`.cf.diag-cf`), also fits / what would tell them apart / evidence pills. One shape for labor and marketing; Reviews (`.rv-diag`) and Food Cost (`.fc2-cfo`) put the same `.cf` line in a "How sure" row and an "AI-written" `.ck-tag` in the header, and a verified cross-check carries a "checked" tag. The per-module pills (`.rv-conf`, `.fc2-conf`, `.diag-conf`) are gone. Renders only when `dg.cause` exists |
 | Model-output caveat | `aiCaveat(title, detail)` (`.ai-caveat`, prepended to the read) — one shape, four titles: "Unverified numbers" (a figure that didn't trace, `applyFigureCaveat` on `figures_verified:false`), "Unsupported cause" (`causes_verified:false` — the sentence stays, said to be a guess, the first `unsupported_causes` quoted), "Unverified" (a structured `UNVERIFIED:` note from `ai_guard.unverified_note`, said whole), "Older read" (a stale fallback, the server's `stale_note`). Never deletes the model's text |
