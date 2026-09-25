@@ -1839,3 +1839,63 @@ def _mdy_safe(stamp):
         return mdy(stamp)
     except Exception:
         return None
+
+
+# ── The inbox's "why" line (density round #32) ─────────────────────────────
+#
+# One deterministic line above the Reviews inbox: which way the rating is
+# moving and the top complaint, from the stored diagnosis. No model call -
+# every part is a count or a row a scheduled pass already wrote. The web
+# draws it (/api/reviews/why-line); the phone can read the same function.
+
+WHY_WINDOW_DAYS = 28      # the recent side of the rating comparison
+WHY_MIN_A_SIDE = 3        # reviews each side before a direction is stated
+
+
+def inbox_why(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{"rating_delta", "recent_n", "prior_n", "window_days", "complaint"}.
+
+    rating_delta is the average star rating of the last WHY_WINDOW_DAYS
+    against the same span before it, stated only when each side holds
+    WHY_MIN_A_SIDE reviews (the Reviews trend's own floor, RV_MIN_A_SIDE) -
+    None otherwise, never 0. complaint is the top stored diagnosis's
+    category, its negative-review count and window, and whether the read is
+    stale; None when no diagnosis exists. Nothing here is invented.
+    """
+    out = {"rating_delta": None, "recent_n": 0, "prior_n": 0,
+           "window_days": WHY_WINDOW_DAYS, "complaint": None}
+    recent, prior = f"-{WHY_WINDOW_DAYS} days", f"-{WHY_WINDOW_DAYS * 2} days"
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            f"SELECT "
+            f" AVG(CASE WHEN {_AXIS} >= datetime('now', ?) THEN rating END) AS recent_avg,"
+            f" SUM(CASE WHEN {_AXIS} >= datetime('now', ?) THEN 1 ELSE 0 END) AS recent_n,"
+            f" AVG(CASE WHEN {_AXIS} < datetime('now', ?) AND {_AXIS} >= datetime('now', ?) THEN rating END) AS prior_avg,"
+            f" SUM(CASE WHEN {_AXIS} < datetime('now', ?) AND {_AXIS} >= datetime('now', ?) THEN 1 ELSE 0 END) AS prior_n"
+            f" FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating IS NOT NULL",
+            (recent, recent, recent, prior, recent, prior, restaurant_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    rn, pn = int(row["recent_n"] or 0), int(row["prior_n"] or 0)
+    out["recent_n"], out["prior_n"] = rn, pn
+    if (rn >= WHY_MIN_A_SIDE and pn >= WHY_MIN_A_SIDE
+            and row["recent_avg"] is not None and row["prior_avg"] is not None):
+        out["rating_delta"] = round(float(row["recent_avg"]) - float(row["prior_avg"]), 1)
+    try:
+        diags = get_diagnoses(restaurant_id, db_path=db_path, include_stale=True)
+    except Exception as e:
+        print(f"[review_intelligence] inbox_why diagnoses unavailable for {restaurant_id}: {e}")
+        diags = []
+    if diags:
+        d = diags[0]
+        out["complaint"] = {
+            "category": d.get("category"),
+            "label": str(d.get("category") or "").replace("_", " "),
+            "mentions": d.get("mention_count"),
+            "window_days": d.get("window_days"),
+            "stale": bool(d.get("stale")),
+            "as_of": d.get("as_of"),
+        }
+    return out

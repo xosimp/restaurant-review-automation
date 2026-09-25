@@ -256,18 +256,20 @@ def test_the_headline_numbers_are_opted_into_the_count_up_mechanism():
         r'<span class="hb-num stat-n">\{\{ _lt\|int \}\}%</span>',
         r'<span class="hb-num stat-n">\{\{ labor\.overstaffed_days\|length \}\}</span>',
         r'<span class="hb-num stat-n">\{\{ _ot \}\}</span>',
-        r'<span id="lb2-hero-n" class="hb-num stat-n">\{\{ _lp \}\}</span>',
         r'<span class="hb-num stat-n">\{\{ labor\.role_summary\|length if labor\.role_summary else 0 \}\}</span>',
     ]
     for pattern in expected:
         assert re.search(pattern, panel), "not opted into count-up: " + pattern
-    # The gap-to-target pair stays; the "$ under industry" tiles were
-    # removed (Benchmarking audit #34 — a benchmark gap in dollars with no
-    # action, against a figure that includes benefits). Neither is ever the
-    # green "good" tone: the gap takes the warn tone, the rest stay neutral.
+    # Density round #26: labor % is said once, in the header, beside its
+    # monthly gap - the hero keeps only the change, and the Details money
+    # row no longer restates the gap or its yearly projection. The "$ under
+    # industry" tiles stay gone (Benchmarking audit #34). Nothing is ever
+    # the green "good" tone.
+    assert 'id="lb2-hero-n"' not in panel
+    assert '<span class="lb2-gap" id="gap-amount"' in panel and "/mo over {{ _tl }}" in panel
     assert panel.count('class="x good stat-n"') == 0
-    assert panel.count('class="x warn stat-n"') == 1
-    assert panel.count('class="x stat-n"') == 1
+    assert panel.count('class="x warn stat-n"') == 0
+    assert panel.count('class="x stat-n"') == 0
     assert "Under" not in panel or "industry / mo" not in panel
     assert 'class="x stat-n {{' in panel  # overtime premium, tone varies
 

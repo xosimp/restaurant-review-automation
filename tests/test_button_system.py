@@ -32,7 +32,7 @@ EXEMPT_CLASSES = {"tab", "rm", "hb-refresh", "hb-chip", "hb-x", "hb-loc", "hm-da
                   "in2-viewall", "in2-gbp-link"}  # AI visibility: text-style "view all" / checklist nav links
 EXEMPT_IDS = {"loc-switcher-btn", "notif-btn", "changelog-btn", "team-msg-btn", "mkt-tab-content-btn",
               "mkt-tab-queue-btn", "mkt-tab-analytics-btn", "sched-toggle-label", "perf-tab-dow",
-              "perf-tab-trend", "ask-cavnar-fab"}
+              "perf-tab-trend", "perf-tab-weekday", "ask-cavnar-fab"}
 EXEMPT_ATTRS = ("data-ask=", "data-score=", "data-quality-shift=", 'role="listitem"', 'role="tab"')
 EXEMPT_ONCLICK = ("switchLocation(", "hbRange(", "hbAct(", "askSuggest(", "askOpenConversation(")
 

@@ -46,8 +46,9 @@ CONTRACT = [
     ("labor_industry_pct", "hosted_dashboard.py", "dashboard"),
     ("labor_industry_basis", "hosted_dashboard.py", "dashboard"),
     ("benchmark_state", "inventory.py", "dashboard"),
-    ("recoverable_kind", "inventory.py", "dashboard"),
-    ("annual_recoverable_basis", "inventory.py", "dashboard"),
+    # recoverable_kind / annual_recoverable_basis: the web's recoverable
+    # hero and gauge were removed in the density round (#25) - one
+    # opportunity figure, the CFO's at-stake; the server still emits them.
     ("rating_note", os.path.join("dsr", "block_reviews.py"), "dashboard"),
     ("coverage_note", os.path.join("dsr", "block_food.py"), "dashboard"),
     ("urgency_adjusted", os.path.join("dsr", "narrative.py"), "dashboard"),

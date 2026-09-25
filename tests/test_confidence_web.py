@@ -347,9 +347,13 @@ def test_review_trend_needs_three_reviews_a_side_and_names_the_weeks():
 
 
 def test_recoverable_is_an_opportunity_not_a_green_win():
+    """Density round #25: the recoverable hero and its gauge are gone from
+    web Food Cost altogether - the page carries one opportunity figure, the
+    CFO's ranked monthly at-stake, labelled an opportunity, not money saved."""
     src = _src()
     assert '<div class="big good"><span id="inv-annual-recoverable"' not in src
-    assert "Recoverable / year · opportunity" in src
+    assert 'id="inv-annual-recoverable"' not in src and "Recoverable / year" not in src
+    assert "/month at stake across '+drv.length+' driver'+(drv.length===1?'':'s')+' · an opportunity, not money saved" in src
 
 
 def test_dsr_footer_counts_estimates_apart():

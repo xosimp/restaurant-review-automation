@@ -54,23 +54,27 @@ def _fn(name):
 
 # ── Employee Availability / Operational Score spacing ───────────────────────
 
-def test_the_three_schedule_rows_share_one_wrapper_and_one_gap():
-    """These used to be three bare divs with hand-typed 16px margins that
-    drifted (14px on one). They are now .lb2-srow tiers inside the ember
-    .lb2-sched container, so the gap comes from one rule and the whole row
-    is the click target."""
+def test_the_setup_rows_are_one_quiet_team_and_rules_disclosure():
+    """Density round #28 (it pinned the per-row ember shades before): the
+    setup rows are one "Team & rules" disclosure, a quiet list inside it -
+    a hairline between rows, no per-row gradient - and Employee
+    Availability lives inside Roster & settings instead of its own row.
+    The whole row is still the click target."""
     s = _src()
-    for marker, cls, fn in (("<!-- Employee Availability Manager -->", "s1", "toggleAvailPanel"),
-                            ('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),
+    team = s[s.index('<details class="hb-results lb2-team" id="lb2-team">'):]
+    team = team[:team.index("</details>")]
+    for marker, cls, fn in (('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),
                             ('<div class="lb2-subsection-title">Daily Tasks</div>', "s3", "toggleTasksPanel")):
-        i = s.index(marker)
-        around = s[max(0, i - 300):i + 300]
+        i = team.index(marker)
+        around = team[max(0, i - 300):i + 300]
         assert f'<div class="lb2-srow {cls}">' in around, marker
         assert f'onclick="lb2RowClick(event,{fn})"' in around, marker
-        assert 'style="margin-bottom:16px"' not in around and 'margin-top:16px;margin-bottom:16px' not in around, marker
+    roster = team[team.index('<div class="lb2-srow s4" data-nav="labor/team">'):team.index('<div class="lb2-srow s2">')]
+    assert 'id="avail-panel"' in roster and 'onclick="toggleAvailPanel()"' in roster
+    assert '<div class="lb2-srow s1">' not in s
     m = re.search(r"\.lb2-srow\{([^}]*)\}", s)
-    assert m and "margin-top:12px" in m.group(1)
-    assert ".lb2-srow.s2{" in s and ".lb2-srow.s3{" in s, "each row is its own shade"
+    assert m and "border-top:1px solid var(--hb-line2)" in m.group(1) and "gradient" not in m.group(1)
+    assert not re.search(r"\.lb2-srow\.s\d\{", s), "no per-row ember shades"
     assert "function lb2RowClick(e, fn)" in s
     # no dash bar on these titles any more — only section headers keep it
     assert ".lb2-subsection-title:before" not in s
@@ -97,24 +101,17 @@ def test_week_radar_number_matches_its_sibling_stat_sizes():
 
 # ── overtime alerts read as red, not the overstaffed orange ─────────────────
 
-def test_overtime_card_border_is_not_the_overstaffed_orange():
+def test_overtime_rows_read_red_through_the_standard_row_dot():
+    """Density round #44 (it pinned the dark-slab border colours before):
+    the staffing lists are hb-card + hb-row with a status dot, like every
+    other list. Overtime is the red (critical) dot; an allowed overtime is
+    green; approaching 40h is amber - tones from the tokens, no hex."""
     s = _src()
-    i = s.index('>Overtime alerts<')  # the heading markup, not the CSS comment above it
-    card = s[i:i + 400]
-    m = re.search(r'class="dark-hero-card[^"]*" style="border:1px solid (rgba\([\d,.]+\))', card)
-    assert m, "couldn't find the overtime alerts card border"
-    assert m.group(1) != "rgba(200,75,47,.45)", \
-        "overtime alerts should not share the overstaffed card's orange border"
-    assert "ot-hero-card" in card, "overtime card should carry its own background-override class"
-
-
-def test_overtime_at_risk_hour_figure_and_badge_are_red_not_orange():
-    s = _src()
-    i = s.index(">Overtime alerts<")  # the heading markup, not the CSS comment above it
+    i = s.index(">Overtime alerts<")
     j = s.index("{% endfor %}", i)
     block = s[i:j]
-    assert "#ff8a65" not in block, "overtime block still uses the overstaffed orange somewhere"
-    assert block.count("#ff5a5a") >= 2, "expected the at-risk hour figure and the review-pay badge in red"
+    assert "'critical' if emp.status == 'overtime'" in block
+    assert "#ff5a5a" not in block and "#ff8a65" not in block and "dark-hero-card" not in block
 
 
 # ── scroll-triggered chart/number reveals ────────────────────────────────────

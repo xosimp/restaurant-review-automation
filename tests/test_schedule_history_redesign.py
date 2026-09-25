@@ -189,12 +189,16 @@ def test_quality_pill_tone_follows_the_engines_own_band():
 
 # ── incremental rendering keeps hundreds of rows cheap to scan ─────────────
 
-def test_history_renders_in_pages_not_all_at_once():
+def test_history_shows_the_last_three_and_stops_auto_loading():
+    """Density round #9 (this pinned the scroll-triggered sentinel before):
+    the page shows the last three weeks and an "All schedules (N)" button;
+    nothing loads on scroll. The rest still renders a page at a time."""
     s = _src()
-    assert "SCHED_HIST_PAGE" in s
+    assert "SCHED_HIST_PAGE=25,SCHED_HIST_FIRST=3" in s
     body = _fn("_schedHistRenderMore")
     assert "_schedHistAll.slice(_schedHistShown,next)" in body
-    assert "cavnarWhenVisible(document.getElementById('sched-history-more')" in body
+    assert "cavnarWhenVisible" not in body
+    assert "'All schedules ('+_schedHistAll.length+') →'" in body and 'onclick="schedHistMore()"' in body
 
 
 def test_loading_state_is_a_skeleton_not_a_loading_string():

@@ -21,16 +21,28 @@ def _src():
 
 
 def test_the_position_and_work_blocks_are_outside_the_hero_column():
+    """Density round (#7, #8, #43): food cost % is the hero figure, in the
+    header's right column; the CFO card is the first "why" block after the
+    header; the working blocks are one-line rows in "This week's work",
+    after the why, each keeping its section id and data-nav."""
     s = _src()
     panel = s[s.index('id="panel-inventory"'):]
     top = panel.index('<div class="hb-top">')
-    left = panel[top:panel.index('<div id="fc2-cfo"', top)]
-    for i in ("fc2-fcp", "fc2-cov", "fc2-wsrc", "fc2-recipes", "fc2-count"):
+    left = panel[top:panel.index('<div class="fc2-top-right">', top)]
+    for i in ("fc2-fcp", "fc2-cov", "fc2-wsrc", "fc2-recipes", "fc2-count", "fc2-cfo"):
         assert f'id="{i}"' not in left, i + " is still inside the hero's left column"
-    assert '<div id="fc2-fcp" class="fc2-fcp fc2-pos" hidden></div>' in panel
+    hero = panel[panel.index('<div class="fc2-hero-nums">'):panel.index('<div class="fc2-position">')]
+    assert '<div id="fc2-fcp" class="fc2-fcp fc2-pos fc2-hero-fcp" hidden></div>' in hero
     assert '<div id="fc2-cov" class="fc2-cov fc2-pos" hidden></div>' in panel
+    order = [panel.index(m) for m in ('<div class="fc2-hero-nums">', '<div id="fc2-cfo" hidden></div>',
+                                      'aria-label="Waste trend"', 'id="inv-insight"', 'id="fc2-work"')]
+    assert order == sorted(order), "position, then why, then this week's work"
     for i in ("fc2-recipes", "fc2-count", "fc2-suppliers"):
         assert f'<section id="{i}" class="fc2-block"' in panel, i
+        k = i.split("-")[1]
+        row = panel[panel.index(f'id="fc2-work-{k}"'):]
+        assert row.index(f'<section id="{i}"') < row.index("</details>"), i + " sits inside its row"
+    assert 'data-nav="inventory/count"' in panel[panel.index('id="fc2-work-count"'):panel.index('id="fc2-work-suppliers"')]
     for rule in (".fc2-position{", ".fc2-pos{", ".fc2-block{", ".fc2-bh{", ".fc2-sup-grid{"):
         assert rule in s, rule
 
@@ -88,7 +100,7 @@ def test_the_price_monitor_reads_the_pantry_for_a_ledger_account():
     assert 'not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items"))' not in guard
     assert "Candidate for future cleanup after additional verification".lower() in guard.lower().replace("\n    # ", " ")
     s = _src()
-    tracker = s[s.index('id="fc2-tracker"') - 400:s.index('id="fc2-tools"')]
+    tracker = s[s.index('id="fc2-tracker"') - 400:s.index('<span id="fc-tab-tracker">')]
     assert "{% set _fc_ledger = food_cost_data and food_cost_data.current and food_cost_data.current.from_pantry %}" in tracker
     assert "{{ ' readonly' if _fc_ledger }}" in tracker and 'onclick="fcEditPrices(this)"' in tracker
     assert "and not _fc_ledger %}" in tracker, "no drift between a ledger read and an old typed week"

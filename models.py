@@ -7888,8 +7888,14 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     # tier the analyser assigns is the one thing that says which of twelve
     # open complaints to read first. NULL severity (analysed before the column
     # existed) sorts with 'service', neither pushed to the top nor buried.
+    # Needs you first (density round #33): a review with a live, approved or
+    # skipped reply sorts below every one still waiting, whatever its
+    # urgency - an old answered complaint no longer outranks today's
+    # unanswered review. The web draws an "Answered (N)" divider where the
+    # answered ones begin.
     sql = f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
-        ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
+        ORDER BY CASE WHEN COALESCE(response_status,'') IN ('posted','approved','skipped') THEN 1 ELSE 0 END,
+        CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
         CASE COALESCE(severity,'service')
              WHEN 'safety' THEN 0 WHEN 'legal' THEN 1 WHEN 'operational' THEN 2
              WHEN 'service' THEN 3 ELSE 4 END,

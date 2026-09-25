@@ -64,17 +64,12 @@ def test_overtime_card_has_its_own_dark_background_not_the_orange_shared_one():
         "overtime's background should not reuse the overstaffed gradient's exact color stops"
 
 
-def test_overtime_heading_wrapper_matches_overstaffed_structure_for_alignment():
+def test_overtime_heading_matches_overstaffed_structure_for_alignment():
+    """Density round #44: both lists are hb-cards whose heading is the same
+    .lb2-ma-h line, so neither card's top edge can drift from the other."""
     s = _src()
-    over_i = s.index(">Overstaffed days ")
-    over_wrap = s[max(0, over_i - 400):over_i]
-    ot_i = s.index(">Overtime alerts<")
-    ot_wrap = s[max(0, ot_i - 400):ot_i]
-    # Both headings sit in a baseline-aligned flex row with the same
-    # margin-bottom — a mismatched value here (8px vs 4px, the actual bug)
-    # shifts one card's top edge relative to the other's.
-    assert "align-items:baseline;justify-content:space-between;margin-bottom:4px" in over_wrap
-    assert "align-items:baseline;justify-content:space-between;margin-bottom:4px" in ot_wrap
+    assert '<div class="lb2-ma-h">Overstaffed days<small>' in s
+    assert '<div class="lb2-ma-h">Overtime alerts<small>' in s
 
 
 # ── Employee Availability / Operational Score panel looks branded ──────────
