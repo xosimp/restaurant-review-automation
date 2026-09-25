@@ -273,7 +273,9 @@ def _visibility(restaurant_id, db_path=DB_PATH):
         return None
     from ai_guard import freshness
     import notify
-    fresh = freshness(row["created_at"], stale_after_days=21)
+    # The registry's visibility rule (DH3-18): its own 21-day cut read "current"
+    # for a week after every other surface called the same run out of date.
+    fresh = freshness(row["created_at"], source="visibility")
     # The range travels with the point (fix I4): a score from a handful of
     # questions is only as precise as its 90% interval, and Ask quotes this.
     lo, hi = notify.visibility_range(row["appeared"], row["answered"])
@@ -349,6 +351,10 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
         # ── complaints and the leanest day fall on the same weekday ──
         for day in days:
             if day in lean:
+                # Evidence from the joined modules' own inputs, and the two
+                # windows compared (DH3-10): complaints from June against
+                # this quarter's shifts are different periods, said so.
+                _periods = _window_overlap(_cluster_window(c), _labor_window(labor))
                 links.append({
                     "kind": "reviews_x_labor",
                     # What the link is about, for its recommendation key: one
@@ -364,7 +370,8 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     # the kind an owner never thinks to check.
                     "headline": (f"{c['mentions']} {_cat(c['category'])} complaints concentrate on "
                                  f"{day}, which runs {lean[day]} points leaner on labor "
-                                 f"than this restaurant's weekday average"),
+                                 f"than this restaurant's weekday average"
+                                 + (" — from different periods" if _periods.get("different") else "")),
                     "evidence": [
                         # A weekday PAIR's share covers both days, so it must
                         # not be reported against the one day this link
@@ -376,7 +383,10 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                         f"{c['window_days']} days, {_concentration_phrase(c)}",
                         f"{day} averages {lean[day]} points below this restaurant's own "
                         f"weekday average labor percentage",
-                    ],
+                    ] + ([_periods["line"]] if _periods.get("different") else []),
+                    "evidence_inputs": [_cluster_evidence_input(c), _labor_evidence_input(labor)],
+                    "periods": "different" if _periods.get("different") else (
+                        "overlapping" if _periods.get("known") else "unknown"),
                     "review_ids": (c.get("review_ids") or [])[:5],
                     # labor.py:974 — the data cannot distinguish lean from
                     # efficient, so this is never stated as a cause.
@@ -409,6 +419,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     f"{waste_day} holds {int(_f(waste_share) * 100)}% of waste dollars against "
                     f"an even week of {int(100 / 7)}%",
                 ],
+                "evidence_inputs": [_cluster_evidence_input(c), _waste_day_evidence_input(food)],
                 "review_ids": (c.get("review_ids") or [])[:5],
                 "confirm_by": (f"Walk {waste_day} prep: over-prepping and re-firing both show "
                                f"up as waste and as guests waiting."),
@@ -438,6 +449,8 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                             f"Food Cost ranks it at ${_f(d.get('dollars_monthly')):,.0f}/month"
                             if d.get("dollars_monthly") else "Food Cost lists it as a driver",
                         ],
+                        "evidence_inputs": [_cluster_evidence_input(c),
+                                            d.get("evidence_input") or _driver_evidence_input(d)],
                         "review_ids": (c.get("review_ids") or [])[:5],
                         "confirm_by": ("Weigh three plates against the recipe card. Portion "
                                        "drift shows up on both sides of this at once."),
@@ -470,6 +483,11 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     + (f", reaching about {mk['reach']:,}" if mk.get("reach") else ""),
                     f"{vol['now']} reviews in the last 30 days against {vol['before']} in the 30 before",
                 ],
+                "evidence_inputs": [
+                    {"n": int(mk.get("posts_published") or 0), "kind": "posts",
+                     "basis": f"{mk['posts_published']} posts in the last 30 days"},
+                    {"n": int(vol["now"] or 0), "kind": "reviews",
+                     "basis": f"{vol['now']} reviews in the last 30 days"}],
                 "not_a_cause": ("Posts and reviews moving in the same month is a co-movement. This product "
                                 "has no click or visit data tying a post to a guest who then reviewed."),
                 "confirm_by": ("Look at whether the new reviews mention what the posts were about, and "
@@ -974,19 +992,99 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
     return out
 
 
+# A link whose two figures cover different periods is held here: the two
+# facts may never have been true at the same time (DH3-10).
+DIFFERENT_PERIODS_CAP = 49
+
+
+def _iso(v):
+    s = str(v or "").strip()[:10]
+    return s if len(s) == 10 and s[4] == "-" and s[7] == "-" else None
+
+
+def _cluster_window(c):
+    """(first, last) ISO dates of a complaint cluster's reviews, or None."""
+    a, b = _iso((c or {}).get("first_seen")), _iso((c or {}).get("last_seen"))
+    return (a, b) if a and b else None
+
+
+def _labor_window(labor):
+    """(start, end) ISO dates of the labor analysis's shifts, or None."""
+    dr = (labor or {}).get("date_range") or {}
+    a, b = _iso(dr.get("start")), _iso(dr.get("end"))
+    return (a, b) if a and b else None
+
+
+def _window_overlap(a, b) -> dict:
+    """{known, different, line}: whether two (start, end) windows share any
+    day, and the owner's line naming both when they do not."""
+    if not a or not b:
+        return {"known": False, "different": False, "line": None}
+    different = a[1] < b[0] or b[1] < a[0]
+    from time_utils import mdy_range
+    line = (f"Different periods: the complaints run {mdy_range(a[0], a[1])}, the labor figures "
+            f"{mdy_range(b[0], b[1])} — the two were never measured over the same days") if different else None
+    return {"known": True, "different": different, "line": line}
+
+
+def _cluster_evidence_input(c) -> dict:
+    """A complaint cluster's own Evidence Strength input: its mentions."""
+    n = int((c or {}).get("mentions") or 0)
+    return {"n": n, "kind": "reviews",
+            "basis": f"{n} reviews on {_cat((c or {}).get('category'))} over {(c or {}).get('window_days') or 90} days"}
+
+
+def _waste_day_evidence_input(food) -> dict:
+    """The worst waste day's own input: the waste events behind its share."""
+    wd = ((food or {}).get("weekday_waste") or {})
+    worst = wd.get("worst_day") or {}
+    n = int(worst.get("events") or 0)
+    per = int(wd.get("min_events_per_bucket") or 4)
+    return {"n": n, "kind": "count", "n_full": max(1, per * 2),
+            "basis": f"{n} waste events on {worst.get('weekday') or 'that day'} over {wd.get('window_days') or 56} days"}
+
+
 def link_evidence_input(link) -> dict:
     """A cross-module link's Evidence Strength input — the one input for the
     same link as the one-thing candidate and as a "What connects" card (T1),
     so both surfaces show one figure. Two modules moving together is an
-    inference, never a measured cause: its evidence is the figures it cites,
-    flagged inferred."""
+    inference, never a measured cause.
+
+    Its evidence is the WEAKER of the joined modules' own inputs (DH3-10:
+    `evidence_inputs` — the cluster's mentions, the labor window's trading
+    days, the waste day's events, the driver's own evidence): two sentences
+    read the same whether they rested on 3 reviews and 9 days or on 40 and
+    90. A link whose windows do not overlap is "different periods" and held
+    to DIFFERENT_PERIODS_CAP. A link without inputs (an older payload)
+    counts its cited figures, as before."""
+    import confidence_engine as ce
     link = link or {}
     mods = [m for m in (link.get("modules") or []) if m]
+    corr = max(0, len(set(mods)) - 1)
+    inputs = [i for i in (link.get("evidence_inputs") or []) if isinstance(i, dict) and i.get("n") is not None]
+    if inputs:
+        scored = []
+        for i in inputs:
+            try:
+                scored.append((ce.evidence(**i).get("pct") or 0, i))
+            except TypeError:
+                continue
+        if scored:
+            _pct, weakest = min(scored, key=lambda t: t[0])
+            out = dict(weakest)
+            out["flags"] = tuple(dict.fromkeys(tuple(out.get("flags") or ()) + ("inferred",)))
+            out["corroborating"] = corr
+            out["basis"] = (f"{str(weakest.get('basis') or 'its weaker input').rstrip('.')} — the weaker of the "
+                            f"{len(scored)} inputs it joins; {len(mods)} modules moving together, an inference")
+            if link.get("periods") == "different":
+                out["cap"] = min(float(out.get("cap", 100)), DIFFERENT_PERIODS_CAP)
+                out["cap_reason"] = "its two figures cover different periods"
+            return out
     # Each module past the first is an independent reading that agrees —
     # bounded corroboration (B4 M2); the inferred cap still holds the causal
     # wording under "high".
     return {"n": len([e for e in (link.get("evidence") or []) if e]), "kind": "evidence_items",
-            "flags": ("inferred",), "corroborating": max(0, len(set(mods)) - 1),
+            "flags": ("inferred",), "corroborating": corr,
             "basis": f"{len(mods)} modules moving together — an inference, "
                      "not a measured cause"}
 

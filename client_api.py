@@ -1293,7 +1293,7 @@ def rv_flags(verdict, text="") -> dict:
 
 
 def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_rows, this_week, last_week,
-                               trend, money, bench, diags, op_lines, urgent_rows, low_count):
+                               trend, money, bench, diags, op_lines, urgent_rows, low_count, registry_state=None):
     """The ValidationContext for the Reviews read (surface review_insight).
 
     Facts: the MEASURED block typed from the figures the prompt is built from
@@ -1354,13 +1354,19 @@ def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_
         tenants = _models_mod.other_tenant_names(rid)
     except Exception:
         tenants = set()
+    data_state = {"required_disclosures": ["low_review_count"] if low_count else [], "stale_sources": stale}
+    if registry_state:
+        # The review fetch's own state from the registry (data_health.
+        # readiness) beside the stored diagnosis and competitor medians
+        # this read already named (DH1-2).
+        import data_health as _dh_rvc
+        data_state = _dh_rvc.merge_data_state(data_state, registry_state)
     return _rvm.ValidationContext(
         restaurant_id=rid, surface="review_insight", facts=facts, context_text=prompt,
         cause_anchors=anchors, tenant_names_denied=tenants,
         untrusted=[str(r["text"] or "") for r in urgent_rows or [] if r["text"]],
         confidence=None,
-        data_state={"required_disclosures": ["low_review_count"] if low_count else [],
-                    "stale_sources": stale},
+        data_state=data_state,
         policy={"action": "review_insight", "check_counts": True})
 
 
@@ -1388,7 +1394,18 @@ def _do_today_confidence(rid, payload):
         dg = payload.get("diagnosis") if isinstance(payload.get("diagnosis"), dict) else None
         if dg and dg.get("confidence") in ("high", "medium", "low"):
             ev["model_band"] = dg["confidence"]
-        return rec_trust.assess(rid, "insight_review", evidence=ev, sources=("reviews",), ctx=_ctx)
+        # What the read rests on (#28, DH3-7): the reviews, the competitor
+        # read when it quotes the competitor median, and the stored
+        # diagnosis's own age when it rests on one (DH3-1).
+        sources = ["reviews"]
+        if (payload.get("benchmark") or {}).get("available") and re.search(
+                r"\b(?:competitor|median|nearby|rivals?)\b", str(payload.get("insight") or ""), re.I):
+            sources.append("competitor")
+        if dg and dg.get("cause"):
+            age, iso = rec_trust.diagnosis_age(dg)
+            if age is not None:
+                ev["read_age_days"], ev["read_as_of_iso"] = age, iso
+        return rec_trust.assess(rid, "insight_review", evidence=ev, sources=tuple(sources), ctx=_ctx)
     except Exception as e:
         print(f"[reviews] do-today confidence unavailable: {e}")
         import confidence_engine
@@ -1536,6 +1553,13 @@ def _do_review_insight(rid):
         # ran on the SDK's 600 s timeout and its own retries.
         _client_ri = _aiu_ri.get_client()
         restaurant = get_restaurant(rid)
+        # The readiness gate before the call (DH5-2): the review read rests on
+        # the review fetch. Interactive, so a fetch that is failing caveats —
+        # the DATA STATE block says so in the prompt, and the registry's
+        # stale sources reach the validation layer (DH1-2: the last fetch
+        # was never checked here).
+        import data_health as _dh_ri
+        _ready_ri = _dh_ri.readiness(rid, "reviews", restaurant=restaurant)
         rstats = get_review_stats(rid)
         # sentiment=None: this line is labelled "Top topics" in the prompt,
         # not "complaints" — see get_top_issues' docstring.
@@ -1838,7 +1862,8 @@ def _do_review_insight(rid):
             f"{ops_block}\n\n"
             "DIAGNOSIS (a stored root-cause pass over the largest complaint cluster):\n"
             f"{diag_block}\n\n"
-            "EVIDENCE RULES - these bound what you may claim:\n"
+            + (f"{_ready_ri['prompt_block']}\n\n" if _ready_ri.get("prompt_block") else "")
+            + "EVIDENCE RULES - these bound what you may claim:\n"
             "- State no figure that does not appear above. Not a dollar amount, not a percentage, "
             "not a count, not a rating.\n"
             "- Name a guest ONLY from the urgent-review list above, using the name exactly as it "
@@ -1875,7 +1900,8 @@ def _do_review_insight(rid):
         import response_validation as _rv
         from ai_guard import CLAIM_KINDS
         import re as _re_ri
-        _ri_ctx_parts = dict(rstats=rstats, top_issues=top_issues, weekly_rows=weekly_rows, this_week=this_week,
+        _ri_ctx_parts = dict(registry_state=_ready_ri.get("data_state"),
+                             rstats=rstats, top_issues=top_issues, weekly_rows=weekly_rows, this_week=this_week,
                              last_week=last_week, trend=_trend, money=_money, bench=_bench, diags=_diags,
                              op_lines=_ri._operational_lines(_ops_ctx), urgent_rows=urgent_rows,
                              low_count=not trend_weeks)
@@ -1977,6 +2003,7 @@ def _do_review_insight(rid):
             messages=[{"role":"user","content":prompt}],
             restaurant_id=rid,
             action="review_insight",
+            readiness=_ready_ri,
         )
         _raw_ri = extract_text(msg).strip()
         payload = _ri_payload(_raw_ri)
@@ -2767,6 +2794,33 @@ def _mkt_checks(stored):
             "validation": stored.get("validation")}
 
 
+# A claim that something worked or performed — refused while the metrics
+# sync is failing or behind (DH3-6): the reach it would rest on is frozen.
+_MKT_PERFORMANCE_RE = re.compile(
+    r"\b(?:work(?:ed|s|ing)|perform(?:ed|s|ing|ance)|(?:out|under|best[- ]|top[- ]|over)perform\w*|"
+    r"did\s+(?:well|best|better|great|poorly|badly|worse)|resonat\w*|took\s+off|landed\s+(?:well|best))\b", re.I)
+
+
+def _mkt_drop_performance(text) -> str:
+    """`text` without any sentence claiming a post or topic worked or
+    performed; a line left empty is dropped. "" when nothing stands (the
+    caller withholds the read)."""
+    out = []
+    for line in str(text or "").split("\n"):
+        if not line.strip():
+            out.append(line)
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+", line)
+        kept = [s for s in sentences if not _MKT_PERFORMANCE_RE.search(s)]
+        if kept:
+            out.append(" ".join(kept))
+    body = "\n".join(out).strip()
+    # The read's first line is its point: without it there is no read.
+    if not body or _MKT_PERFORMANCE_RE.search(str(text or "").strip().split("\n")[0] or ""):
+        return ""
+    return body
+
+
 def _mkt_forecast(reach_vals, diff_pct):
     """(FORECAST line, predicted) for next week's average reach per post,
     computed here rather than written by the model (H8): last full week's
@@ -2804,10 +2858,20 @@ def _do_mkt_insight(rid, raw=False):
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        # The readiness gate before the call (DH5-2, DH3-6): the marketing
+        # read rests on the post metrics, dated by the last metrics sync. The
+        # prompt carries the restaurant's own date and the DATA STATE block
+        # (so a stored read is re-written when either moves, not re-served
+        # for a week), and while the metrics are failing or out of date no
+        # "it worked / performed" claim survives (_mkt_drop_performance).
+        import data_health as _dh_m
+        _ready_m = _dh_m.readiness(rid, "marketing", restaurant=restaurant)
+        _mkt_unreliable = bool((_ready_m.get("data_state") or {}).get("stale_sources"))
         p = get_profile_for_restaurant(rid)
         recent = get_recent_content(rid, limit=5)
-        from time_utils import restaurant_now
+        from time_utils import restaurant_now, mdy as _mdy_m
         now = restaurant_now(restaurant)
+        today_m = _mdy_m(now)
         upcoming = get_upcoming_holidays(now.replace(tzinfo=None))
         recent_str = ", ".join(r["topic"] for r in recent) if recent else "none yet"
         greeting = f"{owner}," if owner else "Hi,"
@@ -2928,6 +2992,13 @@ def _do_mkt_insight(rid, raw=False):
             perf_clause = ("\n\nSocial performance data: none measured yet. The opportunity comes from the calendar, "
                            "the menu and the brand above, not from results — say so, and do not claim anything has "
                            "worked, performed well or performed poorly, or compare with other restaurants.")
+        elif _mkt_unreliable:
+            # The metrics sync is failing or behind (DH3-6): the figures above
+            # may be frozen at its last success, so none of them says what
+            # worked. Enforced after the call too (_mkt_drop_performance).
+            perf_clause += ("\nTHESE POST FIGURES ARE NOT CURRENT — the metrics sync is failing or behind (see DATA "
+                            "STATE). Do not say any post or topic worked, performed, did well or did badly; plan "
+                            "from the calendar, the menu and the brand instead.")
         # The FORECAST line is computed after the call (_mkt_forecast, H8),
         # never asked of the model: its projection was unscored.
         forecast_instruction = ""
@@ -2942,6 +3013,7 @@ def _do_mkt_insight(rid, raw=False):
         import insight_store as _ist_ans_m
         answered_m = _ist_ans_m.do_not_repeat_block(rid, ("insight_marketing",))
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
+Today: {today_m}
 
 Restaurant: {p["name"]} in {p["neighborhood"]}.
 Vibe: {p["vibe"]}.
@@ -2965,6 +3037,8 @@ No preamble on them, no closing encouragement, no sign-off.{forecast_instruction
 
 Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
 brand voice. No corporate language. The whole brief must be under 60 words.{answered_m}"""
+        from ai_utils import with_data_state as _with_ds_m
+        prompt = _with_ds_m(prompt, _ready_m)
         # The shared, bounded client (timeout, no hidden SDK retries): an
         # unbounded one here was invisible to the timeout lint behind its
         # `import anthropic as _anth` alias (MOD-MKT-2).
@@ -2976,7 +3050,8 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # that was posted, or a holiday coming up, is not evidence of what
         # moved reach. Guests and sales were never inputs (M2).
         import response_validation as _rv
-        _fc_line, _fc_pred = _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        # No reach projection from figures the sync has stopped refreshing.
+        _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(_mkt_reach_vals, _mkt_diff)
         _F = _rv.Fact
         _mkt_facts = [_F("posts.measured", len(_mkt_perf_seen), "count", "measured")]
         for _i, _r in enumerate(_mkt_perf_seen):
@@ -2993,10 +3068,17 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             _mkt_tenants = _models_mod.other_tenant_names(rid)
         except Exception:
             _mkt_tenants = set()
+        # The registry's stale sources (the metrics sync, the token) beside
+        # the inputs this read never had (DH3-6). Its present-tense state is
+        # not merged: "the biggest opportunity this week" is about the week
+        # ahead, not a claim about the metrics.
         _mkt_ctx = _rv.ValidationContext(
             restaurant_id=rid, surface="marketing_insight", facts=_mkt_facts, context_text=prompt,
             tenant_names_denied=_mkt_tenants, confidence=None,
-            data_state={"missing_inputs": ["guests", "sales"]}, policy={"action": "marketing_insight"})
+            data_state=_dh_m.merge_data_state(
+                {"missing_inputs": ["guests", "sales"]},
+                {k: v for k, v in (_ready_m.get("data_state") or {}).items() if k != "not_current"}),
+            policy={"action": "marketing_insight"})
 
         def _mkt_read(raw_text):
             """(the read's checks + text, the Validated text) from the model's
@@ -3010,6 +3092,11 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
                 return None, checked
             flags = rv_flags(checked.verdict, checked)
             text = str(checked)
+            if _mkt_unreliable:
+                # Refused while the metrics are failing or behind (DH3-6).
+                text = _mkt_drop_performance(text)
+                if not text.strip():
+                    return None, checked
             if _fc_line:
                 text = text.rstrip() + "\n" + _fc_line
             return {"figures_verified": flags["figures_verified"],
@@ -3035,6 +3122,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=rid,
             action="marketing_insight",
+            readiness=_ready_m,
         )
         _raw_m = extract_text(msg).strip()
         _read_m, _checked_m = _mkt_read(_raw_m)
@@ -3401,12 +3489,28 @@ def _labor_read_age(entry, stale):
     return out
 
 
+def _labor_note_entry(rid, entry):
+    """The cache entry dated by when the model WROTE the note (labor.
+    note_generated_at), not when it entered this five-minute cache (DH3-2,
+    DH4-13): a note written on Monday and re-served on Friday read "as of"
+    a few minutes ago."""
+    if not entry:
+        return entry
+    try:
+        import labor as _lab_nt
+        written = _lab_nt.note_generated_at(rid)
+    except Exception:
+        written = None
+    return (written, entry[1]) if written is not None and written <= entry[0] else entry
+
+
 def labor_read_state(rid) -> dict:
     """The Labor read's age on the fresh and cached paths (T9): the same
     `stale` / `as_of` / `as_of_iso` / `age_days` fields the stale fallback
     carries, so every path — first load, cache hit, fallback — has one
-    shape and a client caching the response keeps whether it was stale."""
-    return _labor_read_age(_insight_cache.get(LABOR_INSIGHT_CACHE + str(rid)), False)
+    shape and a client caching the response keeps whether it was stale.
+    Dated by the note's own generated_at (_labor_note_entry)."""
+    return _labor_read_age(_labor_note_entry(rid, _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))), False)
 
 
 def labor_stale_read(rid):
@@ -3416,11 +3520,49 @@ def labor_stale_read(rid):
     entry = _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
     if not entry:
         return None
-    return {"text": entry[1], "state": _labor_read_age(entry, True)}
+    return {"text": entry[1], "state": _labor_read_age(_labor_note_entry(rid, entry), True)}
 
 
 # The Labor read's cache key, shared by the web route and mobile_api.
 LABOR_INSIGHT_CACHE = "labor-insight:"
+# The analysis fingerprint each restaurant's cached Labor read was written
+# from (DH4-21): a read never outlives the figures it narrates — a POS sync
+# that moves them is a miss, as `inv-insight:` keys already were. One entry
+# per restaurant; the read itself stays under LABOR_INSIGHT_CACHE + rid so
+# the stale fallback still finds it.
+_LABOR_READ_FP = {}
+
+
+def _labor_fp(analysis):
+    try:
+        import labor as _lab_fp
+        return _lab_fp._analysis_fingerprint(analysis) if analysis is not None else None
+    except Exception:
+        return None
+
+
+def labor_cached_read(rid, analysis):
+    """The cached Labor read for `analysis`, or None — a read written from
+    other figures is a miss (DH4-21)."""
+    cached = _cache_get(LABOR_INSIGHT_CACHE + str(rid))
+    if not cached:
+        return None
+    rec, now_fp = _LABOR_READ_FP.get(str(rid)), _labor_fp(analysis)
+    # The fingerprint belongs to the read it was stored with; a read that
+    # entered the cache any other way carries none.
+    if rec is not None and rec[1] is cached and now_fp is not None and rec[0] != now_fp:
+        return None
+    return cached
+
+
+def labor_cache_put(rid, analysis, text):
+    """Cache the Labor read with the fingerprint of the figures behind it."""
+    _cache_set(LABOR_INSIGHT_CACHE + str(rid), text)
+    fp = _labor_fp(analysis)
+    if fp is not None:
+        _LABOR_READ_FP[str(rid)] = (fp, text)
+    else:
+        _LABOR_READ_FP.pop(str(rid), None)
 
 
 @client_bp.route("/api/labor-insight")
@@ -3431,9 +3573,10 @@ def labor_insight_api(current_user):
     # The cache holds the model's TEXT, not rendered HTML: the lines are
     # keyed and answered per request, so an answer given a minute ago drops
     # its line from the next load rather than after the cache expires.
-    cached = _cache_get("labor-insight:" + str(rid))
+    # Keyed on the figures it narrates too (labor_cached_read, DH4-21).
+    _an = labor_analysis_safe(rid)
+    cached = labor_cached_read(rid, _an)
     if cached:
-        _an = labor_analysis_safe(rid)
         return jsonify(diagnosis=_labor_diagnosis_safe(rid, _an, user_id=uid), **labor_read_state(rid),
                        **_labor_insight_out(rid, cached, uid, analysis=_an))
     try:
@@ -3442,13 +3585,13 @@ def labor_insight_api(current_user):
         restaurant = get_restaurant(rid)
         name  = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        analysis = analyse_shifts_for_restaurant(rid)
+        analysis = _an if _an is not None else analyse_shifts_for_restaurant(rid)
         from models import get_staff_notes as _gsn_labor
         _staff_notes_labor = _gsn_labor(rid)
         from labor import labor_note
         insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
                              staff_notes=_staff_notes_labor if _staff_notes_labor else None)
-        _cache_set("labor-insight:" + str(rid), insight)
+        labor_cache_put(rid, analysis, insight)
         return jsonify(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid), **labor_read_state(rid),
                        **_labor_insight_out(rid, insight, uid, analysis=analysis))
     except Exception as e:

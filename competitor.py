@@ -119,6 +119,7 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
             # outside text.
             + UNTRUSTED_NOTE + "\n\nMenu text:\n" + wrap_untrusted(text)
         )
+        import data_health
         msg = create_with_retry(
             client,
             model=model_for("competitor_extract"),
@@ -126,6 +127,8 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
             messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
             action="menu_extract_pdf",
+            # Rests on no data source: menu extraction from the supplied PDF.
+            readiness=data_health.NOT_APPLICABLE,
         )
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
@@ -219,6 +222,7 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             # Scraped from a URL — a page whose author is not our customer.
             + UNTRUSTED_NOTE + "\n\nPage content:\n" + wrap_untrusted(page_text)
         )
+        import data_health
         msg = create_with_retry(
             client,
             model=model_for("competitor_extract"),
@@ -226,6 +230,8 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
             action="menu_extract_url",
+            # Rests on no data source: menu extraction from the supplied page.
+            readiness=data_health.NOT_APPLICABLE,
         )
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
@@ -876,6 +882,16 @@ If nothing in these reviews is worth acting on, write exactly this one line unde
 
 Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
 
+        # The readiness gate before the call (DH5-2). This read is written
+        # from the rivals fetched for it just now, so its own source (the
+        # last competitor read) is what it replaces, never a reason to hold
+        # it; the one registry-dated input it carries is the weather.
+        import data_health as _dh_ci
+        from ai_utils import with_data_state as _with_ds_ci
+        _ready_ci = (_dh_ci.readiness(restaurant_id, "intel", sources=("weather",), include_not_connected=False)
+                     if restaurant_id else _dh_ci.NOT_APPLICABLE)
+        prompt = _with_ds_ci(prompt, _ready_ci)
+
         msg = create_with_retry(
             client,
             model=model_for("competitor_insight"),
@@ -883,13 +899,15 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="competitor_insight",
+            readiness=_ready_ci,
         )
         if getattr(msg, "stop_reason", None) == "max_tokens":
             raise ValueError("competitor insight was truncated")
         text = extract_text(msg).strip()
         return finish_competitor_insight(text, prompt, competitors, restaurant_name,
                                          own_price_level=(restaurant_profile or {}).get("price_level"),
-                                         restaurant_id=restaurant_id, owner_name=owner_name)
+                                         restaurant_id=restaurant_id, owner_name=owner_name,
+                                         registry_state=_ready_ci.get("data_state"))
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         try:
@@ -911,7 +929,8 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
 # computed price line, and _invented_competitors (a multi-word business name
 # at a sentence start, which the engine's N1 patterns do not read).
 
-def _intel_context(prompt, competitors, restaurant_name="", restaurant_id=None, owner_name=None, weather=None):
+def _intel_context(prompt, competitors, restaurant_name="", restaurant_id=None, owner_name=None, weather=None,
+                   registry_state=None):
     """The ValidationContext for one competitor read. Facts: each
     competitor's Google rating (★) and review count, bound to its name;
     the prompt backs anything else it states (hybrid). names_allowed: the
@@ -948,15 +967,20 @@ def _intel_context(prompt, competitors, restaurant_name="", restaurant_id=None, 
     if weather is None:
         weather = "Weather where this restaurant is" in (prompt or "")
     missing = [] if weather else ["weather"]
+    data_state = {"missing_inputs": missing}
+    if registry_state:
+        # The registry's state of the forecast this read carried (DH1-2).
+        import data_health as _dh_ic
+        data_state = _dh_ic.merge_data_state(data_state, registry_state)
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="intel", facts=facts, context_text=prompt or "",
         cause_anchors=anchors, names_allowed=names, tenant_names_denied=tenants, untrusted=untrusted,
-        confidence=None, data_state={"missing_inputs": missing},
+        confidence=None, data_state=data_state,
         policy={"action": "competitor_insight", "check_counts": True})
 
 
 def finish_competitor_insight(raw, prompt, competitors, restaurant_name="", own_price_level=None,
-                              restaurant_id=None, owner_name=None):
+                              restaurant_id=None, owner_name=None, registry_state=None):
     """The competitor read as the owner gets it, from the model's raw text:
     the citation checks (recommendations, then the strength and weakness
     bullets), the Response Validation Layer, the computed price line, and
@@ -970,7 +994,14 @@ def finish_competitor_insight(raw, prompt, competitors, restaurant_name="", own_
     # Strengths and weaknesses are cite-checked the same way (H11).
     text = _validate_bullets(text, competitors)
     import response_validation as rv
-    ctx = _intel_context(prompt, competitors, restaurant_name, restaurant_id, owner_name)
+    import re as _re_fc
+    if registry_state and not _re_fc.search(r"\b(?:weather|rain\w*|snow\w*|storm\w*|forecast|patio|heat|cold)\b",
+                                            raw or "", _re_fc.I):
+        # The forecast is the only registry-dated input here: an out-of-date
+        # one needs disclosing only in a read that leans on it.
+        registry_state = {k: v for k, v in registry_state.items() if k != "stale_sources"}
+    ctx = _intel_context(prompt, competitors, restaurant_name, restaurant_id, owner_name,
+                         registry_state=registry_state)
     return _checked_intel(rv.enforce(text, ctx, marker=False), ctx, competitors, restaurant_name, own_price_level)
 
 

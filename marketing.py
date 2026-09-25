@@ -561,6 +561,7 @@ def generate_content(content_type: str, topic: str,
         topic=topic,
     ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
 
+    import data_health
     msg = create_with_retry(
         get_client(),
         model=model_for("marketing"),
@@ -568,6 +569,8 @@ def generate_content(content_type: str, topic: str,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="marketing_content",
+        # Rests on no data source: a social post drafted from the owner's topic.
+        readiness=data_health.NOT_APPLICABLE,
     )
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
@@ -907,6 +910,7 @@ Rules:
 - Make every idea specific enough that the owner knows exactly what to post
 - NEVER invent geographic or setting details — only reference location specifics (waterfront, patio, views) if they are explicitly mentioned in the restaurant profile above"""
 
+    import data_health
     msg = create_with_retry(
         get_client(),
         model=model_for("marketing"),
@@ -914,6 +918,8 @@ Rules:
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="content_calendar",
+        # Rests on no data source: calendar ideas from the profile and holidays.
+        readiness=data_health.NOT_APPLICABLE,
     )
     # A week cut off at max_tokens is not a parse error to swallow into an
     # empty list — it is a failure the caller has to be able to name (AI-26).

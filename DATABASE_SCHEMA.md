@@ -211,6 +211,8 @@ One identity and one event trail for every recommendation on every surface (`rec
 
 ## Admin / Ops
 
+`activity_log` event `target_change` (9/24/26): written by `models.update_restaurant` inside the same transaction when one of `models.OWNER_TARGET_FIELDS` (`labor_target_pct`, `food_cost_target`, `waste_target_pct`, `monthly_revenue_target`) actually changes value — `event_data` `{"field", "from", "to"}`, `created_at` UTC. Re-saving the same value writes nothing. Read by `rec_trust.owner_changes` (with `schedule_history.published_at`, `reprice_decisions` and `rec_events` completed/done) for the `changed_since` confidence flag; not one of the event types the owner's Account activity list shows.
+
 `admin_events`, `admin_issue_resolutions`, `job_runs`, `job_failures`, `job_period_claims`, `job_cursors` (where a bounded pass stopped; also per-restaurant source state — `places_total:<rid>` the last Google total seen, `places_coverage:<rid>` JSON {since, google_growth, stored, fetches} read by `fetcher.places_coverage`, `metrics_sync:<rid>` JSON {last_attempt_at, last_ok_at, error} read by `scheduler.metrics_sync_state`), `scheduler_lease`, `milestones` (firsts an owner is told about once), `activity_log`, `async_jobs`, `ai_usage` (per-call cost/token logging from `ai_utils.log_ai_usage`), `changelog_entries`, `status_incidents` / `status_incident_updates` / `service_status` (the public status page), `sales_audits` / `sales_audit_shares` (the in-person sales tool), `value_snapshots` (daily "value delivered" figure, populated opportunistically on first Home-tab load of the day — not a scheduled job).
 
 ## Email

@@ -581,8 +581,9 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     data_health.NOT_APPLICABLE for a call that rests on no data source). A
     "refuse" raises DataNotReady before any network call — it costs no
     tokens — and so does "wait" (unattended output whose data is retrying).
-    None is accepted while call sites adopt it; a source test lists the
-    sites that pass it."""
+    Every call site passes it explicitly — tests/test_readiness_adoption.py
+    fails on one that does not; None is still tolerated at runtime (a test
+    double, an old caller) and changes nothing."""
     if isinstance(readiness, dict) and readiness.get("decision") in ("refuse", "wait"):
         raise DataNotReady(readiness)
     if "thinking" not in kwargs and accepts_disabled_thinking(kwargs.get("model"), kwargs):
@@ -638,6 +639,21 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
             _log_failure_safe(e, kwargs.get("model", "unknown"), restaurant_id, action)
             _breaker_release_probe("anthropic")
             raise
+
+
+def with_data_state(prompt, readiness) -> str:
+    """`prompt` with readiness's DATA STATE block appended (data_health.
+    readiness), so the model knows how current each source is before it
+    writes (DH1-2, DH5-2). Unchanged when there is no block."""
+    block = str((readiness or {}).get("prompt_block") or "").strip()
+    return f"{prompt}\n\n{block}" if block else prompt
+
+
+def is_held(readiness) -> bool:
+    """True when readiness says the call must not run (refuse, or wait for
+    a retry that is due) — the check a caller makes before building a
+    prompt it would only throw away."""
+    return isinstance(readiness, dict) and readiness.get("decision") in ("refuse", "wait")
 
 
 # ── AI cost/usage tracking ──────────────────────────────────────────────────

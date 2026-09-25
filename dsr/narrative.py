@@ -386,9 +386,12 @@ class Facts:
     """Tonight's facts as the verifier reads them: which keys can be cited,
     what they are worth, and the untrusted words nothing may echo."""
 
-    def __init__(self, facts, extra_dates=()):
+    def __init__(self, facts, extra_dates=(), data_state=None):
         from time_utils import mdy
         self.metrics, self.details, self.block_strings = {}, {}, {}
+        # The registry's stale sources for the night (data_health.readiness,
+        # DH1-2) — each line's ValidationContext carries them.
+        self.data_state = dict(data_state or {})
         blocks = _blocks(facts)
         for name in _dsr.BLOCKS:
             b = blocks.get(name)
@@ -547,7 +550,7 @@ class Facts:
             untrusted=self.untrusted_texts,
             cause_anchors=[{"text": a, "strength": "likely"} for a in self.cause_anchors(cites)],
             names_allowed=self._rv_base["names"], tenant_names_denied=self._rv_base["denied"],
-            policy={"action": PURPOSE})
+            data_state=dict(getattr(self, "data_state", None) or {}), policy={"action": PURPOSE})
 
     def rv_check(self, text, cites):
         """(text, None, None) when the engine keeps the line — after its
@@ -1844,8 +1847,20 @@ def _write(ctx, facts):
     system, user = build_prompt(ctx, facts, history, open_issues, decisions_text,
                                 _declined_lines(declined[0], declined[1]))
 
-    from ai_utils import (AIBudgetExceeded, AIProviderDown, create_with_retry, extract_text, get_client,
-                          is_refusal, model_for, parse_json_reply)
+    from ai_utils import (AIBudgetExceeded, AIProviderDown, DataNotReady, create_with_retry, extract_text,
+                          get_client, is_refusal, model_for, parse_json_reply)
+    # The readiness gate before the call (DH5-2). The night's figures are
+    # the report's own (can_write above is its data floor, and a night with
+    # sales missing is already provisional); what the registry adds is
+    # whether the POS behind them is failing, said in the DATA STATE block
+    # and handed to the per-line check (Facts.rv_check) as stale sources.
+    # A source that is not connected is left out of the block: this read
+    # is built from the night's close-out, not from it.
+    import data_health as _dh_dsr
+    _ready = _dh_dsr.readiness(rid, "dsr", delivery="unattended", sources=("pos",), include_not_connected=False,
+                               db_path=ctx.db_path if getattr(ctx, "db_path", None) else None)
+    if _ready.get("prompt_block"):
+        user = f"{user}\n\n{_ready['prompt_block']}"
     model = model_for(PURPOSE)
     try:
         msg = create_with_retry(
@@ -1853,7 +1868,10 @@ def _write(ctx, facts):
             model=model, max_tokens=MAX_TOKENS,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}})
+            output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
+            readiness=_ready)
+    except DataNotReady as e:
+        return _refused(f"The summary wasn't written tonight — {e.readiness.get('reason') or 'the data is not ready'}.")
     except (AIBudgetExceeded, AIProviderDown) as e:
         return _refused(str(e))
     except Exception as e:
@@ -1874,7 +1892,10 @@ def _write(ctx, facts):
         _capture(RuntimeError(f"dsr narrative failed validation: {err}"), rid, "validate")
         return _refused("The summary couldn't be written tonight — it came back in the wrong shape.")
 
-    F = Facts(facts, extra_dates=history_dates)
+    # Only the stale sources: tonight's figures are the night's own, so the
+    # POS's present-tense state says nothing about "tonight".
+    F = Facts(facts, extra_dates=history_dates,
+              data_state={k: v for k, v in (_ready.get("data_state") or {}).items() if k == "stale_sources"})
     body, dropped, lead_why = verify(clean, F)
     if lead_why:
         _capture(RuntimeError(f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:200]}"),

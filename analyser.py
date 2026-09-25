@@ -319,6 +319,7 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         dayparts=", ".join(DAYPARTS),
         modes=", ".join(SERVICE_MODES),
     )
+    import data_health
     message = create_with_retry(
         get_client(),
         model=model_for("review_analysis"),
@@ -329,6 +330,8 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="review_analysis",
+        # Rests on no data source: classifies one review's own text.
+        readiness=data_health.NOT_APPLICABLE,
     )
     if getattr(message, "stop_reason", None) == "max_tokens":
         raise ValueError("analysis was truncated")

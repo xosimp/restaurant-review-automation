@@ -281,6 +281,11 @@ def _integrations_for(r, hooks):
     return out
 
 
+# The freshness registry source each admin module row is dated by.
+_ADMIN_MODULE_SOURCE = {"reviews": "reviews", "labor": "labor", "inventory": "inventory",
+                        "marketing": "marketing", "intel": "competitor"}
+
+
 def _modules_for(r, d):
     rid = r["id"]
     rv = d["reviews"].get(rid, {})
@@ -319,7 +324,11 @@ def _modules_for(r, d):
             m["state"] = "no_data"
         else:
             age = _age_days(m["last_data"])
-            m["state"] = "stale" if (age is not None and age > (14 if m["key"] in ("inventory", "intel", "marketing") else 3)) else "healthy"
+            # The registry's one stale rule (DH5-3), not a 3/14-day cut of its
+            # own: admin and the owner's cards call the same data stale.
+            import data_freshness as _df_mods
+            m["state"] = "stale" if (age is not None and _df_mods.is_stale(
+                _ADMIN_MODULE_SOURCE.get(m["key"], m["key"]), age)) else "healthy"
     return mods
 
 

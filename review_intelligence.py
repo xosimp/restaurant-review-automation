@@ -1542,6 +1542,19 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
 
     existing = {d["category"]: d for d in get_diagnoses(restaurant_id, db_path=db_path,
                                                         include_stale=True, include_retired=True)}
+    # The readiness gate before any call (DH5-2). Written by the scheduler
+    # and re-served for a day, so unattended: a review fetch of unknown age,
+    # past its horizon or refused refuses it — the stored diagnoses stand,
+    # as when a call fails — and a failing or old fetch is said in the
+    # prompt's DATA STATE block.
+    import data_health as _dh_rd
+    from ai_utils import is_held as _held_rd
+    _ready_rd = _dh_rd.unattended_readiness(restaurant_id, "reviews",
+                                            db_path=db_path if db_path != DB_PATH else None)
+    if _held_rd(_ready_rd):
+        return [existing[c["category"]] for c in clusters[:max_clusters] if c["category"] in existing]
+    if _ready_rd.get("prompt_block"):
+        op_block = f"{op_block}\n\n{_ready_rd['prompt_block']}"
     produced = []
     for cluster in clusters[:max_clusters]:
         prior = existing.get(cluster["category"])
@@ -1576,6 +1589,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                 messages=[{"role": "user", "content": prompt}],
                 restaurant_id=restaurant_id,
                 action="review_diagnosis",
+                readiness=_ready_rd,
             )
             if getattr(msg, "stop_reason", None) == "max_tokens":
                 raise ValueError("diagnosis was truncated")

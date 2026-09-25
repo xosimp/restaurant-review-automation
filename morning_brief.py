@@ -510,6 +510,10 @@ def _attach_confidence(restaurant_id, lines, db_path=DB_PATH):
     B4 H5). Never raises."""
     try:
         import rec_trust
+        # The demand sources — sales, the POS, the weather (#28, DH3-5): a
+        # POS failing since 6am lowers the slow-day line; "sales" alone
+        # never carried its error.
+        import data_freshness as _df_mb
         ctx = rec_trust.Context(restaurant_id, db_path=db_path)
     except Exception as e:
         log.warning("morning_brief: confidence unavailable: %s", e)
@@ -519,7 +523,7 @@ def _attach_confidence(restaurant_id, lines, db_path=DB_PATH):
             if l.get("key") == "slow_day" and l.get("rec"):
                 n = l.pop("_samples", None)
                 l["confidence"] = rec_trust.assess(
-                    restaurant_id, l["rec"], sources=("sales",), ctx=ctx,
+                    restaurant_id, l["rec"], sources=_df_mb.sources_for(["demand"]), ctx=ctx,
                     evidence={"n": n, "kind": "weekdays",
                               "basis": (f"{n} of that weekday's nights against a normal day"
                                         if n is not None else "the weekday's history")})

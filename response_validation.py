@@ -2318,13 +2318,21 @@ class _Run:
             self.emit("M1", "caveat", "caveat", code, "a required disclosure the text leaves out", caveat)
         age = ds.get("data_age_days")
         limit = self.ctx.policy.get("max_data_age_days", 7)
-        if isinstance(age, (int, float)) and age > limit:
+        # Present tense only while the registry calls the data current
+        # (data_health.validation_state's `not_current`, DH5-3): the card
+        # beside the text reads "out of date" from the same registry.
+        not_current = [str(x) for x in (ds.get("not_current") or []) if x]
+        if (isinstance(age, (int, float)) and age > limit) or not_current:
             m = re.search(r"\b(?:this\s+week|today|tonight|right\s+now|currently|this\s+morning)\b", text or "", re.I)
             if m:
                 through = ds.get("as_of")
-                self.emit("M1", "caveat", "caveat", m.group(0), f"data is {int(age)} days old",
+                why = (f"data is {int(age)} days old" if isinstance(age, (int, float)) and age > limit
+                       else f"not current: {', '.join(not_current[:3])}")
+                self.emit("M1", "caveat", "caveat", m.group(0), why,
                           f"This reads data through {through}, not this week." if through else
-                          f"This reads data that is {int(age)} days old, not this week.")
+                          (f"This reads data that is {int(age)} days old, not this week."
+                           if isinstance(age, (int, float)) else
+                           f"This reads data that isn't current ({', '.join(not_current[:3])}), not this week."))
 
 
 # ── entry points ────────────────────────────────────────────────────────────

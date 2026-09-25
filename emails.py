@@ -164,6 +164,7 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
               "plainly what is set up and what comes next; do not celebrate results that are not there. "
             + "Plain text only, no markdown.\n\n" + context
         )
+        import data_health
         msg = create_with_retry(
             client,
             model=model_for("email_personalise"),
@@ -171,6 +172,8 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="email_personalization",
+            # Rests on no data source: onboarding email copy from typed counts.
+            readiness=data_health.NOT_APPLICABLE,
         )
         text = extract_text(msg).strip()
         if getattr(msg, "stop_reason", None) == "max_tokens":

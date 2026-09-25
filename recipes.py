@@ -267,8 +267,11 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
     drafted = skipped = 0
     for item in todo:
         try:
+            import data_health
             msg = create_with_retry(
                 client, restaurant_id=restaurant_id, action="recipe_draft",
+                # Rests on no data source: recipe drafts the owner confirms line by line.
+                readiness=data_health.NOT_APPLICABLE,
                 model=MODEL, max_tokens=1200,
                 output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
                 messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context)}])
@@ -498,8 +501,11 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients) or "- (none on file yet)"
     from ai_utils import create_with_retry, get_client
     client = client or get_client()
+    import data_health
     msg = create_with_retry(
         client, restaurant_id=restaurant_id, action="recipe_photo",
+        # Rests on no data source: OCR of a recipe photo the owner confirms.
+        readiness=data_health.NOT_APPLICABLE,
         model=MODEL, max_tokens=2000,
         output_config={"format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},
         messages=[{"role": "user", "content": [invoices._content_block(data, media_type),

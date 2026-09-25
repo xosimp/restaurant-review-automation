@@ -527,6 +527,10 @@ def _connect_hint(key) -> str:
 
 # ── before a model call ────────────────────────────────────────────────────
 
+# The sources whose data is a period a sentence can call "this week".
+_PERIOD_SOURCES = ("pos", "labor", "sales", "reviews", "marketing", "dsr")
+
+
 def validation_state(states) -> dict:
     """The Response Validation Layer's data_state from registry states:
     stale_sources (labels of every stale, unknown or failing source — M1
@@ -545,6 +549,19 @@ def validation_state(states) -> dict:
             if stalest is None or lag > (stalest.get("lag_days") or 0):
                 stalest = s
     out = {"stale_sources": stale}
+    # Present tense only while current (DH5-3): a period source that is
+    # not current — aging, stale, unknown or failing — is named here, and
+    # the Response Validation Layer's M1 holds "this week" / "today" /
+    # "currently" to its date. Counts, deliveries, the weather and the
+    # weekly Intel reads are snapshots, not the week a claim describes.
+    not_current = []
+    for s in states or ():
+        if not s or s.get("state") == "not_connected" or s.get("key") not in _PERIOD_SOURCES:
+            continue
+        if s.get("error") or s.get("state") != "current":
+            not_current.append(OWNER_LABEL.get(s.get("key"), s.get("label") or s.get("key")))
+    if not_current:
+        out["not_current"] = not_current
     if ages:
         out["data_age_days"] = max(ages)
         if stalest is not None and stalest.get("as_of"):
@@ -575,7 +592,7 @@ def prompt_block(states) -> str:
 
 
 def readiness(restaurant_id, module, ctx=None, delivery="interactive", restaurant=None, db_path=None,
-              now=None, sources=None) -> dict:
+              now=None, sources=None, include_not_connected=True) -> dict:
     """Asked before a model call: {decision, module, reason, blocking,
     sources (owner lines), data_state (for ValidationContext.data_state),
     prompt_block (for the prompt), retry_after}.
@@ -588,6 +605,9 @@ def readiness(restaurant_id, module, ctx=None, delivery="interactive", restauran
                is scheduled (source_health.next_retry_at).
       caveat   any source is failing or under CURRENT_AT.
       proceed  otherwise.
+    `include_not_connected=False` leaves sources that are not connected out
+    of the prompt block (a read built from its own inputs, like the nightly
+    report, where "not connected — say nothing about it" would silence it).
     Never raises: an unreadable state proceeds with an empty block, and the
     validation layer still runs."""
     try:
@@ -607,11 +627,46 @@ def readiness(restaurant_id, module, ctx=None, delivery="interactive", restauran
             decision, retry_after = "wait", bs.get("next_retry_at")
         return {"decision": decision, "module": module, "reason": reason, "blocking": b,
                 "sources": [source_line(s, now)["line"] for s in states], "data_state": validation_state(states),
-                "prompt_block": prompt_block(states), "retry_after": retry_after}
+                "prompt_block": prompt_block(states if include_not_connected else
+                                             [s for s in states if s.get("state") != "not_connected"]),
+                "retry_after": retry_after}
     except Exception as e:
         print(f"[data_health] readiness failed for {restaurant_id}/{module}: {e}")
         return {"decision": "proceed", "module": module, "reason": "data state unreadable", "blocking": None,
                 "sources": [], "data_state": {}, "prompt_block": "", "retry_after": None}
+
+
+def unattended_readiness(restaurant_id, module, ctx=None, db_path=None, **kw) -> dict:
+    """readiness(delivery="unattended") for a job that already checks it has
+    data (a diagnosis needs drivers or a complaint cluster, the digest a
+    live module): a blocking source that is NOT CONNECTED is left to that
+    check — its refuse becomes a caveat — so only data that is there but
+    can't be stood on (unknown age, past its horizon, credentials refused,
+    a retry due) holds the output. Never raises."""
+    try:
+        if ctx is None:
+            import rec_trust
+            ctx = rec_trust.Context(restaurant_id, db_path=db_path)
+        rd = readiness(restaurant_id, module, ctx=ctx, delivery="unattended", db_path=db_path, **kw)
+        b = rd.get("blocking")
+        if rd.get("decision") == "refuse" and b and \
+                (ctx.sources((b,)) or [{}])[0].get("state") == "not_connected":
+            rd = dict(rd, decision="caveat")
+        return rd
+    except Exception as e:
+        print(f"[data_health] unattended readiness unreadable for {restaurant_id}/{module}: {e}")
+        return {"decision": "proceed", "module": module, "reason": "data state unreadable", "blocking": None,
+                "sources": [], "data_state": {}, "prompt_block": "", "retry_after": None}
+
+
+def unattended_hold(restaurant_id, module, ctx=None, db_path=None):
+    """Why unattended output (the digest, the weekly plan) leaves `module`
+    out this run, or None — unattended_readiness said refuse or wait — per
+    module, so the rest of the output still goes. Never raises (None)."""
+    rd = unattended_readiness(restaurant_id, module, ctx=ctx, db_path=db_path)
+    if rd.get("decision") not in ("refuse", "wait"):
+        return None
+    return str(rd.get("reason") or "its data isn't current")
 
 
 def merge_data_state(base, extra) -> dict:
@@ -619,7 +674,7 @@ def merge_data_state(base, extra) -> dict:
     without repeats, the older age and its as-of kept."""
     out = dict(base or {})
     extra = extra or {}
-    for k in ("stale_sources", "required_disclosures", "partial_flags", "missing_inputs"):
+    for k in ("stale_sources", "required_disclosures", "partial_flags", "missing_inputs", "not_current"):
         vals = list(out.get(k) or [])
         for v in extra.get(k) or []:
             if v not in vals:

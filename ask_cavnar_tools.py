@@ -814,6 +814,28 @@ def _read_review_brief(restaurant_id):
         "restaurant's own sales; quote it as a range and say what it rests on."))
 
 
+def _stale_diagnoses_as_associations(diagnoses) -> list:
+    """A stored diagnosis's own age counts (DH3-9): one past its refresh is
+    handed over as a possible association with the date it was written —
+    its cause sentence says so, so the answer's cause check reads it as an
+    association, never a likely cause — and one past rec_trust.
+    STALE_ANCHOR_MAX_DAYS is not handed over at all."""
+    import rec_trust
+    out = []
+    for d in diagnoses or []:
+        strength = rec_trust.diagnosis_anchor_strength(d)
+        if not strength:
+            continue
+        if strength == "association":
+            d = dict(d)
+            when = d.get("as_of") or "an earlier date"
+            d["cause"] = (f"Possibly associated with these complaints (an older read, written {when}, "
+                          f"not refreshed since): {d.get('cause')}")
+            d["cause_strength"] = "association"
+        out.append(d)
+    return out
+
+
 def _read_review_diagnosis(restaurant_id):
     """Why the complaints are happening, not just what they are.
 
@@ -828,7 +850,7 @@ def _read_review_diagnosis(restaurant_id):
     """
     import review_intelligence as _ri
     try:
-        diagnoses = _ri.get_diagnoses(restaurant_id, include_stale=True)
+        diagnoses = _stale_diagnoses_as_associations(_ri.get_diagnoses(restaurant_id, include_stale=True))
     except Exception:
         diagnoses = []
     try:
@@ -902,7 +924,82 @@ def _read_ai_visibility(restaurant_id):
         "queries_tested": (payload.get("queries") or [])[:_MAX_ROWS],
         "checklist": (payload.get("checklist") or [])[:_MAX_ROWS],
         "social_posts_30d": payload.get("social_posts_30d"),
+        # When the run was measured (DH3-7): a six-week-old score read
+        # exactly like this morning's. M/D/YY for the model to quote.
+        "measured_at": _mdy_or_none(payload.get("measured_at")),
     }
+
+
+def _mdy_or_none(stamp):
+    if not stamp:
+        return None
+    try:
+        from time_utils import mdy
+        return mdy(str(stamp)[:10]) or None
+    except Exception:
+        return None
+
+
+def _read_data_health(restaurant_id):
+    """"Can I trust today's recommendations?" — the Restaurant Data Health
+    snapshot (data_health.snapshot): the overall % with its reason, one line
+    per source with its data-through date and sync health, what is not
+    connected, and per module the decision and the confidence impact
+    (DH5 §2.6, Q6). Computed, never written by a model."""
+    import data_health
+    snap = data_health.snapshot(restaurant_id)
+    if not snap.get("ok"):
+        return {"has_data": False, "error": snap.get("error") or "Data health couldn't be read right now."}
+    return {
+        "has_data": True,
+        "overall": snap.get("overall"),
+        "worst_line": snap.get("worst_line"),
+        "sources": [{k: s.get(k) for k in ("label", "state", "line", "as_of", "synced", "error", "reliability")}
+                    for s in snap.get("sources") or []][:_MAX_ROWS],
+        "not_connected": (snap.get("not_connected") or [])[:_MAX_ROWS],
+        "modules": [{k: m.get(k) for k in ("title", "decision", "reason", "confidence_impact")}
+                    for m in snap.get("modules") or []][:_MAX_ROWS],
+        "note": ("Quote each source's line as written — its dates are the data-through dates. The overall % is "
+                 "a data health score, not the chance a recommendation works. Name the worst line and the one "
+                 "action that would raise it."),
+    }
+
+
+# ── every tool result carries its data's age (DH3-7, #24) ────────────────────
+
+def _with_data_as_of(name, restaurant_id, payload, restaurant=None):
+    """`payload` with `_data_as_of` (M/D/YY the stalest source it reads runs
+    through), `_data_state` (that source's state) and `_sync_error` (every
+    failing source, or None) from the freshness registry — over the sources
+    the tool reads (data_freshness.sources_for_tools, the ones its answer's
+    K1 is measured over). Unchanged for a tool that reads no dated source.
+    Never raises."""
+    try:
+        import data_freshness
+        import ask_cavnar
+        keys = data_freshness.sources_for_tools([name], ask_cavnar._modules_for([name]))
+        if not keys or not isinstance(payload, dict):
+            return payload
+        row = restaurant
+        if row is None:
+            import models
+            row = models.get_restaurant(restaurant_id)
+        if row is None:
+            return payload
+        states = [s for s in data_freshness.states(row, keys) if s and s.get("state") != "not_connected"]
+        if not states:
+            return payload
+        dated = [s for s in states if s.get("pct") is not None]
+        stalest = min(dated, key=lambda s: (s["pct"], s.get("as_of_iso") or "")) if dated else None
+        errors = [f"{s.get('label') or s.get('key')}: {s['error']}" for s in states if s.get("error")]
+        out = dict(payload)
+        out["_data_as_of"] = (stalest or {}).get("as_of")
+        out["_data_state"] = (stalest or {}).get("state") or "unknown"
+        out["_sync_error"] = "; ".join(errors) if errors else None
+        return out
+    except Exception as e:
+        log.warning("ask_cavnar tool %s data age unavailable: %s", name, e)
+        return payload
 
 
 def _read_labor_detail(restaurant_id, weeks=8):
@@ -1424,6 +1521,27 @@ TOOLS = [
                 "of the business. It is computed, not written by a model, and it is one call "
                 "instead of six. Drill into a single module with that module's own tool only "
                 "after this tells you which one matters."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        # "Can I trust today's recommendations?" (DH5 §2.6, #24). Reads
+        # every source (data_freshness.TOOL_SOURCES), so an answer built on
+        # it is measured against all of them.
+        "kind": "read",
+        "fn": _read_data_health,
+        "module": None,
+        "spec": {
+            "name": "read_data_health",
+            "description": (
+                "How current and complete this restaurant's data is: the Data Health score with its reason, "
+                "one line per source (POS sales, shifts, reviews, counts, deliveries, marketing metrics, "
+                "weather, competitors, AI visibility, the daily report) with the date its data runs through "
+                "and whether its sync is failing, what is not connected, and how much each module's "
+                "recommendations would rise once its data is current. Call this for 'can I trust this', "
+                "'is my data up to date', 'why is confidence low', 'is my POS syncing', or before advising "
+                "on data a snapshot marks as not current."
             ),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
@@ -2539,6 +2657,12 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
         kwargs["_viewer"] = restaurant
     try:
         payload = tool["fn"](restaurant_id, **kwargs)
+        # One wrapper for every read (DH3-7, #24): the result says how
+        # current its data is and whether a sync behind it is failing, from
+        # the registry — only the competitor read carried an as-of before.
+        if tool["kind"] == "read" and isinstance(payload, dict) and not payload.get("error") \
+                and name != "read_data_health":
+            payload = _with_data_as_of(name, restaurant_id, payload, restaurant=restaurant)
         if name in _UNTRUSTED_CONTENT_TOOLS and isinstance(payload, dict):
             payload = _mark_untrusted(dict(payload))
             payload["_warning"] = _UNTRUSTED_NOTE

@@ -31,6 +31,20 @@ from models import DB_PATH
 DISTRUST_DAYS = 30
 DISTRUST_CAP = 49
 
+# A stored diagnosis's own age is a Data Freshness input (DH3-1): a
+# pseudo-source folded into the minimum with the card's real sources,
+# recency(age − DIAGNOSIS_GRACE_DAYS) over DIAGNOSIS_HORIZON_DAYS — so a
+# cause written 60 days ago no longer reads ~70% because the reviews were
+# fetched this morning.
+DIAGNOSIS_GRACE_DAYS = 1
+DIAGNOSIS_HORIZON_DAYS = 7
+# Unattended output (the digest, the weekly plan, Ask's diagnosis tool) may
+# anchor a cause on a stale diagnosis only as an association, and on none
+# older than this (DH3-9).
+STALE_ANCHOR_MAX_DAYS = 14
+# Owner changes looked back over for the changed_since flag (DH3-14).
+CHANGES_LOOKBACK_DAYS = 30
+
 
 class Context:
     """What one build (a Home page, a DSR, one Ask answer) reads once."""
@@ -47,6 +61,13 @@ class Context:
         self._distrust = None
         self._row = None
         self._confs = {}
+        self._changes = None
+
+    def changes(self):
+        """owner_changes, read once per build."""
+        if self._changes is None:
+            self._changes = owner_changes(self.rid, db_path=self.db_path)
+        return self._changes
 
     # the restaurant row the freshness readers want (dict of every column)
     def row(self):
@@ -137,16 +158,82 @@ def diagnosis_evidence(dg, n, kind, basis, flags=(), coverage=None, corroboratin
     lowers it — and by any figure that failed verification; raised,
     boundedly, by the other modules whose verified figures agree
     (`corroborating`, default the diagnosis's own distinct verified
-    modules — B4 M2). A diagnosis over a week old is a stale read."""
+    modules — B4 M2). A diagnosis past its refresh (its `stale` flag — the
+    TTL, a day) is a stale read: a partial flag, and the basis says the date
+    it was written ("written 9/22/26" — it said "written over a week ago" of
+    a read 25 hours old, DH3-1). Its own age rides along as
+    read_age_days / read_as_of_iso, which assess() folds into Data
+    Freshness as the `diagnosis` pseudo-source."""
     dg = dg or {}
     band = dg.get("confidence")
     unverified = (dg.get("unsupported_figures") or dg.get("unverified_figures") or dg.get("unverified") or [])
     fl = tuple(flags or ()) + (("stale_read",) if dg.get("stale") else ())
-    return {"n": n, "kind": kind, "basis": basis + ("; written over a week ago" if dg.get("stale") else ""),
-            "flags": fl, "coverage": coverage,
-            "model_band": band if band in ce.MODEL_CAPS else None,
-            "unverified": len(unverified) if isinstance(unverified, (list, tuple)) else int(bool(unverified)),
-            "corroborating": verified_evidence_count(dg) if corroborating is None else int(corroborating)}
+    age, iso = diagnosis_age(dg)
+    written = ce._mdy(iso) if iso else (dg.get("as_of") or "")
+    note = ""
+    if dg.get("stale"):
+        note = f"; written {written}" if written else "; written on a date that can't be read"
+    out = {"n": n, "kind": kind, "basis": basis + note,
+           "flags": fl, "coverage": coverage,
+           "model_band": band if band in ce.MODEL_CAPS else None,
+           "unverified": len(unverified) if isinstance(unverified, (list, tuple)) else int(bool(unverified)),
+           "corroborating": verified_evidence_count(dg) if corroborating is None else int(corroborating)}
+    if age is not None or dg.get("stale") or dg.get("generated_at"):
+        out["read_age_days"] = age
+        out["read_as_of_iso"] = iso
+    return out
+
+
+def diagnosis_age(dg) -> tuple:
+    """(age in days or None, ISO date written or None) of a stored
+    diagnosis — from its generated_at, else its age_hours."""
+    from datetime import timezone as _tz
+    dg = dg or {}
+    iso, age = None, None
+    raw = dg.get("generated_at")
+    if raw:
+        try:
+            from time_utils import parse_stamp
+            at = parse_stamp(raw, naive_tz="UTC")
+        except Exception:
+            at = None
+        if at is not None:
+            iso = at.date().isoformat()
+            age = max(0.0, (datetime.now(_tz.utc) - at).total_seconds() / 86400.0)
+    if age is None and isinstance(dg.get("age_hours"), (int, float)):
+        age = max(0.0, float(dg["age_hours"]) / 24.0)
+        if iso is None:
+            iso = (datetime.utcnow() - timedelta(days=age)).date().isoformat()
+    return (round(age, 2) if age is not None else None), iso
+
+
+def diagnosis_source(age_days, as_of_iso) -> dict:
+    """The `diagnosis` pseudo-source: a data_freshness-shaped state for a
+    stored diagnosis's own age, so the freshness minimum weighs it with
+    the card's real sources. An age that can't be read is unknown (0)."""
+    if age_days is None:
+        return {"key": "diagnosis", "label": "Diagnosis", "pct": 0, "as_of": None, "as_of_iso": None,
+                "basis": "Diagnosis: when it was written can't be read", "state": "unknown", "error": None}
+    pct = int(round(100 * ce.recency(max(0.0, float(age_days)), DIAGNOSIS_GRACE_DAYS, DIAGNOSIS_HORIZON_DAYS)))
+    when = ce._mdy(as_of_iso) if as_of_iso else None
+    return {"key": "diagnosis", "label": "Diagnosis", "pct": pct, "as_of": when, "as_of_iso": as_of_iso,
+            "basis": f"Diagnosis written {when}" if when else "Diagnosis written earlier",
+            "state": ce.state(pct), "error": None}
+
+
+def diagnosis_anchor_strength(dg):
+    """How strongly unattended output may lean on a stored diagnosis's cause
+    (DH3-9): "likely" while it is within its refresh, "association" once it
+    is stale, None (no anchor) past STALE_ANCHOR_MAX_DAYS or when its age
+    can't be read."""
+    if not dg or not dg.get("cause"):
+        return None
+    if not dg.get("stale"):
+        return "likely"
+    age, _iso = diagnosis_age(dg)
+    if age is None or age > STALE_ANCHOR_MAX_DAYS:
+        return None
+    return "association"
 
 
 def verified_evidence_count(dg) -> int:
@@ -216,6 +303,106 @@ def _kind(key):
     return rec_ledger.kind_of(key)
 
 
+# What each recorded owner change touches, by the data_freshness source a
+# recommendation rests on (DH3-14).
+_TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
+                   "food_cost_target": ("inventory", "your food cost target"),
+                   "waste_target_pct": ("inventory", "your waste target"),
+                   "monthly_revenue_target": ("sales", "your revenue target")}
+
+
+def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:
+    """The owner's known changes in the last `since_days`, newest per kind:
+    [{what, at (ISO date), sources (data_freshness keys it touches, empty =
+    any), kind (a recommendation kind it answers, or None)}] — a published
+    schedule (schedule_history.published_at), a reprice (reprice_decisions),
+    a changed target (activity_log target_change, models.update_restaurant)
+    and a recommendation marked done (rec_events completed/done). Each table
+    is read on its own; one that is missing leaves that kind out. Never
+    raises."""
+    import json
+    import data_freshness
+    since = (datetime.utcnow() - timedelta(days=since_days)).strftime("%Y-%m-%d")
+    out = []
+    try:
+        conn = data_freshness.get_conn(db_path)
+    except Exception:
+        return out
+
+    def q(sql, args):
+        try:
+            return conn.execute(sql, args).fetchall()
+        except Exception:
+            return []
+    try:
+        for r in q("SELECT MAX(published_at) AS at FROM schedule_history WHERE restaurant_id=? "
+                   "AND published_at IS NOT NULL AND published_at >= ?", (restaurant_id, since)):
+            if r["at"]:
+                out.append({"what": "published a schedule", "at": str(r["at"])[:10], "sources": ("labor",),
+                            "kind": None})
+        for r in q("SELECT dish, created_at AS at FROM reprice_decisions WHERE restaurant_id=? AND created_at >= ? "
+                   "ORDER BY created_at DESC LIMIT 1", (restaurant_id, since)):
+            if r["at"]:
+                dish = str(r["dish"] or "").strip()
+                out.append({"what": f"repriced {dish}" if dish else "repriced a dish", "at": str(r["at"])[:10],
+                            "sources": ("inventory",), "kind": None})
+        seen = set()
+        for r in q("SELECT event_data, created_at AS at FROM activity_log WHERE restaurant_id=? "
+                   "AND event_type='target_change' AND created_at >= ? ORDER BY created_at DESC",
+                   (restaurant_id, since)):
+            try:
+                field = (json.loads(r["event_data"] or "{}") or {}).get("field")
+            except (TypeError, ValueError):
+                field = None
+            if field in _TARGET_SOURCES and field not in seen:
+                seen.add(field)
+                src, label = _TARGET_SOURCES[field]
+                out.append({"what": f"changed {label}", "at": str(r["at"])[:10], "sources": (src,), "kind": None})
+        for r in q("SELECT key, MAX(at) AS at FROM rec_events WHERE restaurant_id=? AND event='completed' "
+                   "AND at >= ? AND meta LIKE '%\"done\"%' GROUP BY key", (restaurant_id, since)):
+            if r["at"]:
+                out.append({"what": "marked a similar recommendation done", "at": str(r["at"])[:10], "sources": (),
+                            "kind": _kind(r["key"]), "key": r["key"]})
+    finally:
+        conn.close()
+    return out
+
+
+def changed_since(ctx, key, states) -> dict:
+    """{what, at, caution} for the newest owner change after this
+    recommendation's data window, or None (DH3-14). The window ends on the
+    newest date its sources' data covers; a change is relevant when it
+    touches one of those sources, or — a recommendation marked done — when
+    it answered another recommendation of the same kind. Nothing dates the
+    window → None."""
+    try:
+        live = [s for s in states or () if s and s.get("pct") is not None and s.get("as_of_iso")]
+        if not live:
+            return None
+        through = max(str(s["as_of_iso"])[:10] for s in live)
+        keys = {s.get("key") for s in live}
+        kind = _kind(key)
+        hits = []
+        for c in ctx.changes():
+            if c["at"] <= through:
+                continue
+            if c.get("kind"):
+                if c["kind"] != kind or c.get("key") == key:
+                    continue
+            elif not (set(c.get("sources") or ()) & keys):
+                continue
+            hits.append(c)
+        if not hits:
+            return None
+        c = max(hits, key=lambda c: c["at"])
+        when = ce._mdy(c["at"])
+        return {"what": c["what"], "at": c["at"], "as_of": when,
+                "caution": f"You {c['what']} on {when} — this reads data from before it."}
+    except Exception as e:
+        print(f"[rec_trust] changed_since unavailable for {getattr(ctx, 'rid', None)}/{key}: {e}")
+        return None
+
+
 def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_path=None, now=None,
            ctx=None, rests_on=None) -> dict:
     """The K1 confidence object for recommendation `key`.
@@ -245,10 +432,34 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
         if seen and not ev_in.get("sample"):
             ev_in["cap"] = min(ev_in.get("cap", 100), DISTRUST_CAP)
             ev_in["cap_reason"] = f"you said you don't trust the data behind this ({ce._mdy(seen)})"
+        # A stored read's own age (diagnosis_evidence): a pseudo-source in
+        # the freshness minimum, never evidence (DH3-1).
+        has_read_age = "read_age_days" in ev_in
+        read_age = ev_in.pop("read_age_days", None)
+        read_iso = ev_in.pop("read_as_of_iso", None)
+        states = list(ctx.sources(tuple(sources or ())))
+        # Something the owner changed after the data window (DH3-14): the
+        # figure describes the business before it — a partial flag (capped at
+        # PARTIAL_CAP) and a caution naming the change and its date.
+        change = None
+        if not ev_in.get("sample"):
+            change = changed_since(ctx, key, states)
+            if change:
+                ev_in["flags"] = tuple(dict.fromkeys(tuple(ev_in.get("flags") or ()) + ("changed_since",)))
         ev = ce.evidence(**ev_in)
         acc = ce.accuracy(ctx.record(kind))
-        fr = ce.freshness(ctx.sources(tuple(sources or ())), rests_on=rests_on)
+        # Folded into the minimum beside a real source only: with none
+        # measured, the card stays "freshness unmeasured" (capped) — a
+        # diagnosis's own recency never stands in for the data under it.
+        if has_read_age and any(s and s.get("pct") is not None for s in states):
+            states = states + [diagnosis_source(read_age, read_iso)]
+        fr = ce.freshness(states, rests_on=rests_on)
         out = ce.assemble(ev, acc, fr)
+        if change:
+            out["changed_since"] = change
+            cur = str(out.get("caution") or "")
+            if not cur or not any(w in cur for w in ("out of date", "failing", "confirms")):
+                out["caution"] = change["caution"]
         if memo:
             ctx._confs[key] = copy.deepcopy(out)
         return out

@@ -139,12 +139,15 @@ def test_every_digest_line_is_logged_on_the_digest_surface(db_path, monkeypatch,
 
 
 def test_a_stale_labor_line_carries_its_caveat_into_the_email(db_path, monkeypatch):
-    """M1: labor data three weeks old stated as "this week" keeps the line
-    only with the caveat saying which dates it reads — rendered in the email,
-    since nobody reads the digest before it goes."""
+    """M1: labor data a week old (stale, still inside the registry's
+    horizon) stated as "this week" keeps the line only with the caveat
+    saying which dates it reads — rendered in the email, since nobody reads
+    the digest before it goes. (Three-week-old labor is past the horizon
+    now and held outright — the readiness gate, Data Freshness #2; that
+    case is test_readiness_behaviour.py's.)"""
     rid = _rid(db_path, module_labor=1)
     import labor
-    end = (date.today() - timedelta(days=21)).isoformat()
+    end = (date.today() - timedelta(days=7)).isoformat()
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {
         "is_live": True, "overall_labor_pct": 31.0, "overtime_risk": [],
         "date_range": {"end": end, "days": 14}})
