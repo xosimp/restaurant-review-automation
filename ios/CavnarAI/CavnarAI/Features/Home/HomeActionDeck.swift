@@ -12,6 +12,9 @@ import SwiftUI
 /// logs as shown); "+N more" opens the rest in place.
 struct HomeActionDeck: View {
     let items: [NeedsAttentionItem]
+    /// "Start here" when this deck leads Home; "Then these" under the one
+    /// thing, so the page has one "Start here", not two (density #3).
+    var title: String = "Start here"
     var busy: Bool = false
     let onPrimary: (NeedsAttentionItem) -> Void
     let onSecondary: (NeedsAttentionItem) -> Void
@@ -45,7 +48,7 @@ struct HomeActionDeck: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Needs attention", title: "Start here",
+            HomeSectionHeader(kicker: "Needs attention", title: title,
                               trailing: items.count > 1 ? "\(items.count) open" : nil)
 
             if let lead = items.first {

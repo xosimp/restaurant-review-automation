@@ -116,38 +116,22 @@ struct HomeView: View {
                                     .padding(.top, 10)
                             }
 
-                            HomePulseStrip(modules: summary.modules, paused: backgroundMotionPaused) { module in
+                            // The pulse row, with freshness folded in
+                            // (density #21): a stale module's chip carries
+                            // an amber clock, and the row ends on the Data
+                            // health chip that opens the sheet — the old
+                            // per-source strip under it is gone from Home.
+                            let entries = summary.freshness?.entries ?? []
+                            HomePulseStrip(modules: summary.modules, paused: backgroundMotionPaused,
+                                           staleModules: HomePulseStrip.staleModules(entries),
+                                           dataChip: HomePulseStrip.dataChipLabel(
+                                               health: summary.dataHealth,
+                                               unavailable: summary.freshnessUnavailable),
+                                           onOpenDataHealth: { showingDataHealth = true }) { module in
                                 navigate(to: ModuleRoute(key: module.key, label: module.label))
                             }
                             .padding(.top, 18)
                             .belowFold(heroAppeared, delay: 0.1)
-
-                            // How current each source behind those tiles is
-                            // (K4/J2), led by the Data Health Score; tap
-                            // for the Data health sheet. Nothing on an
-                            // older server; "Couldn't check…" when the
-                            // server couldn't work freshness out.
-                            let entries = summary.freshness?.entries ?? []
-                            if HomeFreshnessStrip.hasContent(entries: entries, health: summary.dataHealth,
-                                                             unavailable: summary.freshnessUnavailable) {
-                                HomeFreshnessStrip(entries: entries, dataAsOf: summary.dataAsOfDisplay,
-                                                   monitoring: summary.monitoring,
-                                                   health: summary.dataHealth,
-                                                   unavailable: summary.freshnessUnavailable,
-                                                   onOpen: { showingDataHealth = true })
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 12)
-                                    .belowFold(heroAppeared, delay: 0.13)
-                            }
-
-                            // The activity strip — what Cavnar AI is doing
-                            // right now, rotating; tap for the feed. Shows
-                            // nothing for an account with nothing armed.
-                            AIActivityStrip(viewModel: aiActivity, paused: backgroundMotionPaused)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 12)
-                                .belowFold(heroAppeared, delay: 0.16)
-                                .task { await aiActivity.load() }
 
                             if summary.quietHoursActive {
                                 quietHoursBanner(summary)
@@ -156,54 +140,35 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
+                            // The order is fixed by role, the same as the web
+                            // Home (§11b as amended 9/25/26, density #3):
+                            // header strip, THE ONE THING at position 2 with
+                            // Needs attention directly under it, then the
+                            // day, what to do next, and Results — collapsed,
+                            // one row — at the bottom. An account with
+                            // nothing connected leads with readiness and the
+                            // first look instead, because nothing else has
+                            // data yet. The one thing renders nothing when
+                            // there is none, and Needs attention then says
+                            // "Start here" itself — one "Start here" a page.
+                            if hasOneThing {
+                                HomeOneThingCard(viewModel: followThrough)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 26)
+                                    .belowFold(heroAppeared, delay: 0.16)
+                            }
+
                             // The work leads (friction audit #11): what needs
-                            // the owner sits right under the header strip,
-                            // every item visible, before any result or read.
-                            // It sat tenth, 2–4 screens down, under charts.
+                            // the owner, every item visible, before any
+                            // result or read.
                             attentionSection(summary)
                                 .padding(.horizontal, 20)
-                                .padding(.top, 26)
+                                .padding(.top, hasOneThing ? 30 : 26)
                                 .belowFold(heroAppeared, delay: 0.2)
 
-                            // How you compare (Benchmarking #23): who the
-                            // restaurant is compared to and where it stands,
-                            // behind-first, each behind metric with its Ask.
-                            // Its own read; nothing when there is nothing
-                            // to compare. Results start here, below the work.
-                            HomeBenchmarkStrip(onOpenModule: { module in
-                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                            })
-                                .padding(.horizontal, 20)
-                                .padding(.top, 22)
-                                .belowFold(heroAppeared, delay: 0.3)
-
-                            // The order is fixed by role, the same as the web
-                            // Home: header strip, what needs a hand (above),
-                            // then value graph, THE DAY, what to do next, and
-                            // the proof (§11b as amended 9/25/26).
-                            // An account with nothing connected leads with
-                            // readiness and the first look instead, because
-                            // nothing else has data yet.
                             if summary.isFresh {
                                 freshStart(summary)
                             }
-
-                            HomeValueBand(
-                                total: summary.totalValueDelivered,
-                                history: summary.valueHistory,
-                                measuredOn: summary.valueByModule ?? [],
-                                headline: summary.valueHeadline,
-                                scope: summary.value?.scope,
-                                // Its count-up and line reveal wait for this
-                                // rather than for onAppear — see the flag's
-                                // own comment in HomeValueBand.
-                                revealed: heroAppeared
-                            ) {
-                                Haptic.light()
-                                showingValueDetail = true
-                            }
-                            .padding(.top, 24)
-                            .belowFold(heroAppeared, delay: 0.52)
 
                             // THE DAY. Monday: the weekly receipts lead it.
                             // After 8pm: the close-out takes the slot.
@@ -211,13 +176,13 @@ struct HomeView: View {
                                 HomeWeeklyReceipts(receipts: receipts)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.6)
+                                    .belowFold(heroAppeared, delay: 0.3)
                             }
                             if summary.localIsEvening {
                                 HomeCloseOutCard(viewModel: followThrough)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.6)
+                                    .belowFold(heroAppeared, delay: 0.3)
                             }
                             // Last night's Daily Sales Report leads the
                             // day's read; it renders nothing for a login or
@@ -226,25 +191,16 @@ struct HomeView: View {
                             HomeLastNightCard(open: { path.append($0) },
                                               homeLoadedAt: viewModel.lastLoadedAt,
                                               localNow: summary.localNow)
-                                .belowFold(heroAppeared, delay: 0.61)
+                                .belowFold(heroAppeared, delay: 0.32)
                             HomeDayCard(dateLabel: dayLabel(summary))
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.62)
+                                .belowFold(heroAppeared, delay: 0.36)
                             if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
                                 HomeWeeklyReceipts(receipts: receipts)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.66)
-                            }
-
-                            // The one cross-module thing (§11b), with its
-                            // answers. Renders nothing when there is none.
-                            if followThrough.fixFirst != nil {
-                                HomeOneThingCard(viewModel: followThrough)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.73)
+                                    .belowFold(heroAppeared, delay: 0.4)
                             }
 
                             // What Cavnar recommends, each with the button
@@ -260,22 +216,86 @@ struct HomeView: View {
                                 }, onChanged: { Task { await viewModel.load() } })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.76)
+                                .belowFold(heroAppeared, delay: 0.46)
                             }
 
                             if !summary.isFresh {
                                 freshStart(summary)
                             }
 
-                            // Goals, what the owner's changes did, what
-                            // connects, worth, and (before 8pm) the handoff.
-                            HomeFollowThrough(viewModel: followThrough, showsCloseOut: !summary.localIsEvening,
+                            // The follow-through's work half — still open,
+                            // check-ins, what connects, comps/voids and
+                            // (before 8pm) the handoff. Every one can carry
+                            // an answer, so none of it hides in Results.
+                            // This instance also loads the follow-through
+                            // (the Results one inside the disclosure does
+                            // not — it may never be opened).
+                            HomeFollowThrough(viewModel: followThrough, part: .work,
+                                              showsCloseOut: !summary.localIsEvening,
                                               homeLoadedAt: viewModel.lastLoadedAt) { module in
                                 navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
                             }
                             .padding(.horizontal, 20)
                             .padding(.top, 30)
-                            .belowFold(heroAppeared, delay: 0.8)
+                            .belowFold(heroAppeared, delay: 0.5)
+
+                            // RESULTS (§11b step 7, density #4): everything
+                            // measured behind one closed row that still
+                            // carries the figure — the band, How you
+                            // compare, what the owner's changes did (with
+                            // what got better merged in), what worked and
+                            // this month. Worth moved into the band's sheet.
+                            HomeResultsDisclosure(
+                                line: HomeResultsSummary.line(
+                                    headline: summary.valueHeadline,
+                                    improved: followThrough.value?.delivered?.wins,
+                                    worse: summary.value?.worsened?.count
+                                        ?? followThrough.value?.delivered?.worsened?.count),
+                                tone: HomeResultsSummary.tone(headline: summary.valueHeadline)
+                            ) {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    HomeValueBand(
+                                        total: summary.totalValueDelivered,
+                                        history: summary.valueHistory,
+                                        measuredOn: summary.valueByModule ?? [],
+                                        headline: summary.valueHeadline,
+                                        scope: summary.value?.scope,
+                                        revealed: heroAppeared
+                                    ) {
+                                        Haptic.light()
+                                        showingValueDetail = true
+                                    }
+
+                                    // How you compare (Benchmarking #23) —
+                                    // a read, so it sits with the results.
+                                    HomeBenchmarkStrip(onOpenModule: { module in
+                                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                                    })
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 22)
+
+                                    if HomeFollowThrough.hasResults(followThrough) {
+                                        HomeFollowThrough(viewModel: followThrough, part: .results) { module in
+                                            navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                                        }
+                                        .padding(.horizontal, 20)
+                                        .padding(.top, 30)
+                                    }
+                                }
+                            }
+                            .padding(.top, 34)
+                            .belowFold(heroAppeared, delay: 0.56)
+
+                            // What Cavnar AI is doing right now, rotating;
+                            // tap for the feed. Ambient, so it sits under the
+                            // results rather than between the hero and the
+                            // work (density #21). Nothing for an account
+                            // with nothing armed.
+                            AIActivityStrip(viewModel: aiActivity, paused: backgroundMotionPaused)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.6)
+                                .task { await aiActivity.load() }
 
                             // Clears the FAB's reserved band above the tab
                             // bar plus its own footprint, so the last
@@ -454,16 +474,54 @@ struct HomeView: View {
         .onAppear { DebugFrameWatchdog.mark("hero onAppear"); onHeroAppear() }
     }
 
+    @ViewBuilder
     private func heroHeadline(_ summary: HomeSummary) -> some View {
-        // cavnarEmber2 for the name (the deeper cavnarEmber sank into the
-        // old aurora; on the field it's about the glow, not contrast) plus
-        // a shadow on the whole line — Text concatenation only carries
-        // font/colour per segment, not per-segment view modifiers.
-        (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber2)
-            + Text(Self.heroTail(liveSources: summary.monitoring?.countLive)).foregroundStyle(Color.cavnarInk))
-            .font(.cavnarHeadline(27))
-            .lineSpacing(3)
+        if let headline = Self.briefHeadline(summary) {
+            // The 3-second answer (density #1): the brief's own headline —
+            // web Home's H1 — in its tone, under the owner's name. The
+            // slogan it replaced said nothing about the restaurant.
+            VStack(spacing: 6) {
+                Text(greetingName(summary))
+                    .font(.cavnarHeadline(18))
+                    .foregroundStyle(Color.cavnarEmber2)
+                Text(headline)
+                    .font(.cavnarHeadline(27))
+                    .foregroundStyle(Self.briefToneColor(summary.brief?.tone))
+                    .lineSpacing(3)
+            }
             .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
+            .accessibilityElement(children: .combine)
+        } else {
+            // cavnarEmber2 for the name (the deeper cavnarEmber sank into the
+            // old aurora; on the field it's about the glow, not contrast) plus
+            // a shadow on the whole line — Text concatenation only carries
+            // font/colour per segment, not per-segment view modifiers.
+            (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber2)
+                + Text(Self.heroTail(liveSources: summary.monitoring?.countLive)).foregroundStyle(Color.cavnarInk))
+                .font(.cavnarHeadline(27))
+                .lineSpacing(3)
+                .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
+        }
+    }
+
+    /// The brief's headline, trimmed; nil when the server sent none (an
+    /// older server, or a brief that couldn't be built) — the hero then
+    /// keeps its greeting line, which only claims AI over a live source.
+    static func briefHeadline(_ summary: HomeSummary) -> String? {
+        guard let h = summary.brief?.headline?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !h.isEmpty else { return nil }
+        return h
+    }
+
+    /// home_brief's headline tones: "bad" red, "warn" amber, "good" green;
+    /// "neutral" (and anything unknown) reads in ink — a state, not an alarm.
+    static func briefToneColor(_ tone: String?) -> Color {
+        switch tone {
+        case "bad", "critical": return .cavnarRed
+        case "warn": return .cavnarAmber
+        case "good": return .cavnarGreen
+        default: return .cavnarInk
+        }
     }
 
     /// The hero's claim about the restaurant is conditional on a live
@@ -554,11 +612,26 @@ struct HomeView: View {
         return "\(m)/\(d)/\(p[0].suffix(2))"
     }
 
+    /// The one thing has something to say (HomeOneThingCard draws nothing
+    /// without a `what`) — it then leads the page at position 2.
+    private var hasOneThing: Bool {
+        guard let what = followThrough.fixFirst?.what else { return false }
+        return !what.isEmpty
+    }
+
+    /// One "Start here" a page (density #3): the one thing carries it when
+    /// there is one, and Needs attention follows as "Then these".
+    private var attentionTitle: String { Self.attentionTitle(hasOneThing: hasOneThing) }
+
+    static func attentionTitle(hasOneThing: Bool) -> String {
+        hasOneThing ? "Then these" : "Start here"
+    }
+
     @ViewBuilder
     private func attentionSection(_ summary: HomeSummary) -> some View {
         if summary.needsAttention.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                HomeSectionHeader(kicker: "Needs attention", title: "Start here")
+                HomeSectionHeader(kicker: "Needs attention", title: attentionTitle)
                 AllClearRow(notClearReason: OwnerCopy.allClear(attentionEmpty: true,
                                                                monitoring: summary.monitoring).reason)
             }
@@ -569,6 +642,7 @@ struct HomeView: View {
             // HOME_ATTENTION_SHOWN) — and "+N more" opens the rest in place.
             HomeActionDeck(
                 items: summary.needsAttention,
+                title: attentionTitle,
                 busy: viewModel.isPublishingReplies,
                 onPrimary: { item in primaryAction(item, in: summary) },
                 onSecondary: { item in
@@ -621,6 +695,17 @@ struct HomeView: View {
                     ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory,
                                    headline: summary.valueHeadline)
                         .padding(20)
+                    // Worth — what was measured, estimated and surfaced,
+                    // never added together — lives here now, beside the
+                    // chart it explains, instead of restating the band on
+                    // Home (density #4). No homeLoadedAt: Home's own
+                    // follow-through instance already loaded it.
+                    HomeFollowThrough(viewModel: followThrough, part: .worth) { module in
+                        showingValueDetail = false
+                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
             }
             .background(Color.cavnarPaper.ignoresSafeArea())

@@ -581,7 +581,10 @@ def test_ios_renders_cross_module_and_good_news():
     assert "/mobile/api/cross-module" in src
     assert "/mobile/api/good-news" in src
     assert "private var connectionsCard" in src
-    assert "private var goodNewsCard" in src
+    # Density #4: what got better is drawn inside "What your changes did"
+    # (one measured card, not two), so it is rows now, not its own card.
+    assert "private func goodNewsRows(" in src
+    assert "goodNewsRows(leadsCard:" in src
 
 
 def test_ios_has_a_celebration_and_it_respects_reduced_motion():

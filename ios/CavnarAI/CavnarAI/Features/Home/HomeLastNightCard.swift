@@ -38,6 +38,50 @@ struct HomeLastNightCard: View {
         }
     }
 
+    /// The night's verdict: label, tone and score. The list row's fields
+    /// (the shared `access.summary` contract) lead; the peeked report's own
+    /// scorecard stands in on an older server. Both are the stored
+    /// scorecard, never recomputed here. Nil when neither has a label.
+    struct Verdict: Equatable {
+        let label: String
+        let tone: String?
+        let overall: Int?
+    }
+
+    static func verdict(_ night: DSRSummary, _ report: DSRReport?) -> Verdict? {
+        if let label = night.verdict, !label.isEmpty {
+            return Verdict(label: label, tone: night.tone, overall: night.overall)
+        }
+        if let card = report?.scorecard, let v = card.verdict, !v.label.isEmpty {
+            return Verdict(label: v.label, tone: v.tone, overall: card.overall)
+        }
+        return nil
+    }
+
+    private func verdictRow(_ v: Verdict, vsBudget: Double?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle()
+                .fill(DSRScorecard.color(v.tone) ?? Color.cavnarInk3)
+                .frame(width: 9, height: 9)
+                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 1 }
+            Text(v.label)
+                .font(.cavnarBody(CavnarType.body, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+            if let overall = v.overall {
+                (Text("\(overall)").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundColor(.cavnarInk)
+                 + Text("/100").font(.cavnarNumber(CavnarType.caption)).foregroundColor(.cavnarInk3))
+            }
+            if let vs = vsBudget {
+                Text("\(vs >= 0 ? "+" : "\u{2212}")\(DSRFormat.money(abs(vs))) vs budget")
+                    .font(.cavnarNumber(CavnarType.caption, weight: 600))
+                    .foregroundStyle(vs >= 0 ? Color.cavnarGreen : Color.cavnarAmber)
+                    .cavnarSensitive()
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private func ready(_ night: DSRSummary, _ report: DSRReport?, gap: Int?) -> some View {
         let phase = report?.phase ?? night.phase
         // The list's lead is this login's own (the operations summary for a
@@ -78,9 +122,17 @@ struct HomeLastNightCard: View {
                         Spacer(minLength: 8)
                         DSRStatusPill(phase: phase)
                     }
+                    // The verdict beside the number (density #1): "did we
+                    // win last night?" is a dot, a label and a score here,
+                    // not a paragraph to read. Only what the server sent —
+                    // the list row's verdict (dsr.access.summary), else the
+                    // peeked report's own scorecard; nothing for neither.
+                    if let v = Self.verdict(night, report) {
+                        verdictRow(v, vsBudget: night.vsBudget)
+                    }
                     if let summary {
-                        HomeMixedText.make(summary, size: 14.5, color: .cavnarInk2)
-                            .lineLimit(4)
+                        HomeMixedText.make(summary, size: CavnarType.secondary, color: .cavnarInk2)
+                            .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     } else if phase == .running {
                         Text(report?.checklist?.statusLabel ?? "The report is being built.")

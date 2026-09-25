@@ -98,6 +98,37 @@ extension Font {
     }
 }
 
+/// The type scale as named sizes (DESIGN_SYSTEM.md §2, density #41). The
+/// census found 18 body sizes, 4 kicker sizes and hero figures from 27 to
+/// 56pt; a screen that reaches for these instead of a literal stays on the
+/// scale. Sizes only — the face is still the helper's (`cavnarBody` for
+/// words, `cavnarHeadline` for titles, `cavnarNumber` for figures), so every
+/// call keeps its Dynamic Type mapping.
+///
+/// One rule rides with `heroNumber`: **one 40pt figure per screen, and it is
+/// the status figure** (labor % against target, food cost % against target,
+/// the report's score). Anything else that wants to be big is `cardNumber`.
+enum CavnarType {
+    /// Uppercase tracked kicker above a section or figure.
+    static let kicker: CGFloat = 11.5
+    /// Meta, timestamps, basis lines.
+    static let caption: CGFloat = 12.5
+    /// Secondary copy under a figure or title; helper lines.
+    static let secondary: CGFloat = 13.5
+    /// Body copy.
+    static let body: CGFloat = 15
+    /// A lead line — the one sentence a card opens on.
+    static let emphasis: CGFloat = 16.5
+    /// A section title (Clash).
+    static let section: CGFloat = 21
+    /// The screen's one status figure.
+    static let heroNumber: CGFloat = 40
+    /// A card's own figure.
+    static let cardNumber: CGFloat = 30
+    /// A stat-strip or grid tile figure.
+    static let tileNumber: CGFloat = 22
+}
+
 /// Selects a specific weight out of a variable font by setting its `wght`
 /// variation axis directly. UIFontDescriptor.AttributeName has no typed
 /// `.variation` case — the variation-axis dictionary is a CoreText-level

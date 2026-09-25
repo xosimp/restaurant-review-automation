@@ -18,7 +18,7 @@ struct HomeOneThingCard: View {
     var body: some View {
         if let ff = viewModel.fixFirst, let what = ff.what, !what.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                HomeSectionHeader(kicker: "If you only do one thing", title: "Start with this")
+                HomeSectionHeader(kicker: "Start here", title: "If you only do one thing")
                 VStack(alignment: .leading, spacing: 10) {
                     if let modules = ff.modules, modules.count > 1 {
                         HStack(spacing: 8) {

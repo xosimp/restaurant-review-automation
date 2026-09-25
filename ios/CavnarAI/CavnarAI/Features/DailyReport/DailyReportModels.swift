@@ -102,6 +102,17 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
     /// record its actions as shown) just to draw a card (D3-8).
     var net: Double? = nil
     var lead: String? = nil
+    /// The night's verdict from the stored scorecard (dsr.access.summary,
+    /// density #1): "Good day", its tone ("good"/"warn"/"bad"), the 0–100
+    /// score, net minus budget for a view allowed the budget, and the first
+    /// risk this view may read. Every one optional — an older server, a
+    /// night with no scorecard, or a manager without the budget sends none,
+    /// and the card draws nothing for it.
+    var verdict: String? = nil
+    var tone: String? = nil
+    var overall: Int? = nil
+    var vsBudget: Double? = nil
+    var firstRisk: String? = nil
 
     var id: String { businessDate + "#" + String(version ?? 0) }
     var displayDate: String { label ?? CavnarDate.mdy(businessDate) }
@@ -109,8 +120,11 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case label, version, status, provisional, missing, net, lead
+        case verdict, tone, overall
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
+        case vsBudget = "vs_budget"
+        case firstRisk = "first_risk"
     }
 
     init(from decoder: Decoder) throws {
@@ -124,6 +138,15 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
         finalizedAt = try c.decodeIfPresent(String.self, forKey: .finalizedAt)
         net = try? c.decodeIfPresent(Double.self, forKey: .net)
         lead = try? c.decodeIfPresent(String.self, forKey: .lead)
+        verdict = try? c.decodeIfPresent(String.self, forKey: .verdict)
+        tone = try? c.decodeIfPresent(String.self, forKey: .tone)
+        if let i = try? c.decodeIfPresent(Int.self, forKey: .overall) {
+            overall = i
+        } else if let d = try? c.decodeIfPresent(Double.self, forKey: .overall) {
+            overall = Int(d.rounded())
+        }
+        vsBudget = try? c.decodeIfPresent(Double.self, forKey: .vsBudget)
+        firstRisk = try? c.decodeIfPresent(String.self, forKey: .firstRisk)
     }
 }
 

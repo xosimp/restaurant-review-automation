@@ -19,7 +19,31 @@ struct HomePulseStrip: View {
     // they kept costing frames during a sheet's transition and interactive
     // dismiss even while fully covered.
     var paused: Bool = false
+    /// Modules whose data reads stale or disconnected (freshness[]): their
+    /// chip carries an amber clock (density #21) — the freshness strip that
+    /// used to sit under this row is folded in here.
+    var staleModules: Set<String> = []
+    /// The Data health chip at the row's end ("Data 92%"), and what a tap
+    /// on it opens. Nil draws no chip.
+    var dataChip: String? = nil
+    var onOpenDataHealth: (() -> Void)? = nil
     let onSelect: (ModuleSummary) -> Void
+
+    /// Which modules' sources read stale or disconnected — only what the
+    /// server marked so; aging, unknown and sample are not "stale".
+    static func staleModules(_ entries: [HomeFreshnessEntry]) -> Set<String> {
+        Set(entries.filter { $0.state == .stale || $0.state == .disconnected }.compactMap(\.module))
+    }
+
+    /// "Data 92%", "Waiting for first sync", or "Data: couldn't check" —
+    /// the freshness strip's kicker at chip size. Nil when the server sent
+    /// nothing to state.
+    static func dataChipLabel(health: HomeDataHealth?, unavailable: Bool) -> String? {
+        if health?.overall?.isPending == true { return "Waiting for first sync" }
+        if let pct = health?.overall?.pct { return "Data \(pct)%" }
+        if unavailable { return "Data: couldn\u{2019}t check" }
+        return nil
+    }
 
     private var chips: [ModuleSummary] {
         modules.filter { $0.isAvailable && $0.pulse != nil }
@@ -35,11 +59,24 @@ struct HomePulseStrip: View {
                                 Button {
                                     onSelect(module)
                                 } label: {
-                                    PulseChip(pulse: pulse, paused: paused)
+                                    PulseChip(pulse: pulse, paused: paused,
+                                              stale: staleModules.contains(module.key))
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("\(module.label): \(pulse.value) \(OwnerCopy.displayLabel(pulse.label))")
+                                .accessibilityLabel("\(module.label): \(pulse.value) \(OwnerCopy.displayLabel(pulse.label))"
+                                                    + (staleModules.contains(module.key) ? ", data is stale" : ""))
                             }
+                        }
+                        if let dataChip {
+                            Button {
+                                Haptic.light()
+                                onOpenDataHealth?()
+                            } label: {
+                                DataHealthChip(label: dataChip, stale: !staleModules.isEmpty)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(onOpenDataHealth == nil)
+                            .accessibilityHint("Opens data health")
                         }
                     }
                     .padding(.horizontal, 20)
@@ -64,19 +101,57 @@ struct HomePulseStrip: View {
     }
 }
 
+extension HomePulseStrip {
+    /// The server's tones (mobile_api._home_pulse): "bad" red — a named
+    /// threshold crossed (density #31) — "warn" amber, "good" green, and
+    /// nil ember (no judgement to make).
+    static func toneColor(_ tone: String?) -> Color {
+        switch tone {
+        case "bad": return .cavnarRed
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        default: return .cavnarEmber2
+        }
+    }
+}
+
+/// The row's last chip: the Data Health Score, amber-edged when any
+/// module's data is stale. A tap opens the Data health sheet.
+private struct DataHealthChip: View {
+    let label: String
+    var stale: Bool = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: stale ? "clock.badge.exclamationmark" : "waveform.path.ecg")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(stale ? Color.cavnarAmber : Color.cavnarInk3)
+                .accessibilityHidden(true)
+            HomeMixedText.make(label, size: 12, weight: 700, color: .cavnarInk2)
+                .lineLimit(1)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.cavnarInk3)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Capsule().fill(Color.cavnarPaper2.opacity(0.7)))
+        .overlay(Capsule().strokeBorder(stale ? Color.cavnarAmber.opacity(0.6) : Color.cavnarPaper3.opacity(0.8),
+                                        lineWidth: 1))
+    }
+}
+
 private struct PulseChip: View {
     let pulse: ModulePulse
     var paused: Bool = false
+    var stale: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var start = Date()
 
     private var dotColor: Color {
-        switch pulse.tone {
-        case "good": return .cavnarGreen
-        case "warn": return .cavnarAmber
-        default: return .cavnarEmber2
-        }
+        HomePulseStrip.toneColor(pulse.tone)
     }
 
     var body: some View {
@@ -101,6 +176,12 @@ private struct PulseChip: View {
                 .cavnarSensitive()
             HomeMixedText.make(OwnerCopy.displayLabel(pulse.label), size: 12, weight: 700, color: .cavnarInk2)
                 .lineLimit(1)
+            if stale {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)

@@ -43,6 +43,8 @@ struct HomeRecommendations: View {
     @State private var askingWhyIsHide = false
     @State private var showingWhy = false
     @State private var explaining: HomeRecommendation?
+    /// Rows whose Details are open (density #23).
+    @State private var expanded: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -145,44 +147,75 @@ struct HomeRecommendations: View {
         return out
     }
 
+    /// The row's one answer (density #23): Reprice when the server offers
+    /// it, else Track this for a recommendation that names a metric, else
+    /// Done. Everything else is behind Details.
+    enum PrimaryAnswer: Equatable { case reprice, track, done }
+
+    static func primaryAnswer(_ rec: HomeRecommendation) -> PrimaryAnswer {
+        if let a = rec.action, a.kind == "reprice" { return .reprice }
+        if rec.metric != nil { return .track }
+        return .done
+    }
+
+    /// "$420/mo at stake" — the first chip when the card carries dollars;
+    /// nil otherwise. The row's only figure; the rest of the chips (basis,
+    /// timeframe, impact) are in Details.
+    static func stake(_ rec: HomeRecommendation) -> String? {
+        rec.statedDollars == nil ? nil : chips(rec).first
+    }
+
+    /// A shortlist row, not a report (density #23): the verb-first title,
+    /// the dollars at stake, ONE confidence (a percentage with "Why?") and
+    /// one answer — then "Details" opens why, what it rests on, what
+    /// happens if it is ignored, "Could also be…", Assign, Not for us and
+    /// Hide in place. Every answer is still one tap from the row.
     private func row(_ rec: HomeRecommendation, number: Int, showsDivider: Bool) -> some View {
-        VStack(spacing: 0) {
+        let open = expanded.contains(rec.key)
+        return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(String(format: "%02d", number))
                     .font(.cavnarNumber(17, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .frame(width: 26, alignment: .leading)
-                VStack(alignment: .leading, spacing: 5) {
-                    HomeMixedText.make(rec.title, size: 15, weight: 600, color: .cavnarInk)
-                    if rec.modelWritten == true {
-                        ClaimKindTag(kind: nil, modelWritten: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    HomeMixedText.make(rec.title, size: CavnarType.body, weight: 600, color: .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let stake = Self.stake(rec) {
+                        HomeMixedText.make(stake, size: CavnarType.secondary, weight: 700,
+                                           color: .cavnarInk2, numberColor: .cavnarInk)
+                            .lineLimit(2)
                     }
-                    if let why = rec.why {
-                        HomeMixedText.make(why, size: 13, weight: 500, color: .cavnarInk2)
-                    }
-                    let meta = Self.chips(rec)
-                    if !meta.isEmpty {
-                        HomeMixedText.make(meta.joined(separator: " · "), size: 11.5, weight: 600, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let evidence = rec.evidence {
-                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
-                    }
-                    // ONE confidence per card: the percentage, what it rests
-                    // on, and "Why?" for the three dimensions behind it. An
-                    // older server's band-only object (and its low-band
-                    // caution) renders through the same line.
                     if let c = rec.confidence {
-                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home")
+                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
+                                       compact: true)
                     }
-                    if let ignored = rec.ifIgnored {
-                        (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)
-                         + Text(ignored).font(.cavnarBody(12.5, weight: 500)).foregroundColor(.cavnarInk3))
-                            .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 16) {
+                        primaryButton(rec)
+                        Button {
+                            Haptic.light()
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                if open { expanded.remove(rec.key) } else { expanded.insert(rec.key) }
+                            }
+                            if !open { RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home") }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(open ? "Less" : "Details")
+                                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
+                                Image(systemName: open ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            .foregroundStyle(Color.cavnarInk3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(open ? "Hides the detail" : "Shows why, what it rests on and the other answers")
+                        Spacer(minLength: 0)
                     }
-                    actions(rec)
-                        .padding(.top, 2)
-                    answers(rec)
+                    .padding(.top, 2)
+                    if open {
+                        details(rec)
+                            .transition(.opacity)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -193,10 +226,89 @@ struct HomeRecommendations: View {
         }
     }
 
+    /// Everything the row used to carry open, now behind Details.
     @ViewBuilder
-    private func actions(_ rec: HomeRecommendation) -> some View {
+    private func details(_ rec: HomeRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if rec.modelWritten == true {
+                ClaimKindTag(kind: nil, modelWritten: true)
+            }
+            if let why = rec.why {
+                HomeMixedText.make(why, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            let meta = Array(Self.chips(rec).dropFirst(Self.stake(rec) == nil ? 0 : 1))
+            if !meta.isEmpty {
+                HomeMixedText.make(meta.joined(separator: " · "), size: 11.5, weight: 600, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let evidence = rec.evidence {
+                HomeMixedText.make(evidence, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let ignored = rec.ifIgnored {
+                (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundColor(.cavnarInk2)
+                 + Text(ignored).font(.cavnarBody(CavnarType.caption, weight: 500)).foregroundColor(.cavnarInk3))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            actions(rec, excluding: Self.primaryAnswer(rec))
+                .padding(.top, 2)
+            answers(rec, excluding: Self.primaryAnswer(rec))
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private func primaryButton(_ rec: HomeRecommendation) -> some View {
+        switch Self.primaryAnswer(rec) {
+        case .reprice:
+            Button {
+                Haptic.light()
+                Task {
+                    if let message = await viewModel.reprice(rec) {
+                        withAnimation { answered.insert(rec.key); toast = message }
+                    }
+                }
+            } label: {
+                Text(rec.action?.label ?? "Reprice")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+            }
+            .buttonStyle(.plain)
+        case .track:
+            Button {
+                Haptic.light()
+                Task {
+                    if let message = await viewModel.track(rec) {
+                        withAnimation { toast = message }
+                    }
+                }
+            } label: {
+                Text(viewModel.tracked.contains(rec.key) ? "Tracking" : "Track this")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(viewModel.tracked.contains(rec.key)
+                                     ? Color.cavnarGreen : Color.cavnarEmber2)
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.tracked.contains(rec.key))
+            .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
+        case .done:
+            Button {
+                Haptic.light()
+                submit(rec, kind: "done")
+            } label: {
+                Text("Done")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func actions(_ rec: HomeRecommendation, excluding primary: PrimaryAnswer? = nil) -> some View {
         HStack(spacing: 14) {
-            if let a = rec.action, a.kind == "reprice" {
+            if primary != .reprice, let a = rec.action, a.kind == "reprice" {
                 Button {
                     Haptic.light()
                     Task {
@@ -211,7 +323,7 @@ struct HomeRecommendations: View {
                 }
                 .buttonStyle(.plain)
             }
-            if rec.metric != nil {
+            if primary != .track, rec.metric != nil {
                 Button {
                     Haptic.light()
                     Task {
@@ -259,7 +371,7 @@ struct HomeRecommendations: View {
 
     /// Assign, and the three answers that are not "Track this": Done, Not
     /// for us, and Hide — the second hide asks why.
-    private func answers(_ rec: HomeRecommendation) -> some View {
+    private func answers(_ rec: HomeRecommendation, excluding primary: PrimaryAnswer? = nil) -> some View {
         HStack(spacing: 14) {
             if !assignees.isEmpty {
                 Menu {
@@ -279,7 +391,7 @@ struct HomeRecommendations: View {
                 }
             }
             Spacer(minLength: 0)
-            ForEach(["done", "not_for_us"], id: \.self) { kind in
+            ForEach(primary == .done ? ["not_for_us"] : ["done", "not_for_us"], id: \.self) { kind in
                 Button {
                     Haptic.light()
                     if kind == "not_for_us" {

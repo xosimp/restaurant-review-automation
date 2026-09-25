@@ -7,9 +7,34 @@ import SwiftUI
 struct KPITile: View {
     let module: ModuleSummary
 
+    /// The server's status for this module (mobile_api._home_pulse — the
+    /// same tone the Home chip breathes): bad / warn / good, or nil when
+    /// there is no judgement to make (density #31).
+    private var tone: String? { module.pulse?.tone }
+
+    /// The one-line why under a tile in trouble: the chip's own label
+    /// ("labor · over 30%", "2 urgent unanswered"). Nothing on a good or
+    /// untoned tile — the sublabel already says what the number is.
+    static func why(_ module: ModuleSummary) -> String? {
+        guard let p = module.pulse, p.tone == "bad" || p.tone == "warn" else { return nil }
+        let text = OwnerCopy.displayLabel(p.label)
+        return text.isEmpty ? nil : text
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
+                .overlay(alignment: .topTrailing) {
+                    if tone != nil {
+                        Circle()
+                            .fill(HomePulseStrip.toneColor(tone))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().strokeBorder(Color.cavnarPaper, lineWidth: 2))
+                            .shadow(color: HomePulseStrip.toneColor(tone).opacity(0.8), radius: 4)
+                            .offset(x: 3, y: -3)
+                            .accessibilityHidden(true)
+                    }
+                }
             Text(module.kpi?.value ?? "—")
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
@@ -28,14 +53,22 @@ struct KPITile: View {
                 .multilineTextAlignment(.center)
             if let sublabel = module.kpi?.sublabel {
                 Text(OwnerCopy.displayLabel(sublabel))
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(CavnarType.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .multilineTextAlignment(.center)
+            }
+            if let why = Self.why(module) {
+                HomeMixedText.make(why, size: CavnarType.caption, weight: 700,
+                                   color: HomePulseStrip.toneColor(tone))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
         .cavnarStatCell()
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(tone.map { $0 == "bad" ? "needs attention" : ($0 == "warn" ? "watch" : "on track") } ?? "")
     }
 }
 
@@ -60,9 +93,26 @@ struct HomeModuleGrid: View {
     // Which tile is showing its tap flash right now — see tap(_:) below.
     @State private var flashingKey: String?
 
+    /// Trouble first (density #31): bad, then warn, then good, then the
+    /// untoned — stable within each, so the server's order still holds
+    /// among equals. The grid is a status board, not a fixed menu.
+    static func sorted(_ modules: [ModuleSummary]) -> [ModuleSummary] {
+        func rank(_ m: ModuleSummary) -> Int {
+            switch m.pulse?.tone {
+            case "bad": return 0
+            case "warn": return 1
+            case "good": return 2
+            default: return 3
+            }
+        }
+        return modules.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+    }
+
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-            ForEach(Array(modules.enumerated()), id: \.element.id) { index, module in
+            ForEach(Array(Self.sorted(modules).enumerated()), id: \.element.id) { index, module in
                 // A Button calling back into the parent's NavigationPath,
                 // not a NavigationLink — keeps the haptic on a deterministic
                 // action closure instead of a simultaneousGesture racing

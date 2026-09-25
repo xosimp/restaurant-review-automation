@@ -697,9 +697,15 @@ def _intel_home_kpi(restaurant):
 
 def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     """One chip for Home's pulse strip per active module: the KPI value, a
-    short label, and a semantic tone ("good"/"warn"/None) that colours the
-    chip's breathing dot. Computed here, not on the phone, so the same
+    short label, and a semantic tone ("good"/"warn"/"bad"/None) that colours
+    the chip's breathing dot. Computed here, not on the phone, so the same
     thresholds drive the chip, the Modules tile sublabel and the alerts.
+
+    "bad" is a named threshold, never a feeling: labor at least
+    thresholds.LABOR_OVER_TARGET_PTS over its target (the margin the labor
+    alert fires at), or an urgent review still owed a reply (the count that
+    leads Home's Needs attention). Between on-target and that margin labor
+    is "warn".
 
     Labor and inventory read the labelled sample week/items until the
     restaurant has its own; the chip then says what to add and carries no
@@ -709,6 +715,9 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     value = kpi.get("value", "—")
     if key == "reviews":
         rate = int(rstats.get("response_rate", 0) or 0)
+        urgent = int(rstats.get("urgent", 0) or 0)
+        if urgent > 0:
+            return {"value": value, "label": f"{urgent} urgent unanswered", "tone": "bad"}
         tone = "good" if rate >= 80 else ("warn" if rstats.get("total", 0) and rate < 50 else None)
         return {"value": value, "label": f"replies · {rate}%", "tone": tone}
     if key == "labor" and not (labor or {}).get("is_live"):
@@ -717,11 +726,13 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
         return {"value": "—", "label": "add your inventory", "tone": None}
     if key == "labor":
         from notify import labor_target_for as _labor_target_for
+        from thresholds import LABOR_OVER_TARGET_PTS
         target = _labor_target_for(restaurant)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
         on_track = pct <= target
+        tone = "good" if on_track else ("bad" if pct - target >= LABOR_OVER_TARGET_PTS else "warn")
         return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
-                "tone": "good" if on_track else "warn"}
+                "tone": tone}
     if key == "inventory":
         recoverable = int((inv or {}).get("recoverable_monthly", 0) or 0)
         # An opportunity projected from one week, never "good" money (NS3 M3).
@@ -1250,14 +1261,20 @@ def _do_mobile_home(current_user):
                             # The Data Health Score beside the legacy list.
                             "data_health": _brief_payload.get("data_health"),
                             "freshness_unavailable": False}
+            # Web Home's H1 — the brief's own headline and its tone
+            # ("bad"/"warn"/"neutral"/"good") — so the phone's hero says
+            # what state the restaurant is in, not a slogan (density #1).
+            _bh = _brief_payload.get("brief") or {}
+            _brief_head = ({"headline": _bh.get("headline"), "tone": _bh.get("tone")}
+                           if _bh.get("headline") else None)
         else:
             _brief_recs, _brief_wins, _brief_ready = [], [], None
-            _brief_quieter, _brief_assignees = [], []
+            _brief_quieter, _brief_assignees, _brief_head = [], [], None
             _brief_fresh = _freshness_unavailable()
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
         _brief_recs, _brief_wins, _brief_ready = [], [], None
-        _brief_quieter, _brief_assignees = [], []
+        _brief_quieter, _brief_assignees, _brief_head = [], [], None
         _brief_fresh = _freshness_unavailable()
 
     return {
@@ -1301,6 +1318,9 @@ def _do_mobile_home(current_user):
         # otherwise have nothing on it.
         "first_look": _home_first_look(restaurant, rstats, labor, inv),
         "readiness": _brief_ready,
+        # {headline, tone} from home_brief, or None when the brief could
+        # not be built — the phone then keeps its greeting line.
+        "brief": _brief_head,
         **_brief_fresh,
         # The restaurant's own clock, so the phone can put the close-out in
         # the day's slot after 8pm and the weekly receipts first on Monday —
