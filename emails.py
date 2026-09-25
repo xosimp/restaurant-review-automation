@@ -2475,6 +2475,35 @@ def _monthly_review_sections(restaurant_id, months=1):
     return out
 
 
+def _monthly_source_gaps(restaurant_id):
+    """(review_gap, pos_gap) for the monthly summary: None when the source is
+    current, aging or not connected; else the M/D/YY it was last current
+    through ("" when that date is unknown) — the review fetch
+    (data_freshness.review_fetch_state) and the POS (its registry row).
+    Never raises: unreadable reads as (None, None), the old wording."""
+    if not restaurant_id:
+        return None, None
+    try:
+        import data_freshness as df
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        if r is None:
+            return None, None
+
+        def gap(st):
+            if not st or st.get("state") == "not_connected":
+                return None
+            if st.get("never_synced"):
+                return None
+            if st.get("error") or st.get("state") in ("stale", "unknown"):
+                return st.get("as_of") or ""
+            return None
+        return gap(df.review_fetch_state(r)), gap(df.source_state(r, "pos"))
+    except Exception as e:
+        print(f"[emails] monthly source gaps unreadable for {restaurant_id}: {e}")
+        return None, None
+
+
 def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: str = None,
                                 restaurant_id: int = None,
                                 has_reviews: bool = True, has_labor: bool = False,
@@ -2552,19 +2581,32 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         pos_name = usage.get("pos")
         ingredients = usage.get("ingredient_count", 0)
 
+        # How current the two sources these lines speak for are (registry
+        # states, DH4-16): "no new reviews" is only said when Cavnar was
+        # actually checking, and schedules are only "building from your POS
+        # data" while that POS is syncing.
+        review_gap, pos_gap = _monthly_source_gaps(restaurant_id)
+
         lines = []
         if r_reviews:
             if approved:
                 txt = f"{approved} response{'' if approved == 1 else 's'} approved and posted to date."
             elif total:
                 txt = "Draft responses are written and waiting on your approval."
+            elif review_gap is not None:
+                txt = (f"Reviews weren't checked after {review_gap}, so a quiet month can't be confirmed."
+                       if review_gap else "Reviews couldn't be checked this month, so a quiet month can't be confirmed.")
             else:
                 txt = f"No new reviews came in during {month_name}."
             if pending:
                 txt += f" {pending} repl{'y is' if pending == 1 else 'ies are'} still waiting on you."
             lines.append(("Review Intelligence", txt))
         if r_labor:
-            if usage.get("has_schedule"):
+            if usage.get("has_schedule") and pos_name and pos_gap is not None:
+                lines.append(("Labor Optimizer",
+                              (f"{pos_name} hasn't synced since {pos_gap}" if pos_gap else f"{pos_name} isn't syncing")
+                              + ", so schedules are building from the shift history already on file."))
+            elif usage.get("has_schedule"):
                 lines.append(("Labor Optimizer",
                               "Schedules are building"
                               + (f" from your {pos_name} data." if pos_name else " from your shift history.")))

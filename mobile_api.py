@@ -752,14 +752,24 @@ def _home_overnight(rid):
     """What Cavnar did while the owner wasn't looking — drafts written and
     alerts fired in the last 24 hours. A rolling window rather than a literal
     'since 6pm' so the line is true whenever the app is opened; the phone
-    picks 'Overnight' vs 'Since yesterday' from the clock."""
+    picks 'Overnight' vs 'Since yesterday' from the clock.
+
+    reviews.fetched_at is written in the restaurant's own clock with a 'T'
+    (models.save_reviews), so its edge is cut in that clock too: against
+    SQLite's UTC 'now' the window slid by the UTC offset (DH4-15).
+    alert_log.fired_at is UTC and stays on SQLite's clock."""
+    try:
+        from time_utils import restaurant_now_by_id
+        _edge = (restaurant_now_by_id(rid, naive=True) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        _edge = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
     answered = _home_query("""
         SELECT COUNT(*) AS n FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND response_status IN ('drafted','approved','posted')
           AND draft_response IS NOT NULL
-          AND julianday(fetched_at) >= julianday('now','-1 day')
-    """, (rid,))
+          AND REPLACE(fetched_at,' ','T') >= ?
+    """, (rid, _edge))
     flagged = _home_query("""
         SELECT COUNT(*) AS n FROM alert_log
         WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-1 day')
@@ -1189,16 +1199,19 @@ def _do_mobile_home(current_user):
             # "monitoring" may honestly count (K4) — as web Home has them.
             _brief_fresh = {"freshness": _brief_payload.get("freshness") or [],
                             "monitoring": _brief_payload.get("monitoring"),
-                            "data_as_of": ((_brief_payload.get("brief") or {}).get("data_as_of"))}
+                            "data_as_of": ((_brief_payload.get("brief") or {}).get("data_as_of")),
+                            # The Data Health Score beside the legacy list.
+                            "data_health": _brief_payload.get("data_health"),
+                            "freshness_unavailable": False}
         else:
             _brief_recs, _brief_wins, _brief_ready = [], [], None
             _brief_quieter, _brief_assignees = [], []
-            _brief_fresh = {"freshness": [], "monitoring": None, "data_as_of": None}
+            _brief_fresh = _freshness_unavailable()
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
         _brief_recs, _brief_wins, _brief_ready = [], [], None
         _brief_quieter, _brief_assignees = [], []
-        _brief_fresh = {"freshness": [], "monitoring": None, "data_as_of": None}
+        _brief_fresh = _freshness_unavailable()
 
     return {
         "ok": True,
@@ -1247,6 +1260,15 @@ def _do_mobile_home(current_user):
         # the same rule the web Home uses.
         "local_now": _home_local_now(restaurant),
     }, 200
+
+
+def _freshness_unavailable():
+    """The home payload's freshness block when the brief could not be built:
+    an empty list with `freshness_unavailable` so the phone says "Couldn't
+    check how current your data is" instead of drawing nothing, which read
+    as "nothing to flag" (DH4-19)."""
+    return {"freshness": [], "monitoring": None, "data_as_of": None, "data_health": None,
+            "freshness_unavailable": True}
 
 
 def _home_local_now(restaurant):
@@ -1314,9 +1336,27 @@ def _do_mobile_reviews(restaurant_id, filter_by="all", search="", category=None,
     rows, total = get_reviews_data(restaurant_id, filter_by, search,
                                    category=category, platform=platform,
                                    limit=limit, offset=offset, include_total=True)
-    return {"ok": True, "reviews": rows, "total": total,
-            "offset": offset + len(rows),
-            "has_more": (offset + len(rows)) < total}, 200
+    out = {"ok": True, "reviews": rows, "total": total,
+           "offset": offset + len(rows),
+           "has_more": (offset + len(rows)) < total}
+    if not offset:
+        # The real fetch state, never the reviews_live flag: "Checked
+        # 11:02am · next check 4pm" or "Last check 9/21/26 — 6 checks
+        # missed" (DH4-6). First page only.
+        out["fetch_line"] = _review_fetch_line(restaurant_id)
+    return out, 200
+
+
+def _review_fetch_line(restaurant_id):
+    """data_health.connection_lines()["google"], or None."""
+    try:
+        import data_health
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return data_health.connection_lines(r).get("google") if r is not None else None
+    except Exception as e:
+        print(f"[mobile reviews] fetch line unavailable rid={restaurant_id}: {e}")
+        return None
 
 
 @mobile_bp.route("/reviews")
@@ -3066,6 +3106,8 @@ def _do_mobile_marketing(restaurant_id, user_id=None):
         # types with different labels and no descriptions.
         "content_types": CONTENT_TYPES,
         "channels": _marketing_channels(restaurant_id),
+        # "Metrics synced 9/21/26", amber when stale or failing (DH4-8).
+        "metrics_sync": _capi._metrics_sync_line(restaurant_id),
     }, 200
 
 
@@ -3395,6 +3437,7 @@ def mobile_marketing_performance(current_user):
             total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
             total_engagement=total_engagement,
             top_post=top_post,
+            metrics_sync=_capi._metrics_sync_line(rid),
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
@@ -4596,6 +4639,24 @@ def _do_mobile_account(current_user):
         "rpower": _pos_row("rpower", "rpower_store_mid"),
         "pos": _ph.pos_sync_state(restaurant),
     }
+    # What the row SAYS, from the registry and in the restaurant's clock:
+    # "Last sync 3:02am · Sales through 9/19/26", coloured by state, and
+    # Google's "Checked 11:02am · next check 4pm" / "Last check 9/21/26 — 6
+    # checks missed" (DH4-2, DH4-6). {line, tone ok|warn|bad|off, state,
+    # last_sync, data_through, next} or None. The provider rows keep their
+    # sync_state for older builds.
+    try:
+        import data_health as _dh_c
+        _lines = _dh_c.connection_lines(restaurant)
+    except Exception as _cle:
+        print(f"[mobile account] connection lines unavailable rid={rid}: {_cle}")
+        _lines = {"pos": None, "google": None}
+    connections["pos_line"] = _lines.get("pos")
+    connections["google_business"]["fetch_line"] = _lines.get("google")
+    _pl = _lines.get("pos") or {}
+    if _pl.get("provider") in connections:
+        connections[_pl["provider"]]["sync_line"] = _pl.get("line")
+        connections[_pl["provider"]]["sync_tone"] = _pl.get("tone")
     alerts = {
         "contacts": get_alert_contacts(rid),
         "settings": {

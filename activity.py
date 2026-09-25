@@ -32,6 +32,24 @@ from models import get_conn, DB_PATH
 
 ACTIVITY_TTL = 45
 _CACHE = {}
+# A ceiling on live entries: nothing ever removed an expired one, so the dict
+# held one feed per (restaurant, viewer denial set) that had ever loaded it
+# for the life of the process (DH4-23). home_brief._cache_put's sweep.
+_CACHE_MAX = 2000
+
+
+def _cache_put(key, value):
+    """Store one feed, first dropping every expired entry (oldest first, so
+    the sweep stops at the first live one) and, past _CACHE_MAX, the oldest."""
+    now = time.time()
+    _CACHE.pop(key, None)            # re-inserted below, so dict order stays oldest-first
+    while _CACHE:
+        k = next(iter(_CACHE))
+        if len(_CACHE) >= _CACHE_MAX or now - _CACHE[k][0] >= ACTIVITY_TTL:
+            _CACHE.pop(k, None)
+        else:
+            break
+    _CACHE[key] = (now, value)
 
 
 from time_utils import utc_stamp as _utc
@@ -44,6 +62,27 @@ def _iso_z(value):
         return None
     s = str(value).replace(" ", "T")[:19]
     return s + "Z" if not s.endswith("Z") and "+" not in s else s
+
+
+def _local_z(value, tz):
+    """reviews.fetched_at — written in the RESTAURANT's clock with a 'T'
+    (models.save_reviews) — as UTC ISO-8601 with a Z. _iso_z appended a Z to
+    the local time, so a review fetched at 10:00 Chicago read "5h ago"
+    (DH4-15). A SQLite UTC stamp (space-separated, older rows) stays UTC."""
+    if not value:
+        return None
+    from time_utils import parse_stamp
+    raw = str(value)
+    naive_tz = "UTC" if (" " in raw.strip() and "T" not in raw) else (tz or "America/Chicago")
+    d = parse_stamp(raw, naive_tz=naive_tz)
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d is not None else _iso_z(value)
+
+
+def _local_cut(now, tz, **delta):
+    """A window edge in the restaurant's clock, as the 'T' string
+    reviews.fetched_at is compared against (both sides local, both 'T')."""
+    from time_utils import restaurant_tz
+    return (now - timedelta(**delta)).astimezone(restaurant_tz(tz or None)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _scalar(conn, sql, args=()):
@@ -97,6 +136,11 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
     day = _utc(now - timedelta(hours=24))
     week = _utc(now - timedelta(days=7))
     month = _utc(now - timedelta(days=30))
+    # reviews.fetched_at is the restaurant's local clock with a 'T'; its
+    # windows are cut in that clock and compared with the space normalised,
+    # so a same-date row no longer passes whatever the hour (DH4-15).
+    tz = getattr(r, "timezone", None)
+    rday, rweek = _local_cut(now, tz, hours=24), _local_cut(now, tz, days=7)
     conn = get_conn(db_path)
     working, entries, memory = [], [], []
     try:
@@ -104,17 +148,18 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
         if getattr(r, "module_reviews", 0) and "reviews" not in denied:
             live = bool(getattr(r, "reviews_live", 0) or getattr(r, "gmb_refresh_token", None))
             n_new = _scalar(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                               "AND processed=1 AND fetched_at >= ?", (restaurant_id, day)) or 0
-            last_fetch = _scalar(conn, "SELECT MAX(fetched_at) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                    "AND fetched_at >= ?", (restaurant_id, week))
+                               "AND processed=1 AND REPLACE(fetched_at,' ','T') >= ?", (restaurant_id, rday)) or 0
+            last_fetch = _scalar(conn, "SELECT fetched_at FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                    "AND REPLACE(fetched_at,' ','T') >= ? ORDER BY REPLACE(fetched_at,' ','T') DESC "
+                                    "LIMIT 1", (restaurant_id, rweek))
             if n_new:
-                entries.append({"at": _iso_z(last_fetch), "module": "reviews", "kind": "analyzed",
+                entries.append({"at": _local_z(last_fetch, tz), "module": "reviews", "kind": "analyzed",
                                 "text": f"Finished analyzing {_plural(n_new, 'new review')}."})
             drafted = _scalar(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                 "AND draft_response IS NOT NULL AND draft_response != '' AND fetched_at >= ?",
-                           (restaurant_id, day)) or 0
+                                 "AND draft_response IS NOT NULL AND draft_response != '' "
+                                 "AND REPLACE(fetched_at,' ','T') >= ?", (restaurant_id, rday)) or 0
             if drafted:
-                entries.append({"at": _iso_z(last_fetch), "module": "reviews", "kind": "drafted",
+                entries.append({"at": _local_z(last_fetch, tz), "module": "reviews", "kind": "drafted",
                                 "text": f"Drafted {_plural(drafted, 'reply', 'replies')} in your voice."})
             diag = _row(conn, "SELECT category, mention_count, generated_at FROM review_diagnoses "
                               "WHERE restaurant_id=? AND generated_at >= ? ORDER BY generated_at DESC LIMIT 1",
@@ -127,7 +172,22 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                     cat = str(diag["category"]).replace("_", " ")
                 entries.append({"at": _iso_z(diag["generated_at"]), "module": "reviews", "kind": "diagnosed",
                                 "text": f"Traced the likely cause behind {_plural(diag['mention_count'], cat.lower() + ' mention')}."})
+            # "Watching" only while the fetch is actually keeping up — the
+            # registry's review_fetch_state, not the connection flag. A
+            # fetch that has missed its slots says so instead (DH4-14).
+            fetch = None
             if live:
+                try:
+                    import data_freshness as _dfr
+                    fetch = _dfr.review_fetch_state(r)
+                except Exception:
+                    fetch = None
+            if live and fetch and (fetch.get("error") or fetch.get("state") in ("stale", "unknown")):
+                from time_utils import mdy
+                working.append({"module": "reviews",
+                                "text": ("Review checks are behind — last check " + mdy(fetch["as_of_iso"])
+                                         if fetch.get("as_of_iso") else "Review checks haven't run yet")})
+            elif live:
                 slot = _next_fetch_slot(r)
                 working.append({"module": "reviews",
                                 "text": "Watching for new reviews" + (f" · next sweep at {slot}" if slot else "")})
@@ -329,5 +389,5 @@ def feed(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
     if hit and time.time() - hit[0] < ACTIVITY_TTL:
         return hit[1]
     out = build(restaurant_id, restaurant=restaurant, db_path=db_path, denied=denied)
-    _CACHE[key] = (time.time(), out)
+    _cache_put(key, out)
     return out

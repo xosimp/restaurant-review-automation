@@ -80,6 +80,10 @@ struct DSRListResponse: Decodable {
     let ok: Bool
     let view: String?
     let reports: [DSRSummary]
+    /// Tonight's business date on the restaurant's own clock (ISO) — what
+    /// Home's card measures the latest report against. Lenient: absent on
+    /// an older server.
+    var tonight: LenientText? = nil
 }
 
 /// One night in the list (access.summary).

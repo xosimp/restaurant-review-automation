@@ -84,6 +84,9 @@ struct IntelView: View {
         .task {
             await viewModel.load()
         }
+        // Reopening the app after a while re-reads competitor intel rather
+        // than showing an earlier load as current (audit 4.2).
+        .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.load() }
     }
 
     /// "Cold Hearth" while there's nothing here (the CTA is what lights
@@ -680,6 +683,8 @@ struct IntelView: View {
             if let updatedAt = summary.updatedAt {
                 updatedLabel(updatedAt)
             }
+            // How current the sources behind Intel are, from data health.
+            DataHealthModuleBadge(module: "intel")
         }
     }
 
@@ -852,13 +857,12 @@ struct IntelView: View {
             comps.year = parts[0]; comps.month = parts[1]; comps.day = parts[2]
             if let date = Calendar.current.date(from: comps) {
                 daysOld = Calendar.current.dateComponents([.day], from: date, to: Date()).day
-                display = "\(parts[1])/\(parts[2])/\(parts[0])"
+                // M/D/YY, the one owner-facing date form (was M/D/YYYY).
+                display = CavnarDate.mdy(datePart)
             }
         }
         return HStack(spacing: 8) {
-            Text("Last updated \(display)")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+            HomeMixedText.make("Last updated \(display)", size: 14, color: .cavnarInk3)
             if let daysOld, daysOld >= 7 {
                 Text("Consider refreshing")
                     .font(.cavnarBody(13.5, weight: 700))

@@ -52,6 +52,11 @@ struct MarketingView: View {
                     if subTab == .content {
                         if let stats = viewModel.stats {
                             pulseRow(stats)
+                            // How current the post metrics are (DH4-8),
+                            // amber when the nightly pull is stale or failing.
+                            if let sync = viewModel.metricsSync {
+                                ServerStatusCaption(status: sync)
+                            }
                             shelfTiles
                             composerCard
                             weekSection
@@ -124,6 +129,15 @@ struct MarketingView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
+        // Reopening the app after a while re-reads whichever tab is on
+        // screen rather than showing earlier numbers as current (audit 4.2).
+        .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) {
+            if subTab == .content {
+                await viewModel.load()
+            } else {
+                await analyticsViewModel.refresh()
+            }
+        }
         .onChange(of: viewModel.calendar.map(\.id)) { _, _ in
             selectedDay = viewModel.calendar.firstIndex(where: \.isToday) ?? 0
         }

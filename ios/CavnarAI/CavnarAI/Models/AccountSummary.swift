@@ -94,12 +94,23 @@ struct ConnectionStatus: Decodable {
     var error: String? = nil
     var source: String? = nil
     var label: String? = nil
+    /// DH4: the sentence the server wrote for this row, in the restaurant's
+    /// clock — the chosen POS provider's `sync_line` / `sync_tone` ("Last
+    /// sync 3:02am · Sales through 9/19/26", tone ok | warn | bad | off),
+    /// and Google's `fetch_line` ("Checked 11:02am · next check 4pm").
+    /// Absent on an older server, which keeps `syncLine`'s wording.
+    var serverSyncLine: String? = nil
+    var serverSyncTone: String? = nil
+    var fetchLine: ServerStatusLine? = nil
 
     enum CodingKeys: String, CodingKey {
         case connected, error, source, label
         case lastSynced = "last_synced"
         case syncState = "sync_state"
         case ageDays = "age_days"
+        case serverSyncLine = "sync_line"
+        case serverSyncTone = "sync_tone"
+        case fetchLine = "fetch_line"
     }
 
     init(connected: Bool, lastSynced: String? = nil, syncState: String? = nil, ageDays: Double? = nil,
@@ -119,6 +130,36 @@ struct ConnectionStatus: Decodable {
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         let l = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil
         label = (l?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) ? nil : l
+        let sl = ((try? c.decodeIfPresent(String.self, forKey: .serverSyncLine)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        serverSyncLine = (sl?.isEmpty ?? true) ? nil : sl
+        serverSyncTone = ((try? c.decodeIfPresent(String.self, forKey: .serverSyncTone)) ?? nil)?.lowercased()
+        fetchLine = c.statusLine(.fetchLine)
+    }
+
+    /// The line a POS row prints: the server's own sentence for this
+    /// provider when it sent one (its `sync_line`, else the connections'
+    /// `pos_line` when that names this provider), coloured by its tone;
+    /// otherwise the older state-derived wording. Nil when there is none.
+    func posStatusLine(provider: String, posLine: ServerStatusLine?) -> (text: String, tone: SyncTone)? {
+        if let text = serverSyncLine {
+            return (text, Self.tone(serverSyncTone))
+        }
+        if let p = posLine, p.provider == provider {
+            return (p.line, Self.tone(p.tone))
+        }
+        return syncLine
+    }
+
+    /// The server's tone words onto the row's tones: ok good, warn warn,
+    /// bad bad, off (or nothing) neutral.
+    static func tone(_ raw: String?) -> SyncTone {
+        switch raw {
+        case "ok": return .good
+        case "warn": return .warn
+        case "bad": return .bad
+        default: return .neutral
+        }
     }
 
     /// "Last synced 9/21/26" — M/D/YY, never the raw stamp.
@@ -145,6 +186,7 @@ struct ConnectionStatus: Decodable {
         case "stale": return ("No sync since " + (days ?? "a while") + " \u{2014} figures from this POS are out of date", .warn)
         case "error": return ("Sync failing" + (error.map { ": \($0)" } ?? ""), .bad)
         case "unknown": return ("Sync state unknown", .neutral)
+        case "disconnected": return ("Disconnected", .warn)
         default: return nil
         }
     }
@@ -161,10 +203,17 @@ struct AccountConnections: Decodable {
     /// Absent on an older server.
     var rpower: ConnectionStatus? = nil
     var pos: POSSyncState? = nil
+    /// DH4: the POS row's sentence from the registry, in the restaurant's
+    /// clock (`pos_line`: {line, tone, state, provider, …}). Lenient; absent
+    /// on an older server.
+    var posLineField: LenientStatusLine? = nil
+
+    var posLine: ServerStatusLine? { posLineField?.value }
 
     enum CodingKeys: String, CodingKey {
         case googleBusiness = "google_business"
         case instagram, toast, square, clover, rpower, pos
+        case posLineField = "pos_line"
     }
 
     /// `{provider, connected, last_synced, age_days, error, state}`.

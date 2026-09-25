@@ -678,6 +678,21 @@ def index(current_user):
     import time_utils as _tu
     from notify import labor_target_for as _labor_target_for
     _today_mdy = _tu.mdy(_tu.restaurant_now(restaurant))
+    # The registry's reading of the sources the server-rendered tabs speak
+    # for (Data Freshness #17, #33, #34): the Labor and Food Cost heroes say
+    # no good-tone word over stale data and date what they show, and Account
+    # → Connections and the Reviews tab read the POS and Google lines in the
+    # restaurant's clock — never a sync-run stamp, a UTC time or a config flag.
+    _source_fresh, _conn_lines = {}, {"pos": None, "google": None}
+    try:
+        import data_freshness as _dfr_h
+        import data_health as _dh_h
+        if labor and labor.get("is_live"):
+            _source_fresh["labor"] = _dfr_h.source_state(restaurant, "labor", context={"labor": labor})
+        _source_fresh["inventory"] = _dfr_h.source_state(restaurant, "inventory")
+        _conn_lines = _dh_h.connection_lines(restaurant)
+    except Exception as _sfe:
+        print(f"[dashboard] source freshness unavailable for {rid}: {_sfe}")
     return render_template('dashboard.html',
         show_welcome=show_welcome,
         onboarding_steps=onboarding_steps,
@@ -715,7 +730,8 @@ def index(current_user):
         intel_market=intel_market,
         competitor_updated_at=restaurant.competitor_updated_at if restaurant else None,
         labor_upcoming=_labor_upcoming,
-        food_cost_data=_food_cost_data)
+        food_cost_data=_food_cost_data,
+        source_fresh=_source_fresh, conn_lines=_conn_lines)
 
 def _json_api_path():
     """/api/* and /mobile/api/* callers are fetch() and the iOS app: they

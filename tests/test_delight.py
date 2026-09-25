@@ -102,6 +102,16 @@ def test_all_clear_appears_when_there_was_something_to_watch(db_path, monkeypatc
     # Reviews only: Labor's "next week isn't built yet" line fires from
     # Thursday on, which would make this assert the day of the week.
     rid = _restaurant(db_path, reviews_live=1, module_labor=0, module_inventory=0)
+    # Watched means the registry reads the source CURRENT (Data Freshness
+    # #12, DH4-3) — a connection whose fetch never ran watched nothing, and
+    # this test used to pass on the reviews_live flag alone.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+                 (datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%dT%H:%M:%S"), rid))
+    conn.commit()
+    conn.close()
     from models import get_restaurant
     brief = morning_brief.build(rid, restaurant=get_restaurant(rid), db_path=db_path)
     lines = [l for l in brief["lines"] if l["key"] == "all_clear"]

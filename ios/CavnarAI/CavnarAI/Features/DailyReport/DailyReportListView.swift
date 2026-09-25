@@ -86,6 +86,9 @@ struct DailyReportListView: View {
             didLoad = true
             await viewModel.load()
         }
+        // A night that finished while the app was away shows up on return
+        // (audit 4.2).
+        .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.load() }
     }
 
     private var tonightCard: some View {

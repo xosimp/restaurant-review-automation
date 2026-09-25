@@ -2137,6 +2137,21 @@ def mkt_stats_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e))
 
+def _metrics_sync_line(rid):
+    """"Metrics synced 9/21/26", amber when the Meta metrics sync is failing
+    or stale (data_health.metrics_line, DH4-8) — the reach and engagement
+    beside it are only as current as that sync. None when unreadable or no
+    social account is connected."""
+    try:
+        import data_health
+        from models import get_restaurant
+        r = get_restaurant(rid)
+        return data_health.metrics_line(r) if r is not None else None
+    except Exception as e:
+        print(f"[marketing] metrics sync line unavailable rid={rid}: {e}")
+        return None
+
+
 @client_bp.route("/api/mkt-performance")
 @login_required
 def mkt_performance_api(current_user):
@@ -2187,6 +2202,7 @@ def mkt_performance_api(current_user):
             total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
             total_engagement=total_engagement,
             top_post=top_post,
+            metrics_sync=_metrics_sync_line(rid),
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e))
@@ -6848,6 +6864,8 @@ _NOTIFICATION_LABELS = {
     "milestone":        "A milestone",
     "while_away":       "While you were away",
     "connection_lost":  "A connection stopped working",
+    "data_source_down": "A data source stopped updating",
+    "data_source_restored": "A data source is back to normal",
 }
 
 # Which module a notification's "view" action should open. The keys are the

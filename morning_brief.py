@@ -127,6 +127,110 @@ def _day_context(restaurant, day):
     return (" — " + " · ".join(bits)) if bits else ""
 
 
+# ── how current the data under the brief is (Data Freshness audit #12) ────
+#
+# The brief used to say "Nothing needs you this morning" while the POS had
+# been down for ten days: its all-clear rested on configuration, and no line
+# said a source had stopped (DH3-8, DH4-3). The registry (data_freshness)
+# now gates it: one deterministic first line names a source that is stale,
+# of unknown age or failing, the lines resting on it are held, and the
+# all-clear is said only when what it watches is current.
+
+# (module flag, the denial key a viewer may lack, the registry module).
+_BRIEF_MODULES = (("module_reviews", "reviews", "reviews"), ("module_labor", "labor", "labor"),
+                  ("module_inventory", "inventory", "food_cost"), ("module_marketing", "marketing", "marketing"))
+# The sources each held line rests on.
+_HELD_BY = {"yesterday": ("pos", "sales"), "prime_cost": ("pos", "sales", "labor", "inventory")}
+_HELD_NAME = {"yesterday": "yesterday's sales", "prime_cost": "prime cost", "money": "dollar opportunity"}
+
+
+def _source_health(restaurant, denied, db_path=DB_PATH, now=None):
+    """{states: {key: registry state}, problems: [state], as_of: M/D/YY of
+    the stalest dated source} over the sources the brief's enabled,
+    viewable modules rest on. A problem is a connected source that is
+    stale, of unknown age or failing — never one still waiting on its
+    first sync. Never raises: an unreadable registry is no line at all."""
+    out = {"states": {}, "problems": [], "as_of": None}
+    try:
+        import data_freshness as df
+        import data_health as dh
+        mods = [m for flag, deny, m in _BRIEF_MODULES
+                if getattr(restaurant, flag, 0) and deny not in denied]
+        keys = df.sources_for(mods)
+        if not keys:
+            return out
+        states = df.states(restaurant, keys, db_path=db_path, now=now)
+        out["states"] = {st.get("key"): st for st in states}
+        out["problems"] = [st for st in states if st.get("state") != "not_connected" and not dh.is_pending(st)
+                           and (st.get("error") or st.get("state") in ("stale", "unknown"))]
+        dated = [st for st in states if st.get("pct") is not None and st.get("as_of_iso")]
+        if dated:
+            out["as_of"] = min(dated, key=lambda st: st["as_of_iso"]).get("as_of")
+    except Exception as e:
+        log.warning("morning_brief: source health unreadable: %s", e)
+    return out
+
+
+def _problem_keys(health):
+    return {p.get("key") for p in (health or {}).get("problems") or []}
+
+
+def _health_line(health, held):
+    """The deterministic first line: "⚠ Toast hasn't synced since 9/22/26 —
+    yesterday's sales and prime cost lines are held." None when every
+    source is current or aging."""
+    problems = list((health or {}).get("problems") or [])
+    if not problems:
+        return None
+    by_key = {p.get("key"): p for p in problems}
+    lead = by_key.get("pos") or by_key.get("sales") or by_key.get("labor") or problems[0]
+    key = lead.get("key")
+    since = lead.get("as_of")
+    if not since and lead.get("last_ok_at"):
+        from time_utils import mdy
+        since = mdy(str(lead["last_ok_at"])[:10])
+    prov = {"rpower": "RPOWER"}.get(lead.get("provider"), str(lead.get("provider") or "").title()) or "Your POS"
+    if key == "pos":
+        what = f"{prov} hasn't synced since {since}" if since else f"{prov} sync is failing"
+    elif key == "sales":
+        what = f"Sales haven't come in since {since}" if since else "Sales can't be confirmed current"
+    elif key == "labor":
+        what = f"Shifts haven't come in since {since}" if since else "Shifts can't be confirmed current"
+    elif key == "reviews":
+        what = f"Reviews haven't been checked since {since}" if since else "Reviews can't be checked right now"
+    elif key == "inventory":
+        what = f"Inventory counts are from {since}" if since else "Inventory counts can't be dated"
+    elif key == "marketing":
+        what = f"Marketing metrics haven't synced since {since}" if since else "Marketing metrics aren't syncing"
+    else:
+        import data_health as dh
+        what = f"{dh.OWNER_LABEL.get(key, key)} is out of date" + (f" (since {since})" if since else "")
+    names = [_HELD_NAME[k] for k in ("yesterday", "prime_cost", "money") if k in held]
+    if names:
+        joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        tail = f" — the {joined} line{'s are' if len(names) > 1 else ' is'} held until it catches up"
+    else:
+        tail = " — figures that use it may be out of date"
+    pos_family = {"pos", "sales", "labor"} if key in ("pos", "sales", "labor") else {key}
+    others = [p for p in problems if p.get("key") not in pos_family]
+    more = f" ({len(others)} other source{'s' if len(others) != 1 else ''} out of date too)" if others else ""
+    return {"key": "data_health", "tone": "bad", "sources": [p.get("key") for p in problems],
+            "text": f"⚠ {what}{tail}.{more}",
+            "ask": "Which of my data sources are out of date, and what does it affect?"}
+
+
+def _money_confidence(restaurant_id, t, db_path=DB_PATH):
+    """The dollar-opportunity line's K1, over the sources its module rests
+    on (data_freshness.MODULE_SOURCES) — so the line carries "data through"
+    and is held when those sources are out of date. None when unreadable."""
+    import rec_trust
+    import data_freshness as df
+    module = t.get("module") or ""
+    return rec_trust.assess(restaurant_id, t.get("key") or f"money:{module}", sources=df.sources_for([module]),
+                            db_path=db_path,
+                            evidence={"n": None, "basis": t.get("basis") or "ranked by dollars per month"})
+
+
 def _dsr_yesterday_line(night):
     """The "yesterday" line from last night's DSR (dsr.memory.last_night):
     its net sales, its own comparison against the forecast, its labor % when
@@ -156,6 +260,20 @@ def _dsr_yesterday_line(night):
             "source": "dsr", "dsr_date": night["date"]}
 
 
+def _prime_stamp(pp, health):
+    """" (sales through 9/23/26; labor share from 9/1/26 to 9/14/26)" — what
+    the prime-cost run rate rests on, dated (#12, DH1-3)."""
+    bits = []
+    sales = ((health or {}).get("states") or {}).get("sales") or {}
+    if sales.get("as_of"):
+        bits.append(f"sales through {sales['as_of']}")
+    if pp.get("labor_period"):
+        bits.append(f"labor share from {pp['labor_period']}")
+    elif pp.get("labor_from"):
+        bits.append(pp['labor_from'])
+    return f" ({'; '.join(bits)})" if bits else ""
+
+
 def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
     """The brief as structured lines. Each line: {"key", "text", "tone", "ask"}.
     tone is good | bad | neutral | action.
@@ -176,6 +294,9 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     sees_loss = viewer is None or has_permission(viewer, LOSS_VIEW)
     today = today or date.today()
     lines = []
+    health = _source_health(restaurant, denied, db_path)
+    down = _problem_keys(health)
+    held = []
 
     # ── yesterday ── from last night's Daily Sales Report when it finished
     # (final or provisional): the brief reads the report, never recomputes
@@ -190,6 +311,12 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     else:
         y = (_safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
              if "labor" not in denied else None)
+    if y and y.get("available") and down & set(_HELD_BY["yesterday"]):
+        # The POS or its sales stopped: yesterday's figure is whatever
+        # arrived before it stopped, so it is held, and the first line says
+        # why (#12).
+        held.append("yesterday")
+        y = None
     if y and y.get("available"):
         # "Typical" rests on this restaurant's own same-weekday median, and
         # how many nights it is said (NS4 L5: three samples, unshown).
@@ -210,7 +337,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     if getattr(restaurant, "module_inventory", 0):
         import food_cost_intelligence as fci
         pp = _safe(fci.profitability_projection, restaurant_id, db_path=db_path)
-        if pp and pp.get("available") and pp.get("prime_cost_pct") is not None:
+        if pp and pp.get("available") and pp.get("prime_cost_pct") is not None \
+                and down & set(_HELD_BY["prime_cost"]):
+            held.append("prime_cost")
+        elif pp and pp.get("available") and pp.get("prime_cost_pct") is not None:
             delta = pp.get("prime_pct_delta")
             vs = (f", {abs(delta):.1f} points {'above' if delta > 0 else 'below'} last month"
                   if delta not in (None, 0) else "")
@@ -219,7 +349,8 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                           # another period: the footer never calls it
                           # measured (T3, B4 M8).
                           "claim_kind": pp.get("claim_kind") or "forecast",
-                          "text": f"Prime cost month to date: {pp['prime_cost_pct']:.1f}% of sales{vs}" + (f" ({pp['labor_from']})." if pp.get("labor_from") else "."),
+                          "text": f"Prime cost month to date: {pp['prime_cost_pct']:.1f}% of sales{vs}"
+                                  + _prime_stamp(pp, health) + ".",
                           "ask": "What's driving my prime cost this month?"})
 
     # ── the one thing ──
@@ -251,7 +382,17 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         # (CA4 F3). A point figure has low == high.
         lo_m = t.get("monthly_low") if t.get("is_range") else t.get("monthly")
         hi_m = t.get("monthly_high") if t.get("is_range") else t.get("monthly")
+        # Its K1 (so email and push carry "data through …"), and held when
+        # the data under its module reads under the stale threshold (#12).
+        mconf = _safe(_money_confidence, restaurant_id, t, db_path)
+        _mfr = (((mconf or {}).get("dimensions") or {}).get("freshness") or {}).get("pct")
+        import confidence_engine as _ce
+        if _mfr is not None and _mfr < _ce.STALE_BELOW:
+            held.append("money")
+            t = None
+    if top and t is not None:
         lines.append({"key": "money", "tone": "neutral", "rec": t.get("key"),
+                      "confidence": mconf if isinstance(mconf, dict) else None,
                       "claim_kind": t.get("claim_kind") or "opportunity",
                       "money": {"low": lo_m, "high": hi_m, "per": "month",
                                 "label": f"{t['label']} — opportunity, {amount}/month",
@@ -463,8 +604,14 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # checked. `_watching` names what was actually read, so the line can only
     # appear when there was something to read — and it says what, so the
     # reassurance is verifiable rather than a platitude.
+    # A source that stopped leads the brief, and there is no all-clear under
+    # it: "nothing needs you" over a dead integration is the failure this
+    # section exists to prevent.
+    hl = _health_line(health, held)
+    if hl:
+        lines.insert(0, hl)
     if not lines:
-        watching = _watching(restaurant, restaurant_id, denied, db_path)
+        watching = _watching(restaurant, restaurant_id, denied, db_path, health=health)
         if watching:
             lines.append({"key": "all_clear", "tone": "good",
                           "text": "Nothing needs you this morning. "
@@ -484,7 +631,12 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             l["answerable"] = rec_delivery.answerable(l["rec"])
             if l.get("recs"):
                 l["rec_keys"] = line_keys(l)
-    out = {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+    out = {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines,
+           # The stalest date under the brief: the email header and the push
+           # body say "Data as of …" (DH4-3). `stale_sources` names what is
+           # out of date for the footer.
+           "data_as_of": health.get("as_of"),
+           "stale_sources": [p.get("key") for p in health.get("problems") or []]}
     # Contract K8: how far today's forecast has been off, nightly and out of
     # sample — beside the forecast line, never inside its text. Only for a
     # viewer who may read labor (the forecast is labor-module data).
@@ -711,31 +863,32 @@ def _review_variety(restaurant_id, today, db_path):
     return None
 
 
-def _watching(restaurant, restaurant_id, denied, db_path):
+def _watching(restaurant, restaurant_id, denied, db_path, health=None):
     """Which modules actually have data to watch, for the all-clear line.
 
     A module switched on but never fed is NOT watching anything and must not
     appear here. That distinction is the whole difference between "all
     clear" and "nothing is connected".
+
+    Watching means the source is CURRENT in the registry (data_freshness) —
+    home_brief's monitoring.all_clear rule — not that a Google token exists
+    or a shift landed in the last 14 days: a fetch that missed three days of
+    slots was still "watched" (DH4-3, DH3-18).
     """
+    states = (health or _source_health(restaurant, denied, db_path)).get("states") or {}
+
+    def current(key):
+        st = states.get(key) or {}
+        return st.get("state") == "current" and not st.get("error")
+
     out = []
     if getattr(restaurant, "module_reviews", 0) and "reviews" not in denied:
-        if (getattr(restaurant, "gmb_refresh_token", None)
-                or getattr(restaurant, "reviews_live", 0)):
+        if current("reviews"):
             out.append("reviews")
     if getattr(restaurant, "module_labor", 0) and "labor" not in denied:
-        conn = get_conn(db_path)
-        try:
-            row = conn.execute("SELECT 1 FROM labor_daily_history WHERE restaurant_id=? "
-                               "AND date >= date('now','-14 days') LIMIT 1",
-                               (restaurant_id,)).fetchone()
-        except Exception:
-            row = None
-        finally:
-            conn.close()
-        if row:
+        if current("labor"):
             out.append("labor")
-    if getattr(restaurant, "module_inventory", 0) and "inventory" not in denied:
+    if getattr(restaurant, "module_inventory", 0) and "inventory" not in denied and current("inventory"):
         try:
             from inventory import load_inventory_for_restaurant
             _items, is_live = load_inventory_for_restaurant(restaurant_id)
@@ -767,7 +920,11 @@ def push_text(brief, restaurant_name):
     if not lines:
         return None
     body = " ".join(l["text"] + _conf_suffix(l) for l in lines)
-    return {"title": f"Good morning — {restaurant_name}", "body": body[:230]}
+    # How current it is, always said and never cut off by the length cap.
+    tail = f" Data as of {brief['data_as_of']}." if brief.get("data_as_of") else ""
+    if len(body) + len(tail) > 230:
+        body = body[:230 - len(tail) - 1].rstrip() + "…"
+    return {"title": f"Good morning — {restaurant_name}", "body": body + tail}
 
 
 def _conf_label(line) -> str:
@@ -806,7 +963,7 @@ _FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost proj
                  "money": "the dollar opportunity", "fix_first": "the one thing"}
 
 
-def footer_source(lines) -> str:
+def footer_source(lines, data_as_of=None, stale=None) -> str:
     """The brief email's provenance sentence. It says "measured" only when
     every line is: today's forecast, the prime-cost projection, the dollar
     opportunity and an inferred or computed one thing are each named as the
@@ -825,12 +982,24 @@ def footer_source(lines) -> str:
                 exceptions.append(bit)
     if outside:
         exceptions.append("the weather and the calendar")
+    # How current it is (#12): the stalest date under the brief, and — when
+    # a source is out of date — that the figures resting on it were held,
+    # so "measured from your own data" is never said over a dead feed.
+    when = f" Data as of {data_as_of}." if data_as_of else ""
+    if stale:
+        import data_health as dh
+        names = [dh.OWNER_LABEL.get(k, k) for k in stale]
+        joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        when += (f" {joined} {'is' if len(names) == 1 else 'are'} out of date, so the lines resting on "
+                 f"{'it' if len(names) == 1 else 'them'} were held or flagged.")
+    if not [l for l in lines if l.get("key") != "data_health"]:
+        return ("Nothing here is a measured figure." + when).strip()
     if not exceptions:
-        return "Every figure above is measured from your own data."
+        return "Every figure above is measured from your own data." + when
     if exceptions == ["the weather and the calendar"]:
-        return "Every figure above is measured from your own data, except the weather and the calendar."
+        return "Every figure above is measured from your own data, except the weather and the calendar." + when
     listed = exceptions[0] if len(exceptions) == 1 else ", ".join(exceptions[:-1]) + " and " + exceptions[-1]
-    return f"Every figure above is from your own data — measured, except {listed}."
+    return f"Every figure above is from your own data — measured, except {listed}." + when
 
 
 def _email_html(brief, restaurant_name):
@@ -857,9 +1026,10 @@ def _email_html(brief, restaurant_name):
     # And honest about forecasts: today's expected sales and the projected
     # prime cost are FROM the restaurant's data but are not measurements, and
     # the footer used to cover them with "measured" (CA1 H9 / red flag 18).
-    source = footer_source(brief["lines"])
+    source = footer_source(brief["lines"], brief.get("data_as_of"), brief.get("stale_sources"))
+    as_of = f' · Data as of {html.escape(brief["data_as_of"])}' if brief.get("data_as_of") else ""
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
-            f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}</p>'
+            f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}{as_of}</p>'
             f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'
             f'<table role="presentation" style="width:100%;border-collapse:collapse">{rows}</table>'
             f'<p style="font-size:13px;color:#7a736a;margin:18px 0 0">{source} '

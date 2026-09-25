@@ -2418,7 +2418,10 @@ def run_daily_alert_checks():
                      ("extra_daily", check_extra_daily_alerts),
                      # Monday only (per restaurant, its own timezone): a
                      # competitor's rating moving, or a new one nearby (#48).
-                     ("competitor", check_competitor_alerts)):
+                     ("competitor", check_competitor_alerts),
+                     # A data source that stopped updating, or came back
+                     # (Data Freshness #18) — once per source per ISO week.
+                     ("data_source", _notify.check_data_source_alerts)):
         try:
             fn(local_hour=10)
             out[name] = "ok"

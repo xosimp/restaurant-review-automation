@@ -652,6 +652,11 @@ def assemble(ev, acc, fr) -> dict:
            "reason": reason, "score": round(pct / 100.0, 2) if pct is not None else 0.0,
            "caution": c["caution"], "dimensions": dims, "version": VERSION}
     out.update(_common(pct, c["caps_applied"], sample=bool((ev or {}).get("sample"))))
+    # The Recommendation Confidence Impact rides on every K1 object, so the
+    # Why? drawer can say "94% once inventory counts are current" (#22):
+    # None unless fresher data would move it IMPACT_MIN_DELTA points.
+    imp = freshness_impact(out)
+    out["confidence_impact"] = imp if imp and (imp.get("delta") or 0) >= IMPACT_MIN_DELTA else None
     return out
 
 

@@ -19,6 +19,11 @@ struct MarketingAnalyticsSection: View {
                     .frame(maxWidth: .infinity)
             } else {
                 periodSwitcher
+                // "Metrics synced 9/21/26" — amber when the nightly pull is
+                // stale or failing (DH4-8), so a flat week reads as what it is.
+                if let sync = viewModel.performance?.metricsSync {
+                    ServerStatusCaption(status: sync)
+                }
                 if let window = viewModel.window {
                     statsTile(window)
                     // Why there's no +/−% beside the figures (F2) — a

@@ -141,7 +141,9 @@ def test_web_labor_money_is_a_gap_never_green_and_never_on_sample_data():
     assert "Gap to target / mo" in s and "Per year · projected" in s
     assert "labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0" in s  # hidden at $0 and without a benchmark for the type
     assert "Overtime premium · " in s  # names its window
-    assert "{% set _status_ok = labor.is_live and not _partial and not labor.period_too_short_to_project and labor.total_sales %}" in s
+    # ...and not over stale shifts (Data Freshness #33): the registry's labor
+    # source withholds the good tone too.
+    assert "{% set _status_ok = labor.is_live and not _partial and not labor.period_too_short_to_project and labor.total_sales and not _lab_stale %}" in s
 
 
 def test_web_gap_chip_only_says_on_target_under_the_contract():

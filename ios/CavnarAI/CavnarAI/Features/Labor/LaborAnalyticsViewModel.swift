@@ -110,6 +110,28 @@ final class LaborAnalyticsViewModel {
     var diagnosis: LaborDiagnosis?
     var isLoadingInsight = false
     var isLoading = false
+    /// When the read on screen was saved to this device, while it is the
+    /// cached copy, and whether the last fetch of a new one failed. The
+    /// insight is fetched best-effort, so a failure used to leave the
+    /// cached read up looking current (#37).
+    private(set) var insightCachedAt: Date?
+    private(set) var insightFetchFailed = false
+
+    /// "Older read" when the fetch failed and the read shown is this
+    /// device's cached copy — unless the server already marked it stale
+    /// (its own `olderReadNote` then says so).
+    var insightFallbackNote: String? {
+        Self.insightFallbackNote(hasInsight: insight != nil, serverSaysOlder: insight?.olderReadNote != nil,
+                                 fetchFailed: insightFetchFailed, cachedAt: insightCachedAt)
+    }
+
+    static func insightFallbackNote(hasInsight: Bool, serverSaysOlder: Bool, fetchFailed: Bool,
+                                    cachedAt: Date?) -> String? {
+        guard hasInsight, fetchFailed, !serverSaysOlder else { return nil }
+        return "This is the last read Cavnar finished"
+            + (cachedAt.map { ", from \(CavnarDate.mdy($0))" } ?? "")
+            + ". A new one couldn\u{2019}t be loaded just now."
+    }
 
     // Whether the performance chart's grow-up-from-zero bar reveal has
     // already played. Persisted to UserDefaults — this view model gets
@@ -152,7 +174,11 @@ final class LaborAnalyticsViewModel {
         hasPlayedTilesIntro = UserDefaults.standard.bool(forKey: Self.tilesIntroPlayedKey(restaurantId))
         guard let data = SecureCache.read(key: Self.insightCacheKey(restaurantId)),
               let cached = try? JSONDecoder.cavnar.decode(AIInsight.self, from: data) else { return }
+        // A foreground return re-runs this; a read this session already
+        // fetched stays as it is.
+        guard insightCachedAt != nil || insight == nil else { return }
         insight = cached
+        insightCachedAt = SecureCache.modifiedAt(key: Self.insightCacheKey(restaurantId))
     }
 
     private static func insightCacheKey(_ restaurantId: Int) -> String { "labor.cachedInsight.\(restaurantId)" }
@@ -197,6 +223,11 @@ final class LaborAnalyticsViewModel {
             insight = fresh.insight
             diagnosis = fresh.diagnosis
             cacheInsight(fresh.insight)
+            insightCachedAt = nil
+            insightFetchFailed = false
+        } else {
+            // The cached read stays up; the note under it says how old it is.
+            insightFetchFailed = true
         }
         isLoadingInsight = false
     }

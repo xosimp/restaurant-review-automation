@@ -39,6 +39,12 @@ final class ReviewsListViewModel {
     /// /mobile/api/review-stats from anywhere, so the phone's Reviews tab
     /// showed no reputation summary at all while the web showed four pills.
     var stats: ReviewStats?
+    /// The real review-fetch state from the first page (DH4-6), in the
+    /// restaurant's clock: "Checked 11:02am · next check 4pm", "Last check
+    /// 9/21/26 — 6 checks missed". Nil from an older server.
+    private(set) var fetchLine: ServerStatusLine?
+    /// When a page last loaded — the foreground-refresh policy's clock.
+    private(set) var lastLoadedAt: Date?
     /// Paging state. load() used to ask for every review the restaurant had
     /// ever received (filter=all, no limit) and filter client-side.
     private(set) var total = 0
@@ -132,10 +138,12 @@ final class ReviewsListViewModel {
         let total: Int?
         let offset: Int?
         let hasMore: Bool?
+        var fetchLine: LenientStatusLine? = nil
 
         enum CodingKeys: String, CodingKey {
             case ok, reviews, total, offset
             case hasMore = "has_more"
+            case fetchLine = "fetch_line"
         }
     }
 
@@ -163,6 +171,8 @@ final class ReviewsListViewModel {
             total = response.total ?? response.reviews.count
             nextOffset = response.offset ?? response.reviews.count
             hasMore = response.hasMore ?? false
+            fetchLine = response.fetchLine?.value
+            lastLoadedAt = Date()
             loadCategory = category
             loadPlatform = platform
             await loadStats()

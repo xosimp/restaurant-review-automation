@@ -105,7 +105,8 @@ final class HomeSummaryTests: XCTestCase {
         let kicker = MainActor.assumeIsolated {
             HomeFreshnessStrip.kicker(dataAsOf: s.dataAsOfDisplay, monitoring: s.monitoring)
         }
-        XCTAssertEqual(kicker, "DATA AS OF 9/9/26 · 1 LIVE")
+        // The count is cadence-gated server-side: "current", never "live".
+        XCTAssertEqual(kicker, "DATA AS OF 9/9/26 · 1 CURRENT")
         // The cache round trip keeps it.
         let again = try JSONDecoder.cavnar.decode(HomeSummary.self, from: try JSONEncoder.cavnar.encode(s))
         XCTAssertEqual(again.freshness, s.freshness)

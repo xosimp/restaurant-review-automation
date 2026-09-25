@@ -22,6 +22,7 @@ struct HomeView: View {
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
     @State private var showingValueDetail = false
+    @State private var showingDataHealth = false
     @State private var notificationsBadge = NotificationsBadgeViewModel()
     // Owned here (not by NotificationsListView) so the fetch can start the
     // instant the bell is tapped, and so a second open in the same session
@@ -67,7 +68,7 @@ struct HomeView: View {
     // kept compositing every frame through a sheet's presentation and any
     // interactive swipe-to-dismiss, which is what made both feel laggy.
     private var backgroundMotionPaused: Bool {
-        showingValueDetail || showingNotifications || showingLocationSwitcher || !tabVisible
+        showingValueDetail || showingNotifications || showingLocationSwitcher || showingDataHealth || !tabVisible
             // Also frozen until the landing is done. Home mounts during
             // RootView's own crossfade out of the sign-in screen, and the
             // field's three Canvas layers used to start ticking right then
@@ -109,6 +110,16 @@ struct HomeView: View {
                         if let summary = viewModel.summary {
                             hero(summary)
 
+                            // What's on screen came from the device cache
+                            // and is old enough to say so (audit 6.5).
+                            if let notice = viewModel.stalenessNotice {
+                                HomeMixedText.make(notice, size: 12.5, weight: 600, color: .cavnarAmber)
+                                    .frame(maxWidth: .infinity)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 24)
+                                    .padding(.top, 10)
+                            }
+
                             HomePulseStrip(modules: summary.modules, paused: backgroundMotionPaused) { module in
                                 navigate(to: ModuleRoute(key: module.key, label: module.label))
                             }
@@ -116,10 +127,18 @@ struct HomeView: View {
                             .belowFold(heroAppeared, delay: 0.1)
 
                             // How current each source behind those tiles is
-                            // (K4/J2). Nothing on an older server.
-                            if let entries = summary.freshness?.entries, !entries.isEmpty {
+                            // (K4/J2), led by the Data Health Score; tap
+                            // for the Data health sheet. Nothing on an
+                            // older server; "Couldn't check…" when the
+                            // server couldn't work freshness out.
+                            let entries = summary.freshness?.entries ?? []
+                            if HomeFreshnessStrip.hasContent(entries: entries, health: summary.dataHealth,
+                                                             unavailable: summary.freshnessUnavailable) {
                                 HomeFreshnessStrip(entries: entries, dataAsOf: summary.dataAsOfDisplay,
-                                                   monitoring: summary.monitoring)
+                                                   monitoring: summary.monitoring,
+                                                   health: summary.dataHealth,
+                                                   unavailable: summary.freshnessUnavailable,
+                                                   onOpen: { showingDataHealth = true })
                                     .padding(.horizontal, 20)
                                     .padding(.top, 12)
                                     .belowFold(heroAppeared, delay: 0.13)
@@ -187,7 +206,8 @@ struct HomeView: View {
                             // location without one.
                             // (It pads itself, so a hidden card leaves no gap.)
                             HomeLastNightCard(open: { path.append($0) },
-                                              homeLoadedAt: viewModel.lastLoadedAt)
+                                              homeLoadedAt: viewModel.lastLoadedAt,
+                                              localNow: summary.localNow)
                                 .belowFold(heroAppeared, delay: 0.61)
                             HomeDayCard(dateLabel: dayLabel(summary))
                                 .padding(.horizontal, 20)
@@ -412,6 +432,9 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showingValueDetail) {
                 valueDetailSheet
+            }
+            .sheet(isPresented: $showingDataHealth) {
+                DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
             // Opening the sheet marks alert_log seen server-side (see
             // NotificationsListViewModel.load()), so refreshing again right

@@ -66,6 +66,10 @@ final class FoodCostAnalyticsViewModel {
 
     /// Whether the Analytics tab has asked for its first load yet.
     private(set) var hasRequestedFirstLoad = false
+    /// When the analytics last loaded — the foreground-refresh clock. Nil
+    /// until the Analytics tab has been shown, so a foreground return never
+    /// loads (and records as shown) a tab the owner hasn't opened.
+    private(set) var lastLoadedAt: Date?
 
     /// The Analytics tab's first appearance — the only automatic load.
     /// Opening Food Cost on the Tracker tab fetches nothing here, because
@@ -97,6 +101,7 @@ final class FoodCostAnalyticsViewModel {
         do {
             let fresh: FoodCostAnalytics = try await client.send("/mobile/api/food-cost/analytics")
             analytics = fresh
+            lastLoadedAt = Date()
         } catch is CancellationError {
             // View went away mid-fetch; not a failure.
         } catch let error as APIClient.APIError {

@@ -186,7 +186,8 @@ final class DeepLinkRouter {
         case "morning_brief", "daily_briefing", "intraday_pulse", "closing_summary",
              "weekly_review", "monthly_review", "outcome_achieved", "milestone":
             return "ask"
-        case "issue", "issue_escalated", "login", "staff_signin", "connection_lost":
+        case "issue", "issue_escalated", "login", "staff_signin", "connection_lost",
+             "data_source_down", "data_source_restored":
             return "account"
         default:
             return "reviews"

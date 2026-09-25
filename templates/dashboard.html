@@ -1057,6 +1057,38 @@ details[open]>summary~*{animation:askIn .3s ease both}
 }
 </style>
 <script>
+/* AI-read caches (Data Freshness #14, DH4-1). Every sessionStorage entry a
+   module keeps is keyed "cav:<name>:<restaurant id>", so a location switch
+   can never show the other location's read, and the whole cav: namespace is
+   wiped on a switch and after Sync now. Each entry carries when it was read
+   and the server's own as-of, and a cache hit says so (cavReadNote). ES5. */
+function cavRid(){var m=document.querySelector('meta[name="cavnar-restaurant-id"]');return m?String(m.getAttribute('content')||''):'';}
+function cavKey(k){return 'cav:'+k+':'+cavRid();}
+function cavGet(k){try{return sessionStorage.getItem(cavKey(k));}catch(e){return null;}}
+function cavSet(k,v){try{sessionStorage.setItem(cavKey(k),v);}catch(e){}}
+function cavDel(k){try{sessionStorage.removeItem(cavKey(k));}catch(e){}}
+var CAV_LEGACY_KEYS=['review_insight','review_insight_at','labor_insight','labor_insight_at','labor_insight_meta','inv_insight','inv_insight_at','mkt_brief','mkt_brief_at','mkt_brief_check','aiv_cache','aiv_cache_at'];
+function cavWipe(){
+  try{
+    var ks=[],i;
+    for(i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);if(k&&k.indexOf('cav:')===0)ks.push(k);}
+    for(i=0;i<ks.length;i++)sessionStorage.removeItem(ks[i]);
+    /* Keys an older page wrote with no restaurant in them. */
+    for(i=0;i<CAV_LEGACY_KEYS.length;i++)sessionStorage.removeItem(CAV_LEGACY_KEYS[i]);
+  }catch(e){}
+}
+/* "Read 2:14pm" (or "Read 9/23/26 · 2:14pm") under a read served from this
+   tab's cache: the server's generated_at when it sent one, else when the
+   page cached it. Never shown on a fresh fetch. */
+function cavClock(d){var h=d.getHours(),m=d.getMinutes();return (h%12||12)+(m?':'+(m<10?'0':'')+m:'')+(h<12?'am':'pm');}
+function cavReadNote(el,at,asOf){
+  if(!el)return;
+  var d=null;if(at){d=new Date(/Z$|[+-]\d\d:?\d\d$/.test(String(at))?at:String(at).replace(' ','T')+'Z');if(isNaN(d))d=null;}
+  if(!d)return;
+  var now=new Date(),same=d.toDateString()===now.toDateString();
+  var txt='Read '+(same?'':(d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2)+' \u00b7 ')+cavClock(d)+(asOf?' \u00b7 data as of '+asOf:'');
+  var n=document.createElement('div');n.className='ck-strip cav-read';n.textContent=txt;el.appendChild(n);
+}
 function addCustomFoodItem(){
   var tbody=document.getElementById('fc-rows');
   if(!tbody)return;
@@ -1219,7 +1251,7 @@ function clientUpload(dataType, input) {
           resultEl.style.color = '#2d6a4f';
           resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
         }
-        try{sessionStorage.removeItem('labor_insight');sessionStorage.removeItem('labor_insight_at');sessionStorage.removeItem('inv_insight');sessionStorage.removeItem('inv_insight_at');}catch(e){}
+        cavDel('labor_insight');cavDel('labor_insight_at');cavDel('inv_insight');cavDel('inv_insight_at');
         setTimeout(function() { location.reload(); }, 1200);
       } else {
         if (resultEl) {
@@ -1937,10 +1969,27 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-fresh-it b{font-weight:700;color:var(--ink2)}
 .hb-fresh-it i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0}
 .hb-fresh-it.current i{background:var(--hb-good);box-shadow:0 0 7px var(--hb-good)}
-.hb-fresh-it.aging i{background:var(--hb-warn);box-shadow:0 0 7px var(--hb-warn)}
+.hb-fresh-it.aging i,.hb-fresh-it.disconnected i{background:var(--hb-warn);box-shadow:0 0 7px var(--hb-warn)}
 .hb-fresh-it.stale{border-color:var(--hb-warn)}.hb-fresh-it.stale i{background:var(--hb-warn);box-shadow:0 0 9px var(--hb-warn)}
 .hb-fresh-it.sample i{background:repeating-linear-gradient(135deg,var(--ink3) 0 2px,transparent 2px 4px)}
 .hb-fresh-it .pc{color:var(--ink2);font-weight:600}
+/* Data Health (Data Freshness #21-23): the kicker opens the drawer (the
+   explanation modal, dark in both themes, so its rows use the Why? panel's
+   .cf-p tokens); each module header carries one .hb-fresh chip from the
+   same payload. No new pattern: the strip's chip, the panel's rows, .cbtn,
+   the .dr-pulse loading bar. */
+.hb-fresh .dh-open{font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:11px;padding:0 6px;margin-left:-6px}
+.hb-fresh .dh-open .hb-num{letter-spacing:0;color:var(--ink2)}
+.dh-badge{margin-top:10px}
+.dh-badge .hb-fresh{margin-top:0}
+.dh-badge .dh-imp{font-size:12.5px;color:var(--ink3)}
+.dh-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--p-c);box-shadow:0 0 7px var(--p-c);margin-right:8px;vertical-align:middle}
+.dh-sync{margin-top:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.dh-sync-msg{font-size:13px;color:var(--p-ink2);line-height:1.5;width:100%}
+.dh-sync-msg.err{color:var(--p-warn)}
+.dh-sync-msg .dr-pulse{background:var(--p-track);margin:4px 0 8px}
+.dh-line{font-size:12.5px;color:var(--ink3);margin-top:6px}
+.dh-line.warn,.dh-line.bad{color:var(--amber)}
 .hb-join .ln:before{left:6px;margin-left:-5.5px;animation:hbTravel 2.6s cubic-bezier(.45,0,.2,1) infinite,hbGlow 2s ease-in-out infinite}
 /* The sphere runs the line at full strength and stops where the pulse sits:
    both centred 6px inside the end, on the line, clear of the pill's edge. */
@@ -2048,6 +2097,7 @@ svg:hover .hb-xh{opacity:1}
     // meaning: what the % is - how well supported, not the chance it works
     // (the owner's "support score", group P); the Why? panel leads with it.
     return {pct:pct,band:band,label:label,reason:reason,caution:str(c.caution),dims:dims,k1:k1,at:at,sample:sample,
+            impact:obj(c.confidence_impact),
             caps:obj(c.caps),capsApplied:(c.caps_applied instanceof Array)?c.caps_applied:[],
             meaning:str(c.meaning)||(k1?MEANING:''),tone:bandTone(band)};
   }
@@ -2088,10 +2138,22 @@ svg:hover .hb-xh{opacity:1}
     p=f?pctOf(f.pct):null;
     var asOf=f?(isMdy(f.as_of)?f.as_of:mdyIso(f.as_of_iso||f.as_of)):'';
     out.push({key:'freshness',title:'Data freshness',pct:p,tone:tone(p,at),value:p==null?'—':p+'%',
-              basis:f?(str(f.basis)||(p==null?'Not measured':'')):'Not measured',detail:asOf?'as of '+asOf:''});
+              basis:f?(str(f.basis)||(p==null?'Not measured':'')):'Not measured',detail:asOf?'as of '+asOf:'',
+              note:impactText(n.impact)});
     return out;
   }
   function meter(p,cls){return '<span class="'+cls+(p==null?' none':'')+'" aria-hidden="true"><i style="width:'+(p==null?0:p)+'%"></i></span>';}
+  // The Recommendation Confidence Impact (#22, confidence_engine.
+  // freshness_impact): "94% once inventory counts are current", only when
+  // current data would move the figure 3 points or more.
+  var SOURCE_WORD={pos:['POS sales','is'],labor:['shifts','are'],sales:['sales','are'],reviews:['reviews','are'],
+    inventory:['inventory counts','are'],purchases:['deliveries','are'],marketing:['marketing metrics','are'],
+    visibility:['AI visibility','is'],competitor:['competitor reads','are'],weather:['the forecast','is'],dsr:['the daily report','is']};
+  function impactText(im){
+    im=obj(im);if(!im||!isNum(im.when_current)||!isNum(im.delta)||im.delta<3)return '';
+    var w=SOURCE_WORD[im.blocked_by]||['the data','is'];
+    return im.when_current+'% once '+w[0]+' '+w[1]+' current';
+  }
   // What holds the overall figure down, in plain words (B4 M7): the two
   // ceilings confidence_engine.overall applies. The figures come from the
   // payload's caps {no_track_record, stale} when sent, else the engine's
@@ -2193,7 +2255,7 @@ svg:hover .hb-xh{opacity:1}
     var l=obj(legacy);if(l&&(l.version!=null||obj(l.dimensions)||l.hasOwnProperty('pct')))return l;
     return null;
   }
-  window.cavConf={k1:k1,norm:norm,rows:rows,line:line,panel:panel,tone:tone,footer:footer,claimTag:claimTag,claimStrip:claimStrip,demand:demandAccuracyText,AT:AT};
+  window.cavConf={k1:k1,norm:norm,rows:rows,line:line,panel:panel,tone:tone,footer:footer,claimTag:claimTag,claimStrip:claimStrip,demand:demandAccuracyText,AT:AT,impactText:impactText};
   window.cavConfLine=line;
 })();
 </script>
@@ -2332,28 +2394,41 @@ svg:hover .hb-xh{opacity:1}
     var mo=d.monitoring;
     if(mo&&typeof mo==='object'&&mo.count_live!=null){
       var asOf=mo.stalest_as_of?(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(mo.stalest_as_of)?mo.stalest_as_of:mdy(mo.stalest_as_of)):'';
-      return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+(+mo.count_live||0)+'</span> live '+((+mo.count_live)===1?'source':'sources')+(asOf?' · oldest data <span class="hb-num">'+esc(asOf)+'</span>':' · <span class="ago">'+esc(ago(d.generated_at))+'</span>')+'</span>';}
+      // "Live" is reserved for a source refreshed inside its cadence; the
+      // count is the sources that are current by that rule (#27).
+      return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+(+mo.count_live||0)+'</span> current '+((+mo.count_live)===1?'source':'sources')+(asOf?' · oldest data <span class="hb-num">'+esc(asOf)+'</span>':' · <span class="ago">'+esc(ago(d.generated_at))+'</span>')+'</span>';}
     return '<span class="hb-live"><i></i>'+esc(label||'Monitoring')+' <span class="hb-num">'+hbSignals(d)+'</span> signals · <span class="ago">'+esc(ago(d.generated_at))+'</span></span>';}
   // How current each source under the page is (K4 freshness[] + data_as_of).
   // The server computed this per module and no client drew it, so a Home
   // built on a nine-day-old review pull looked as current as today's
   // (CA3 F1, CA4 F7). One pill per source: its state dot, its name, its
   // basis ("POS synced 9/23/26"), and its freshness % when measured.
-  var FRESH_STATE={current:'current',fresh:'current',aging:'aging',stale:'stale',not_connected:'off',missing:'off',manual:'off',unknown:'unknown',sample:'sample'};
-  var FRESH_WORD={aging:'aging',stale:'stale',off:'not connected',unknown:'age unknown',sample:'sample data'};
+  // A POS removed after use keeps its last data's recency: "disconnected",
+  // drawn with the warning dot, never as current.
+  var FRESH_STATE={current:'current',fresh:'current',aging:'aging',stale:'stale',not_connected:'off',missing:'off',manual:'off',unknown:'unknown',sample:'sample',disconnected:'disconnected'};
+  var FRESH_WORD={aging:'aging',stale:'stale',off:'not connected',unknown:'age unknown',sample:'sample data',disconnected:'disconnected'};
   function renderFreshness(d){
     // The date sits at brief.data_as_of and monitoring.stalest_as_of on the
     // web payload (home_brief); only mobile lifts it to the top level, so a
     // top-level-only read never drew it here (B6#8).
     var dao=d.data_as_of||(d.brief&&d.brief.data_as_of)||(d.monitoring&&d.monitoring.stalest_as_of)||'';
-    var fr=d.freshness||[];if(!fr.length&&!dao)return '';
+    var fr=d.freshness||[];
+    // The Restaurant Data Health Score leads the strip and opens the drawer
+    // (#21-23): "DATA HEALTH 71% · DATA AS OF 9/22/26".
+    var ov=d.data_health&&d.data_health.overall;
+    var hasDh=ov&&(ov.pct!=null||ov.state==='pending');
+    if(!fr.length&&!dao&&!hasDh)return '';
     var h='<div class="hb-fresh hb-rise" style="--i:2" aria-label="How current your data is">';
-    if(dao)h+='<span class="hb-fresh-k">Data as of <span class="hb-num">'+esc(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(dao)?dao:mdy(dao))+'</span></span>';
+    var daoTxt=dao?(/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(dao)?dao:mdy(dao)):'';
+    if(hasDh)h+='<button type="button" class="cbtn cbtn-text cbtn-muted cbtn-sm dh-open" data-dh-open="1" title="'+esc(d.data_health.worst_line||ov.reason||'')+'">'
+      +(ov.pct!=null?'Data health <span class="hb-num">'+(+ov.pct)+'%</span>':'Waiting for the first sync')
+      +(daoTxt?' · Data as of <span class="hb-num">'+esc(daoTxt)+'</span>':'')+'</button>';
+    else if(dao)h+='<span class="hb-fresh-k">Data as of <span class="hb-num">'+esc(daoTxt)+'</span></span>';
     for(var i=0;i<fr.length;i++){var f=fr[i]||{},st=FRESH_STATE[f.state]||'unknown';
       var lbl=f.label||MODLABEL[f.module||f.key]||f.source||f.module||f.key||'';if(!lbl)continue;
       var basis=f.basis||f.note||(f.as_of?'as of '+f.as_of:'');
       var pc=(typeof f.pct==='number'&&isFinite(f.pct))?Math.round(f.pct):null;
-      h+='<span class="hb-fresh-it '+st+'" title="'+esc(basis)+'"><i></i><b>'+esc(lbl)+'</b>'+(basis?' '+num(basis):(FRESH_WORD[st]?' '+esc(FRESH_WORD[st]):''))+(pc!=null&&st!=='sample'&&st!=='off'?' <span class="pc hb-num">'+pc+'%</span>':'')+'</span>';}
+      h+='<span class="hb-fresh-it '+st+'" title="'+esc(basis)+'"><i></i><b>'+esc(lbl)+'</b>'+(st==='disconnected'&&basis?' disconnected ·':'')+(basis?' '+num(basis):(FRESH_WORD[st]?' '+esc(FRESH_WORD[st]):''))+(pc!=null&&st!=='sample'&&st!=='off'?' <span class="pc hb-num">'+pc+'%</span>':'')+'</span>';}
     return h+'</div>';
   }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
@@ -3445,6 +3520,130 @@ svg:hover .hb-xh{opacity:1}
     if(e.target&&e.target.id==='explain-modal')hbCloseExplain();
   });
   document.addEventListener('keydown',function(e){if(e.key==='Escape')hbCloseExplain();});
+  // ── Data Health (Data Freshness #21-23) ───────────────────────────────────
+  // The Restaurant Data Health Score behind the Home kicker and the module
+  // badges: GET /api/data-health (data_health.snapshot), read once per page
+  // and shared. The drawer is the explanation modal the Why? panel uses, so
+  // its rows are the panel's rows: each source with its tone dot, how many
+  // recent syncs succeeded, when it next refreshes, what is not connected and
+  // the one action for each, and each module's confidence impact. Sync now
+  // posts /api/data-health/sync/pos (deduplicated server-side: a second tap
+  // hears "already syncing"); the ember pulse bar runs while it waits, and
+  // every cached AI read on the page is dropped (cavWipe) because the data
+  // under it is about to change. Percentages stay; the overall % is a
+  // support score, never a grade.
+  var _dhData=null,_dhWait=null;
+  var DH_BADGE_MODULE={reviews:'reviews',labor:'labor',food_cost:'food_cost',marketing:'marketing',intel:'intel'};
+  function dhFetch(fresh){
+    if(_dhData&&!fresh)return Promise.resolve(_dhData);
+    if(_dhWait&&!fresh)return _dhWait;
+    _dhWait=fetch('/api/data-health',{headers:{'Accept':'application/json'}}).then(apiJson).then(function(d){
+      _dhWait=null;if(d&&d.ok)_dhData=d;return d;
+    },function(){_dhWait=null;return {ok:false,error:'Data health could not be read right now.'};});
+    return _dhWait;
+  }
+  function dhTone(t){return t==='ok'?'good':(t==='warn'||t==='bad'?'warn':'mid');}
+  function dhStateTone(o){var p=o&&o.pct;return p==null?'mid':(p>=80?'good':(p>=50?'mid':'warn'));}
+  function dhRow(title,tone,value,basis,detail){
+    return '<div class="cf-p-row '+tone+'"><div class="cf-p-h"><span class="t"><i class="dh-dot" aria-hidden="true"></i>'+esc(title)+'</span>'
+      +(value!=null&&value!==''?'<span class="v hb-num">'+esc(value)+'</span>':'')+'</div>'
+      +(basis?'<div class="b">'+num(basis)+'</div>':'')+(detail?'<div class="d">'+num(detail)+'</div>':'')+'</div>';
+  }
+  function dhBody(d){
+    if(!d||!d.ok)return '<div class="cf-p"><div class="cf-p-mean">'+esc((d&&d.error)||'Data health could not be read right now.')+'</div></div>';
+    var o=d.overall||{},h='<div class="cf-p dh-p">';
+    h+='<div class="cf-p-mean">How current the data behind your recommendations is — a support score, not a grade.</div>';
+    h+='<div class="cf-p-hero '+dhStateTone(o)+'"><div class="cf-p-big hb-num">'+(o.pct==null?'—':(+o.pct)+'<small>%</small>')+'</div>'
+      +'<span class="cf-p-bar'+(o.pct==null?' none':'')+'" aria-hidden="true"><i style="width:'+(o.pct==null?0:+o.pct)+'%"></i></span>'
+      +'<div class="cf-p-why">'+(o.pct==null?esc(o.label||'')+(o.reason?' — ':''):'')+num(o.reason||'')+'</div></div>';
+    var src=d.sources||[],i;
+    if(src.length){
+      h+='<div class="cf-p-k">Sources</div>';
+      for(i=0;i<src.length;i++){var s=src[i]||{},det=[];
+        if(s.reliability&&s.reliability.basis)det.push(s.reliability.basis);
+        if(s.expected_line)det.push(s.expected_line);
+        if(s.error&&String(s.line||'').indexOf(s.error)<0)det.push(s.error);
+        h+=dhRow(s.label||s.key,dhTone(s.tone),s.pct==null?'':(+s.pct)+'%',s.line||'',det.join(' · '));}
+    }
+    var nc=d.not_connected||[];
+    if(nc.length){
+      h+='<div class="cf-p-k">Not connected</div>';
+      for(i=0;i<nc.length;i++)h+=dhRow(nc[i].label||nc[i].key,'mid','',nc[i].next||'','');
+    }
+    var mods=d.modules||[],imp=[];
+    for(i=0;i<mods.length;i++){var ci=mods[i]&&mods[i].confidence_impact;if(ci&&ci.line)imp.push(dhRow(mods[i].title||mods[i].module,'warn',(+ci.now)+'% → '+(+ci.when_current)+'%',ci.line,ci.basis||''));}
+    if(imp.length)h+='<div class="cf-p-k">What it does to your recommendations</div>'+imp.join('');
+    var canSync=false;for(i=0;i<src.length;i++)if(src[i]&&src[i].can_sync_now)canSync=true;
+    if(canSync)h+='<div class="dh-sync"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dh-sync="pos">Sync now</button><div class="dh-sync-msg" aria-live="polite"></div></div>';
+    h+='<div class="cf-p-ft">Sources that aren’t connected are listed, never scored. Checked '+esc(ago(d.generated_at))+'.</div>';
+    return h+'</div>';
+  }
+  function dhLoading(){return '<div class="cf-p"><div class="dh-sync-msg"><div class="dr-pulse wide" aria-hidden="true"><i></i></div>Reading how current each source is</div></div>';}
+  function dhOpen(){
+    hbExplain('Data health',dhLoading(),'How current your data is');
+    dhFetch(true).then(function(d){
+      var m=document.getElementById('explain-modal'),t=document.getElementById('explain-title'),b=document.getElementById('explain-body');
+      if(!m||!m.classList.contains('show')||!t||t.textContent!=='Data health'||!b)return;
+      b.innerHTML=dhBody(d);dhBadges(d);
+    });
+  }
+  function dhSync(btn){
+    var src=btn.getAttribute('data-dh-sync')||'pos',msg=btn.parentNode&&btn.parentNode.querySelector('.dh-sync-msg');
+    btn.disabled=true;
+    if(msg){msg.className='dh-sync-msg';msg.innerHTML='<div class="dr-pulse wide" aria-hidden="true"><i></i></div>Asking your POS for the latest data';}
+    fetch('/api/data-health/sync/'+encodeURIComponent(src),{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(apiJson).then(function(r){
+      if(r&&r.ok){
+        if(typeof cavWipe==='function')cavWipe();
+        if(msg)msg.textContent=r.message||(r.already_syncing?'A sync is already running — this updates when it finishes.':'Syncing now.');
+        // One re-read once the pull has had time to land; the button stays
+        // off, so a second tap never races the first.
+        setTimeout(function(){var m=document.getElementById('explain-modal'),t=document.getElementById('explain-title');
+          if(m&&m.classList.contains('show')&&t&&t.textContent==='Data health')dhOpen();},45000);
+      }else{
+        if(msg){msg.className='dh-sync-msg err';msg.textContent=(r&&r.error)||'The sync couldn’t start.';}
+        btn.disabled=false;
+      }
+    }).catch(function(){
+      // The answer was lost: whether it started is unknown, so the button
+      // stays off rather than inviting a blind second send.
+      if(msg){msg.className='dh-sync-msg err';msg.textContent='Couldn’t confirm the sync started — check again in a minute.';}
+    });
+  }
+  // One line under each module header, filtered by that module's sources:
+  // the weakest source's line with its dot, and the module's confidence
+  // impact when fresher data would move it.
+  var DH_CHIP={ok:'current',warn:'aging',bad:'stale',off:'off'};
+  function dhBadges(d){
+    var els=document.querySelectorAll('.dh-badge[data-dh-module]');if(!els.length)return;
+    if(!d||!d.ok){for(var z=0;z<els.length;z++)els[z].hidden=true;return;}
+    var byKey={},i,j;for(i=0;i<(d.sources||[]).length;i++)byKey[d.sources[i].key]=d.sources[i];
+    var mods={};for(i=0;i<(d.modules||[]).length;i++)mods[d.modules[i].module]=d.modules[i];
+    var rank={bad:0,warn:1,off:2,ok:3};
+    for(i=0;i<els.length;i++){
+      var el=els[i],m=mods[DH_BADGE_MODULE[el.getAttribute('data-dh-module')]];
+      if(!m){el.hidden=true;continue;}
+      var worst=null;
+      for(j=0;j<(m.sources||[]).length;j++){var s=byKey[m.sources[j]];if(!s)continue;
+        if(!worst||(rank[s.tone]!=null?rank[s.tone]:9)<(rank[worst.tone]!=null?rank[worst.tone]:9))worst=s;}
+      if(!worst){el.hidden=true;continue;}
+      var st=DH_CHIP[worst.tone]||'unknown',ci=m.confidence_impact;
+      el.innerHTML='<div class="hb-fresh"><span class="hb-fresh-it '+st+'" title="'+esc(worst.basis||'')+'"><i></i><b>Data</b> '+num(worst.line||'')+'</span>'
+        +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')
+        +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button></div>';
+      el.hidden=false;
+    }
+  }
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-dh-open],[data-dh-sync]'):null;if(!t)return;
+    e.preventDefault();
+    if(t.hasAttribute('data-dh-sync')){if(!t.disabled)dhSync(t);return;}
+    dhOpen();
+  });
+  // The module panels are parsed after this script, so the badges fill once
+  // the page is in.
+  function dhInit(){if(document.querySelector('.dh-badge[data-dh-module]'))dhFetch(false).then(dhBadges);}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',dhInit);else dhInit();
+  window.cavDataHealth={open:dhOpen,fetch:dhFetch,badges:dhBadges,body:dhBody};
   function renderFollow(g){
     var el=document.getElementById('hb-follow'),dayEl=document.getElementById('hb-day');if(!el)return;
     var lines=(g.brief&&g.brief.brief&&g.brief.brief.lines)||[],iss=(g.issues&&g.issues.issues)||[],gl=(g.goals&&g.goals.goals)||[];
@@ -5252,13 +5451,14 @@ svg:hover .hb-xh{opacity:1}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Reviews. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span><span>{{ 'Live from Google' if restaurant.reviews_live else ('Google connected' if restaurant.gmb_refresh_token else 'Imported reviews') }}</span>{#
+      <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span>{% set _gl = conn_lines.google if conn_lines else None %}{% if _gl %}<span id="rv-fetch-line" class="{{ 'dh-warn' if _gl.tone == 'bad' }}"{% if _gl.tone == 'bad' %} style="color:var(--amber)"{% endif %}>{{ _gl.line }}</span>{% else %}<span id="rv-fetch-line">{{ 'Google connected' if restaurant.gmb_refresh_token else ('Google reviews (sampled)' if restaurant.reviews_live else 'Imported reviews') }}</span>{% endif %}{#
    Two honesty lines the backend has always computed and no screen has
    ever shown. official_rating/official_review_count/is_full_history exist
    because the rating pill can be Google's all-time figure OR our average
    over the reviews we actually hold, and both were displayed unlabelled;
    `unanalysed` exists because when it is non-zero the sentiment split and
    the topic charts cover fewer reviews than the totals beside them. #}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}{% if savings_breakdown and savings_breakdown.reviews_avoided > 0 %}<span class="sep">·</span><span title="{% if savings_breakdown.reply_rate %}At ${{ '%g'|format(savings_breakdown.reply_rate) }} a reply — {{ savings_breakdown.reply_rate_basis }}. {% endif %}An estimate, not a measurement."><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews_avoided|format_num }}</span> of reply writing on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
+      <div class="dh-badge" data-dh-module="reviews" hidden></div>
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
     <div class="hb-pulse">
@@ -6051,8 +6251,14 @@ svg:hover .hb-xh{opacity:1}
   {# The positive-status contract (DESIGN_SYSTEM.md, Money labels and
      positive status): a good word or a green tone only on live, complete
      data long enough to read against the target. #}
-  {% set _status_ok = labor.is_live and not _partial and not labor.period_too_short_to_project and labor.total_sales %}
+  {# The registry's labor source (hosted_dashboard source_fresh): "On
+     target" over shifts that stopped arriving weeks ago was the stale-as-
+     current failure Home already refuses (Data Freshness #33, DH4-5). #}
+  {% set _lf = source_fresh.labor if (source_fresh and source_fresh.labor) else None %}
+  {% set _lab_stale = labor.is_live and _lf and (_lf.state in ('stale', 'unknown') or _lf.error) %}
+  {% set _status_ok = labor.is_live and not _partial and not labor.period_too_short_to_project and labor.total_sales and not _lab_stale %}
   {% if not labor.is_live %}{% set _head = 'Add your shifts to light this up' %}{% set _tone = 'neutral' %}
+  {% elif _lab_stale %}{% set _head = 'Out of date' %}{% set _tone = 'warn' %}
   {% elif _over > 3 %}{% set _head = _over ~ ' pts over target' %}{% set _tone = 'bad' %}
   {% elif _over > 0 %}{% set _head = 'Slightly over target' %}{% set _tone = 'warn' %}
   {% elif _partial %}{% set _head = 'Incomplete data' %}{% set _tone = 'warn' %}
@@ -6060,7 +6266,8 @@ svg:hover .hb-xh{opacity:1}
   <div class="hb-top">
     <div style="min-width:300px;flex:1 1 460px">
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
+      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}{% if _lab_stale %}<span class="sep">·</span><span style="color:var(--amber)">{{ _lf.basis }}</span>{% endif %}</div>
+      <div class="dh-badge" data-dh-module="labor" hidden></div>
       <div class="lb2-bignums">
         <div class="lb2-bn"><span class="l">Sales</span><span class="row"><span class="hb-num stat-n">${{ labor.total_sales|int|format_num }}</span></span></div>
         <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num stat-n">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span></span></div>
@@ -6082,7 +6289,7 @@ svg:hover .hb-xh{opacity:1}
       <span id="labor-gap-banner" hidden></span>
     </div>
     <div class="hb-pulse">
-      <span class="hb-chip {{ 'bad' if _over > 3 else ('warn' if _over > 0 else ('good' if _status_ok else '')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
+      <span class="hb-chip {{ 'warn' if _lab_stale else ('bad' if _over > 3 else ('warn' if _over > 0 else ('good' if _status_ok else ''))) }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
       <span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _lt|int }}%</span></span><span class="l">target</span></span>
       <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
       <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _ot }}</span></span><span class="l">in overtime</span></span>
@@ -6092,7 +6299,7 @@ svg:hover .hb-xh{opacity:1}
 
   <div id="lb-panel-schedule">
   <section class="lb2-hero" aria-label="Labor ribbon">
-    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num stat-n">{{ _lp }}</span><small>% of sales · {{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
+    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num stat-n">{{ _lp }}</span><small>% of sales · {% if labor.date_range and labor.date_range.start and labor.date_range.end %}{{ labor.date_range.start|format_date }} – {{ labor.date_range.end|format_date }}{% else %}{{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}{% endif %}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
     <div id="lb2-hero-chart"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
     <span id="perf-period-label" hidden></span>
   </section>
@@ -7163,7 +7370,13 @@ svg:hover .hb-xh{opacity:1}
   {% set _ostock_total = inv.overstock_total if inv.overstock_total is defined and inv.overstock_total is not none else (inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0) %}
   {# benchmark_state (inventory.py): "not_measured" is a week with nothing logged as waste — never the
      best result, so it never reads "On track" or green (CA4 F11, fix I8). #}
+  {# The registry's inventory source: the oldest count the page rests on
+     (Data Freshness #33 — iOS said "From your count of", the web said
+     "This week · On track" over a three-week-old count). #}
+  {% set _if = source_fresh.inventory if (source_fresh and source_fresh.inventory) else None %}
+  {% set _inv_stale = inv.is_live and _if and (_if.state in ('stale', 'unknown') or _if.error) %}
   {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
+  {% elif _inv_stale %}{% set _head = 'Counts are out of date' %}{% set _tone = 'warn' %}
   {% elif inv.benchmark_state == 'not_measured' %}{% set _head = 'No waste logged this week' %}{% set _tone = 'neutral' %}
   {% elif inv.benchmark_state == 'no_data' %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}
   {% elif _wl in ['Excellent','On Track'] %}{% set _head = 'On track' %}{% set _tone = 'good' %}
@@ -7184,7 +7397,9 @@ svg:hover .hb-xh{opacity:1}
          sit six inches above "Waste is climbing" with nothing explaining how
          both were true. Each now says which question it answers. #}
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      {% if inv.is_live and inv.benchmark_detail and inv.benchmark_label != '—' %}<div class="fc2-h1-basis">This week · {{ inv.benchmark_detail }}</div>{% endif %}
+      {% if inv.is_live and _if and _if.as_of %}<div class="fc2-h1-basis"{% if _inv_stale %} style="color:var(--amber)"{% endif %}>From your count of <span class="hb-num">{{ _if.as_of }}</span>{% if inv.benchmark_detail and inv.benchmark_label != '—' and not _inv_stale %} · {{ inv.benchmark_detail }}{% endif %}</div>
+      {% elif inv.is_live and inv.benchmark_detail and inv.benchmark_label != '—' %}<div class="fc2-h1-basis">This week · {{ inv.benchmark_detail }}</div>{% endif %}
+      <div class="dh-badge" data-dh-module="food_cost" hidden></div>
       {# Actual food cost % — COGS over net sales, against this restaurant's own
          food_cost_target. Filled by /api/food-cost/cogs; hidden until it
          answers, and when a component is missing it says which rather than
@@ -7615,6 +7830,7 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
+  <div class="dh-badge" data-dh-module="marketing" hidden style="margin:-8px 0 16px"></div>
   <div id="mkt-tab-content">
 
   <!-- AI marketing brief -->
@@ -7864,6 +8080,7 @@ svg:hover .hb-xh{opacity:1}
       <div id="mkt-attr-body" style="font-size:12px;color:var(--ink3);line-height:1.6"></div>
     </div>
 
+    <div id="mkt-perf-sync" class="dh-line" hidden style="margin:0 0 10px"></div>
     <div id="mkt-perf-loading" class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
       <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
       <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
@@ -8148,6 +8365,7 @@ svg:hover .hb-xh{opacity:1}
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
+      <div class="dh-badge" data-dh-module="intel" hidden></div>
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ comp_count }}</span></span><span class="l">tracked</span></span>
@@ -8213,6 +8431,7 @@ svg:hover .hb-xh{opacity:1}
       <div style="font-size:13.5px;color:var(--ink3)">Running three local search queries</div>
     </div>
     <div id="aiv-results" style="display:none">
+      <div class="in2-upd" id="aiv-measured" hidden><span>Measured <span class="hb-num" id="aiv-measured-d"></span></span><span id="aiv-measured-old"></span></div>
       <div class="lb2-sig">
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
           <div class="in2-orbit" id="in2-orbit"></div></div>
@@ -8474,10 +8693,13 @@ svg:hover .hb-xh{opacity:1}
 .ac-conn .ic.on::after,.ac-conn .ic.err::after{content:'';position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--ac-card)}
 .ac-conn .ic.on::after{background:var(--green)}
 .ac-conn .ic.err::after{background:var(--red)}
+.ac-conn .ic.warn{opacity:1}
+.ac-conn .ic.warn::after{content:'';position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--ac-card);background:var(--amber)}
 .ac-conn .t{flex:1;min-width:0}
 .ac-conn .t b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
 .ac-conn .t span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ac-conn .t span.err{color:var(--red)}
+.ac-conn .t span.warn{color:var(--amber)}
 .ac-conn .a{flex:none;display:flex;gap:6px}
 
 /* Disclosure */
@@ -8545,12 +8767,17 @@ svg:hover .hb-xh{opacity:1}
 {# ── Connection card for the three POS providers. One template, three
       states (connected · reconnect needed · not connected), replacing three
       hand-copied 90-line blocks that had already drifted in their comments. #}
-{% macro pos_card(label, mark, ident, sync_error, last_synced, sync_fn, disconnect_fn, open_fn) -%}
+{% macro pos_card(label, mark, ident, sync_error, last_synced, sync_fn, disconnect_fn, open_fn, reg=None) -%}
   <div class="ac-conn" data-conn="{{ label|lower|replace(' ','-') }}">
     {% set _wide = 'rpower' in mark %}
     {% if ident and not sync_error %}
-      <div class="ic on" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
-      <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced <span class="ac-num">{{ last_synced|format_date }} {{ last_synced[11:16] }}</span> UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
+      {# The registry's line, in the restaurant's clock and coloured by
+         state: "Last sync 3:02am · Sales through 9/19/26" (DH4-2). The old
+         line read the sync-run stamp in UTC under a green check whatever
+         its age. #}
+      {% set _rt = reg.tone if reg else 'ok' %}
+      <div class="ic {{ 'on' if _rt in ('ok', 'off') else ('err' if _rt == 'bad' else 'warn') }}" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
+      <div class="t"><b>{{ label }}</b>{% if reg %}<span class="{{ 'err' if _rt == 'bad' else ('warn' if _rt == 'warn' else '') }}" title="{{ reg.error or reg.line }}">{{ reg.line }}</span>{% else %}<span>{% if last_synced %}Last synced <span class="ac-num">{{ last_synced|format_date }}</span>{% else %}Connected &mdash; first sync pending{% endif %}</span>{% endif %}</div>
       <div class="a">
         <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
         <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
@@ -8975,7 +9202,7 @@ svg:hover .hb-xh{opacity:1}
       <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to. A connection that stops syncing says so here.</p></div></div>
       <div class="ac-grid">
         <div class="ac-conn">
-          {% if restaurant.gmb_refresh_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Connected &mdash; approved replies post to Google</span></div>
+          {% if restaurant.gmb_refresh_token %}{% set _gl2 = conn_lines.google if conn_lines else None %}<div class="ic {{ 'err' if (_gl2 and _gl2.tone == 'bad') else ('warn' if (_gl2 and _gl2.tone == 'warn') else 'on') }}" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span{% if _gl2 and _gl2.tone in ('bad', 'warn') %} class="warn"{% endif %}>{{ _gl2.line if _gl2 else 'Connected' }} &mdash; approved replies post to Google</span></div>
           <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>
           {# Places-only reviews are a SAMPLE of the listing (admin_ops.review_source, G9): never "connected". #}
           {% elif restaurant.reviews_live and restaurant.google_place_id %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google reviews (sampled &mdash; Places returns 5 at a time)</b><span>Reading your public listing, not your Business Profile &mdash; connect it to see every review and post replies</span></div>
@@ -8989,10 +9216,10 @@ svg:hover .hb-xh{opacity:1}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
           <div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
         </div>
-        {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
-        {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
-        {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
-        {{ pos_card('RPower POS', '/static/brand/integrations/rpower.png', restaurant.rpower_store_mid, restaurant.rpower_sync_error, restaurant.rpower_last_synced, 'rpowerSyncNow', 'rpowerDisconnect', 'openRpowerConnect') }}
+        {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'toast') else None)) }}
+        {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'square') else None)) }}
+        {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'clover') else None)) }}
+        {{ pos_card('RPower POS', '/static/brand/integrations/rpower.png', restaurant.rpower_store_mid, restaurant.rpower_sync_error, restaurant.rpower_last_synced, 'rpowerSyncNow', 'rpowerDisconnect', 'openRpowerConnect', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'rpower') else None)) }}
         <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
       </div>
 
@@ -10549,7 +10776,7 @@ window.switchIntelTab = function(tab) {
   if(window.loadAivHistory)loadAivHistory();
   // The 4-hour session cache is read here too — the tab can open before the
   // window 'load' handler that normally hydrates _aivData has run.
-  if(!_aivData){try{var _c=sessionStorage.getItem('aiv_cache'),_ca=parseInt(sessionStorage.getItem('aiv_cache_at')||'0',10);if(_c&&_ca&&(Date.now()-_ca)<4*60*60*1000)_aivData=JSON.parse(_c);}catch(e){}}
+  if(!_aivData){try{var _c=cavGet('aiv_cache'),_ca=parseInt(cavGet('aiv_cache_at')||'0',10);if(_c&&_ca&&(Date.now()-_ca)<4*60*60*1000)_aivData=JSON.parse(_c);}catch(e){}}
   if(_aivData&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display==='none'){renderAIVisibility(_aivData);}
 };
 
@@ -10666,8 +10893,8 @@ function loadReviewInsight(){
   if(!el)return;
   var fiveMin=5*60*1000;
   try{
-    var cached=sessionStorage.getItem('review_insight');
-    var cachedAt=parseInt(sessionStorage.getItem('review_insight_at')||'0',10);
+    var cached=cavGet('review_insight');
+    var cachedAt=parseInt(cavGet('review_insight_at')||'0',10);
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       /* Older entries held the bare sentence; new ones hold the whole
          payload. Parse defensively so a session that spans the deploy
@@ -10683,6 +10910,7 @@ function loadReviewInsight(){
       renderSeverityStrip(cd);
       renderReviewDiagnosis(cd);
       renderInsightRecs(el,cd.recs,'reviews');
+      cavReadNote(el,cd.generated_at||cachedAt&&new Date(cachedAt).toISOString(),cd.as_of);
       return;
     }
   }catch(e){}
@@ -10708,7 +10936,7 @@ function loadReviewInsight(){
        names, the trend's confidence, the diagnosis and its age — were shown
        once and then silently dropped for five minutes while the text they
        qualified kept rendering. */
-    try{sessionStorage.setItem('review_insight',JSON.stringify(d));sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
+    cavSet('review_insight',JSON.stringify(d));cavSet('review_insight_at',String(Date.now()));
     el.classList.remove('insight-loading');
     typewriterEffect(el,processInsightHtml(html));
     applyInsightCaveats(el,d);
@@ -10870,7 +11098,7 @@ function recAnswer(btn,extra){
     if(box){box.style.display='';box.innerHTML='<span class="rec-ans-done">'+recEsc(recAnswerSentence(ev,d))+'</span>';}
     /* The panels keep a five-minute session copy; an answered line must not
        come back from it. */
-    try{sessionStorage.removeItem('review_insight');sessionStorage.removeItem('mkt_brief');sessionStorage.removeItem('labor_insight');}catch(x){}
+    cavDel('review_insight');cavDel('mkt_brief');cavDel('labor_insight');
     for(var h=0;h<_recAnsweredHooks.length;h++){try{_recAnsweredHooks[h](key,ev,d);}catch(x){}}
   }).catch(function(){for(var j=0;j<all.length;j++)all[j].disabled=false;if(picker)picker.unlock();if(typeof toast==='function')toast('Network error','error');});
 }
@@ -12857,6 +13085,10 @@ function loadMktPerformance(){
   if(!loadingEl)return;
   fetch('/api/mkt-performance').then(apiJson).then(function(d){
     loadingEl.style.display='none';
+    // "Metrics synced 9/21/26", amber when the Meta sync is failing or
+    // stale: reach and engagement are only as current as it (#36).
+    var syncEl=document.getElementById('mkt-perf-sync'),ms=d&&d.metrics_sync;
+    if(syncEl){if(ms&&ms.line){syncEl.textContent=ms.line;syncEl.className='dh-line'+(ms.tone==='warn'?' warn':'');syncEl.hidden=false;}else{syncEl.hidden=true;}}
     if(!d.ok||!d.has_data){
       bodyEl.style.display='none';
       emptyEl.style.display='';
@@ -12905,8 +13137,8 @@ function loadMktInsight(){
   if(!el)return;
   // Check sessionStorage cache (4-hour TTL) to avoid regenerating on every page reload
   try{
-    var cached=sessionStorage.getItem('mkt_brief');
-    var cachedAt=parseInt(sessionStorage.getItem('mkt_brief_at')||'0',10);
+    var cached=cavGet('mkt_brief');
+    var cachedAt=parseInt(cavGet('mkt_brief_at')||'0',10);
     var fiveMin=5*60*1000;
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       el.classList.remove('insight-loading');
@@ -12914,15 +13146,15 @@ function loadMktInsight(){
       el.innerHTML=cached;
       /* The figure check travels with the cached copy: a session-cache hit
          dropped the "unverified numbers" caveat (M-16). */
-      try{var mck=JSON.parse(sessionStorage.getItem('mkt_brief_check')||'{}');applyFigureCaveat(el,mck);mktStaleCaveat(el,mck);}catch(x){}
+      try{var mck=JSON.parse(cavGet('mkt_brief_check')||'{}');applyFigureCaveat(el,mck);mktStaleCaveat(el,mck);cavReadNote(el,mck.generated_at||new Date(cachedAt).toISOString(),mck.as_of);}catch(x){}
       mktLoaded=true;
       return;
     }
   }catch(e){}
   fetch('/api/mkt-insight').then(apiJson).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
-    try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));
-        sessionStorage.setItem('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||''}));}catch(e){}
+    cavSet('mkt_brief',html);cavSet('mkt_brief_at',String(Date.now()));
+    cavSet('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
     applyFigureCaveat(el,d);
@@ -13064,8 +13296,8 @@ function loadLaborInsight(){
   if(!el)return;
   var fiveMin=5*60*1000;
   try{
-    var cached=sessionStorage.getItem('labor_insight');
-    var cachedAt=parseInt(sessionStorage.getItem('labor_insight_at')||'0',10);
+    var cached=cavGet('labor_insight');
+    var cachedAt=parseInt(cavGet('labor_insight_at')||'0',10);
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       el.classList.remove('insight-loading');
       var cs=laborSplitUnverified(cached);
@@ -13074,8 +13306,9 @@ function loadLaborInsight(){
       el.innerHTML=cs.html;
       // The read's stale/stale_note/as_of ride with the cached text, so a
       // reload inside five minutes still says it is an older read (B6#12).
-      var cmeta=null;try{cmeta=JSON.parse(sessionStorage.getItem('labor_insight_meta')||'null');}catch(e2){cmeta=null;}
+      var cmeta=null;try{cmeta=JSON.parse(cavGet('labor_insight_meta')||'null');}catch(e2){cmeta=null;}
       laborApplyCaveats(el,cs.figs,cmeta,cs.note);
+      cavReadNote(el,(cmeta&&cmeta.generated_at)||new Date(cachedAt).toISOString(),cmeta&&cmeta.as_of);
       return;
     }
   }catch(e){}
@@ -13086,8 +13319,8 @@ function loadLaborInsight(){
       var ls=laborSplitUnverified(html);
       _laborInsightFull=ls.html;
       renderDiagnosis('lb2-diag',d.diagnosis);
-      try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));
-        sessionStorage.setItem('labor_insight_meta',JSON.stringify({stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||''}));}catch(e){}
+      cavSet('labor_insight',html);cavSet('labor_insight_at',String(Date.now()));
+      cavSet('labor_insight_meta',JSON.stringify({stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
       elLaborInsight.classList.remove('insight-loading');
       typewriterEffect(elLaborInsight,ls.html);
       laborApplyCaveats(elLaborInsight,ls.figs,d,ls.note);
@@ -15992,30 +16225,25 @@ function loadInvInsight(){
   fc2LoadCfo();
   var fiveMin=5*60*1000;
   try{
-    var cached=sessionStorage.getItem('inv_insight');
-    var cachedAt=parseInt(sessionStorage.getItem('inv_insight_at')||'0',10);
+    /* The whole payload is cached (DH4-1): the HTML alone dropped the
+       sample-data caveat on a cache hit. An entry an older page wrote holds
+       the bare HTML; it still renders. */
+    var cached=cavGet('inv_insight');
+    var cachedAt=parseInt(cavGet('inv_insight_at')||'0',10);
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
-      el.classList.remove('insight-loading');
-      _invInsightFull=cached;
+      var cdi=null;try{cdi=JSON.parse(cached);}catch(pe){cdi=null;}
+      if(!cdi||typeof cdi!=='object')cdi={insight:cached};
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
-      el.innerHTML=cached;
+      invRenderInsight(el,cdi,false);
+      cavReadNote(el,cdi.generated_at||new Date(cachedAt).toISOString(),cdi.as_of);
       return;
     }
   }catch(e){}
   fetch('/api/inv-insight').then(apiJson).then(function(d){
     var elInvInsight=document.getElementById('inv-insight');
     if(elInvInsight){
-      var html=d.insight||'Analysis unavailable.';
-      _invInsightFull=html;
-      try{sessionStorage.setItem('inv_insight',html);sessionStorage.setItem('inv_insight_at',String(Date.now()));}catch(e){}
-      elInvInsight.classList.remove('insight-loading');
-      elInvInsight.innerHTML='';
-      if(d.is_live===false){
-        elInvInsight.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect your POS or upload a count to see your own.'));
-        var _p=document.createElement('div');_p.textContent=html;elInvInsight.appendChild(_p);
-      } else {
-        typewriterEffect(elInvInsight,html);
-      }
+      cavSet('inv_insight',JSON.stringify(d||{}));cavSet('inv_insight_at',String(Date.now()));
+      invRenderInsight(elInvInsight,d||{},true);
     }
     // The insight run is what writes this week's inventory_history
     // snapshot, so the trend fetched above may predate it — pull it once
@@ -16026,6 +16254,20 @@ function loadInvInsight(){
     var elInvErr=document.getElementById('inv-insight');
     if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
+}
+function invRenderInsight(el,d,animate){
+  var html=d.insight||'Analysis unavailable.';
+  _invInsightFull=html;
+  el.classList.remove('insight-loading');
+  el.innerHTML='';
+  if(d.is_live===false){
+    el.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect your POS or upload a count to see your own.'));
+    var _p=document.createElement('div');_p.textContent=html;el.appendChild(_p);
+  } else if(animate){
+    typewriterEffect(el,html);
+  } else {
+    el.innerHTML=html;
+  }
 }
 // ── Waste trend card ────────────────────────────────────────────────────────
 // The engine (waste_trend.py) computes the series and every figure on the
@@ -18217,7 +18459,22 @@ function aivRangeReading(ai, lo, hi) {
   if (bl === bh) return {label: BANDS[bl][1], tone: BANDS[bl][2], range: true};
   return {label: 'range too wide to call', tone: '', range: true};
 }
+// "Measured 9/21/26", and past a week the Intel rule: "treat it as
+// background" (Data Freshness #35, DH4-7). A fresh run with no stamp is
+// today's.
+function aivMeasured(d) {
+  var box = document.getElementById('aiv-measured'); if (!box) return;
+  var raw = d && (d.measured_at || d.created_at), at = null;
+  if (raw) { at = new Date(/Z$|[+-]\d\d:?\d\d$/.test(String(raw)) ? raw : String(raw).replace(' ', 'T') + 'Z'); if (isNaN(at)) at = null; }
+  if (!at && d && !d.cached) at = new Date();
+  if (!at) { box.hidden = true; return; }
+  document.getElementById('aiv-measured-d').textContent = (at.getMonth() + 1) + '/' + at.getDate() + '/' + String(at.getFullYear()).slice(-2);
+  var old = document.getElementById('aiv-measured-old'), days = Math.floor((Date.now() - at.getTime()) / 86400000);
+  if (old) { if (days >= 7) { old.textContent = '· ' + days + ' days ago — treat it as background'; old.className = 'stale'; } else { old.textContent = ''; old.className = ''; } }
+  box.hidden = false;
+}
 function renderAIVisibility(d) {
+  aivMeasured(d);
   document.getElementById('aiv-loading').style.display = 'none';
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-results').style.display = 'block';
@@ -18323,7 +18580,7 @@ function renderAIVisibility(d) {
       gbpLbl.className = presTone;
     }
   }
-  try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
+  cavSet('aiv_cache', JSON.stringify(d)); cavSet('aiv_cache_at', String(Date.now()));
 
   // GBP checklist grid — the iOS two-column grid. Full list can run to a
   // dozen-plus items; showing all of them by default buried the query
@@ -18477,7 +18734,7 @@ function toggleAivWhy(idx, btn) {
 if (typeof recOnAnswered === 'function') recOnAnswered(function(key) {
   if (String(key).indexOf('aiv_roadmap:') !== 0 || !_aivData || !_aivData.roadmap) return;
   for (var i = 0; i < _aivData.roadmap.length; i++) if (_aivData.roadmap[i].rec_key === key) { _aivData.roadmap[i].answered = true; _aivData.roadmap[i].answerable = false; }
-  try { sessionStorage.setItem('aiv_cache', JSON.stringify(_aivData)); } catch (e) {}
+  cavSet('aiv_cache', JSON.stringify(_aivData));
 });
 // A roadmap card's own action: where in the product the owner does it.
 document.addEventListener('click', function(e) {
@@ -18531,8 +18788,8 @@ window.addEventListener('load', function(){
   // always start at the idle "Check Visibility" state, never silently
   // pre-populate results the client never actually requested this load.
   try {
-    var aivCached = sessionStorage.getItem('aiv_cache');
-    var aivCachedAt = parseInt(sessionStorage.getItem('aiv_cache_at') || '0', 10);
+    var aivCached = cavGet('aiv_cache');
+    var aivCachedAt = parseInt(cavGet('aiv_cache_at') || '0', 10);
     var fourHours = 4 * 60 * 60 * 1000;
     if (aivCached && aivCachedAt && (Date.now() - aivCachedAt) < fourHours) {
       _aivData = JSON.parse(aivCached);
@@ -19634,10 +19891,33 @@ window.switchLocation = function(rid) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({restaurant_id: rid})
   }).then(apiJson).then(function(d) {
-    if (d.ok) { window.location.reload(); }
+    /* Every cached AI read belongs to the location it was read for. */
+    if (d.ok) { cavWipe(); window.location.reload(); }
     else { toast(d.error || 'Could not switch location', 'error'); }
   }).catch(function() { toast('Could not switch location \u2014 check your connection.', 'error'); });
 };
+
+// Labor, Food Cost, Account and the other server-rendered tabs are drawn
+// once, at page load: a laptop left open overnight showed yesterday's
+// numbers as today's (Data Freshness #33, DH4-20). After 30 minutes hidden,
+// coming back reloads the tab the owner was on (switchTab keeps it in the
+// hash). Home refreshes itself on visibilitychange already.
+// Anything typed on the page since it loaded holds the reload back (a
+// half-written setting is never thrown away); the owner is told instead.
+(function(){
+  var hiddenAt = 0, LIMIT = 30 * 60 * 1000, typed = false;
+  document.addEventListener('input', function() { typed = true; }, true);
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (!hiddenAt) return;
+    var away = Date.now() - hiddenAt; hiddenAt = 0;
+    if (away < LIMIT) return;
+    var act = document.querySelector('.panel.active'), id = (act && act.id) || '';
+    if (!/^panel-(labor|inventory|account|competitor)$/.test(id)) return;
+    if (typed) { if (typeof toast === 'function') toast('These numbers were loaded over 30 minutes ago — reload the page for the latest.'); return; }
+    cavWipe(); window.location.reload();
+  });
+})();
 
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('loc-switcher-wrap');

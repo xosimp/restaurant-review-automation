@@ -652,6 +652,8 @@ struct FoodCostAnalyticsSection: View {
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk.opacity(0.45))
             }
+            // How current the sources behind food cost are, from data health.
+            DataHealthModuleBadge(module: "food_cost")
         }
     }
 
